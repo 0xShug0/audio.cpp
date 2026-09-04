@@ -1003,12 +1003,39 @@ public:
         return backbone_->prefill_embeddings(embeddings, steps);
     }
 
+    modules::QwenCausalPrefillResult prefill_embeddings_padded(
+        const std::vector<float> & embeddings, int64_t padded_steps, int64_t valid_steps) {
+        return backbone_->prefill_embeddings_padded(embeddings, padded_steps, valid_steps);
+    }
+
     void start_decode_embeddings(const runtime::TransformerKVState & state, int64_t required_cache_steps) {
         backbone_->start_decode_embeddings(state, required_cache_steps);
     }
 
     modules::QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding) {
         return backbone_->decode_embedding(embedding);
+    }
+
+    void start_decode_embeddings_batched(const runtime::TransformerBatchedKVState & state, int64_t required_cache_steps) {
+        backbone_->start_decode_embeddings_batched(state, required_cache_steps);
+    }
+
+    modules::QwenCausalDecodeStepResult decode_embeddings_batched(
+        const std::vector<float> & embeddings, int64_t batch_size,
+        const std::vector<uint8_t> & active_mask) {
+        return backbone_->decode_embeddings_batched(embeddings, batch_size, active_mask);
+    }
+
+    void set_batched_member_end(int64_t batch, int64_t end) {
+        backbone_->set_batched_member_end(batch, end);
+    }
+
+    std::vector<int64_t> batched_member_ends() const {
+        return backbone_->batched_member_ends();
+    }
+
+    runtime::TransformerBatchedKVState export_batched_decode_state() const {
+        return backbone_->export_batched_decode_state();
     }
 
     void release_graphs() {
@@ -1106,6 +1133,13 @@ engine::modules::QwenCausalPrefillResult FireRedArRuntime::prefill_embeddings(
     return impl_->prefill_embeddings(embeddings, steps);
 }
 
+engine::modules::QwenCausalPrefillResult FireRedArRuntime::prefill_embeddings_padded(
+    const std::vector<float> & embeddings,
+    int64_t padded_steps,
+    int64_t valid_steps) {
+    return impl_->prefill_embeddings_padded(embeddings, padded_steps, valid_steps);
+}
+
 void FireRedArRuntime::start_decode_embeddings(
     const engine::runtime::TransformerKVState & state,
     int64_t required_cache_steps) {
@@ -1114,6 +1148,30 @@ void FireRedArRuntime::start_decode_embeddings(
 
 engine::modules::QwenCausalDecodeStepResult FireRedArRuntime::decode_embedding(const std::vector<float> & embedding) {
     return impl_->decode_embedding(embedding);
+}
+
+void FireRedArRuntime::start_decode_embeddings_batched(
+    const engine::runtime::TransformerBatchedKVState & state,
+    int64_t required_cache_steps) {
+    impl_->start_decode_embeddings_batched(state, required_cache_steps);
+}
+
+engine::modules::QwenCausalDecodeStepResult FireRedArRuntime::decode_embeddings_batched(
+    const std::vector<float> & embeddings, int64_t batch_size,
+    const std::vector<uint8_t> & active_mask) {
+    return impl_->decode_embeddings_batched(embeddings, batch_size, active_mask);
+}
+
+void FireRedArRuntime::set_batched_member_end(int64_t batch, int64_t end) {
+    impl_->set_batched_member_end(batch, end);
+}
+
+std::vector<int64_t> FireRedArRuntime::batched_member_ends() const {
+    return impl_->batched_member_ends();
+}
+
+engine::runtime::TransformerBatchedKVState FireRedArRuntime::export_batched_decode_state() const {
+    return impl_->export_batched_decode_state();
 }
 
 void FireRedArRuntime::release_graphs() {

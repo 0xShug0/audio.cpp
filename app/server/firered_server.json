@@ -1,0 +1,27 @@
+{
+  "host": "0.0.0.0",
+  "port": 8007,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "busy_timeout_ms": 0,
+  "models": [
+    {
+      "id": "firered-base",
+      "family": "fireredtts3",
+      "path": "/data/megastore/Projects/DuJing/models/FireRedTTS3-Base-GGUF/fireredtts3-base-q8_0.gguf",
+      "model_spec_override": "/data/megastore/Projects/DuJing/code/audio.cpp/model_specs/fireredtts3.json",
+      "task": "clon",
+      "mode": "streaming",
+      "instance_count": 3,
+      "session_options": {
+        "fireredtts3.reference_cache_slots": "8",
+        "fireredtts3.chunk_sizes": "3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12"
+      },
+      "default_request_options": {
+        "num_inference_steps": "5"
+      }
+    }
+  ]
+}

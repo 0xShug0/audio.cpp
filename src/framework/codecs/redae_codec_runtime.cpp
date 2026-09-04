@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/codecs/redae_codec_runtime.h"
 
 #include "engine/framework/audio/istft_graph.h"
@@ -264,7 +265,7 @@ std::shared_ptr<RedAeWeights> load_redae_weights(
         options.graph_arena_bytes,
         options.graph_arena_bytes,
         execution.backend_type(),
-        true,
+        false,
         c.enc_sliding_window);
     auto encoder_load_config = encoder_config;
     encoder_load_config.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
@@ -284,7 +285,7 @@ std::shared_ptr<RedAeWeights> load_redae_weights(
         options.graph_arena_bytes,
         options.graph_arena_bytes,
         execution.backend_type(),
-        true,
+        false,
         0);
     auto downsample_load_config = downsample_config;
     downsample_load_config.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
@@ -643,6 +644,76 @@ public:
         return audio;
     }
 
+    // --- 增量解码（流式）--- per-slot state
+    void decode_reset(RedAeCodecRuntime::DecodeState & st) {
+        st.dec_state.reset();
+        st.dec_qwen_frames = 0;
+        st.inc_istft.reset();
+        st.inc_istft_frames = 0;
+    }
+
+    runtime::AudioBuffer decode_incremental(RedAeCodecRuntime::DecodeState & st, const std::vector<float> & latents) {
+        if (latents.empty() || static_cast<int64_t>(latents.size()) % config_.bottleneck_dim != 0) {
+            throw std::runtime_error("RedAE codec incremental decode latent size mismatch");
+        }
+        const int64_t latent_frames = static_cast<int64_t>(latents.size()) / config_.bottleneck_dim;
+        auto decoder_in = encoder_out_.decode_in(latents, latent_frames);
+        const int64_t qwen_frames = latent_frames * config_.enc_extra_downsample_rate;
+        std::vector<float> decoder_hidden;
+
+        if (!st.dec_state.has_value()) {
+            // 首块：一次性 prefill（返回 KV state 用于后续 chaining）
+            auto decoder = decoder_qwen_.prefill_embeddings(decoder_in, qwen_frames);
+            decoder_hidden = std::move(decoder.hidden);
+            st.dec_state = std::move(decoder.state);
+        } else {
+            // 后续块：用 decode_embedding 逐 qwen frame 解码，复用前序 KV
+            const int64_t required = st.dec_qwen_frames + qwen_frames;
+            decoder_qwen_.start_decode_embeddings(*st.dec_state, required);
+            decoder_hidden.reserve(static_cast<size_t>(qwen_frames * config_.dec_hidden_size));
+            for (int64_t f = 0; f < qwen_frames; ++f) {
+                std::vector<float> row(
+                    decoder_in.begin() + static_cast<std::ptrdiff_t>(f * config_.dec_hidden_size),
+                    decoder_in.begin() + static_cast<std::ptrdiff_t>((f + 1) * config_.dec_hidden_size));
+                auto step = decoder_qwen_.decode_embedding(row);
+                decoder_hidden.insert(
+                    decoder_hidden.end(), step.hidden.begin(), step.hidden.end());
+            }
+        }
+        st.dec_qwen_frames += qwen_frames;
+
+        auto spec = encoder_out_.istft_head(decoder_hidden, qwen_frames);
+
+        // 增量 iSTFT
+        if (!st.inc_istft) {
+            audio::HostLogMagnitudePhaseISTFTConfig cfg;
+            cfg.frames = qwen_frames;
+            cfg.n_fft = config_.audio_patch_size * 4;
+            cfg.hop_length = config_.audio_patch_size;
+            cfg.out_dim = config_.audio_patch_size * 4 + 2;
+            cfg.threads = static_cast<size_t>(std::max(1, execution_.config().threads));
+            st.inc_istft = std::make_unique<audio::HostLogMagnitudePhaseISTFT>(cfg);
+            st.inc_istft_frames = qwen_frames;
+        }
+        auto chunk_audio = st.inc_istft->append_incremental(spec, qwen_frames, istft_window_);
+
+        runtime::AudioBuffer audio;
+        audio.sample_rate = static_cast<int>(config_.sample_rate);
+        audio.channels = 1;
+        audio.samples = std::move(chunk_audio);
+        return audio;
+    }
+
+    runtime::AudioBuffer flush_incremental(RedAeCodecRuntime::DecodeState & st) {
+        runtime::AudioBuffer audio;
+        audio.sample_rate = static_cast<int>(config_.sample_rate);
+        audio.channels = 1;
+        if (st.inc_istft) {
+            audio.samples = st.inc_istft->finish_incremental();
+        }
+        return audio;
+    }
+
     void release_graphs() {
         encoder_in_.release_graph();
         encoder_out_.release_graph();
@@ -764,6 +835,18 @@ std::vector<float> RedAeCodecRuntime::encode(const std::vector<float> & audio_24
 
 runtime::AudioBuffer RedAeCodecRuntime::decode(const std::vector<float> & latents) {
     return impl_->runtime.decode(latents);
+}
+
+void RedAeCodecRuntime::decode_reset(RedAeCodecRuntime::DecodeState & state) {
+    impl_->runtime.decode_reset(state);
+}
+
+runtime::AudioBuffer RedAeCodecRuntime::decode_incremental(RedAeCodecRuntime::DecodeState & state, const std::vector<float> & latents) {
+    return impl_->runtime.decode_incremental(state, latents);
+}
+
+runtime::AudioBuffer RedAeCodecRuntime::flush_incremental(RedAeCodecRuntime::DecodeState & state) {
+    return impl_->runtime.flush_incremental(state);
 }
 
 void RedAeCodecRuntime::release_runtime_graphs() {

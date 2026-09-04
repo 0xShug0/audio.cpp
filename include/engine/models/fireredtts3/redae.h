@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/codecs/redae_codec_runtime.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/fireredtts3/assets.h"
@@ -31,6 +32,13 @@ public:
 
     std::vector<float> encode(const std::vector<float> & audio_24k);
     engine::runtime::AudioBuffer decode(const std::vector<float> & latents);
+
+    // 增量解码（流式）：重置 + 逐块解码 + flush 尾部（per-slot 状态）
+    using DecodeState = codecs::RedAeCodecRuntime::DecodeState;
+    void decode_reset(DecodeState & state);
+    engine::runtime::AudioBuffer decode_incremental(DecodeState & state, const std::vector<float> & latents);
+    engine::runtime::AudioBuffer flush_incremental(DecodeState & state);
+
     void release_graphs();
 
 private:

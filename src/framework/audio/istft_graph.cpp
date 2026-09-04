@@ -211,6 +211,159 @@ private:
     HostLogMagnitudePhaseISTFTConfig config_;
     int64_t freq_bins_ = 0;
     Workspace workspace_;
+
+    // --- 增量状态 ---
+    bool inc_initialized_ = false;
+    std::vector<float> inc_window_;
+    std::vector<float> inc_folded_;
+    std::vector<float> inc_envelope_;
+    int64_t inc_frames_emitted_ = 0;    // 已折叠的 frame 绝对计数
+    int64_t inc_emitted_samples_ = 0;   // 已输出的样本数（累计）
+
+    // 初始化滚动累加器：buffer 长度 = (本块 frame 数 - 1) * hop + n_fft（可增长），
+    // envelope 按已加入的 frame 计算。
+    void inc_ensure(int64_t total_frames, const std::vector<float> & window) {
+        const int64_t need = (total_frames - 1) * config_.hop_length + config_.n_fft;
+        if (static_cast<int64_t>(inc_folded_.size()) < need) {
+            inc_folded_.resize(static_cast<size_t>(need), 0.0F);
+            inc_envelope_.resize(static_cast<size_t>(need), 0.0F);
+        }
+        inc_window_ = window;
+    }
+
+public:
+    std::vector<float> append_incremental(
+        const std::vector<float> & log_magnitude_phase,
+        int64_t frames,
+        const std::vector<float> & window) {
+        require(static_cast<int64_t>(window.size()) == config_.n_fft, "host incremental ISTFT window size mismatch");
+        require(static_cast<int64_t>(log_magnitude_phase.size()) == frames * config_.out_dim,
+                "host incremental ISTFT input size mismatch");
+        require(frames > 0, "host incremental ISTFT requires positive frames");
+        if (!inc_initialized_) {
+            inc_folded_.clear();
+            inc_envelope_.clear();
+            inc_frames_emitted_ = 0;
+            inc_emitted_samples_ = 0;
+            inc_initialized_ = true;
+        }
+        // 目标总帧数（含本块）
+        const int64_t new_total = inc_frames_emitted_ + frames;
+        inc_ensure(new_total, window);
+
+        // 折叠本块 spectrum（frame 绝对索引从 inc_frames_emitted_ 起）
+        fold_frames(log_magnitude_phase, frames, window);
+
+        // 重新计算 envelope（基于已加入的帧数）
+        std::fill(inc_envelope_.begin(), inc_envelope_.end(), 0.0F);
+        for (int64_t f = 0; f < new_total; ++f) {
+            const int64_t start = f * config_.hop_length;
+            for (int64_t i = 0; i < config_.n_fft; ++i) {
+                const int64_t pos = start + i;
+                if (pos >= static_cast<int64_t>(inc_envelope_.size())) {
+                    break;
+                }
+                const float w = window[static_cast<size_t>(i)];
+                inc_envelope_[static_cast<size_t>(pos)] += w * w;
+            }
+        }
+
+        // 可输出样本：从 pad 到 (buffer 末尾 - pad)，且只输出"自上次以来新增"的部分。
+        // 首块从 pad 起；后续从上次输出的绝对位置 inc_emitted_samples_ 起。
+        const int64_t pad = (config_.n_fft - config_.hop_length) / 2;
+        const int64_t total_samples = (new_total - 1) * config_.hop_length + config_.n_fft;
+        const int64_t out_end = total_samples - pad;
+        const int64_t out_start = inc_emitted_samples_ == 0 ? pad : inc_emitted_samples_;
+        std::vector<float> out;
+        if (out_end > out_start) {
+            out.resize(static_cast<size_t>(out_end - out_start));
+            for (int64_t i = out_start; i < out_end; ++i) {
+                const float denom = inc_envelope_[static_cast<size_t>(i)];
+                out[static_cast<size_t>(i - out_start)] = denom <= 1.0e-11F ? 0.0F
+                                                          : inc_folded_[static_cast<size_t>(i)] / denom;
+            }
+        }
+        // 记录已输出的绝对样本数（不含 pad 前缀，保持与输出对齐）
+        inc_emitted_samples_ = out_end;
+        return out;
+    }
+
+    std::vector<float> finish_incremental() {
+        if (!inc_initialized_) {
+            return {};
+        }
+        // append_incremental 已输出 [pad, total_samples-pad) 的完整内部覆盖区，
+        // 与离线 compute() 的裁剪语义（输出 = output_size - 2*pad）一致。
+        // 这里只输出"尚未输出"的尾部（若有），避免把整段折叠缓冲区重复倒出
+        // （此前从索引 0 全量重放会导致流式输出 2 倍时长）。
+        const int64_t start = inc_emitted_samples_;
+        const int64_t end = static_cast<int64_t>(inc_folded_.size());
+        std::vector<float> out;
+        if (end > start) {
+            out.resize(static_cast<size_t>(end - start));
+            for (int64_t i = start; i < end; ++i) {
+                const float denom = inc_envelope_[static_cast<size_t>(i)];
+                out[static_cast<size_t>(i - start)] =
+                    denom <= 1.0e-11F ? 0.0F
+                                      : inc_folded_[static_cast<size_t>(i)] / denom;
+            }
+        }
+        inc_folded_.clear();
+        inc_envelope_.clear();
+        inc_frames_emitted_ = 0;
+        inc_emitted_samples_ = 0;
+        inc_initialized_ = false;
+        return out;
+    }
+
+    // 折叠一批 log-magnitude+phase 帧到滚动累加器（frame 绝对索引从 inc_frames_emitted_ 起）。
+    void fold_frames(const std::vector<float> & log_magnitude_phase, int64_t frames, const std::vector<float> & window) {
+        // 1) 逐帧把 log-magnitude+phase 转成复数 spectrum
+        std::vector<std::complex<float>> spectrum(static_cast<size_t>(frames * freq_bins_));
+        for (int64_t frame = 0; frame < frames; ++frame) {
+            const float * row = log_magnitude_phase.data() + static_cast<size_t>(frame * config_.out_dim);
+            auto * spectrum_row = spectrum.data() + static_cast<size_t>(frame * freq_bins_);
+            for (int64_t freq = 0; freq < freq_bins_; ++freq) {
+                const float mag = std::min(std::exp(row[freq]), 100.0F);
+                const float phase = row[freq_bins_ + freq];
+                spectrum_row[static_cast<size_t>(freq)] = {
+                    mag * std::cos(phase),
+                    mag * std::sin(phase),
+                };
+            }
+        }
+        // 2) inverse FFT
+        std::vector<float> framed(static_cast<size_t>(frames * config_.n_fft), 0.0F);
+        real_fft_inverse(
+            {static_cast<size_t>(frames), static_cast<size_t>(config_.n_fft)},
+            {
+                static_cast<std::ptrdiff_t>(freq_bins_ * static_cast<int64_t>(sizeof(std::complex<float>))),
+                static_cast<std::ptrdiff_t>(sizeof(std::complex<float>)),
+            },
+            {
+                static_cast<std::ptrdiff_t>(config_.n_fft * static_cast<int64_t>(sizeof(float))),
+                static_cast<std::ptrdiff_t>(sizeof(float)),
+            },
+            1,
+            spectrum.data(),
+            framed.data(),
+            1.0F / static_cast<float>(config_.n_fft),
+            config_.threads);
+        // 3) windowed overlap-add 到滚动累加器
+        for (int64_t frame = 0; frame < frames; ++frame) {
+            const int64_t abs_start = (inc_frames_emitted_ + frame) * config_.hop_length;
+            const float * src = framed.data() + static_cast<size_t>(frame * config_.n_fft);
+            for (int64_t i = 0; i < config_.n_fft; ++i) {
+                const int64_t pos = abs_start + i;
+                if (pos >= static_cast<int64_t>(inc_folded_.size())) {
+                    continue;
+                }
+                const float w = window[static_cast<size_t>(i)];
+                inc_folded_[static_cast<size_t>(pos)] += src[i] * w;
+            }
+        }
+        inc_frames_emitted_ += frames;
+    }
 };
 
 class CudaLogMagnitudePhaseISTFT::Impl {
@@ -283,6 +436,17 @@ HostLogMagnitudePhaseISTFTResult HostLogMagnitudePhaseISTFT::compute(
     const std::vector<float> & log_magnitude_phase,
     const std::vector<float> & window) {
     return impl_->compute(log_magnitude_phase, window);
+}
+
+std::vector<float> HostLogMagnitudePhaseISTFT::append_incremental(
+    const std::vector<float> & log_magnitude_phase,
+    int64_t frames,
+    const std::vector<float> & window) {
+    return impl_->append_incremental(log_magnitude_phase, frames, window);
+}
+
+std::vector<float> HostLogMagnitudePhaseISTFT::finish_incremental() {
+    return impl_->finish_incremental();
 }
 
 CudaLogMagnitudePhaseISTFT::CudaLogMagnitudePhaseISTFT(

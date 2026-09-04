@@ -3,16 +3,27 @@
 namespace engine::runtime {
 
 RuntimeSessionBase::RuntimeSessionBase(const SessionOptions & options)
+    : RuntimeSessionBase(options, nullptr) {}
+
+RuntimeSessionBase::RuntimeSessionBase(
+    const SessionOptions & options,
+    std::shared_ptr<engine::core::ExecutionContext> external_context)
     : options_(options),
-      execution_context_(options.backend),
-      graph_executor_(execution_context_) {}
+      context_(external_context != nullptr
+          ? std::move(external_context)
+          : std::make_shared<engine::core::ExecutionContext>(options.backend)),
+      graph_executor_(*context_) {
+    if (context_ == nullptr) {
+        throw std::runtime_error("RuntimeSessionBase requires a non-null execution context");
+    }
+}
 
 engine::core::ExecutionContext & RuntimeSessionBase::execution_context() noexcept {
-    return execution_context_;
+    return *context_;
 }
 
 const engine::core::ExecutionContext & RuntimeSessionBase::execution_context() const noexcept {
-    return execution_context_;
+    return *context_;
 }
 
 ArtifactStore & RuntimeSessionBase::artifacts() noexcept {

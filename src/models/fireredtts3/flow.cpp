@@ -16,7 +16,9 @@
 #include <ggml.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 #include <string>

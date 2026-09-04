@@ -13,6 +13,10 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session.h"
 
+#include <deque>
+#include <mutex>
+#include <thread>
+
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -44,6 +48,30 @@ public:
     LiveIngestLimits live_ingest_limits(const HttpRequest & request) const override;
 
 private:
+    struct LoadedModel;
+
+    // session 池借用锁（RAII）：借一个空闲 session 实例，析构归还。
+    class SessionPoolLock {
+    public:
+        SessionPoolLock() = default;
+        SessionPoolLock(LoadedModel & model, size_t index);
+        SessionPoolLock(SessionPoolLock && other) noexcept;
+        SessionPoolLock & operator=(SessionPoolLock && other) noexcept;
+        SessionPoolLock(const SessionPoolLock &) = delete;
+        SessionPoolLock & operator=(const SessionPoolLock &) = delete;
+        ~SessionPoolLock();
+
+        // 借到的 session 下标。public 且是唯一存储：构造函数/move/赋值都写这里，
+        // release() 也读这里归还。曾有个 private index_ 与 public index 并存，
+        // 构造函数只写 index_ 而调用处全读 public index → 恒为 0 → 所有并发请求
+        // 都绑 session 0（跨请求串音/截断/double free 根因）。
+        size_t index = 0;
+
+    private:
+        void release();
+        LoadedModel * model_ = nullptr;
+    };
+
     struct LoadedModel {
         struct RuntimeVoicePreset {
             std::optional<std::string> voice_id;
@@ -54,10 +82,14 @@ private:
         ServerModelConfig config;
         engine::runtime::TaskSpec task;
         std::unique_ptr<engine::runtime::ILoadedVoiceModel> model;
-        std::unique_ptr<engine::runtime::IVoiceTaskSession> session;
+        // 并发 session 池：每个实例独立 graph arena + reference cache。
+        std::vector<std::unique_ptr<engine::runtime::IVoiceTaskSession>> sessions;
         engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
         engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
         std::atomic<bool> loaded{false};
+        // 空闲 session 索引队列（受 pool_mutex 保护）
+        std::mutex pool_mutex;
+        std::deque<size_t> free_sessions;
         // Steady-clock ms of the most recent load or run of this model. Orders
         // eviction when max_loaded_models forces an unload: the least recently
         // used idle model goes first.
@@ -89,6 +121,9 @@ private:
     // override, clamped by this model's configured ceiling. Throws ServerBusyError
     // (-> HTTP 503) once the effective timeout has elapsed.
     BusyGuard::Lock acquire_model_run(LoadedModel & model, std::optional<int> request_timeout_ms);
+
+    // 从 session 池借一个空闲实例（真并发）；析构自动归还。池满时阻塞/超时。
+    SessionPoolLock borrow_session(LoadedModel & model, std::optional<int> request_timeout_ms);
 
     // Server policy for this model: its own busy_timeout_ms if set, else the
     // top-level config value.

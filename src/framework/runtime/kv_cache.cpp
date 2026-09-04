@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/runtime/kv_cache.h"
 
 #include "engine/framework/core/backend.h"
@@ -260,6 +261,14 @@ void TransformerBatchedKVCache::import_state(const TransformerBatchedKVState & s
         throw std::runtime_error("TransformerBatchedKVCache state batch size does not match cache batch size");
     }
     current_end_ = state.current_end;
+    // per-member ends
+    member_ends_.clear();
+    if (!state.current_ends.empty()) {
+        if (static_cast<int64_t>(state.current_ends.size()) != batch_size_) {
+            throw std::runtime_error("TransformerBatchedKVCache state current_ends size does not match batch size");
+        }
+        member_ends_ = state.current_ends;
+    }
     if (layers_.empty()) {
         valid_steps_ = 0;
         return;
@@ -267,27 +276,32 @@ void TransformerBatchedKVCache::import_state(const TransformerBatchedKVState & s
     if (state.layers.size() != layers_.size()) {
         throw std::runtime_error("TransformerBatchedKVCache state layer count does not match cache layer count");
     }
-    const int64_t state_steps = state.layers.empty() ? 0 : state.layers.front().valid_steps;
-    if (state_steps > cache_steps_) {
+    // 每 member 的有效步数（per-member 或均匀）
+    std::vector<int64_t> member_steps(static_cast<size_t>(batch_size_));
+    int64_t max_steps = 0;
+    for (int64_t b = 0; b < batch_size_; ++b) {
+        member_steps[static_cast<size_t>(b)] = member_ends_.empty() ? current_end_ : member_ends_[static_cast<size_t>(b)];
+        max_steps = std::max(max_steps, member_steps[static_cast<size_t>(b)]);
+    }
+    if (max_steps > cache_steps_) {
         throw std::runtime_error("TransformerBatchedKVCache state valid_steps exceeds cache capacity");
     }
-    valid_steps_ = state_steps;
-    const size_t copy_elems = static_cast<size_t>(state_steps * row_elems_);
+    valid_steps_ = max_steps;
     for (size_t layer = 0; layer < layers_.size(); ++layer) {
         auto & cache = layers_[layer];
         const auto & source = state.layers[layer];
-        if (source.valid_steps != state_steps) {
-            throw std::runtime_error("TransformerBatchedKVCache requires consistent valid_steps across all layers");
-        }
-        const size_t state_elems = static_cast<size_t>(batch_size_) * copy_elems;
+        // source 按 batch * max_steps * row 布局（导出时统一 max_steps）
+        const size_t state_elems = static_cast<size_t>(batch_size_) * static_cast<size_t>(max_steps * row_elems_);
         if (source.key.size() != source.value.size() || source.key.size() != state_elems) {
-            throw std::runtime_error("TransformerBatchedKVCache source tensors do not match batch * valid_steps * row_elems");
+            throw std::runtime_error("TransformerBatchedKVCache source tensors do not match batch * max_steps * row_elems");
         }
         std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
         std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
-        for (int64_t batch = 0; batch < batch_size_; ++batch) {
-            const size_t src_offset = static_cast<size_t>(batch) * copy_elems;
-            const size_t dst_offset = static_cast<size_t>(batch * cache_steps_ * row_elems_);
+        for (int64_t b = 0; b < batch_size_; ++b) {
+            const int64_t steps = member_steps[static_cast<size_t>(b)];
+            const size_t src_offset = static_cast<size_t>(b) * static_cast<size_t>(max_steps * row_elems_);
+            const size_t dst_offset = static_cast<size_t>(b * cache_steps_ * row_elems_);
+            const size_t copy_elems = static_cast<size_t>(steps * row_elems_);
             std::copy(
                 source.key.begin() + static_cast<std::ptrdiff_t>(src_offset),
                 source.key.begin() + static_cast<std::ptrdiff_t>(src_offset + copy_elems),
@@ -306,12 +320,16 @@ TransformerBatchedKVState TransformerBatchedKVCache::export_state() const {
     TransformerBatchedKVState state;
     state.batch_size = batch_size_;
     state.current_end = current_end_;
+    if (!member_ends_.empty()) {
+        state.current_ends = member_ends_;
+    }
     state.layers.resize(layers_.size());
-    const size_t copy_elems = static_cast<size_t>(valid_steps_ * row_elems_);
+    const int64_t max_steps = valid_steps_;
+    const size_t copy_elems = static_cast<size_t>(max_steps * row_elems_);
     const size_t state_elems = static_cast<size_t>(batch_size_) * copy_elems;
     for (size_t layer = 0; layer < layers_.size(); ++layer) {
         auto & out = state.layers[layer];
-        out.valid_steps = valid_steps_;
+        out.valid_steps = max_steps;
         out.key.resize(state_elems);
         out.value.resize(state_elems);
         if (copy_elems == 0) {
@@ -344,6 +362,11 @@ void TransformerBatchedKVCache::advance_after_direct_append(int64_t steps) {
     }
     valid_steps_ += steps;
     current_end_ += steps;
+    if (!member_ends_.empty()) {
+        for (auto & end : member_ends_) {
+            end += steps;
+        }
+    }
 }
 
 int64_t TransformerBatchedKVCache::batch_size() const noexcept {
@@ -360,6 +383,32 @@ int64_t TransformerBatchedKVCache::current_end() const noexcept {
 
 int64_t TransformerBatchedKVCache::cache_steps() const noexcept {
     return cache_steps_;
+}
+
+int64_t TransformerBatchedKVCache::member_end(int64_t batch) const noexcept {
+    if (member_ends_.empty()) {
+        return current_end_;
+    }
+    return member_ends_[static_cast<size_t>(batch)];
+}
+
+void TransformerBatchedKVCache::set_member_end(int64_t batch, int64_t end) noexcept {
+    if (member_ends_.empty()) {
+        member_ends_.assign(static_cast<size_t>(batch_size_), current_end_);
+    }
+    member_ends_[static_cast<size_t>(batch)] = end;
+    current_end_ = std::max(current_end_, end);
+    valid_steps_ = std::max(valid_steps_, end);
+}
+
+void TransformerBatchedKVCache::advance_member(int64_t batch, int64_t steps) noexcept {
+    const int64_t new_end = member_end(batch) + steps;
+    if (member_ends_.empty()) {
+        member_ends_.assign(static_cast<size_t>(batch_size_), current_end_);
+    }
+    member_ends_[static_cast<size_t>(batch)] = new_end;
+    current_end_ = std::max(current_end_, new_end);
+    valid_steps_ = std::max(valid_steps_, new_end);
 }
 
 core::TensorValue view_transformer_kv_cache_steps(

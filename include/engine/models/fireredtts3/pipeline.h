@@ -6,6 +6,7 @@
 #include "engine/models/fireredtts3/assets.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -53,6 +54,18 @@ struct FireRedTTS3InstructResult {
     std::string generated_text;
 };
 
+// 流式块回调：每生成一块音频调用一次（chunk_index 从 0 起）。
+using FireRedStreamChunkCallback = std::function<void(int64_t chunk_index, engine::runtime::AudioBuffer && audio)>;
+
+// 增量流式会话：持有 AR 循环状态，逐块产出音频。
+// 由 FireRedTTS3BaseRuntime 创建；调用方每取一块调 next_chunk()。
+class FireRedTTS3StreamSession {
+public:
+    virtual ~FireRedTTS3StreamSession() = default;
+    // 返回下一块音频；流结束返回 empty（samples 为空）。
+    virtual engine::runtime::AudioBuffer next_chunk() = 0;
+};
+
 class FireRedTTS3BaseRuntime {
 public:
     FireRedTTS3BaseRuntime(
@@ -70,6 +83,14 @@ public:
     FireRedTTS3BaseRuntime & operator=(const FireRedTTS3BaseRuntime &) = delete;
 
     engine::runtime::AudioBuffer generate(const FireRedTTS3BaseRequest & request);
+
+    // 增量流式：启动一个流式会话（AR 逐 patch 生成，按 chunk 边界增量解码）。
+    // chunk_patches[i] 为第 i 块的 patch 数（如 {3,12,12,...} 首块 0.5s 后续 2s）。
+    // 返回的会话每次 next_chunk() 产出一块音频；结束后 next_chunk() 返回空 audio。
+    std::unique_ptr<FireRedTTS3StreamSession> begin_streaming(
+        const FireRedTTS3BaseRequest & request,
+        const std::vector<int64_t> & chunk_patches);
+
     void release_graphs();
 
 private:

@@ -8,8 +8,13 @@
 #include "engine/framework/text/chinese_normalization.h"
 #include "engine/framework/text/text_normalization.h"
 #include "engine/models/fireredtts3/pipeline.h"
+#include "engine/models/fireredtts3/batch_scheduler.h"
 
+#include <mutex>
+#include <cstdio>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace engine::models::fireredtts3 {
@@ -20,6 +25,81 @@ constexpr const char * kBaseName = "FireRedTTS3 Base";
 constexpr const char * kInstructName = "FireRedTTS3 Instruct";
 constexpr int64_t kDefaultTextChunkSize = 600;
 constexpr size_t kDefaultReferenceCacheSlots = 4;
+
+// ---- 共享 batch scheduler + 共享 ExecutionContext 注册表（assets-keyed）----
+// 同一 assets 的所有 session（server session 池）共享一个 scheduler（llama.cpp
+// update_slots 的模拟）和一个 ExecutionContext/backend（llama.cpp 的单 context）。
+//
+// 为什么 context 也必须共享：旧实现每个 session 在 RuntimeSessionBase 自建一个
+// ExecutionContext（自建 CUDA backend），instance_count=3 → 3 个 device-0 context，
+// 而 scheduler 只借用第一个 session 的（引用绑定其成员，session 析构即悬垂）。
+// 冷并发首请求多 context 并存 → "CUDA error: invalid device context"。
+// 对齐 llama.cpp：一个 context 随 model 建一次、所有 session 借它。
+//
+// 所有权/生命周期：context 与 scheduler 都由每个 session 强持有（session 基类持
+// context 的 shared_ptr，session 持 scheduler 的 shared_ptr）。注册表只存 weak_ptr，
+// 不延长存活——最后一个 session 析构时 context+scheduler 随之释放。析构顺序安全：
+// FireRedTTS3Session 的派生成员（含 scheduler_）先于基类析构，故 scheduler（内部持
+// context 引用）先于基类持有的 context 释放。
+struct SchedulerRegistry {
+    std::mutex mu;
+    std::unordered_map<
+        const FireRedTTS3Assets *,
+        std::weak_ptr<engine::core::ExecutionContext>> context_by_assets;
+    std::unordered_map<
+        const FireRedTTS3Assets *,
+        std::weak_ptr<FireRedTTS3BatchScheduler>> scheduler_by_assets;
+
+    // 取 assets 对应的共享 backend context（首次创建）。返回强副本，由调用方
+    // （session 基类）持有，保证该 context 在本 session 存活期不析构。
+    std::shared_ptr<engine::core::ExecutionContext> get_or_create_context(
+        const std::shared_ptr<const FireRedTTS3Assets> & assets,
+        const engine::core::BackendConfig & backend_config) {
+        std::lock_guard<std::mutex> lock(mu);
+        auto it = context_by_assets.find(assets.get());
+        if (it != context_by_assets.end()) {
+            if (auto existing = it->second.lock()) {
+                return existing;
+            }
+            context_by_assets.erase(it);
+        }
+        auto context = std::make_shared<engine::core::ExecutionContext>(backend_config);
+        context_by_assets.emplace(assets.get(), context);
+        return context;
+    }
+
+    // 取 assets 对应的共享 scheduler（首次创建时用共享 context 构造）。返回强副本。
+    std::shared_ptr<FireRedTTS3BatchScheduler> get_or_create(
+        std::shared_ptr<const FireRedTTS3Assets> assets,
+        std::shared_ptr<engine::core::ExecutionContext> context,
+        size_t graph_arena_bytes,
+        size_t helper_graph_arena_bytes,
+        size_t weight_context_bytes,
+        engine::assets::TensorStorageType storage_type,
+        size_t reference_cache_slots,
+        bool mem_saver,
+        int64_t max_batch) {
+        std::lock_guard<std::mutex> lock(mu);
+        auto it = scheduler_by_assets.find(assets.get());
+        if (it != scheduler_by_assets.end()) {
+            if (auto existing = it->second.lock()) {
+                return existing;
+            }
+            scheduler_by_assets.erase(it);
+        }
+        const FireRedTTS3Assets * key = assets.get();
+        auto scheduler = std::make_shared<FireRedTTS3BatchScheduler>(
+            std::move(assets), *context, graph_arena_bytes, helper_graph_arena_bytes,
+            weight_context_bytes, storage_type, reference_cache_slots, mem_saver, max_batch);
+        scheduler_by_assets.emplace(key, scheduler);
+        return scheduler;
+    }
+};
+
+SchedulerRegistry & scheduler_registry() {
+    static SchedulerRegistry registry;
+    return registry;
+}
 
 const char * variant_name(FireRedTTS3Variant variant) {
     return variant == FireRedTTS3Variant::Instruct ? kInstructName : kBaseName;
@@ -42,6 +122,28 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
         throw std::runtime_error("FireRedTTS3 session requires a model contract");
     }
     return contract;
+}
+
+// scheduler-mode（Base clone + fireredtts3.max_batch>1）时，返回 assets 对应的
+// 共享 ExecutionContext（注册表持有，所有 session 借用 → llama.cpp 单 context）。
+// 其它情况（Instruct、非 scheduler 的单 Base）返回 nullptr → session 自建 context：
+// 这些路径不集中到单调度线程，每个 session 独立并发跑自己的 graph，共享 backend
+// 会撞 ggml 后端线程安全，故必须各持一个。
+std::shared_ptr<engine::core::ExecutionContext> firered_scheduler_shared_context(
+    const runtime::SessionOptions & options,
+    const std::shared_ptr<const FireRedTTS3Assets> & assets) {
+    if (assets == nullptr) {
+        return nullptr;  // require_assets 会给出明确报错；此处不提前解引用
+    }
+    if (is_instruct_variant(assets->variant)) {
+        return nullptr;
+    }
+    const int64_t max_batch = runtime::parse_i64_option(
+        options.options, {"fireredtts3.max_batch"}).value_or(1);
+    if (max_batch <= 1) {
+        return nullptr;
+    }
+    return scheduler_registry().get_or_create_context(assets, options.backend);
 }
 
 std::string request_language(const runtime::TaskRequest & request) {
@@ -216,9 +318,9 @@ FireRedTTS3Session::FireRedTTS3Session(
     runtime::SessionOptions options,
     std::shared_ptr<const FireRedTTS3Assets> assets,
     std::shared_ptr<const engine::model_spec::ModelContract> contract)
-    : runtime::RuntimeSessionBase(options),
+    : runtime::RuntimeSessionBase(options, firered_scheduler_shared_context(options, assets)),
       task_(task),
-      assets_(require_assets(std::move(assets))),
+      assets_(require_assets(assets)),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<FireRedTTS3TextTokenizer>(assets_)) {
     const bool is_instruct = is_instruct_variant(assets_->variant);
@@ -233,9 +335,7 @@ FireRedTTS3Session::FireRedTTS3Session(
     } else if (task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("FireRedTTS3 Base supports the voice clone task");
     }
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("FireRedTTS3 supports offline sessions");
-    }
+    // 双模式：Offline 与 Streaming 都允许（Base clone 支持离线 + 增量流式）
     using T = engine::assets::TensorStorageType;
     const auto storage_type = runtime::parse_tensor_storage_option(
         options.options,
@@ -273,6 +373,26 @@ FireRedTTS3Session::FireRedTTS3Session(
             weight_context_bytes,
             storage_type,
             mem_saver_);
+        return;
+    }
+    // Base clone：优先走共享 batch scheduler（多 session 共享 GPU batch decode）。
+    const int64_t max_batch = runtime::parse_i64_option(
+        options.options,
+        {"fireredtts3.max_batch"})
+        .value_or(1);
+    if (max_batch > 1) {
+        // scheduler 用共享 context 构造（与基类 borrow 的是同一个）。
+        scheduler_ = scheduler_registry().get_or_create(
+            assets_,
+            scheduler_registry().get_or_create_context(assets_, options.backend),
+            graph_arena_bytes,
+            helper_graph_arena_bytes,
+            weight_context_bytes,
+            storage_type,
+            static_cast<size_t>(reference_cache_slots),
+            mem_saver_,
+            max_batch);
+        scheduler_enabled_ = true;
     } else {
         runtime_ = std::make_unique<FireRedTTS3BaseRuntime>(
             assets_,
@@ -337,15 +457,22 @@ runtime::TaskResult FireRedTTS3Session::run(const runtime::TaskRequest & request
                 if (i > 0) {
                     parsed.seed += static_cast<uint32_t>(i);
                 }
-                runtime::append_audio_buffer(merged_audio, runtime_->generate(parsed));
+                if (scheduler_enabled_ && scheduler_) {
+                    // 共享 scheduler 整句生成（并发请求共享 GPU batch decode）
+                    runtime::append_audio_buffer(merged_audio, scheduler_->generate(parsed));
+                } else {
+                    runtime::append_audio_buffer(merged_audio, runtime_->generate(parsed));
+                }
             }
         }
     } catch (...) {
         if (mem_saver_) {
             if (is_instruct) {
                 instruct_runtime_->release_graphs();
-            } else {
+            } else if (runtime_) {
                 runtime_->release_graphs();
+            } else if (scheduler_) {
+                scheduler_->release_graphs();
             }
         }
         throw;
@@ -353,8 +480,10 @@ runtime::TaskResult FireRedTTS3Session::run(const runtime::TaskRequest & request
     if (mem_saver_) {
         if (is_instruct) {
             instruct_runtime_->release_graphs();
-        } else {
+        } else if (runtime_) {
             runtime_->release_graphs();
+        } else if (scheduler_) {
+            scheduler_->release_graphs();
         }
     }
     result.audio_output = std::move(merged_audio);
@@ -363,6 +492,151 @@ runtime::TaskResult FireRedTTS3Session::run(const runtime::TaskRequest & request
     }
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
+}
+
+// ------------------------------------------------------------------ //
+// 流式（增量）接口
+// ------------------------------------------------------------------ //
+runtime::StreamingPolicy FireRedTTS3Session::streaming_policy() const {
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::None;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    return policy;
+}
+
+void FireRedTTS3Session::initialize_stream_request(const runtime::TaskRequest & request) {
+    if (is_instruct_variant(assets_->variant)) {
+        throw std::runtime_error("FireRedTTS3 Instruct streaming is not implemented yet; use offline mode");
+    }
+    stream_request_ = request;
+    // chunk_patches: 每个块的 patch 数（首块 ~0.5s=3 patch, 后续 ~2s=12 patch）
+    std::string sizes_str = runtime::find_option(request.options, {"fireredtts3.chunk_sizes"}).value_or("3,12,12,12,12,12,12,12,12,12,12,12,12,12,12,12");
+    stream_chunk_patches_.clear();
+    std::stringstream ss(sizes_str);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        if (!item.empty()) {
+            stream_chunk_patches_.push_back(std::stoll(item));
+        }
+    }
+    if (stream_chunk_patches_.empty()) {
+        stream_chunk_patches_.push_back(3);
+    }
+    stream_chunk_index_ = 0;
+    stream_merged_audio_ = runtime::AudioBuffer{};
+    stream_generated_text_.clear();
+    stream_session_.reset();
+}
+
+void FireRedTTS3Session::start_stream(const runtime::TaskRequest & request) {
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+    require_prepared("FireRedTTS3 streaming");
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("FireRedTTS3 start_stream requires a streaming session");
+    }
+    reset();
+    initialize_stream_request(request);
+    auto base = make_base_request(*tokenizer_, request);
+    if (scheduler_enabled_ && scheduler_) {
+        // 共享 scheduler：launch 一个 slot（并发请求共享 GPU batch decode）
+        scheduler_slot_ = scheduler_->launch(base, stream_chunk_patches_);
+        if (!scheduler_slot_.valid()) {
+            throw std::runtime_error("FireRedTTS3 scheduler slot pool exhausted");
+        }
+    } else {
+        stream_session_ = runtime_->begin_streaming(base, stream_chunk_patches_);
+    }
+    stream_started_ = true;
+}
+
+std::optional<runtime::StreamEvent> FireRedTTS3Session::next_stream_event() {
+    std::lock_guard<std::mutex> lock(stream_mutex_);
+    if (!stream_started_) {
+        throw std::runtime_error("FireRedTTS3 streaming has not been started");
+    }
+    runtime::AudioBuffer audio;
+    if (scheduler_enabled_ && scheduler_) {
+        if (!scheduler_slot_.valid()) {
+            return std::nullopt;
+        }
+        audio = scheduler_->next_chunk(scheduler_slot_);
+        if (audio.samples.empty()) {
+            // 流结束：显式归还 slot（此后该 id 才可能被复用），并失效本句柄，
+            // 杜绝"本 session 尚未完全 drain / 仍在持句柄时 slot 被其他请求复用"。
+            scheduler_->release_slot(scheduler_slot_);
+            scheduler_slot_ = FireRedTTS3BatchScheduler::SlotHandle{};
+            return std::nullopt;
+        }
+    } else {
+        if (!stream_session_) {
+            return std::nullopt;
+        }
+        audio = stream_session_->next_chunk();
+        if (audio.samples.empty()) {
+            stream_session_.reset();
+            return std::nullopt;
+        }
+    }
+    runtime::append_audio_buffer(stream_merged_audio_, audio);
+    runtime::StreamEvent event;
+    event.named_audio_outputs.push_back({
+        "chunk_" + std::to_string(stream_chunk_index_++),
+        std::move(audio),
+        {},
+    });
+    return event;
+}
+
+void FireRedTTS3Session::set_stream_event_sink(runtime::StreamEventCallback sink) {
+    (void)sink;
+}
+
+runtime::TaskResult FireRedTTS3Session::finish_stream() {
+    if (!stream_started_) {
+        throw std::runtime_error("FireRedTTS3 streaming has not been started");
+    }
+    // 排空剩余块
+    while (next_stream_event().has_value()) {
+    }
+    runtime::TaskResult result;
+    result.audio_output = std::move(stream_merged_audio_);
+    if (!stream_generated_text_.empty()) {
+        result.text_output = runtime::Transcript{std::move(stream_generated_text_), request_language(stream_request_)};
+    }
+    reset();
+    return result;
+}
+
+void FireRedTTS3Session::reset() {
+    stream_request_ = {};
+    stream_chunk_patches_.clear();
+    stream_chunk_index_ = 0;
+    stream_merged_audio_ = runtime::AudioBuffer{};
+    stream_generated_text_.clear();
+    if (scheduler_enabled_ && scheduler_ && scheduler_slot_.valid()) {
+        // 若上一次流式请求因异常/中断遗留仍 Active 的 slot：先 abort 快速收尾，
+        // 再排空（next_chunk 等待至 finished），最后显式 release_slot 归还。
+        scheduler_->abort(scheduler_slot_);
+        try {
+            while (!scheduler_->next_chunk(scheduler_slot_).samples.empty()) {
+            }
+        } catch (...) {
+            // 旧请求的 prefill/decode 错误只在此吞掉清理，不得泄漏到下一个请求。
+        }
+        scheduler_->release_slot(scheduler_slot_);
+        scheduler_slot_ = FireRedTTS3BatchScheduler::SlotHandle{};
+    }
+    stream_session_.reset();
+    stream_started_ = false;
+}
+
+runtime::StreamEvent FireRedTTS3Session::process_audio_chunk(const runtime::AudioChunk & chunk) {
+    (void)chunk;
+    throw std::runtime_error("FireRedTTS3 streaming does not consume audio chunks");
+}
+
+runtime::TaskResult FireRedTTS3Session::finalize() {
+    return finish_stream();
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_fireredtts3_loader() {

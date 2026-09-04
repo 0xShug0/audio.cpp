@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -203,11 +204,11 @@ void write_batched_cached_step_mask(
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
     int64_t mask_steps,
-    int64_t visible_prefix_steps,
-    int64_t current_slot,
-    int64_t position) {
+    const std::vector<int64_t> & member_ends,
+    const std::vector<int32_t> & cache_slots,
+    const std::vector<uint8_t> * active_mask) {
     if (config.sliding_window <= 0) {
-        write_qwen_batched_cached_step_mask(tensor, scratch, batch_size, mask_steps, visible_prefix_steps, current_slot);
+        write_qwen_batched_cached_step_mask(tensor, scratch, batch_size, mask_steps, member_ends, cache_slots, active_mask);
         return;
     }
     if (tensor == nullptr) {
@@ -219,11 +220,8 @@ void write_batched_cached_step_mask(
     if (mask_steps <= 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask requires positive steps");
     }
-    if (visible_prefix_steps < 0 || visible_prefix_steps > mask_steps) {
-        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask visible prefix is out of range");
-    }
-    if (current_slot < 0 || current_slot >= mask_steps) {
-        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask current slot is out of range");
+    if (active_mask != nullptr && static_cast<int64_t>(active_mask->size()) != batch_size) {
+        throw std::runtime_error("QwenCausalDecodeRuntime sliding batched cached mask active mask size mismatch");
     }
     const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
     const auto visible = ggml_fp32_to_fp16(0.0F);
@@ -232,14 +230,24 @@ void write_batched_cached_step_mask(
     if (scratch.size() != total_size) {
         scratch.resize(total_size);
     }
-    const int64_t begin = std::max<int64_t>(0, position - config.sliding_window + 1);
     for (int64_t batch = 0; batch < batch_size; ++batch) {
         const size_t offset = static_cast<size_t>(batch) * row_size;
+        if (active_mask != nullptr && (*active_mask)[static_cast<size_t>(batch)] == 0) {
+            // 非活跃行：整行 -inf（同 write_qwen_batched_cached_step_mask）。
+            std::fill(
+                scratch.begin() + static_cast<std::ptrdiff_t>(offset),
+                scratch.begin() + static_cast<std::ptrdiff_t>(offset + row_size),
+                masked);
+            continue;
+        }
+        const int64_t end = member_ends.empty() ? cache_slots[static_cast<size_t>(batch)] : member_ends[static_cast<size_t>(batch)];
+        const int64_t current_slot = cache_slots[static_cast<size_t>(batch)];
+        const int64_t begin = std::max<int64_t>(0, end - config.sliding_window + 1);
         std::fill(
             scratch.begin() + static_cast<std::ptrdiff_t>(offset),
             scratch.begin() + static_cast<std::ptrdiff_t>(offset + row_size),
             masked);
-        for (int64_t i = begin; i < visible_prefix_steps; ++i) {
+        for (int64_t i = begin; i < end; ++i) {
             scratch[offset + static_cast<size_t>(i)] = visible;
         }
         scratch[offset + static_cast<size_t>(current_slot)] = visible;
@@ -487,6 +495,54 @@ public:
         return run_prefill();
     }
 
+    QwenCausalPrefillResult prefill_embeddings_padded(
+        const std::vector<float> & embeddings,
+        int64_t padded_steps,
+        int64_t valid_steps) {
+        if (padded_steps <= 0 || valid_steps <= 0 || valid_steps > padded_steps) {
+            throw std::runtime_error("QwenCausalDecodeRuntime padded prefill requires 0 < valid_steps <= padded_steps");
+        }
+        const size_t expected = static_cast<size_t>(padded_steps * config_.decoder.stack.hidden_size);
+        if (embeddings.size() != expected) {
+            throw std::runtime_error("QwenCausalDecodeRuntime padded prefill embedding size mismatch");
+        }
+        // grow-only graph：padded_steps 建一次，之后复用（不重建）。
+        ensure_prefill_embedding_graph(padded_steps);
+        ggml_backend_tensor_set(
+            prefill_input_,
+            embeddings.data(),
+            0,
+            embeddings.size() * sizeof(float));
+        // 位置：有效部分 0..valid_steps-1，padding 部分 valid_steps 起继续递增。
+        // 注意：padding 行保持标准因果 mask（不设 -inf），softmax 有界（非 NaN），
+        // 避免 NaN 污染 KV cache 与后续 decode 的有效位置 attention。
+        if (prefill_positions_values_.size() != static_cast<size_t>(padded_steps)) {
+            prefill_positions_values_ = qwen_position_ids(padded_steps);
+        }
+        ggml_backend_tensor_set(
+            prefill_positions_,
+            prefill_positions_values_.data(),
+            0,
+            prefill_positions_values_.size() * sizeof(int32_t));
+        // mask：标准因果（padding 行也 attend 前面的 token，softmax 有界）。
+        if (prefill_attention_mask_values_.size() != static_cast<size_t>(padded_steps * padded_steps)) {
+            prefill_attention_mask_values_ = prefill_attention_mask_values(config_, 1, padded_steps);
+        }
+        ggml_backend_tensor_set(
+            prefill_attention_mask_,
+            prefill_attention_mask_values_.data(),
+            0,
+            prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
+        if (prefill_logits_readback_token_ids_ != nullptr) {
+            upload_logits_readback_token_ids(prefill_logits_readback_token_ids_, config_);
+        }
+        // 导出时截断到 valid_steps
+        prefill_export_steps_ = valid_steps;
+        auto result = run_prefill();
+        prefill_export_steps_ = -1;
+        return result;
+    }
+
     QwenCausalBatchedPrefillResult prefill_tokens_batched(
         const std::vector<int32_t> & token_ids,
         int64_t batch_size,
@@ -577,6 +633,10 @@ public:
         return batched_decode_cache_.export_state();
     }
 
+    void set_batched_member_end(int64_t batch, int64_t end) {
+        batched_decode_cache_.set_member_end(batch, end);
+    }
+
     void start_decode_embeddings_batched(
         const runtime::TransformerBatchedKVState & state,
         int64_t required_cache_steps) {
@@ -596,12 +656,13 @@ public:
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode token size mismatch");
         }
         ggml_backend_tensor_set(batched_decode_input_, tokens.data(), 0, tokens.size() * sizeof(int32_t));
-        return run_batched_decode_step();
+        return run_batched_decode_step({});
     }
 
     QwenCausalDecodeStepResult decode_embeddings_batched(
         const std::vector<float> & embeddings,
-        int64_t batch_size) {
+        int64_t batch_size,
+        const std::vector<uint8_t> & active_mask) {
         ensure_batched_decode_started();
         if (batched_decode_input_kind_ != InputKind::Embedding) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode graph expects embeddings");
@@ -612,8 +673,11 @@ public:
         if (embeddings.size() != static_cast<size_t>(batch_size * config_.decoder.stack.hidden_size)) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode embedding size mismatch");
         }
+        if (!active_mask.empty() && static_cast<int64_t>(active_mask.size()) != batch_size) {
+            throw std::runtime_error("QwenCausalDecodeRuntime batched decode active mask size mismatch");
+        }
         ggml_backend_tensor_set(batched_decode_input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
-        return run_batched_decode_step();
+        return run_batched_decode_step(active_mask);
     }
 
     int64_t decode_cache_steps() const noexcept {
@@ -626,6 +690,13 @@ public:
 
     int64_t decode_valid_steps() const noexcept {
         return decode_cache_.valid_steps();
+    }
+
+    std::vector<int64_t> batched_member_ends() const {
+        if (batched_decode_graph_ == nullptr) {
+            return {};
+        }
+        return batched_decode_cache_.member_ends_for_mask();
     }
 
     void release_runtime_graphs() {
@@ -653,7 +724,10 @@ private:
     }
 
     void ensure_prefill_embedding_graph(int64_t steps) {
-        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Embedding && prefill_steps_ == steps) {
+        // grow-only：graph 建为请求过的最大 steps，之后 steps <= 已建则复用
+        // （padded prefill 需要；避免因 steps 变化重建 prefill graph 破坏
+        //   CUDA pool 逆序 free 约束）。
+        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Embedding && prefill_steps_ >= steps) {
             debug::timing_log_scalar(config_.trace_name + ".prefill.graph.build_ms", 0.0);
             debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
             return;
@@ -808,19 +882,27 @@ private:
             ggml_backend_tensor_get(prefill_hidden_, out.hidden.data(), 0, out.hidden.size() * sizeof(float));
             round_readback(out.hidden, config_);
         }
-        out.state.current_end = prefill_steps_;
+        const int64_t export_steps = prefill_export_steps_ >= 0 ? prefill_export_steps_ : prefill_steps_;
+        out.state.current_end = export_steps;
         out.state.layers.resize(prefill_keys_.size());
         const size_t layer_values = static_cast<size_t>(
-            prefill_steps_ * config_.decoder.stack.num_key_value_heads * config_.decoder.stack.head_dim);
+            export_steps * config_.decoder.stack.num_key_value_heads * config_.decoder.stack.head_dim);
         for (size_t layer = 0; layer < prefill_keys_.size(); ++layer) {
             auto & state = out.state.layers[layer];
-            state.valid_steps = prefill_steps_;
+            state.valid_steps = export_steps;
             state.key.resize(layer_values);
             state.value.resize(layer_values);
             ggml_backend_tensor_get(prefill_keys_[layer], state.key.data(), 0, state.key.size() * sizeof(float));
             ggml_backend_tensor_get(prefill_values_[layer], state.value.data(), 0, state.value.size() * sizeof(float));
             round_readback(state.key, config_);
             round_readback(state.value, config_);
+        }
+        // padded prefill：hidden 也截断到 valid_steps 行（scheduler 只取有效部分）
+        if (prefill_export_steps_ >= 0 && !out.hidden.empty()) {
+            const size_t hidden_elems = static_cast<size_t>(export_steps * config_.decoder.stack.hidden_size);
+            if (out.hidden.size() > hidden_elems) {
+                out.hidden.resize(hidden_elems);
+            }
         }
         return out;
     }
@@ -1190,11 +1272,12 @@ private:
             batched_decode_input_ = input.tensor;
             x = input;
         }
-        batched_decode_positions_ = ggml_new_tensor_1d(batched_decode_ctx_.get(), GGML_TYPE_I32, 1);
+        batched_decode_positions_ = ggml_new_tensor_1d(batched_decode_ctx_.get(), GGML_TYPE_I32, batch_size);
         auto positions = core::wrap_tensor(
             batched_decode_positions_,
-            core::TensorShape::from_dims({1}),
+            core::TensorShape::from_dims({batch_size}),
             GGML_TYPE_I32);
+        batched_decode_positions_host_.resize(static_cast<size_t>(batch_size), 0);
         auto slot = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({batch_size}));
         batched_decode_cache_slot_ = slot.tensor;
         auto attention = core::make_tensor(
@@ -1311,31 +1394,39 @@ private:
         return out;
     }
 
-    QwenCausalDecodeStepResult run_batched_decode_step() {
+    QwenCausalDecodeStepResult run_batched_decode_step(const std::vector<uint8_t> & active_mask) {
         if (batched_decode_cache_.valid_steps() >= batched_decode_cache_steps_) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode cache exhausted");
         }
-        const int32_t position = static_cast<int32_t>(batched_decode_cache_.current_end());
-        ggml_backend_tensor_set(batched_decode_positions_, &position, 0, sizeof(int32_t));
-        const int32_t cache_slot = static_cast<int32_t>(batched_decode_cache_.valid_steps());
+        const bool have_mask = !active_mask.empty();
+        // per-member positions + cache slots（不同序列可处于不同位置）
         for (int64_t batch = 0; batch < batched_decode_batch_size_; ++batch) {
+            const int32_t pos = static_cast<int32_t>(batched_decode_cache_.member_end(batch));
+            batched_decode_positions_host_[static_cast<size_t>(batch)] = pos;
             batched_decode_cache_slots_[static_cast<size_t>(batch)] =
-                static_cast<int32_t>(batch * batched_decode_cache_steps_ + cache_slot);
+                static_cast<int32_t>(batch * batched_decode_cache_steps_ + pos);
         }
+        ggml_backend_tensor_set(
+            batched_decode_positions_,
+            batched_decode_positions_host_.data(),
+            0,
+            batched_decode_positions_host_.size() * sizeof(int32_t));
         ggml_backend_tensor_set(
             batched_decode_cache_slot_,
             batched_decode_cache_slots_.data(),
             0,
             batched_decode_cache_slots_.size() * sizeof(int32_t));
+        // mask：活跃行暴露 [0, member_end)；非活跃行（active_mask 置 0）整行 -inf，
+        // 即使其 cache 段残留上一请求的 stale KV 也绝不 attend —— 非活跃行彻底 inert。
         write_batched_cached_step_mask(
             config_,
             batched_decode_attention_mask_,
             batched_decode_attention_mask_values_,
             batched_decode_batch_size_,
             batched_decode_cache_steps_,
-            batched_decode_cache_.valid_steps(),
-            cache_slot,
-            position);
+            batched_decode_cache_.member_ends_for_mask(),
+            batched_decode_cache_slots_,
+            have_mask ? &active_mask : nullptr);
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, batched_decode_graph_);
         ggml_backend_synchronize(backend_);
@@ -1360,7 +1451,14 @@ private:
                 out.hidden.size() * sizeof(float));
             round_readback(out.hidden, config_);
         }
-        batched_decode_cache_.advance_after_direct_append(1);
+        // 只有真正活跃的行前进 1 步；非活跃行不 advance（member_end 恒为 0/前值，
+        // 无 freeze→advance 振荡，位置/cache-slot 稳定）。
+        for (int64_t batch = 0; batch < batched_decode_batch_size_; ++batch) {
+            if (have_mask && active_mask[static_cast<size_t>(batch)] == 0) {
+                continue;
+            }
+            batched_decode_cache_.advance_member(batch, 1);
+        }
         return out;
     }
 
@@ -1488,6 +1586,8 @@ private:
     std::vector<int32_t> prefill_positions_values_;
     std::vector<ggml_fp16_t> prefill_attention_mask_values_;
     int64_t prefill_steps_ = 0;
+    // >=0 时表示 padded prefill 的导出 steps（截断 state/hidden 到 valid_steps）；-1 = 正常。
+    int64_t prefill_export_steps_ = -1;
     InputKind prefill_input_kind_ = InputKind::None;
 
     std::unique_ptr<ggml_context, GgmlContextDeleter> batched_prefill_ctx_;
@@ -1535,6 +1635,7 @@ private:
     ggml_backend_buffer_t batched_decode_buffer_ = nullptr;
     std::vector<ggml_fp16_t> batched_decode_attention_mask_values_;
     std::vector<int32_t> batched_decode_cache_slots_;
+    std::vector<int32_t> batched_decode_positions_host_;
     runtime::TransformerBatchedKVCache batched_decode_cache_;
     int64_t batched_decode_batch_size_ = 0;
     int64_t batched_decode_cache_steps_ = 0;
@@ -1557,6 +1658,13 @@ QwenCausalPrefillResult QwenCausalDecodeRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) {
     return impl_->prefill_embeddings(embeddings, steps);
+}
+
+QwenCausalPrefillResult QwenCausalDecodeRuntime::prefill_embeddings_padded(
+    const std::vector<float> & embeddings,
+    int64_t padded_steps,
+    int64_t valid_steps) {
+    return impl_->prefill_embeddings_padded(embeddings, padded_steps, valid_steps);
 }
 
 QwenCausalBatchedPrefillResult QwenCausalDecodeRuntime::prefill_tokens_batched(
@@ -1605,14 +1713,19 @@ void QwenCausalDecodeRuntime::start_decode_embeddings_batched(
     impl_->start_decode_embeddings_batched(state, required_cache_steps);
 }
 
+void QwenCausalDecodeRuntime::set_batched_member_end(int64_t batch, int64_t end) {
+    impl_->set_batched_member_end(batch, end);
+}
+
 QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_tokens_batched(const std::vector<int32_t> & tokens) {
     return impl_->decode_tokens_batched(tokens);
 }
 
 QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_embeddings_batched(
     const std::vector<float> & embeddings,
-    int64_t batch_size) {
-    return impl_->decode_embeddings_batched(embeddings, batch_size);
+    int64_t batch_size,
+    const std::vector<uint8_t> & active_mask) {
+    return impl_->decode_embeddings_batched(embeddings, batch_size, active_mask);
 }
 
 runtime::TransformerBatchedKVState QwenCausalDecodeRuntime::export_batched_decode_state() const {
@@ -1629,6 +1742,10 @@ int64_t QwenCausalDecodeRuntime::decode_current_end() const noexcept {
 
 int64_t QwenCausalDecodeRuntime::decode_valid_steps() const noexcept {
     return impl_->decode_valid_steps();
+}
+
+std::vector<int64_t> QwenCausalDecodeRuntime::batched_member_ends() const {
+    return impl_->batched_member_ends();
 }
 
 void QwenCausalDecodeRuntime::release_runtime_graphs() {

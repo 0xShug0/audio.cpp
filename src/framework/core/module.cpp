@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/core/module.h"
 
 #include <numeric>

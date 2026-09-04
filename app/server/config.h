@@ -50,6 +50,10 @@ struct ServerModelConfig {
     // magnitude (a short TTS clip vs. minutes of music generation), so one fleet-wide
     // bound is either too tight for the slow models or useless for the fast ones.
     std::optional<int> busy_timeout_ms;
+    // Number of concurrent session instances for this model (a runtime pool).
+    // Each instance has its own graph arena + reference cache, enabling true
+    // multi-request concurrency within one loaded model. Default 1 (serialized).
+    int instance_count = 1;
     // Only meaningful for a streaming model reachable over the live-ingest route;
     // ignored otherwise, since no other route delivers its body incrementally.
     LiveIngestOverrides live_ingest;

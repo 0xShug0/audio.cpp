@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "engine/framework/modules/transformers/qwen_causal_decoder.h"
 
 #include "engine/framework/core/backend.h"
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -502,8 +504,9 @@ void write_qwen_batched_cached_step_mask(
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
     int64_t mask_steps,
-    int64_t visible_prefix_steps,
-    int64_t current_slot) {
+    const std::vector<int64_t> & member_ends,
+    const std::vector<int32_t> & cache_slots,
+    const std::vector<uint8_t> * active_mask) {
     if (tensor == nullptr) {
         throw std::runtime_error("write_qwen_batched_cached_step_mask requires a tensor");
     }
@@ -511,11 +514,8 @@ void write_qwen_batched_cached_step_mask(
         throw std::runtime_error("write_qwen_batched_cached_step_mask requires positive batch size");
     }
     validate_steps(mask_steps, "write_qwen_batched_cached_step_mask");
-    if (visible_prefix_steps < 0 || visible_prefix_steps > mask_steps) {
-        throw std::runtime_error("write_qwen_batched_cached_step_mask visible prefix is out of range");
-    }
-    if (current_slot < 0 || current_slot >= mask_steps) {
-        throw std::runtime_error("write_qwen_batched_cached_step_mask current slot is out of range");
+    if (active_mask != nullptr && static_cast<int64_t>(active_mask->size()) != batch_size) {
+        throw std::runtime_error("write_qwen_batched_cached_step_mask active mask size mismatch");
     }
     const auto masked = ggml_fp32_to_fp16(-INFINITY);
     const auto visible = ggml_fp32_to_fp16(0.0F);
@@ -526,6 +526,18 @@ void write_qwen_batched_cached_step_mask(
     }
     for (int64_t batch = 0; batch < batch_size; ++batch) {
         const size_t offset = static_cast<size_t>(batch) * row_size;
+        if (active_mask != nullptr && (*active_mask)[static_cast<size_t>(batch)] == 0) {
+            // 非活跃行：整行 -inf。即使该 cache 段残留上一请求的 stale KV，也绝不
+            // attend —— 杜绝"冻结行携带旧内容参与 decode"的跨请求串音。
+            std::fill(
+                scratch.begin() + static_cast<std::ptrdiff_t>(offset),
+                scratch.begin() + static_cast<std::ptrdiff_t>(offset + row_size),
+                masked);
+            continue;
+        }
+        const int64_t end = member_ends.empty() ? cache_slots[static_cast<size_t>(batch)] : member_ends[static_cast<size_t>(batch)];
+        const int64_t visible_prefix_steps = end;
+        const int64_t current_slot = cache_slots[static_cast<size_t>(batch)];
         std::fill(
             scratch.begin() + static_cast<std::ptrdiff_t>(offset),
             scratch.begin() + static_cast<std::ptrdiff_t>(offset + row_size),
@@ -533,7 +545,12 @@ void write_qwen_batched_cached_step_mask(
         for (int64_t i = 0; i < visible_prefix_steps; ++i) {
             scratch[offset + static_cast<size_t>(i)] = visible;
         }
-        scratch[offset + static_cast<size_t>(current_slot)] = visible;
+        // current_slot 是绝对 cache 位置（batch*cache_steps + pos）。mask 是 batch-major
+        // 布局（每行 offset = batch*row_size），因此当前 step 的相对位置 = current_slot - batch*row_size。
+        const int64_t pos = current_slot - batch * static_cast<int64_t>(row_size);
+        if (pos >= 0 && pos < static_cast<int64_t>(row_size)) {
+            scratch[offset + static_cast<size_t>(pos)] = visible;
+        }
     }
     ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
 }

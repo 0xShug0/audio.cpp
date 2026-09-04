@@ -1592,6 +1592,7 @@ audiocpp_add_model(fireredtts3
     SOURCES
         src/models/fireredtts3/assets.cpp
         src/models/fireredtts3/ar.cpp
+        src/models/fireredtts3/batch_scheduler.cpp
         src/models/fireredtts3/flow.cpp
         src/models/fireredtts3/pipeline.cpp
         src/models/fireredtts3/redae.cpp
@@ -1600,6 +1601,7 @@ audiocpp_add_model(fireredtts3
     INCLUDES
         engine/models/fireredtts3/assets.h
         engine/models/fireredtts3/ar.h
+        engine/models/fireredtts3/batch_scheduler.h
         engine/models/fireredtts3/flow.h
         engine/models/fireredtts3/pipeline.h
         engine/models/fireredtts3/redae.h
