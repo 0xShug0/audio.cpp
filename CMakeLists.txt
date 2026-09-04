@@ -2445,6 +2445,19 @@ if (ENGINE_BUILD_TESTS)
             NAME server_model_installer_test
             COMMAND server_model_installer_test
         )
+
+        add_executable(package_manager_modelscope_test
+            tests/unittests/test_package_manager_modelscope.cpp
+        )
+        target_link_libraries(package_manager_modelscope_test PRIVATE
+            Threads::Threads audiocpp_package_manager)
+        target_compile_definitions(package_manager_modelscope_test PRIVATE
+            AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
+
+        add_test(
+            NAME package_manager_modelscope_test
+            COMMAND package_manager_modelscope_test
+        )
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)
