@@ -12,9 +12,7 @@ ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gg
 
 > [!IMPORTANT]
 >
-> **2026-08-28 - Dev testing:** Fun-CozyVoice3 and BreezeTTS 2 are available for testing on the `dev` branch.
->
-> **2026-08-26 - Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
+> **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.
 >
@@ -51,17 +49,15 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
+> **2026-09-04 - Release 0.7.2:** This release adds BreezeTTS 2, CosyVoice3, Chatterbox Turbo TTS, Audio8 TTS, and Audio8 ASR, plus the new multipart audio alignment endpoint.
+>
 > **2026-08-26 - Release 0.7:** This release adds MiniMax Music 3, MagpieTTS, PersonaPlex, MeanVC2, AudioSR, ControlFoley, FireRedTTS3, FireRedAudio, MiDashengLM-Gen, F5-TTS/Habibi, Granite Speech 5.0 TurboCTC, MMS Forced Aligner, and MOSS-VoiceGenerator, plus DotTTS Edit and ACE-Step 1.5 XL variants, bringing audio.cpp to **62** total model families and **85+** model variants! It also introduces the new Arena UI for side-by-side TTS, voice-conversion, and ASR comparison with shared inputs, queued runs, metrics, and result sorting.
 >
 > **2026-08-13 - Release 0.6:** This release adds **5** new model families - DotTTS, NeuTTS, MuScriptor, MiniMax-H3, and SenseVoice - bringing audio.cpp to **49** total model families and **70+** model variants, alongside the new native WebUI from [@mirek190](https://github.com/mirek190), expanded GGUF packaging, and more shared framework runtime pieces.
 >
 > **2026-07-31 - Release 0.5:** audio.cpp reaches **44 model families** with 9 new additions, early HIP/ROCm support for AMD GPUs, Nix ROCm/HIP build support, Metal optimizations with tested VoxCPM2 runs up to **2.56x faster** on Apple Silicon, and a major GGUF-first WebUI/package-spec usability pass.
->
-> **2026-07-23 - Release 0.4:** audio.cpp expanded to **35 model families**, adding Higgs Audio v3 TTS 4B, Fish Audio S2 Pro, Voxtral Realtime ASR, community OuteTTS and VieNeu-TTS, broader GGUF/package-spec support, reusable framework improvements, and the integrated WebUI thanks to [@kigner](https://github.com/kigner) and [@patrickjchen](https://github.com/patrickjchen).
->
-> **2026-07-14 - Release 0.3:** This release added IndexTTS2, Irodori-TTS, MOSS-TTS-Nano, MOSS-TTS-Local, Supertonic 3, Chatterbox voice conversion, and the first broad GGUF loading/conversion wave. Thanks to [@justinjohn0306](https://github.com/justinjohn0306) for MOSS-TTS-Local and [@mirek190](https://github.com/mirek190) for driving GGUF forward.
 
-**2026-06-25 to 2026-07-08:** audio.cpp grew from the first released model wave into broad TTS, ASR, music generation, source separation, VAD, diarization, codec, and voice-conversion coverage, with VibeVoice 1.5B/7B, LoRA adapter loading, initial streaming support, and major CUDA Conv1DTransp speedups.
+**2026-06-25 to 2026-07-23 (release 0.1 to 0.4):** audio.cpp grew from the first released model wave into broad TTS, ASR, music generation, source separation, VAD, diarization, codec, and voice-conversion coverage, with VibeVoice 1.5B/7B, LoRA adapter loading, initial streaming support, and major CUDA Conv1DTransp speedups.
 
 ## Supported Models
 
@@ -73,8 +69,10 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
+| **breeze_tts** | TTS, Clone, Design | zh, en | BreezeTTS 2 instruction-conditioned TTS and prompt-audio voice cloning | GGUF BF16/Q8, Stream |
 | **chatterbox** | TTS, Clone, VC| ar, da, de, el, en, es, fi, fr, hi, it, ko, ms, nl, no, pl, pt, sv, sw, tr | Chatterbox with 0.5B backbone | GGUF 16/Q8 |
 | **confucius4_tts** | Clone | zh, en, ja, ko, de, fr, es, id, it, th, pt, ru, ms, vi | Confucius4-TTS multilingual voice cloning | GGUF F32, Stream |
+| **cosyvoice3** | TTS, Clone | zh, en, ja, ko, de, es, fr, it, ru, yue | Fun-CosyVoice3 zero-shot, cross-lingual, and instruction-conditioned TTS | GGUF F32/Q8 |
 | **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR, MeanFlow, and Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
 | **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8 |
