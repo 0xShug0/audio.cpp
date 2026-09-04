@@ -45,7 +45,7 @@ struct Package {
     std::string strip_prefix;
     std::string download_kind;
     std::string repo;
-    std::string revision = "main";
+    std::string revision;
     bool gated = false;
 };
 
@@ -121,6 +121,23 @@ std::string hf_url(const Package & package, const std::string & remote_path) {
         url_encode(package.revision, false) + "/" + url_encode(remote_path, true);
 }
 
+std::string modelscope_base_url() {
+    auto base = getenv_text("AUDIOCPP_MS_BASE_URL");
+    if (base.empty()) base = "https://www.modelscope.cn";
+    while (!base.empty() && base.back() == '/') base.pop_back();
+    return base;
+}
+
+std::string ms_url(const Package & package, const std::string & remote_path) {
+    return modelscope_base_url() + "/models/" + package.repo + "/resolve/" +
+        url_encode(package.revision, false) + "/" + url_encode(remote_path, true);
+}
+
+std::string ms_files_url(const Package & package) {
+    return modelscope_base_url() + "/api/v1/models/" + package.repo +
+        "/repo/files?Revision=" + url_encode(package.revision, false) + "&Recursive=true";
+}
+
 std::filesystem::path validate_relative_path(const std::filesystem::path & path, const char * label) {
     if (path.empty() || path == "." || path.is_absolute()) {
         throw std::runtime_error(std::string(label) + " must be a non-empty relative path: " + path.string());
@@ -192,13 +209,13 @@ std::vector<Package> parse_specs(const std::vector<std::pair<std::string, std::s
         const auto family = json::require_string(root, "family");
         std::string default_kind;
         std::string default_repo;
-        std::string default_revision = "main";
+        std::string default_revision;
         bool default_gated = false;
         if (const auto * defaults = root.find("package_defaults")) {
             if (const auto * download = defaults->find("download")) {
                 default_kind = json::optional_string(*download, "kind", "");
                 default_repo = json::optional_string(*download, "repo", "");
-                default_revision = json::optional_string(*download, "revision", "main");
+                default_revision = json::optional_string(*download, "revision", "");
                 default_gated = json::optional_bool(*download, "gated", false);
             }
         }
@@ -225,9 +242,15 @@ std::vector<Package> parse_specs(const std::vector<std::pair<std::string, std::s
                 package.revision = json::optional_string(*download, "revision", package.revision);
                 package.gated = json::optional_bool(*download, "gated", package.gated);
             }
-            if (package.download_kind != "huggingface_snapshot") continue;
+            if (package.download_kind != "huggingface_snapshot" &&
+                package.download_kind != "modelscope_snapshot") continue;
+            if (package.revision.empty()) {
+                // ModelScope's default branch is master; Hugging Face uses main.
+                package.revision = package.download_kind == "modelscope_snapshot" ? "master" : "main";
+            }
             if (package.repo.empty()) {
-                throw std::runtime_error(source + ": package " + package.id + " has no Hugging Face repo");
+                throw std::runtime_error(source + ": package " + package.id +
+                    " has no remote repo for download kind '" + package.download_kind + "'");
             }
             if (!ids.insert(package.id).second) {
                 throw std::runtime_error("duplicate package id: " + package.id);
@@ -327,6 +350,25 @@ std::string http_origin(const HttpUrl & url) {
     return url.scheme + "://" + host + ":" + std::to_string(url.port);
 }
 
+httplib::Headers default_request_headers() {
+    httplib::Headers headers{{"User-Agent", "audio.cpp native model manager/1.0"}};
+    const auto token = huggingface_token();
+    if (!token.empty()) {
+        headers.emplace("Authorization", "Bearer " + token);
+    }
+    return headers;
+}
+
+void configure_client(httplib::Client & client, long read_timeout_seconds) {
+    client.set_follow_location(true);
+    client.set_connection_timeout(60, 0);
+    client.set_read_timeout(read_timeout_seconds, 0);
+    client.set_write_timeout(60, 0);
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    client.enable_server_certificate_verification(true);
+#endif
+}
+
 HttpResult http_request(
     const std::string & url,
     bool head,
@@ -335,19 +377,9 @@ HttpResult http_request(
     const std::function<void(uint64_t)> & progress) {
     const auto parsed = parse_http_url(url);
     httplib::Client client(http_origin(parsed));
-    client.set_follow_location(true);
-    client.set_connection_timeout(60, 0);
-    client.set_read_timeout(head ? 60 : 300, 0);
-    client.set_write_timeout(60, 0);
-#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-    client.enable_server_certificate_verification(true);
-#endif
+    configure_client(client, head ? 60 : 300);
 
-    httplib::Headers request_headers{{"User-Agent", "audio.cpp native model manager/1.0"}};
-    const auto token = huggingface_token();
-    if (!token.empty()) {
-        request_headers.emplace("Authorization", "Bearer " + token);
-    }
+    const auto request_headers = default_request_headers();
 
     uint64_t downloaded = 0;
     bool write_failed = false;
@@ -385,7 +417,103 @@ HttpResult http_request(
     return result;
 }
 
-RemoteFileInfo remote_info(const Package & package, const std::string & remote) {
+HttpResult http_get_body(const std::string & url, std::string & body) {
+    const auto parsed = parse_http_url(url);
+    httplib::Client client(http_origin(parsed));
+    configure_client(client, 60);
+    auto response = client.Get(parsed.path, default_request_headers());
+    if (!response) {
+        throw std::runtime_error("model host request failed: " + httplib::to_string(response.error()));
+    }
+    HttpResult result;
+    result.status = response->status;
+    for (const auto & [name, value] : response->headers) {
+        result.headers[lower(name)] = value;
+    }
+    body = std::move(response->body);
+    return result;
+}
+
+using RemoteFileMap = std::map<std::string, RemoteFileInfo>;
+
+// ModelScope resolve HEAD responses carry no Content-Length or ETag, so
+// per-file size and checksum come from the repo file-list API instead. The
+// listing is fetched once per repo+revision and shared through this cache.
+using ListingCache = std::map<std::string, RemoteFileMap>;
+
+RemoteFileMap fetch_modelscope_listing(const Package & package) {
+    std::string body;
+    const auto response = http_get_body(ms_files_url(package), body);
+    if (response.status < 200 || response.status >= 300) {
+        throw std::runtime_error("ModelScope repo listing is not accessible: " + package.repo +
+            " (HTTP " + std::to_string(response.status) + ")");
+    }
+    const auto root = json::parse(body);
+    if (json::optional_i64(root, "Code", 0) != 200) {
+        throw std::runtime_error("ModelScope repo listing failed for " + package.repo + ": " +
+            json::optional_string(root, "Message", "unknown error"));
+    }
+    const auto * data = root.find("Data");
+    const auto * files = data != nullptr ? data->find("Files") : nullptr;
+    if (files == nullptr || !files->is_array()) {
+        throw std::runtime_error("ModelScope repo listing has no file list: " + package.repo);
+    }
+    RemoteFileMap listing;
+    for (const auto & item : files->as_array()) {
+        if (json::optional_string(item, "Type", "") != "blob") continue;
+        const auto path = json::optional_string(item, "Path", "");
+        if (path.empty()) continue;
+        RemoteFileInfo info;
+        info.etag = json::optional_string(item, "Sha256", "");
+        const auto size = json::optional_i64(item, "Size", -1);
+        if (size >= 0) info.size = static_cast<uint64_t>(size);
+        listing.emplace(path, std::move(info));
+    }
+    return listing;
+}
+
+RemoteFileInfo modelscope_remote_info(
+    const Package & package,
+    const std::string & remote,
+    ListingCache & cache) {
+    const auto key = package.repo + "\n" + package.revision;
+    auto found = cache.find(key);
+    if (found == cache.end()) {
+        RemoteFileMap listing;
+        try {
+            listing = fetch_modelscope_listing(package);
+        } catch (...) {
+            listing.clear();
+        }
+        found = cache.emplace(key, std::move(listing)).first;
+    }
+    const auto file = found->second.find(remote);
+    if (file != found->second.end()) return file->second;
+    if (!found->second.empty()) {
+        throw std::runtime_error("remote file is not accessible: " + package.repo + "/" + remote +
+            " (not in the ModelScope repo listing)");
+    }
+    // The listing API is unreachable; fall back to a HEAD on the resolve URL,
+    // which reports the file checksum as X-Linked-Etag but no size.
+    const auto response = http_request(ms_url(package, remote), true, nullptr, {}, {});
+    if (response.status < 200 || response.status >= 300) {
+        throw std::runtime_error("remote file is not accessible: " + package.repo + "/" + remote +
+            " (HTTP " + std::to_string(response.status) + ")");
+    }
+    RemoteFileInfo result;
+    const auto etag = response.headers.find("x-linked-etag");
+    if (etag != response.headers.end()) result.etag = trim_quotes(etag->second);
+    return result;
+}
+
+RemoteFileInfo remote_info(const Package & package, const std::string & remote, ListingCache * ms_cache) {
+    if (package.download_kind == "modelscope_snapshot") {
+        if (ms_cache == nullptr) {
+            ListingCache local;
+            return modelscope_remote_info(package, remote, local);
+        }
+        return modelscope_remote_info(package, remote, *ms_cache);
+    }
     const auto response = http_request(hf_url(package, remote), true, nullptr, {}, {});
     if (response.status == 401 || response.status == 403) {
         if (package.gated) return {};
@@ -415,11 +543,16 @@ void download_file(
     std::filesystem::create_directories(destination.parent_path());
     std::ofstream output(destination, std::ios::binary | std::ios::trunc);
     if (!output) throw std::runtime_error("could not create " + destination.string());
-    const auto response = http_request(hf_url(package, remote), false, &output, cancelled, progress);
+    const auto url = package.download_kind == "modelscope_snapshot"
+        ? ms_url(package, remote)
+        : hf_url(package, remote);
+    const auto response = http_request(url, false, &output, cancelled, progress);
     output.close();
     if (response.status == 401 || response.status == 403) {
         throw std::runtime_error(package.repo + "/" + remote +
-            " requires accepted Hugging Face access and a valid HF token");
+            (package.download_kind == "modelscope_snapshot"
+                ? " requires ModelScope access to this repo"
+                : " requires accepted Hugging Face access and a valid HF token"));
     }
     if (response.status < 200 || response.status >= 300) {
         throw std::runtime_error("failed to download " + package.repo + "/" + remote +
@@ -513,11 +646,12 @@ std::string PackageManager::install(
     }
 
     std::map<std::string, RemoteFileInfo> remote_files;
+    ListingCache ms_cache;
     uint64_t total = 0;
     bool known_total = true;
     for (const auto & [remote, output] : downloads) {
         (void) output;
-        auto info = remote_info(package, remote);
+        auto info = remote_info(package, remote, &ms_cache);
         if (!info.size) known_total = false; else total += *info.size;
         remote_files.emplace(remote, std::move(info));
     }
@@ -568,7 +702,7 @@ std::string PackageManager::install(
         // Include reused sidecars in the per-package manifest as well.
         for (const auto & [remote, output] : plan) {
             (void) output;
-            if (remote_files.count(remote) == 0) remote_files.emplace(remote, remote_info(package, remote));
+            if (remote_files.count(remote) == 0) remote_files.emplace(remote, remote_info(package, remote, &ms_cache));
         }
         json::Value::Object manifest;
         manifest["schema_version"] = number_value(1);
@@ -659,6 +793,7 @@ std::string PackageManager::inventory(bool query_remote, const std::string & pac
     workers.reserve(worker_count);
     for (size_t worker = 0; worker < worker_count; ++worker) {
         workers.push_back(std::async(std::launch::async, [this, query_remote, &selected, &rows, &next] {
+          ListingCache ms_cache;
           for (;;) {
             const auto index = next.fetch_add(1);
             if (index >= selected.size()) return;
@@ -683,7 +818,7 @@ std::string PackageManager::inventory(bool query_remote, const std::string & pac
                 std::map<std::string, RemoteFileInfo> remote;
                 std::string revision;
                 for (const auto & file : package.files) {
-                    auto info = remote_info(package, file);
+                    auto info = remote_info(package, file, &ms_cache);
                     if (!info.size) size_known = false; else total += *info.size;
                     if (revision.empty()) revision = info.revision;
                     remote.emplace(file, std::move(info));

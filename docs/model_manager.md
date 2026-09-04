@@ -122,6 +122,15 @@ For support status and tested precision coverage, see the [GGUF guide](gguf.md).
 For measured 16-bit vs Q8 speed and peak-VRAM results, see the
 [Q8 performance report](reports/gguf_q8_performance.md).
 
+## Download Sources
+
+Native packages download from Hugging Face (`kind: "huggingface_snapshot"`) or
+ModelScope (`kind: "modelscope_snapshot"`); see
+[maintainers/model_specs.md](maintainers/model_specs.md) for the spec fields.
+The endpoints can be overridden for mirrors or tests with
+`AUDIOCPP_HF_BASE_URL` (default `https://huggingface.co`) and
+`AUDIOCPP_MS_BASE_URL` (default `https://www.modelscope.cn`).
+
 ## Dependencies
 
 The native manager needs no Python runtime. The default bundled-TLS build needs

@@ -181,6 +181,14 @@ overrides.
 }
 ```
 
+`kind: "modelscope_snapshot"` downloads the same way from a ModelScope
+(modelscope.cn) repo. It takes the same fields (`repo` required, `revision`
+optional); the only differences are that the default revision is `master`
+(ModelScope's default branch) and the `gated` flag does not apply. The native
+package manager resolves the endpoint through `AUDIOCPP_MS_BASE_URL`
+(default `https://www.modelscope.cn`), mirroring `AUDIOCPP_HF_BASE_URL` for
+Hugging Face.
+
 Dependencies describe extra model-level resources required by runtime features.
 Use `kind: "model"` for another model family, and `kind: "bundled_model"` for an
 in-repo bundled model asset. Do not use dependencies for sidecars or tensor
