@@ -531,6 +531,16 @@ void ggml_compute_forward_dup(
 
     if (src0->type == dst->type) {
         ggml_compute_forward_dup_bytes(params, dst);
+        // I8_S keeps one scale for the whole tensor, stored past the last
+        // element: a byte copy moves the payload but leaves that float
+        // uninitialized, so a cont/cpy of an I8_S view has to carry it over.
+        if (dst->type == GGML_TYPE_I8_S && params->ith == 0) {
+            // Reading through to the parent keeps this working for the permuted
+            // views that ggml_cont() is usually handed, which have no scale of
+            // their own.
+            const ggml_tensor * scale_src = src0->view_src ? src0->view_src : src0;
+            *ggml_inband_scale(dst) = *ggml_inband_scale_const(scale_src);
+        }
         return;
     }
 
