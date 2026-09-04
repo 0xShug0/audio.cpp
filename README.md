@@ -659,6 +659,7 @@ The server exposes:
 - `GET /v1/models`
 - `POST /v1/audio/speech`
 - `POST /v1/audio/transcriptions`
+- `POST /v1/audio/transcriptions/details`
 - `POST /v1/audio/alignments`
 - `POST /v1/tasks/run`
 
