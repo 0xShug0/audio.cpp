@@ -7,6 +7,7 @@
 #include "ggml.h"
 #include "unary-ops.h"
 #include "vec.h"
+#include "ggml-quants.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -531,6 +532,16 @@ void ggml_compute_forward_dup(
 
     if (src0->type == dst->type) {
         ggml_compute_forward_dup_bytes(params, dst);
+        // I8_S keeps one scale for the whole tensor, stored past the last
+        // element: a byte copy moves the payload but leaves that float
+        // uninitialized, so a cont/cpy of an I8_S view has to carry it over.
+        if (dst->type == GGML_TYPE_I8_S && params->ith == 0) {
+            // Reading through to the parent keeps this working for the permuted
+            // views that ggml_cont() is usually handed, which have no scale of
+            // their own.
+            const ggml_tensor * scale_src = src0->view_src ? src0->view_src : src0;
+            *ggml_inband_scale(dst) = *ggml_inband_scale_const(scale_src);
+        }
         return;
     }
 
@@ -11639,5 +11650,665 @@ void ggml_compute_forward_fwht(const ggml_compute_params * params, ggml_tensor *
             {
                 GGML_ABORT("fatal error - fwht is F32 only");
             }
+    }
+}
+
+// VibeASR CPU INT8 pipeline
+//
+// Scalar reference implementations of the five fused I8_S ops. They are written
+// to be obviously correct rather than fast: the vectorized kernels live with the
+// other SIMD code under arch/, and dispatch to them replaces the inner loops
+// here without changing the surrounding structure.
+//
+// Four of the five produce I8_S, and all four share one shape:
+//
+//   1. compute the result in F32 into params->wdata, tracking this thread's absmax
+//   2. barrier, reduce the per-thread absmaxes to a tensor-wide absmax
+//   3. quantize this thread's slice into dst; thread 0 writes the output scale
+//
+// Step 2 is why these are fused ops at all. The output scale cannot be known
+// before the whole output has been computed, so an unfused chain would have to
+// materialize each intermediate in F32, rescan it, and write it again.
+//
+// wdata layout, shared by all four:
+//
+//   [0, n_stage)                F32 staging for the result
+//   [n_stage, n_stage + nth)    per-thread absmax
+//   [n_stage + nth, ...)        op-specific scratch (int32 accumulators)
+
+// Steps 2 and 3. The thread's slice of the output is the rectangle
+// {row*row_stride + col : row < n_rows, col0 <= col < col1}; contiguous callers
+// pass n_rows = 1, row_stride = 0. Both `stage` and dst use the same indexing.
+//
+// `relu` clamps after rounding rather than before the absmax scan, so the
+// negatives that are about to be zeroed still widen the scale: an output
+// spanning [-10, +5] scales by 10, leaving the surviving positives to reach 63
+// of the available 127. That is what the reference implementation does, and
+// matching it is what makes a layer-by-layer comparison meaningful, so it is
+// reproduced here deliberately rather than improved in passing.
+// Scale a contiguous run of staged F32 into I8_S.
+//
+// relu is folded into the low clamp: clamping to 0 before rounding and rounding
+// before clamping to 0 agree on every negative input, and the float clamp is
+// free here. The absmax that produced id was taken before the clamp, so a
+// channel about to be zeroed still counts towards the scale.
+//
+// roundf() would be a PLT call per element. rintf() inlines to one instruction
+// and rounds ties to even, which is what _mm256_cvtps_epi32 does as well, so the
+// vector body and the scalar tail agree - and it matches ggml's own
+// nearest_int(). VibeASR rounds ties away from zero in its scalar tail but to
+// even in its vector body, so no tie convention reproduces it exactly.
+static inline void ggml_i8_s_quantize_range(
+        int8_t * GGML_RESTRICT dst,
+        const float * GGML_RESTRICT src,
+        int64_t n,
+        float id,
+        bool relu) {
+
+    int64_t i = 0;
+
+    const float lo = relu ? 0.0f : -127.0f;
+
+#if defined(__AVX2__)
+    const __m256 v_id  = _mm256_set1_ps(id);
+    const __m256 v_lo  = _mm256_set1_ps(lo);
+    const __m256 v_hi  = _mm256_set1_ps(127.0f);
+
+    for (; i + 8 <= n; i += 8) {
+        __m256 vf = _mm256_mul_ps(_mm256_loadu_ps(src + i), v_id);
+        vf = _mm256_min_ps(_mm256_max_ps(vf, v_lo), v_hi);
+
+        const __m256i vi32 = _mm256_cvtps_epi32(vf);
+
+        __m256i vi16 = _mm256_permute4x64_epi64(_mm256_packs_epi32(vi32, vi32), 0xD8);
+        __m256i vi8  = _mm256_permute4x64_epi64(_mm256_packs_epi16(vi16, vi16), 0xD8);
+
+        _mm_storel_epi64((__m128i *)(dst + i), _mm256_castsi256_si128(vi8));
+    }
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+    const float32x4_t v_id = vdupq_n_f32(id);
+    const float32x4_t v_lo = vdupq_n_f32(lo);
+    const float32x4_t v_hi = vdupq_n_f32(127.0f);
+
+    for (; i + 8 <= n; i += 8) {
+        float32x4_t f0 = vmulq_f32(vld1q_f32(src + i    ), v_id);
+        float32x4_t f1 = vmulq_f32(vld1q_f32(src + i + 4), v_id);
+
+        f0 = vminq_f32(vmaxq_f32(f0, v_lo), v_hi);
+        f1 = vminq_f32(vmaxq_f32(f1, v_lo), v_hi);
+
+        const int16x8_t vi16 = vcombine_s16(vqmovn_s32(vcvtnq_s32_f32(f0)),
+                                            vqmovn_s32(vcvtnq_s32_f32(f1)));
+
+        vst1_s8(dst + i, vqmovn_s16(vi16));
+    }
+#endif
+
+    for (; i < n; ++i) {
+        float v = src[i] * id;
+        v = v < lo ? lo : (v > 127.0f ? 127.0f : v);
+        dst[i] = (int8_t) rintf(v);
+    }
+}
+
+static void ggml_i8_s_requantize(
+        const ggml_compute_params * params,
+        ggml_tensor * dst,
+        const float * stage,
+        float * thread_max,
+        int64_t row_stride,
+        int64_t n_rows,
+        int64_t col0,
+        int64_t col1,
+        float local_absmax,
+        bool relu) {
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    thread_max[ith] = local_absmax;
+
+    ggml_barrier(params->threadpool);
+
+    if (ith == 0) {
+        float global_max = 0.0f;
+        for (int t = 0; t < nth; t++) {
+            if (thread_max[t] > global_max) global_max = thread_max[t];
+        }
+        thread_max[0] = global_max;
+    }
+
+    ggml_barrier(params->threadpool);
+
+    const float global_max = thread_max[0];
+    const float id = global_max != 0.0f ? 127.0f / global_max : 0.0f;
+
+    int8_t * dst_data = (int8_t *) dst->data;
+
+    // Each row's [col0, col1) slice is contiguous, so the vectorized helper runs
+    // once per row regardless of how the rectangle is strided.
+    for (int64_t row = 0; row < n_rows; row++) {
+        const int64_t i = row*row_stride + col0;
+
+        ggml_i8_s_quantize_range(dst_data + i, stage + i, col1 - col0, id, relu);
+    }
+
+    if (ith == 0) {
+        // Multiplier, so that dequantizing is q * scale like every other ggml
+        // quantized type -- see ggml_i8_s_to_float.
+        *ggml_inband_scale(dst) = global_max != 0.0f ? global_max / 127.0f : 0.0f;
+    }
+}
+
+// ggml_compute_forward_add_scaled
+
+void ggml_compute_forward_add_scaled(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // a     (I8_S)
+    const ggml_tensor * src1 = dst->src[1];  // b     (I8_S)
+    const ggml_tensor * src2 = dst->src[2];  // scale (F32, per channel)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(src1->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+    GGML_ASSERT(ggml_are_same_shape(src0, src1));
+    GGML_ASSERT(ggml_are_same_shape(src0, dst));
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t n   = ggml_nelements(src0);
+    const int64_t ne0 = src0->ne[0];
+
+    const int8_t * a = (const int8_t *) src0->data;
+    const int8_t * b = (const int8_t *) src1->data;
+
+    const float a_d = *ggml_inband_scale_const(src0);
+    const float b_d = *ggml_inband_scale_const(src1);
+
+    // Channel index is i % ne0: the graph is channel-major, so ne[0] is the
+    // channel axis and one coefficient covers every position of that channel.
+    const float * gamma = (const float *) src2->data;
+
+    float * stage      = (float *) params->wdata;
+    float * thread_max = stage + n;
+
+    const int64_t dr = (n + nth - 1)/nth;
+    const int64_t i0 = dr*ith;
+    const int64_t i1 = MIN(i0 + dr, n);
+
+    float local_absmax = 0.0f;
+
+    for (int64_t i = i0; i < i1; i++) {
+        const float v = (float) a[i] * a_d * gamma[i % ne0] + (float) b[i] * b_d;
+
+        stage[i] = v;
+
+        const float av = fabsf(v);
+        if (av > local_absmax) local_absmax = av;
+    }
+
+    ggml_i8_s_requantize(params, dst, stage, thread_max, 0, 1, i0, i1, local_absmax, false);
+}
+
+// ggml_compute_forward_rms_norm_scaled
+
+void ggml_compute_forward_rms_norm_scaled(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // a     (I8_S)
+    const ggml_tensor * src1 = dst->src[1];  // scale (F32, per channel)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+    GGML_ASSERT(ggml_are_same_shape(src0, dst));
+    GGML_ASSERT(ggml_is_contiguous(src0));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t n    = ggml_nelements(src0);
+    const int64_t nr   = n / ne00;
+
+    float eps;
+    memcpy(&eps, dst->op_params, sizeof(float));
+
+    const int8_t * x     = (const int8_t *) src0->data;
+    const float  * gamma = (const float  *) src1->data;
+
+    const float x_d = *ggml_inband_scale_const(src0);
+
+    // The normalization is scale-invariant, so the input scale cancels between
+    // numerator and denominator and never has to be applied to the int8 values:
+    //
+    //   real[i] = q[i] * x_d
+    //   out[i]  = real[i] / sqrt(mean(real^2) + eps) * gamma[i]
+    //           = q[i]    / sqrt(mean(q^2) + eps/x_d^2) * gamma[i]
+    //
+    // which keeps the sum of squares in exact int64 arithmetic. Only eps has to
+    // move into the int8 domain.
+    const float eps_q = (float) ((double) eps / ((double) x_d * (double) x_d));
+
+    float * stage      = (float *) params->wdata;
+    float * thread_max = stage + n;
+
+    const int64_t dr  = (nr + nth - 1)/nth;
+    const int64_t ir0 = dr*ith;
+    const int64_t ir1 = MIN(ir0 + dr, nr);
+
+    float local_absmax = 0.0f;
+
+    for (int64_t ir = ir0; ir < ir1; ir++) {
+        const int8_t * x_row     = x     + ir*ne00;
+        float        * stage_row = stage + ir*ne00;
+
+        int64_t sum_sq = 0;
+        for (int64_t i = 0; i < ne00; i++) {
+            sum_sq += (int32_t) x_row[i] * (int32_t) x_row[i];
+        }
+
+        const float rms_inv = 1.0f/sqrtf((float) sum_sq/(float) ne00 + eps_q);
+
+        for (int64_t i = 0; i < ne00; i++) {
+            const float v = (float) x_row[i] * rms_inv * gamma[i];
+
+            stage_row[i] = v;
+
+            const float av = fabsf(v);
+            if (av > local_absmax) local_absmax = av;
+        }
+    }
+
+    ggml_i8_s_requantize(params, dst, stage, thread_max, 0, 1, ir0*ne00, ir1*ne00, local_absmax, false);
+}
+
+// ggml_compute_forward_mul_mat_add
+
+#define GGML_MUL_MAT_ADD_OC_CHUNK 64
+
+// stage[j] = acc[j]*d + bias[j], returning max(|stage[j]|) folded into amax.
+//
+// This is the second pass over every output, so leaving it scalar costs about as
+// much as the dot products do at the small contraction lengths the conv layers
+// use. Vectorizing it is exact: max over floats is order-independent, and the
+// multiply and add are kept separate so the tail cannot disagree with the body.
+static inline float ggml_i8_s_scale_bias_absmax(
+        float * GGML_RESTRICT stage,
+        const int32_t * GGML_RESTRICT acc,
+        const float * GGML_RESTRICT bias,
+        int64_t n,
+        float d,
+        float amax) {
+
+    int64_t i = 0;
+
+#if defined(__AVX2__)
+    const __m256 v_d    = _mm256_set1_ps(d);
+    const __m256 v_abs  = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
+
+    __m256 v_amax = _mm256_setzero_ps();
+
+    for (; i + 8 <= n; i += 8) {
+        const __m256 v = _mm256_add_ps(
+            _mm256_mul_ps(_mm256_cvtepi32_ps(_mm256_loadu_si256((const __m256i *)(acc + i))), v_d),
+            _mm256_loadu_ps(bias + i));
+
+        _mm256_storeu_ps(stage + i, v);
+
+        v_amax = _mm256_max_ps(v_amax, _mm256_and_ps(v, v_abs));
+    }
+
+    if (i > 0) {
+        __m128 r = _mm_max_ps(_mm256_castps256_ps128(v_amax), _mm256_extractf128_ps(v_amax, 1));
+        r = _mm_max_ps(r, _mm_movehl_ps(r, r));
+        r = _mm_max_ss(r, _mm_shuffle_ps(r, r, 1));
+
+        const float v = _mm_cvtss_f32(r);
+        if (v > amax) amax = v;
+    }
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+    const float32x4_t v_d = vdupq_n_f32(d);
+
+    float32x4_t v_amax = vdupq_n_f32(0.0f);
+
+    for (; i + 4 <= n; i += 4) {
+        const float32x4_t v = vaddq_f32(
+            vmulq_f32(vcvtq_f32_s32(vld1q_s32(acc + i)), v_d),
+            vld1q_f32(bias + i));
+
+        vst1q_f32(stage + i, v);
+
+        v_amax = vmaxq_f32(v_amax, vabsq_f32(v));
+    }
+
+    if (i > 0) {
+        const float v = vmaxvq_f32(v_amax);
+        if (v > amax) amax = v;
+    }
+#endif
+
+    for (; i < n; ++i) {
+        const float v = (float) acc[i]*d + bias[i];
+
+        stage[i] = v;
+
+        const float av = fabsf(v);
+        if (av > amax) amax = av;
+    }
+
+    return amax;
+}
+
+// Shared by GGML_OP_MUL_MAT_ADD and GGML_OP_MUL_MAT_ADD_RELU.
+//
+// Two shapes are handled. When src0 is [K, 1, C] the op is depthwise: C
+// independent length-K dot products per position, with src1 laid out
+// [K, N, C] and the output [C, N] channel-major. Otherwise src0 is an ordinary
+// [IC, OC] weight matrix, src1 is [IC, N], and the output is [OC, N].
+static void ggml_compute_forward_mul_mat_add_impl(
+        const ggml_compute_params * params,
+        ggml_tensor * dst,
+        bool relu) {
+
+    const ggml_tensor * src0 = dst->src[0];  // weight (I8_S)
+    const ggml_tensor * src1 = dst->src[1];  // input  (I8_S)
+    const ggml_tensor * src2 = dst->src[2];  // bias   (F32)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(src1->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t ne00 = src0->ne[0];  // IC, or K in the depthwise case
+    const int64_t ne01 = src0->ne[1];  // OC, or 1
+    const int64_t ne02 = src0->ne[2];  // 1,  or C
+    const int64_t ne11 = src1->ne[1];  // N
+
+    const float * bias = (const float *) src2->data;
+
+    // Both scales are multipliers, so they combine by multiplication and the
+    // int32 accumulator only has to be scaled once.
+    const float combined_d = *ggml_inband_scale_const(src0) * *ggml_inband_scale_const(src1);
+
+    const int8_t * w = (const int8_t *) src0->data;
+    const int8_t * x = (const int8_t *) src1->data;
+
+    const bool depthwise = ne01 == 1 && ne02 > 1;
+
+    // Output channel count, and the number of outputs per column.
+    const int64_t OC = depthwise ? ne02 : ne01;
+
+    // The loops below walk a single batch. Batched matmul has no caller in the
+    // VibeASR graphs, so refuse it here rather than silently leaving
+    // dst->ne[2]/ne[3] beyond the first as uninitialized garbage. In the
+    // depthwise case ne[2] is the channel axis, which is handled.
+    GGML_ASSERT(dst->ne[3] == 1);
+    GGML_ASSERT(depthwise || dst->ne[2] == 1);
+    GGML_ASSERT(ne11*OC == ggml_nelements(dst));
+
+    float * stage      = (float *) params->wdata;
+    float * thread_max = stage + ne11*OC;
+
+    // Split over columns: every thread owns whole columns of the output, so the
+    // int32 accumulators need no cross-thread coordination.
+    const int64_t dr   = (ne11 + nth - 1)/nth;
+    const int64_t col0 = dr*ith;
+    const int64_t col1 = MIN(col0 + dr, ne11);
+
+    float local_absmax = 0.0f;
+
+    if (depthwise) {
+        // stage/dst index is ch*ne11 + col, so each channel is a row of length
+        // ne11 and this thread owns the [col0, col1) band of every row.
+        //
+        // The batched roles are inverted here relative to the matmul path: the
+        // filter is the single row and the positions are the nrc rows, since it is
+        // the positions that are strided by ne00 and the filter that is reused.
+        // That also makes the results contiguous, so the scale/bias pass vectorizes.
+        int32_t acc[GGML_MUL_MAT_ADD_OC_CHUNK];
+        float   bias_v[GGML_MUL_MAT_ADD_OC_CHUNK];
+
+        for (int64_t ch = 0; ch < ne02; ch++) {
+            const int8_t * w_ch = w + ch*ne00;
+
+            // Broadcast once per channel, not per position.
+            for (int64_t j = 0; j < GGML_MUL_MAT_ADD_OC_CHUNK; j++) {
+                bias_v[j] = bias[ch];
+            }
+
+            for (int64_t col = col0; col < col1; col += GGML_MUL_MAT_ADD_OC_CHUNK) {
+                const int64_t ncol = MIN((int64_t) GGML_MUL_MAT_ADD_OC_CHUNK, col1 - col);
+
+                // src1 is [K, N, C]: the channel stride is ne11*ne00.
+                const int8_t * x_col = x + ch*ne11*ne00 + col*ne00;
+
+                ggml_vec_dot_i8_i8(ne00, acc, 1, x_col, ne00, w_ch, ncol);
+
+                local_absmax = ggml_i8_s_scale_bias_absmax(
+                    stage + ch*ne11 + col, acc, bias_v, ncol, combined_d, local_absmax);
+            }
+        }
+
+        ggml_i8_s_requantize(params, dst, stage, thread_max, ne11, ne02, col0, col1, local_absmax, relu);
+    } else {
+        // stage/dst index is col*ne01 + oc, so this thread owns the contiguous
+        // block [col0*ne01, col1*ne01).
+        const size_t nb11 = src1->nb[1];
+
+        // Output channels are handled a chunk at a time so the int32
+        // accumulators fit a fixed stack buffer and params->wdata does not have
+        // to grow. Within a chunk the weight rows are contiguous and x_col stays
+        // hot, which is the whole reason for batching them into one call.
+        int32_t acc[GGML_MUL_MAT_ADD_OC_CHUNK];
+
+        for (int64_t col = col0; col < col1; col++) {
+            const int8_t * x_col = (const int8_t *) ((const char *) src1->data + col*nb11);
+
+            for (int64_t oc0 = 0; oc0 < ne01; oc0 += GGML_MUL_MAT_ADD_OC_CHUNK) {
+                const int64_t noc = MIN((int64_t) GGML_MUL_MAT_ADD_OC_CHUNK, ne01 - oc0);
+
+                ggml_vec_dot_i8_i8(ne00, acc, 1, w + oc0*ne00, ne00, x_col, noc);
+
+                local_absmax = ggml_i8_s_scale_bias_absmax(
+                    stage + col*ne01 + oc0, acc, bias + oc0, noc, combined_d, local_absmax);
+            }
+        }
+
+        ggml_i8_s_requantize(params, dst, stage, thread_max, 0, 1, col0*ne01, col1*ne01, local_absmax, relu);
+    }
+}
+
+void ggml_compute_forward_mul_mat_add(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    ggml_compute_forward_mul_mat_add_impl(params, dst, false);
+}
+
+void ggml_compute_forward_mul_mat_add_relu(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    ggml_compute_forward_mul_mat_add_impl(params, dst, true);
+}
+
+// ggml_compute_forward_mul_mat_i2_s
+
+// Output features per int32 accumulator batch. Batching them means the
+// activation row is read once for 64 weight rows instead of once per row, and 64
+// int32s is a small enough stack buffer that params->wdata does not have to
+// carry it.
+#define GGML_MUL_MAT_I2_S_OC_CHUNK 64
+
+void ggml_compute_forward_mul_mat_i2_s(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // weights     (I2_S, ternary)
+    const ggml_tensor * src1 = dst->src[1];  // activations (F32)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I2_S);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+
+    GGML_TENSOR_BINARY_OP_LOCALS
+
+    GGML_ASSERT(ne0 == ne01);
+    GGML_ASSERT(ne1 == ne11);
+    GGML_ASSERT(ne2 == ne12);
+    GGML_ASSERT(ne3 == ne13);
+    GGML_ASSERT(nb0 == sizeof(float));
+    GGML_ASSERT(ne00 % 128 == 0);
+
+    // One scale covers the whole weight tensor, so broadcasting src0 over a
+    // batch would work, but the language model never has more than a 2D weight
+    // and silently supporting an untested shape is worse than refusing it.
+    GGML_ASSERT(ne02 == 1 && ne03 == 1);
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t nrows_y = ne11*ne12*ne13;
+
+    // wdata holds the quantized activation rows, then a sidecar with one scale
+    // and one int8 row sum each. The sidecar cannot be folded into the rows the
+    // way I8_S folds its scale in: both values are needed in the epilogue, after
+    // the kernel has already consumed the row.
+    int8_t * const qy       = (int8_t *) params->wdata;
+    const size_t   qy_bytes = GGML_PAD((size_t) ne10*nrows_y, sizeof(float));
+    float   * const act_scale = (float   *) ((char *) qy + qy_bytes);
+    int32_t * const act_sum   = (int32_t *) (act_scale + nrows_y);
+
+    GGML_ASSERT(params->wsize >= qy_bytes + nrows_y*(sizeof(float) + sizeof(int32_t)));
+
+    // Striped by whole rows: the scale is a row-wide absmax, so a row cannot be
+    // split across threads.
+    for (int64_t ir = ith; ir < nrows_y; ir += nth) {
+        const int64_t i11 =  ir % ne11;
+        const int64_t i12 = (ir / ne11) % ne12;
+        const int64_t i13 =  ir / (ne11*ne12);
+
+        const float * y_row = (const float *) ((const char *) src1->data + i11*nb11 + i12*nb12 + i13*nb13);
+
+        ggml_i8_s_quantize_act(y_row, qy + ir*ne10, ne10, act_scale + ir, act_sum + ir);
+    }
+
+    ggml_barrier(params->threadpool);
+
+    const float  w_scale = *ggml_inband_scale_const(src0);
+    const size_t w_row   = nb01;  // bytes per packed weight row
+
+    // Split over output features and sweep the whole batch inside, so a weight
+    // row is loaded once and reused across every column. Splitting over columns
+    // instead would re-stream the weights per thread, and the weights are what
+    // this op is bandwidth-bound on.
+    const int64_t dr  = (ne01 + nth - 1)/nth;
+    const int64_t oc0 = dr*ith;
+    const int64_t oc1 = MIN(oc0 + dr, ne01);
+
+    if (oc0 >= oc1) {
+        return;
+    }
+
+    int32_t acc[GGML_MUL_MAT_I2_S_OC_CHUNK];
+
+    for (int64_t ir = 0; ir < nrows_y; ++ir) {
+        const int64_t i11 =  ir % ne11;
+        const int64_t i12 = (ir / ne11) % ne12;
+        const int64_t i13 =  ir / (ne11*ne12);
+
+        const int8_t * y_row = qy + ir*ne10;
+
+        // The kernel returns sum(code*q) with codes {0,1,2}; subtracting the row
+        // sum turns that into sum(w*q) with w in {-1,0,+1}. Both scales are
+        // multipliers, so they combine once at the end.
+        const float   d    = w_scale * act_scale[ir];
+        const int32_t bias = act_sum[ir];
+
+        float * dst_row = (float *) ((char *) dst->data + i11*nb1 + i12*nb2 + i13*nb3);
+
+        for (int64_t oc = oc0; oc < oc1; oc += GGML_MUL_MAT_I2_S_OC_CHUNK) {
+            const int64_t noc = MIN((int64_t) GGML_MUL_MAT_I2_S_OC_CHUNK, oc1 - oc);
+
+            ggml_vec_dot_i2_i8(ne00, acc, 1,
+                               (const uint8_t *) src0->data + oc*w_row, w_row,
+                               y_row, noc);
+
+            for (int64_t j = 0; j < noc; ++j) {
+                dst_row[oc + j] = (float) (acc[j] - bias) * d;
+            }
+        }
+    }
+}
+
+// ggml_compute_forward_im2col_asym
+
+void ggml_compute_forward_im2col_asym(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // kernel, for its shape only
+    const ggml_tensor * src1 = dst->src[1];  // input (I8_S)
+
+    GGML_ASSERT(src1->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(dst->type  == GGML_TYPE_I8_S);
+
+    const int32_t s0     = ggml_get_op_params_i32(dst, 0);
+    const int32_t lp0    = ggml_get_op_params_i32(dst, 2);
+    const int32_t d0     = ggml_get_op_params_i32(dst, 4);
+    const bool    is_2D  = ggml_get_op_params_i32(dst, 6) == 1;
+
+    // 1D only. The 2D case has no caller, and guessing at its indexing would
+    // mean shipping an untested path.
+    GGML_ASSERT(!is_2D && "ggml_im2col_asym: only the 1D case is implemented");
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t IC = src0->ne[1];
+    const int64_t KW = src0->ne[0];
+    const int64_t IW = src1->ne[0];
+    const int64_t N  = src1->ne[2];
+    const int64_t OW = dst->ne[1];
+
+    const int64_t total      = N*OW;
+    const int64_t per_thread = (total + nth - 1)/nth;
+    const int64_t start      = per_thread*ith;
+    const int64_t end        = MIN(start + per_thread, total);
+
+    int8_t * dst_data = (int8_t *) dst->data;
+
+    for (int64_t idx = start; idx < end; idx++) {
+        const int64_t in  = idx/OW;
+        const int64_t iow = idx%OW;
+
+        int8_t * dst_col = dst_data + idx*(IC*KW);
+
+        for (int64_t iic = 0; iic < IC; iic++) {
+            const int8_t * src_ch = (const int8_t *) ((const char *) src1->data +
+                iic*src1->nb[1] + in*src1->nb[2]);
+
+            for (int64_t ikw = 0; ikw < KW; ikw++) {
+                const int64_t iiw = iow*s0 + ikw*d0 - lp0;
+
+                // Zero is exact in both directions, so padding needs no
+                // special handling when the scale is applied later.
+                dst_col[iic*KW + ikw] = (iiw < 0 || iiw >= IW) ? 0 : src_ch[iiw];
+            }
+        }
+    }
+
+    if (ith == 0) {
+        // Pure rearrangement: no value changes, so the scale carries over.
+        *ggml_inband_scale(dst) = *ggml_inband_scale_const(src1);
     }
 }

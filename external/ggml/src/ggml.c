@@ -927,7 +927,48 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .type_size                = 0,
         .is_quantized             = false,
     },
+    // .to_float / .from_float_ref are deliberately left NULL for the two types
+    // below. Both carry a single F32 scale for the whole tensor rather than one
+    // per block, so a row-scoped callback has no way to find it: the scale is
+    // past the end of the last row, not the row it is handed. Use
+    // ggml_i8_s_to_float / ggml_i2_s_to_float (ggml-quants.h), which take an
+    // element count of ggml_nelements(). For the same reason neither type
+    // appears in ggml_quantize_chunk -- its `result == nrows * row_size`
+    // invariant cannot hold when a per-tensor scale is in play.
+    [GGML_TYPE_I8_S] = {
+        .type_name                = "i8_s",
+        .blck_size                = 1,
+        .type_size                = sizeof(int8_t),
+        .is_quantized             = true,
+    },
+    [GGML_TYPE_I2_S] = {
+        .type_name                = "i2_s",
+        // 128 ternary values packed into 32 bytes: byte gp holds the values at
+        // positions gp, 32+gp, 64+gp and 96+gp in bit pairs 6,4,2,0. A partial
+        // group still consumes a full 32 bytes, so the row size is
+        // ceil(ne0/128)*32 -- declaring the block as 128/32 makes ggml_row_size
+        // compute exactly that and assert the ne0 % 128 == 0 the packing needs.
+        .blck_size                = 128,
+        .type_size                = 32,
+        .is_quantized             = true,
+    },
 };
+
+// I8_S and I2_S append one F32 per-tensor scale after the payload. Padded to 32
+// bytes so the next tensor in an arena stays aligned.
+//
+// This is the only place the layout is encoded; ggml_nbytes and
+// ggml_new_tensor_impl both go through it. Returns 0 for every other type, so
+// no existing type changes size.
+size_t ggml_type_extra_bytes(enum ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_I8_S:
+        case GGML_TYPE_I2_S:
+            return 32;
+        default:
+            return 0;
+    }
+}
 
 const struct ggml_type_traits * ggml_get_type_traits(enum ggml_type type) {
     assert(type >= 0);
@@ -1084,9 +1125,15 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
 
     "GLU",
     "CONVROT_LINEAR",
+
+    "ADD_SCALED",
+    "RMS_NORM_SCALED",
+    "MUL_MAT_ADD",
+    "MUL_MAT_ADD_RELU",
+    "IM2COL_ASYM",
 };
 
-static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
+static_assert(GGML_OP_COUNT == 107, "GGML_OP_COUNT != 107");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1200,9 +1247,15 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
 
     "glu(x)",
     "convrot_linear(weight_i8, input, weight_scale, bias)",
+
+    "a*scale+b",
+    "rms_norm(x)*scale",
+    "a*b+bias",
+    "relu(a*b+bias)",
+    "im2col_asym(x)",
 };
 
-static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
+static_assert(GGML_OP_COUNT == 107, "GGML_OP_COUNT != 107");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -1304,7 +1357,7 @@ size_t ggml_nbytes(const struct ggml_tensor * tensor) {
         }
     }
 
-    return nbytes;
+    return nbytes + ggml_type_extra_bytes(tensor->type);
 }
 
 size_t ggml_nbytes_pad(const struct ggml_tensor * tensor) {
@@ -1758,6 +1811,7 @@ static struct ggml_tensor * ggml_new_tensor_impl(
     for (int i = 1; i < n_dims; i++) {
         data_size *= ne[i];
     }
+    data_size += ggml_type_extra_bytes(type);
 
     GGML_ASSERT(view_src == NULL || data_size == 0 || data_size + view_offs <= ggml_nbytes(view_src));
 
@@ -5611,6 +5665,161 @@ struct ggml_tensor * ggml_convrot_linear(
     result->src[1] = input;
     result->src[2] = weight_scale;
     result->src[3] = bias;
+
+    return result;
+}
+
+// VibeASR CPU INT8 pipeline
+//
+// Five fused ops that keep an activation chain entirely in GGML_TYPE_I8_S: each
+// one consumes int8 with a per-tensor scale, does its arithmetic in int32/F32,
+// and re-quantizes its own output to int8 with a freshly measured scale. Fusing
+// matters because the requantization needs the output absmax, so an unfused
+// chain would have to write, read back and rescan every intermediate.
+//
+// That per-tensor output scale is why these need GGML_TYPE_I8_S rather than the
+// GGML_TYPE_I8-plus-separate-scale-tensor pair used by ggml_convrot_linear
+// above: a scale computed from the op's own output has nowhere to live but with
+// the data, since a node has exactly one output tensor.
+
+struct ggml_tensor * ggml_add_scaled(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * scale) {
+    GGML_ASSERT(ggml_are_same_shape(a, b));
+    GGML_ASSERT(scale->type == GGML_TYPE_F32);
+    // Broadcast along ne[0], the channel axis: one LayerScale coefficient per
+    // channel, applied to every position.
+    GGML_ASSERT(scale->ne[0] == a->ne[0]);
+
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
+
+    result->op     = GGML_OP_ADD_SCALED;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = scale;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_rms_norm_scaled(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * scale,
+        float                 eps) {
+    GGML_ASSERT(a->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(scale->type == GGML_TYPE_F32);
+    GGML_ASSERT(scale->ne[0] == a->ne[0]);
+    GGML_ASSERT(eps > 0.0f);
+
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
+
+    ggml_set_op_params(result, &eps, sizeof(eps));
+
+    result->op     = GGML_OP_RMS_NORM_SCALED;
+    result->src[0] = a;
+    result->src[1] = scale;
+
+    return result;
+}
+
+// Shared by ggml_mul_mat_add and ggml_mul_mat_add_relu: identical shape rules,
+// only the epilogue differs.
+static struct ggml_tensor * ggml_mul_mat_add_impl(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * bias,
+        enum ggml_op          op) {
+    GGML_ASSERT(ggml_can_mul_mat(a, b));
+    // I8_S weights only. The ternary I2_S weights of the language model go
+    // through plain ggml_mul_mat, which has no bias to fuse.
+    GGML_ASSERT(a->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(b->type == GGML_TYPE_I8_S);
+    GGML_ASSERT(bias->type == GGML_TYPE_F32);
+
+    // Bias is per output channel, and which ne holds the output channels
+    // depends on the shape of a: a [IC, OC] is an ordinary matmul, whereas
+    // a [K, 1, C] is the depthwise case where the channels sit in ne[2].
+    GGML_ASSERT(bias->ne[0] == (a->ne[1] == 1 && a->ne[2] > 1 ? a->ne[2] : a->ne[1]));
+
+    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
+
+    // Output is int8 with its own scale, so the chain continues without a
+    // detour through F32.
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_I8_S, 4, ne);
+
+    result->op     = op;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = bias;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_mul_mat_add(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * bias) {
+    return ggml_mul_mat_add_impl(ctx, a, b, bias, GGML_OP_MUL_MAT_ADD);
+}
+
+struct ggml_tensor * ggml_mul_mat_add_relu(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * bias) {
+    return ggml_mul_mat_add_impl(ctx, a, b, bias, GGML_OP_MUL_MAT_ADD_RELU);
+}
+
+struct ggml_tensor * ggml_im2col_asym(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        int                   s0,
+        int                   s1,
+        int                   lp0,
+        int                   rp0,
+        int                   p1,
+        int                   d0,
+        int                   d1,
+        bool                  is_2D,
+        enum ggml_type        dst_type) {
+    if (is_2D) {
+        GGML_ASSERT(a->ne[2] == b->ne[2]);
+    } else {
+        GGML_ASSERT(a->ne[1] == b->ne[1]);
+        GGML_ASSERT(b->ne[3] == 1);
+    }
+
+    const int64_t OH = is_2D ? ggml_calc_conv_output_size(b->ne[1], a->ne[1], s1, p1, d1) : 0;
+    // Same formula as ggml_calc_conv_output_size but with the two width pads
+    // counted separately instead of as 2*p0.
+    const int64_t OW = (b->ne[0] + lp0 + rp0 - d0 * (a->ne[0] - 1) - 1) / s0 + 1;
+
+    GGML_ASSERT((!is_2D || OH > 0) && "b too small compared to a");
+    GGML_ASSERT((OW > 0)           && "b too small compared to a");
+
+    const int64_t ne[4] = {
+        is_2D ? (a->ne[2] * a->ne[1] * a->ne[0]) : a->ne[1] * a->ne[0],
+        OW,
+        is_2D ? OH : b->ne[2],
+        is_2D ?      b->ne[3] : 1,
+    };
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, dst_type, 4, ne);
+
+    // Note the order: lp0 and rp0 occupy slots 2 and 3, where GGML_OP_IM2COL
+    // keeps p0 and p1. The two ops read their own params and never share a
+    // forward, so the layouts do not have to agree.
+    int32_t params[] = { s0, s1, lp0, rp0, d0, d1, (is_2D ? 1 : 0), p1 };
+    ggml_set_op_params(result, params, sizeof(params));
+
+    result->op     = GGML_OP_IM2COL_ASYM;
+    result->src[0] = a;
+    result->src[1] = b;
 
     return result;
 }

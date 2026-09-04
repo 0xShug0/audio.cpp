@@ -429,7 +429,15 @@ extern "C" {
         GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
-        GGML_TYPE_COUNT   = 42,
+        // INT8 / ternary with a single per-tensor scale, stored as one F32
+        // immediately after the payload rather than interleaved per block.
+        // Used by the VibeASR CPU pipeline; see ggml_mul_mat_add().
+        // NOTE: 36/37 are deliberately avoided even though VibeASR's own fork
+        // uses them -- they are retired IQ4_NL_4_4/4_8 slots and reusing an ID
+        // would silently misread GGUF files that still carry the old type.
+        GGML_TYPE_I8_S    = 42,
+        GGML_TYPE_I2_S    = 43,
+        GGML_TYPE_COUNT   = 44,
     };
 
     // precision
@@ -588,6 +596,14 @@ extern "C" {
 
         GGML_OP_GLU,
         GGML_OP_CONVROT_LINEAR,
+
+        // VibeASR CPU INT8 pipeline. Appended at the tail so every existing
+        // op keeps its value -- GGML_OP_NAME and GGML_OP_SYMBOL are positional.
+        GGML_OP_ADD_SCALED,
+        GGML_OP_RMS_NORM_SCALED,
+        GGML_OP_MUL_MAT_ADD,
+        GGML_OP_MUL_MAT_ADD_RELU,
+        GGML_OP_IM2COL_ASYM,
 
         GGML_OP_COUNT,
     };
@@ -2478,6 +2494,77 @@ extern "C" {
             struct ggml_tensor  * weight_scale,
             struct ggml_tensor  * bias,
             int                   group_size);
+
+    // VibeASR CPU INT8 pipeline (GGML_TYPE_I8_S / GGML_TYPE_I2_S).
+    //
+    // Ported from https://github.com/microsoft/VibeASR.cpp, an end-to-end INT8
+    // ASR stack (INT8 VAE encoder, ternary-weight language model) built for CPU
+    // inference on edge devices.
+    //
+    // These are CPU-only, mirroring how ggml_convrot_linear and
+    // ggml_sage_attn2_i8 above are CUDA-only.
+    //
+    // Unlike those two, the scale is NOT a separate F32 src tensor. An I8_S
+    // activation's scale is recomputed from that activation at run time, and a
+    // ggml node has exactly one output, so the scale has to travel with the
+    // data: every I8_S/I2_S tensor stores one F32 immediately after its int8
+    // payload (see ggml_type_extra_bytes in ggml.c). Weight scales could have
+    // used the separate-tensor convention, but sharing one representation with
+    // activations keeps a single kernel per op instead of two.
+
+    // y = a*scale + b, fusing a ConvNeXt LayerScale into its residual add.
+    // a and b are I8_S and same-shape, scale is F32 per-channel broadcast on
+    // ne[0]. Output is I8_S and carries a freshly computed per-tensor scale.
+    GGML_API struct ggml_tensor * ggml_add_scaled(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * scale);
+
+    // y = rms_norm(a) * scale, fused. a is I8_S, scale is F32 per-channel,
+    // output is I8_S. Equivalent to ggml_mul(ggml_rms_norm(a), scale) but
+    // avoids materializing the F32 intermediate.
+    GGML_API struct ggml_tensor * ggml_rms_norm_scaled(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * scale,
+            float                 eps);
+
+    // y = a*b + bias, with a I8_S weights and b I8_S activations. bias is F32
+    // and broadcasts on ne[0]. Output is I8_S. The ternary I2_S weights of the
+    // language model go through plain ggml_mul_mat, which has no bias to fuse.
+    //
+    // a with ne[1] == 1 and ne[2] > 1 selects a depthwise contraction: one
+    // length-ne[0] filter per channel, output indexed channel-major.
+    GGML_API struct ggml_tensor * ggml_mul_mat_add(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * bias);
+
+    // As ggml_mul_mat_add, with ReLU folded into the epilogue.
+    GGML_API struct ggml_tensor * ggml_mul_mat_add_relu(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * bias);
+
+    // im2col with independent left/right padding on the width axis. ggml_im2col
+    // only takes a single symmetric p0, so causal 1D convolutions otherwise need
+    // a separate ggml_pad_ext node and a full copy of the activation.
+    GGML_API struct ggml_tensor * ggml_im2col_asym(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            int                   s0,
+            int                   s1,
+            int                   lp0,
+            int                   rp0,
+            int                   p1,
+            int                   d0,
+            int                   d1,
+            bool                  is_2D,
+            enum ggml_type        dst_type);
 
     // MINITTS_FLASH_BIAS_WRAPPER:
     // Helper for models that already assemble a dense additive attention bias
