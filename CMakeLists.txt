@@ -630,6 +630,19 @@ audiocpp_add_model(personaplex
         engine::models::personaplex::make_personaplex_loader
 )
 
+audiocpp_add_model(sanotts
+    SOURCES
+        src/community_models/sanotts/assets.cpp
+        src/community_models/sanotts/frontend.cpp
+        src/community_models/sanotts/piper_runtime.cpp
+        src/community_models/sanotts/runtime.cpp
+        src/community_models/sanotts/session.cpp
+    INCLUDES
+        engine/community_models/sanotts/session.h
+    LOADERS
+        engine::models::sanotts::make_sanotts_loader
+)
+
 audiocpp_add_model(inflect_v2
     SOURCES
         src/community_models/inflect_v2/assets.cpp
@@ -944,6 +957,33 @@ audiocpp_add_model(fish_audio
     LOADERS
         engine::models::fish_audio::make_fish_audio_loader
 )
+
+# Fish Fast-AR emits a 4096-entry logits tensor for each acoustic codebook.
+# On Linux HIP, use a small device-side exact top-k helper so only the compact
+# sampling candidates cross back to the host. Other backends stay unchanged.
+if (ENGINE_ENABLE_HIP AND UNIX AND NOT APPLE)
+    find_program(AUDIOCPP_HIPCC hipcc REQUIRED)
+    set(AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ "${CMAKE_CURRENT_BINARY_DIR}/fish_hip_fast_sampler.o")
+    set(AUDIOCPP_FISH_HIP_TARGETS ${CMAKE_HIP_ARCHITECTURES})
+    if (NOT AUDIOCPP_FISH_HIP_TARGETS)
+        set(AUDIOCPP_FISH_HIP_TARGETS ${GPU_TARGETS})
+    endif()
+    set(AUDIOCPP_FISH_HIP_ARCH_FLAGS)
+    foreach(AUDIOCPP_FISH_HIP_ARCH IN LISTS AUDIOCPP_FISH_HIP_TARGETS)
+        list(APPEND AUDIOCPP_FISH_HIP_ARCH_FLAGS "--offload-arch=${AUDIOCPP_FISH_HIP_ARCH}")
+    endforeach()
+    add_custom_command(
+        OUTPUT ${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ}
+        COMMAND ${AUDIOCPP_HIPCC} -O3 -fPIC ${AUDIOCPP_FISH_HIP_ARCH_FLAGS} -std=c++17
+            -c ${CMAKE_CURRENT_SOURCE_DIR}/src/models/fish_audio/hip_fast_sampler.cu
+            -o ${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ}
+        DEPENDS
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/models/fish_audio/hip_fast_sampler.cu
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/models/fish_audio/hip_fast_sampler.h
+        VERBATIM)
+    set_source_files_properties(${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ} PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+    target_compile_definitions(engine_model_fish_audio PRIVATE ENGINE_HAS_HIP_FISH_FAST_SAMPLER=1)
+endif()
 
 audiocpp_add_model(audio8_tts
     SOURCES
@@ -1442,6 +1482,24 @@ audiocpp_add_model(chatterbox
         engine::models::chatterbox::make_chatterbox_loader
 )
 
+audiocpp_add_model(chatterbox_turbo
+    SOURCES
+        src/community_models/chatterbox_turbo/t3_turbo_weights.cpp
+        src/community_models/chatterbox_turbo/t3_turbo_component.cpp
+        src/community_models/chatterbox_turbo/s3gen_turbo.cpp
+        src/community_models/chatterbox_turbo/text_tokenizer_turbo.cpp
+        src/community_models/chatterbox_turbo/assets.cpp
+        src/community_models/chatterbox_turbo/loader.cpp
+        src/community_models/chatterbox_turbo/session.cpp
+        src/community_models/chatterbox_turbo/tts.cpp
+    INCLUDES
+        engine/community_models/chatterbox_turbo/loader.h
+    LOADERS
+        engine::community_models::chatterbox_turbo::make_chatterbox_turbo_loader
+    DEPENDS
+        chatterbox
+)
+
 audiocpp_add_model(ace_step
     SOURCES
         src/models/ace_step/assets.cpp
@@ -1606,6 +1664,48 @@ audiocpp_add_model(firered_audio
         engine::models::firered_audio::make_firered_audio_loader
 )
 
+audiocpp_add_model(cosyvoice3
+    SOURCES
+        src/models/cosyvoice3/ar.cpp
+        src/models/cosyvoice3/assets.cpp
+        src/models/cosyvoice3/flow.cpp
+        src/models/cosyvoice3/frontend.cpp
+        src/models/cosyvoice3/hift.cpp
+        src/models/cosyvoice3/session.cpp
+        src/models/cosyvoice3/tokenizer_text.cpp
+    INCLUDES
+        engine/models/cosyvoice3/ar.h
+        engine/models/cosyvoice3/assets.h
+        engine/models/cosyvoice3/flow.h
+        engine/models/cosyvoice3/frontend.h
+        engine/models/cosyvoice3/hift.h
+        engine/models/cosyvoice3/session.h
+        engine/models/cosyvoice3/tokenizer_text.h
+    LOADERS
+        engine::models::cosyvoice3::make_cosyvoice3_loader
+)
+
+audiocpp_add_model(breeze_tts
+    SOURCES
+        src/models/breeze_tts/assets.cpp
+        src/models/breeze_tts/generator.cpp
+        src/models/breeze_tts/session.cpp
+        src/models/breeze_tts/speech_decoder.cpp
+        src/models/breeze_tts/speech_encoder.cpp
+        src/models/breeze_tts/text_encoder.cpp
+        src/models/breeze_tts/tokenizer_text.cpp
+    INCLUDES
+        engine/models/breeze_tts/assets.h
+        engine/models/breeze_tts/generator.h
+        engine/models/breeze_tts/session.h
+        engine/models/breeze_tts/speech_decoder.h
+        engine/models/breeze_tts/speech_encoder.h
+        engine/models/breeze_tts/text_encoder.h
+        engine/models/breeze_tts/tokenizer_text.h
+    LOADERS
+        engine::models::breeze_tts::make_breeze_tts_loader
+)
+
 set(AUDIOCPP_ENABLED_MODELS "")
 if (AUDIOCPP_MODEL_SET STREQUAL "full")
     set(AUDIOCPP_ENABLED_MODELS ${AUDIOCPP_MODEL_TARGETS})
@@ -1671,6 +1771,9 @@ set(AUDIOCPP_RUNTIME_OBJECTS
 foreach(model_name IN LISTS AUDIOCPP_LINKED_MODELS)
     list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:engine_model_${model_name}>)
 endforeach()
+if (ENGINE_ENABLE_HIP AND UNIX AND NOT APPLE AND "fish_audio" IN_LIST AUDIOCPP_LINKED_MODELS)
+    list(APPEND AUDIOCPP_RUNTIME_OBJECTS ${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ})
+endif()
 
 message(STATUS "audio.cpp model composite: ${AUDIOCPP_MODEL_SET} selected [${AUDIOCPP_ENABLED_MODELS}] linked [${AUDIOCPP_LINKED_MODELS}]")
 add_library(engine_runtime STATIC
@@ -2064,11 +2167,25 @@ if (ENGINE_BUILD_TESTS)
         COMMAND audio_chunking_test
     )
 
+    add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
+
+    add_test(
+        NAME wav_writer_formats_test
+        COMMAND wav_writer_formats_test
+    )
+
     add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
 
     add_test(
         NAME chinese_normalization_test
         COMMAND chinese_normalization_test
+    )
+
+    add_engine_unittest(text_chunking_test tests/unittests/test_text_chunking.cpp)
+
+    add_test(
+        NAME text_chunking_test
+        COMMAND text_chunking_test
     )
 
     add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
@@ -2233,6 +2350,20 @@ if (ENGINE_BUILD_TESTS)
         COMMAND conv_lowering_matrix_test
     )
 
+    add_engine_unittest(i8_s_fused_ops_test tests/unittests/test_i8_s_fused_ops.cpp)
+
+    add_test(
+        NAME i8_s_fused_ops_test
+        COMMAND i8_s_fused_ops_test
+    )
+
+    add_engine_unittest(i2_s_mul_mat_test tests/unittests/test_i2_s_mul_mat.cpp)
+
+    add_test(
+        NAME i2_s_mul_mat_test
+        COMMAND i2_s_mul_mat_test
+    )
+
     add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
     target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 
@@ -2342,6 +2473,19 @@ if (ENGINE_BUILD_TESTS)
         add_test(
             NAME server_model_installer_test
             COMMAND server_model_installer_test
+        )
+
+        add_executable(package_manager_modelscope_test
+            tests/unittests/test_package_manager_modelscope.cpp
+        )
+        target_link_libraries(package_manager_modelscope_test PRIVATE
+            Threads::Threads audiocpp_package_manager)
+        target_compile_definitions(package_manager_modelscope_test PRIVATE
+            AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
+
+        add_test(
+            NAME package_manager_modelscope_test
+            COMMAND package_manager_modelscope_test
         )
     endif()
 
@@ -2497,6 +2641,13 @@ if (ENGINE_BUILD_TESTS)
         add_test(
             NAME echo_tts_host_units
             COMMAND echo_tts_host_units
+        )
+
+        add_engine_unittest(sanotts_frontend_test tests/unittests/test_sanotts_frontend.cpp)
+        target_include_directories(sanotts_frontend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(
+            NAME sanotts_frontend_test
+            COMMAND sanotts_frontend_test
         )
 
         add_engine_unittest(inflect_v2_frontend_test tests/unittests/test_inflect_v2_frontend.cpp)

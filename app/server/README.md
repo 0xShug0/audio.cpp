@@ -380,6 +380,58 @@ The stream emits `transcript.text.delta` events, one final `transcript.text.done
 
 Note that `stream=true` streams the *output* of an already-uploaded file: the whole recording is sent first, and the deltas describe decoding it. It shortens time-to-first-token on long audio, but nothing can appear while the speaker is still talking. For that, use the live endpoint below.
 
+### `POST /v1/audio/transcriptions/details`
+
+Same request as `POST /v1/audio/transcriptions` — JSON with a server-local path, or a `multipart/form-data` upload — with a richer response. Use it when the model produces timestamps or speaker labels and the caller wants them.
+
+`/v1/audio/transcriptions` returns `text` and `timing` and nothing else, so a model that aligned every word or separated speakers has that work discarded on the way out. This route returns those fields instead. The response schema of the plain route is unchanged; existing clients see exactly what they see today.
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/transcriptions/details \
+  -F model=parakeet-tdt \
+  -F file=@/path/to/input.wav
+```
+
+```json
+{
+  "text": "the task has completed successfully",
+  "language": "en",
+  "words": [
+    {"word": "the", "start_sample": 3200, "end_sample": 6400, "confidence": 0.98}
+  ],
+  "sample_rate": 16000,
+  "timing": { "wall_ms": 412.7, "audio_duration_ms": 2400.0, "rtf": 0.17 }
+}
+```
+
+`text` and `timing` are always present and match the plain route. The rest appear only when the model produced them:
+
+| Field | Present when | Contents |
+|---|---|---|
+| `language` | the model reports a detected or configured language | Language code. |
+| `segments` | the model produces speech segments | `start_sample`, `end_sample`, `confidence`, and `text` where the segment carries it. |
+| `speaker_turns` | the model diarizes | `start_sample`, `end_sample`, `speaker_id`, `confidence`, and `text` where present. |
+| `words` | the model aligns words | `word`, `start_sample`, `end_sample`, `confidence`. |
+| `sample_rate` | any of the three arrays above is present | Rate the sample offsets are counted in. Divide an offset by it for seconds. |
+
+Spans are sample offsets rather than seconds because that is what the models report; `sample_rate` is what converts them, which is why it only appears alongside them.
+
+`stream=true` is rejected with a 400 on this route: the SSE response carries transcript deltas only, so it has nowhere to put the detail arrays. Use `/v1/audio/transcriptions` for a streamed transcript.
+
+### `POST /v1/audio/alignments`
+
+Multipart forced-alignment request using uploaded audio bytes and a known transcript. Use this when the server cannot see the client's local audio path, for example when the server is remote or running in Docker.
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/alignments \
+  -F model=qwen3-align \
+  -F language=en \
+  -F text='The task has completed successfully.' \
+  -F file=@/path/to/input.wav
+```
+
+`file`, `model`, and `text` are required; `language` is optional. The selected model must be configured with `task: "align"` and `mode: "offline"`. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. The response includes word timestamps in seconds plus sample offsets.
+
 ### `POST /v1/audio/transcriptions/live`
 
 Streams raw PCM **as it is captured** and returns transcript deltas on the same connection, so partial text can appear while the user is still speaking.

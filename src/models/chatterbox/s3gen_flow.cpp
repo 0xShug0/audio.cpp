@@ -1497,6 +1497,19 @@ public:
         auto time_hidden = linear_lastdim(ctx, time_in_, weights.time_mlp_1, writer);
         time_hidden = engine::core::wrap_tensor(ggml_silu(ctx.ggml, time_hidden.tensor), time_hidden.shape, GGML_TYPE_F32);
         time_hidden = linear_lastdim(ctx, time_hidden, weights.time_mlp_2, writer);
+        if (weights.meanflow) {
+            r_in_ = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({batch_, 320}));
+            ggml_set_input(r_in_.tensor);
+            ggml_set_output(r_in_.tensor);
+            auto r_hidden = linear_lastdim(ctx, r_in_, weights.time_mlp_1, writer);
+            r_hidden = engine::core::wrap_tensor(ggml_silu(ctx.ggml, r_hidden.tensor), r_hidden.shape, GGML_TYPE_F32);
+            r_hidden = linear_lastdim(ctx, r_hidden, weights.time_mlp_2, writer);
+            auto concat_shape = time_hidden.shape;
+            concat_shape.dims[concat_shape.rank - 1] += r_hidden.shape.dims[r_hidden.shape.rank - 1];
+            auto concat_te = engine::core::wrap_tensor(
+                ggml_concat(ctx.ggml, time_hidden.tensor, r_hidden.tensor, 0), concat_shape, GGML_TYPE_F32);
+            time_hidden = linear_lastdim(ctx, concat_te, weights.time_embed_mixer, writer);
+        }
 
         auto hidden_bct = cat_channels_bct(ctx, x_in_, mu_in_);
         auto repeat_spks = repeat_spks_bct(ctx, spks_in_, frames);
@@ -1567,7 +1580,8 @@ public:
         const std::vector<float> & x,
         const std::vector<float> & mask,
         const std::vector<float> & t,
-        S3FlowDecoderRunTiming * timing = nullptr) {
+        S3FlowDecoderRunTiming * timing = nullptr,
+        const std::vector<float> * r = nullptr) {
         constexpr int64_t mel_channels = 80;
         constexpr int64_t time_dim = 320;
         if (timing != nullptr) {
@@ -1587,6 +1601,12 @@ public:
         }
         started = Clock::now();
         engine::core::write_tensor_f32(time_in_, time_emb_values);
+        if (r != nullptr) {
+            if (r_in_.tensor == nullptr) {
+                throw std::runtime_error("S3 flow decoder runner was not built for meanflow but received r");
+            }
+            engine::core::write_tensor_f32(r_in_, decoder_sinusoidal_pos_emb(*r, batch_, time_dim));
+        }
         if (timing != nullptr) {
             timing->input_write_ms += engine::debug::elapsed_ms(started);
         }
@@ -1631,6 +1651,7 @@ private:
     engine::core::TensorValue x_in_;
     engine::core::TensorValue mu_in_;
     engine::core::TensorValue time_in_;
+    engine::core::TensorValue r_in_;
     engine::core::TensorValue spks_in_;
     engine::core::TensorValue cond_in_;
     engine::core::TensorValue attention_mask_;
@@ -1740,10 +1761,14 @@ std::shared_ptr<const S3FlowEncoderWeights> load_s3_flow_encoder_weights(
         execution_context.backend_type(),
         "chatterbox.s3_flow_encoder.weights",
         1024ull * 1024ull * 1024ull);
+    // ggml_get_rows (used by S3TokenEmbeddingGraph for this lookup table) only supports F32/F16
+    // and legacy quant types on the CUDA backend, not K-quants -- pin this one small table
+    // (~6.7 MB in F16) to F16 regardless of the requested weight_storage_type so a Q4_K/Q5_K/...
+    // package (e.g. Chatterbox Turbo's chatterbox-turbo-s3gen-q4_k.gguf) doesn't crash on it.
     weights->input_embedding_tensor = weights->store->load_tensor(
         source,
         "flow.input_embedding.weight",
-        weight_storage_type,
+        engine::assets::TensorStorageType::F16,
         {6561, 512});
     weights->speaker_affine = load_flow_linear(*weights->store, source, "flow.spk_embed_affine_layer", 80, 192, true, weight_storage_type);
     weights->encoder_proj = load_flow_linear(*weights->store, source, "flow.encoder_proj", 80, 512, true, weight_storage_type);
@@ -1867,8 +1892,19 @@ std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
 
     weights->final_block = load_causal_block("flow.decoder.estimator.final_block", 256, 256);
     weights->final_proj = load_decoder_conv1d(*weights->store, source, "flow.decoder.estimator.final_proj", 80, 256, 1, 1, true, weight_storage_type);
+
+    if (source.has_tensor("flow.decoder.estimator.time_embed_mixer.weight")) {
+        weights->meanflow = true;
+        weights->time_embed_mixer = load_decoder_linear(
+            *weights->store, source, "flow.decoder.estimator.time_embed_mixer", 1024, 2048, false, weight_storage_type);
+    }
+
     weights->store->upload();
     return weights;
+}
+
+bool s3_flow_decoder_is_meanflow(const S3FlowDecoderWeights & weights) {
+    return weights.meanflow;
 }
 
 S3FlowDecoderOutputs compute_s3_flow_decoder_forward(
@@ -1883,11 +1919,12 @@ S3FlowDecoderOutputs compute_s3_flow_decoder_forward(
     int64_t batch,
     int64_t frames,
     int64_t capacity_frames,
-    engine::core::BackendConfig backend) {
+    engine::core::BackendConfig backend,
+    const std::vector<float> * r) {
     const int64_t valid_frames = valid_frames_from_mask(mask, batch, frames);
     auto & runner = cache.state_->decoder_runner_for_capacity(weights, batch, capacity_frames, backend);
     runner.set_conditioning(weights, mu, spks, cond, frames, backend);
-    auto outputs = runner.run(x, mask, t);
+    auto outputs = runner.run(x, mask, t, nullptr, r);
     outputs.frames = valid_frames;
     return outputs;
 }
@@ -1992,6 +2029,57 @@ S3FlowCFMOutputs compute_s3_flow_cfm_euler(
         }
         if (timing != nullptr) {
             timing->host_update_ms += engine::debug::elapsed_ms(started);
+        }
+    }
+
+    S3FlowCFMOutputs outputs;
+    outputs.mel = std::move(x);
+    outputs.channels = mel_channels;
+    outputs.frames = valid_frames;
+    outputs.storage_frames = frames;
+    return outputs;
+}
+
+// Meanflow-distilled decoders (Chatterbox Turbo) were trained with CFG already baked in, so
+// inference is a plain (non-CFG, non-batch-doubled) Euler solve driven by two time inputs per
+// step (t, r); mirrors ConditionalCFM.basic_euler in the upstream Python reference.
+S3FlowCFMOutputs compute_s3_flow_cfm_meanflow(
+    S3FlowSessionCache & cache,
+    const S3FlowDecoderWeights & weights,
+    const std::vector<float> & noise,
+    const std::vector<float> & mask,
+    const std::vector<float> & mu,
+    const std::vector<float> & spks,
+    const std::vector<float> & cond,
+    int64_t batch,
+    int64_t frames,
+    int64_t capacity_frames,
+    int64_t num_steps,
+    engine::core::BackendConfig backend) {
+    constexpr int64_t mel_channels = 80;
+    if (!weights.meanflow) {
+        throw std::runtime_error("compute_s3_flow_cfm_meanflow requires meanflow-trained S3FlowDecoderWeights");
+    }
+    std::vector<float> x = noise;
+    std::vector<float> t_span(static_cast<size_t>(num_steps + 1), 0.0f);
+    for (int64_t i = 0; i <= num_steps; ++i) {
+        t_span[static_cast<size_t>(i)] = static_cast<float>(i) / static_cast<float>(num_steps);
+    }
+    const int64_t valid_frames = valid_frames_from_mask(mask, batch, frames);
+
+    auto & runner = cache.state_->decoder_runner_for_capacity(weights, batch, capacity_frames, backend);
+    runner.set_conditioning(weights, mu, spks, cond, frames, backend);
+    std::vector<float> t_vec(static_cast<size_t>(batch), 0.0f);
+    std::vector<float> r_vec(static_cast<size_t>(batch), 0.0f);
+    for (int64_t step = 0; step < num_steps; ++step) {
+        const float t0 = t_span[static_cast<size_t>(step)];
+        const float t1 = t_span[static_cast<size_t>(step + 1)];
+        const float dt = t1 - t0;
+        std::fill(t_vec.begin(), t_vec.end(), t0);
+        std::fill(r_vec.begin(), r_vec.end(), t1);
+        const auto outputs = runner.run(x, mask, t_vec, nullptr, &r_vec);
+        for (size_t i = 0; i < x.size(); ++i) {
+            x[i] += dt * outputs.mel[i];
         }
     }
 

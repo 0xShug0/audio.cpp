@@ -227,6 +227,32 @@ void expect_rejects(const std::string & label, const std::string & spec_text, co
     engine::test::require(rejected, label + " should reject with: " + needle);
 }
 
+std::string spec_with_download(const std::string & download) {
+    auto text = schema_v1_spec_text("[]");
+    const std::string anchor = "\"download\": {\"kind\": \"unsupported\", \"reason\": \"test fixture\"}";
+    const auto at = text.find(anchor);
+    engine::test::require(at != std::string::npos, "download fixture anchor exists");
+    text.replace(at, anchor.size(), "\"download\": " + download);
+    return text;
+}
+
+void test_download_kinds_schema() {
+    // ModelScope snapshot downloads validate like Hugging Face snapshots:
+    // repo is required, revision is optional.
+    engine::model_spec::validate_spec(
+        json::parse(spec_with_download(
+            R"JSON({"kind": "modelscope_snapshot", "repo": "audio-cpp/toy-model"})JSON")),
+        "modelscope_snapshot_repo_only");
+    engine::model_spec::validate_spec(
+        json::parse(spec_with_download(
+            R"JSON({"kind": "modelscope_snapshot", "repo": "audio-cpp/toy-model", "revision": "master"})JSON")),
+        "modelscope_snapshot_with_revision");
+    expect_rejects(
+        "modelscope_snapshot_missing_repo",
+        spec_with_download(R"JSON({"kind": "modelscope_snapshot"})JSON"),
+        "missing required field 'repo'");
+}
+
 void test_legacy_dependencies_schema() {
     // Valid legacy specs accept required model dependencies and conditional bundled dependencies.
     const auto spec = json::parse(schema_v1_spec_text(R"JSON([
@@ -1321,6 +1347,7 @@ void test_loading_and_resource_bundle() {
 int main() {
     try {
         test_legacy_dependencies_schema();
+        test_download_kinds_schema();
         test_typed_schema_renamed_dependencies();
         test_dependency_option_mapping_from_production_spec();
         test_options_schema();

@@ -48,6 +48,9 @@ int64_t require_head_dim(const QwenDecoderLayerConfig & config) {
         config.activation_cast.type != GGML_TYPE_F16 && config.activation_cast.type != GGML_TYPE_BF16) {
         throw std::runtime_error("QwenDecoderLayerConfig activation cast supports only f32, f16, and bf16");
     }
+    if (config.activation_cast.fused_round && config.activation_cast.type != GGML_TYPE_BF16) {
+        throw std::runtime_error("QwenDecoderLayerConfig fused activation rounding requires bf16");
+    }
     return config.head_dim;
 }
 
@@ -234,6 +237,13 @@ core::TensorValue activation_cast(
     const QwenDecoderActivationCastPolicy & policy) {
     if (policy.type == GGML_TYPE_F32) {
         return core::wrap_tensor(ggml_cast(ctx.ggml, input.tensor, GGML_TYPE_F32), input.shape, GGML_TYPE_F32);
+    }
+    if (policy.fused_round && policy.type == GGML_TYPE_BF16 && ggml_is_contiguous_rows(input.tensor)) {
+        // Fused single-kernel round-to-bf16: f32/f16/bf16 in, always f32 out,
+        // values rounded to bf16. Numerically identical to the cast round trip
+        // below (bf16 input is already rounded, so rounding is a widening no-op),
+        // but avoids the intermediate bf16 tensor and one kernel launch.
+        return core::wrap_tensor(ggml_round_bf16(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32);
     }
     auto rounded = core::wrap_tensor(ggml_cast(ctx.ggml, input.tensor, policy.type), input.shape, policy.type);
     return core::wrap_tensor(ggml_cast(ctx.ggml, rounded.tensor, GGML_TYPE_F32), input.shape, GGML_TYPE_F32);
