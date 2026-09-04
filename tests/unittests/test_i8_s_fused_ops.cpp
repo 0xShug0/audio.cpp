@@ -469,6 +469,46 @@ void test_im2col_asym(int n_threads) {
               << " OW=" << OW << " nth=" << n_threads << " OK\n";
 }
 
+// The VibeASR encoder flips its activations between channel-major and
+// length-major with ggml_cont(ggml_permute(...)), which lands in
+// ggml_compute_forward_dup. A byte copy moves the payload but not the in-band
+// scale, and the permuted view it is handed has no scale of its own, so the
+// scale has to be read through view_src. Getting this wrong leaves the copy
+// holding whatever was in the buffer -- values stay right while everything
+// downstream is off by an arbitrary factor.
+void test_i8_s_cont_permute(int n_threads) {
+    const int64_t C = 5;
+    const int64_t L = 33;
+
+    ggml_init_params ip = { kCtxBytes, nullptr, false };
+    ggml_context * ctx = ggml_init(ip);
+
+    ggml_tensor * src = ggml_new_tensor_2d(ctx, GGML_TYPE_I8_S, C, L);
+    const float src_scale = fill_i8_s(src, patterned(C * L, 0.6f, 1.9f));
+
+    ggml_tensor * result = ggml_cont(ctx, ggml_permute(ctx, src, 1, 0, 2, 3));
+    require_eq(result->ne[0], L, "cont(permute) ne0");
+    require_eq(result->ne[1], C, "cont(permute) ne1");
+
+    compute(ctx, result, n_threads);
+
+    const auto * in  = static_cast<const int8_t *>(src->data);
+    const auto * out = static_cast<const int8_t *>(result->data);
+    for (int64_t ic = 0; ic < C; ++ic) {
+        for (int64_t il = 0; il < L; ++il) {
+            require_eq(static_cast<int>(out[ic * L + il]), static_cast<int>(in[il * C + ic]),
+                       "cont(permute) value at c=" + std::to_string(ic) + " l=" + std::to_string(il));
+        }
+    }
+
+    // Rearrangement only: the same scale has to come out the other side.
+    require_close(*inband_scale(result), src_scale, 0.0f, "cont(permute) scale carried over");
+
+    ggml_free(ctx);
+    std::cout << "cont(permute) i8_s: C=" << C << " L=" << L
+              << " nth=" << n_threads << " OK\n";
+}
+
 }  // namespace
 
 int main() {
@@ -498,6 +538,7 @@ int main() {
             test_mul_mat_add_depthwise(nth, 36, 19);
             test_mul_mat_add_depthwise(nth, 7,  150);
             test_im2col_asym(nth);
+            test_i8_s_cont_permute(nth);
         }
     } catch (const std::exception & e) {
         std::cerr << "FAILED: " << e.what() << "\n";
