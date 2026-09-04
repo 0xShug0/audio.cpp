@@ -160,6 +160,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **sense_asr** | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | GGUF Q8, Stream | Jason Chen [@jasonchen31](https://github.com/jasonchen31), [@LauraGPT](https://github.com/LauraGPT) / FunASR | [SenseVoice-Small](docs/community_models/sense_asr.md) offline/streaming SAN-M + CTC transcription with event/emotion/language tags and ITN |
 | **soprano_tts** | TTS | en | GGUF Q8, Stream | [@WalkingCat](https://github.com/WalkingCat) | [Soprano-1.1-80M](https://huggingface.co/WalkingCat/Soprano-1.1-80M-GGUF) ultra-lightweight TTS with Qwen3 LM + Vocos decoder |
 | **vietneu_tts** | TTS, Clone | vi, en | GGUF | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](docs/community_models/vietneu_tts.md) TTS and voice cloning support |
+| **vibeasr** | ASR (encoder only) | n/a | GGUF I8_S | [@XsquirrelC](https://github.com/XsquirrelC) | [VibeASR VAE encoder](docs/community_models/vibeasr.md) INT8-weight and INT8-activation port of the VibeVoice acoustic/semantic tokenizers from [VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp); encoder only, the ternary I2_S decoder is not ported yet |
 
 ## Docker
 
