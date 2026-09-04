@@ -1,7 +1,13 @@
 #include "engine/community_models/vibeasr/assets.h"
 
+#include "engine/framework/model_spec/package.h"
+
+#include <gguf.h>
+
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::community_models::vibeasr {
@@ -112,6 +118,55 @@ VaeBranchConfig derive_branch(const assets::TensorSource & source, const std::st
     return branch;
 }
 
+// assets::TensorSource exposes tensors, not the GGUF KV block, and the decoder
+// geometry lives entirely in the KV block. Reading it directly is what the other
+// community entries do (see sense_asr/assets.cpp).
+class GgufMetadataReader {
+public:
+    explicit GgufMetadataReader(const std::filesystem::path & path) {
+        gguf_init_params params{};
+        params.no_alloc = true;
+        params.ctx = nullptr;
+        gguf_context * gguf = gguf_init_from_file(path.string().c_str(), params);
+        if (gguf == nullptr) {
+            throw std::runtime_error("Failed to read VibeASR GGUF metadata from " + path.string());
+        }
+        ctx_.reset(gguf);
+    }
+
+    int64_t require_u32(const char * key) const {
+        const int64_t id = gguf_find_key(ctx_.get(), key);
+        if (id < 0) {
+            throw std::runtime_error(std::string("VibeASR LM GGUF is missing ") + key);
+        }
+        return static_cast<int64_t>(gguf_get_val_u32(ctx_.get(), id));
+    }
+
+    float require_f32(const char * key) const {
+        const int64_t id = gguf_find_key(ctx_.get(), key);
+        if (id < 0) {
+            throw std::runtime_error(std::string("VibeASR LM GGUF is missing ") + key);
+        }
+        return gguf_get_val_f32(ctx_.get(), id);
+    }
+
+    std::string kv_str(const char * key, std::string fallback) const {
+        const int64_t id = gguf_find_key(ctx_.get(), key);
+        return id < 0 ? std::move(fallback) : std::string(gguf_get_val_str(ctx_.get(), id));
+    }
+
+private:
+    struct GgufDeleter {
+        void operator()(gguf_context * ctx) const noexcept {
+            if (ctx != nullptr) {
+                gguf_free(ctx);
+            }
+        }
+    };
+
+    std::unique_ptr<gguf_context, GgufDeleter> ctx_;
+};
+
 }  // namespace
 
 int64_t VaeBranchConfig::frames_for_samples(int64_t num_samples) const {
@@ -139,9 +194,79 @@ VibeASRVaeConfig derive_vae_config(const assets::TensorSource & source) {
 }
 
 std::shared_ptr<const VibeASRVaeAssets> load_vibeasr_vae_assets(const std::filesystem::path & model_path) {
+    return make_vibeasr_vae_assets(engine::assets::open_tensor_source(model_path));
+}
+
+std::shared_ptr<const VibeASRVaeAssets> make_vibeasr_vae_assets(
+    std::shared_ptr<const assets::TensorSource> source) {
     auto assets = std::make_shared<VibeASRVaeAssets>();
-    assets->source = engine::assets::open_tensor_source(model_path);
-    assets->config = derive_vae_config(*assets->source);
+    assets->config = derive_vae_config(*source);
+    assets->source = std::move(source);
+    return assets;
+}
+
+VibeASRLmConfig derive_lm_config(const assets::TensorSource & source) {
+    const GgufMetadataReader reader(source.source_path());
+
+    const std::string architecture = reader.kv_str("general.architecture", "");
+    if (architecture != "qwen2") {
+        throw std::runtime_error(
+            "VibeASR LM GGUF declares architecture '" + architecture + "', expected qwen2");
+    }
+
+    VibeASRLmConfig config;
+    config.vocab_size = reader.require_u32("qwen2.vocab_size");
+    config.hidden_size = reader.require_u32("qwen2.embedding_length");
+    config.intermediate_size = reader.require_u32("qwen2.feed_forward_length");
+    config.num_hidden_layers = reader.require_u32("qwen2.block_count");
+    config.num_attention_heads = reader.require_u32("qwen2.attention.head_count");
+    config.num_key_value_heads = reader.require_u32("qwen2.attention.head_count_kv");
+    config.max_position_embeddings = reader.require_u32("qwen2.context_length");
+    // The checkpoint has no attention.key_length: Qwen2 stores the per-head width
+    // only as the RoPE dimension count, which for this model equals
+    // embedding_length / head_count.
+    config.head_dim = reader.require_u32("qwen2.rope.dimension_count");
+    config.rms_norm_eps = reader.require_f32("qwen2.attention.layer_norm_rms_epsilon");
+    config.rope_theta = reader.require_f32("qwen2.rope.freq_base");
+
+    if (config.head_dim * config.num_attention_heads != config.hidden_size) {
+        throw std::runtime_error("VibeASR LM head_dim * head_count does not match embedding_length");
+    }
+    if (config.num_key_value_heads <= 0 || config.num_attention_heads % config.num_key_value_heads != 0) {
+        throw std::runtime_error("VibeASR LM head_count is not a multiple of head_count_kv");
+    }
+    if (config.num_hidden_layers <= 0) {
+        throw std::runtime_error("VibeASR LM declares no layers");
+    }
+
+    // Cross-check the metadata against the one tensor whose shape pins both dims.
+    const auto embedding = source.require_metadata("token_embd.weight").shape;
+    if (embedding.size() != 2 || embedding[0] != config.vocab_size || embedding[1] != config.hidden_size) {
+        throw std::runtime_error("VibeASR LM token_embd.weight does not match the declared geometry");
+    }
+    return config;
+}
+
+std::shared_ptr<const VibeASRAssets> load_vibeasr_assets(const std::filesystem::path & model_path) {
+    auto assets = std::make_shared<VibeASRAssets>();
+    assets->resources = engine::model_spec::load_resource_bundle_for_family(model_path, "vibeasr");
+
+    // A GGUF still carrying the VibeASR fork's type ids (36/37) fails deep inside
+    // the reader with an unhelpful message, so name the fix here.
+    auto open = [&assets](const char * id) {
+        try {
+            return assets->resources.open_tensor_source(id);
+        } catch (const std::exception & error) {
+            throw std::runtime_error(
+                std::string("VibeASR could not open the '") + id + "' GGUF (" + error.what() +
+                "). If it came straight from huggingface.co/XsquirrelC/VibeVoice-ASR-BitNet, run "
+                "tools/community_models/convert_vibeasr_gguf.py --in-place on it first.");
+        }
+    };
+
+    assets->vae = make_vibeasr_vae_assets(open("vae_weights"));
+    assets->lm_weights = open("lm_weights");
+    assets->lm = derive_lm_config(*assets->lm_weights);
     return assets;
 }
 

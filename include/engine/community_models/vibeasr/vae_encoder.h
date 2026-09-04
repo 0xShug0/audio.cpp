@@ -65,7 +65,7 @@ public:
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes = 64ull * 1024ull * 1024ull);
 
-    // Both branches consume the same waveform, sampled at 16 kHz and scaled to
+    // Both branches consume the same waveform, sampled at 24 kHz and scaled to
     // [-1, 1], and produce connector_hidden-wide features.
     VaeEncoderFeatures encode_acoustic(const std::vector<float> & samples);
     VaeEncoderFeatures encode_semantic(const std::vector<float> & samples);

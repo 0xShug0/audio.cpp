@@ -1,34 +1,44 @@
 #!/usr/bin/env python3
-"""Convert a VibeASR.cpp VAE encoder GGUF into an audio.cpp GGUF package.
+"""Convert a VibeASR.cpp GGUF into an audio.cpp GGUF package.
 
 Upstream: https://github.com/microsoft/VibeASR.cpp
+Weights:  https://huggingface.co/XsquirrelC/VibeVoice-ASR-BitNet
 
-VibeASR.cpp ships its VAE encoder already quantized to its own ggml fork's
-GGML_TYPE_I8_S, so there is nothing to re-quantize here. The only thing that
-differs is the numeric type id: the VibeASR fork picked 36 (I2_S) and
-37 (I8_S), which upstream ggml had already used for the retired
-IQ4_NL_4_4 / IQ4_NL_4_8 slots. audio.cpp therefore registers the same two
-types at 42 (I8_S) and 43 (I2_S).
+Handles both halves of the published package -- the I8_S VAE encoder and the
+ternary I2_S language model -- because they need exactly the same fix and
+nothing else. VibeASR.cpp ships both already quantized by its own ggml fork, so
+there is nothing to re-quantize here. The only thing that differs is the numeric
+type id: the VibeASR fork picked 36 (I2_S) and 37 (I8_S), which upstream ggml had
+already used for the retired IQ4_NL_4_4 / IQ4_NL_4_8 slots. audio.cpp therefore
+registers the same two types at 42 (I8_S) and 43 (I2_S). Tensors of any other
+type in the file -- the LM's Q6_K token embedding, its F16 output projection, and
+every F32 norm and bias -- are already portable and pass through untouched.
 
-The on-disk layout is identical either way -- an I8_S tensor is
-`nelements` int8 bytes followed by a single padded F32 tensor scale, and
-ggml's GGUF writer sizes every tensor with ggml_nbytes() -- so this tool
-rewrites the 4-byte type field of each tensor info and copies everything else
-through byte for byte. Data offsets, the data section, and the KV block are
-untouched.
+The on-disk layout is identical either way -- an I8_S tensor is `nelements` int8
+bytes followed by a single padded F32 tensor scale, an I2_S tensor is the same
+with 128 ternary codes packed per 32 bytes, and ggml's GGUF writer sizes every
+tensor with ggml_nbytes() -- so this tool rewrites the 4-byte type field of each
+tensor info and copies everything else through byte for byte. Data offsets, the
+data section, and the KV block are untouched.
 
 Examples:
   # inspect a VibeASR GGUF without writing anything
-  python3 tools/community_models/convert_vibeasr_vae.py \
+  python3 tools/community_models/convert_vibeasr_gguf.py \
       --input vibeasr-vae-encoder-i8_s.gguf --list
 
-  # produce the audio.cpp package
-  python3 tools/community_models/convert_vibeasr_vae.py \
+  # convert a downloaded package where it sits (both halves)
+  python3 tools/community_models/convert_vibeasr_gguf.py \
+      --input VibeVoice-ASR-BitNet/vibeasr-vae-encoder-i8_s.gguf --in-place
+  python3 tools/community_models/convert_vibeasr_gguf.py \
+      --input VibeVoice-ASR-BitNet/vibeasr-lm-i2_s-embed-q6_k.gguf --in-place
+
+  # or write the converted copy somewhere else
+  python3 tools/community_models/convert_vibeasr_gguf.py \
       --input vibeasr-vae-encoder-i8_s.gguf \
       --output models/vibeasr/vae_encoder-i8_s.gguf
 
   # confirm an already converted package needs no further remapping
-  python3 tools/community_models/convert_vibeasr_vae.py \
+  python3 tools/community_models/convert_vibeasr_gguf.py \
       --input models/vibeasr/vae_encoder-i8_s.gguf --check
 """
 import argparse
@@ -42,7 +52,7 @@ GGUF_MAGIC = b"GGUF"
 # audio.cpp cannot reuse 36/37.
 TYPE_REMAP = {36: 43, 37: 42}
 
-TYPE_NAMES = {0: "f32", 1: "f16", 8: "q8_0", 42: "i8_s", 43: "i2_s"}
+TYPE_NAMES = {0: "f32", 1: "f16", 8: "q8_0", 14: "q6_k", 42: "i8_s", 43: "i2_s"}
 
 # GGUF metadata value type ids.
 (
@@ -174,11 +184,17 @@ def list_tensors(infos) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--input", type=Path, required=True, help="VibeASR.cpp VAE encoder GGUF")
+    parser.add_argument("--input", type=Path, required=True, help="VibeASR.cpp GGUF (VAE encoder or LM)")
     parser.add_argument("--output", type=Path, help="audio.cpp GGUF to write")
+    parser.add_argument("--in-place", action="store_true", help="rewrite --input itself instead of writing a copy")
     parser.add_argument("--list", action="store_true", help="print the tensor table and exit")
     parser.add_argument("--check", action="store_true", help="exit non-zero if any tensor still needs remapping")
     args = parser.parse_args()
+
+    if args.in_place:
+        if args.output is not None:
+            parser.error("--in-place and --output are mutually exclusive")
+        args.output = args.input
 
     data = bytearray(args.input.read_bytes())
     infos, alignment = parse_tensor_infos(bytes(data))
@@ -196,7 +212,7 @@ def main() -> int:
         return 0
 
     if args.output is None:
-        parser.error("--output is required unless --list or --check is given")
+        parser.error("--output or --in-place is required unless --list or --check is given")
 
     # Guard against a double conversion: the fork ids and the audio.cpp ids are
     # both valid ggml types, so a second pass would silently corrupt nothing but

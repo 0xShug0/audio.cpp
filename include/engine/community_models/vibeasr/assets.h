@@ -1,9 +1,10 @@
 #pragma once
 
-// VibeASR VAE encoder assets.
+// VibeASR assets: the I8_S audio VAE encoder and the ternary I2_S Qwen2 decoder.
 //
-// Ported from https://github.com/microsoft/VibeASR.cpp (src/vae.cpp).
+// Ported from https://github.com/microsoft/VibeASR.cpp (src/vae.cpp, src/lm.cpp).
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <cstdint>
@@ -70,5 +71,39 @@ struct VibeASRVaeAssets {
 VibeASRVaeConfig derive_vae_config(const assets::TensorSource & source);
 
 std::shared_ptr<const VibeASRVaeAssets> load_vibeasr_vae_assets(const std::filesystem::path & model_path);
+
+// Same, for a tensor source already opened from a resource bundle.
+std::shared_ptr<const VibeASRVaeAssets> make_vibeasr_vae_assets(
+    std::shared_ptr<const assets::TensorSource> source);
+
+// Decoder geometry. Unlike the encoder, none of this is recoverable from the
+// tensor shapes alone -- head_dim, rope_theta and the RMS norm epsilon are not
+// implied by any weight -- so it comes from the GGUF qwen2.* metadata block.
+struct VibeASRLmConfig {
+    int64_t vocab_size = 0;
+    int64_t hidden_size = 0;
+    int64_t intermediate_size = 0;
+    int64_t num_hidden_layers = 0;
+    int64_t num_attention_heads = 0;
+    int64_t num_key_value_heads = 0;
+    int64_t head_dim = 0;
+    int64_t max_position_embeddings = 0;
+    // 1e-6 for the published checkpoint. Note this is *not* the encoder's
+    // epsilon: the VAE graph hardcodes 1e-5 (see VibeASRVaeConfig).
+    float rms_norm_eps = 1e-6f;
+    float rope_theta = 1e6f;
+};
+
+// The two GGUF halves plus the tokenizer files, as named by model_specs/vibeasr.json.
+struct VibeASRAssets {
+    assets::ResourceBundle resources;
+    std::shared_ptr<const VibeASRVaeAssets> vae;
+    std::shared_ptr<const assets::TensorSource> lm_weights;
+    VibeASRLmConfig lm;
+};
+
+VibeASRLmConfig derive_lm_config(const assets::TensorSource & source);
+
+std::shared_ptr<const VibeASRAssets> load_vibeasr_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::community_models::vibeasr
