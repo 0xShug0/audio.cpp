@@ -287,8 +287,13 @@ void test_loads_model_directory_through_family_spec() {
   (void)make_resources(root, current_config());
   auto assets = engine::models::fun_asr_nano::load_fun_asr_nano_assets(root);
   require_published_dimensions(assets->config);
-  engine::test::require_eq(assets->resources.model_root(), root,
-                           "Fun-ASR model root");
+  // Compare canonical forms: the loader stores the resolved root, while the
+  // path we passed in may differ lexically yet denote the same directory
+  // (macOS /var symlink to /private/var, Windows TEMP 8.3 short names).
+  engine::test::require_eq(
+      std::filesystem::weakly_canonical(assets->resources.model_root()),
+      std::filesystem::weakly_canonical(root),
+      "Fun-ASR model root");
   std::filesystem::remove_all(root);
 }
 
