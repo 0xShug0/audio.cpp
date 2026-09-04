@@ -119,6 +119,19 @@ GGML_API size_t ggml_i8_s_from_float(const float * GGML_RESTRICT x, void  * GGML
 GGML_API void   ggml_i2_s_to_float  (const void  * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t n);
 GGML_API size_t ggml_i2_s_from_float(const float * GGML_RESTRICT x, void  * GGML_RESTRICT y, int64_t n);
 
+// Activation quantizer for the I2_S matmul: one row in, int8 payload out, with
+// the scale and the row's int8 sum handed back out of band.
+//
+// Out of band because neither fits the in-band convention above. The scale is
+// per row here, not per tensor, since a language model activation row is a
+// single token and its dynamic range has nothing to do with its neighbours'.
+// The sum is needed because I2_S stores the ternary values as the codes
+// {0, 1, 2} rather than {-1, 0, +1}: an integer dot against the codes gives
+// sum(w*q) + sum(q), so the row sum has to be subtracted back out. Computing it
+// here costs nothing -- the values are already in registers.
+GGML_API void ggml_i8_s_quantize_act(const float * GGML_RESTRICT x, int8_t * GGML_RESTRICT q, int64_t n,
+                                     float * GGML_RESTRICT scale, int32_t * GGML_RESTRICT sum);
+
 GGML_API void iq2xs_init_impl(enum ggml_type type);
 GGML_API void iq2xs_free_impl(enum ggml_type type);
 GGML_API void iq3xs_init_impl(int grid_size);

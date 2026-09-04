@@ -2539,6 +2539,31 @@ size_t ggml_i2_s_from_float(const float * GGML_RESTRICT x, void * GGML_RESTRICT 
     return i2_s_payload_bytes(n) + ggml_type_extra_bytes(GGML_TYPE_I2_S);
 }
 
+void ggml_i8_s_quantize_act(const float * GGML_RESTRICT x, int8_t * GGML_RESTRICT q, int64_t n,
+                            float * GGML_RESTRICT scale, int32_t * GGML_RESTRICT sum) {
+    float amax = 0.0f;
+    for (int64_t i = 0; i < n; ++i) {
+        const float a = fabsf(x[i]);
+        if (a > amax) amax = a;
+    }
+
+    // -127..127 rather than -128..127, as in ggml_i8_s_from_float.
+    const float d  = amax / 127.0f;
+    const float id = d != 0.0f ? 1.0f / d : 0.0f;
+
+    int32_t s = 0;
+    for (int64_t i = 0; i < n; ++i) {
+        int v = nearest_int(x[i] * id);
+        if (v >  127) v =  127;
+        if (v < -127) v = -127;
+        q[i] = (int8_t)v;
+        s   += v;
+    }
+
+    *scale = d;
+    *sum   = s;
+}
+
 // ====================== "True" 2-bit (de)-quantization
 
 void dequantize_row_iq2_xxs(const block_iq2_xxs * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {

@@ -2294,6 +2294,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND i8_s_fused_ops_test
     )
 
+    add_engine_unittest(i2_s_mul_mat_test tests/unittests/test_i2_s_mul_mat.cpp)
+
+    add_test(
+        NAME i2_s_mul_mat_test
+        COMMAND i2_s_mul_mat_test
+    )
+
     add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
     target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 

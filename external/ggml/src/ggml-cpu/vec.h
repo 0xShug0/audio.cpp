@@ -50,6 +50,23 @@ void ggml_vec_dot_f16(int n, float * GGML_RESTRICT s, size_t bs, ggml_fp16_t * G
 // n is arbitrary: whatever the vector width does not cover is done scalar.
 void ggml_vec_dot_i8_i8(int n, int32_t * GGML_RESTRICT s, size_t bs, const int8_t * GGML_RESTRICT x, size_t bx, const int8_t * GGML_RESTRICT y, int nrc);
 
+// Packed ternary x int8 dot products for GGML_TYPE_I2_S, accumulating in int32.
+//
+// x holds the 2-bit codes as they sit on disk: 128 values per 32-byte group,
+// byte gp of a group carrying the values at group-relative positions gp, 32+gp,
+// 64+gp and 96+gp in bit pairs 6, 4, 2, 0. y is plain sequential int8, so the
+// four code lanes of a group line up with four consecutive 32-value slices of y
+// and no shuffling is needed on either side.
+//
+// The result is sum(code*y), NOT sum(w*y): the codes are {0,1,2} where the
+// weights are {-1,0,+1}, so the caller subtracts sum(y) to recover the real
+// contraction. Keeping the bias out of the kernel is what lets the unsigned
+// multiply-add instructions be used directly.
+//
+// nrc rows of x, each bx bytes apart, are contracted against the single row y;
+// result row stride is bs int32s. n must be a multiple of 128.
+void ggml_vec_dot_i2_i8(int n, int32_t * GGML_RESTRICT s, size_t bs, const uint8_t * GGML_RESTRICT x, size_t bx, const int8_t * GGML_RESTRICT y, int nrc);
+
 void ggml_vec_silu_f32(const int n, float * y, const float * x);
 ggml_float ggml_vec_cvar_f32(const int n, float * y, const float * x, const float mean); //it will also center y ( y = y - mean )
 ggml_float ggml_vec_soft_max_f32(const int n, float * y, const float * x, float max);

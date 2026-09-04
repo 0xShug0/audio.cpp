@@ -21,7 +21,7 @@ not a different architecture:
 | Encoder weights | F32 / Q8_0 | `GGML_TYPE_I8_S`, one F32 scale per tensor |
 | Encoder activations | F32 | INT8 throughout; every stage requantizes |
 | Ops | generic ggml | the five fused I8_S ops (`ggml_mul_mat_add`, `ggml_mul_mat_add_relu`, `ggml_add_scaled`, `ggml_rms_norm_scaled`, `ggml_im2col_asym`) |
-| Decoder | Q8_0 Qwen2 | ternary `GGML_TYPE_I2_S` (not ported yet) |
+| Decoder | Q8_0 Qwen2 | ternary `GGML_TYPE_I2_S` (kernel in tree, graph not yet) |
 | Backends | CPU, CUDA, Metal | CPU only — the I8_S ops have no GPU kernels |
 | Streaming | yes | no |
 
@@ -185,12 +185,12 @@ Ported:
 
 Not ported yet:
 
-- **The decoder.** VibeASR.cpp runs it on ternary `GGML_TYPE_I2_S` weights whose
-  matmul kernel is not in tree yet, so there is no loader, no session, and no
+- **The decoder.** The ternary `GGML_TYPE_I2_S` matmul is in tree (plain
+  `ggml_mul_mat` with an I2_S weight; see `i2_s_mul_mat_test`), but the Qwen2
+  graph that uses it is not, so there is no loader, no session, and no
   `--family vibeasr` — nothing can transcribe through this path today. The
   encoder output is the LM input, so the halves are independently reviewable but
-  only useful together. Two follow-up PRs cover it: the I2_S matmul kernel, then
-  the decoder graph plus loader and session.
+  only useful together.
 
 Known limitations:
 

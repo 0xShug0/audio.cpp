@@ -1255,6 +1255,17 @@ void ggml_compute_forward_mul_mat(
         return;
     }
 
+    // Ternary weights own their activation quantization, so they cannot use the
+    // vec_dot_type path below: that quantizes src1 one row at a time into a
+    // fixed row_size and hands the kernel nothing but two row pointers, while
+    // I2_S needs the per-row activation scale and int8 row sum to survive into
+    // the epilogue. Branching here rather than adding an op keeps the language
+    // model graph on plain ggml_mul_mat.
+    if (src0->type == GGML_TYPE_I2_S) {
+        ggml_compute_forward_mul_mat_i2_s(params, dst);
+        return;
+    }
+
     GGML_TENSOR_BINARY_OP_LOCALS
 
     const int ith = params->ith;
@@ -2846,6 +2857,17 @@ struct ggml_cplan ggml_graph_plan(
                 case GGML_OP_MUL_MAT:
                 case GGML_OP_MUL_MAT_PACK4:
                     {
+                        if (node->src[0]->type == GGML_TYPE_I2_S) {
+                            // The int8 activation rows, then one scale and one
+                            // int8 row sum each. I2_S has no vec_dot_type entry
+                            // -- see ggml_compute_forward_mul_mat_i2_s.
+                            const int64_t nrows_y = ggml_nrows(node->src[1]);
+
+                            cur  = GGML_PAD((size_t) ggml_nelements(node->src[1]), sizeof(float));
+                            cur += nrows_y*(sizeof(float) + sizeof(int32_t));
+                            break;
+                        }
+
                         const enum ggml_type vec_dot_type = type_traits_cpu[node->src[0]->type].vec_dot_type;
 
                         if (node->src[1]->type != vec_dot_type) {

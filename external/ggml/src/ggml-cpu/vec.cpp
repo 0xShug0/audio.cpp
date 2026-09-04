@@ -502,6 +502,129 @@ void ggml_vec_dot_i8_i8(int n, int32_t * GGML_RESTRICT s, size_t bs, const int8_
     }
 }
 
+void ggml_vec_dot_i2_i8(int n, int32_t * GGML_RESTRICT s, size_t bs, const uint8_t * GGML_RESTRICT x, size_t bx, const int8_t * GGML_RESTRICT y, int nrc) {
+    // 128 values per 32-byte group, and every I2_S row in the language model is
+    // a multiple of that, so there is no partial-group path to get wrong.
+    assert(n % 128 == 0);
+
+    const int nb = n / 128;
+
+    for (int row = 0; row < nrc; ++row) {
+        const uint8_t * xr = x + (size_t)row*bx;
+
+        int     b    = 0;
+        int32_t sumi = 0;
+
+#if defined(__AVX2__)
+        // Shifting by 16-bit lanes pulls bits down from the neighbouring byte,
+        // but the mask discards them: after >>6 the low two bits of each byte
+        // are exactly that byte's top code.
+        const __m256i mask  = _mm256_set1_epi8(0x03);
+        const __m256i one16 = _mm256_set1_epi16(1);
+
+        __m256i acc = _mm256_setzero_si256();
+
+        // Each maddubs lane holds a sum of two code*int8 products, at most
+        // 2*2*127 = 508 in magnitude, and eight groups contribute 32 of them:
+        // 32*508 = 16256, still inside int16. Widening once per eight groups
+        // rather than once per group keeps the madd out of the inner loop.
+        while (b < nb) {
+            const int bend = b + 8 < nb ? b + 8 : nb;
+
+            __m256i acc16 = _mm256_setzero_si256();
+
+            for (; b < bend; ++b) {
+                const __m256i xq = _mm256_loadu_si256((const __m256i *)(xr + (size_t)b*32));
+
+                const __m256i c0 = _mm256_and_si256(_mm256_srli_epi16(xq, 6), mask);
+                const __m256i c1 = _mm256_and_si256(_mm256_srli_epi16(xq, 4), mask);
+                const __m256i c2 = _mm256_and_si256(_mm256_srli_epi16(xq, 2), mask);
+                const __m256i c3 = _mm256_and_si256(xq, mask);
+
+                const int8_t * py = y + (size_t)b*128;
+
+                const __m256i y0 = _mm256_loadu_si256((const __m256i *)(py +  0));
+                const __m256i y1 = _mm256_loadu_si256((const __m256i *)(py + 32));
+                const __m256i y2 = _mm256_loadu_si256((const __m256i *)(py + 64));
+                const __m256i y3 = _mm256_loadu_si256((const __m256i *)(py + 96));
+
+                acc16 = _mm256_add_epi16(acc16, _mm256_add_epi16(_mm256_maddubs_epi16(c0, y0),
+                                                                 _mm256_maddubs_epi16(c1, y1)));
+                acc16 = _mm256_add_epi16(acc16, _mm256_add_epi16(_mm256_maddubs_epi16(c2, y2),
+                                                                 _mm256_maddubs_epi16(c3, y3)));
+            }
+
+            acc = _mm256_add_epi32(acc, _mm256_madd_epi16(acc16, one16));
+        }
+
+        sumi = ggml_i8_hsum_i32_4(_mm_add_epi32(_mm256_castsi256_si128(acc),
+                                                _mm256_extracti128_si256(acc, 1)));
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+        // Half a group per iteration, since a NEON register holds 16 of the 32
+        // bytes. The four code lanes still map to the four 32-value slices of y,
+        // offset by which half of the group is loaded.
+        const uint8x16_t mask = vdupq_n_u8(3);
+
+        int32x4_t acc = vdupq_n_s32(0);
+
+        for (; b < nb; ++b) {
+            for (int h = 0; h < 2; ++h) {
+                const uint8x16_t xq = vld1q_u8(xr + (size_t)b*32 + h*16);
+
+                const int8x16_t c0 = vreinterpretq_s8_u8(vandq_u8(vshrq_n_u8(xq, 6), mask));
+                const int8x16_t c1 = vreinterpretq_s8_u8(vandq_u8(vshrq_n_u8(xq, 4), mask));
+                const int8x16_t c2 = vreinterpretq_s8_u8(vandq_u8(vshrq_n_u8(xq, 2), mask));
+                const int8x16_t c3 = vreinterpretq_s8_u8(vandq_u8(xq, mask));
+
+                const int8_t * py = y + (size_t)b*128 + h*16;
+
+                const int8x16_t y0 = vld1q_s8(py +  0);
+                const int8x16_t y1 = vld1q_s8(py + 32);
+                const int8x16_t y2 = vld1q_s8(py + 64);
+                const int8x16_t y3 = vld1q_s8(py + 96);
+
+    #if defined(__ARM_FEATURE_DOTPROD)
+                acc = vdotq_s32(acc, c0, y0);
+                acc = vdotq_s32(acc, c1, y1);
+                acc = vdotq_s32(acc, c2, y2);
+                acc = vdotq_s32(acc, c3, y3);
+    #else
+                // Products top out at 2*127 = 254, so the int16 halves are safe
+                // and vpadalq_s16 folds them pairwise straight into int32.
+                acc = vpadalq_s16(acc, vmull_s8(vget_low_s8 (c0), vget_low_s8 (y0)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_high_s8(c0), vget_high_s8(y0)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_low_s8 (c1), vget_low_s8 (y1)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_high_s8(c1), vget_high_s8(y1)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_low_s8 (c2), vget_low_s8 (y2)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_high_s8(c2), vget_high_s8(y2)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_low_s8 (c3), vget_low_s8 (y3)));
+                acc = vpadalq_s16(acc, vmull_s8(vget_high_s8(c3), vget_high_s8(y3)));
+    #endif
+            }
+        }
+
+        sumi = vaddvq_s32(acc);
+#endif
+
+        // Portable path, and the only path on targets without either ISA.
+        for (; b < nb; ++b) {
+            const uint8_t * px = xr + (size_t)b*32;
+            const int8_t  * py = y  + (size_t)b*128;
+
+            for (int gp = 0; gp < 32; ++gp) {
+                const uint8_t v = px[gp];
+
+                sumi += (int32_t)((v >> 6) & 3) * (int32_t)py[      gp];
+                sumi += (int32_t)((v >> 4) & 3) * (int32_t)py[32  + gp];
+                sumi += (int32_t)((v >> 2) & 3) * (int32_t)py[64  + gp];
+                sumi += (int32_t)( v       & 3) * (int32_t)py[96  + gp];
+            }
+        }
+
+        s[(size_t)row*bs] = sumi;
+    }
+}
+
 void ggml_vec_silu_f32(const int n, float * y, const float * x) {
     int i = 0;
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
