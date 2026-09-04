@@ -182,12 +182,15 @@ void write_qwen_cached_step_mask(
     int64_t visible_prefix_steps,
     int64_t current_slot);
 
+// active_mask（可选，长度==batch_size）：置 0 的行整行 -inf（即使其 cache 段残留
+// stale KV 也不 attend）；nullptr = 全部活跃（原行为）。
 void write_qwen_batched_cached_step_mask(
     ggml_tensor * tensor,
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
     int64_t mask_steps,
     const std::vector<int64_t> & member_ends,
-    const std::vector<int32_t> & cache_slots);
+    const std::vector<int32_t> & cache_slots,
+    const std::vector<uint8_t> * active_mask = nullptr);
 
 }  // namespace engine::modules

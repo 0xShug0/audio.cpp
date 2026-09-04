@@ -18,19 +18,26 @@
 
 namespace engine::models::fireredtts3 {
 
-
-
-// 真·batch 并发调度器（llama.cpp update_slots 的模拟）。
-// 一个共享 FireRedArRuntime + FireRedFlowRuntime + FireRedRedAeRuntime，
-// 多个 slot（请求）每轮把活跃 slot 的 AR decode 合并成一个 batch
-// （decode_embeddings_batched，per-member position）。固定 max_batch graph，
-// 运行期不重建；slot 中途 stop 掉队（dead 行零填充），新 slot 通过
-// export -> splice -> import 加入。
+// 真·并发调度器（llama.cpp update_slots 的精神：model/graph 对请求无状态，slot 是
+// 轻量状态机，一个请求 = 一个 slot）。
+//
+// 结构（比历史版本大幅简化，删除了 export/splice/rebuild/dirty/freeze 整机）：
+//   - 共享一个 FireRedArRuntime + FireRedFlowRuntime + FireRedRedAeRuntime，
+//     固定 max_batch batched-decode graph（运行期永不重建）。
+//   - "round"：一轮并发请求（≤ max_batch）。轮开始时对该轮所有 slot 做一次全量
+//     干净 import（只写本轮的 prefill KV，其余行全零），之后每 tick 一次 batched
+//     decode 同时推进该轮所有活跃行。轮与轮之间串行 —— 新请求等当前轮 drain。
+//   - 行隔离由 decode 层的 active_mask 保证：非活跃行整行 -inf 且不 advance，
+//     即使其 cache 段有内容也不参与 attention，绝不残留跨轮内容（每轮 import 全量清零）。
+//
+// 不变量：
+//   - 任何一次 batched decode 运行时，图上只有"当前轮活跃行"带真实内容。
+//   - slot release（owner 排空结束）即归还空闲；epoch 单调，stale 句柄立即失效。
 class FireRedTTS3BatchScheduler {
 public:
     // 一个并发请求 = 一个 slot（持有其 AR + RedAE 增量解码状态 + chunk 队列）
     struct Slot {
-        enum class State { Idle, Active, Dead, Done, Failed };
+        enum class State { Idle, Active, Dead, Failed };
         State state = State::Idle;
         FireRedTTS3BaseRequest request;
         std::vector<int64_t> chunks;          // 块 patch 数（流式）
@@ -42,7 +49,7 @@ public:
         std::vector<float> chunk_latents;
         // 参考音色 prep 产物（wave 形成时拷进 slot，不持有 cache 引用跨轮）
         std::vector<float> prompt_latents;
-        // prefill 单路径 KV state（CPU，用于拼进 batched KV）
+        // prefill 单路径 KV state（CPU，拼进 batched KV 用）
         engine::runtime::TransformerKVState prefill_state;
         bool prefill_done = false;
         // RedAE 增量解码状态（per-slot）
@@ -51,12 +58,11 @@ public:
         std::deque<engine::runtime::AudioBuffer> chunk_queue;
         bool finished = false;
         std::exception_ptr error;
-        // 代次：launch 时 +1（重置后回写），release_slot 时再 +1。句柄失效/幂等判定用。
+        // 代次：launch 时 +1，release_slot 时再 +1。句柄失效/幂等判定用。
         uint64_t epoch = 0;
     };
 
     // 句柄：{slot id, 代次}。持有句柄才能读块/归还/终止。
-    // slot 被释放并复用时 epoch +1，旧句柄立即失效（stale 访问视作流结束，不读新请求状态）。
     struct SlotHandle {
         int64_t id = -1;
         uint64_t epoch = 0;
@@ -81,9 +87,8 @@ public:
     // 启动一个请求（分配 slot），返回句柄。槽池耗尽返回无效句柄（id == -1）。
     SlotHandle launch(const FireRedTTS3BaseRequest & request, const std::vector<int64_t> & chunk_patches);
     // 取下一音频块（驱动调度轮次直到该 slot 产出块或结束）。
-    // 句柄失效（stale / 已 release）→ 立即返回空块，不读新请求状态（防串音）。
     engine::runtime::AudioBuffer next_chunk(const SlotHandle & handle);
-    // 归还已完成并排空的 slot 到空闲池（owner 在确认结束时显式调用；幂等）。
+    // 归还已完成并排空的 slot 到空闲池（owner 确认结束时显式调用；幂等）。
     void release_slot(const SlotHandle & handle);
     // 快速终止仍 Active 的 slot（供 reset/异常清理），终止后需排空 + release_slot。
     void abort(const SlotHandle & handle);

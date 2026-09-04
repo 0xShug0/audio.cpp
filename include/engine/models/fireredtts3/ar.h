@@ -6,6 +6,7 @@
 #include "engine/models/fireredtts3/assets.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -44,11 +45,14 @@ public:
     void start_decode_embeddings_batched(
         const engine::runtime::TransformerBatchedKVState & state, int64_t required_cache_steps);
     engine::modules::QwenCausalDecodeStepResult decode_embeddings_batched(
-        const std::vector<float> & embeddings, int64_t batch_size);
+        const std::vector<float> & embeddings, int64_t batch_size,
+        const std::vector<uint8_t> & active_mask = {});
     engine::runtime::TransformerBatchedKVState export_batched_decode_state() const;
     // 冻结/重置某 batch 行的解码位置：非活跃行应保持 end=0（mask 全 -inf，不参与 attention），
     // 避免 run_batched_decode_step 对空行 advance_member 导致其位置递增、mask 污染活跃行。
     void set_batched_member_end(int64_t batch, int64_t end);
+    // [DIAG] 当前 batched decode 各行的解码结束位置（未启动则空）。
+    std::vector<int64_t> batched_member_ends() const;
 
     void release_graphs();
     void release_backbone_graphs();

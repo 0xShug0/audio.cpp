@@ -16,7 +16,6 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
-#include <set>
 #include <stdexcept>
 #include <thread>
 
@@ -28,12 +27,11 @@ namespace modules = engine::modules;
 using Clock = std::chrono::steady_clock;
 
 constexpr int64_t kMaxArSteps = 400;
-// prefill graph 固定 steps（grow-only 复用）：所有 wave 的 prefill 都 padding 到该长度，
+// prefill graph 固定 steps（grow-only 复用）：所有请求的 prefill 都 padding 到该长度，
 // 避免因 steps 变化重建 prefill graph 破坏 CUDA pool 逆序 free 约束。
 constexpr int64_t kMaxPrefillSteps = 1024;
 // batched decode KV cache 固定上限（首次 build 后永不重建）：
 // 最大可能 prefill（参考 + 长文本 ~300） + kMaxArSteps(400) + 尾部余量。
-// 若实际 prefill_steps 超此预算，decode 会 cache 耗尽（罕见，可调大）。
 constexpr int64_t kMaxDecodeCacheSteps = 700;
 
 // 与 pipeline.cpp 一致的参考音色 key/entry（避免引用失效跨轮，slot 拷贝产物）。
@@ -214,9 +212,6 @@ public:
             return {};
         }
         // 纯等待模式：调度线程负责 tick（batch decode），本线程只等自己的 chunk。
-        // ggml CUDA pool 逆序约束 -> 唯一 GPU decode 线程必须是调度线程。
-        // 用带谓词的 wait（wait 内部重查条件），避免"检查 queue 后、wait 前"的
-        // notify 竞态窗口导致死等。
         cv_.wait(lock, [&] {
             return slot.finished || !slot.chunk_queue.empty() || slot.state == Slot::State::Failed || slot.error != nullptr;
         });
@@ -258,7 +253,6 @@ public:
             release_slot(handle);
             throw;
         }
-        // drain 结束（slot 必已 finished）：显式归还，slot 才可被复用。
         release_slot(handle);
         return merged;
     }
@@ -283,8 +277,8 @@ public:
     }
 
     // owner 在排空结束（next_chunk 见空 / reset / generate drain 完）时显式归还 slot。
-    // 只回收 terminal（finished 且非 Active/Dead）的 slot；过早调用 no-op。
-    // 幂等：epoch 不匹配（已 release/复用）直接返回。
+    // 只回收 terminal（Idle 且 finished）的 slot；过早调用 no-op。幂等。
+    // 归还即"slot 回到干净空闲态"，下一次 launch 复用它时行是零（每轮 import 全量清零）。
     void release_slot(const SlotHandle & handle) {
         std::lock_guard<std::mutex> lock(mu_);
         if (!handle.valid() || handle.id >= max_batch_) {
@@ -294,11 +288,8 @@ public:
         if (slot.epoch != handle.epoch) {
             return;  // 已 release 或复用 → 幂等
         }
-        if (slot.state == Slot::State::Active || slot.state == Slot::State::Dead) {
-            return;  // 过早：调用方应先 abort+drain，不回收活 slot
-        }
-        if (!slot.finished) {
-            return;
+        if (slot.state != Slot::State::Idle || !slot.finished) {
+            return;  // 过早：调用方应先排空（Dead 在 finish_slot 转 Idle），不回收活 slot
         }
         slot.epoch++;  // 残留句柄立即失效
         if (std::find(free_slots_.begin(), free_slots_.end(), handle.id) == free_slots_.end()) {
@@ -307,11 +298,11 @@ public:
         fprintf(stderr, "[RELEASED] slot=%ld epoch=%llu\n",
                 handle.id, (unsigned long long)slot.epoch);
         fflush(stderr);
+        cv_wake_.notify_all();  // 空闲槽可能让新一轮开跑
         cv_.notify_all();
     }
 
-    // 快速终止仍 Active 的 slot（reset/异常清理用）：
-    // Active → Dead（若尚未被 form_wave 领走则从 pending 摘除），调度线程下一轮 finish 收尾。
+    // 快速终止仍 Active 的 slot（reset/异常清理用）：Active → Dead，调度线程收尾。
     void abort(const SlotHandle & handle) {
         std::lock_guard<std::mutex> lock(mu_);
         if (!handle.valid() || handle.id >= max_batch_) {
@@ -325,13 +316,13 @@ public:
             return;  // 已 Dead/Idle/Failed，无需干预
         }
         if (!slot.prefill_done) {
-            // 尚未被 form_wave 领走：直接从 pending 摘除，避免 Dead slot 被 prefill。
+            // 尚未被领进 round：直接从 pending 摘除，避免 Dead slot 被 prefill。
             pending_.erase(
                 std::remove(pending_.begin(), pending_.end(), handle.id),
                 pending_.end());
         }
         slot.state = Slot::State::Dead;
-        cv_wake_.notify_all();  // 唤醒可能休眠的调度线程收尾
+        cv_wake_.notify_all();
     }
 
 private:
@@ -375,7 +366,7 @@ private:
             assets_->campplus_weights, execution_.config(), std::move(cfg));
     }
 
-    // 单个 slot 的 prefill（锁内串行）：参考 prep + 单路径 prefill，KV 存 CPU。
+    // 单个 slot 的 prefill（锁内串行）：参考 prep + 单路径 padded prefill，KV 存 CPU。
     void prefill_slot_locked(int64_t slot_id) {
         auto & slot = slots_[static_cast<size_t>(slot_id)];
         const auto & ref = prepare_reference_voice_locked(slot.request.prompt_audio);
@@ -414,82 +405,188 @@ private:
         redae_->decode_reset(slot.redae_state);
     }
 
-    // 是否存在活跃 decode slot（step>=1，已在 batched KV 中）。
-    bool has_active_decode_locked() const {
+    // 是否存在某 slot 已 prefill（即已占用 decode graph 的一行）。非空 → 当前有 round 在跑。
+    bool any_round_participant_locked() const {
         for (int64_t i = 0; i < max_batch_; ++i) {
             const auto & slot = slots_[static_cast<size_t>(i)];
-            if (slot.state == Slot::State::Active && slot.prefill_done && slot.step >= 1) {
+            if (slot.state == Slot::State::Active && slot.prefill_done) {
                 return true;
             }
         }
         return false;
     }
 
-    // ---- 调度主循环（锁内）----
-    // 与 pipeline.cpp 的单路径 AR 循环逐位对应：
-    //   step 0: 用 prefill_hidden 的 stop/one_backbone 走 AR（不 consume decode）
-    //   step>=1: decode_embeddings_batched 产出 hidden 后走 AR
-    void tick_locked() {
-        // 1. 处理 pending 启动（prefill 新 slot）。仅当无活跃 decode slot 时才 prefill
-        //    （wave batching）：prefill graph 与 batched decode graph 共用同一 CUDA
-        //    device pool，若在 decode 进行中 prefill（重建 prefill graph），会破坏
-        //    pool 的逆序 free 约束（GGML_ASSERT(ptr == pool_addr + pool_used)）。
-        if (!pending_.empty() && !has_active_decode_locked()) {
-            form_wave_locked();
-        }
-        // 2. 对 step==0 且已 prefill 的 slot 走 step-0 AR（不进 batch decode，
-        //    否则零行会被 advance_member 污染 KV 位置）。
+    // 当前 round 的活跃 decode 行（step>=1，真正在 decode）。
+    std::vector<int64_t> active_decode_rows_locked() const {
+        std::vector<int64_t> out;
         for (int64_t i = 0; i < max_batch_; ++i) {
-            auto & slot = slots_[static_cast<size_t>(i)];
-            if (slot.state == Slot::State::Active && slot.prefill_done && slot.step == 0) {
-                advance_slot_from_prefill_locked(i);
-            }
-        }
-        // 3. 收集 step>=1 的活跃 slot（参与 batched decode）
-        std::vector<int64_t> active;
-        for (int64_t i = 0; i < max_batch_; ++i) {
-            auto & slot = slots_[static_cast<size_t>(i)];
+            const auto & slot = slots_[static_cast<size_t>(i)];
             if (slot.state == Slot::State::Active && slot.prefill_done && slot.step >= 1) {
-                active.push_back(i);
+                out.push_back(i);
             }
         }
-        if (active.empty()) {
-            // 没有需要 decode 的 slot；若 step-0 AR 让某些 slot 进入 Dead，
-            // 本轮结束前清理。
-            for (int64_t i = 0; i < max_batch_; ++i) {
-                auto & slot = slots_[static_cast<size_t>(i)];
-                if (slot.state == Slot::State::Dead || slot.state == Slot::State::Done) {
-                    finish_slot_locked(i);
+        return out;
+    }
+
+    // ---- 调度主循环（锁内）----
+    // round 制：
+    //   begin_round: prefill 所有 pending 请求 → 一次全量干净 import（只写本轮行，
+    //                其余行零）→ 对本轮每个 slot 走 step-0 AR（AR0，不 consume decode）。
+    //   之后每 tick: 一次 batched decode 同时推进本轮所有 step>=1 活跃行。
+    //   slot 结束（stop/上限）→ Dead → finish_slot 收尾（flush RedAE）→ Idle+finished，
+    //   等 owner 排空后 release_slot 归还空闲。
+    //   round 全部 drain 后，新 pending 才开新一轮（全量 import 天然清零旧内容）。
+    void tick_locked() {
+        tick_count_++;
+        // 1. 开新一轮：有待 prefill 的请求，且当前无任何已 prefill 的 round 参与者在跑。
+        if (!pending_.empty() && !any_round_participant_locked()) {
+            begin_round_locked();
+        }
+        // 2. 一次 batched decode 推进当前 round 所有活跃行。
+        const auto active = active_decode_rows_locked();
+        if (!active.empty()) {
+            decode_round_step_locked(active);
+        }
+        // 3. 收尾 Dead/Failed slot（flush RedAE 尾部、标记 finished、唤醒 owner）。
+        for (int64_t i = 0; i < max_batch_; ++i) {
+            auto & slot = slots_[static_cast<size_t>(i)];
+            if (slot.state == Slot::State::Dead || slot.state == Slot::State::Failed) {
+                finish_slot_locked(i);
+            }
+        }
+    }
+
+    // 开一轮：prefill 全部 pending，全量干净 import，AR0。
+    void begin_round_locked() {
+        std::vector<int64_t> round_slots;
+        while (!pending_.empty()) {
+            const int64_t slot_id = pending_.front();
+            pending_.pop_front();
+            round_slots.push_back(slot_id);
+        }
+        for (int64_t slot_id : round_slots) {
+            try {
+                prefill_slot_locked(slot_id);
+            } catch (...) {
+                auto & slot = slots_[static_cast<size_t>(slot_id)];
+                slot.error = std::current_exception();
+                slot.state = Slot::State::Failed;
+                slot.finished = true;
+                // 失败 slot 留待 owner next_chunk 抛错后 release_slot 回收。
+            }
+        }
+        // 成功的 round 成员（Active && prefill_done）
+        std::vector<int64_t> members;
+        for (int64_t i = 0; i < max_batch_; ++i) {
+            const auto & slot = slots_[static_cast<size_t>(i)];
+            if (slot.state == Slot::State::Active && slot.prefill_done) {
+                members.push_back(i);
+            }
+        }
+        if (members.empty()) {
+            return;  // 全失败；本 tick 末尾 finish_slot 收尾
+        }
+        if (diag_enabled()) {
+            std::string m;
+            for (size_t k = 0; k < members.size(); ++k) {
+                m += std::to_string(members[k]);
+                if (k + 1 < members.size()) {
+                    m += ",";
                 }
             }
-            return;
+            fprintf(stderr, "[ROUND] t=%lld members=[%s] prefill_ends=[",
+                    (long long)tick_count_, m.c_str());
+            for (int64_t i : members) {
+                fprintf(stderr, "%lld,", (long long)slots_[static_cast<size_t>(i)].prefill_steps);
+            }
+            fprintf(stderr, "]\n");
+            fflush(stderr);
         }
-        // 4. 若 batched decode 未启动，或需要 splice 新 slot（step-0 AR 后），重建。
-        if (!batched_started_ || !imported_slots_.empty()) {
-            rebuild_batched_state_locked();
+        // 全量干净 import：只写本轮成员行的 prefill KV，其余行全零。
+        import_round_state_locked(members);
+        // AR0：对本轮每个成员走 step-0 AR（用 CPU prefill_hidden，不 consume decode）。
+        for (int64_t slot_id : members) {
+            advance_slot_from_prefill_locked(slot_id);
         }
-        // 5. 收集 embeddings；非活跃行零填充
+    }
+
+    // 组装全量 batched state 并 import（写满所有行：成员行=prefill，非成员行=零）。
+    void import_round_state_locked(const std::vector<int64_t> & members) {
+        int64_t max_steps = 0;
+        for (int64_t i : members) {
+            max_steps = std::max(max_steps, slots_[static_cast<size_t>(i)].prefill_steps);
+        }
+        const size_t layer_count = slot_prefill_layer_count();
+        if (layer_count == 0) {
+            throw std::runtime_error("FireRedTTS3 round import requires prefill layer state");
+        }
+        const size_t row_elems = static_cast<size_t>(assets_->base.kv_heads * assets_->base.head_dim);
+        runtime::TransformerBatchedKVState state;
+        state.batch_size = max_batch_;
+        state.current_end = max_steps;
+        state.current_ends.assign(static_cast<size_t>(max_batch_), 0);
+        state.layers.resize(layer_count);
+        for (size_t layer = 0; layer < layer_count; ++layer) {
+            auto & out_layer = state.layers[layer];
+            out_layer.valid_steps = max_steps;
+            out_layer.key.assign(
+                static_cast<size_t>(max_batch_) * static_cast<size_t>(max_steps) * row_elems, 0.0F);
+            out_layer.value.assign(
+                static_cast<size_t>(max_batch_) * static_cast<size_t>(max_steps) * row_elems, 0.0F);
+        }
+        for (int64_t b : members) {
+            auto & slot = slots_[static_cast<size_t>(b)];
+            state.current_ends[static_cast<size_t>(b)] = slot.prefill_steps;
+            for (size_t layer = 0; layer < layer_count; ++layer) {
+                const size_t copy_elems = static_cast<size_t>(slot.prefill_steps) * row_elems;
+                float * dst_key = state.layers[layer].key.data()
+                    + static_cast<size_t>(b) * static_cast<size_t>(max_steps) * row_elems;
+                float * dst_value = state.layers[layer].value.data()
+                    + static_cast<size_t>(b) * static_cast<size_t>(max_steps) * row_elems;
+                const auto & src = slot.prefill_state.layers[layer];
+                if (src.key.size() != copy_elems || src.value.size() != copy_elems) {
+                    throw std::runtime_error("FireRedTTS3 prefill state size mismatch during round import");
+                }
+                std::copy(src.key.begin(), src.key.end(), dst_key);
+                std::copy(src.value.begin(), src.value.end(), dst_value);
+            }
+        }
+        // start_decode_embeddings_batched：graph 未建则建（固定 cache），已建则仅 import
+        // （重写整张 cache tensor —— 本轮成员行写入，非成员行清零）。
+        ar_->start_decode_embeddings_batched(state, kMaxDecodeCacheSteps);
+    }
+
+    // 一次 batched decode 推进本轮所有活跃行（非活跃行 inert）。
+    void decode_round_step_locked(const std::vector<int64_t> & active) {
         const int64_t hidden = assets_->base.hidden_size;
         std::vector<float> embeddings(static_cast<size_t>(max_batch_ * hidden), 0.0F);
-        for (int64_t i = 0; i < max_batch_; ++i) {
+        std::vector<uint8_t> active_mask(static_cast<size_t>(max_batch_), 0);
+        for (int64_t i : active) {
             auto & slot = slots_[static_cast<size_t>(i)];
-            if (slot.state == Slot::State::Active && slot.prefill_done && slot.step >= 1) {
-                std::copy(slot.next_input.begin(), slot.next_input.end(),
-                          embeddings.begin() + static_cast<std::ptrdiff_t>(i * hidden));
+            std::copy(slot.next_input.begin(), slot.next_input.end(),
+                      embeddings.begin() + static_cast<std::ptrdiff_t>(i * hidden));
+            active_mask[static_cast<size_t>(i)] = 1;
+        }
+        auto out = ar_->decode_embeddings_batched(embeddings, max_batch_, active_mask);
+        if (diag_enabled()) {
+            for (int64_t i : active) {
+                const size_t base = static_cast<size_t>(i) * static_cast<size_t>(hidden);
+                bool nan = false;
+                for (int64_t e = 0; e < hidden; ++e) {
+                    if (std::isnan(out.hidden[base + static_cast<size_t>(e)])) {
+                        nan = true;
+                        break;
+                    }
+                }
+                if (nan) {
+                    fprintf(stderr, "[NAN] t=%lld row=%lld step=%lld\n",
+                            (long long)tick_count_, (long long)i,
+                            (long long)slots_[static_cast<size_t>(i)].step);
+                    fflush(stderr);
+                }
             }
         }
-        // 5.5 冻结非活跃行的解码位置（end=0，mask 全 -inf），避免空行被
-        // advance_member 推高位置后 mask 污染活跃行（导致 stop 判定错乱/内容重复）。
-        for (int64_t i = 0; i < max_batch_; ++i) {
-            auto & slot = slots_[static_cast<size_t>(i)];
-            if (slot.state != Slot::State::Active || !slot.prefill_done || slot.step < 1) {
-                ar_->set_batched_member_end(i, 0);
-            }
-        }
-        // 6. 一次 batched decode（每成员独立 pos/cache-slot/mask）
-        auto out = ar_->decode_embeddings_batched(embeddings, max_batch_);
-        // 7. 分发 hidden 到各 step>=1 活跃 slot
-        for (int64_t i = 0; i < max_batch_; ++i) {
+        for (int64_t i : active) {
             auto & slot = slots_[static_cast<size_t>(i)];
             if (slot.state != Slot::State::Active || !slot.prefill_done || slot.step < 1) {
                 continue;
@@ -499,16 +596,10 @@ private:
                 out.hidden.begin() + static_cast<std::ptrdiff_t>((i + 1) * hidden));
             advance_slot_locked(i, row);
         }
-        // 8. 处理完成/死亡的 slot（flush RedAE 尾部，标记 finished，归还槽位）
-        for (int64_t i = 0; i < max_batch_; ++i) {
-            auto & slot = slots_[static_cast<size_t>(i)];
-            if (slot.state == Slot::State::Dead || slot.state == Slot::State::Done) {
-                finish_slot_locked(i);
-            }
-        }
     }
 
     // step-0 AR：用 prefill_hidden 的 stop/one_backbone 走 AR，不 consume decode。
+    // 生成的第一个 latent 作为 next_input，随后进入 batched decode（step>=1）。
     void advance_slot_from_prefill_locked(int64_t slot_id) {
         auto & slot = slots_[static_cast<size_t>(slot_id)];
         const int64_t hidden = assets_->base.hidden_size;
@@ -651,50 +742,57 @@ private:
         return current;
     }
 
-    // 完成一个 slot：flush RedAE 尾部、标记 finished、归还槽位。
-    // 只处理 Dead（Done 已处理过并归还）；Done 状态由 launch 复用前的 reset 清除。
+    // 完成一个 slot：flush RedAE 尾部、标记 finished（Idle），等 owner 排空 + release。
+    // 只处理 Dead / Failed；finished 后槽位暂归 owner，绝不在此 push free_slots_。
     void finish_slot_locked(int64_t slot_id) {
         auto & slot = slots_[static_cast<size_t>(slot_id)];
+        if (slot.state != Slot::State::Dead && slot.state != Slot::State::Failed) {
+            return;
+        }
         fprintf(stderr, "[FINISH] slot=%ld tokens=%zu gen_patches=%ld\n",
                 slot_id, slot.request.token_ids.size(), slot.generated_patches);
         fflush(stderr);
-        if (slot.state != Slot::State::Dead) {
-            return;
-        }
-        // 有剩余 chunk_latents → decode_incremental 输出 tail（含 istft 尾部）；
-        // 无剩余 → flush_incremental 输出尾部。二选一，避免 decode + flush 双输出导致重复。
-        if (!slot.chunk_latents.empty() && slot.generated_patches > 0) {
-            auto audio = redae_->decode_incremental(slot.redae_state, slot.chunk_latents);
-            slot.chunk_latents.clear();
-            if (!audio.samples.empty()) {
-                slot.chunk_queue.push_back(std::move(audio));
+        if (slot.state == Slot::State::Dead) {
+            // 有剩余 chunk_latents → decode_incremental 输出 tail（含 istft 尾部）；
+            // 无剩余 → flush_incremental 输出尾部。二选一，避免 decode + flush 双输出。
+            if (!slot.chunk_latents.empty() && slot.generated_patches > 0) {
+                auto audio = redae_->decode_incremental(slot.redae_state, slot.chunk_latents);
+                slot.chunk_latents.clear();
+                if (!audio.samples.empty()) {
+                    slot.chunk_queue.push_back(std::move(audio));
+                }
+            } else {
+                auto flush = redae_->flush_incremental(slot.redae_state);
+                if (!flush.samples.empty()) {
+                    slot.chunk_queue.push_back(std::move(flush));
+                }
             }
-        } else {
-            auto flush = redae_->flush_incremental(slot.redae_state);
-            if (!flush.samples.empty()) {
-                slot.chunk_queue.push_back(std::move(flush));
-            }
         }
+        // Failed slot 的 error 由 owner next_chunk rethrow；此处仅置 finished。
         slot.state = Slot::State::Idle;
         slot.finished = true;
-        // 不再 push free_slots_：slot 暂归 owner 所有（保留态），等 owner 在
-        // next_chunk 排空见空后显式 release_slot 归还，杜绝"未 drain 完的 slot 被复用"
-        // （旧 owner 串读新请求 chunk / Slot{} 析构与 drain 交错 double-free）。
-        fprintf(stderr, "[DONE_WAIT_RELEASE] slot=%ld gen_patches=%ld\n",
-                slot_id, slot.generated_patches);
-        fflush(stderr);
-        // 该行不再参与 decode：从 running 集合移除（下次 join 时重建）。
-        running_active_.erase(
-            std::remove(running_active_.begin(), running_active_.end(), slot_id),
-            running_active_.end());
-        imported_slots_.erase(slot_id);
-        // 该行 KV 在 GPU 上仍残留 decode 产物；标记脏，下次 rebuild 时清零。
-        dirty_rows_.insert(slot_id);
+        // 该 slot 的 GPU 行内容由下一轮全量 import 清零；期间它不在 active（active_mask
+        // 置 0 → 整行 -inf 且不 advance），绝不参与 decode、绝不污染其他行。
         cv_.notify_all();
     }
 
+    // 是否有待启动请求或待收尾 slot（决定 scheduler_loop 是否休眠）。
+    bool has_work_locked() const {
+        if (!pending_.empty()) {
+            return true;
+        }
+        for (int64_t i = 0; i < max_batch_; ++i) {
+            const auto & slot = slots_[static_cast<size_t>(i)];
+            if (slot.state == Slot::State::Active || slot.state == Slot::State::Dead ||
+                slot.state == Slot::State::Failed) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // 专用调度线程主循环（唯一 GPU decode 线程）。
-    // 持锁跑 tick（batch decode 推进所有活跃 slot），无活跃 slot 时等待 launch/stop。
+    // 持锁跑 tick（一次 batched decode 推进所有活跃行），无工作/无 pending 时等待。
     void scheduler_loop() {
         std::unique_lock<std::mutex> lock(mu_);
         while (!stop_) {
@@ -706,7 +804,7 @@ private:
             tick_locked();
             // 若本 tick 产出了新 chunk，短暂让出锁：让 next_chunk（cv_.wait）能抢到锁
             // 取走 chunk，实现真正的增量流式（否则调度线程持锁持续 tick，一次性
-            // 生成完整个 slot，流式退化成离线）。
+            // 生成完整个 round，流式退化成离线）。
             size_t chunks_after = 0;
             for (int64_t i = 0; i < max_batch_; ++i) {
                 chunks_after += slots_[static_cast<size_t>(i)].chunk_queue.size();
@@ -714,242 +812,18 @@ private:
             if (chunks_after > chunks_before) {
                 cv_wake_.wait_for(lock, std::chrono::milliseconds(1));
             }
-            // 有工作（Active 未完成 / Dead 待 finish）则继续 tick；否则等新工作。
-            bool has_work = false;
-            for (int64_t i = 0; i < max_batch_; ++i) {
-                auto & slot = slots_[static_cast<size_t>(i)];
-                if (slot.state == Slot::State::Active ||
-                    slot.state == Slot::State::Dead) {
-                    has_work = true;
-                    break;
-                }
-            }
-            if (!has_work) {
+            if (!has_work_locked()) {
                 cv_wake_.wait(lock);
             }
         }
     }
 
-    // 形成 wave：prefill pending slot（锁内串行）。prefill 后标记需 splice。
-    void form_wave_locked() {
-        // 一次最多 prefill 直到槽池满（但同一轮只 prefill，不挤占已活跃 slot 的 GPU）
-        std::vector<int64_t> newly;
-        while (!pending_.empty() && newly.size() < static_cast<size_t>(max_batch_)) {
-            const int64_t slot_id = pending_.front();
-            pending_.pop_front();
-            newly.push_back(slot_id);
-        }
-        for (int64_t slot_id : newly) {
-            try {
-                prefill_slot_locked(slot_id);
-                imported_slots_.insert(slot_id);  // 标记需要 splice 进 batched KV
-            } catch (...) {
-                auto & slot = slots_[static_cast<size_t>(slot_id)];
-                slot.error = std::current_exception();
-                slot.state = Slot::State::Failed;
-                slot.finished = true;
-                // 不 push free_slots_：失败 slot 留待 owner next_chunk 抛错 → reset/异常路径
-                // 显式 release_slot 回收，避免失败槽在 owner 处理错误前被复用。
-            }
-        }
-    }
-
-    // 重建 batched KV state：export 当前 GPU state + splice 新 prefill slot 的 CPU KV + 重新 start。
-    // 固定 max_batch graph，不重建（batch_size 不变、cache_steps 不减）。
-    void rebuild_batched_state_locked() {
-        // 需要 splice 的新 slot（尚未在 batched 中）
-        std::vector<int64_t> joining;
-        for (int64_t i = 0; i < max_batch_; ++i) {
-            auto & slot = slots_[static_cast<size_t>(i)];
-            if (slot.prefill_done && imported_slots_.count(i) > 0) {
-                joining.push_back(i);
-            }
-        }
-        if (batched_started_ && !joining.empty()) {
-            // 从 GPU 导出当前 batched state（active slot 的中间 KV 保留）
-            runtime::TransformerBatchedKVState gpu = ar_->export_batched_decode_state();
-            // 层数/row_elems 校验（与 import_state 的期望布局一致）
-            if (gpu.layers.size() != slot_prefill_layer_count()) {
-                throw std::runtime_error("FireRedTTS3BatchScheduler batched state layer mismatch");
-            }
-            // 组装全量 batched state：max_steps = 所有"有数据行"（imported/running）的最大 end。
-            // 空行（无 prefill、非 running）end=0，不参与 max_steps（避免 gpu 残留的空行
-            // 高 end 撑大 state，导致与 current_ends 的 import max 不一致）。
-            runtime::TransformerBatchedKVState state;
-            state.batch_size = max_batch_;
-            state.current_ends.assign(static_cast<size_t>(max_batch_), 0);
-            for (int64_t i = 0; i < max_batch_; ++i) {
-                if (imported_slots_.count(i) > 0) {
-                    state.current_ends[static_cast<size_t>(i)] = slots_[static_cast<size_t>(i)].prefill_steps;
-                } else if (std::find(running_active_.begin(), running_active_.end(), i) != running_active_.end()) {
-                    state.current_ends[static_cast<size_t>(i)] = gpu_end_for(gpu, i);
-                }
-            }
-            static int rebuild_dbg = 0;
-            if (rebuild_dbg++ < 10) {
-                std::string ends;
-                for (int64_t i = 0; i < max_batch_; ++i) {
-                    ends += std::to_string(state.current_ends[static_cast<size_t>(i)]) + ",";
-                }
-                std::string gpu_ends;
-                if (!gpu.current_ends.empty()) {
-                    for (size_t i = 0; i < gpu.current_ends.size(); ++i) {
-                        gpu_ends += std::to_string(gpu.current_ends[i]) + ",";
-                    }
-                }
-                fprintf(stderr, "[REBUILD] batch=%ld state_ends=[%s] gpu_ends=[%s] running=[",
-                        (long)max_batch_, ends.c_str(), gpu_ends.c_str());
-                for (size_t i = 0; i < running_active_.size(); ++i) {
-                    fprintf(stderr, "%ld,", (long)running_active_[i]);
-                }
-                fprintf(stderr, "]\n");
-                fflush(stderr);
-            }
-            int64_t max_steps = 0;
-            for (int64_t i = 0; i < max_batch_; ++i) {
-                max_steps = std::max(max_steps, state.current_ends[static_cast<size_t>(i)]);
-            }
-            state.current_end = max_steps;
-            state.layers.resize(gpu.layers.size());
-            for (size_t layer = 0; layer < state.layers.size(); ++layer) {
-                auto & out_layer = state.layers[layer];
-                out_layer.valid_steps = max_steps;
-                const size_t row_elems = row_elems_for_layer(layer);
-                out_layer.key.assign(static_cast<size_t>(max_batch_) * static_cast<size_t>(max_steps) * row_elems, 0.0F);
-                out_layer.value.assign(static_cast<size_t>(max_batch_) * static_cast<size_t>(max_steps) * row_elems, 0.0F);
-            }
-            // 填充每行：已运行 slot（running）从 gpu 拷贝其 ends；新 slot 从 prefill_state 拷贝；
-            // 其余（dead/脏/空行）保持全零。
-            for (int64_t b = 0; b < max_batch_; ++b) {
-                if (imported_slots_.count(b) == 0 && std::find(running_active_.begin(), running_active_.end(), b) == running_active_.end()) {
-                    continue;  // 非活跃行：全零（不拷 gpu 残留）
-                }
-                const int64_t end = (imported_slots_.count(b) > 0)
-                    ? slots_[static_cast<size_t>(b)].prefill_steps
-                    : gpu_end_for(gpu, b);
-                if (end <= 0) {
-                    continue;
-                }
-                static int splice_dbg = 0;
-                if (splice_dbg++ < 20) {
-                    fprintf(stderr, "[SPLICE] row=%ld src=%s tokens=%zu end=%ld\n", b,
-                            imported_slots_.count(b) > 0 ? "new-prefill" : "gpu-running",
-                            slots_[static_cast<size_t>(b)].request.token_ids.size(), end);
-                    fflush(stderr);
-                }
-                const int64_t current_end = end;
-                for (size_t layer = 0; layer < state.layers.size(); ++layer) {
-                    const size_t row_elems = row_elems_for_layer(layer);
-                    const size_t copy_elems = static_cast<size_t>(current_end) * row_elems;
-                    float * dst_key = state.layers[layer].key.data()
-                        + static_cast<size_t>(b) * static_cast<size_t>(max_steps) * row_elems;
-                    float * dst_value = state.layers[layer].value.data()
-                        + static_cast<size_t>(b) * static_cast<size_t>(max_steps) * row_elems;
-                    if (imported_slots_.count(b) > 0) {
-                        const auto & src = slots_[static_cast<size_t>(b)].prefill_state.layers[layer];
-                        std::copy(src.key.begin(), src.key.end(), dst_key);
-                        std::copy(src.value.begin(), src.value.end(), dst_value);
-                    } else {
-                        const auto & src = gpu.layers[layer];
-                        const size_t src_row_elems = row_elems;
-                        const int64_t gpu_valid_steps = gpu.layers.empty() ? 0 : gpu.layers.front().valid_steps;
-                        const size_t src_offset = static_cast<size_t>(b) * static_cast<size_t>(gpu_valid_steps) * src_row_elems;
-                        std::copy(
-                            src.key.begin() + static_cast<std::ptrdiff_t>(src_offset),
-                            src.key.begin() + static_cast<std::ptrdiff_t>(src_offset + copy_elems),
-                            dst_key);
-                        std::copy(
-                            src.value.begin() + static_cast<std::ptrdiff_t>(src_offset),
-                            src.value.begin() + static_cast<std::ptrdiff_t>(src_offset + copy_elems),
-                            dst_value);
-                    }
-                }
-            }
-            const int64_t required_steps = compute_required_steps(max_steps);
-            ar_->start_decode_embeddings_batched(state, required_steps);
-            for (int64_t i : joining) {
-                imported_slots_.erase(i);
-            }
-        } else if (!joining.empty()) {
-            // 首次启动（无 GPU 导出，全部新 slot）
-            int64_t max_steps = 0;
-            for (int64_t i = 0; i < max_batch_; ++i) {
-                auto & slot = slots_[static_cast<size_t>(i)];
-                if (slot.prefill_done) {
-                    max_steps = std::max(max_steps, slot.prefill_steps);
-                }
-            }
-            runtime::TransformerBatchedKVState state;
-            state.batch_size = max_batch_;
-            state.current_end = max_steps;
-            state.current_ends.assign(static_cast<size_t>(max_batch_), 0);
-            state.layers.resize(slot_prefill_layer_count());
-            for (size_t layer = 0; layer < state.layers.size(); ++layer) {
-                auto & out_layer = state.layers[layer];
-                out_layer.valid_steps = max_steps;
-                const size_t row_elems = row_elems_for_layer(layer);
-                out_layer.key.assign(static_cast<size_t>(max_batch_) * static_cast<size_t>(max_steps) * row_elems, 0.0F);
-                out_layer.value.assign(static_cast<size_t>(max_batch_) * static_cast<size_t>(max_steps) * row_elems, 0.0F);
-            }
-            for (int64_t b = 0; b < max_batch_; ++b) {
-                auto & slot = slots_[static_cast<size_t>(b)];
-                if (!slot.prefill_done) {
-                    continue;
-                }
-                state.current_ends[static_cast<size_t>(b)] = slot.prefill_steps;
-                for (size_t layer = 0; layer < state.layers.size(); ++layer) {
-                    const size_t row_elems = row_elems_for_layer(layer);
-                    const size_t copy_elems = static_cast<size_t>(slot.prefill_steps) * row_elems;
-                    float * dst_key = state.layers[layer].key.data()
-                        + static_cast<size_t>(b) * static_cast<size_t>(max_steps) * row_elems;
-                    float * dst_value = state.layers[layer].value.data()
-                        + static_cast<size_t>(b) * static_cast<size_t>(max_steps) * row_elems;
-                    const auto & src = slot.prefill_state.layers[layer];
-                    std::copy(src.key.begin(), src.key.end(), dst_key);
-                    std::copy(src.value.begin(), src.value.end(), dst_value);
-                }
-            }
-            const int64_t required_steps = compute_required_steps(max_steps);
-            ar_->start_decode_embeddings_batched(state, required_steps);
-            // 全量分支：所有 prefill slot 已 splice 进 batched KV，清空 imported 标记，
-            // 否则每次 tick 都会重复 rebuild（用 prefill_steps 覆盖 GPU 增量 KV）。
-            imported_slots_.clear();
-        }
-        batched_started_ = true;
-        dirty_rows_.clear();
-        running_active_.clear();
-        for (int64_t i = 0; i < max_batch_; ++i) {
-            auto & slot = slots_[static_cast<size_t>(i)];
-            if (slot.state == Slot::State::Active && slot.prefill_done) {
-                running_active_.push_back(i);
-            }
-        }
-    }
-
-    // 计算 batched decode graph 所需 cache steps。为避免 graph 重建（昂贵），
-    // 首次 build 用保守上限：max_steps + 完整 AR 预算。后续 join 若 max_steps
-    // 增长超预算才重建（罕见），通常复用首次 graph。
-    int64_t compute_required_steps(int64_t /*max_prefill_steps*/) const {
-        // 固定 cache 上限：首次 build 后永不重建（避免 export 空 state / pool 顺序破坏）。
-        // 预算 = 最大可能 prefill（参考+文本） + kMaxArSteps + 尾部。
-        // KV 显存 = max_batch × cache_steps × layers × row_elems ≈ 可控。
-        return kMaxDecodeCacheSteps;
-    }
-
-    // GPU batched state 中某行的当前 end（运行中 slot 用它作为拷贝长度）
-    int64_t gpu_end_for(const runtime::TransformerBatchedKVState & gpu, int64_t batch) const {
-        if (!gpu.current_ends.empty()) {
-            if (static_cast<int64_t>(gpu.current_ends.size()) == gpu.batch_size) {
-                return gpu.current_ends[static_cast<size_t>(batch)];
-            }
-        }
-        return gpu.current_end;
+    // [DIAG] 轮/步日志是否开启（仅看是否有待处理请求，避免纯空闲刷屏）。
+    bool diag_enabled() const {
+        return tick_count_ < 1000000;
     }
 
     size_t slot_prefill_layer_count() const {
-        if (max_batch_ == 0) {
-            return 0;
-        }
         for (int64_t i = 0; i < max_batch_; ++i) {
             auto & slot = slots_[static_cast<size_t>(i)];
             if (slot.prefill_done && !slot.prefill_state.layers.empty()) {
@@ -957,11 +831,6 @@ private:
             }
         }
         return 0;
-    }
-
-    size_t row_elems_for_layer(size_t /*layer*/) const {
-        // FireRed TTS3 AR: kv_heads × head_dim（同 pipeline prefill state 的层元素数）。
-        return static_cast<size_t>(assets_->base.kv_heads * assets_->base.head_dim);
     }
 
     std::shared_ptr<const FireRedTTS3Assets> assets_;
@@ -978,19 +847,13 @@ private:
 
     std::mutex mu_;
     std::condition_variable cv_;       // chunk 产出 / slot 结束通知（next_chunk 等待）
-    std::condition_variable cv_wake_;  // 调度线程唤醒（launch / stop）
+    std::condition_variable cv_wake_;  // 调度线程唤醒（launch / release / stop）
     std::vector<Slot> slots_;
     std::deque<int64_t> free_slots_;
     std::deque<int64_t> pending_;
-    bool batched_started_ = false;
     bool stop_ = false;
     std::thread scheduler_thread_;
-    // 已 spliced 进 batched KV 的 slot（运行中）；新 prefill 的 slot 在此集合外，需 join。
-    std::vector<int64_t> running_active_;
-    // 已 prefill 但尚未 splice 进 batched KV 的 slot id
-    std::set<int64_t> imported_slots_;
-    // 刚结束、GPU 行残留 KV 的 slot id（下次 rebuild 时该行清零）
-    std::set<int64_t> dirty_rows_;
+    int64_t tick_count_ = 0;  // [DIAG]
 };
 
 FireRedTTS3BatchScheduler::FireRedTTS3BatchScheduler(

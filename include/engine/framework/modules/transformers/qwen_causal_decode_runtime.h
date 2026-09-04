@@ -98,9 +98,14 @@ public:
         const runtime::TransformerBatchedKVState & state,
         int64_t required_cache_steps);
     QwenCausalDecodeStepResult decode_tokens_batched(const std::vector<int32_t> & tokens);
+    // 每步 batched decode。active_mask（可选，长度==batch_size）：只有置 1 的行才
+    // 真正前进一步、mask 才暴露其前缀；置 0 的行全 -inf（不读自身 stale KV）、
+    // 不 advance —— 非活跃行彻底 inert，杜绝"冻结行携带上一请求 stale KV 参与
+    // decode"导致的跨请求串音。
     QwenCausalDecodeStepResult decode_embeddings_batched(
         const std::vector<float> & embeddings,
-        int64_t batch_size);
+        int64_t batch_size,
+        const std::vector<uint8_t> & active_mask = {});
     // 冻结/重置某 batch 行的解码位置（非活跃行 end=0，mask 全 -inf）。
     void set_batched_member_end(int64_t batch, int64_t end);
 
@@ -113,6 +118,9 @@ public:
     int64_t decode_current_end() const noexcept;
     int64_t decode_valid_steps() const noexcept;
     void release_runtime_graphs();
+
+    // [DIAG] 每 batch 行的当前解码结束位置（member_ends_ 拷贝；未启动则空）。
+    std::vector<int64_t> batched_member_ends() const;
 
 private:
     class Impl;
