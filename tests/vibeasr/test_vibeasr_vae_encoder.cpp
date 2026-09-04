@@ -180,8 +180,8 @@ int main(int argc, char ** argv) {
         audio_path.empty() || !engine::io::is_existing_file(audio_path)) {
         std::fprintf(
             stderr,
-            "SKIP: test_vibeasr_vae_encoder needs --model <vae_encoder-i8_s.gguf> and --audio <16 kHz wav>.\n"
-            "      Convert a VibeASR.cpp checkpoint with tools/community_models/convert_vibeasr_vae.py first.\n");
+            "SKIP: test_vibeasr_vae_encoder needs --model <vibeasr-vae-encoder-i8_s.gguf> and --audio <wav>.\n"
+            "      Convert a VibeASR.cpp checkpoint with tools/community_models/convert_vibeasr_gguf.py first.\n");
         return kExitSkip;
     }
 
@@ -192,8 +192,10 @@ int main(int argc, char ** argv) {
                          audio_path.string().c_str(), wav.channels);
             return kExitSkip;
         }
-        if (wav.sample_rate != 16000) {
-            std::fprintf(stderr, "SKIP: %s is %d Hz, the encoder expects 16 kHz\n",
+        // The encoder is a raw-waveform stack: it accepts whatever rate the clip
+        // carries, and only the frame count and the reported RTF depend on it.
+        if (wav.sample_rate <= 0) {
+            std::fprintf(stderr, "SKIP: %s reports sample rate %d\n",
                          audio_path.string().c_str(), wav.sample_rate);
             return kExitSkip;
         }
@@ -215,7 +217,7 @@ int main(int argc, char ** argv) {
         engine::community_models::vibeasr::VibeASRVaeEncoderRuntime runtime(assets, execution_context);
 
         const auto num_samples = static_cast<int64_t>(wav.samples.size());
-        const double audio_seconds = static_cast<double>(num_samples) / 16000.0;
+        const double audio_seconds = static_cast<double>(num_samples) / static_cast<double>(wav.sample_rate);
 
         const auto acoustic_start = std::chrono::steady_clock::now();
         const auto acoustic = runtime.encode_acoustic(wav.samples);
