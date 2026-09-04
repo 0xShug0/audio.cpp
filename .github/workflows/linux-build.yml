@@ -76,8 +76,10 @@ jobs:
         # sometimes does not register at all. Revisit once that is understood.
         run: |
           cmake --build "$BUILD_DIR" --parallel "$(nproc)"
-          EXCLUDE="-E audio_utility_api_test"
+          # ctest -E replaces (not unions) on repeat: pass one regex.
           if [ "${{ matrix.enable_vulkan }}" = "ON" ]; then
-            EXCLUDE="$EXCLUDE -E rnnoise_utility_test -E zipenhancer_utility_test"
+            EXCLUDE="-E \"audio_utility_api_test|rnnoise_utility_test|zipenhancer_utility_test\""
+          else
+            EXCLUDE="-E audio_utility_api_test"
           fi
           ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel 4 $EXCLUDE
