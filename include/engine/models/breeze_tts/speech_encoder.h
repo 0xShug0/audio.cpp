@@ -19,7 +19,8 @@ namespace engine::models {
 namespace breeze_tts {
 
 struct BreezeSpeechEncoderWeights;
-class BreezeSpeechEncoderGraph;
+class BreezeSpeechEncoderConvGraph;
+class BreezeSpeechEncoderTransformerGraph;
 
 struct BreezeSpeechEncoderOutput {
     BreezeSpeechCodes codes;
@@ -46,7 +47,8 @@ private:
     core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;
     std::unique_ptr<core::ConstantTensorCache> constants_;
-    mutable std::unique_ptr<BreezeSpeechEncoderGraph> graph_;
+    mutable std::unique_ptr<BreezeSpeechEncoderConvGraph> conv_graph_;
+    mutable std::unique_ptr<BreezeSpeechEncoderTransformerGraph> transformer_graph_;
 };
 
 }  // namespace breeze_tts
