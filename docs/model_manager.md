@@ -134,6 +134,27 @@ The native endpoints can be overridden for mirrors or tests with
 uses the standard `HF_ENDPOINT` for Hugging Face and the same
 `AUDIOCPP_MS_BASE_URL` for ModelScope.
 
+### Python Source Override
+
+The Python v2 manager can redirect any package to ModelScope on demand,
+without editing `model_specs/*.json`:
+
+```bash
+python3 tools/model_manager_v2.py install qwen3_tts --source modelscope --source-repo HereIsMark/audio.cpp-gguf
+```
+
+`--source modelscope` is accepted by `install` and `sizes`. `--source-repo`
+names the ModelScope repo (`namespace/name`); when omitted, the spec's own
+repo name is reused on ModelScope. Passing `--source-repo` without
+`--source modelscope` is rejected. Revision translation: a spec revision that
+is unset or `main` becomes ModelScope's default branch `master`; any other
+explicit revision passes through unchanged.
+
+Note that manifest etags are source-specific (Hugging Face etag vs ModelScope
+sha256), so cross-source freshness checks can spuriously report that an
+installed package has an update. Query with the same `--source` that was used
+to install.
+
 ## Dependencies
 
 The native manager needs no Python runtime. The default bundled-TLS build needs

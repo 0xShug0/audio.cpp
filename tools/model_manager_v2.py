@@ -10,7 +10,7 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -42,6 +42,7 @@ class PackageRecord:
     strip_prefix: str
     download: dict[str, Any]
     default: bool
+    source_overridden: bool = False
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,30 @@ def package_revision(package: PackageRecord) -> str:
     if revision:
         return revision
     return "master" if package_kind(package) == "modelscope_snapshot" else "main"
+
+
+def apply_source_override(record: PackageRecord, source_repo: str | None) -> PackageRecord:
+    """Redirect a package's download to ModelScope (--source modelscope).
+
+    The repo comes from --source-repo when given, otherwise the spec's own
+    repo is reused on ModelScope. An unset or 'main' spec revision becomes
+    ModelScope's default branch ('master', via the kind-aware default); any
+    other explicit revision passes through unchanged.
+    """
+    download = dict(record.download)
+    download["kind"] = "modelscope_snapshot"
+    if source_repo:
+        download["repo"] = source_repo
+    revision = str(download.get("revision", "")).strip()
+    if not revision or revision == "main":
+        download.pop("revision", None)
+    return replace(record, download=download, source_overridden=True)
+
+
+def source_override_hint(package: PackageRecord) -> str:
+    if package.source_overridden:
+        return "; the spec repo may not exist on ModelScope, name it with --source-repo <namespace/name>"
+    return ""
 
 
 def flatten_packages(specs: list[dict[str, Any]]) -> list[PackageRecord]:
@@ -270,6 +295,7 @@ def check_ms_remote_file(package: PackageRecord, remote_path: str) -> RemoteFile
     if listing:
         raise ManagerError(
             f"remote file is not accessible: {repo}/{remote_path} (not in the ModelScope repo listing)"
+            f"{source_override_hint(package)}"
         )
     # The listing API is unreachable; fall back to a HEAD on the resolve URL,
     # which reports the file checksum as X-Linked-Etag but no size.
@@ -282,7 +308,10 @@ def check_ms_remote_file(package: PackageRecord, remote_path: str) -> RemoteFile
                 etag=response.headers.get("X-Linked-Etag", "").strip('"'),
             )
     except HTTPError as error:
-        raise ManagerError(f"remote file is not accessible: {repo}/{remote_path} ({error.code})") from error
+        raise ManagerError(
+            f"remote file is not accessible: {repo}/{remote_path} ({error.code})"
+            f"{source_override_hint(package)}"
+        ) from error
 
 
 def check_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:
@@ -350,7 +379,9 @@ def download_file(
             ) from error
         if package_kind(package) == "modelscope_snapshot" and error.code in (401, 403):
             raise ManagerError(f"{repo}/{remote_path} requires ModelScope access to this repo") from error
-        raise ManagerError(f"failed to download {repo}/{remote_path}: HTTP {error.code}") from error
+        raise ManagerError(
+            f"failed to download {repo}/{remote_path}: HTTP {error.code}{source_override_hint(package)}"
+        ) from error
 
 
 def ensure_snapshot_package(package: PackageRecord) -> None:
@@ -763,6 +794,21 @@ def command_installed(records: list[PackageRecord], args: argparse.Namespace) ->
     print(json.dumps(rows, ensure_ascii=False))
 
 
+def add_source_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--source",
+        choices=["huggingface", "modelscope"],
+        default="huggingface",
+        help="download source override; 'modelscope' downloads from ModelScope even when the "
+        "spec says huggingface_snapshot (an unset or 'main' revision becomes 'master'). "
+        "Manifest etags are source-specific, so cross-source checks may report updates",
+    )
+    parser.add_argument(
+        "--source-repo",
+        help="ModelScope repo (namespace/name) for --source modelscope; defaults to the spec's repo",
+    )
+
+
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Install audio.cpp model packages from model_specs/*.json.")
     parser.add_argument("--specs-dir", default=str(DEFAULT_SPECS_DIR), help="directory containing model spec JSON files")
@@ -782,6 +828,7 @@ def make_parser() -> argparse.ArgumentParser:
     sizes_parser.add_argument("--jobs", type=int, default=12, help="parallel metadata checks")
     sizes_parser.add_argument("--models-root", help="also report packages whose required files are installed")
     sizes_parser.add_argument("--json", action="store_true", help="retained for command symmetry; output is JSON")
+    add_source_arguments(sizes_parser)
 
     installed_parser = sub.add_parser("installed", help="report locally installed packages without network access")
     installed_parser.add_argument("--models-root", default="models")
@@ -811,14 +858,21 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="emit machine-readable AUDIOCPP_PROGRESS lines while downloading",
     )
+    add_source_arguments(install_parser)
     return parser
 
 
 def main() -> int:
     parser = make_parser()
     args = parser.parse_args()
+    source = getattr(args, "source", "huggingface")
+    source_repo = getattr(args, "source_repo", None)
+    if source_repo and source != "modelscope":
+        parser.error("--source-repo requires --source modelscope")
     try:
         records = flatten_packages(load_specs(Path(args.specs_dir)))
+        if source == "modelscope":
+            records = [apply_source_override(record, source_repo) for record in records]
         if args.command == "list":
             command_list(records, args)
         elif args.command == "info":
