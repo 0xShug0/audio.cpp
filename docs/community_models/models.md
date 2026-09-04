@@ -17,6 +17,7 @@ Practical expectations:
 | Family | Task | Supported language(s) | Contributor | What They Added |
 |---|---|---|---|---|
 | **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | [@0xShug0](https://github.com/0xShug0) | [Audio8-ASR-0.1B](audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
+| **chatterbox_turbo** | TTS, voice cloning (testing) | en | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](chatterbox_turbo.md) Resemble AI's distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder for fast English TTS; built-in default voice only for now |
 | **echo_tts** | TTS, voice cloning | en | Tym [@5uck1ess](https://github.com/5uck1ess), [@dignome](https://github.com/dignome) | [Echo-TTS](echo_tts.md) 44.1 kHz zero-shot voice cloning: 2.8B diffusion transformer in 80-D PCA space, decoded by the Fish S1-DAC autoencoder. Byte-level text, no phonemiser, no reference transcript |
 | **f5_tts** | TTS, voice cloning | en, ar (Habibi) | Community | [F5-TTS](f5_tts.md) flow-matching DiT — M0 scaffolding, aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, voice cloning | zh, en | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](glm_tts.md) zero-shot synthesis and voice cloning support |
@@ -30,6 +31,7 @@ Practical expectations:
 | **outetts** | TTS, voice cloning | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | Mirek [@mirek190](https://github.com/mirek190) | [Llama-OuteTTS-1.0-1B](outetts.md) TTS and voice cloning support |
 | **voxcpm1** | TTS, voice cloning | zh, en, ja, ko | Community | [VoxCPM1](voxcpm1.md) tokenizer-free 0.5B TTS with 16 kHz output, streaming, and continuation-mode voice cloning |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support |
+| **sanotts** | TTS | en, vi, id | Community | [sanoTTS voice family](sanotts.md) seven voices from 294k to 2.27M parameters, FP32 offline synthesis |
 | **sense_asr** | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | Jason Chen [@jasonchen31](https://github.com/jasonchen31), [@LauraGPT](https://github.com/LauraGPT) / FunASR | [SenseVoice-Small](sense_asr.md) offline/streaming SAN-M + CTC transcription with event/emotion/language tags and ITN |
 | **vietneu_tts** | TTS, voice cloning | vi, en | Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS-v3-Turbo](vietneu_tts.md) TTS and voice cloning support |
 | **moss_voicegen** | Voice design | en, zh | Joost [@jrohde](https://github.com/jrohde) | [MOSS-VoiceGenerator](moss_voicegen.md) voice design from a written instruction, on the MOSS delay architecture |

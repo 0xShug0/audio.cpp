@@ -539,22 +539,40 @@ S3Token2MelOutputs compute_s3_token2mel_inference(
     }
     cache.state_->release_pre_cfm_graphs();
     const auto cfm_started = std::chrono::steady_clock::now();
-    const auto mel_full = compute_s3_flow_cfm_euler(
-        cache.state_->flow_cache,
-        decoder_weights,
-        noise,
-        mask,
-        mu,
-        prepared.speaker,
-        cond,
-        batch,
-        total_frames,
-        frame_capacity,
-        num_steps,
-        cfg_rate,
-        cosine_schedule,
-        backend,
-        timing == nullptr ? nullptr : &timing->token2mel_cfm);
+    // Meanflow-distilled decoders (Chatterbox Turbo) use a plain, non-CFG Euler solve driven by
+    // two time inputs per step; see S3FlowDecoderWeights::meanflow and
+    // compute_s3_flow_cfm_meanflow. cfg_rate/cosine_schedule are meaningless for that path and
+    // are ignored, matching upstream's ConditionalCFM.forward branching on `meanflow`.
+    const auto mel_full = decoder_weights.meanflow
+        ? compute_s3_flow_cfm_meanflow(
+              cache.state_->flow_cache,
+              decoder_weights,
+              noise,
+              mask,
+              mu,
+              prepared.speaker,
+              cond,
+              batch,
+              total_frames,
+              frame_capacity,
+              num_steps,
+              backend)
+        : compute_s3_flow_cfm_euler(
+              cache.state_->flow_cache,
+              decoder_weights,
+              noise,
+              mask,
+              mu,
+              prepared.speaker,
+              cond,
+              batch,
+              total_frames,
+              frame_capacity,
+              num_steps,
+              cfg_rate,
+              cosine_schedule,
+              backend,
+              timing == nullptr ? nullptr : &timing->token2mel_cfm);
     if (timing != nullptr) {
         timing->token2mel_cfm_ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cfm_started).count();

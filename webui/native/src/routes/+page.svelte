@@ -379,8 +379,9 @@
   $: modelGroups = groupCatalog(activeCatalog);
   $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
-  $: workflowModels = activeCatalog.filter((entry) =>
-    activeWorkflowSpec.tasks.some((task) => task === entry.task));
+  $: workflowModels = activeCatalog
+    .filter((entry) => activeWorkflowSpec.tasks.some((task) => task === entry.task))
+    .sort((left, right) => compareModelNames(left.display_name, right.display_name));
   $: filteredModelGroups = modelGroups.map((group) => ({
     ...group,
     entries: group.entries.filter((entry) => {
@@ -396,7 +397,10 @@
   $: usesDurationSecOption =
     selected?.family === 'controlfoley' ||
     selected?.family === 'midashenglm_gen';
-  $: supportsTextOnlyTts = selected?.family === 'breeze_tts' && selected?.task === 'tts';
+  $: supportsTextOnlyTts = (
+    selected?.family === 'breeze_tts' ||
+    selected?.family === 'chatterbox_turbo'
+  ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit;
   $: acceptsSource = needsSource || selected?.task === 'gen';

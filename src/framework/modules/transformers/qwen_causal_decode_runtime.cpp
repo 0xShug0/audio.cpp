@@ -291,10 +291,15 @@ ggml_tensor * make_logits_readback_token_ids(
     if (config.logits_readback_token_ids.empty()) {
         return nullptr;
     }
-    return ggml_new_tensor_1d(
+    auto * tensor = ggml_new_tensor_1d(
         ctx,
         GGML_TYPE_I32,
         static_cast<int64_t>(config.logits_readback_token_ids.size()));
+    // This leaf is populated by the host after graph allocation. Marking it as
+    // an input keeps the graph allocator from aliasing its storage with a
+    // temporary that executes before ggml_get_rows consumes the token ids.
+    ggml_set_input(tensor);
+    return tensor;
 }
 
 core::TensorValue wrap_logits_readback_token_ids(
@@ -782,6 +787,9 @@ private:
             prefill_attention_mask_values_.data(),
             0,
             prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
+        if (prefill_logits_readback_token_ids_ != nullptr) {
+            upload_logits_readback_token_ids(prefill_logits_readback_token_ids_, config_);
+        }
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, prefill_graph_);
         ggml_backend_synchronize(backend_);
@@ -966,6 +974,10 @@ private:
             batched_prefill_attention_mask_values_.data(),
             0,
             batched_prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
+        if (batched_prefill_logits_readback_token_ids_ != nullptr) {
+            upload_logits_readback_token_ids(
+                batched_prefill_logits_readback_token_ids_, config_);
+        }
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, batched_prefill_graph_);
         ggml_backend_synchronize(backend_);

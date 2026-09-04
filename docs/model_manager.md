@@ -122,6 +122,44 @@ For support status and tested precision coverage, see the [GGUF guide](gguf.md).
 For measured 16-bit vs Q8 speed and peak-VRAM results, see the
 [Q8 performance report](reports/gguf_q8_performance.md).
 
+## Download Sources
+
+Both the native package manager and `tools/model_manager_v2.py` download from
+Hugging Face (`kind: "huggingface_snapshot"`) or ModelScope
+(`kind: "modelscope_snapshot"`); see
+[maintainers/model_specs.md](maintainers/model_specs.md) for the spec fields.
+The native endpoints can be overridden for mirrors or tests with
+`AUDIOCPP_HF_BASE_URL` (default `https://huggingface.co`) and
+`AUDIOCPP_MS_BASE_URL` (default `https://www.modelscope.cn`). The Python tool
+uses the standard `HF_ENDPOINT` for Hugging Face and the same
+`AUDIOCPP_MS_BASE_URL` for ModelScope.
+
+Authentication is provider-scoped: Hugging Face requests may carry
+`HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, while ModelScope requests only carry
+`AUDIOCPP_MS_TOKEN` (optional, for access-restricted ModelScope repos). The
+Hugging Face token is never sent to a ModelScope endpoint, and vice versa.
+
+### Python Source Override
+
+The Python v2 manager can redirect any package to ModelScope on demand,
+without editing `model_specs/*.json`:
+
+```bash
+python3 tools/model_manager_v2.py install qwen3_tts --source modelscope --source-repo HereIsMark/audio.cpp-gguf
+```
+
+`--source modelscope` is accepted by `install` and `sizes`. `--source-repo`
+names the ModelScope repo (`namespace/name`); when omitted, the spec's own
+repo name is reused on ModelScope. Passing `--source-repo` without
+`--source modelscope` is rejected. Revision translation: a spec revision that
+is unset or `main` becomes ModelScope's default branch `master`; any other
+explicit revision passes through unchanged.
+
+Note that manifest etags are source-specific (Hugging Face etag vs ModelScope
+sha256), so cross-source freshness checks can spuriously report that an
+installed package has an update. Query with the same `--source` that was used
+to install.
+
 ## Dependencies
 
 The native manager needs no Python runtime. The default bundled-TLS build needs

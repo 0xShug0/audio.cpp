@@ -50,7 +50,8 @@ private:
         int64_t batch,
         int64_t frames,
         int64_t capacity_frames,
-        engine::core::BackendConfig backend);
+        engine::core::BackendConfig backend,
+        const std::vector<float> * r);
     friend S3FlowCFMOutputs compute_s3_flow_cfm_euler(
         S3FlowSessionCache & cache,
         const S3FlowDecoderWeights & weights,
@@ -67,6 +68,19 @@ private:
         bool cosine_schedule,
         engine::core::BackendConfig backend,
         S3FlowCFMTimingBreakdown * timing);
+    friend S3FlowCFMOutputs compute_s3_flow_cfm_meanflow(
+        S3FlowSessionCache & cache,
+        const S3FlowDecoderWeights & weights,
+        const std::vector<float> & noise,
+        const std::vector<float> & mask,
+        const std::vector<float> & mu,
+        const std::vector<float> & spks,
+        const std::vector<float> & cond,
+        int64_t batch,
+        int64_t frames,
+        int64_t capacity_frames,
+        int64_t num_steps,
+        engine::core::BackendConfig backend);
 };
 
 struct S3FlowDecoderRunTiming {
@@ -107,6 +121,12 @@ std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
     const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
+// S3FlowDecoderWeights is intentionally opaque outside this family; this accessor lets callers
+// (e.g. chatterbox_turbo) detect whether a loaded decoder is meanflow-distilled without needing
+// the struct's internal layout.
+bool s3_flow_decoder_is_meanflow(const S3FlowDecoderWeights & weights);
+// r: meanflow end-time input (see S3FlowDecoderWeights::meanflow); nullptr for the base
+// Chatterbox 10-step CFG decoder, which never reads it.
 S3FlowDecoderOutputs compute_s3_flow_decoder_forward(
     S3FlowSessionCache & cache,
     const S3FlowDecoderWeights & weights,
@@ -119,7 +139,8 @@ S3FlowDecoderOutputs compute_s3_flow_decoder_forward(
     int64_t batch,
     int64_t frames,
     int64_t capacity_frames,
-    engine::core::BackendConfig backend = {});
+    engine::core::BackendConfig backend = {},
+    const std::vector<float> * r = nullptr);
 S3FlowCFMOutputs compute_s3_flow_cfm_euler(
     S3FlowSessionCache & cache,
     const S3FlowDecoderWeights & weights,
@@ -136,5 +157,21 @@ S3FlowCFMOutputs compute_s3_flow_cfm_euler(
     bool cosine_schedule,
     engine::core::BackendConfig backend = {},
     S3FlowCFMTimingBreakdown * timing = nullptr);
+
+// Non-CFG, non-batch-doubled Euler solve for meanflow-distilled decoders (Chatterbox Turbo);
+// see S3FlowDecoderWeights::meanflow. num_steps defaults to 2 in upstream Python (tts_turbo.py).
+S3FlowCFMOutputs compute_s3_flow_cfm_meanflow(
+    S3FlowSessionCache & cache,
+    const S3FlowDecoderWeights & weights,
+    const std::vector<float> & noise,
+    const std::vector<float> & mask,
+    const std::vector<float> & mu,
+    const std::vector<float> & spks,
+    const std::vector<float> & cond,
+    int64_t batch,
+    int64_t frames,
+    int64_t capacity_frames,
+    int64_t num_steps = 2,
+    engine::core::BackendConfig backend = {});
 
 }  // namespace engine::models::chatterbox

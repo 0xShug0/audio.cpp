@@ -21,7 +21,7 @@ VoxCPM1 is a **tokenizer-free TTS model** from [OpenBMB](https://github.com/Open
 
 ```bash
 # Via model manager (recommended)
-python3 tools/model_manager_v2.py install voxcpm1_0.5b_q8_0 --models-root models
+python3 tools/model_manager_v2.py install voxcpm1_0_5b_q8_0 --models-root models
 ```
 
 This downloads the `voxcpm-0.5b-q8_0-audiovae-f16.gguf` package (~690 MB) to `models/VoxCPM1-GGUF/`.
@@ -150,7 +150,7 @@ The default package is the standalone GGUF:
 
 | Package ID | Display Name | Format | Precision | Files |
 |---|---|---|---|---|
-| `voxcpm1_0.5b_q8_0` | VoxCPM 0.5B Q8_0 GGUF | gguf | q8_0 (LLM) + f16 (AudioVAE) | `VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf` |
+| `voxcpm1_0_5b_q8_0` | VoxCPM 0.5B Q8_0 GGUF | gguf | q8_0 (LLM) + f16 (AudioVAE) | `VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf` |
 
 The GGUF embeds:
 - Hybrid-quantized model (LLM Q8_0, AudioVAE F16)

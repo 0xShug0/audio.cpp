@@ -91,7 +91,6 @@ CosyVoice3Session::CosyVoice3Session(
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("CosyVoice3 supports offline sessions");
     }
-
     using T = engine::assets::TensorStorageType;
     const auto storage_type = runtime::parse_tensor_storage_option(
         options.options,

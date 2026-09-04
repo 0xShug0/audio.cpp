@@ -104,7 +104,7 @@ const std::unordered_set<std::string> & precisions() {
 
 const std::unordered_set<std::string> & download_kinds() {
     static const std::unordered_set<std::string> values = {
-        "huggingface_snapshot", "local_snapshot", "converter", "unsupported",
+        "huggingface_snapshot", "modelscope_snapshot", "local_snapshot", "converter", "unsupported",
     };
     return values;
 }
@@ -408,7 +408,7 @@ void validate_runtime(const json::Value & value, std::string_view path) {
     validate_string_array(require_spec_field(value, "tags", path), &runtime_tags(), std::string(path) + ".tags", "runtime tag");
 }
 
-void validate_hf_snapshot_download(const json::Value & value, std::string_view path) {
+void validate_snapshot_download(const json::Value & value, std::string_view path) {
     require_spec_object(value, path);
     (void) require_spec_string(require_spec_field(value, "repo", path), std::string(path) + ".repo");
     if (const auto * revision = value.find("revision")) {
@@ -431,8 +431,8 @@ void validate_download(const json::Value & value, std::string_view path) {
     require_spec_object(value, path);
     const auto kind = require_spec_string(require_spec_field(value, "kind", path), std::string(path) + ".kind");
     validate_enum(kind, download_kinds(), std::string(path) + ".kind", "download kind");
-    if (kind == "huggingface_snapshot") {
-        validate_hf_snapshot_download(value, path);
+    if (kind == "huggingface_snapshot" || kind == "modelscope_snapshot") {
+        validate_snapshot_download(value, path);
     } else if (kind == "local_snapshot") {
         (void) require_spec_string(require_spec_field(value, "path", path), std::string(path) + ".path");
         if (const auto * array = value.find("include")) {

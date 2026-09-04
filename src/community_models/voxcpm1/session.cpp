@@ -4,6 +4,7 @@
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/text/chinese_variant.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
@@ -147,6 +148,20 @@ int64_t product(const std::vector<int64_t> &values) {
   return out;
 }
 
+std::optional<std::string> extract_request_language(const runtime::TaskRequest &request) {
+  if (request.text_input.has_value() && !request.text_input->language.empty()) {
+    return request.text_input->language;
+  }
+  if (request.voice.has_value() && request.voice->style.has_value() &&
+      request.voice->style->language.has_value()) {
+    return request.voice->style->language;
+  }
+  if (const auto lang = runtime::find_option(request.options, {"language", "lang"})) {
+    return *lang;
+  }
+  return std::nullopt;
+}
+
 } // namespace
 
 bool VoxCPM1SessionBase::EncodedPromptCacheKeyEqual::operator()(
@@ -266,19 +281,31 @@ runtime::TaskResult VoxCPM1SessionBase::run_offline_request(const runtime::TaskR
       release_guard(this, release_runtime_memory);
 
   const auto wall_start = Clock::now();
+  // Traditional -> Simplified conversion (OpenCC TSCharacters) unless language is Cantonese/Yue.
+  // Mirrors audio8_tts fix: keep Traditional only for yue/cantonese/zh-HK/zh-MO.
+  const auto language = extract_request_language(request);
+  auto maybe_convert = [&](std::string_view text) -> std::string {
+    return engine::text::maybe_convert_traditional_to_simplified_opt(text, language);
+  };
+  const auto prompt_text_raw =
+      runtime::find_option(request.options, {"voxcpm1.prompt_text",
+                                             "voxcpm1.prompt_text",
+                                             "prompt_text", "reference_text"})
+          .value_or("");
+  const std::string prompt_text = maybe_convert(prompt_text_raw);
+  // Apply conversion to TTS text before chunking so word-budget chunking operates on converted text.
+  runtime::TaskRequest converted_request = request;
+  if (converted_request.text_input.has_value()) {
+    converted_request.text_input->text = maybe_convert(converted_request.text_input->text);
+  }
   const int64_t text_chunk_size =
       engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
   const auto text_chunk_mode =
       engine::text::parse_text_chunk_mode_override(request.options)
           .value_or(engine::text::TextChunkMode::TagAware);
   const auto chunk_requests =
-      runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
+      runtime::chunk_text_request(converted_request, text_chunk_size, text_chunk_mode);
   const auto generation_options = generation_options_from_request(request);
-  const auto prompt_text =
-      runtime::find_option(request.options, {"voxcpm1.prompt_text",
-                                             "voxcpm1.prompt_text",
-                                             "prompt_text", "reference_text"})
-          .value_or("");
   std::optional<runtime::AudioBuffer> reference_audio;
   if (request.voice.has_value() && request.voice->speaker.has_value() &&
       request.voice->speaker->audio.has_value()) {
@@ -365,12 +392,17 @@ VoxCPM1SessionBase::run_streaming_request(
       release_guard(this, release_runtime_memory);
 
   const auto wall_start = Clock::now();
+  const auto language = extract_request_language(request);
+  auto maybe_convert = [&](std::string_view text) -> std::string {
+    return engine::text::maybe_convert_traditional_to_simplified_opt(text, language);
+  };
   auto generation_options = generation_options_from_request(request);
-  const auto prompt_text =
+  const auto prompt_text_raw =
       runtime::find_option(request.options, {"voxcpm1.prompt_text",
                                              "voxcpm1.prompt_text",
                                              "prompt_text", "reference_text"})
           .value_or("");
+  const std::string prompt_text = maybe_convert(prompt_text_raw);
   std::optional<runtime::AudioBuffer> reference_audio;
   if (request.voice.has_value() && request.voice->speaker.has_value() &&
       request.voice->speaker->audio.has_value()) {
@@ -433,7 +465,8 @@ VoxCPM1SessionBase::run_streaming_request(
   };
 
   const auto generator_start = Clock::now();
-  (void)generator_->generate_streaming(request.text_input->text, prompt,
+  const std::string streaming_text = maybe_convert(request.text_input->text);
+  (void)generator_->generate_streaming(streaming_text, prompt,
                                        generation_options, emit_chunk);
   const auto generator_end = Clock::now();
   const double generator_with_callbacks_ms =

@@ -71,6 +71,11 @@ private:
         // the request thread, which costs ~0.9 s per request for large GGUFs.
         // `true` mirrors model_accepts_request_option's no-contract behavior.
         bool accepts_reference_text = true;
+        // Same treatment for `language`. Clients send the field on every
+        // transcription whether or not the user chose one, so a model whose
+        // contract omits it would reject the whole request over an option
+        // nobody set. Resolved once at registration for the same cost reason.
+        bool accepts_language = true;
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;
@@ -167,13 +172,17 @@ private:
         const engine::runtime::TaskRequest & request,
         const engine::io::json::Value & body);
     HttpResponse handle_speech_live(const HttpRequest & request);
-    HttpResponse handle_transcription(const HttpRequest & request);
-    HttpResponse handle_transcription_json(const std::string & body_text);
-    HttpResponse handle_transcription_multipart(const std::string & body_text, const std::string & boundary);
+    // detail selects the /v1/audio/transcriptions/details response, which adds the
+    // segment, speaker-turn and word arrays the plain route drops.
+    HttpResponse handle_transcription(const HttpRequest & request, bool detail = false);
+    HttpResponse handle_transcription_json(const std::string & body_text, bool detail = false);
+    HttpResponse handle_transcription_multipart(
+        const std::string & body_text, const std::string & boundary, bool detail = false);
     HttpResponse run_transcription(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        bool detail = false);
     HttpResponse run_transcription_stream(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,

@@ -631,6 +631,19 @@ audiocpp_add_model(personaplex
         engine::models::personaplex::make_personaplex_loader
 )
 
+audiocpp_add_model(sanotts
+    SOURCES
+        src/community_models/sanotts/assets.cpp
+        src/community_models/sanotts/frontend.cpp
+        src/community_models/sanotts/piper_runtime.cpp
+        src/community_models/sanotts/runtime.cpp
+        src/community_models/sanotts/session.cpp
+    INCLUDES
+        engine/community_models/sanotts/session.h
+    LOADERS
+        engine::models::sanotts::make_sanotts_loader
+)
+
 audiocpp_add_model(inflect_v2
     SOURCES
         src/community_models/inflect_v2/assets.cpp
@@ -1470,6 +1483,24 @@ audiocpp_add_model(chatterbox
         engine::models::chatterbox::make_chatterbox_loader
 )
 
+audiocpp_add_model(chatterbox_turbo
+    SOURCES
+        src/community_models/chatterbox_turbo/t3_turbo_weights.cpp
+        src/community_models/chatterbox_turbo/t3_turbo_component.cpp
+        src/community_models/chatterbox_turbo/s3gen_turbo.cpp
+        src/community_models/chatterbox_turbo/text_tokenizer_turbo.cpp
+        src/community_models/chatterbox_turbo/assets.cpp
+        src/community_models/chatterbox_turbo/loader.cpp
+        src/community_models/chatterbox_turbo/session.cpp
+        src/community_models/chatterbox_turbo/tts.cpp
+    INCLUDES
+        engine/community_models/chatterbox_turbo/loader.h
+    LOADERS
+        engine::community_models::chatterbox_turbo::make_chatterbox_turbo_loader
+    DEPENDS
+        chatterbox
+)
+
 audiocpp_add_model(ace_step
     SOURCES
         src/models/ace_step/assets.cpp
@@ -2135,6 +2166,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND chinese_normalization_test
     )
 
+    add_engine_unittest(text_chunking_test tests/unittests/test_text_chunking.cpp)
+
+    add_test(
+        NAME text_chunking_test
+        COMMAND text_chunking_test
+    )
+
     add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
 
     add_test(
@@ -2305,6 +2343,20 @@ if (ENGINE_BUILD_TESTS)
         COMMAND conv_lowering_matrix_test
     )
 
+    add_engine_unittest(i8_s_fused_ops_test tests/unittests/test_i8_s_fused_ops.cpp)
+
+    add_test(
+        NAME i8_s_fused_ops_test
+        COMMAND i8_s_fused_ops_test
+    )
+
+    add_engine_unittest(i2_s_mul_mat_test tests/unittests/test_i2_s_mul_mat.cpp)
+
+    add_test(
+        NAME i2_s_mul_mat_test
+        COMMAND i2_s_mul_mat_test
+    )
+
     add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
     target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 
@@ -2414,6 +2466,19 @@ if (ENGINE_BUILD_TESTS)
         add_test(
             NAME server_model_installer_test
             COMMAND server_model_installer_test
+        )
+
+        add_executable(package_manager_modelscope_test
+            tests/unittests/test_package_manager_modelscope.cpp
+        )
+        target_link_libraries(package_manager_modelscope_test PRIVATE
+            Threads::Threads audiocpp_package_manager)
+        target_compile_definitions(package_manager_modelscope_test PRIVATE
+            AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
+
+        add_test(
+            NAME package_manager_modelscope_test
+            COMMAND package_manager_modelscope_test
         )
     endif()
 
@@ -2569,6 +2634,13 @@ if (ENGINE_BUILD_TESTS)
         add_test(
             NAME echo_tts_host_units
             COMMAND echo_tts_host_units
+        )
+
+        add_engine_unittest(sanotts_frontend_test tests/unittests/test_sanotts_frontend.cpp)
+        target_include_directories(sanotts_frontend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(
+            NAME sanotts_frontend_test
+            COMMAND sanotts_frontend_test
         )
 
         add_engine_unittest(inflect_v2_frontend_test tests/unittests/test_inflect_v2_frontend.cpp)
