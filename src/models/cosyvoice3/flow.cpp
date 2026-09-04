@@ -445,7 +445,11 @@ private:
         ggml_set_input(token_ids_);
         auto h = modules::EmbeddingModule({config_.speech_token_size, config_.flow_mel_channels})
                      .build(ctx, ids, weights_->token_embedding);
+        const auto residual = h;
         h = modules::TransposeModule({{0, 2, 1, 3}, h.shape.rank}).build(ctx, h);
+        if (execution_.backend_type() == core::BackendType::Metal) {
+            h = core::ensure_backend_addressable_layout(ctx, h);
+        }
         h = core::wrap_tensor(
             ggml_pad_ext(ctx.ggml, h.tensor, 0, config_.pre_lookahead_len, 0, 0, 0, 0, 0, 0),
             core::TensorShape::from_dims({1, config_.flow_mel_channels, tokens + config_.pre_lookahead_len}),
@@ -460,11 +464,7 @@ private:
         h = modules::Conv1dModule({config_.flow_hidden_size, config_.flow_mel_channels, 3, 1, 0, 1, true})
                 .build(ctx, h, weights_->pre_lookahead_conv2);
         h = modules::TransposeModule({{0, 2, 1, 3}, h.shape.rank}).build(ctx, h);
-        h = modules::AddModule().build(
-            ctx,
-            h,
-            modules::EmbeddingModule({config_.speech_token_size, config_.flow_mel_channels})
-                .build(ctx, ids, weights_->token_embedding));
+        h = modules::AddModule().build(ctx, h, residual);
         h = modules::Interpolate1dModule({tokens * config_.token_mel_ratio, modules::Interpolate1dMode::Nearest})
                 .build(ctx, modules::TransposeModule({{0, 2, 1, 3}, h.shape.rank}).build(ctx, h));
         h = modules::TransposeModule({{0, 2, 1, 3}, h.shape.rank}).build(ctx, h);
