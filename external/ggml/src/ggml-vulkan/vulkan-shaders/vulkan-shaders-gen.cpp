@@ -883,6 +883,9 @@ void process_shaders() {
     string_to_spv("round_bf16_f32",  "round_bf16.comp", {{"A_TYPE", "float"},       {"D_TYPE", "float"}});
     string_to_spv("round_bf16_f16",  "round_bf16.comp", {{"A_TYPE", "float16_t"},   {"D_TYPE", "float"}});
     string_to_spv("round_bf16_bf16", "round_bf16.comp", {{"A_TYPE", "uint16_t"},    {"D_TYPE", "float"}, {"DATA_A_BF16", "1"}});
+    string_to_spv("round_bf16_strided_f32",  "round_bf16_strided.comp", {{"A_TYPE", "float"},     {"D_TYPE", "float"}});
+    string_to_spv("round_bf16_strided_f16",  "round_bf16_strided.comp", {{"A_TYPE", "float16_t"}, {"D_TYPE", "float"}});
+    string_to_spv("round_bf16_strided_bf16", "round_bf16_strided.comp", {{"A_TYPE", "uint16_t"},  {"D_TYPE", "float"}, {"DATA_A_BF16", "1"}});
     string_to_spv("ceil_f16",       "ceil.comp",        {{"A_TYPE", "float16_t"},   {"D_TYPE", "float16_t"}});
     string_to_spv("ceil_f32",       "ceil.comp",        {{"A_TYPE", "float"},       {"D_TYPE", "float"}});
     string_to_spv("floor_f16",      "floor.comp",       {{"A_TYPE", "float16_t"},   {"D_TYPE", "float16_t"}});

@@ -812,6 +812,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_step[2];
     vk_pipeline pipeline_round[2];
     vk_pipeline pipeline_round_bf16[3];
+    vk_pipeline pipeline_round_bf16_strided[3];
     vk_pipeline pipeline_ceil[2];
     vk_pipeline pipeline_floor[2];
     vk_pipeline pipeline_trunc[2];
@@ -4755,6 +4756,10 @@ static void ggml_vk_load_shaders(vk_device& device) {
     ggml_vk_create_pipeline(device, device->pipeline_round_bf16[0], "round_bf16_f32", round_bf16_f32_len, round_bf16_f32_data, "main", 2, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_round_bf16[1], "round_bf16_f16", round_bf16_f16_len, round_bf16_f16_data, "main", 2, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_round_bf16[2], "round_bf16_bf16", round_bf16_bf16_len, round_bf16_bf16_data, "main", 2, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
+    // strided variant for non-contiguous (e.g. row-strided view) inputs.
+    ggml_vk_create_pipeline(device, device->pipeline_round_bf16_strided[0], "round_bf16_strided_f32", round_bf16_strided_f32_len, round_bf16_strided_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_round_bf16_strided[1], "round_bf16_strided_f16", round_bf16_strided_f16_len, round_bf16_strided_f16_data, "main", 2, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_round_bf16_strided[2], "round_bf16_strided_bf16", round_bf16_strided_bf16_len, round_bf16_strided_bf16_data, "main", 2, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
 
     ggml_vk_create_pipeline(device, device->pipeline_add1_f16_f16, "add1_f16_f16", add1_f16_f16_len, add1_f16_f16_data, "main", 3, sizeof(vk_op_binary_push_constants), {512, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_add1_f16_f32, "add1_f16_f32", add1_f16_f32_len, add1_f16_f32_data, "main", 3, sizeof(vk_op_binary_push_constants), {512, 1, 1}, {}, 1);
@@ -9751,10 +9756,11 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
             if (dst->type != GGML_TYPE_F32) {
                 return nullptr;
             }
+            const bool strided = !ggml_is_contiguous(src0) || !ggml_is_contiguous(dst);
             switch (src0->type) {
-                case GGML_TYPE_F32:  return ctx->device->pipeline_round_bf16[0];
-                case GGML_TYPE_F16:  return ctx->device->pipeline_round_bf16[1];
-                case GGML_TYPE_BF16: return ctx->device->pipeline_round_bf16[2];
+                case GGML_TYPE_F32:  return strided ? ctx->device->pipeline_round_bf16_strided[0] : ctx->device->pipeline_round_bf16[0];
+                case GGML_TYPE_F16:  return strided ? ctx->device->pipeline_round_bf16_strided[1] : ctx->device->pipeline_round_bf16[1];
+                case GGML_TYPE_BF16: return strided ? ctx->device->pipeline_round_bf16_strided[2] : ctx->device->pipeline_round_bf16[2];
                 default:             return nullptr;
             }
         }
@@ -11495,6 +11501,11 @@ static void ggml_vk_unary(ggml_backend_vk_context * ctx, vk_context& subctx, con
 }
 
 static void ggml_vk_sigmoid_strided(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, ggml_tensor * dst) {
+    vk_op_unary_push_constants p = vk_op_unary_push_constants_init(src0, dst);
+    ggml_vk_op_f32(ctx, subctx, src0, nullptr, nullptr, nullptr, dst, GGML_OP_UNARY, std::move(p));
+}
+
+static void ggml_vk_round_bf16_strided(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, ggml_tensor * dst) {
     vk_op_unary_push_constants p = vk_op_unary_push_constants_init(src0, dst);
     ggml_vk_op_f32(ctx, subctx, src0, nullptr, nullptr, nullptr, dst, GGML_OP_UNARY, std::move(p));
 }
@@ -13534,11 +13545,17 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         case GGML_UNARY_OP_SOFTPLUS:
         case GGML_UNARY_OP_STEP:
         case GGML_UNARY_OP_ROUND:
-        case GGML_UNARY_OP_ROUND_BF16:
         case GGML_UNARY_OP_CEIL:
         case GGML_UNARY_OP_FLOOR:
         case GGML_UNARY_OP_TRUNC:
         case GGML_UNARY_OP_SGN:
+            ggml_vk_unary(ctx, compute_ctx, src0, node);
+            break;
+        case GGML_UNARY_OP_ROUND_BF16:
+            if (!ggml_is_contiguous(src0) || !ggml_is_contiguous(node)) {
+                ggml_vk_round_bf16_strided(ctx, compute_ctx, src0, node);
+                break;
+            }
             ggml_vk_unary(ctx, compute_ctx, src0, node);
             break;
         case GGML_UNARY_OP_SIGMOID:
@@ -15792,8 +15809,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                            (op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16) &&
                            (op->src[0]->type == op->type);
                 case GGML_UNARY_OP_ROUND_BF16:
-                    return ggml_is_contiguous(op->src[0]) &&
-                           (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 || op->src[0]->type == GGML_TYPE_BF16) &&
+                    return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 || op->src[0]->type == GGML_TYPE_BF16) &&
                            (op->type == GGML_TYPE_F32);
                 case GGML_UNARY_OP_SIGMOID:
                     return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) &&
