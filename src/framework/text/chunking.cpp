@@ -63,6 +63,17 @@ bool is_clause_break(std::string_view token) {
            token == u8"，" || token == u8"、" || token == u8"；" || token == u8"：";
 }
 
+bool is_cjk_punctuation_delimiter(std::string_view token) noexcept {
+    // Full-width CJK sentence/clause punctuation (。！？，、；：) separates words
+    // even without ASCII spaces — CJK text has no inter-word spaces, so without
+    // this a whole paragraph parses as one word and Default-mode chunking can
+    // never split it at the codepoint budget (only TagAware/Japanese could).
+    // ASCII punctuation stays attached to its word so space-delimited Latin
+    // text is unaffected.
+    const auto leading = static_cast<unsigned char>(token.front());
+    return leading >= 0x80 && (is_sentence_break(token) || is_clause_break(token));
+}
+
 bool is_tag_open(std::string_view token) {
     return token == "[" || token == "<";
 }
@@ -112,9 +123,25 @@ std::vector<WordRange> split_word_ranges(const std::vector<Utf8Span> & spans) {
         if (span_pos >= spans.size()) {
             break;
         }
+        // A CJK punctuation token forms a word of its own (attached to nothing),
+        // so a subsequent run never absorbs it and boundaries can land on it.
+        if (is_cjk_punctuation_delimiter(spans[span_pos].text)) {
+            words.push_back({
+                span_pos,
+                span_pos + 1,
+                spans[span_pos].start,
+                spans[span_pos].end,
+                is_sentence_break(spans[span_pos].text),
+                is_clause_break(spans[span_pos].text),
+            });
+            span_pos += 1;
+            continue;
+        }
         const size_t word_start = span_pos;
         size_t word_end = span_pos + 1;
-        while (word_end < spans.size() && !is_ascii_space(spans[word_end].text)) {
+        while (word_end < spans.size() &&
+               !is_ascii_space(spans[word_end].text) &&
+               !is_cjk_punctuation_delimiter(spans[word_end].text)) {
             ++word_end;
         }
         const auto last = spans[word_end - 1].text;

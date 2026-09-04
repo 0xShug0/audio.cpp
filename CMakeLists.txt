@@ -2118,6 +2118,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND chinese_normalization_test
     )
 
+    add_engine_unittest(text_chunking_test tests/unittests/test_text_chunking.cpp)
+
+    add_test(
+        NAME text_chunking_test
+        COMMAND text_chunking_test
+    )
+
     add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
 
     add_test(
