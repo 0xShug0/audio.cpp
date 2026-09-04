@@ -329,6 +329,11 @@ chunking, server usage, and validation notes.
 
 VibeVoice ASR is an offline ASR model with greedy, sampling, and beam-search decode paths. It can return transcription text and structured segment/speaker-turn output when the model produces timestamps.
 
+An INT8-activation port of the same encoder, from Microsoft's
+[VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp), lives under community
+models: see [VibeASR VAE encoder](community_models/vibeasr.md). It is not a
+separate model, and it has no CLI family yet.
+
 | Field | Value |
 |---|---|
 | Family | `vibevoice_asr` |
