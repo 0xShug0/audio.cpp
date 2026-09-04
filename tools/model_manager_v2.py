@@ -86,9 +86,17 @@ def ms_endpoint() -> str:
     return endpoint or "https://www.modelscope.cn"
 
 
-def http_headers() -> dict[str, str]:
+def modelscope_token() -> str | None:
+    token = os.environ.get("AUDIOCPP_MS_TOKEN", "").strip()
+    return token or None
+
+
+def http_headers(source: str = "huggingface") -> dict[str, str]:
+    # Auth is provider-scoped: HF requests may carry the HF token, ModelScope
+    # requests carry only AUDIOCPP_MS_TOKEN, so one provider's credential is
+    # never sent to the other provider's host.
     headers = {"User-Agent": "audio.cpp model_manager_v2.py"}
-    token = huggingface_token()
+    token = modelscope_token() if source == "modelscope" else huggingface_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
@@ -138,6 +146,11 @@ def merged_download(spec: dict[str, Any], package: dict[str, Any]) -> dict[str, 
 
 def package_kind(package: PackageRecord) -> str:
     return str(package.download.get("kind", ""))
+
+
+def package_source(package: PackageRecord) -> str:
+    """Download provider for a package: 'modelscope' or 'huggingface'."""
+    return "modelscope" if package_kind(package) == "modelscope_snapshot" else "huggingface"
 
 
 def package_revision(package: PackageRecord) -> str:
@@ -258,7 +271,7 @@ def ms_repo_listing(repo: str, revision: str) -> dict[str, RemoteFileInfo]:
         return cached
     listing: dict[str, RemoteFileInfo] = {}
     try:
-        request = Request(ms_files_url(repo, revision), headers=http_headers())
+        request = Request(ms_files_url(repo, revision), headers=http_headers("modelscope"))
         with urlopen(request, timeout=60) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if payload.get("Code") != 200:
@@ -299,7 +312,7 @@ def check_ms_remote_file(package: PackageRecord, remote_path: str) -> RemoteFile
         )
     # The listing API is unreachable; fall back to a HEAD on the resolve URL,
     # which reports the file checksum as X-Linked-Etag but no size.
-    request = Request(ms_url(repo, revision, remote_path), headers=http_headers(), method="HEAD")
+    request = Request(ms_url(repo, revision, remote_path), headers=http_headers("modelscope"), method="HEAD")
     try:
         with urlopen(request, timeout=60) as response:
             return RemoteFileInfo(
@@ -346,7 +359,7 @@ def download_file(
     cancel_file: Path | None = None,
 ) -> None:
     repo = package.download["repo"]
-    request = Request(download_url(package, remote_path), headers=http_headers())
+    request = Request(download_url(package, remote_path), headers=http_headers(package_source(package)))
     try:
         with urlopen(request, timeout=300) as response:
             expected_header = response.headers.get("Content-Length")

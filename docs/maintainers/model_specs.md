@@ -187,7 +187,8 @@ optional); the only differences are that the default revision is `master`
 (ModelScope's default branch) and the `gated` flag does not apply. The native
 package manager resolves the endpoint through `AUDIOCPP_MS_BASE_URL`
 (default `https://www.modelscope.cn`), mirroring `AUDIOCPP_HF_BASE_URL` for
-Hugging Face.
+Hugging Face. ModelScope requests authenticate with `AUDIOCPP_MS_TOKEN` only;
+the Hugging Face token is never sent to a ModelScope endpoint.
 
 Dependencies describe extra model-level resources required by runtime features.
 Use `kind: "model"` for another model family, and `kind: "bundled_model"` for an

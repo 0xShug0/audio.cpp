@@ -134,6 +134,11 @@ The native endpoints can be overridden for mirrors or tests with
 uses the standard `HF_ENDPOINT` for Hugging Face and the same
 `AUDIOCPP_MS_BASE_URL` for ModelScope.
 
+Authentication is provider-scoped: Hugging Face requests may carry
+`HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, while ModelScope requests only carry
+`AUDIOCPP_MS_TOKEN` (optional, for access-restricted ModelScope repos). The
+Hugging Face token is never sent to a ModelScope endpoint, and vice versa.
+
 ### Python Source Override
 
 The Python v2 manager can redirect any package to ModelScope on demand,

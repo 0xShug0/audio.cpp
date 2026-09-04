@@ -47,6 +47,14 @@ void set_base_url(const std::string & value) {
 #endif
 }
 
+void set_env(const char * name, const std::string & value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
 void test_modelscope_package_lifecycle() {
     const auto root = make_root();
     try {
@@ -62,11 +70,17 @@ void test_modelscope_package_lifecycle() {
           ],"sources":[]
         })JSON");
         set_base_url("http://127.0.0.1:18992");
+        // The fixture rejects any ModelScope request carrying this HF token,
+        // and requires every ModelScope request to carry AUDIOCPP_MS_TOKEN.
+        set_env("HF_TOKEN", "hf-secret-fixture-token");
+        set_env("AUDIOCPP_MS_TOKEN", "ms-secret-fixture-token");
         auto fixture = std::async(std::launch::async, [] {
 #ifdef _WIN32
-            return std::system("python \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --port 18992 --requests 4");
+            return std::system("python \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --port 18992 --requests 4"
+                " --hf-token hf-secret-fixture-token --ms-token ms-secret-fixture-token");
 #else
-            return std::system("python3 \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --port 18992 --requests 4");
+            return std::system("python3 \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --port 18992 --requests 4"
+                " --hf-token hf-secret-fixture-token --ms-token ms-secret-fixture-token");
 #endif
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(200));

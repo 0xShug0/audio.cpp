@@ -94,6 +94,10 @@ std::string huggingface_token() {
     return token;
 }
 
+std::string modelscope_token() {
+    return getenv_text("AUDIOCPP_MS_TOKEN");
+}
+
 bool unreserved(unsigned char ch) {
     return std::isalnum(ch) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == '~';
 }
@@ -350,9 +354,20 @@ std::string http_origin(const HttpUrl & url) {
     return url.scheme + "://" + host + ":" + std::to_string(url.port);
 }
 
-httplib::Headers default_request_headers() {
+// Request auth is provider-scoped: Hugging Face requests may carry the HF
+// token, ModelScope requests carry only AUDIOCPP_MS_TOKEN. A request must
+// never leak one provider's credential to the other provider's host.
+enum class RequestAuth { huggingface, modelscope };
+
+RequestAuth package_auth(const Package & package) {
+    return package.download_kind == "modelscope_snapshot"
+        ? RequestAuth::modelscope
+        : RequestAuth::huggingface;
+}
+
+httplib::Headers request_headers(RequestAuth auth) {
     httplib::Headers headers{{"User-Agent", "audio.cpp native model manager/1.0"}};
-    const auto token = huggingface_token();
+    const auto token = auth == RequestAuth::modelscope ? modelscope_token() : huggingface_token();
     if (!token.empty()) {
         headers.emplace("Authorization", "Bearer " + token);
     }
@@ -374,12 +389,13 @@ HttpResult http_request(
     bool head,
     std::ofstream * output,
     const std::shared_ptr<std::atomic_bool> & cancelled,
-    const std::function<void(uint64_t)> & progress) {
+    const std::function<void(uint64_t)> & progress,
+    RequestAuth auth) {
     const auto parsed = parse_http_url(url);
     httplib::Client client(http_origin(parsed));
     configure_client(client, head ? 60 : 300);
 
-    const auto request_headers = default_request_headers();
+    const auto headers = request_headers(auth);
 
     uint64_t downloaded = 0;
     bool write_failed = false;
@@ -401,8 +417,8 @@ HttpResult http_request(
     };
 
     httplib::Result response = head
-        ? client.Head(parsed.path, request_headers)
-        : client.Get(parsed.path, request_headers, receiver, keep_downloading);
+        ? client.Head(parsed.path, headers)
+        : client.Get(parsed.path, headers, receiver, keep_downloading);
     if (!response) {
         if (cancelled && cancelled->load()) throw Cancelled();
         if (write_failed) throw std::runtime_error("could not write downloaded model file");
@@ -417,11 +433,11 @@ HttpResult http_request(
     return result;
 }
 
-HttpResult http_get_body(const std::string & url, std::string & body) {
+HttpResult http_get_body(const std::string & url, std::string & body, RequestAuth auth) {
     const auto parsed = parse_http_url(url);
     httplib::Client client(http_origin(parsed));
     configure_client(client, 60);
-    auto response = client.Get(parsed.path, default_request_headers());
+    auto response = client.Get(parsed.path, request_headers(auth));
     if (!response) {
         throw std::runtime_error("model host request failed: " + httplib::to_string(response.error()));
     }
@@ -443,7 +459,7 @@ using ListingCache = std::map<std::string, RemoteFileMap>;
 
 RemoteFileMap fetch_modelscope_listing(const Package & package) {
     std::string body;
-    const auto response = http_get_body(ms_files_url(package), body);
+    const auto response = http_get_body(ms_files_url(package), body, RequestAuth::modelscope);
     if (response.status < 200 || response.status >= 300) {
         throw std::runtime_error("ModelScope repo listing is not accessible: " + package.repo +
             " (HTTP " + std::to_string(response.status) + ")");
@@ -495,7 +511,7 @@ RemoteFileInfo modelscope_remote_info(
     }
     // The listing API is unreachable; fall back to a HEAD on the resolve URL,
     // which reports the file checksum as X-Linked-Etag but no size.
-    const auto response = http_request(ms_url(package, remote), true, nullptr, {}, {});
+    const auto response = http_request(ms_url(package, remote), true, nullptr, {}, {}, RequestAuth::modelscope);
     if (response.status < 200 || response.status >= 300) {
         throw std::runtime_error("remote file is not accessible: " + package.repo + "/" + remote +
             " (HTTP " + std::to_string(response.status) + ")");
@@ -514,7 +530,7 @@ RemoteFileInfo remote_info(const Package & package, const std::string & remote, 
         }
         return modelscope_remote_info(package, remote, *ms_cache);
     }
-    const auto response = http_request(hf_url(package, remote), true, nullptr, {}, {});
+    const auto response = http_request(hf_url(package, remote), true, nullptr, {}, {}, RequestAuth::huggingface);
     if (response.status == 401 || response.status == 403) {
         if (package.gated) return {};
     }
@@ -546,7 +562,7 @@ void download_file(
     const auto url = package.download_kind == "modelscope_snapshot"
         ? ms_url(package, remote)
         : hf_url(package, remote);
-    const auto response = http_request(url, false, &output, cancelled, progress);
+    const auto response = http_request(url, false, &output, cancelled, progress, package_auth(package));
     output.close();
     if (response.status == 401 || response.status == 403) {
         throw std::runtime_error(package.repo + "/" + remote +
