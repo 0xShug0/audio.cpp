@@ -7,6 +7,7 @@
 #include "ggml.h"
 #include "unary-ops.h"
 #include "vec.h"
+#include "ggml-quants.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -12133,6 +12134,116 @@ void ggml_compute_forward_mul_mat_add_relu(
         const ggml_compute_params * params,
         ggml_tensor * dst) {
     ggml_compute_forward_mul_mat_add_impl(params, dst, true);
+}
+
+// ggml_compute_forward_mul_mat_i2_s
+
+// Output features per int32 accumulator batch. Batching them means the
+// activation row is read once for 64 weight rows instead of once per row, and 64
+// int32s is a small enough stack buffer that params->wdata does not have to
+// carry it.
+#define GGML_MUL_MAT_I2_S_OC_CHUNK 64
+
+void ggml_compute_forward_mul_mat_i2_s(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];  // weights     (I2_S, ternary)
+    const ggml_tensor * src1 = dst->src[1];  // activations (F32)
+
+    GGML_ASSERT(src0->type == GGML_TYPE_I2_S);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+
+    GGML_TENSOR_BINARY_OP_LOCALS
+
+    GGML_ASSERT(ne0 == ne01);
+    GGML_ASSERT(ne1 == ne11);
+    GGML_ASSERT(ne2 == ne12);
+    GGML_ASSERT(ne3 == ne13);
+    GGML_ASSERT(nb0 == sizeof(float));
+    GGML_ASSERT(ne00 % 128 == 0);
+
+    // One scale covers the whole weight tensor, so broadcasting src0 over a
+    // batch would work, but the language model never has more than a 2D weight
+    // and silently supporting an untested shape is worse than refusing it.
+    GGML_ASSERT(ne02 == 1 && ne03 == 1);
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t nrows_y = ne11*ne12*ne13;
+
+    // wdata holds the quantized activation rows, then a sidecar with one scale
+    // and one int8 row sum each. The sidecar cannot be folded into the rows the
+    // way I8_S folds its scale in: both values are needed in the epilogue, after
+    // the kernel has already consumed the row.
+    int8_t * const qy       = (int8_t *) params->wdata;
+    const size_t   qy_bytes = GGML_PAD((size_t) ne10*nrows_y, sizeof(float));
+    float   * const act_scale = (float   *) ((char *) qy + qy_bytes);
+    int32_t * const act_sum   = (int32_t *) (act_scale + nrows_y);
+
+    GGML_ASSERT(params->wsize >= qy_bytes + nrows_y*(sizeof(float) + sizeof(int32_t)));
+
+    // Striped by whole rows: the scale is a row-wide absmax, so a row cannot be
+    // split across threads.
+    for (int64_t ir = ith; ir < nrows_y; ir += nth) {
+        const int64_t i11 =  ir % ne11;
+        const int64_t i12 = (ir / ne11) % ne12;
+        const int64_t i13 =  ir / (ne11*ne12);
+
+        const float * y_row = (const float *) ((const char *) src1->data + i11*nb11 + i12*nb12 + i13*nb13);
+
+        ggml_i8_s_quantize_act(y_row, qy + ir*ne10, ne10, act_scale + ir, act_sum + ir);
+    }
+
+    ggml_barrier(params->threadpool);
+
+    const float  w_scale = *ggml_inband_scale_const(src0);
+    const size_t w_row   = nb01;  // bytes per packed weight row
+
+    // Split over output features and sweep the whole batch inside, so a weight
+    // row is loaded once and reused across every column. Splitting over columns
+    // instead would re-stream the weights per thread, and the weights are what
+    // this op is bandwidth-bound on.
+    const int64_t dr  = (ne01 + nth - 1)/nth;
+    const int64_t oc0 = dr*ith;
+    const int64_t oc1 = MIN(oc0 + dr, ne01);
+
+    if (oc0 >= oc1) {
+        return;
+    }
+
+    int32_t acc[GGML_MUL_MAT_I2_S_OC_CHUNK];
+
+    for (int64_t ir = 0; ir < nrows_y; ++ir) {
+        const int64_t i11 =  ir % ne11;
+        const int64_t i12 = (ir / ne11) % ne12;
+        const int64_t i13 =  ir / (ne11*ne12);
+
+        const int8_t * y_row = qy + ir*ne10;
+
+        // The kernel returns sum(code*q) with codes {0,1,2}; subtracting the row
+        // sum turns that into sum(w*q) with w in {-1,0,+1}. Both scales are
+        // multipliers, so they combine once at the end.
+        const float   d    = w_scale * act_scale[ir];
+        const int32_t bias = act_sum[ir];
+
+        float * dst_row = (float *) ((char *) dst->data + i11*nb1 + i12*nb2 + i13*nb3);
+
+        for (int64_t oc = oc0; oc < oc1; oc += GGML_MUL_MAT_I2_S_OC_CHUNK) {
+            const int64_t noc = MIN((int64_t) GGML_MUL_MAT_I2_S_OC_CHUNK, oc1 - oc);
+
+            ggml_vec_dot_i2_i8(ne00, acc, 1,
+                               (const uint8_t *) src0->data + oc*w_row, w_row,
+                               y_row, noc);
+
+            for (int64_t j = 0; j < noc; ++j) {
+                dst_row[oc + j] = (float) (acc[j] - bias) * d;
+            }
+        }
+    }
 }
 
 // ggml_compute_forward_im2col_asym
