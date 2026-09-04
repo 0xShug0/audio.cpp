@@ -102,6 +102,23 @@ GGML_API size_t quantize_q8_0(const float * GGML_RESTRICT src, void * GGML_RESTR
 GGML_API size_t quantize_mxfp4(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
 GGML_API size_t quantize_nvfp4(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrows, int64_t n_per_row, const float * imatrix);
 
+// GGML_TYPE_I8_S / GGML_TYPE_I2_S conversions.
+//
+// These are whole-tensor, not per-row: both types carry a single F32 scale for
+// the entire tensor, stored immediately after the payload (see
+// ggml_type_extra_bytes), so `n` is ggml_nelements() and a row pointer alone
+// cannot locate the scale. That is also why the two traits entries leave
+// .to_float / .from_float_ref NULL instead of pointing here, and why
+// ggml_quantize_chunk does not list these types -- its
+// `result == nrows * row_size` invariant cannot hold for a per-tensor scale.
+//
+// The from_float direction returns the number of bytes written, payload plus
+// the padded scale.
+GGML_API void   ggml_i8_s_to_float  (const void  * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t n);
+GGML_API size_t ggml_i8_s_from_float(const float * GGML_RESTRICT x, void  * GGML_RESTRICT y, int64_t n);
+GGML_API void   ggml_i2_s_to_float  (const void  * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t n);
+GGML_API size_t ggml_i2_s_from_float(const float * GGML_RESTRICT x, void  * GGML_RESTRICT y, int64_t n);
+
 GGML_API void iq2xs_init_impl(enum ggml_type type);
 GGML_API void iq2xs_free_impl(enum ggml_type type);
 GGML_API void iq3xs_init_impl(int grid_size);

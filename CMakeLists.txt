@@ -2254,6 +2254,13 @@ if (ENGINE_BUILD_TESTS)
         COMMAND conv_lowering_matrix_test
     )
 
+    add_engine_unittest(i8_s_fused_ops_test tests/unittests/test_i8_s_fused_ops.cpp)
+
+    add_test(
+        NAME i8_s_fused_ops_test
+        COMMAND i8_s_fused_ops_test
+    )
+
     add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
     target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
 

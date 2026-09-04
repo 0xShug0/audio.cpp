@@ -2092,6 +2092,26 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 ggml_compute_forward_opt_step_sgd(params, tensor);
             }
             break;
+        case GGML_OP_ADD_SCALED:
+            {
+                ggml_compute_forward_add_scaled(params, tensor);
+            } break;
+        case GGML_OP_RMS_NORM_SCALED:
+            {
+                ggml_compute_forward_rms_norm_scaled(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_ADD:
+            {
+                ggml_compute_forward_mul_mat_add(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_ADD_RELU:
+            {
+                ggml_compute_forward_mul_mat_add_relu(params, tensor);
+            } break;
+        case GGML_OP_IM2COL_ASYM:
+            {
+                ggml_compute_forward_im2col_asym(params, tensor);
+            } break;
         case GGML_OP_NONE:
             {
                 // nop
@@ -2345,6 +2365,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
             } break;
         case GGML_OP_IM2COL:
         case GGML_OP_IM2COL_FAST_1D:
+        case GGML_OP_IM2COL_ASYM:
         case GGML_OP_IM2COL_BACK:
         case GGML_OP_IM2COL_3D:
         case GGML_OP_CONV_2D:
@@ -2352,6 +2373,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_CONV_2D_DW:
         case GGML_OP_CONV_TRANSPOSE_1D:
         case GGML_OP_CONV_TRANSPOSE_2D:
+        case GGML_OP_ADD_SCALED:
+        case GGML_OP_RMS_NORM_SCALED:
+        case GGML_OP_MUL_MAT_ADD:
+        case GGML_OP_MUL_MAT_ADD_RELU:
             {
                 n_tasks = n_threads;
             } break;
@@ -2947,6 +2972,18 @@ struct ggml_cplan ggml_graph_plan(
                 case GGML_OP_CROSS_ENTROPY_LOSS:
                     {
                         cur = ggml_type_size(node->type)*(n_tasks + node->src[0]->ne[0]*n_tasks);
+                    } break;
+                case GGML_OP_ADD_SCALED:
+                case GGML_OP_RMS_NORM_SCALED:
+                case GGML_OP_MUL_MAT_ADD:
+                case GGML_OP_MUL_MAT_ADD_RELU:
+                    {
+                        // F32 staging for the whole output, plus one absmax per
+                        // thread. The output cannot be quantized in place: its
+                        // scale is only known once every element has been
+                        // computed, so all of them have to be held somewhere
+                        // first.
+                        cur = sizeof(float)*ggml_nelements(node) + sizeof(float)*n_tasks;
                     } break;
                 case GGML_OP_GATED_DELTA_NET:
                     {
