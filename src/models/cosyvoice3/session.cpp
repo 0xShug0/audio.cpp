@@ -91,10 +91,6 @@ CosyVoice3Session::CosyVoice3Session(
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("CosyVoice3 supports offline sessions");
     }
-    if (execution_context().backend_type() == core::BackendType::Metal) {
-        throw std::runtime_error("CosyVoice3 has an unresolved Metal backend issue, so Metal is temporarily blocked");
-    }
-
     using T = engine::assets::TensorStorageType;
     const auto storage_type = runtime::parse_tensor_storage_option(
         options.options,
