@@ -1,12 +1,19 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace engine::models::sanotts {
+
+/** Thrown by encode() when a chunk phonemizes past the duration model's
+ *  token limit; the session responds by bisecting the chunk. */
+struct SanoTtsTooLongError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 struct SanoTtsEncoded {
     std::vector<int32_t> token_ids;

@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -168,25 +169,60 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
 
     const auto request_options = parse_request_options(request);
     runtime::AudioBuffer merged;
+    uint64_t rendered_chunks = 0;
+    // Renders one chunk, bisecting at whitespace when it phonemizes past the
+    // duration model's token limit -- the codepoint budget cannot see phoneme
+    // counts, so a dense 280-codepoint chunk can exceed 207 tokens.
+    const std::function<void(const std::string &, int)> render_chunk =
+        [&](const std::string & chunk, int depth) {
+            SanoTtsEncoded encoded;
+            try {
+                encoded = frontend_->encode(chunk);
+            } catch (const SanoTtsTooLongError &) {
+                const size_t middle = chunk.size() / 2;
+                size_t split = std::string::npos;
+                for (size_t offset = 0; offset < chunk.size(); ++offset) {
+                    const size_t after = middle + offset;
+                    if (after < chunk.size() && chunk[after] == ' ') {
+                        split = after;
+                        break;
+                    }
+                    if (offset <= middle && chunk[middle - offset] == ' ') {
+                        split = middle - offset;
+                        break;
+                    }
+                }
+                if (depth >= 8 || split == std::string::npos) {
+                    throw;
+                }
+                const std::string left = chunk.substr(0, split);
+                const std::string right = chunk.substr(split + 1);
+                render_chunk(left, depth + 1);
+                append_pause(merged, SanoTtsFrontend::boundary_pause_seconds(left));
+                render_chunk(right, depth + 1);
+                return;
+            }
+            SanoTtsGenerationOptions chunk_options;
+            chunk_options.speaking_rate = request_options.speaking_rate;
+            // The default seed is derived from the chunk's own text -- the
+            // reference implementations' sha256(text)[:8] convention -- so a
+            // given sentence renders identically wherever it appears. An
+            // explicit seed advances per chunk instead, so long-form noise
+            // is not reused across chunks.
+            chunk_options.seed = request_options.seed_from_text
+                ? sanotts_text_seed(chunk)
+                : request_options.seed + rendered_chunks;
+            ++rendered_chunks;
+            auto audio = runtime_->synthesize(encoded.token_ids, chunk_options);
+            runtime::append_audio_buffer(merged, audio);
+        };
     for (size_t index = 0; index < chunks.size(); ++index) {
         if (index != 0) {
             append_pause(
                 merged,
                 SanoTtsFrontend::boundary_pause_seconds(chunks[index - 1]));
         }
-        const auto encoded = frontend_->encode(chunks[index]);
-        SanoTtsGenerationOptions chunk_options;
-        chunk_options.speaking_rate = request_options.speaking_rate;
-        // The default seed is derived from the chunk's own text -- the
-        // reference implementations' sha256(text)[:8] convention -- so a
-        // given sentence renders identically wherever it appears. An
-        // explicit seed advances per chunk instead, so long-form noise is
-        // not reused across chunks.
-        chunk_options.seed = request_options.seed_from_text
-            ? sanotts_text_seed(chunks[index])
-            : request_options.seed + static_cast<uint64_t>(index);
-        auto audio = runtime_->synthesize(encoded.token_ids, chunk_options);
-        runtime::append_audio_buffer(merged, audio);
+        render_chunk(chunks[index], 0);
     }
     for (float & sample : merged.samples) {
         sample = std::clamp(sample, -1.0F, 1.0F);

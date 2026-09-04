@@ -536,10 +536,10 @@ SanoTtsEncoded SanoTtsFrontend::encode(const std::string & text) const {
     }
     out.token_ids.push_back(2);   // <eos>
     if (static_cast<int64_t>(out.token_ids.size()) > max_tokens_) {
-        throw std::runtime_error(
+        throw SanoTtsTooLongError(
             "sanoTTS phoneme sequence has " + std::to_string(out.token_ids.size()) +
             " tokens including BOS/EOS; the duration model was trained for at most " +
-            std::to_string(max_tokens_) + ". Lower text_chunk_size.");
+            std::to_string(max_tokens_) + ".");
     }
     return out;
 }
