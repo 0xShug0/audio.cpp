@@ -62,7 +62,7 @@ constexpr int64_t kCodecDecodeCapacityBucketFrames = 32;
 constexpr int64_t kCodecHopLength = 960;
 constexpr int64_t kCodecPadSamples = kCodecHopLength / 2;
 constexpr int64_t kCodecDecodeWindowFrames = 128;
-constexpr int64_t kCodecDecodeOverlapFrames = 8;
+constexpr int64_t kCodecDecodeContextFrames = 32;
 constexpr int64_t kCodecFullDecodeMaxFrames = 512;
 constexpr int64_t kResidualDilations[] = {1, 3, 9};
 
@@ -1584,11 +1584,14 @@ HiggsCodecDecodeOutput HiggsCodecRuntime::decode_codes(const std::vector<int32_t
     std::vector<int32_t> window_codes;
     int64_t emitted_frames = 0;
     while (emitted_frames < frames) {
-        const int64_t window_begin =
-            std::max<int64_t>(0, emitted_frames - kCodecDecodeOverlapFrames);
+        const int64_t emit_begin = emitted_frames;
         const int64_t emit_end =
-            std::min<int64_t>(frames, emitted_frames + kCodecDecodeWindowFrames);
-        const int64_t window_frames = emit_end - window_begin;
+            std::min<int64_t>(frames, emit_begin + kCodecDecodeWindowFrames);
+        const int64_t window_begin =
+            std::max<int64_t>(0, emit_begin - kCodecDecodeContextFrames);
+        const int64_t window_end =
+            std::min<int64_t>(frames, emit_end + kCodecDecodeContextFrames);
+        const int64_t window_frames = window_end - window_begin;
         window_codes.resize(static_cast<size_t>(window_frames * kCodecCodebooks));
         for (int64_t frame = 0; frame < window_frames; ++frame) {
             const auto src =
@@ -1602,9 +1605,9 @@ HiggsCodecDecodeOutput HiggsCodecRuntime::decode_codes(const std::vector<int32_t
         const auto window = run_window(
             window_codes,
             window_frames,
-            kCodecDecodeWindowFrames + kCodecDecodeOverlapFrames);
-        const int64_t trim_frames = emitted_frames - window_begin;
-        const int64_t emit_frames = emit_end - emitted_frames;
+            kCodecDecodeWindowFrames + 2 * kCodecDecodeContextFrames);
+        const int64_t trim_frames = emit_begin - window_begin;
+        const int64_t emit_frames = emit_end - emit_begin;
         const int64_t sample_begin = trim_frames * kCodecHopLength;
         const int64_t sample_count = emit_frames * kCodecHopLength;
         if (sample_begin < 0 || sample_count <= 0 ||
