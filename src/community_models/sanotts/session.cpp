@@ -128,11 +128,21 @@ SanoTtsSession::SanoTtsSession(
         throw std::runtime_error("sanoTTS only supports offline TTS");
     }
     validate_session_options(options, *contract_);
-    frontend_ = std::make_unique<SanoTtsFrontend>(
-        session_path(options, "sanotts.espeak_library_path"),
-        session_path(options, "sanotts.espeak_data_path"),
-        assets_->config.duration_max_tokens);
-    runtime_ = std::make_unique<SanoTtsNativeRuntime>(assets_, options.backend);
+    if (assets_->graph == SanoTtsGraph::Nano) {
+        frontend_ = std::make_unique<SanoTtsFrontend>(
+            session_path(options, "sanotts.espeak_library_path"),
+            session_path(options, "sanotts.espeak_data_path"),
+            assets_->config.duration_max_tokens);
+        runtime_ = std::make_unique<SanoTtsNativeRuntime>(assets_, options.backend);
+    } else {
+        piper_frontend_ = std::make_unique<SanoTtsPiperFrontend>(
+            session_path(options, "sanotts.espeak_library_path"),
+            session_path(options, "sanotts.espeak_data_path"),
+            assets_->piper.espeak_voice,
+            assets_->piper.phoneme_id_map,
+            assets_->piper.duration_max_tokens);
+        piper_runtime_ = std::make_unique<SanoTtsPiperRuntime>(assets_, options.backend);
+    }
 }
 
 SanoTtsSession::~SanoTtsSession() = default;
@@ -154,11 +164,15 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
     if (request.audio_input.has_value()) {
         throw std::runtime_error("sanoTTS does not accept audio input");
     }
+    const std::string voice_language =
+        assets_->graph == SanoTtsGraph::Nano ? "en" : assets_->piper.language;
     if (!request.text_input->language.empty() &&
-        request.text_input->language != "en" &&
-        request.text_input->language != "en-us" &&
-        request.text_input->language != "English") {
-        throw std::runtime_error("sanoTTS supports English only");
+        request.text_input->language != voice_language &&
+        !(voice_language == "en" &&
+          (request.text_input->language == "en-us" ||
+           request.text_input->language == "English"))) {
+        throw std::runtime_error(
+            "this sanoTTS voice supports language '" + voice_language + "' only");
     }
     validate_chunk_mode(request);
     const int64_t chunk_size = chunk_size_from_request(request);
@@ -177,7 +191,9 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
         [&](const std::string & chunk, int depth) {
             SanoTtsEncoded encoded;
             try {
-                encoded = frontend_->encode(chunk);
+                encoded = frontend_ != nullptr
+                    ? frontend_->encode(chunk)
+                    : piper_frontend_->encode(chunk);
             } catch (const SanoTtsTooLongError &) {
                 const size_t middle = chunk.size() / 2;
                 size_t split = std::string::npos;
@@ -202,18 +218,27 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
                 render_chunk(right, depth + 1);
                 return;
             }
-            SanoTtsGenerationOptions chunk_options;
-            chunk_options.speaking_rate = request_options.speaking_rate;
-            // The default seed is derived from the chunk's own text -- the
-            // reference implementations' sha256(text)[:8] convention -- so a
-            // given sentence renders identically wherever it appears. An
-            // explicit seed advances per chunk instead, so long-form noise
-            // is not reused across chunks.
-            chunk_options.seed = request_options.seed_from_text
-                ? sanotts_text_seed(chunk)
-                : request_options.seed + rendered_chunks;
+            runtime::AudioBuffer audio;
+            if (runtime_ != nullptr) {
+                SanoTtsGenerationOptions chunk_options;
+                chunk_options.speaking_rate = request_options.speaking_rate;
+                // The default seed is derived from the chunk's own text --
+                // the reference implementations' sha256(text)[:8] convention
+                // -- so a given sentence renders identically wherever it
+                // appears. An explicit seed advances per chunk instead, so
+                // long-form noise is not reused across chunks.
+                chunk_options.seed = request_options.seed_from_text
+                    ? sanotts_text_seed(chunk)
+                    : request_options.seed + rendered_chunks;
+                audio = runtime_->synthesize(encoded.token_ids, chunk_options);
+            } else {
+                // The piperlite decoder is deterministic; the seed option is
+                // documented as ignored for these voices.
+                SanoTtsPiperGenerationOptions chunk_options;
+                chunk_options.speaking_rate = request_options.speaking_rate;
+                audio = piper_runtime_->synthesize(encoded.token_ids, chunk_options);
+            }
             ++rendered_chunks;
-            auto audio = runtime_->synthesize(encoded.token_ids, chunk_options);
             runtime::append_audio_buffer(merged, audio);
         };
     for (size_t index = 0; index < chunks.size(); ++index) {

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::models::sanotts {
@@ -52,6 +53,33 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    int64_t max_tokens_;
+};
+
+/**
+ * Text -> Piper phoneme ids for the piperlite voices.
+ *
+ * Reproduces piper's phonemize_espeak / phonemes_to_ids convention through
+ * the same eSpeak-ng library: phonemizer-style punctuation preservation,
+ * NFD decomposition to single codepoints, then the voice's phoneme_id_map
+ * with [BOS, PAD, (id, PAD)..., EOS] framing. Deterministic per voice.
+ */
+class SanoTtsPiperFrontend {
+public:
+    SanoTtsPiperFrontend(
+        std::filesystem::path espeak_library_path,
+        std::filesystem::path espeak_data_path,
+        std::string espeak_voice,
+        std::unordered_map<std::string, int32_t> phoneme_id_map,
+        int64_t max_tokens);
+    ~SanoTtsPiperFrontend();
+
+    [[nodiscard]] SanoTtsEncoded encode(const std::string & text) const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+    std::unordered_map<std::string, int32_t> id_map_;
     int64_t max_tokens_;
 };
 

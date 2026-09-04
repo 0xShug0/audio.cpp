@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "sanotts",
   "display_name": "sanoTTS Nano",
-  "description": "Very small English text-to-speech: a duration student, a contextual acoustic student producing mel-100, and a ConvNeXt-1D decoder with an iSTFT head. Two voices: heart (2.27M parameters, higher quality) and heart-nano (294k parameters, also runs on microcontrollers). 24 kHz output. Uses an external eSpeak-ng phonemizer.",
+  "description": "Very small English, Vietnamese and Indonesian text-to-speech. Two graphs: the nano lineage (duration student, contextual acoustic student to mel-100, noise-fed ConvNeXt-1D decoder with an iSTFT head; voices heart 2.27M and heart-nano 294k, 24 kHz) and the deterministic piperlite lineage (duration student, acoustic student to a 192-channel latent, 3-stage ConvTranspose1d decoder with dilated residual banks; voices amy, hfc, kristin, vi, id at 1.1-1.8M parameters, 22.05 kHz). Uses an external eSpeak-ng phonemizer.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -12,7 +12,9 @@
     "offline"
   ],
   "languages": [
-    "en"
+    "en",
+    "vi",
+    "id"
   ],
   "runtime": {
     "tags": [
@@ -29,7 +31,7 @@
       {
         "name": "speaking_rate",
         "type": "float",
-        "description": "Duration multiplier; larger is slower. Applied before the per-token clamp.",
+        "description": "Duration multiplier on the voice's tuned length scale; larger is slower. Applied before the per-token clamp.",
         "required": false,
         "min": 0.5,
         "max": 2.0,
@@ -38,7 +40,7 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder noise seed. The decoder is noise-fed, so a given seed picks one of many valid renderings; 0 derives it from the text as sha256(text)[:8], which is what the reference implementations do.",
+        "description": "Decoder noise seed. The decoder is noise-fed, so a given seed picks one of many valid renderings; 0 derives it from the text as sha256(text)[:8], which is what the reference implementations do. Piperlite voices are deterministic and ignore the seed.",
         "required": false,
         "min": 0,
         "default": 0
@@ -112,6 +114,71 @@
         "gguf/heart/config.json"
       ],
       "strip_prefix": "gguf/heart"
+    },
+    {
+      "id": "sanotts_amy_orig",
+      "display_name": "sanoTTS amy 1.46M FP32 GGUF (English, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-amy-GGUF",
+      "files": [
+        "gguf/amy/amy-f32.gguf",
+        "gguf/amy/config.json"
+      ],
+      "strip_prefix": "gguf/amy"
+    },
+    {
+      "id": "sanotts_hfc_orig",
+      "display_name": "sanoTTS hfc 1.83M FP32 GGUF (English, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-hfc-GGUF",
+      "files": [
+        "gguf/hfc/hfc-f32.gguf",
+        "gguf/hfc/config.json"
+      ],
+      "strip_prefix": "gguf/hfc"
+    },
+    {
+      "id": "sanotts_kristin_orig",
+      "display_name": "sanoTTS kristin 1.40M FP32 GGUF (English, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-kristin-GGUF",
+      "files": [
+        "gguf/kristin/kristin-f32.gguf",
+        "gguf/kristin/config.json"
+      ],
+      "strip_prefix": "gguf/kristin"
+    },
+    {
+      "id": "sanotts_vi_orig",
+      "display_name": "sanoTTS vi 1.57M FP32 GGUF (Vietnamese, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-vi-GGUF",
+      "files": [
+        "gguf/vi/vi-f32.gguf",
+        "gguf/vi/config.json"
+      ],
+      "strip_prefix": "gguf/vi"
+    },
+    {
+      "id": "sanotts_id_orig",
+      "display_name": "sanoTTS id 1.56M FP32 GGUF (Indonesian, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-id-GGUF",
+      "files": [
+        "gguf/id/id-f32.gguf",
+        "gguf/id/config.json"
+      ],
+      "strip_prefix": "gguf/id"
     }
   ],
   "dependencies": [],

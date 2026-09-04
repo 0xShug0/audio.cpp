@@ -634,6 +634,7 @@ audiocpp_add_model(sanotts
     SOURCES
         src/community_models/sanotts/assets.cpp
         src/community_models/sanotts/frontend.cpp
+        src/community_models/sanotts/piper_runtime.cpp
         src/community_models/sanotts/runtime.cpp
         src/community_models/sanotts/session.cpp
     INCLUDES

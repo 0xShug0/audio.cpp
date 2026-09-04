@@ -29,7 +29,7 @@
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
-| sanoTTS heart / heart-nano | `sanotts` | `tts` | [sanoTTS](#sanotts) |
+| sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VieNeu-TTS | `vietneu_tts` | `tts`, `clon` | [VieNeu-TTS](community_models/vietneu_tts.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
@@ -771,10 +771,11 @@ limitations.
 
 ## sanoTTS
 
-sanoTTS heart-nano is a 294,279-parameter English offline TTS model with a
-native GGML runtime, small enough that the same weights also run on
-microcontrollers. The GGUF package is standalone and downloads from Hugging
-Face. sanoTTS requires an external eSpeak-ng installation:
+sanoTTS is a family of very small offline TTS voices (English, Vietnamese,
+Indonesian; 294k to 2.27M parameters) with native GGML runtimes; the
+smallest voice also runs on microcontrollers. The GGUF packages are
+standalone and download from Hugging Face. sanoTTS requires an external
+eSpeak-ng installation:
 
 ```bash
 python3 tools/model_manager_v2.py install sanotts_heart_nano_orig --models-root models

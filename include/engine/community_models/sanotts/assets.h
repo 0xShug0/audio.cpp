@@ -3,10 +3,13 @@
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace engine::models::sanotts {
 
@@ -37,9 +40,48 @@ struct SanoTtsConfig {
     std::string voice;
 };
 
+enum class SanoTtsGraph {
+    Nano,        // mel-100 -> ConvNeXt-1D -> iSTFT, noise-fed (heart, heart-nano)
+    Piperlite,   // 192-ch latent -> 3-stage ConvTranspose1d, deterministic (amy, ...)
+};
+
+struct SanoTtsPiperConfig {
+    std::string voice;
+    std::string language;       // short code the session validates against: en, vi, id
+    std::string espeak_voice;
+    int64_t sample_rate = 22050;
+    double duration_length_scale = 1.0;
+
+    int64_t duration_vocab = 0;
+    int64_t duration_hidden = 0;
+    int64_t duration_depth = 0;
+    int64_t duration_kernel = 5;
+    int64_t duration_max_tokens = 0;
+    int64_t duration_max_frames = 0;
+
+    int64_t acoustic_vocab = 0;
+    int64_t acoustic_hidden = 0;
+    int64_t acoustic_depth = 0;
+    int64_t acoustic_token_depth = 0;
+    int64_t acoustic_kernel = 5;
+    int64_t acoustic_out_channels = 0;
+
+    std::array<int64_t, 4> channels = {0, 0, 0, 0};
+    std::array<std::vector<int64_t>, 3> stage_branches;
+    int64_t post_filter_channels = 0;
+    int64_t post_filter_layers = 0;
+    int64_t post_filter_kernel = 9;
+    double post_filter_scale = 0.0;
+
+    /** Piper phoneme_id_map: one UTF-8 codepoint -> id. */
+    std::unordered_map<std::string, int32_t> phoneme_id_map;
+};
+
 struct SanoTtsAssets {
     assets::ResourceBundle resources;
-    SanoTtsConfig config;
+    SanoTtsGraph graph = SanoTtsGraph::Nano;
+    SanoTtsConfig config;      // valid when graph == Nano
+    SanoTtsPiperConfig piper;  // valid when graph == Piperlite
     std::shared_ptr<const assets::TensorSource> weights;
 };
 

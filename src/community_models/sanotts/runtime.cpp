@@ -1,5 +1,7 @@
 #include "engine/community_models/sanotts/runtime.h"
 
+#include "graph_common.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/backend.h"
@@ -34,6 +36,7 @@ namespace {
 
 namespace core = engine::core;
 namespace modules = engine::modules;
+using namespace engine::models::sanotts::graph;   // shared graph helpers
 
 constexpr size_t kIoArenaBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr size_t kGraphArenaBytes = 128ULL * 1024ULL * 1024ULL;
@@ -58,199 +61,11 @@ constexpr float kLayerNormEps = 1.0e-6F;
 constexpr float kDcBlockPole = 0.9973F;
 constexpr double kPi = 3.14159265358979323846;
 
-struct GgmlContextDeleter {
-    void operator()(ggml_context * context) const noexcept {
-        if (context != nullptr) {
-            ggml_free(context);
-        }
-    }
-};
-
-core::TensorValue contiguous(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & value) {
-    if (core::has_backend_addressable_layout(value.tensor)) {
-        return value;
-    }
-    return core::wrap_tensor(
-        ggml_cont(ctx.ggml, value.tensor),
-        value.shape,
-        value.type);
-}
-
-core::TensorValue add(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & lhs,
-    const core::TensorValue & rhs) {
-    return modules::AddModule().build(ctx, lhs, rhs);
-}
-
-struct SanoTtsBackendWeights {
-    std::shared_ptr<core::BackendWeightStore> store;
-    std::unordered_map<std::string, core::TensorValue> tensors;
-};
-
-const core::TensorValue & weight(
-    const SanoTtsBackendWeights & weights,
-    const std::string & name) {
-    const auto found = weights.tensors.find(name);
-    if (found == weights.tensors.end()) {
-        throw std::runtime_error("sanoTTS missing tensor: " + name);
-    }
-    return found->second;
-}
-
-std::shared_ptr<const SanoTtsBackendWeights> load_weights(
-    const std::shared_ptr<const SanoTtsAssets> & assets,
-    ggml_backend_t backend,
-    core::BackendType backend_type) {
-    auto out = std::make_shared<SanoTtsBackendWeights>();
-    out->store = std::make_shared<core::BackendWeightStore>(
-        backend,
-        backend_type,
-        "sanotts.weights",
-        kWeightArenaBytes);
-    const auto metadata = assets->weights->tensors();
-    const size_t expected = expected_tensor_count(assets->config);
-    if (metadata.size() != expected) {
-        throw std::runtime_error(
-            "sanoTTS expects exactly " + std::to_string(expected) +
-            " tensors for this config, found " + std::to_string(metadata.size()));
-    }
-    out->tensors.reserve(metadata.size());
-    for (const auto & tensor : metadata) {
-        if (assets::ggml_type_for_tensor_dtype(tensor.dtype) != GGML_TYPE_F32) {
-            throw std::runtime_error(
-                "sanoTTS supports FP32 weights only: " + tensor.name);
-        }
-        out->tensors.emplace(
-            tensor.name,
-            out->store->load_tensor(
-                *assets->weights,
-                tensor.name,
-                assets::TensorStorageType::F32,
-                tensor.shape));
-    }
-    out->store->upload();
-    assets->weights->release_storage();
-    return out;
-}
-
 // ---- graph builders ------------------------------------------------------
 //
 // Values are carried channel-major as [1, C, T] (ggml ne0 = T) through the
 // convolutional front ends, and channel-last as [1, T, C] through the
 // ConvNeXt decoder blocks, matching the PyTorch modules they reproduce.
-
-core::TensorValue conv1d(
-    core::ModuleBuildContext & ctx,
-    const SanoTtsBackendWeights & weights,
-    const core::TensorValue & input,
-    const std::string & prefix,
-    int64_t out_channels,
-    int64_t kernel,
-    int padding) {
-    const int64_t in_channels = input.shape.dims[1];
-    const int64_t input_frames = input.shape.dims[2];
-    const int64_t output_frames = input_frames + 2 * padding - (kernel - 1);
-    const auto source = contiguous(ctx, input);
-    auto * input_2d = ggml_reshape_2d(
-        ctx.ggml,
-        source.tensor,
-        input_frames,
-        in_channels);
-    auto * kernel_tensor = weight(weights, prefix + ".weight").tensor;
-    ggml_tensor * output = nullptr;
-    if (kernel == 1 && padding == 0) {
-        auto * kernel_2d = ggml_reshape_2d(
-            ctx.ggml,
-            kernel_tensor,
-            in_channels,
-            out_channels);
-        auto * input_channels_first = ggml_cont(
-            ctx.ggml,
-            ggml_permute(ctx.ggml, input_2d, 1, 0, 2, 3));
-        auto * output_channels_first =
-            ggml_mul_mat(ctx.ggml, kernel_2d, input_channels_first);
-        output = ggml_reshape_2d(
-            ctx.ggml,
-            ggml_cont(
-                ctx.ggml,
-                ggml_permute(ctx.ggml, output_channels_first, 1, 0, 2, 3)),
-            output_frames,
-            out_channels);
-    } else {
-        auto * kernel_3d = ggml_reshape_3d(
-            ctx.ggml,
-            kernel_tensor,
-            kernel,
-            in_channels,
-            out_channels);
-        auto * input_3d = ggml_reshape_3d(
-            ctx.ggml,
-            input_2d,
-            input_frames,
-            in_channels,
-            1);
-        auto * output_3d = ggml_conv_1d(
-            ctx.ggml,
-            kernel_3d,
-            input_3d,
-            1,
-            padding,
-            1);
-        output = ggml_reshape_2d(
-            ctx.ggml,
-            output_3d,
-            output_frames,
-            out_channels);
-    }
-    auto * bias = ggml_reshape_2d(
-        ctx.ggml,
-        weight(weights, prefix + ".bias").tensor,
-        1,
-        out_channels);
-    output = ggml_add(ctx.ggml, output, bias);
-    return core::wrap_tensor(
-        ggml_reshape_3d(ctx.ggml, output, output_frames, out_channels, 1),
-        core::TensorShape::from_dims({1, out_channels, output_frames}),
-        GGML_TYPE_F32);
-}
-
-/** x + scale * conv2(silu(conv1(x))) -- the front ends' ResidualConvBlock.
- *  `scale` is a learned one-element tensor, broadcast by ggml_mul. */
-core::TensorValue residual_block(
-    core::ModuleBuildContext & ctx,
-    const SanoTtsBackendWeights & weights,
-    const core::TensorValue & input,
-    const std::string & prefix,
-    int64_t hidden,
-    int64_t kernel) {
-    const int padding = static_cast<int>(kernel / 2);
-    auto h = conv1d(ctx, weights, input, prefix + ".net.0", hidden, kernel, padding);
-    h = modules::SiluModule().build(ctx, h);
-    h = conv1d(ctx, weights, h, prefix + ".net.2", hidden, kernel, padding);
-    const auto h_source = contiguous(ctx, h);
-    const auto scaled_h = core::wrap_tensor(
-        ggml_mul(ctx.ggml, h_source.tensor, weight(weights, prefix + ".scale").tensor),
-        h.shape,
-        GGML_TYPE_F32);
-    return add(ctx, input, scaled_h);
-}
-
-core::TensorValue embed_tokens(
-    core::ModuleBuildContext & ctx,
-    const SanoTtsBackendWeights & weights,
-    const core::TensorValue & tokens,
-    const std::string & name,
-    int64_t vocab,
-    int64_t hidden) {
-    auto embedded = modules::EmbeddingModule({vocab, hidden}).build(
-        ctx,
-        tokens,
-        weight(weights, name));
-    return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, embedded);
-}
 
 core::TensorValue channel_last_layer_norm(
     core::ModuleBuildContext & ctx,
@@ -265,60 +80,6 @@ core::TensorValue channel_last_layer_norm(
             weight(weights, prefix + ".weight"),
             weight(weights, prefix + ".bias"),
         });
-}
-
-struct GraphResources {
-    ~GraphResources() {
-        core::free_backend_graph_plan(backend, plan);
-        core::release_backend_graph_resources(backend, graph);
-        if (allocator != nullptr) {
-            ggml_gallocr_free(allocator);
-        }
-        if (io_buffer != nullptr) {
-            ggml_backend_buffer_free(io_buffer);
-        }
-    }
-
-    std::unique_ptr<ggml_context, GgmlContextDeleter> io_context;
-    std::unique_ptr<ggml_context, GgmlContextDeleter> graph_context;
-    ggml_backend_buffer_t io_buffer = nullptr;
-    ggml_gallocr_t allocator = nullptr;
-    ggml_backend_t backend = nullptr;
-    ggml_backend_graph_plan_t plan = nullptr;
-    ggml_cgraph * graph = nullptr;
-};
-
-void allocate_graph(GraphResources & resources) {
-    resources.io_buffer =
-        ggml_backend_alloc_ctx_tensors(resources.io_context.get(), resources.backend);
-    if (resources.io_buffer == nullptr) {
-        throw std::runtime_error("sanoTTS failed to allocate graph input buffer");
-    }
-    resources.allocator =
-        ggml_gallocr_new(ggml_backend_get_default_buffer_type(resources.backend));
-    if (resources.allocator == nullptr ||
-        !ggml_gallocr_reserve(resources.allocator, resources.graph) ||
-        !ggml_gallocr_alloc_graph(resources.allocator, resources.graph)) {
-        throw std::runtime_error("sanoTTS failed to allocate backend graph");
-    }
-    core::validate_backend_graph_supported(
-        resources.backend,
-        resources.graph,
-        "sanoTTS");
-    resources.plan =
-        core::create_backend_graph_plan_if_host(resources.backend, resources.graph);
-}
-
-void compute_graph(GraphResources & resources, const char * label) {
-    const auto status = core::compute_backend_graph(
-        resources.backend,
-        resources.graph,
-        resources.plan,
-        label);
-    ggml_backend_synchronize(resources.backend);
-    if (status != GGML_STATUS_SUCCESS) {
-        throw std::runtime_error(std::string(label) + " graph compute failed");
-    }
 }
 
 // ---- ATen-compatible noise ----------------------------------------------
@@ -424,28 +185,6 @@ std::vector<float> seeded_noise(uint64_t seed, int64_t channels, int64_t frames)
         std::memcpy(out.data() + size - 16, tail, sizeof(tail));
     }
     return out;
-}
-
-// ---- host float semantics shared with the reference front end ------------
-
-/** torch.linspace(0, 1, n) with exact CPU-kernel float semantics: step in
- *  fp32, the first half filled as step*i, the second as fma(-step, n-1-i, 1). */
-void linspace01(float * dst, int64_t n) {
-    if (n <= 0) {
-        return;
-    }
-    if (n == 1) {
-        dst[0] = 0.0F;
-        return;
-    }
-    const auto step = 1.0F / static_cast<float>(n - 1);
-    const int64_t half = n / 2;
-    for (int64_t i = 0; i < half; ++i) {
-        dst[i] = step * static_cast<float>(i);
-    }
-    for (int64_t i = half; i < n; ++i) {
-        dst[i] = std::fma(-step, static_cast<float>(n - 1 - i), 1.0F);
-    }
 }
 
 // ---- graphs --------------------------------------------------------------
@@ -926,7 +665,12 @@ struct SanoTtsNativeRuntime::State {
         backend.value = core::init_backend(backend_config);
         backend_type = core::backend_type(backend.value);
         core::set_backend_threads(backend.value, threads);
-        weights = load_weights(assets, backend.value, backend_type);
+        weights = load_weights(
+            assets,
+            backend.value,
+            backend_type,
+            expected_tensor_count(assets->config),
+            kWeightArenaBytes);
         if (backend_type == core::BackendType::Cuda) {
             // Durations round to integers and gate the whole frame layout, so
             // small TF32 differences would move frame counts. Keep the tiny
@@ -941,7 +685,9 @@ struct SanoTtsNativeRuntime::State {
             duration_weights = load_weights(
                 assets,
                 duration_backend.value,
-                core::BackendType::Cpu);
+                core::BackendType::Cpu,
+                expected_tensor_count(assets->config),
+                kWeightArenaBytes);
         }
     }
 
