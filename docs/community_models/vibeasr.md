@@ -28,9 +28,15 @@ not a different architecture:
 So this is an alternative execution path for weights that were quantized
 upstream, useful where the INT8/ternary package is the point (no F32
 activations anywhere, integer dot products, and a much smaller decoder once the
-I2_S kernel lands). Converging the two — reusing the `vibevoice_asr` loader,
-session, and streaming state machine and treating I8_S as one more weight path —
-is the intended direction for the decoder half; see [Status](#status).
+I2_S kernel lands).
+
+It stays a separate community entry rather than becoming a weight path inside
+`vibevoice_asr`, because the two share no graph code: every activation here is
+I8_S and every node is one of the fused CPU-only ops, so folding it in would put
+a second, mutually exclusive graph builder and a second backend policy behind one
+family's loader. The reuse that is worth having — tokenizer vocabulary, prompt
+layout, feature-injection order — is data and conventions, and this entry follows
+`vibevoice_asr` on all of it.
 
 ## Architecture
 
@@ -180,15 +186,11 @@ Ported:
 Not ported yet:
 
 - **The decoder.** VibeASR.cpp runs it on ternary `GGML_TYPE_I2_S` weights whose
-  kernel is not in tree, so there is no loader, no session, and no
+  matmul kernel is not in tree yet, so there is no loader, no session, and no
   `--family vibeasr` — nothing can transcribe through this path today. The
   encoder output is the LM input, so the halves are independently reviewable but
-  only useful together.
-- **Convergence with `vibevoice_asr`.** Once the I2_S kernel lands, the decoder
-  half should reuse that family's loader, session, and streaming machinery rather
-  than duplicate it. Maintainer preference on where the I8_S/I2_S path should
-  live — a separate community family, or a weight path inside `vibevoice_asr` —
-  is worth settling before that PR.
+  only useful together. Two follow-up PRs cover it: the I2_S matmul kernel, then
+  the decoder graph plus loader and session.
 
 Known limitations:
 
