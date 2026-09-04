@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "family": "sanotts",
+  "display_name": "sanoTTS Nano",
+  "description": "Very small English text-to-speech: a duration student, a contextual acoustic student producing mel-100, and a ConvNeXt-1D decoder with an iSTFT head. 294k parameters at 24 kHz, with a 2.27M variant. Uses an external eSpeak-ng phonemizer.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "speaking_rate",
+        "type": "float",
+        "description": "Duration multiplier; larger is slower. Applied before the per-token clamp.",
+        "required": false,
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Decoder noise seed. The decoder is noise-fed, so a given seed picks one of many valid renderings; 0 derives it from the text as sha256(text)[:8], which is what the reference implementations do.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode.",
+        "values": [
+          "word_budget"
+        ],
+        "required": false,
+        "default": "word_budget"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 280.",
+        "required": false,
+        "min": 1,
+        "default": 280
+      }
+    ],
+    "session": [
+      {
+        "name": "espeak_library_path",
+        "type": "path",
+        "description": "Optional explicit path to the eSpeak-ng shared library.",
+        "required": false
+      },
+      {
+        "name": "espeak_data_path",
+        "type": "path",
+        "description": "Optional explicit path to the directory containing espeak-ng-data.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "ampixa/sanoTTS",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "sanotts_heart_nano_orig",
+      "display_name": "sanoTTS heart-nano 294k GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-heart-nano-GGUF",
+      "files": [
+        "gguf/heart-nano.gguf"
+      ],
+      "strip_prefix": "gguf"
+    },
+    {
+      "id": "sanotts_heart_orig",
+      "display_name": "sanoTTS heart 2.27M GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-heart-GGUF",
+      "files": [
+        "gguf/heart.gguf"
+      ],
+      "strip_prefix": "gguf"
+    }
+  ],
+  "dependencies": [],
+  "ui": {},
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}
