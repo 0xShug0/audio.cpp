@@ -124,12 +124,15 @@ For measured 16-bit vs Q8 speed and peak-VRAM results, see the
 
 ## Download Sources
 
-Native packages download from Hugging Face (`kind: "huggingface_snapshot"`) or
-ModelScope (`kind: "modelscope_snapshot"`); see
+Both the native package manager and `tools/model_manager_v2.py` download from
+Hugging Face (`kind: "huggingface_snapshot"`) or ModelScope
+(`kind: "modelscope_snapshot"`); see
 [maintainers/model_specs.md](maintainers/model_specs.md) for the spec fields.
-The endpoints can be overridden for mirrors or tests with
+The native endpoints can be overridden for mirrors or tests with
 `AUDIOCPP_HF_BASE_URL` (default `https://huggingface.co`) and
-`AUDIOCPP_MS_BASE_URL` (default `https://www.modelscope.cn`).
+`AUDIOCPP_MS_BASE_URL` (default `https://www.modelscope.cn`). The Python tool
+uses the standard `HF_ENDPOINT` for Hugging Face and the same
+`AUDIOCPP_MS_BASE_URL` for ModelScope.
 
 ## Dependencies
 

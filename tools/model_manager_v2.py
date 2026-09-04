@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,6 +74,17 @@ def hf_endpoint() -> str:
     return endpoint or "https://huggingface.co"
 
 
+def ms_endpoint() -> str:
+    """Base URL for ModelScope requests.
+
+    Honors AUDIOCPP_MS_BASE_URL, mirroring the native C++ package manager.
+    Falls back to https://www.modelscope.cn. Empty values and trailing slashes
+    are tolerated.
+    """
+    endpoint = os.environ.get("AUDIOCPP_MS_BASE_URL", "").strip().rstrip("/")
+    return endpoint or "https://www.modelscope.cn"
+
+
 def http_headers() -> dict[str, str]:
     headers = {"User-Agent": "audio.cpp model_manager_v2.py"}
     token = huggingface_token()
@@ -121,6 +133,18 @@ def merged_download(spec: dict[str, Any], package: dict[str, Any]) -> dict[str, 
     download = dict(defaults)
     download.update(package.get("download", {}))
     return download
+
+
+def package_kind(package: PackageRecord) -> str:
+    return str(package.download.get("kind", ""))
+
+
+def package_revision(package: PackageRecord) -> str:
+    """Kind-aware revision default: master on ModelScope, main on Hugging Face."""
+    revision = str(package.download.get("revision", "")).strip()
+    if revision:
+        return revision
+    return "master" if package_kind(package) == "modelscope_snapshot" else "main"
 
 
 def flatten_packages(specs: list[dict[str, Any]]) -> list[PackageRecord]:
@@ -177,9 +201,95 @@ def hf_url(repo: str, revision: str, remote_path: str) -> str:
     return f"{hf_endpoint()}/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
 
 
-def check_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:
+def ms_url(repo: str, revision: str, remote_path: str) -> str:
+    return f"{ms_endpoint()}/models/{repo}/resolve/{quote(revision, safe='')}/{quote_repo_path(remote_path)}"
+
+
+def ms_files_url(repo: str, revision: str) -> str:
+    return f"{ms_endpoint()}/api/v1/models/{repo}/repo/files?Revision={quote(revision, safe='')}&Recursive=true"
+
+
+def download_url(package: PackageRecord, remote_path: str) -> str:
     repo = package.download["repo"]
-    revision = package.download.get("revision", "main")
+    revision = package_revision(package)
+    if package_kind(package) == "modelscope_snapshot":
+        return ms_url(repo, revision, remote_path)
+    return hf_url(repo, revision, remote_path)
+
+
+# ModelScope resolve HEAD responses carry no Content-Length or ETag, so
+# per-file size and checksum come from the repo file-list API instead. The
+# listing is fetched once per repo+revision and shared through this cache; an
+# empty entry means the listing was unavailable and HEAD fallback applies.
+_MS_LISTING_CACHE: dict[tuple[str, str, str], dict[str, RemoteFileInfo]] = {}
+_MS_LISTING_LOCK = threading.Lock()
+
+
+def ms_repo_listing(repo: str, revision: str) -> dict[str, RemoteFileInfo]:
+    key = (ms_endpoint(), repo, revision)
+    with _MS_LISTING_LOCK:
+        cached = _MS_LISTING_CACHE.get(key)
+    if cached is not None:
+        return cached
+    listing: dict[str, RemoteFileInfo] = {}
+    try:
+        request = Request(ms_files_url(repo, revision), headers=http_headers())
+        with urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("Code") != 200:
+            raise ManagerError(f"ModelScope repo listing failed for {repo}: {payload.get('Message', 'unknown error')}")
+        files = payload.get("Data", {}).get("Files")
+        if not isinstance(files, list):
+            raise ManagerError(f"ModelScope repo listing has no file list: {repo}")
+        for item in files:
+            if not isinstance(item, dict) or item.get("Type") != "blob":
+                continue
+            path = item.get("Path")
+            if not path:
+                continue
+            size = item.get("Size")
+            listing[str(path)] = RemoteFileInfo(
+                size=int(size) if size is not None else None,
+                revision="",
+                etag=str(item.get("Sha256") or ""),
+            )
+    except Exception:
+        listing = {}
+    with _MS_LISTING_LOCK:
+        _MS_LISTING_CACHE[key] = listing
+    return listing
+
+
+def check_ms_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:
+    repo = package.download["repo"]
+    revision = package_revision(package)
+    listing = ms_repo_listing(repo, revision)
+    info = listing.get(remote_path)
+    if info is not None:
+        return info
+    if listing:
+        raise ManagerError(
+            f"remote file is not accessible: {repo}/{remote_path} (not in the ModelScope repo listing)"
+        )
+    # The listing API is unreachable; fall back to a HEAD on the resolve URL,
+    # which reports the file checksum as X-Linked-Etag but no size.
+    request = Request(ms_url(repo, revision, remote_path), headers=http_headers(), method="HEAD")
+    try:
+        with urlopen(request, timeout=60) as response:
+            return RemoteFileInfo(
+                size=None,
+                revision="",
+                etag=response.headers.get("X-Linked-Etag", "").strip('"'),
+            )
+    except HTTPError as error:
+        raise ManagerError(f"remote file is not accessible: {repo}/{remote_path} ({error.code})") from error
+
+
+def check_remote_file(package: PackageRecord, remote_path: str) -> RemoteFileInfo:
+    if package_kind(package) == "modelscope_snapshot":
+        return check_ms_remote_file(package, remote_path)
+    repo = package.download["repo"]
+    revision = package_revision(package)
     request = Request(hf_url(repo, revision, remote_path), headers=http_headers(), method="HEAD")
     try:
         with urlopen(request, timeout=60) as response:
@@ -207,8 +317,7 @@ def download_file(
     cancel_file: Path | None = None,
 ) -> None:
     repo = package.download["repo"]
-    revision = package.download.get("revision", "main")
-    request = Request(hf_url(repo, revision, remote_path), headers=http_headers())
+    request = Request(download_url(package, remote_path), headers=http_headers())
     try:
         with urlopen(request, timeout=300) as response:
             expected_header = response.headers.get("Content-Length")
@@ -239,18 +348,21 @@ def download_file(
             raise ManagerError(
                 f"{repo}/{remote_path} requires accepted Hugging Face access and a valid HF token"
             ) from error
+        if package_kind(package) == "modelscope_snapshot" and error.code in (401, 403):
+            raise ManagerError(f"{repo}/{remote_path} requires ModelScope access to this repo") from error
         raise ManagerError(f"failed to download {repo}/{remote_path}: HTTP {error.code}") from error
 
 
-def ensure_hf_package(package: PackageRecord) -> None:
+def ensure_snapshot_package(package: PackageRecord) -> None:
     kind = package.download.get("kind")
-    if kind != "huggingface_snapshot":
+    if kind not in ("huggingface_snapshot", "modelscope_snapshot"):
         raise ManagerError(
-            f"{package.id} uses download kind '{kind}'. model_manager_v2 only installs huggingface_snapshot packages; "
+            f"{package.id} uses download kind '{kind}'. model_manager_v2 only installs "
+            "huggingface_snapshot and modelscope_snapshot packages; "
             "use tools/model_manager.py for legacy composite or converter installs."
         )
     if not package.download.get("repo"):
-        raise ManagerError(f"{package.id} has no Hugging Face repo")
+        raise ManagerError(f"{package.id} has no remote repo for download kind '{kind}'")
 
 
 def package_manifest_path(package: PackageRecord, models_root: Path) -> Path:
@@ -281,7 +393,7 @@ def write_package_manifest(
         "schema_version": 1,
         "package_id": package.id,
         "repo": package.download.get("repo", ""),
-        "requested_revision": package.download.get("revision", "main"),
+        "requested_revision": package_revision(package),
         "resolved_revision": resolved_revision,
         "installed_at_unix": int(time.time()),
         "files": {
@@ -321,7 +433,7 @@ def reusable_package_outputs(
 
 
 def install_package(package: PackageRecord, records: list[PackageRecord], args: argparse.Namespace) -> None:
-    ensure_hf_package(package)
+    ensure_snapshot_package(package)
     target_dir = validate_relative_path(package.target_directory, "target_directory")
     models_root = Path(args.models_root)
     final_dir = models_root / target_dir
@@ -329,7 +441,7 @@ def install_package(package: PackageRecord, records: list[PackageRecord], args: 
     full_plan = list(plan)
 
     print(f"selected {package.id} ({package.family})")
-    print(f"repo {package.download['repo']}@{package.download.get('revision', 'main')}")
+    print(f"repo {package.download['repo']}@{package_revision(package)}")
     print(f"target {final_dir}")
     for remote, output in plan:
         if args.check:
@@ -421,7 +533,7 @@ def install_package(package: PackageRecord, records: list[PackageRecord], args: 
             shutil.rmtree(staging)
         resolved_revision = next(
             (info.revision for info in remote_files.values() if info.revision),
-            package.download.get("revision", "main"),
+            package_revision(package),
         )
         write_package_manifest(package, models_root, resolved_revision, remote_files)
     except Exception:
@@ -578,7 +690,7 @@ def package_version_state(
 def package_size_record(package: PackageRecord, models_root: Path | None = None) -> dict[str, Any]:
     installed = package_is_installed(package, models_root)
     try:
-        ensure_hf_package(package)
+        ensure_snapshot_package(package)
         total = 0
         unknown = False
         remote_revision = ""
@@ -685,7 +797,7 @@ def make_parser() -> argparse.ArgumentParser:
     clean_parser.add_argument("package", help="package id or family")
     clean_parser.add_argument("--models-root", default="models")
 
-    install_parser = sub.add_parser("install", help="install one Hugging Face snapshot package")
+    install_parser = sub.add_parser("install", help="install one Hugging Face or ModelScope snapshot package")
     install_parser.add_argument("package", help="package id or family")
     install_parser.add_argument("--format")
     install_parser.add_argument("--precision")
