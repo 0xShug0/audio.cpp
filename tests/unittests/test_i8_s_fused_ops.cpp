@@ -67,8 +67,13 @@ std::vector<float> patterned(size_t n, float phase, float scale) {
     return v;
 }
 
-// The reference requantizer: absmax over the whole result, then round, then
-// clamp. Mirrors ggml_i8_s_requantize.
+// The reference requantizer, mirroring ggml_i8_s_requantize: absmax over the
+// whole result -- taken before the relu clamp, so a value about to be zeroed
+// still widens the scale -- then clamp, then round ties to even.
+//
+// std::rint, not std::round: the op rounds ties to even so that its AVX2 and
+// NEON bodies agree with their scalar tails. std::round would round ties away
+// from zero and make the byte-exact comparisons below fail on any tie.
 std::vector<int8_t> requantize_ref(const std::vector<float> & values, bool relu, float * scale_out) {
     float amax = 0.0f;
     for (float v : values) {
@@ -76,13 +81,13 @@ std::vector<int8_t> requantize_ref(const std::vector<float> & values, bool relu,
     }
 
     const float id = amax != 0.0f ? 127.0f / amax : 0.0f;
+    const float lo = relu ? 0.0f : -127.0f;
 
     std::vector<int8_t> q(values.size());
     for (size_t i = 0; i < values.size(); ++i) {
         float v = values[i] * id;
-        v = std::max(-127.0f, std::min(127.0f, v));
-        const int8_t r = static_cast<int8_t>(std::round(v));
-        q[i] = relu && r < 0 ? 0 : r;
+        v = std::max(lo, std::min(127.0f, v));
+        q[i] = static_cast<int8_t>(std::rint(v));
     }
 
     *scale_out = amax != 0.0f ? amax / 127.0f : 0.0f;
@@ -286,9 +291,10 @@ void test_rms_norm_scaled(int n_threads) {
     std::cout << "rms_norm_scaled: C=" << C << " L=" << L << " nth=" << n_threads << " OK\n";
 }
 
-void test_mul_mat_add(bool relu, int n_threads) {
-    const int64_t IC = 64;
-    const int64_t OC = 48;
+// IC and OC are varied by the caller rather than fixed: IC decides how much of
+// the contraction the SIMD path covers and how much falls to the scalar tail,
+// and OC decides whether the output-channel chunking loop wraps around.
+void test_mul_mat_add(bool relu, int n_threads, int64_t IC, int64_t OC) {
     const int64_t N  = 23;
 
     ggml_init_params ip = { kCtxBytes, nullptr, false };
@@ -331,6 +337,7 @@ void test_mul_mat_add(bool relu, int n_threads) {
     const auto want_q = requantize_ref(want, relu, &want_scale);
 
     const std::string label = std::string(relu ? "mul_mat_add_relu" : "mul_mat_add") +
+                              " IC=" + std::to_string(IC) + " OC=" + std::to_string(OC) +
                               " nth=" + std::to_string(n_threads);
 
     require_close(*inband_scale(result), want_scale, want_scale * 1e-4f, label + " scale");
@@ -352,13 +359,14 @@ void test_mul_mat_add(bool relu, int n_threads) {
     }
 
     ggml_free(ctx);
-    std::cout << label << ": IC=" << IC << " OC=" << OC << " N=" << N << " OK\n";
+    std::cout << label << " N=" << N << " OK\n";
 }
 
-void test_mul_mat_add_depthwise(int n_threads) {
-    const int64_t K = 7;    // kernel width
+// K is the contraction length, so it decides how much of the dot product the SIMD
+// path covers. N is the number of positions, which is what the depthwise path
+// batches -- so it decides whether the chunking loop wraps around.
+void test_mul_mat_add_depthwise(int n_threads, int64_t K, int64_t N) {
     const int64_t C = 40;   // channels
-    const int64_t N = 19;   // positions
 
     ggml_init_params ip = { kCtxBytes, nullptr, false };
     ggml_context * ctx = ggml_init(ip);
@@ -395,7 +403,9 @@ void test_mul_mat_add_depthwise(int n_threads) {
     float want_scale = 0.0f;
     const auto want_q = requantize_ref(want, false, &want_scale);
 
-    const std::string label = "mul_mat_add depthwise nth=" + std::to_string(n_threads);
+    const std::string label = "mul_mat_add depthwise K=" + std::to_string(K) +
+                              " N=" + std::to_string(N) +
+                              " nth=" + std::to_string(n_threads);
     require_close(*inband_scale(result), want_scale, want_scale * 1e-4f, label + " scale");
 
     const auto * q = static_cast<const int8_t *>(result->data);
@@ -405,7 +415,7 @@ void test_mul_mat_add_depthwise(int n_threads) {
     }
 
     ggml_free(ctx);
-    std::cout << label << ": K=" << K << " C=" << C << " N=" << N << " OK\n";
+    std::cout << label << ": C=" << C << " OK\n";
 }
 
 void test_im2col_asym(int n_threads) {
@@ -472,9 +482,21 @@ int main() {
         for (int nth : {1, 4}) {
             test_add_scaled(nth);
             test_rms_norm_scaled(nth);
-            test_mul_mat_add(false, nth);
-            test_mul_mat_add(true, nth);
-            test_mul_mat_add_depthwise(nth);
+            // IC=64: SIMD only, no tail. IC=67: three elements land in the
+            // scalar tail, which a truncating block count would silently drop.
+            // IC=13: shorter than one 32-byte step, so entirely scalar.
+            // OC=48 stays inside one output-channel chunk, OC=100 spans two.
+            test_mul_mat_add(false, nth, 64, 48);
+            test_mul_mat_add(true,  nth, 64, 48);
+            test_mul_mat_add(false, nth, 67, 48);
+            test_mul_mat_add(false, nth, 13, 48);
+            test_mul_mat_add(false, nth, 67, 100);
+            // K=7 is shorter than any vector step, so the dot is all scalar;
+            // K=36 runs the 32-byte body plus a 4-element tail. N=19 stays inside
+            // one position chunk, N=150 spans three.
+            test_mul_mat_add_depthwise(nth, 7,  19);
+            test_mul_mat_add_depthwise(nth, 36, 19);
+            test_mul_mat_add_depthwise(nth, 7,  150);
             test_im2col_asym(nth);
         }
     } catch (const std::exception & e) {

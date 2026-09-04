@@ -11671,6 +11671,71 @@ void ggml_compute_forward_fwht(const ggml_compute_params * params, ggml_tensor *
 // of the available 127. That is what the reference implementation does, and
 // matching it is what makes a layer-by-layer comparison meaningful, so it is
 // reproduced here deliberately rather than improved in passing.
+// Scale a contiguous run of staged F32 into I8_S.
+//
+// relu is folded into the low clamp: clamping to 0 before rounding and rounding
+// before clamping to 0 agree on every negative input, and the float clamp is
+// free here. The absmax that produced id was taken before the clamp, so a
+// channel about to be zeroed still counts towards the scale.
+//
+// roundf() would be a PLT call per element. rintf() inlines to one instruction
+// and rounds ties to even, which is what _mm256_cvtps_epi32 does as well, so the
+// vector body and the scalar tail agree - and it matches ggml's own
+// nearest_int(). VibeASR rounds ties away from zero in its scalar tail but to
+// even in its vector body, so no tie convention reproduces it exactly.
+static inline void ggml_i8_s_quantize_range(
+        int8_t * GGML_RESTRICT dst,
+        const float * GGML_RESTRICT src,
+        int64_t n,
+        float id,
+        bool relu) {
+
+    int64_t i = 0;
+
+    const float lo = relu ? 0.0f : -127.0f;
+
+#if defined(__AVX2__)
+    const __m256 v_id  = _mm256_set1_ps(id);
+    const __m256 v_lo  = _mm256_set1_ps(lo);
+    const __m256 v_hi  = _mm256_set1_ps(127.0f);
+
+    for (; i + 8 <= n; i += 8) {
+        __m256 vf = _mm256_mul_ps(_mm256_loadu_ps(src + i), v_id);
+        vf = _mm256_min_ps(_mm256_max_ps(vf, v_lo), v_hi);
+
+        const __m256i vi32 = _mm256_cvtps_epi32(vf);
+
+        __m256i vi16 = _mm256_permute4x64_epi64(_mm256_packs_epi32(vi32, vi32), 0xD8);
+        __m256i vi8  = _mm256_permute4x64_epi64(_mm256_packs_epi16(vi16, vi16), 0xD8);
+
+        _mm_storel_epi64((__m128i *)(dst + i), _mm256_castsi256_si128(vi8));
+    }
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+    const float32x4_t v_id = vdupq_n_f32(id);
+    const float32x4_t v_lo = vdupq_n_f32(lo);
+    const float32x4_t v_hi = vdupq_n_f32(127.0f);
+
+    for (; i + 8 <= n; i += 8) {
+        float32x4_t f0 = vmulq_f32(vld1q_f32(src + i    ), v_id);
+        float32x4_t f1 = vmulq_f32(vld1q_f32(src + i + 4), v_id);
+
+        f0 = vminq_f32(vmaxq_f32(f0, v_lo), v_hi);
+        f1 = vminq_f32(vmaxq_f32(f1, v_lo), v_hi);
+
+        const int16x8_t vi16 = vcombine_s16(vqmovn_s32(vcvtnq_s32_f32(f0)),
+                                            vqmovn_s32(vcvtnq_s32_f32(f1)));
+
+        vst1_s8(dst + i, vqmovn_s16(vi16));
+    }
+#endif
+
+    for (; i < n; ++i) {
+        float v = src[i] * id;
+        v = v < lo ? lo : (v > 127.0f ? 127.0f : v);
+        dst[i] = (int8_t) rintf(v);
+    }
+}
+
 static void ggml_i8_s_requantize(
         const ggml_compute_params * params,
         ggml_tensor * dst,
@@ -11705,16 +11770,12 @@ static void ggml_i8_s_requantize(
 
     int8_t * dst_data = (int8_t *) dst->data;
 
+    // Each row's [col0, col1) slice is contiguous, so the vectorized helper runs
+    // once per row regardless of how the rectangle is strided.
     for (int64_t row = 0; row < n_rows; row++) {
-        for (int64_t col = col0; col < col1; col++) {
-            const int64_t i = row*row_stride + col;
+        const int64_t i = row*row_stride + col0;
 
-            float v = stage[i] * id;
-            v = v < -127.0f ? -127.0f : (v > 127.0f ? 127.0f : v);
-
-            int8_t q = (int8_t) roundf(v);
-            dst_data[i] = relu && q < 0 ? 0 : q;
-        }
+        ggml_i8_s_quantize_range(dst_data + i, stage + i, col1 - col0, id, relu);
     }
 
     if (ith == 0) {
@@ -11854,6 +11915,81 @@ void ggml_compute_forward_rms_norm_scaled(
 
 // ggml_compute_forward_mul_mat_add
 
+#define GGML_MUL_MAT_ADD_OC_CHUNK 64
+
+// stage[j] = acc[j]*d + bias[j], returning max(|stage[j]|) folded into amax.
+//
+// This is the second pass over every output, so leaving it scalar costs about as
+// much as the dot products do at the small contraction lengths the conv layers
+// use. Vectorizing it is exact: max over floats is order-independent, and the
+// multiply and add are kept separate so the tail cannot disagree with the body.
+static inline float ggml_i8_s_scale_bias_absmax(
+        float * GGML_RESTRICT stage,
+        const int32_t * GGML_RESTRICT acc,
+        const float * GGML_RESTRICT bias,
+        int64_t n,
+        float d,
+        float amax) {
+
+    int64_t i = 0;
+
+#if defined(__AVX2__)
+    const __m256 v_d    = _mm256_set1_ps(d);
+    const __m256 v_abs  = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
+
+    __m256 v_amax = _mm256_setzero_ps();
+
+    for (; i + 8 <= n; i += 8) {
+        const __m256 v = _mm256_add_ps(
+            _mm256_mul_ps(_mm256_cvtepi32_ps(_mm256_loadu_si256((const __m256i *)(acc + i))), v_d),
+            _mm256_loadu_ps(bias + i));
+
+        _mm256_storeu_ps(stage + i, v);
+
+        v_amax = _mm256_max_ps(v_amax, _mm256_and_ps(v, v_abs));
+    }
+
+    if (i > 0) {
+        __m128 r = _mm_max_ps(_mm256_castps256_ps128(v_amax), _mm256_extractf128_ps(v_amax, 1));
+        r = _mm_max_ps(r, _mm_movehl_ps(r, r));
+        r = _mm_max_ss(r, _mm_shuffle_ps(r, r, 1));
+
+        const float v = _mm_cvtss_f32(r);
+        if (v > amax) amax = v;
+    }
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+    const float32x4_t v_d = vdupq_n_f32(d);
+
+    float32x4_t v_amax = vdupq_n_f32(0.0f);
+
+    for (; i + 4 <= n; i += 4) {
+        const float32x4_t v = vaddq_f32(
+            vmulq_f32(vcvtq_f32_s32(vld1q_s32(acc + i)), v_d),
+            vld1q_f32(bias + i));
+
+        vst1q_f32(stage + i, v);
+
+        v_amax = vmaxq_f32(v_amax, vabsq_f32(v));
+    }
+
+    if (i > 0) {
+        const float v = vmaxvq_f32(v_amax);
+        if (v > amax) amax = v;
+    }
+#endif
+
+    for (; i < n; ++i) {
+        const float v = (float) acc[i]*d + bias[i];
+
+        stage[i] = v;
+
+        const float av = fabsf(v);
+        if (av > amax) amax = av;
+    }
+
+    return amax;
+}
+
 // Shared by GGML_OP_MUL_MAT_ADD and GGML_OP_MUL_MAT_ADD_RELU.
 //
 // Two shapes are handled. When src0 is [K, 1, C] the op is depthwise: C
@@ -11919,24 +12055,32 @@ static void ggml_compute_forward_mul_mat_add_impl(
     if (depthwise) {
         // stage/dst index is ch*ne11 + col, so each channel is a row of length
         // ne11 and this thread owns the [col0, col1) band of every row.
+        //
+        // The batched roles are inverted here relative to the matmul path: the
+        // filter is the single row and the positions are the nrc rows, since it is
+        // the positions that are strided by ne00 and the filter that is reused.
+        // That also makes the results contiguous, so the scale/bias pass vectorizes.
+        int32_t acc[GGML_MUL_MAT_ADD_OC_CHUNK];
+        float   bias_v[GGML_MUL_MAT_ADD_OC_CHUNK];
+
         for (int64_t ch = 0; ch < ne02; ch++) {
             const int8_t * w_ch = w + ch*ne00;
 
-            for (int64_t col = col0; col < col1; col++) {
+            // Broadcast once per channel, not per position.
+            for (int64_t j = 0; j < GGML_MUL_MAT_ADD_OC_CHUNK; j++) {
+                bias_v[j] = bias[ch];
+            }
+
+            for (int64_t col = col0; col < col1; col += GGML_MUL_MAT_ADD_OC_CHUNK) {
+                const int64_t ncol = MIN((int64_t) GGML_MUL_MAT_ADD_OC_CHUNK, col1 - col);
+
                 // src1 is [K, N, C]: the channel stride is ne11*ne00.
                 const int8_t * x_col = x + ch*ne11*ne00 + col*ne00;
 
-                int32_t acc = 0;
-                for (int64_t k = 0; k < ne00; k++) {
-                    acc += (int32_t) w_ch[k] * (int32_t) x_col[k];
-                }
+                ggml_vec_dot_i8_i8(ne00, acc, 1, x_col, ne00, w_ch, ncol);
 
-                const float v = (float) acc * combined_d + bias[ch];
-
-                stage[ch*ne11 + col] = v;
-
-                const float av = fabsf(v);
-                if (av > local_absmax) local_absmax = av;
+                local_absmax = ggml_i8_s_scale_bias_absmax(
+                    stage + ch*ne11 + col, acc, bias_v, ncol, combined_d, local_absmax);
             }
         }
 
@@ -11946,23 +12090,22 @@ static void ggml_compute_forward_mul_mat_add_impl(
         // block [col0*ne01, col1*ne01).
         const size_t nb11 = src1->nb[1];
 
+        // Output channels are handled a chunk at a time so the int32
+        // accumulators fit a fixed stack buffer and params->wdata does not have
+        // to grow. Within a chunk the weight rows are contiguous and x_col stays
+        // hot, which is the whole reason for batching them into one call.
+        int32_t acc[GGML_MUL_MAT_ADD_OC_CHUNK];
+
         for (int64_t col = col0; col < col1; col++) {
             const int8_t * x_col = (const int8_t *) ((const char *) src1->data + col*nb11);
 
-            for (int64_t oc = 0; oc < ne01; oc++) {
-                const int8_t * w_row = w + oc*ne00;
+            for (int64_t oc0 = 0; oc0 < ne01; oc0 += GGML_MUL_MAT_ADD_OC_CHUNK) {
+                const int64_t noc = MIN((int64_t) GGML_MUL_MAT_ADD_OC_CHUNK, ne01 - oc0);
 
-                int32_t acc = 0;
-                for (int64_t k = 0; k < ne00; k++) {
-                    acc += (int32_t) w_row[k] * (int32_t) x_col[k];
-                }
+                ggml_vec_dot_i8_i8(ne00, acc, 1, w + oc0*ne00, ne00, x_col, noc);
 
-                const float v = (float) acc * combined_d + bias[oc];
-
-                stage[col*ne01 + oc] = v;
-
-                const float av = fabsf(v);
-                if (av > local_absmax) local_absmax = av;
+                local_absmax = ggml_i8_s_scale_bias_absmax(
+                    stage + col*ne01 + oc0, acc, bias + oc0, noc, combined_d, local_absmax);
             }
         }
 

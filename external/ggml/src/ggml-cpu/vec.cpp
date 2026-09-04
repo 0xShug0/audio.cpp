@@ -393,6 +393,115 @@ void ggml_vec_dot_f16(int n, float * GGML_RESTRICT s, size_t bs, ggml_fp16_t * G
     *s = sumf;
 }
 
+#if defined(__AVX2__)
+static inline int ggml_i8_hsum_i32_4(const __m128i a) {
+    const __m128i hi64  = _mm_unpackhi_epi64(a, a);
+    const __m128i sum64 = _mm_add_epi32(hi64, a);
+    const __m128i hi32  = _mm_shuffle_epi32(sum64, _MM_SHUFFLE(2, 3, 0, 1));
+    return _mm_cvtsi128_si32(_mm_add_epi32(sum64, hi32));
+}
+#endif
+
+void ggml_vec_dot_i8_i8(int n, int32_t * GGML_RESTRICT s, size_t bs, const int8_t * GGML_RESTRICT x, size_t bx, const int8_t * GGML_RESTRICT y, int nrc) {
+    for (int row = 0; row < nrc; ++row) {
+        const int8_t * xr = x + (size_t)row*bx;
+
+        int     i    = 0;
+        int32_t sumi = 0;
+
+#if defined(__AVX2__)
+        // The sign trick: maddubs wants the left operand unsigned, so move the
+        // sign of x onto y and take |x|. Each maddubs lane holds a sum of two
+        // products, at most 2*128*127 = 32512, which still fits int16 - but a
+        // second int16 accumulation could not, so widen to int32 every block
+        // instead of batching in int16.
+        //
+        // Everything reduces into one 128-bit accumulator so that short rows
+        // (the depthwise filters are 4 or 8 long) neither run the 256-bit loop
+        // nor pay for reducing a register that stayed zero.
+        __m128i acc = _mm_setzero_si128();
+
+        if (i + 32 <= n) {
+            const __m256i one16 = _mm256_set1_epi16(1);
+
+            __m256i acc256 = _mm256_setzero_si256();
+            for (; i + 32 <= n; i += 32) {
+                const __m256i xq = _mm256_loadu_si256((const __m256i *)(xr + i));
+                const __m256i yq = _mm256_loadu_si256((const __m256i *)(y  + i));
+
+                const __m256i ax  = _mm256_sign_epi8(xq, xq);
+                const __m256i sy  = _mm256_sign_epi8(yq, xq);
+                const __m256i dot = _mm256_maddubs_epi16(ax, sy);
+
+                acc256 = _mm256_add_epi32(acc256, _mm256_madd_epi16(dot, one16));
+            }
+            acc = _mm_add_epi32(_mm256_castsi256_si128(acc256),
+                                _mm256_extracti128_si256(acc256, 1));
+        }
+
+        if (i + 8 <= n) {
+            const __m128i one16 = _mm_set1_epi16(1);
+
+            for (; i + 16 <= n; i += 16) {
+                const __m128i xq = _mm_loadu_si128((const __m128i *)(xr + i));
+                const __m128i yq = _mm_loadu_si128((const __m128i *)(y  + i));
+
+                const __m128i ax  = _mm_sign_epi8(xq, xq);
+                const __m128i sy  = _mm_sign_epi8(yq, xq);
+                const __m128i dot = _mm_maddubs_epi16(ax, sy);
+
+                acc = _mm_add_epi32(acc, _mm_madd_epi16(dot, one16));
+            }
+            for (; i + 8 <= n; i += 8) {
+                const __m128i xq = _mm_loadl_epi64((const __m128i *)(xr + i));
+                const __m128i yq = _mm_loadl_epi64((const __m128i *)(y  + i));
+
+                const __m128i ax  = _mm_sign_epi8(xq, xq);
+                const __m128i sy  = _mm_sign_epi8(yq, xq);
+                const __m128i dot = _mm_maddubs_epi16(ax, sy);
+
+                acc = _mm_add_epi32(acc, _mm_madd_epi16(dot, one16));
+            }
+        }
+
+        // i > 0 exactly when some vector block ran. Reducing a register that
+        // stayed zero costs four instructions per row, which is not free when the
+        // row is a 4-tap depthwise filter and there is one row per output.
+        if (i > 0) {
+            sumi = ggml_i8_hsum_i32_4(acc);
+        }
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+        int32x4_t acc = vdupq_n_s32(0);
+        for (; i + 16 <= n; i += 16) {
+            const int8x16_t xv = vld1q_s8(xr + i);
+            const int8x16_t yv = vld1q_s8(y  + i);
+    #if defined(__ARM_FEATURE_DOTPROD)
+            acc = vdotq_s32(acc, xv, yv);
+    #else
+            // vmull_s8 tops out at 128*128 = 16384, so the int16 products are
+            // safe; vpadalq_s16 folds them pairwise straight into int32.
+            acc = vpadalq_s16(acc, vmull_s8(vget_low_s8 (xv), vget_low_s8 (yv)));
+            acc = vpadalq_s16(acc, vmull_s8(vget_high_s8(xv), vget_high_s8(yv)));
+    #endif
+        }
+        for (; i + 8 <= n; i += 8) {
+            const int8x8_t xv = vld1_s8(xr + i);
+            const int8x8_t yv = vld1_s8(y  + i);
+            acc = vpadalq_s16(acc, vmull_s8(xv, yv));
+        }
+        if (i > 0) {
+            sumi = vaddvq_s32(acc);
+        }
+#endif
+
+        for (; i < n; ++i) {
+            sumi += (int32_t)xr[i] * (int32_t)y[i];
+        }
+
+        s[(size_t)row*bs] = sumi;
+    }
+}
+
 void ggml_vec_silu_f32(const int n, float * y, const float * x) {
     int i = 0;
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
