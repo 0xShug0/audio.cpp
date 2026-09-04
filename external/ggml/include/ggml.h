@@ -589,6 +589,9 @@ extern "C" {
         GGML_OP_GLU,
         GGML_OP_CONVROT_LINEAR,
 
+        GGML_OP_MUL_MAT_ACC,
+        GGML_OP_SNAKE_1D,
+
         GGML_OP_COUNT,
     };
 
@@ -1424,6 +1427,21 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
+
+    // accumulate matrix multiplication in-place: acc += a * b
+    // result is a view of acc (which must have the shape of a * b), so the
+    // accumulation lands directly in acc's memory without a separate add pass
+    GGML_API struct ggml_tensor * ggml_mul_mat_acc(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * acc);
+
+    // fused snake activation: dst = a + sin(a * alpha)^2 / alpha, alpha broadcast per channel
+    GGML_API struct ggml_tensor * ggml_snake_1d(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * alpha);
 
     GGML_API struct ggml_tensor * ggml_mul_mat_pack4(
             struct ggml_context * ctx,

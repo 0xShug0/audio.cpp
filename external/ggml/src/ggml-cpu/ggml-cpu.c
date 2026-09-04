@@ -1697,6 +1697,93 @@ static void ggml_compute_forward_mul_mat_id(
     }
 }
 
+// reference implementation of the accumulate-in-place matmul (dst aliases src[2]):
+// dst += src0 * src1. The op is only exercised on Metal; this plain single-threaded
+// loop exists so the CPU backend stays correct if a graph containing it is ever run.
+static void ggml_compute_forward_mul_mat_acc(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+    const struct ggml_tensor * src0 = dst->src[0]; // a [K, M]
+    const struct ggml_tensor * src1 = dst->src[1]; // b [K, N]
+
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+
+    if (params->ith != 0) {
+        return;
+    }
+
+    const int64_t K = src0->ne[0];
+    const int64_t M = src0->ne[1];
+    const int64_t N = src1->ne[1];
+
+    GGML_ASSERT(src1->ne[0] == K);
+    GGML_ASSERT(dst->ne[0] == M && dst->ne[1] == N);
+    GGML_ASSERT(src0->ne[2] == 1 && src0->ne[3] == 1);
+    GGML_ASSERT(src1->ne[2] == 1 && src1->ne[3] == 1);
+    GGML_ASSERT(dst->ne[2]  == 1 && dst->ne[3]  == 1);
+
+    const char * A = (const char *) src0->data;
+    const char * B = (const char *) src1->data;
+    char       * C = (char *)       dst->data;
+
+    for (int64_t n = 0; n < N; ++n) {
+        for (int64_t m = 0; m < M; ++m) {
+            float sum = 0.0f;
+            for (int64_t k = 0; k < K; ++k) {
+                const float av = *(const float *) (A + k*src0->nb[0] + m*src0->nb[1]);
+                const float bv = *(const float *) (B + k*src1->nb[0] + n*src1->nb[1]);
+                sum += av * bv;
+            }
+            float * cv = (float *) (C + m*dst->nb[0] + n*dst->nb[1]);
+            *cv += sum;
+        }
+    }
+}
+
+// ggml_compute_forward_snake_1d
+//
+// fused snake activation: y = x + sin(x * alpha)^2 / alpha, alpha broadcast per channel.
+// naive single-threaded reference so the CPU backend stays correct if a graph containing
+// this op is ever run there.
+static void ggml_compute_forward_snake_1d(
+        const struct ggml_compute_params * params,
+        struct ggml_tensor * dst) {
+    const struct ggml_tensor * src0 = dst->src[0]; // x [C, T], channels on the fast axis
+    const struct ggml_tensor * src1 = dst->src[1]; // alpha [C, 1]
+
+    if (params->ith != 0) {
+        return;
+    }
+
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+    GGML_ASSERT(ggml_is_contiguous(dst));
+    GGML_ASSERT(src0->ne[2] == 1 && src0->ne[3] == 1);
+    GGML_ASSERT(src1->ne[0] == src0->ne[0] && src1->ne[1] == 1);
+
+    const int64_t nc = src0->ne[0];
+    const int64_t nt = src0->ne[1];
+
+    const float * x = (const float *) src0->data;
+    const float * a = (const float *) src1->data;
+    float       * y = (float       *) dst->data;
+
+    for (int64_t t = 0; t < nt; t++) {
+        for (int64_t c = 0; c < nc; c++) {
+            const float av = a[c];
+            const float xv = x[t*nc + c];
+            const float ax = xv * av;
+            const float s  = sinf(ax);
+            y[t*nc + c] = xv + (s*s)/av;
+        }
+    }
+}
+
 /////////////////////////////////
 
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
@@ -1828,6 +1915,14 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_MUL_MAT_PACK4:
             {
                 ggml_compute_forward_mul_mat(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_ACC:
+            {
+                ggml_compute_forward_mul_mat_acc(params, tensor);
+            } break;
+        case GGML_OP_SNAKE_1D:
+            {
+                ggml_compute_forward_snake_1d(params, tensor);
             } break;
         case GGML_OP_MUL_MAT_ID:
             {
@@ -2306,6 +2401,16 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_OUT_PROD:
             {
                 n_tasks = n_threads;
+            } break;
+        case GGML_OP_MUL_MAT_ACC:
+            {
+                // reference implementation is single-threaded
+                n_tasks = 1;
+            } break;
+        case GGML_OP_SNAKE_1D:
+            {
+                // reference implementation is single-threaded
+                n_tasks = 1;
             } break;
         case GGML_OP_GET_ROWS:
         case GGML_OP_SET_ROWS:
