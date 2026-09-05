@@ -123,6 +123,36 @@
         "kind": "huggingface_snapshot",
         "repo": "CaptainArni/audio.cpp-gguf"
       }
+    },
+    {
+      "id": "ace_step_xl_turbo_q8dit",
+      "display_name": "ACE-Step 1.5 XL Turbo Q8_0 DiT GGUF (BF16 planner)",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/xl-turbo-q8dit/ace-step-1.5-xl-turbo-q8dit.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "CaptainArni/audio.cpp-gguf"
+      }
+    },
+    {
+      "id": "ace_step_xl_sft_q8dit",
+      "display_name": "ACE-Step 1.5 XL SFT Q8_0 DiT GGUF (BF16 planner)",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ACE-Step1.5-GGUF",
+      "files": [
+        "ACE-Step1.5-GGUF/xl-sft-q8dit/ace-step-1.5-xl-sft-q8dit.gguf"
+      ],
+      "strip_prefix": "ACE-Step1.5-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "CaptainArni/audio.cpp-gguf"
+      }
     }
   ],
   "sources": [
