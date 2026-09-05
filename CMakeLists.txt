@@ -1691,6 +1691,18 @@ audiocpp_add_model(breeze_tts
         engine::models::breeze_tts::make_breeze_tts_loader
 )
 
+audiocpp_add_model(vibeasr
+    SOURCES
+        src/community_models/vibeasr/assets.cpp
+        src/community_models/vibeasr/vae_encoder.cpp
+        src/community_models/vibeasr/lm_decoder.cpp
+        src/community_models/vibeasr/session.cpp
+    INCLUDES
+        engine/community_models/vibeasr/session.h
+    LOADERS
+        engine::community_models::vibeasr::make_vibeasr_loader
+)
+
 set(AUDIOCPP_ENABLED_MODELS "")
 if (AUDIOCPP_MODEL_SET STREQUAL "full")
     set(AUDIOCPP_ENABLED_MODELS ${AUDIOCPP_MODEL_TARGETS})
@@ -2498,6 +2510,56 @@ if (ENGINE_BUILD_TESTS)
         target_include_directories(test_granite5asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        if (vibeasr IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_vibeasr_vae_encoder
+                tests/vibeasr/test_vibeasr_vae_encoder.cpp
+            )
+            target_compile_definitions(test_vibeasr_vae_encoder PRIVATE
+                ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            )
+            target_link_libraries(test_vibeasr_vae_encoder PRIVATE engine_runtime ggml)
+            target_include_directories(test_vibeasr_vae_encoder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_vibeasr_vae_encoder PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+            add_test(
+                NAME test_vibeasr_vae_encoder
+                COMMAND test_vibeasr_vae_encoder
+                    --model ${CMAKE_CURRENT_SOURCE_DIR}/models/vibeasr/vibeasr-vae-encoder-i8_s.gguf
+                    --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav
+            )
+            # Needs the converted 703 MB encoder package, which a normal checkout
+            # does not have; the probe exits 125 (skip) instead of failing. Pass
+            # --reference-acoustic / --reference-semantic by hand to also check
+            # parity against a VibeASR.cpp dump.
+            set_tests_properties(test_vibeasr_vae_encoder PROPERTIES
+                SKIP_RETURN_CODE 125
+                TIMEOUT 300
+            )
+
+            add_executable(test_vibeasr_asr
+                tests/vibeasr/test_vibeasr_asr.cpp
+            )
+            target_compile_definitions(test_vibeasr_asr PRIVATE
+                ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            )
+            target_link_libraries(test_vibeasr_asr PRIVATE engine_runtime ggml)
+            target_include_directories(test_vibeasr_asr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_vibeasr_asr PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+            add_test(
+                NAME test_vibeasr_asr
+                COMMAND test_vibeasr_asr --threads 8
+            )
+            # Same story as the encoder probe, plus the 993 MB decoder: exits 125
+            # (skip) unless both converted GGUFs sit in models/vibeasr/.
+            set_tests_properties(test_vibeasr_asr PROPERTIES
+                SKIP_RETURN_CODE 125
+                TIMEOUT 600
+            )
         endif()
 
         if (audio8_asr IN_LIST AUDIOCPP_LINKED_MODELS)
