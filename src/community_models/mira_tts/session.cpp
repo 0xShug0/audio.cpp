@@ -141,11 +141,22 @@ MiraTTSOfflineSession::MiraTTSOfflineSession(
         {assets::TensorStorageType::Native, assets::TensorStorageType::F32,
          assets::TensorStorageType::F16, assets::TensorStorageType::BF16});
     auto & execution = execution_context();
+    auto * generator_execution = &execution;
+    if (execution.backend_type() == core::BackendType::Vulkan) {
+        // Mira's Qwen language-model graph is not numerically reliable on the
+        // current Vulkan backend. Keep the acoustic stages accelerated while
+        // generating speech codes on CPU so Vulkan never returns corrupt audio.
+        core::BackendConfig cpu_config;
+        cpu_config.type = core::BackendType::Cpu;
+        cpu_config.threads = std::max(1, execution.config().threads);
+        generator_execution_ = std::make_unique<core::ExecutionContext>(cpu_config);
+        generator_execution = generator_execution_.get();
+    }
     prompt_ = std::make_unique<MiraPromptBuilder>(assets_);
     speaker_encoder_ = std::make_unique<MiraSpeakerEncoder>(
         *assets_, execution, kWeightBytes, kGraphBytes, linear_type, conv_type);
     generator_ = std::make_unique<MiraGenerator>(
-        *assets_, execution, kGraphBytes, kGraphBytes, kWeightBytes, lm_type);
+        *assets_, *generator_execution, kGraphBytes, kGraphBytes, kWeightBytes, lm_type);
     processor_ = std::make_unique<MiraAcousticProcessor>(
         *assets_, execution, kWeightBytes, kGraphBytes, linear_type, conv_type);
     // ggml's current CUDA ConvTranspose1d kernel requires F32 weights.
@@ -265,6 +276,13 @@ runtime::AudioBuffer MiraTTSOfflineSession::synthesize_text(
     const auto prompt_ids = prompt_->build(text, context_codes);
     engine::debug::timing_log_scalar(
         "mira_tts.prompt_ms", engine::debug::elapsed_ms(prompt_start));
+    if (generator_execution_ ||
+        execution_context().backend_type() == core::BackendType::Cpu) {
+        // The CPU decode graph may otherwise reuse a larger cache allocation
+        // after a long request. Rebuilding its graph preserves deterministic
+        // seeded output; model weights remain resident across this reset.
+        generator_->release_runtime_graphs();
+    }
     const auto generator_start = Clock::now();
     const auto speech_codes = generator_->generate(
         prompt_ids, options);

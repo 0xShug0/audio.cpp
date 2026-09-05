@@ -303,7 +303,11 @@ core::TensorValue se_res2(
     gate = modules::ReluModule{}.build(ctx, gate);
     gate = modules::LinearModule({128, 512, true}).build(ctx, gate, weights.se_second);
     gate = modules::SigmoidModule{}.build(ctx, gate);
-    gate = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, gate);
+    // [B, 1, C] -> [B, C, 1]. The singleton-axis transpose is only a
+    // strided view whose ggml dim 0 has a non-unit stride. CPU repeat requires
+    // dim 0 to be contiguous, so reshape the already contiguous values instead.
+    gate = core::reshape_tensor(
+        ctx, gate, core::TensorShape::from_dims({1, kEcapaChannels, 1}));
     gate = modules::RepeatModule({x.shape}).build(ctx, gate);
     return modules::AddModule{}.build(
         ctx, input, modules::MulModule{}.build(ctx, x, gate));

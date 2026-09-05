@@ -7,6 +7,7 @@
 #include "engine/framework/sampling/hf_sampler.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -176,11 +177,19 @@ modules::QwenCausalDecodeRuntimeConfig runtime_config(
     modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "mira_tts.lm";
     out.decoder = decoder_config(config, backend_type);
-    // MiraTTS generation emits one of the 8192 speech-code tokens or EOS.
-    // Keep the tied full-vocabulary projection for exact model semantics, but
-    // read back and sample only its generative alphabet. This avoids copying
-    // and sorting 166k logits on the host for every autoregressive step.
-    out.decoder.logits_size = config.vocab_size;
+    // MiraTTS generation emits one of the 8192 speech-code tokens or EOS. On
+    // CPU, skip the unused text-vocabulary rows in the tied output projection;
+    // this preserves every candidate that can be sampled in TTS mode while
+    // avoiding most of the 166k-row lm_head multiplication. Accelerators keep
+    // the full projection because their large matmul kernels are preferable.
+    const char * sparse_head = std::getenv("AUDIOCPP_MIRA_TTS_SPARSE_HEAD");
+    if (backend_type == core::BackendType::Cpu &&
+        !(sparse_head != nullptr && sparse_head[0] == '0')) {
+        out.lm_head_row_offset = config.eos_token_id;
+        out.decoder.logits_size = config.vocab_size - out.lm_head_row_offset;
+    } else {
+        out.decoder.logits_size = config.vocab_size;
+    }
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.decoder.use_lm_head_bias = false;
     out.logits_readback_token_ids = generation_token_ids(config);

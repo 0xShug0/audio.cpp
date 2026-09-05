@@ -15,6 +15,7 @@ namespace engine::audio {
 
 struct FlashSrWeights;
 class FlashSrGraph;
+class FlashSrDsp;
 
 struct FlashSrOutput {
     int sample_rate = 48000;
@@ -43,6 +44,7 @@ private:
 
     std::shared_ptr<FlashSrWeights> weights_;
     mutable std::unique_ptr<FlashSrGraph> graph_;
+    mutable std::unique_ptr<FlashSrDsp> dsp_;
 };
 
 }  // namespace engine::audio

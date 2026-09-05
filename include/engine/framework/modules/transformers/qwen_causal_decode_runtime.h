@@ -26,6 +26,9 @@ struct QwenCausalDecodeRuntimeConfig {
     QwenCausalDecodeOutputMode output_mode = QwenCausalDecodeOutputMode::Logits;
     bool return_hidden = false;
     std::optional<ggml_type> readback_round_type;
+    // Optional contiguous row window into lm_head. Token IDs used for compact
+    // readback remain in the original vocabulary and are rebased internally.
+    int64_t lm_head_row_offset = 0;
     std::vector<int32_t> logits_readback_token_ids;
     int64_t sliding_window = 0;
     bool evict_cuda_graph_cache_on_release = false;
