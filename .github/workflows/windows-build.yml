@@ -49,3 +49,10 @@ jobs:
           .\scripts\build_windows.ps1 `
             -Preset windows-cpu-release `
             -Target audiocpp_gguf
+
+      - name: Build and run unit tests
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 `
+            -Preset windows-cpu-release `
+            -RunTests
