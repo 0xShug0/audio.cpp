@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(AudioCpp LANGUAGES C CXX)
 
+set(AUDIOCPP_VERSION "dev" CACHE STRING "audio.cpp version string")
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -115,6 +117,43 @@ option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
 set(AUDIOCPP_GGML_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/ggml"
     CACHE PATH "ggml source tree to build with AudioCPP")
+
+set(AUDIOCPP_GIT_SHA "unknown")
+set(AUDIOCPP_GIT_DATE "unknown")
+find_package(Git QUIET)
+if (GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE AUDIOCPP_GIT_SHA
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} show -s --format=%cs HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE AUDIOCPP_GIT_DATE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+endif()
+
+set(AUDIOCPP_BUILD_BACKENDS "cpu")
+if (ENGINE_ENABLE_CUDA)
+    string(APPEND AUDIOCPP_BUILD_BACKENDS ",cuda")
+endif()
+if (ENGINE_ENABLE_HIP)
+    string(APPEND AUDIOCPP_BUILD_BACKENDS ",hip")
+endif()
+if (ENGINE_ENABLE_VULKAN)
+    string(APPEND AUDIOCPP_BUILD_BACKENDS ",vulkan")
+endif()
+if (ENGINE_ENABLE_METAL)
+    string(APPEND AUDIOCPP_BUILD_BACKENDS ",metal")
+endif()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/app/common/build_info_config.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/build_info_config.h"
+    @ONLY
+)
 
 # HIP compiles ggml's CUDA backend sources as HIP code, so the two options drive the
 # same ggml backend and cannot coexist: enabling both starts CUDA backend setup and
@@ -1873,6 +1912,7 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
 endif()
 
 add_executable(audiocpp_cli
+    app/common/build_info.cpp
     app/cli/main.cpp
     app/cli/args.cpp
     app/cli/batch.cpp
@@ -1886,6 +1926,7 @@ add_executable(audiocpp_cli
 )
 
 target_link_libraries(audiocpp_cli PRIVATE engine_runtime ggml)
+target_include_directories(audiocpp_cli PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 # MinGW selects the wmain() entry point only when linked with -municode;
 # without it the CLI fails to link (undefined reference / ld error 5).
 # MSVC detects wmain natively, so this is MinGW-only. Link option only:
@@ -1942,6 +1983,7 @@ configure_file(
 )
 
 add_executable(audiocpp_server
+    app/common/build_info.cpp
     app/server/main.cpp
     app/server/base64.cpp
     app/server/config.cpp
