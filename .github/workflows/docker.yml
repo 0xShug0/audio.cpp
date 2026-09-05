@@ -7,6 +7,8 @@
 #   full-cuda12-YYYYMMDD-HHHHHHH (pinned to date + short SHA, immutable)
 #   full-cuda13                  (latest, mutable)
 #   full-cuda13-YYYYMMDD-HHHHHHH (pinned to date + short SHA, immutable)
+#   full-vulkan                  (latest, mutable)
+#   full-vulkan-YYYYMMDD-HHHHHHH (pinned to date + short SHA, immutable)
 
 name: Build and publish Docker images
 
@@ -145,6 +147,19 @@ jobs:
             runs_on: ubuntu-24.04-arm
             cuda_version: "13.3.0"
             enabled: true
+          # ── Vulkan ──
+          - tag: vulkan
+            dockerfile: .devops/vulkan.Dockerfile
+            platforms: linux/amd64
+            arch: amd64
+            runs_on: ubuntu-24.04
+            enabled: true
+          - tag: vulkan
+            dockerfile: .devops/vulkan.Dockerfile
+            platforms: linux/arm64
+            arch: arm64
+            runs_on: ubuntu-24.04-arm
+            enabled: true
     steps:
       - name: Skip when not enabled
         if: ${{ matrix.enabled != true }}
@@ -222,7 +237,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tag: [cpu, cuda12, cuda13]
+        tag: [cpu, cuda12, cuda13, vulkan]
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

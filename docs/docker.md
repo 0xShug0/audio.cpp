@@ -14,6 +14,9 @@
 - Docker must be installed and running on your system.
 - For CUDA:
   - The [NVIDIA container toolkit](https://github.com/NVIDIA/nvidia-container-toolkit) must be installed.
+- For Vulkan:
+  - The host must expose a working Vulkan device to Docker, typically through `/dev/dri` on Linux.
+  - The container user needs access to the host render/video device groups.
 
 ## Image Variants
 
@@ -24,6 +27,7 @@ The following image variants are available:
 The following backends are supported:
 - **cuda12**
 - **cuda13**
+- **vulkan**
 - **cpu**
 
 The following architectures are supported:
@@ -38,6 +42,7 @@ as multiarch images (amd64/arm64).
 Pull the latest images using these tags:
 - **cuda12**: `ghcr.io/0xshug0/audio.cpp:full-cuda12`
 - **cuda13**: `ghcr.io/0xshug0/audio.cpp:full-cuda13`
+- **vulkan**: `ghcr.io/0xshug0/audio.cpp:full-vulkan`
 - **cpu**: `ghcr.io/0xshug0/audio.cpp:full-cpu`
 
 Images for a specific day/commit can be found in the
@@ -71,6 +76,12 @@ Build for a specific set of GPU architectures (e.g. for faster, less portable bu
 docker build -f .devops/cuda.Dockerfile -t local/audio.cpp:full-cuda12 --build-arg CUDA_DOCKER_ARCH="86;89" .
 ```
 
+### Vulkan
+
+```bash
+docker build -f .devops/vulkan.Dockerfile -t local/audio.cpp:full-vulkan .
+```
+
 ### CPU
 
 ```bash
@@ -88,6 +99,17 @@ An additional `<output-dir>` should be mounted for tasks that write files.
 docker run --rm --gpus all -v "<models-dir>:/models:ro" ghcr.io/0xshug0/audio.cpp:full-cuda12 <cli|server> --model /models/<model> <...>
 ```
 
+### Vulkan
+
+```bash
+docker run --rm --device /dev/dri \
+  --group-add "$(getent group render | cut -d: -f3)" \
+  --group-add "$(getent group video | cut -d: -f3)" \
+  -v "<models-dir>:/models:ro" \
+  ghcr.io/0xshug0/audio.cpp:full-vulkan \
+  <cli|server> --backend vulkan --model /models/<model> <...>
+```
+
 ### Native WebUI
 
 For the native WebUI with model downloads and dynamic model management, mount a
@@ -99,6 +121,18 @@ docker run --rm --gpus all \
   -v "<models-dir>:/app/models" \
   ghcr.io/0xshug0/audio.cpp:full-cuda12 \
   server --ui --ui-management --host 0.0.0.0 --port 8080 --backend cuda
+```
+
+For Vulkan, expose the host render device and use the Vulkan backend:
+
+```bash
+docker run --rm --device /dev/dri \
+  --group-add "$(getent group render | cut -d: -f3)" \
+  --group-add "$(getent group video | cut -d: -f3)" \
+  -p 8080:8080 \
+  -v "<models-dir>:/app/models" \
+  ghcr.io/0xshug0/audio.cpp:full-vulkan \
+  server --ui --ui-management --host 0.0.0.0 --port 8080 --backend vulkan
 ```
 
 Open `http://127.0.0.1:8080` on the host. Use a writable mount when the UI
