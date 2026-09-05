@@ -22,4 +22,24 @@ void hip_fast_sampler_topk(
     int32_t top_k,
     HipFastTopKResult * host_result);
 
+void hip_fast_sampler_upload_embeddings(
+    void * workspace,
+    const float * host_embeddings,
+    int32_t rows,
+    int32_t dim);
+
+void hip_fast_sampler_gather_embedding(
+    void * workspace,
+    int32_t row,
+    float * device_output,
+    void * stream);
+
+void hip_fast_sampler_prepare_step(
+    void * workspace,
+    int32_t position,
+    int32_t mask_length,
+    int32_t * device_position,
+    void * device_mask,
+    void * stream);
+
 }  // namespace engine::models::fish_audio::detail
