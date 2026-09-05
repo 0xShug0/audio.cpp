@@ -215,8 +215,11 @@ The two differ only in `is_turbo`: XL Turbo is guidance-distilled and ignores
 Their dimensions, encoder group and head configuration are identical.
 
 `ace_step_xl_turbo_bf16` and `ace_step_xl_sft_bf16` install them as GGUFs
-(14.2 GB each), self-contained the way the Turbo and Base GGUFs are — XL DiT,
-planner LM, text encoder and VAE in one file:
+(14.2 GiB each), self-contained the way the Turbo and Base GGUFs are — XL DiT,
+planner LM, text encoder and VAE in one file. `ace_step_xl_turbo_q8dit` and
+`ace_step_xl_sft_q8dit` are the same packages with the DiT at q8_0 and the
+planner LM, text encoder and VAE left at bf16 (9.97 GiB); see the measurements
+at the end of this section for what that costs:
 
 ```bash
 audiocpp_cli --task gen --family ace_step --model models/ACE-Step1.5-GGUF/xl-turbo --backend cuda --task-route text2music --text "warm lo-fi hip hop with a soft rhodes piano" --duration-seconds 60 --load-option ace_step.dit_model_path=acestep-v15-xl-turbo --out song.wav
