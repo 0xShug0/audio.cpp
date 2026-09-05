@@ -2,6 +2,8 @@
 #include "http.h"
 #include "runtime.h"
 
+#include "../common/build_info.h"
+
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
 
@@ -66,6 +68,7 @@ void print_help() {
         << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
+        << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
         << "  --ui                             serve the embedded WebUI\n"
         << "  --no-ui                          disable the embedded WebUI\n"
         << "  --ui-management                  allow WebUI model management and downloads; requires\n"
@@ -125,6 +128,10 @@ int main(int argc, char ** argv) {
     try {
         if (has_arg(argc, argv, "--list-devices")) {
             engine::core::print_backend_devices(std::cout);
+            return 0;
+        }
+        if (has_arg(argc, argv, "--version")) {
+            minitts::app::print_build_info(std::cout);
             return 0;
         }
         if (has_arg(argc, argv, "--help") || has_arg(argc, argv, "-h")) {
