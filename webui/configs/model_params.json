@@ -135,6 +135,12 @@
     {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 280, "minimum": 1, "step": 1, "precision": 0}
   ],
 
+  "sanotts": [
+    {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 280, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "word_budget", "choices": ["word_budget"]}
+  ],
+
   "dramabox": [
     {"name": "negative_prompt", "type": "text", "label": "negative_prompt（负向提示）", "label_en": "negative_prompt", "default": "", "placeholder": "留空=模型内置质量提示", "placeholder_en": "Blank = built-in quality prompt"},
     {"name": "duration_sec", "type": "number", "label": "duration_sec（0=自动估时）", "label_en": "duration_sec (0 = auto)", "default": 0.0, "minimum": 0.0, "step": 0.5},
