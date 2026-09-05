@@ -17,7 +17,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -554,7 +556,9 @@ inline void flashsr_dsp_resblock(
 class FlashSrDsp {
 public:
     explicit FlashSrDsp(const FlashSrWeights & weights) : weights_(make_weights(weights)) {
+#ifdef _OPENMP
         omp_set_num_threads(std::max(1, weights.threads));
+#endif
     }
 
     // waveform: [n] 16 kHz mono. Returns raw 48 kHz output (3n samples,
