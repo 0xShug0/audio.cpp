@@ -101,7 +101,7 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "XsquirrelC/VibeVoice-ASR-BitNet",
+        "repo": "microsoft/VibeVoice-ASR-BitNet",
         "revision": "main",
         "gated": false
       }

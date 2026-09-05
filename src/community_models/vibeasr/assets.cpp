@@ -259,7 +259,7 @@ std::shared_ptr<const VibeASRAssets> load_vibeasr_assets(const std::filesystem::
         } catch (const std::exception & error) {
             throw std::runtime_error(
                 std::string("VibeASR could not open the '") + id + "' GGUF (" + error.what() +
-                "). If it came straight from huggingface.co/XsquirrelC/VibeVoice-ASR-BitNet, run "
+                "). If it came straight from huggingface.co/microsoft/VibeVoice-ASR-BitNet, run "
                 "tools/community_models/convert_vibeasr_gguf.py --in-place on it first.");
         }
     };

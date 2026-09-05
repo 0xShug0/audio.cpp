@@ -361,4 +361,4 @@ Known limitations:
 - Model port: <https://github.com/microsoft/VibeASR.cpp> (`src/vae.cpp`,
   `src/lm.cpp`, `src/asr_server.cpp`, `utils/prompt_builder.h`)
 - Base model: VibeVoice ASR, also in tree as [`vibevoice_asr`](../asr.md#vibevoice-asr)
-- Weights: <https://huggingface.co/XsquirrelC/VibeVoice-ASR-BitNet>
+- Weights: <https://huggingface.co/microsoft/VibeVoice-ASR-BitNet>

@@ -76,7 +76,7 @@ int main(int argc, char ** argv) {
         std::fprintf(
             stderr,
             "SKIP: test_vibeasr_asr needs the LM GGUF at '%s' and audio at '%s'.\n"
-            "      Fetch huggingface.co/XsquirrelC/VibeVoice-ASR-BitNet and run\n"
+            "      Fetch huggingface.co/microsoft/VibeVoice-ASR-BitNet and run\n"
             "      tools/community_models/convert_vibeasr_gguf.py --in-place on both GGUFs.\n",
             model_path.string().c_str(),
             audio_path.string().c_str());

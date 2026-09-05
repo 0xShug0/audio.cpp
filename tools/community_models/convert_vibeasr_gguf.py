@@ -2,7 +2,7 @@
 """Convert a VibeASR.cpp GGUF into an audio.cpp GGUF package.
 
 Upstream: https://github.com/microsoft/VibeASR.cpp
-Weights:  https://huggingface.co/XsquirrelC/VibeVoice-ASR-BitNet
+Weights:  https://huggingface.co/microsoft/VibeVoice-ASR-BitNet
 
 Handles both halves of the published package -- the I8_S VAE encoder and the
 ternary I2_S language model -- because they need exactly the same fix and
