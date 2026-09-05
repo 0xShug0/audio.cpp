@@ -117,13 +117,21 @@ modules::QwenCausalDecoderConfig decoder_config(
         modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.static_cache.update_mode =
         modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    if (backend_type == core::BackendType::Vulkan) {
+        // Mira's projections are sensitive to Vulkan's default reduced
+        // precision. Materialize grouped K/V heads for attention as well:
+        // the strided-view path diverges during prompt evaluation.
+        out.stack.projection_precision = GGML_PREC_F32;
+        out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
+        out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
+    }
     out.logits_size = config.vocab_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.use_lm_head_bias = false;
-    if (backend_type == core::BackendType::Vulkan ||
-        backend_type == core::BackendType::Metal) {
+    if (backend_type == core::BackendType::Metal) {
         out.lm_head_input_type = GGML_TYPE_F16;
-    } else if (backend_type != core::BackendType::Cpu) {
+    } else if (backend_type != core::BackendType::Cpu &&
+               backend_type != core::BackendType::Vulkan) {
         out.lm_head_input_type = GGML_TYPE_BF16;
     }
     return out;

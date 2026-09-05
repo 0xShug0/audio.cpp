@@ -78,7 +78,6 @@ private:
     std::optional<runtime::AudioBuffer> prepared_reference_;
     std::unique_ptr<MiraPromptBuilder> prompt_;
     std::unique_ptr<MiraSpeakerEncoder> speaker_encoder_;
-    std::unique_ptr<engine::core::ExecutionContext> generator_execution_;
     std::unique_ptr<MiraGenerator> generator_;
     std::unique_ptr<MiraAcousticProcessor> processor_;
     std::unique_ptr<MiraDecoder> decoder_;
