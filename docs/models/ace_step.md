@@ -235,16 +235,22 @@ warm in the page cache: 87 s from safetensors at `native`, 25 s from safetensors
 at `bf16`, 15 s from the bf16 GGUF, both variants alike (turbo, for reference:
 11 s). Reading the weights off disk adds roughly 10 s either way.
 
-Building an XL GGUF yourself needs the other variants' safetensors on hand,
-because `audiocpp_gguf` checks the conversion against the spec's required
-namespaces; exclude them from the output:
+Building an XL GGUF yourself still names every namespace the spec requires,
+because `audiocpp_gguf` validates the conversion against all of them — but the
+turbo and base entries only have to *exist*. `--exclude-prefix` drops their
+tensors before any data is read, so a 76-byte placeholder stands in for the 9 GB
+of weights that would otherwise be downloaded and thrown away:
+
+```bash
+python -c "import json,struct; h=json.dumps({'x':{'dtype':'F32','shape':[1,1],'data_offsets':[0,4]}}).encode(); h+=b' '*((8-len(h)%8)%8); open('placeholder.safetensors','wb').write(struct.pack('<Q',len(h))+h+bytes(4))"
+```
 
 ```bash
 audiocpp_gguf --root models/Ace-Step1.5 --family ace_step \
-  --input dit_turbo_weights=models/Ace-Step1.5/acestep-v15-turbo/model.safetensors \
-  --input dit_turbo_silence_latent=models/Ace-Step1.5/acestep-v15-turbo/silence_latent.safetensors \
-  --input dit_base_weights=models/Ace-Step1.5/acestep-v15-base/model.safetensors \
-  --input dit_base_silence_latent=models/Ace-Step1.5/acestep-v15-base/silence_latent.safetensors \
+  --input dit_turbo_weights=placeholder.safetensors \
+  --input dit_turbo_silence_latent=placeholder.safetensors \
+  --input dit_base_weights=placeholder.safetensors \
+  --input dit_base_silence_latent=placeholder.safetensors \
   --input dit_xl_turbo_weights=models/Ace-Step1.5/acestep-v15-xl-turbo/model.safetensors.index.json \
   --input dit_xl_turbo_silence_latent=models/Ace-Step1.5/acestep-v15-xl-turbo/silence_latent.safetensors \
   --input lm_weights=models/Ace-Step1.5/acestep-5Hz-lm-1.7B/model.safetensors \
@@ -257,4 +263,33 @@ audiocpp_gguf --root models/Ace-Step1.5 --family ace_step \
 Swap `dit_xl_turbo_*` for `dit_xl_sft_*` to build the SFT one. Upstream ships
 `silence_latent.pt` where the spec wants safetensors;
 `tests/ace_step/convert_silence_latent.py --input <variant>/silence_latent.pt`
-converts it.
+converts it. Of the turbo and base snapshots only `config.json` is genuinely
+needed — those are required sidecars, a few KB each.
+
+`ace_step` is graded `No (planner sampling can fail)` for q8_0 in
+[gguf.md](../gguf.md), and that grade is about the planner LM, not the DiT: at a
+fixed seed a fully quantised build samples a different token path and returns an
+unrelated song. Quantising the DiT alone keeps the planner exact, which
+`--keep-type` expresses:
+
+```bash
+  --keep-type "lm_weights*=bf16" \
+  --keep-type "text_encoder_weights*=bf16" \
+  --keep-type "vae_weights*=bf16" \
+  --keep-type "dit_xl_turbo_silence_latent*=bf16" \
+  --type q8_0 --output ace-step-1.5-xl-turbo-q8dit.gguf
+```
+
+Measured on an RTX 5090 against the bf16 build at the same seed and prompt,
+20 s of audio: 9.97 GiB against 14.2 GiB and 9.3 s against 14.2 s, with a 0.989
+waveform correlation against the bf16 output — 0.997 on a sung 40 s take, 0.999
+for XL SFT. A fully quantised build of the same weights correlates 0.09, and its
+ASR transcript is a different lyric line.
+
+Re-quantising a finished GGUF works too, since a GGUF input carries its own
+namespaces, package spec and sidecars:
+
+```bash
+audiocpp_gguf --input ace-step-1.5-xl-turbo-bf16.gguf --type q8_0 \
+  --keep-type "lm_weights*=bf16" --output ace-step-1.5-xl-turbo-q8dit.gguf
+```
