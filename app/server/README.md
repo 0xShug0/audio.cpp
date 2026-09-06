@@ -23,9 +23,23 @@ Pick the mode that matches the behavior you want:
 | Standalone deployed binary without local `model_specs/` | `-DAUDIOCPP_DEPLOYMENT_BUILD=ON` | `audiocpp_server --config server.json` | Binary carries compiled package specs for fallback model-spec lookup. |
 | Offline/reproducible native-manager build | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz` | `audiocpp_server --ui --ui-management --backend <backend>` | Configure does not fetch BoringSSL from the network. |
 | Distro-packaged TLS instead of bundled BoringSSL | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | Uses system OpenSSL; useful for packagers. |
+| Optional in-process frontend pipeline | `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTEND_MODULES="audio_decode;mp3_encode"` | `audiocpp_server --config server.json` | Adds compiled-in pre/post processing modules around the stable core API. `audio_decode` accepts MP3/FLAC transcription input through miniaudio; `mp3_encode` returns `response_format=mp3` speech output through libmp3lame. The default server build includes none of these modules or dependencies. |
+| Optional HTTPS frontend listener | `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTEND_MODULES=https` | `audiocpp_server --config server.json --https-cert-file cert.pem --https-key-file key.pem` | Serves the same in-process server over HTTPS through the frontend layer. The default server build does not include this TLS dependency. |
 
 Native model management uses bundled BoringSSL by default. Normal server builds
 do not build or link that HTTP/TLS dependency.
+
+Optional frontend modules are selected at configure time with the semicolon-separated
+`AUDIOCPP_SERVER_FRONTEND_MODULES` list. The server runs selected modules as an
+ordered pipeline: every module gets a pre-processing pass before the core handler,
+then every module gets a post-processing pass after the core handler. A module that
+does not need one side leaves that method empty. Each active side declares a simple
+contract over the HTTP envelope state (`method`, `path`, `request_in/request_out`
+for pre-processing, or `response_in/response_out` for post-processing), and module
+registration rejects incompatible adjacent transforms on the same route. Add a new
+module by implementing `ServerFrontendModule`, declaring its contract, registering it
+from the generated CMake registration list, and appending its source and private
+dependencies in `app/server/frontends/server_frontends.cmake`.
 
 ## Config
 
@@ -104,6 +118,11 @@ Set top-level `"min_free_memory_mb"` to refuse a model load when the host or the
 Set per-model `"default_request_options"` to apply request-option defaults to every request for that model. Values supplied by the actual request body override these defaults.
 
 Set top-level `"max_request_body_bytes"` to bound the largest HTTP request body buffered in host RAM before routing. This protects endpoints that accept JSON or audio uploads from unbounded `Content-Length` claims. The default is `2147483648` bytes (2 GiB). Raise or lower it to match the largest upload your deployment intends to accept. Values above `2^53 - 1` are rejected because this config parser stores JSON numbers as doubles.
+
+Set top-level `"https_cert_file"` and `"https_key_file"` together to serve HTTPS
+when the server was built with the optional `https` frontend capability. Relative
+paths are resolved from the config file directory. The equivalent command-line
+options are `--https-cert-file <pem>` and `--https-key-file <pem>`.
 
 Set top-level `"log_request_body": true` and start the server with `--log` to print full JSON request bodies for debugging. This is off by default, and both switches are required so prompt text, paths, and request options are not logged accidentally. Audio bodies are not printed; multipart uploads log filename and byte count, while raw or live/chunked audio requests log only route, content type, query, and size/stream metadata.
 
@@ -319,7 +338,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   }'
 ```
 
-Set `"response_format": "json"` to receive base64 WAV in a JSON response.
+Set `"response_format": "json"` to receive base64 WAV in a JSON response. In builds configured with `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTEND_MODULES=mp3_encode`, `"response_format": "mp3"` returns `audio/mpeg` MP3 bytes for non-streaming speech requests.
 
 For streaming-capable TTS models configured with `mode: "streaming"`, `stream_format` follows the OpenAI speech streaming shape:
 
@@ -344,7 +363,7 @@ The SSE stream emits `speech.audio.delta` events with base64 PCM chunks, then `s
 
 ### `POST /v1/audio/transcriptions`
 
-JSON transcription request using a server-local audio path.
+JSON transcription request using a server-local WAV audio path.
 
 ```bash
 curl http://127.0.0.1:8080/v1/audio/transcriptions \
@@ -364,7 +383,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
   -F file=@/path/to/input.wav
 ```
 
-`file` and `model` are required; `language` is optional. Uploaded WAV bytes are decoded in memory and are not written to a temporary file.
+`file` and `model` are required; `language` is optional. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. In builds configured with `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTEND_MODULES=audio_decode`, the frontend also accepts MP3 and FLAC input for this route, decodes it to a temporary WAV, and forwards that normalized request to the same core transcription handler.
 
 For streaming-capable ASR models configured with `mode: "streaming"`, pass `stream=true` to receive OpenAI-style transcription SSE:
 

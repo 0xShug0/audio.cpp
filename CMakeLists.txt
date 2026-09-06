@@ -100,12 +100,14 @@ option(ENGINE_ENABLE_OPENMP "Build host code with OpenMP support" ON)
 option(AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER
     "Build native model-manager tools and server download/install support"
     OFF)
+include("${CMAKE_CURRENT_SOURCE_DIR}/app/server/frontends/server_frontends.cmake")
 option(AUDIOCPP_USE_SYSTEM_OPENSSL
     "Use system OpenSSL for native model management instead of bundled BoringSSL"
     OFF)
-if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER AND NOT AUDIOCPP_SERVER_FRONTEND_HTTPS_ENABLED)
     message(FATAL_ERROR
-        "AUDIOCPP_USE_SYSTEM_OPENSSL requires AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON")
+        "AUDIOCPP_USE_SYSTEM_OPENSSL requires AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON "
+        "or AUDIOCPP_BUILD_SERVER_FRONTENDS=ON with AUDIOCPP_SERVER_FRONTEND_MODULES=https")
 endif()
 option(ENGINE_ENABLE_CPU_ALL_VARIANTS
     "Build CPU backends as dynamic libraries with per-ISA variants (for Docker/portable builds)"
@@ -1861,8 +1863,10 @@ target_include_directories(cjson_vendor PUBLIC
 # builds do not configure an HTTP/TLS dependency. When enabled, package specs
 # remain embedded so the standalone manager and managed WebUI do not require a
 # source checkout or an external model_specs directory.
-if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER OR AUDIOCPP_SERVER_FRONTEND_HTTPS_ENABLED)
     add_subdirectory(external/cpp-httplib)
+endif()
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     add_library(audiocpp_package_manager STATIC
         src/framework/package_manager/manager.cpp
         src/framework/io/json.cpp
@@ -2019,6 +2023,7 @@ add_executable(audiocpp_server
     app/server/main.cpp
     app/server/base64.cpp
     app/server/config.cpp
+    app/server/frontend.cpp
     app/server/http.cpp
     app/server/model_memory.cpp
     app/server/multipart.cpp
@@ -2031,6 +2036,7 @@ add_executable(audiocpp_server
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
+audiocpp_configure_server_frontends(audiocpp_server)
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_sources(audiocpp_server PRIVATE app/server/model_installer.cpp)
     target_link_libraries(audiocpp_server PRIVATE audiocpp_package_manager)
