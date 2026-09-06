@@ -1,6 +1,7 @@
 #include "engine/models/chatterbox/text_tokenizer.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/text/unicode_normalization.h"
 #include "unicode.h"
 
 #include <algorithm>
@@ -190,12 +191,12 @@ std::string lower_ascii(std::string text) {
     return text;
 }
 
-std::string lower_and_normalize_nfd(const std::string & text) {
+std::string lower_and_normalize_nfkd(const std::string & text) {
     auto codepoints = unicode_cpts_from_utf8(text);
     for (uint32_t & codepoint : codepoints) {
         codepoint = unicode_tolower(codepoint);
     }
-    codepoints = unicode_cpts_normalize_nfd(codepoints);
+    codepoints = engine::text::normalize_nfkd_codepoints(codepoints);
     std::string out;
     for (const uint32_t codepoint : codepoints) {
         out += unicode_cpt_to_utf8(codepoint);
@@ -431,7 +432,7 @@ std::vector<int32_t> encode_chatterbox_multilingual_text(
     const std::string & language) {
     const auto & tokenizer = tokenizer_base;
     const std::string normalized_language = normalize_chatterbox_language_code(language);
-    std::string prepared = lower_and_normalize_nfd(text);
+    std::string prepared = lower_and_normalize_nfkd(text);
     if (normalized_language == "ko") {
         prepared = decompose_korean_hangul(prepared);
     }
