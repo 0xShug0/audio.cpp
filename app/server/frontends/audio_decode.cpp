@@ -5,6 +5,7 @@
 
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/audio/wav_writer.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 
 #include <cstddef>
@@ -309,15 +310,34 @@ bool rewrite_multipart_transcription(ServerFrontendContext & context, ServerFron
     if (const auto it = request.request.headers.find("content-type"); it != request.request.headers.end()) {
         content_type = it->second;
     }
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] audio_decode.multipart.enter content_type=" + content_type +
+            " body_bytes=" + std::to_string(request.request.body.size()));
+    }
     const auto boundary = extract_multipart_boundary(content_type);
     if (!boundary.has_value()) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message("[MP3_FRONTEND_DEBUG] audio_decode.multipart.no_boundary");
+        }
         return false;
     }
 
     const auto parts = parse_multipart_body(request.request.body, *boundary);
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] audio_decode.multipart.parts count=" + std::to_string(parts.size()) +
+            " boundary_bytes=" + std::to_string(boundary->size()));
+    }
     const MultipartPart * file_part = nullptr;
     Value::Object fields;
     for (const auto & part : parts) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message(
+                "[MP3_FRONTEND_DEBUG] audio_decode.multipart.part name=" + part.name +
+                " filename=" + (part.filename.empty() ? std::string("<none>") : part.filename) +
+                " bytes=" + std::to_string(part.data.size()));
+        }
         if (part.name == "file") {
             file_part = &part;
         } else if (part.name == "model") {
@@ -343,12 +363,25 @@ bool rewrite_multipart_transcription(ServerFrontendContext & context, ServerFron
         }
     }
     if (file_part == nullptr) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message("[MP3_FRONTEND_DEBUG] audio_decode.multipart.no_file_part");
+        }
         return false;
     }
 
     const auto format = upload_format(*file_part);
     if (format == EncodedAudioFormat::Unknown) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message(
+                "[MP3_FRONTEND_DEBUG] audio_decode.multipart.unknown_format filename=" +
+                (file_part->filename.empty() ? std::string("<none>") : file_part->filename) +
+                " bytes=" + std::to_string(file_part->data.size()));
+        }
         return false;
+    }
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] audio_decode.multipart.format " + format_name(format));
     }
     const auto model = fields.find("model");
     if (model == fields.end() || !model->second.is_string() || model->second.as_string().empty()) {
@@ -362,10 +395,24 @@ bool rewrite_multipart_transcription(ServerFrontendContext & context, ServerFron
         file_part->filename.empty() ? std::string_view("multipart upload") : std::string_view(file_part->filename),
         file_part->data,
         format);
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] audio_decode.decoded sample_rate=" + std::to_string(decoded.sample_rate) +
+            " channels=" + std::to_string(decoded.channels) +
+            " samples=" + std::to_string(decoded.samples.size()));
+    }
     const auto wav_path = write_temp_wav(context, file_part->filename, decoded);
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message("[MP3_FRONTEND_DEBUG] audio_decode.temp_wav " + wav_path.string());
+    }
     fields["file"] = Value::make_string(wav_path.string());
 
     request.request = frontends::json_forward_request(request.request, std::move(fields));
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] audio_decode.forward_json body_bytes=" +
+            std::to_string(request.request.body.size()));
+    }
     return true;
 }
 

@@ -2552,8 +2552,19 @@ HttpResponse ServerState::handle_transcription(const HttpRequest & request, bool
     if (const auto it = request.headers.find("content-type"); it != request.headers.end()) {
         content_type = it->second;
     }
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] core.transcription.enter content_type=" + content_type +
+            " body_bytes=" + std::to_string(request.body.size()));
+    }
     if (const auto boundary = extract_multipart_boundary(content_type)) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message("[MP3_FRONTEND_DEBUG] core.transcription.route multipart");
+        }
         return handle_transcription_multipart(request.body, *boundary, detail);
+    }
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message("[MP3_FRONTEND_DEBUG] core.transcription.route json");
     }
     return handle_transcription_json(request.body, detail);
 }
@@ -2581,6 +2592,11 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
 HttpResponse ServerState::handle_transcription_multipart(
     const std::string & body_text, const std::string & boundary, bool detail) {
     const auto parts = parse_multipart_body(body_text, boundary);
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] core.multipart.parts count=" + std::to_string(parts.size()) +
+            " body_bytes=" + std::to_string(body_text.size()));
+    }
     log_multipart_request_summary_if_enabled(config_, parts);
 
     const MultipartPart * file_part = nullptr;
@@ -2621,12 +2637,20 @@ HttpResponse ServerState::handle_transcription_multipart(
         }
     }
     if (file_part == nullptr || file_part->data.empty()) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message("[MP3_FRONTEND_DEBUG] core.multipart.missing_file");
+        }
         throw std::runtime_error("multipart transcription request requires a non-empty 'file' field");
     }
     if (model_id.empty()) {
         throw std::runtime_error("multipart transcription request requires a 'model' field");
     }
     if (!is_wav_upload_filename(file_part->filename)) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message(
+                "[MP3_FRONTEND_DEBUG] core.multipart.reject_non_wav filename=" + file_part->filename +
+                " bytes=" + std::to_string(file_part->data.size()));
+        }
         return error_response(
             400,
             "only WAV audio uploads are currently supported for transcription; MP3 support is planned",

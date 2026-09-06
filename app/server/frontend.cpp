@@ -1,5 +1,7 @@
 #include "frontend.h"
 
+#include "engine/framework/debug/trace.h"
+
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -113,14 +115,45 @@ bool ServerFrontendRegistry::empty() const { return modules_.empty(); }
 
 HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, const HttpRequest & request) const {
     ServerFrontendRequest frontend_request{request, std::nullopt};
+    if (engine::debug::log_enabled()) {
+        const auto content_type = request.headers.find("content-type");
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] frontend.enter method=" + request.method +
+            " path=" + request.path +
+            " content_type=" +
+            (content_type == request.headers.end() ? std::string("<none>") : content_type->second) +
+            " body_bytes=" + std::to_string(request.body.size()));
+    }
     for (const auto & module : modules_) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message(
+                "[MP3_FRONTEND_DEBUG] frontend.pre.begin module=" + std::string(module->name()) +
+                " path=" + frontend_request.request.path +
+                " body_bytes=" + std::to_string(frontend_request.request.body.size()));
+        }
         module->pre_process(context, frontend_request);
+        if (engine::debug::log_enabled()) {
+            const auto content_type = frontend_request.request.headers.find("content-type");
+            engine::debug::log_message(
+                "[MP3_FRONTEND_DEBUG] frontend.pre.end module=" + std::string(module->name()) +
+                " path=" + frontend_request.request.path +
+                " content_type=" +
+                (content_type == frontend_request.request.headers.end() ? std::string("<none>") : content_type->second) +
+                " body_bytes=" + std::to_string(frontend_request.request.body.size()) +
+                " short_circuit=" + (frontend_request.response.has_value() ? "true" : "false"));
+        }
         if (frontend_request.response.has_value()) {
             return std::move(*frontend_request.response);
         }
     }
 
     auto core_response = context.forward_to_core(frontend_request.request);
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[MP3_FRONTEND_DEBUG] frontend.core_response status=" + std::to_string(core_response.status) +
+            " content_type=" + core_response.content_type +
+            " body_bytes=" + std::to_string(core_response.body.size()));
+    }
     ServerFrontendResponse frontend_response{request, frontend_request.request, std::move(core_response)};
     for (const auto & module : modules_) {
         module->post_process(context, frontend_response);
