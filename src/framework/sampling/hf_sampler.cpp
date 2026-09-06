@@ -327,6 +327,57 @@ void HfLogitsProcessor::apply_top_p(
     scratch.probabilities_scores_size_ = scores.size();
 }
 
+void HfLogitsProcessor::apply_min_p(
+    std::vector<float> & scores,
+    float min_p,
+    int64_t min_tokens_to_keep,
+    HfSamplerScratch & scratch) {
+    require_min_tokens(min_tokens_to_keep);
+    if (min_p < 0.0F || min_p > 1.0F || !std::isfinite(min_p)) {
+        throw std::runtime_error("HF sampler min_p must be finite and in [0, 1]");
+    }
+    if (min_p == 0.0F) {
+        return;
+    }
+    if (scores.empty()) {
+        return;
+    }
+    auto & order = scratch.candidates_;
+    order.clear();
+    order.reserve(scores.size());
+    for (size_t index = 0; index < scores.size(); ++index) {
+        if (std::isfinite(scores[index])) {
+            order.push_back(static_cast<int32_t>(index));
+        }
+    }
+    if (order.empty()) {
+        return;
+    }
+    const size_t min_keep = std::min<size_t>(
+        static_cast<size_t>(min_tokens_to_keep), order.size());
+    std::partial_sort(
+        order.begin(),
+        order.begin() + static_cast<std::ptrdiff_t>(min_keep),
+        order.end(),
+        [&](int32_t lhs, int32_t rhs) {
+            const float lhs_score = scores[static_cast<size_t>(lhs)];
+            const float rhs_score = scores[static_cast<size_t>(rhs)];
+            return lhs_score == rhs_score ? lhs < rhs : lhs_score > rhs_score;
+        });
+    const float max_score = scores[static_cast<size_t>(order.front())];
+    const float threshold = max_score + std::log(min_p);
+    const float protected_threshold =
+        scores[static_cast<size_t>(order[min_keep - 1])];
+    for (float & score : scores) {
+        if (score < threshold && score < protected_threshold) {
+            score = -std::numeric_limits<float>::infinity();
+        }
+    }
+    scratch.probabilities_ready_ = false;
+    scratch.probabilities_scores_data_ = nullptr;
+    scratch.probabilities_scores_size_ = 0;
+}
+
 void HfLogitsProcessor::apply_temperature(std::vector<float> & scores, float temperature) {
     if (!(temperature > 0.0F) || !std::isfinite(temperature)) {
         throw std::runtime_error("HF sampler temperature must be finite and positive");
@@ -434,7 +485,8 @@ int32_t HfSampler::sample(
     const bool needs_repetition_penalty = options.repetition_penalty != 1.0F && !history.empty();
     const bool needs_sampling_processors =
         options.do_sample &&
-        (options.temperature != 1.0F || options.top_k > 0 || options.top_p < 1.0F);
+        (options.temperature != 1.0F || options.top_k > 0 ||
+         options.top_p < 1.0F || options.min_p > 0.0F);
     if (!needs_repetition_penalty && !needs_sampling_processors) {
         if (!options.do_sample) {
             return HfLogitsProcessor::argmax(logits.data(), logits.size(), context);
@@ -452,6 +504,7 @@ int32_t HfSampler::sample(
     HfLogitsProcessor::apply_temperature(scores, options.temperature);
     HfLogitsProcessor::apply_top_k(scores, options.top_k, options.min_tokens_to_keep, scratch);
     HfLogitsProcessor::apply_top_p(scores, options.top_p, options.min_tokens_to_keep, scratch);
+    HfLogitsProcessor::apply_min_p(scores, options.min_p, options.min_tokens_to_keep, scratch);
     return HfTokenSampler::sample_from_processed_scores(scores, scratch, fallback_rng, torch_state, context, true);
 }
 

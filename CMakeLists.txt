@@ -1578,6 +1578,21 @@ audiocpp_add_model(soprano_tts
         engine::community_models::soprano_tts::make_soprano_tts_loader
 )
 
+audiocpp_add_model(mira_tts
+    SOURCES
+        src/community_models/mira_tts/assets.cpp
+        src/community_models/mira_tts/decoder.cpp
+        src/community_models/mira_tts/generator.cpp
+        src/community_models/mira_tts/processor.cpp
+        src/community_models/mira_tts/prompt.cpp
+        src/community_models/mira_tts/session.cpp
+        src/community_models/mira_tts/speaker_encoder.cpp
+    INCLUDES
+        engine/community_models/mira_tts/session.h
+    LOADERS
+        engine::community_models::mira_tts::make_mira_tts_loader
+)
+
 
 audiocpp_add_model(midashenglm_gen
     SOURCES
@@ -2067,6 +2082,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
+    add_engine_warmbench(mira_tts_warm_bench tests/mira_tts/mira_tts_warm_bench.cpp)
     add_engine_warmbench(muscriptor_warm_bench tests/muscriptor/muscriptor_warm_bench.cpp)
     add_engine_warmbench(moss_tts_nano_warm_bench tests/moss_tts_nano/moss_tts_nano_warm_bench.cpp)
     add_engine_warmbench(moss_tts_local_warm_bench tests/moss_tts_local/moss_tts_local_warm_bench.cpp)

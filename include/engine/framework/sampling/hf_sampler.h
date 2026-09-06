@@ -15,6 +15,7 @@ struct HfSamplingOptions {
     float temperature = 1.0F;
     int64_t top_k = 0;
     float top_p = 1.0F;
+    float min_p = 0.0F;
     int64_t min_tokens_to_keep = 1;
     float repetition_penalty = 1.0F;
 };
@@ -72,6 +73,12 @@ public:
     static void apply_top_p(
         std::vector<float> & scores,
         float top_p,
+        int64_t min_tokens_to_keep,
+        HfSamplerScratch & scratch);
+
+    static void apply_min_p(
+        std::vector<float> & scores,
+        float min_p,
         int64_t min_tokens_to_keep,
         HfSamplerScratch & scratch);
 
