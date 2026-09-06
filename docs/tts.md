@@ -606,6 +606,7 @@ python3 tools/model_manager_v2.py install --models-root models higgs_audio_tts_4
 | `--top-k` | integer | `30` | AR top-k sampling limit. The narrower default is less prone to premature EOC than the Python client's `50`. |
 | `--top-p` | float | `0.8` | AR nucleus sampling limit. The Python client's unfiltered equivalent is `1.0`. |
 | `--repetition-penalty` | float | `1.1` | Accepted for Python API compatibility; Higgs audio-code sampling does not consume it. |
+| `--session-option higgs_audio_tts.attention=<mode>` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |
 
 ## Fish Audio S2 Pro
 

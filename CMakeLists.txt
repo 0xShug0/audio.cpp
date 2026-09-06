@@ -392,6 +392,7 @@ add_library(engine_core OBJECT
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
+    src/framework/core/attention_fallback.cpp
     src/framework/core/deferred_tensor_writer.cpp
     src/framework/core/execution_context.cpp
     src/framework/core/host_memory.cpp
@@ -2337,6 +2338,14 @@ if (ENGINE_BUILD_TESTS)
     add_test(
         NAME backend_device_resolution_test
         COMMAND backend_device_resolution_test
+    )
+
+    add_engine_unittest(attention_fallback_test tests/unittests/test_attention_fallback.cpp)
+    target_include_directories(attention_fallback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+
+    add_test(
+        NAME attention_fallback_test
+        COMMAND attention_fallback_test
     )
 
     add_executable(streaming_audio_input_test

@@ -82,7 +82,8 @@ modules::QwenDecoderActivationCastPolicy breeze_bf16_activation_policy(core::Bac
 modules::QwenCausalDecodeRuntimeConfig backbone_config(
     const BreezeTTSConfig & config,
     core::BackendType backend_type,
-    size_t graph_arena_bytes) {
+    size_t graph_arena_bytes,
+    bool allow_flash_attention = true) {
     modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "breeze_tts.backbone";
     out.prefill_graph_arena_bytes = graph_arena_bytes;
@@ -101,8 +102,15 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     out.decoder.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
-    out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    // Eager graph for GPUs without a flash kernel (e.g. sm70).
+    out.decoder.stack.runtime.attention.allow_flash_attention = allow_flash_attention;
+    if (allow_flash_attention) {
+        out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+        out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    } else {
+        out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+        out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    }
     out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
@@ -129,7 +137,8 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
 modules::QwenCausalDecodeRuntimeConfig depth_config(
     const BreezeTTSConfig & config,
     core::BackendType backend_type,
-    size_t graph_arena_bytes) {
+    size_t graph_arena_bytes,
+    bool allow_flash_attention = true) {
     modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "breeze_tts.depth_decoder";
     out.prefill_graph_arena_bytes = graph_arena_bytes;
@@ -148,8 +157,14 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     out.decoder.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
-    out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.attention.allow_flash_attention = allow_flash_attention;
+    if (allow_flash_attention) {
+        out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+        out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    } else {
+        out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+        out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    }
     out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
@@ -720,7 +735,8 @@ struct BreezeGeneratorRuntime::Impl {
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType storage_type)
+        assets::TensorStorageType storage_type,
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto)
         : assets(std::move(assets)),
           execution(execution),
           tokenizer(this->assets),
@@ -735,8 +751,14 @@ struct BreezeGeneratorRuntime::Impl {
             throw std::runtime_error("BreezeTTS generator requires assets");
         }
         const auto & config = this->assets->config;
-        backbone_runtime_config = backbone_config(config, execution.backend_type(), graph_arena_bytes);
-        depth_runtime_config = depth_config(config, execution.backend_type(), graph_arena_bytes);
+        const bool allow_backbone_flash = core::resolve_flash_attention(
+            execution.backend(), config.head_dim, attention_preference);
+        const bool allow_depth_flash = core::resolve_flash_attention(
+            execution.backend(), config.depth_head_dim, attention_preference);
+        engine::debug::trace_log_scalar("breeze_tts.attention.allow_backbone_flash", allow_backbone_flash);
+        engine::debug::trace_log_scalar("breeze_tts.attention.allow_depth_flash", allow_depth_flash);
+        backbone_runtime_config = backbone_config(config, execution.backend_type(), graph_arena_bytes, allow_backbone_flash);
+        depth_runtime_config = depth_config(config, execution.backend_type(), graph_arena_bytes, allow_depth_flash);
         weights = load_weights(*this->assets, execution, weight_context_bytes, storage_type, backbone_runtime_config);
         backbone_cond = std::make_unique<modules::QwenCausalDecodeRuntime>(execution, backbone_runtime_config, weights->backbone);
         backbone_uncond = std::make_unique<modules::QwenCausalDecodeRuntime>(execution, backbone_runtime_config, weights->backbone);
@@ -754,14 +776,16 @@ struct BreezeGeneratorRuntime::Impl {
             execution,
             graph_arena_bytes,
             storage_type,
-            storage_type);
+            storage_type,
+            attention_preference);
         speech_decoder = std::make_unique<BreezeSpeechDecoderRuntime>(
             this->assets,
             execution,
             graph_arena_bytes,
             weight_context_bytes,
             storage_type,
-            storage_type);
+            storage_type,
+            attention_preference);
         depth_first_embed_staging_.assign(static_cast<size_t>(config.depth_hidden_size), 0.0F);
         depth_projected_pair_staging_.assign(static_cast<size_t>(2 * config.depth_hidden_size), 0.0F);
         depth_prefill_staging_.assign(static_cast<size_t>(4 * config.depth_hidden_size), 0.0F);
@@ -1158,8 +1182,10 @@ BreezeGeneratorRuntime::BreezeGeneratorRuntime(
     engine::core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    engine::assets::TensorStorageType storage_type)
-    : impl_(std::make_unique<Impl>(std::move(assets), execution, graph_arena_bytes, weight_context_bytes, storage_type)) {}
+    engine::assets::TensorStorageType storage_type,
+    engine::core::AttentionPreference attention_preference)
+    : impl_(std::make_unique<Impl>(
+          std::move(assets), execution, graph_arena_bytes, weight_context_bytes, storage_type, attention_preference)) {}
 
 BreezeGeneratorRuntime::~BreezeGeneratorRuntime() = default;
 

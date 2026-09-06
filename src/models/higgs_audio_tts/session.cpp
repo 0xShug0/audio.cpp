@@ -1,5 +1,6 @@
 #include "engine/models/higgs_audio_tts/session.h"
 
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::higgs_audio_tts {
@@ -48,6 +50,23 @@ uint64_t hash_audio_samples(const runtime::AudioBuffer & audio) {
         hash = fnv1a_mix(hash, &bits, sizeof(bits));
     }
     return hash;
+}
+
+core::AttentionPreference resolve_attention_preference(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"higgs_audio_tts.attention"})) {
+        return core::parse_attention_preference(*value, "higgs_audio_tts.attention");
+    }
+    return core::AttentionPreference::Auto;
+}
+
+void trace_attention_preference(core::AttentionPreference preference) {
+    const char * name = "auto";
+    if (preference == core::AttentionPreference::Flash) {
+        name = "flash";
+    } else if (preference == core::AttentionPreference::Eager) {
+        name = "eager";
+    }
+    debug::trace_log_scalar("higgs_audio_tts.attention.preference", std::string_view(name));
 }
 
 std::size_t resolve_reference_cache_slots(const runtime::SessionOptions & options) {
@@ -169,6 +188,7 @@ HiggsTTSSession::HiggsTTSSession(
             key != "higgs_audio_tts.codec_decode_graph_arena_mb" &&
             key != "higgs_audio_tts.codec_encode_graph_arena_mb" &&
             key != "higgs_audio_tts.reference_cache_slots" &&
+            key != "higgs_audio_tts.attention" &&
             key != "higgs_audio_tts.weight_type" &&
             key != "higgs_audio_tts.ar_weight_type" &&
             key != "higgs_audio_tts.codec_weight_type") {
@@ -176,11 +196,14 @@ HiggsTTSSession::HiggsTTSSession(
         }
     }
 
+    const auto attention_preference = resolve_attention_preference(options);
+    trace_attention_preference(attention_preference);
     ar_ = std::make_shared<HiggsARRuntime>(
         assets_,
         execution_context(),
         ar_weight_context_bytes_,
-        ar_weight_storage_type_);
+        ar_weight_storage_type_,
+        attention_preference);
     codec_ = std::make_shared<HiggsCodecRuntime>(
         assets_,
         execution_context(),

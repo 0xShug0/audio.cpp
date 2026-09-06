@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/breeze_tts/assets.h"
 #include "engine/models/breeze_tts/speech_decoder.h"
@@ -35,7 +36,8 @@ public:
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        engine::assets::TensorStorageType storage_type);
+        engine::assets::TensorStorageType storage_type,
+        engine::core::AttentionPreference attention_preference = engine::core::AttentionPreference::Auto);
     ~BreezeGeneratorRuntime();
 
     engine::runtime::AudioBuffer generate(const BreezeGenerationRequest & request);

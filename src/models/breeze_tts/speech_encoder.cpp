@@ -178,7 +178,8 @@ core::TensorValue mimi_self_attention(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const TransformerLayerWeights & weights,
-    const std::optional<core::TensorValue> & attention_mask) {
+    const std::optional<core::TensorValue> & attention_mask,
+    modules::ScaledDotProductAttentionLowering lowering = modules::ScaledDotProductAttentionLowering::Flash) {
     constexpr int64_t kHeads = 8;
     constexpr int64_t kHeadDim = 64;
     auto q = modules::LinearModule(binding::linear_config(kHiddenSize, kHiddenSize, false))
@@ -206,7 +207,7 @@ core::TensorValue mimi_self_attention(
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     auto context = modules::ScaledDotProductAttentionModule({
         kHeadDim,
-        modules::ScaledDotProductAttentionLowering::Flash,
+        lowering,
         GGML_PREC_F32,
         modules::AttentionCausality::Causal,
     }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
@@ -221,12 +222,13 @@ core::TensorValue transformer_block(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const TransformerLayerWeights & weights,
-    const std::optional<core::TensorValue> & attention_mask) {
+    const std::optional<core::TensorValue> & attention_mask,
+    modules::ScaledDotProductAttentionLowering lowering = modules::ScaledDotProductAttentionLowering::Flash) {
     const modules::LayerNormModule norm({kHiddenSize, 1.0e-5F, true, true});
     auto x = norm.build(ctx, input, weights.norm1);
     auto attn_out = modules::LayerScaleModule{}.build(
         ctx,
-        mimi_self_attention(ctx, x, positions, weights, attention_mask),
+        mimi_self_attention(ctx, x, positions, weights, attention_mask, lowering),
         weights.scale1);
     x = modules::AddModule{}.build(ctx, input, attn_out);
     auto y = norm.build(ctx, x, weights.norm2);
@@ -545,8 +547,10 @@ public:
         int64_t frames,
         core::ExecutionContext & execution_context,
         core::ConstantTensorCache & constants,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        bool allow_flash_attention = true)
         : weights_(std::move(weights)),
+          allow_flash_attention_(allow_flash_attention),
           frames_(frames),
           backend_(execution_context.backend()),
           compute_threads_(std::max(1, execution_context.config().threads)) {
@@ -590,7 +594,14 @@ public:
             core::TensorShape::from_dims({1, 1, frames_, frames_}),
             GGML_TYPE_F16);
         for (const auto & layer : weights_->transformer_layers) {
-            seq = transformer_block(build_ctx, seq, positions_value, layer, attention_mask);
+            seq = transformer_block(
+                build_ctx,
+                seq,
+                positions_value,
+                layer,
+                attention_mask,
+                allow_flash_attention_ ? modules::ScaledDotProductAttentionLowering::Flash
+                                       : modules::ScaledDotProductAttentionLowering::Explicit);
         }
         auto x = modules::TransposeModule({{0, 2, 1, 3}, seq.shape.rank}).build(build_ctx, seq);
         x = core::ensure_backend_addressable_layout(build_ctx, x);
@@ -676,6 +687,7 @@ private:
     }
 
     std::shared_ptr<const BreezeSpeechEncoderWeights> weights_;
+    bool allow_flash_attention_ = true;
     int64_t frames_ = 0;
     int64_t output_frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -697,7 +709,8 @@ BreezeSpeechEncoderRuntime::BreezeSpeechEncoderRuntime(
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     assets::TensorStorageType linear_weight_storage_type,
-    assets::TensorStorageType conv_weight_storage_type)
+    assets::TensorStorageType conv_weight_storage_type,
+    core::AttentionPreference attention_preference)
     : assets_(std::move(assets)),
       execution_context_(&execution_context),
       graph_arena_bytes_(graph_arena_bytes) {
@@ -710,6 +723,9 @@ BreezeSpeechEncoderRuntime::BreezeSpeechEncoderRuntime(
         execution_context_->backend_type(),
         linear_weight_storage_type,
         conv_weight_storage_type);
+    // Mimi encoder self-attention head dim (kHeadDim in mimi_self_attention).
+    allow_flash_attention_ = core::resolve_flash_attention(execution_context_->backend(), 64, attention_preference);
+    engine::debug::trace_log_scalar("breeze_tts.attention.allow_encoder_flash", allow_flash_attention_);
     constants_ = std::make_unique<core::ConstantTensorCache>(
         execution_context_->backend(),
         std::max(1, execution_context_->config().threads),
@@ -754,7 +770,8 @@ BreezeSpeechCodes BreezeSpeechEncoderRuntime::encode(const runtime::AudioBuffer 
             graph_frames,
             *execution_context_,
             *constants_,
-            graph_arena_bytes_);
+            graph_arena_bytes_,
+            allow_flash_attention_);
     }
 
     std::vector<float> features(static_cast<size_t>(kHiddenSize * graph_frames));
