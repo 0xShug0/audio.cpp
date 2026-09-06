@@ -39,9 +39,6 @@ void validate_runtime_config(const QwenCausalDecodeRuntimeConfig & config) {
     if (config.output_mode == QwenCausalDecodeOutputMode::Logits && config.decoder.logits_size <= 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime logits mode requires positive logits size");
     }
-    if (config.lm_head_row_offset < 0) {
-        throw std::runtime_error("QwenCausalDecodeRuntime lm_head row offset must be non-negative");
-    }
     if (config.readback_round_type.has_value() && *config.readback_round_type != GGML_TYPE_BF16) {
         throw std::runtime_error("QwenCausalDecodeRuntime readback rounding currently supports only bf16");
     }
@@ -50,8 +47,7 @@ void validate_runtime_config(const QwenCausalDecodeRuntimeConfig & config) {
             throw std::runtime_error("QwenCausalDecodeRuntime compact logits readback requires logits mode");
         }
         for (const int32_t token : config.logits_readback_token_ids) {
-            if (token < config.lm_head_row_offset ||
-                token >= config.lm_head_row_offset + config.decoder.logits_size) {
+            if (token < 0 || token >= config.decoder.logits_size) {
                 throw std::runtime_error("QwenCausalDecodeRuntime compact logits token id is outside logits size");
             }
         }
@@ -109,10 +105,7 @@ QwenDecoderHiddenWeights hidden_weights_from_runtime(const QwenCausalDecodeRunti
     return out;
 }
 
-QwenCausalDecoderWeights causal_decoder_weights(
-    core::ModuleBuildContext & ctx,
-    const QwenCausalDecodeRuntimeConfig & config,
-    const QwenCausalDecodeRuntimeWeights & weights) {
+QwenCausalDecoderWeights causal_decoder_weights(const QwenCausalDecodeRuntimeWeights & weights) {
     if (!weights.lm_head.has_value()) {
         throw std::runtime_error("QwenCausalDecodeRuntime logits mode requires lm_head weights");
     }
@@ -120,26 +113,6 @@ QwenCausalDecoderWeights causal_decoder_weights(
     out.stack = weights.stack;
     out.final_norm = weights.final_norm;
     out.lm_head = *weights.lm_head;
-    const int64_t row_offset = config.lm_head_row_offset;
-    const int64_t row_count = config.decoder.logits_size;
-    if (row_offset != 0 || out.lm_head.weight.shape.dims[0] != row_count) {
-        if (out.lm_head.weight.shape.rank != 2 ||
-            row_offset + row_count > out.lm_head.weight.shape.dims[0]) {
-            throw std::runtime_error("QwenCausalDecodeRuntime lm_head window is outside the weight tensor");
-        }
-        auto * base = out.lm_head.weight.tensor;
-        auto * view = ggml_view_2d(
-            ctx.ggml,
-            base,
-            base->ne[0],
-            row_count,
-            base->nb[1],
-            static_cast<size_t>(row_offset) * base->nb[1]);
-        out.lm_head.weight = core::wrap_tensor(
-            view,
-            core::TensorShape::from_dims({row_count, out.lm_head.weight.shape.dims[1]}),
-            out.lm_head.weight.type);
-    }
     return out;
 }
 
@@ -341,16 +314,11 @@ core::TensorValue wrap_logits_readback_token_ids(
 void upload_logits_readback_token_ids(
     ggml_tensor * tensor,
     const QwenCausalDecodeRuntimeConfig & config) {
-    std::vector<int32_t> rebased;
-    rebased.reserve(config.logits_readback_token_ids.size());
-    for (const int32_t token : config.logits_readback_token_ids) {
-        rebased.push_back(token - static_cast<int32_t>(config.lm_head_row_offset));
-    }
     ggml_backend_tensor_set(
         tensor,
-        rebased.data(),
+        config.logits_readback_token_ids.data(),
         0,
-        rebased.size() * sizeof(int32_t));
+        config.logits_readback_token_ids.size() * sizeof(int32_t));
 }
 
 QwenCausalDecoderOutputs build_causal_prefill(
@@ -361,7 +329,7 @@ QwenCausalDecoderOutputs build_causal_prefill(
     const QwenCausalDecodeRuntimeWeights & weights,
     const core::TensorValue & attention_mask) {
     if (config.output_mode == QwenCausalDecodeOutputMode::Logits) {
-        auto causal_weights = causal_decoder_weights(ctx, config, weights);
+        auto causal_weights = causal_decoder_weights(weights);
         return QwenCausalDecoderModule(config.decoder)
             .build(ctx, input, positions, causal_weights, std::nullopt, attention_mask);
     }
@@ -393,7 +361,7 @@ QwenCausalDecoderStaticCacheOutputs build_causal_decode(
     const core::TensorValue & attention_mask,
     const core::TensorValue & cache_slot) {
     if (config.output_mode == QwenCausalDecodeOutputMode::Logits) {
-        auto causal_weights = causal_decoder_weights(ctx, config, weights);
+        auto causal_weights = causal_decoder_weights(weights);
         return QwenCausalDecoderModule(config.decoder)
             .build_static_cache_tail(
                 ctx,
@@ -435,7 +403,7 @@ QwenCausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
     const core::TensorValue & attention_mask,
     const core::TensorValue & cache_slot) {
     if (config.output_mode == QwenCausalDecodeOutputMode::Logits) {
-        auto causal_weights = causal_decoder_weights(ctx, config, weights);
+        auto causal_weights = causal_decoder_weights(weights);
         return QwenCausalDecoderModule(config.decoder)
             .build_static_cache_tail_batched(
                 ctx,

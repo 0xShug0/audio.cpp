@@ -21,7 +21,12 @@ namespace binding = engine::modules::binding;
 
 struct MiraQwenWeights {
     std::shared_ptr<core::BackendWeightStore> store;
+    // This context owns only the sparse head's tensor metadata. The tied
+    // embedding storage outlives it, and both outlive the decoder runtime.
+    std::shared_ptr<ggml_context> head_context;
     core::TensorValue token_embedding;
+    core::TensorValue lm_head;
+    int64_t lm_head_row_offset = 0;
     modules::QwenDecoderStackWeights stack;
     modules::NormWeights final_norm;
 };
@@ -174,33 +179,58 @@ std::shared_ptr<MiraQwenWeights> load_weights(
     out->final_norm = binding::norm_weight_from_source(
         *out->store, source, "model.norm", config.hidden_size);
     out->store->upload();
+    out->lm_head = out->token_embedding;
+    const char * sparse_head = std::getenv("AUDIOCPP_MIRA_TTS_SPARSE_HEAD");
+    if (backend_type == core::BackendType::Cpu &&
+        !(sparse_head != nullptr && sparse_head[0] == '0')) {
+        // Only MiraTTS knows its speech/EOS alphabet. Keep its weight window
+        // here, presenting an ordinary, correctly sized head to shared Qwen.
+        const int64_t offset = config.eos_token_id;
+        if (offset < 0 || offset >= config.vocab_size ||
+            config.speech_token_start < offset ||
+            config.speech_token_end < config.speech_token_start ||
+            config.speech_token_end >= config.vocab_size) {
+            throw std::runtime_error("MiraTTS sparse head does not cover its generation alphabet");
+        }
+        const int64_t rows = config.vocab_size - offset;
+        out->head_context = std::shared_ptr<ggml_context>(
+            ggml_init({ggml_tensor_overhead(), nullptr, true}), ggml_free);
+        if (!out->head_context) {
+            throw std::runtime_error("failed to initialize MiraTTS sparse head context");
+        }
+        auto * base = out->token_embedding.tensor;
+        auto * view = ggml_view_2d(
+            out->head_context.get(), base, base->ne[0], rows, base->nb[1],
+            static_cast<size_t>(offset) * base->nb[1]);
+        if (ggml_backend_view_init(view) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("failed to initialize MiraTTS sparse head view");
+        }
+        out->lm_head = core::wrap_tensor(
+            view, core::TensorShape::from_dims({rows, config.hidden_size}),
+            out->token_embedding.type);
+        out->lm_head_row_offset = offset;
+    }
     return out;
 }
 
 modules::QwenCausalDecodeRuntimeConfig runtime_config(
     const MiraTTSConfig & config,
+    const MiraQwenWeights & weights,
     core::BackendType backend_type,
     size_t prefill_bytes,
     size_t decode_bytes) {
     modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "mira_tts.lm";
     out.decoder = decoder_config(config, backend_type);
-    // MiraTTS generation emits one of the 8192 speech-code tokens or EOS. On
-    // CPU, skip the unused text-vocabulary rows in the tied output projection;
-    // this preserves every candidate that can be sampled in TTS mode while
-    // avoiding most of the 166k-row lm_head multiplication. Accelerators keep
-    // the full projection because their large matmul kernels are preferable.
-    const char * sparse_head = std::getenv("AUDIOCPP_MIRA_TTS_SPARSE_HEAD");
-    if (backend_type == core::BackendType::Cpu &&
-        !(sparse_head != nullptr && sparse_head[0] == '0')) {
-        out.lm_head_row_offset = config.eos_token_id;
-        out.decoder.logits_size = config.vocab_size - out.lm_head_row_offset;
-    } else {
-        out.decoder.logits_size = config.vocab_size;
-    }
+    out.decoder.logits_size = weights.lm_head.shape.dims[0];
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.decoder.use_lm_head_bias = false;
     out.logits_readback_token_ids = generation_token_ids(config);
+    // Readback indices address our local head. Prompt/decode token IDs still
+    // address the full embedding vocabulary and are never rebased.
+    for (auto & token : out.logits_readback_token_ids) {
+        token -= static_cast<int32_t>(weights.lm_head_row_offset);
+    }
     out.prefill_graph_arena_bytes = prefill_bytes;
     out.decode_graph_arena_bytes = decode_bytes;
     return out;
@@ -212,7 +242,7 @@ modules::QwenCausalDecodeRuntimeWeights runtime_weights(
     out.token_embedding = weights.token_embedding;
     out.stack = weights.stack;
     out.final_norm = weights.final_norm;
-    out.lm_head = modules::LinearWeights{weights.token_embedding, std::nullopt};
+    out.lm_head = modules::LinearWeights{weights.lm_head, std::nullopt};
     return out;
 }
 
@@ -235,7 +265,7 @@ struct MiraGenerator::Impl {
               storage_type)),
           runtime(std::make_unique<modules::QwenCausalDecodeRuntime>(
               execution,
-              runtime_config(config, execution.backend_type(), prefill_bytes, decode_bytes),
+              runtime_config(config, *weights, execution.backend_type(), prefill_bytes, decode_bytes),
               runtime_weights(*weights))) {}
 
     std::vector<int32_t> generate(
