@@ -66,6 +66,20 @@ void trace_attention_preference(core::AttentionPreference preference) {
     engine::debug::trace_log_scalar("breeze_tts.attention.preference", std::string_view(name));
 }
 
+void validate_session_options(
+    const runtime::SessionOptions & options,
+    const engine::model_spec::ModelContract & contract) {
+    auto validation_options = options;
+    // Older standalone GGUF packages embed a v1 contract that predates this
+    // backend-compatibility option; keep them usable while still validating
+    // the option value in attention_preference_from_options().
+    if (contract.session_option_keys.find("breeze_tts.attention") ==
+        contract.session_option_keys.end()) {
+        validation_options.options.erase("breeze_tts.attention");
+    }
+    runtime::validate_spec_backed_session_options(validation_options, contract, kFamily, kModelName);
+}
+
 std::size_t reference_cache_slots_from_options(const runtime::SessionOptions & options) {
     const int64_t slots = runtime::parse_i64_option(
         options.options,
@@ -119,7 +133,7 @@ BreezeTTSSession::BreezeTTSSession(
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))),
       reference_cache_(reference_cache_slots_from_options(options)) {
-    runtime::validate_spec_backed_session_options(options, *contract_, kFamily, kModelName);
+    validate_session_options(options, *contract_);
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning &&
         task_.task != runtime::VoiceTaskKind::VoiceDesign) {
