@@ -1564,6 +1564,23 @@ audiocpp_add_model(ace_step
     LOADERS
         engine::models::ace_step::make_ace_step_loader
 )
+audiocpp_add_model(sopro_tts
+    SOURCES
+        src/community_models/sopro_tts/acoustic.cpp
+        src/community_models/sopro_tts/assets.cpp
+        src/community_models/sopro_tts/reference.cpp
+        src/community_models/sopro_tts/semantic_encoder.cpp
+        src/community_models/sopro_tts/semantic_lm.cpp
+        src/community_models/sopro_tts/session.cpp
+        src/community_models/sopro_tts/speaker_encoder.cpp
+        src/community_models/sopro_tts/text_tokenizer.cpp
+        src/community_models/sopro_tts/vocoder.cpp
+    INCLUDES
+        engine/community_models/sopro_tts/session.h
+    LOADERS
+        engine::community_models::sopro_tts::make_sopro_tts_loader
+)
+
 audiocpp_add_model(soprano_tts
     SOURCES
         src/community_models/soprano_tts/assets.cpp
@@ -2116,6 +2133,7 @@ if (ENGINE_BUILD_WARMBENCH)
     target_compile_definitions(soprano_warm_bench PRIVATE
         ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
     )
+    add_engine_warmbench(sopro_probe tests/sopro_tts/sopro_probe.cpp)
     add_engine_warmbench(sortformer_diar_warm_bench tests/sortformer_diar/sortformer_diar_warm_bench.cpp)
     add_engine_warmbench(supertonic_warm_bench tests/supertonic/supertonic_warm_bench.cpp)
     add_engine_warmbench(vevo2_warm_bench tests/vevo2/vevo2_warm_bench.cpp)
@@ -2617,6 +2635,22 @@ if (ENGINE_BUILD_TESTS)
             set_tests_properties(test_vibeasr_asr PROPERTIES
                 SKIP_RETURN_CODE 125
                 TIMEOUT 600
+            )
+        endif()
+
+        if (sopro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_sopro_tts_audio_ops
+                tests/sopro_tts/test_sopro_tts_audio_ops.cpp
+            )
+            target_link_libraries(test_sopro_tts_audio_ops PRIVATE engine_runtime ggml)
+            target_include_directories(test_sopro_tts_audio_ops PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_sopro_tts_audio_ops PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+
+            add_test(
+                NAME test_sopro_tts_audio_ops
+                COMMAND test_sopro_tts_audio_ops
             )
         endif()
 
