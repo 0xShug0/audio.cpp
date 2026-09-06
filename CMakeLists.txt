@@ -112,6 +112,7 @@ option(ENGINE_ENABLE_CPU_ALL_VARIANTS
     OFF)
 option(ENGINE_BUILD_EXAMPLES "Build example binaries" OFF)
 option(ENGINE_BUILD_TESTS "Build framework unit tests" OFF)
+option(ENGINE_BUILD_EXTENDED_TESTS "Build extended non-model tests and probes" OFF)
 option(ENGINE_BUILD_MODEL_TESTS "Build model-specific tests and probes" OFF)
 option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
 set(AUDIOCPP_GGML_SOURCE_DIR
@@ -2143,22 +2144,8 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(voxcpm2_warm_bench tests/voxcpm2/voxcpm2_warm_bench.cpp)
 endif()
 
-if (ENGINE_BUILD_TESTS)
+if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
     enable_testing()
-
-    add_test(
-        NAME audiocpp_cli_list_devices
-        COMMAND audiocpp_cli --list-devices
-    )
-    add_test(
-        NAME audiocpp_server_list_devices
-        COMMAND audiocpp_server --list-devices
-    )
-    set_tests_properties(
-        audiocpp_cli_list_devices
-        audiocpp_server_list_devices
-        PROPERTIES PASS_REGULAR_EXPRESSION "available_devices=[0-9]+"
-    )
 
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 
@@ -2167,407 +2154,256 @@ if (ENGINE_BUILD_TESTS)
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
-    add_executable(sentencepiece_tokenizer1_test
-        tests/unittests/test_sentencepiece_tokenizer1.cpp
-    )
-
-    target_link_libraries(sentencepiece_tokenizer1_test PRIVATE engine_runtime ggml)
-    target_compile_definitions(sentencepiece_tokenizer1_test PRIVATE
-        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
-    )
-
-    add_test(
-        NAME sentencepiece_tokenizer1_test
-        COMMAND sentencepiece_tokenizer1_test
-    )
-
-    add_engine_unittest(citrinet_tokenizer_decode_test tests/unittests/test_citrinet_tokenizer_decode.cpp)
-    target_compile_definitions(citrinet_tokenizer_decode_test PRIVATE
-        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
-    )
-
-    add_test(
-        NAME citrinet_tokenizer_decode_test
-        COMMAND citrinet_tokenizer_decode_test
-    )
-
-    add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
-
-    add_test(
-        NAME audio_dsp_test
-        COMMAND audio_dsp_test
-    )
-
-    add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
-
-    add_test(
-        NAME midi_file_test
-        COMMAND midi_file_test
-    )
-
-    add_engine_unittest(wav_reader_test tests/unittests/test_wav_reader.cpp)
-
-    add_test(
-        NAME wav_reader_test
-        COMMAND wav_reader_test
-    )
-
-    add_engine_unittest(wav_reader_chunk_bounds_test tests/unittests/test_wav_reader_chunk_bounds.cpp)
-
-    add_test(
-        NAME wav_reader_chunk_bounds_test
-        COMMAND wav_reader_chunk_bounds_test
-    )
-
-    add_engine_unittest(hf_tokenizer_vocab_bounds_test tests/unittests/test_hf_tokenizer_vocab_bounds.cpp)
-
-    add_test(
-        NAME hf_tokenizer_vocab_bounds_test
-        COMMAND hf_tokenizer_vocab_bounds_test
-    )
-
-    add_engine_unittest(safetensors_offsets_test tests/unittests/test_safetensors_offsets.cpp)
-
-    add_test(
-        NAME safetensors_offsets_test
-        COMMAND safetensors_offsets_test
-    )
-
-    add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
-
-    add_test(
-        NAME audio_chunking_test
-        COMMAND audio_chunking_test
-    )
-
-    add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
-
-    add_test(
-        NAME wav_writer_formats_test
-        COMMAND wav_writer_formats_test
-    )
-
-    add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
-
-    add_test(
-        NAME chinese_normalization_test
-        COMMAND chinese_normalization_test
-    )
-
-    add_engine_unittest(text_chunking_test tests/unittests/test_text_chunking.cpp)
-
-    add_test(
-        NAME text_chunking_test
-        COMMAND text_chunking_test
-    )
-
-    add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
-
-    add_test(
-        NAME unicode_normalization_test
-        COMMAND unicode_normalization_test
-    )
-
-    add_engine_unittest(text_normalization_test tests/unittests/test_text_normalization.cpp)
-
-    add_test(
-        NAME text_normalization_test
-        COMMAND text_normalization_test
-    )
-
-    add_engine_unittest(subtitle_formatter_test tests/unittests/test_subtitle_formatter.cpp)
-
-    add_test(
-        NAME subtitle_formatter_test
-        COMMAND subtitle_formatter_test
-    )
-
-    add_engine_unittest(rnnoise_utility_test tests/unittests/test_rnnoise_utility.cpp)
-    target_compile_definitions(rnnoise_utility_test PRIVATE
-        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
-        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
-    )
-
-    add_test(
-        NAME rnnoise_utility_test
-        COMMAND rnnoise_utility_test
-    )
-
-    add_engine_unittest(flashsr_utility_test tests/unittests/test_flashsr_utility.cpp)
-    target_compile_definitions(flashsr_utility_test PRIVATE
-        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
-        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
-    )
-
-    add_test(
-        NAME flashsr_utility_test
-        COMMAND flashsr_utility_test
-    )
-
-    add_engine_unittest(zipenhancer_utility_test tests/unittests/test_zipenhancer_utility.cpp)
-    target_compile_definitions(zipenhancer_utility_test PRIVATE
-        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
-        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
-    )
-
-    add_test(
-        NAME zipenhancer_utility_test
-        COMMAND zipenhancer_utility_test
-    )
-
-    add_engine_unittest(audio_utility_api_test tests/unittests/test_audio_utility_api.cpp)
-    target_compile_definitions(audio_utility_api_test PRIVATE
-        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
-    )
-
-    add_test(
-        NAME audio_utility_api_test
-        COMMAND audio_utility_api_test
-    )
-
-    add_engine_unittest(torch_random_test tests/unittests/test_torch_random.cpp)
-
-    add_test(
-        NAME torch_random_test
-        COMMAND torch_random_test
-    )
-
-    add_engine_unittest(backend_device_resolution_test tests/unittests/test_backend_device_resolution.cpp)
-    target_include_directories(backend_device_resolution_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
-
-    add_test(
-        NAME backend_device_resolution_test
-        COMMAND backend_device_resolution_test
-    )
-
-    add_engine_unittest(attention_fallback_test tests/unittests/test_attention_fallback.cpp)
-    target_include_directories(attention_fallback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
-
-    add_test(
-        NAME attention_fallback_test
-        COMMAND attention_fallback_test
-    )
-
-    add_executable(streaming_audio_input_test
-        tests/unittests/test_streaming_audio_input.cpp
-        app/streaming/pcm_source.cpp
-        app/streaming/streaming.cpp
-    )
-    target_link_libraries(streaming_audio_input_test PRIVATE engine_runtime ggml)
-    target_include_directories(streaming_audio_input_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
-
-    add_test(
-        NAME streaming_audio_input_test
-        COMMAND streaming_audio_input_test
-    )
-
-    add_executable(http_live_body_test
-        tests/unittests/test_http_live_body.cpp
-        app/server/http.cpp
-    )
-    target_link_libraries(http_live_body_test PRIVATE engine_runtime ggml)
-    if(WIN32)
-        target_link_libraries(http_live_body_test PRIVATE ws2_32)
-    endif()
-    target_include_directories(http_live_body_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
-
-    add_test(
-        NAME http_live_body_test
-        COMMAND http_live_body_test
-    )
-    # This test talks to a real loopback socket, so a framing regression could
-    # block forever rather than fail. Bound it so CI reports a failure instead.
-    set_tests_properties(http_live_body_test PROPERTIES TIMEOUT 120)
-
-    add_engine_unittest(partial_text_render_test tests/unittests/test_partial_text_render.cpp)
-
-    add_test(
-        NAME partial_text_render_test
-        COMMAND partial_text_render_test
-    )
-
-    add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
-
-    add_test(
-        NAME hf_sampler_test
-        COMMAND hf_sampler_test
-    )
-
-    add_engine_unittest(diffusion_math_test tests/unittests/test_diffusion_math.cpp)
-
-    add_test(
-        NAME diffusion_math_test
-        COMMAND diffusion_math_test
-    )
-
-    add_engine_unittest(encoder_module_test tests/unittests/test_encoder_modules.cpp)
-
-    add_test(
-        NAME encoder_module_test
-        COMMAND encoder_module_test
-    )
-
-    add_engine_unittest(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)
-
-    add_test(
-        NAME conv_transpose_fast_path_test
-        COMMAND conv_transpose_fast_path_test
-    )
-
-    add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
-
-    add_test(
-        NAME depthwise_conv1d_lowering_test
-        COMMAND depthwise_conv1d_lowering_test
-    )
-
-    add_engine_unittest(conv_lowering_matrix_test tests/unittests/test_conv_lowering_matrix.cpp)
-    if (ENGINE_ENABLE_HIP)
-        target_compile_definitions(conv_lowering_matrix_test PRIVATE ENGINE_TEST_ENABLE_HIP=1)
-    endif()
-
-    add_test(
-        NAME conv_lowering_matrix_test
-        COMMAND conv_lowering_matrix_test
-    )
-
-    add_engine_unittest(i8_s_fused_ops_test tests/unittests/test_i8_s_fused_ops.cpp)
-
-    add_test(
-        NAME i8_s_fused_ops_test
-        COMMAND i8_s_fused_ops_test
-    )
-
-    add_engine_unittest(i2_s_mul_mat_test tests/unittests/test_i2_s_mul_mat.cpp)
-
-    add_test(
-        NAME i2_s_mul_mat_test
-        COMMAND i2_s_mul_mat_test
-    )
-
-    add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
-    target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
-
-    add_test(
-        NAME gguf_tensor_source_test
-        COMMAND gguf_tensor_source_test
-    )
-
-    add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
-    target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
-
-    add_test(
-        NAME model_spec_system_test
-        COMMAND model_spec_system_test
-    )
-
-    add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)
-
-    add_test(
-        NAME scaled_dot_product_attention_test
-        COMMAND scaled_dot_product_attention_test
-    )
-
-    add_executable(cli_request_options_test
-        tests/unittests/test_cli_request_options.cpp
-        app/cli/args.cpp
-        app/cli/request.cpp
-    )
-    target_link_libraries(cli_request_options_test PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(cli_request_options_test PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
-    add_test(
-        NAME cli_request_options_test
-        COMMAND cli_request_options_test
-    )
-
-    add_executable(server_multipart_test
-        tests/unittests/test_server_multipart.cpp
-        app/server/multipart.cpp
-    )
-    target_include_directories(server_multipart_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-
-    add_test(
-        NAME server_multipart_test
-        COMMAND server_multipart_test
-    )
-
-    add_executable(server_base64_test
-        tests/unittests/test_server_base64.cpp
-        app/server/base64.cpp
-    )
-    target_include_directories(server_base64_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-
-    add_test(
-        NAME server_base64_test
-        COMMAND server_base64_test
-    )
-
-    add_executable(server_busy_guard_test
-        tests/unittests/test_server_busy_guard.cpp
-    )
-    target_include_directories(server_busy_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-    find_package(Threads REQUIRED)
-    target_link_libraries(server_busy_guard_test PRIVATE Threads::Threads)
-
-    add_test(
-        NAME server_busy_guard_test
-        COMMAND server_busy_guard_test
-    )
-    # The suite deliberately drives threads against a held lock; bound it so a
-    # regression that reintroduces unbounded queuing fails instead of hanging CI.
-    set_tests_properties(server_busy_guard_test PROPERTIES TIMEOUT 60)
-
-    add_executable(server_config_test
-        tests/unittests/test_server_config.cpp
-        app/server/config.cpp
-        app/server/model_memory.cpp
-        app/cli/args.cpp
-        app/cli/request.cpp
-    )
-    target_include_directories(server_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-    target_link_libraries(server_config_test PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(server_config_test PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-
-    add_test(
-        NAME server_config_test
-        COMMAND server_config_test
-    )
-
-    if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
-        add_executable(server_model_installer_test
-            tests/unittests/test_server_model_installer.cpp
-            app/server/model_installer.cpp
+    if (ENGINE_BUILD_TESTS)
+        add_executable(sentencepiece_tokenizer1_test
+            tests/unittests/test_sentencepiece_tokenizer1.cpp
         )
-        target_include_directories(server_model_installer_test PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/app/server
-            ${CMAKE_CURRENT_BINARY_DIR}/generated)
-        target_link_libraries(server_model_installer_test PRIVATE
-            Threads::Threads engine_runtime audiocpp_package_manager)
-        target_compile_definitions(server_model_installer_test PRIVATE
-            AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
+
+        target_link_libraries(sentencepiece_tokenizer1_test PRIVATE engine_runtime ggml)
+        target_compile_definitions(sentencepiece_tokenizer1_test PRIVATE
+            ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+        )
 
         add_test(
-            NAME server_model_installer_test
-            COMMAND server_model_installer_test
+            NAME sentencepiece_tokenizer1_test
+            COMMAND sentencepiece_tokenizer1_test
         )
 
-        add_executable(package_manager_modelscope_test
-            tests/unittests/test_package_manager_modelscope.cpp
+        add_engine_unittest(citrinet_tokenizer_decode_test tests/unittests/test_citrinet_tokenizer_decode.cpp)
+        target_compile_definitions(citrinet_tokenizer_decode_test PRIVATE
+            ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
         )
-        target_link_libraries(package_manager_modelscope_test PRIVATE
-            Threads::Threads audiocpp_package_manager)
-        target_compile_definitions(package_manager_modelscope_test PRIVATE
-            AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
 
         add_test(
-            NAME package_manager_modelscope_test
-            COMMAND package_manager_modelscope_test
+            NAME citrinet_tokenizer_decode_test
+            COMMAND citrinet_tokenizer_decode_test
         )
+
+        add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
+        add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
+
+        add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
+        add_test(NAME midi_file_test COMMAND midi_file_test)
+
+        add_engine_unittest(wav_reader_test tests/unittests/test_wav_reader.cpp)
+        add_test(NAME wav_reader_test COMMAND wav_reader_test)
+
+        add_engine_unittest(wav_reader_chunk_bounds_test tests/unittests/test_wav_reader_chunk_bounds.cpp)
+        add_test(NAME wav_reader_chunk_bounds_test COMMAND wav_reader_chunk_bounds_test)
+
+        add_engine_unittest(hf_tokenizer_vocab_bounds_test tests/unittests/test_hf_tokenizer_vocab_bounds.cpp)
+        add_test(NAME hf_tokenizer_vocab_bounds_test COMMAND hf_tokenizer_vocab_bounds_test)
+
+        add_engine_unittest(safetensors_offsets_test tests/unittests/test_safetensors_offsets.cpp)
+        add_test(NAME safetensors_offsets_test COMMAND safetensors_offsets_test)
+
+        add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
+        add_test(NAME audio_chunking_test COMMAND audio_chunking_test)
+
+        add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
+        add_test(NAME wav_writer_formats_test COMMAND wav_writer_formats_test)
+
+        add_engine_unittest(chinese_normalization_test tests/unittests/test_chinese_normalization.cpp)
+        add_test(NAME chinese_normalization_test COMMAND chinese_normalization_test)
+
+        add_engine_unittest(text_chunking_test tests/unittests/test_text_chunking.cpp)
+        add_test(NAME text_chunking_test COMMAND text_chunking_test)
+
+        add_engine_unittest(unicode_normalization_test tests/unittests/test_unicode_normalization.cpp)
+        add_test(NAME unicode_normalization_test COMMAND unicode_normalization_test)
+
+        add_engine_unittest(text_normalization_test tests/unittests/test_text_normalization.cpp)
+        add_test(NAME text_normalization_test COMMAND text_normalization_test)
+
+        add_engine_unittest(subtitle_formatter_test tests/unittests/test_subtitle_formatter.cpp)
+        add_test(NAME subtitle_formatter_test COMMAND subtitle_formatter_test)
+
+        add_engine_unittest(torch_random_test tests/unittests/test_torch_random.cpp)
+        add_test(NAME torch_random_test COMMAND torch_random_test)
+
+        add_engine_unittest(backend_device_resolution_test tests/unittests/test_backend_device_resolution.cpp)
+        target_include_directories(backend_device_resolution_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME backend_device_resolution_test COMMAND backend_device_resolution_test)
+
+        add_engine_unittest(attention_fallback_test tests/unittests/test_attention_fallback.cpp)
+        target_include_directories(attention_fallback_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME attention_fallback_test COMMAND attention_fallback_test)
+
+        add_engine_unittest(partial_text_render_test tests/unittests/test_partial_text_render.cpp)
+        add_test(NAME partial_text_render_test COMMAND partial_text_render_test)
+
+        add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
+        add_test(NAME hf_sampler_test COMMAND hf_sampler_test)
+
+        add_engine_unittest(diffusion_math_test tests/unittests/test_diffusion_math.cpp)
+        add_test(NAME diffusion_math_test COMMAND diffusion_math_test)
+
+        add_engine_unittest(encoder_module_test tests/unittests/test_encoder_modules.cpp)
+        add_test(NAME encoder_module_test COMMAND encoder_module_test)
+
+        add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
+        target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME gguf_tensor_source_test COMMAND gguf_tensor_source_test)
+
+        add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
+        target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME model_spec_system_test COMMAND model_spec_system_test)
+    endif()
+
+    if (ENGINE_BUILD_EXTENDED_TESTS)
+        find_package(Threads REQUIRED)
+
+        add_test(NAME audiocpp_cli_list_devices COMMAND audiocpp_cli --list-devices)
+        add_test(NAME audiocpp_server_list_devices COMMAND audiocpp_server --list-devices)
+        set_tests_properties(
+            audiocpp_cli_list_devices
+            audiocpp_server_list_devices
+            PROPERTIES PASS_REGULAR_EXPRESSION "available_devices=[0-9]+"
+        )
+
+        add_engine_unittest(rnnoise_utility_test tests/unittests/test_rnnoise_utility.cpp)
+        target_compile_definitions(rnnoise_utility_test PRIVATE
+            ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+        )
+        add_test(NAME rnnoise_utility_test COMMAND rnnoise_utility_test)
+
+        add_engine_unittest(flashsr_utility_test tests/unittests/test_flashsr_utility.cpp)
+        target_compile_definitions(flashsr_utility_test PRIVATE
+            ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+        )
+        add_test(NAME flashsr_utility_test COMMAND flashsr_utility_test)
+
+        add_engine_unittest(zipenhancer_utility_test tests/unittests/test_zipenhancer_utility.cpp)
+        target_compile_definitions(zipenhancer_utility_test PRIVATE
+            ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+        )
+        add_test(NAME zipenhancer_utility_test COMMAND zipenhancer_utility_test)
+
+        add_engine_unittest(audio_utility_api_test tests/unittests/test_audio_utility_api.cpp)
+        target_compile_definitions(audio_utility_api_test PRIVATE
+            ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+        add_test(NAME audio_utility_api_test COMMAND audio_utility_api_test)
+
+        add_executable(streaming_audio_input_test
+            tests/unittests/test_streaming_audio_input.cpp
+            app/streaming/pcm_source.cpp
+            app/streaming/streaming.cpp
+        )
+        target_link_libraries(streaming_audio_input_test PRIVATE engine_runtime ggml)
+        target_include_directories(streaming_audio_input_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME streaming_audio_input_test COMMAND streaming_audio_input_test)
+
+        add_executable(http_live_body_test
+            tests/unittests/test_http_live_body.cpp
+            app/server/http.cpp
+        )
+        target_link_libraries(http_live_body_test PRIVATE engine_runtime ggml)
+        if(WIN32)
+            target_link_libraries(http_live_body_test PRIVATE ws2_32)
+        endif()
+        target_include_directories(http_live_body_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME http_live_body_test COMMAND http_live_body_test)
+        # This test talks to a real loopback socket, so a framing regression could
+        # block forever rather than fail. Bound it so CI reports a failure instead.
+        set_tests_properties(http_live_body_test PROPERTIES TIMEOUT 120)
+
+        add_engine_unittest(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)
+        add_test(NAME conv_transpose_fast_path_test COMMAND conv_transpose_fast_path_test)
+
+        add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
+        add_test(NAME depthwise_conv1d_lowering_test COMMAND depthwise_conv1d_lowering_test)
+
+        add_engine_unittest(conv_lowering_matrix_test tests/unittests/test_conv_lowering_matrix.cpp)
+        if (ENGINE_ENABLE_HIP)
+            target_compile_definitions(conv_lowering_matrix_test PRIVATE ENGINE_TEST_ENABLE_HIP=1)
+        endif()
+        add_test(NAME conv_lowering_matrix_test COMMAND conv_lowering_matrix_test)
+
+        add_engine_unittest(i8_s_fused_ops_test tests/unittests/test_i8_s_fused_ops.cpp)
+        add_test(NAME i8_s_fused_ops_test COMMAND i8_s_fused_ops_test)
+
+        add_engine_unittest(i2_s_mul_mat_test tests/unittests/test_i2_s_mul_mat.cpp)
+        add_test(NAME i2_s_mul_mat_test COMMAND i2_s_mul_mat_test)
+
+        add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)
+        add_test(NAME scaled_dot_product_attention_test COMMAND scaled_dot_product_attention_test)
+
+        add_executable(cli_request_options_test
+            tests/unittests/test_cli_request_options.cpp
+            app/cli/args.cpp
+            app/cli/request.cpp
+        )
+        target_link_libraries(cli_request_options_test PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(cli_request_options_test PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        add_test(NAME cli_request_options_test COMMAND cli_request_options_test)
+
+        add_executable(server_multipart_test
+            tests/unittests/test_server_multipart.cpp
+            app/server/multipart.cpp
+        )
+        target_include_directories(server_multipart_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        add_test(NAME server_multipart_test COMMAND server_multipart_test)
+
+        add_executable(server_base64_test
+            tests/unittests/test_server_base64.cpp
+            app/server/base64.cpp
+        )
+        target_include_directories(server_base64_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        add_test(NAME server_base64_test COMMAND server_base64_test)
+
+        add_executable(server_busy_guard_test
+            tests/unittests/test_server_busy_guard.cpp
+        )
+        target_include_directories(server_busy_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        target_link_libraries(server_busy_guard_test PRIVATE Threads::Threads)
+        add_test(NAME server_busy_guard_test COMMAND server_busy_guard_test)
+        # The suite deliberately drives threads against a held lock; bound it so a
+        # regression that reintroduces unbounded queuing fails instead of hanging CI.
+        set_tests_properties(server_busy_guard_test PROPERTIES TIMEOUT 60)
+
+        add_executable(server_config_test
+            tests/unittests/test_server_config.cpp
+            app/server/config.cpp
+            app/server/model_memory.cpp
+            app/cli/args.cpp
+            app/cli/request.cpp
+        )
+        target_include_directories(server_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        target_link_libraries(server_config_test PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(server_config_test PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        add_test(NAME server_config_test COMMAND server_config_test)
+
+        if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+            add_executable(server_model_installer_test
+                tests/unittests/test_server_model_installer.cpp
+                app/server/model_installer.cpp
+            )
+            target_include_directories(server_model_installer_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/app/server
+                ${CMAKE_CURRENT_BINARY_DIR}/generated)
+            target_link_libraries(server_model_installer_test PRIVATE
+                Threads::Threads engine_runtime audiocpp_package_manager)
+            target_compile_definitions(server_model_installer_test PRIVATE
+                AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
+            add_test(NAME server_model_installer_test COMMAND server_model_installer_test)
+
+            add_executable(package_manager_modelscope_test
+                tests/unittests/test_package_manager_modelscope.cpp
+            )
+            target_link_libraries(package_manager_modelscope_test PRIVATE
+                Threads::Threads audiocpp_package_manager)
+            target_compile_definitions(package_manager_modelscope_test PRIVATE
+                AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
+            add_test(NAME package_manager_modelscope_test COMMAND package_manager_modelscope_test)
+        endif()
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)

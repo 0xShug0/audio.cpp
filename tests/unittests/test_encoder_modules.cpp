@@ -207,6 +207,7 @@ engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for_test(engin
         case engine::core::BackendType::Cpu:
             return engine::runtime::GraphOptimizationBackend::Cpu;
         case engine::core::BackendType::Cuda:
+        case engine::core::BackendType::Hip:
             return engine::runtime::GraphOptimizationBackend::Gpu;
         case engine::core::BackendType::Vulkan:
         case engine::core::BackendType::Metal:
