@@ -1119,14 +1119,18 @@ runtime::AudioBuffer BreezeSpeechDecoderRuntime::decode(const BreezeSpeechCodes 
         const bool graph_rebuilt =
             graph == nullptr || !graph->matches(*weights_, chunk_frames, execution_context_->backend(), threads);
         if (graph_rebuilt) {
-            auto replacement = std::make_unique<BreezeSpeechDecoderGraph>(
+            // Free the old graph BEFORE allocating the replacement. Growing
+            // prefix decodes (streaming) change chunk_frames every event; building
+            // the replacement first peaks at old+new and fragments VRAM until
+            // cudaMalloc fails even though a single graph fits comfortably.
+            graph.reset();
+            graph = std::make_unique<BreezeSpeechDecoderGraph>(
                 weights_,
                 chunk_frames,
                 *execution_context_,
                 *constants_,
                 graph_arena_bytes_,
                 allow_flash_attention_);
-            graph = std::move(replacement);
         }
         auto decoded = graph->run(chunk.data(), chunk.size());
         const int64_t drop = context * kDecodeSamplesPerCode;
