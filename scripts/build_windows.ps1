@@ -19,6 +19,7 @@ param(
     [ValidateSet("full", "core", "custom")]
     [string]$ModelSet = "full",
     [string]$Models = "",
+    [string]$Version = "dev",
     [string]$VsInstall = ""
 )
 
@@ -551,6 +552,7 @@ Write-Host "Model composite: $ModelSet"
 if ($Models -ne "") {
     Write-Host "Selected models: $Models"
 }
+Write-Host "audio.cpp version: $Version"
 
 if ($Clean) {
     $buildDirForClean = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "build") $Preset
@@ -587,6 +589,7 @@ $configureArgs = @(
     "-DAUDIOCPP_DEPLOYMENT_BUILD=$deploymentBuildValue",
     "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=$nativeModelManagerValue",
     "-DAUDIOCPP_USE_SYSTEM_OPENSSL=$systemOpenSslValue",
+    "-DAUDIOCPP_VERSION=$Version",
     "-U", "AUDIOCPP_BORINGSSL_ARCHIVE",
     "-DAUDIOCPP_MODEL_SET=$ModelSet",
     "-DAUDIOCPP_MODELS=$Models"

@@ -17,6 +17,7 @@ ARG BASE_CUDA_RUN_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu
 FROM ${BASE_CUDA_DEV_CONTAINER} AS build
 
 ARG GCC_VERSION=14
+ARG AUDIOCPP_VERSION=dev
 # CUDA architectures to compile for.
 # - default = the portable default list from CMakeLists.txt
 # - for a custom arch set build with --build-arg CUDA_DOCKER_ARCH="89-real;...".
@@ -46,6 +47,7 @@ RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
         -DENGINE_ENABLE_VULKAN=OFF \
         -DENGINE_ENABLE_OPENMP=ON \
         -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
+        -DAUDIOCPP_VERSION="${AUDIOCPP_VERSION}" \
         -DENGINE_BUILD_EXAMPLES=OFF \
         -DENGINE_BUILD_TESTS=OFF \
         -DENGINE_BUILD_WARMBENCH=OFF \
