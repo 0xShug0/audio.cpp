@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -67,6 +68,7 @@ private:
         const engine::runtime::TaskRequest & request,
         const std::optional<BreezeSpeechCodes> & reference_codes,
         size_t chunk_index) const;
+    std::optional<engine::runtime::StreamEvent> next_subchunk_event();
 
     engine::runtime::TaskSpec task_;
     std::shared_ptr<const BreezeTTSAssets> assets_;
@@ -77,7 +79,13 @@ private:
     std::vector<engine::runtime::TaskRequest> stream_chunk_requests_;
     std::optional<BreezeSpeechCodes> stream_reference_codes_;
     engine::runtime::AudioBuffer stream_merged_audio_;
+    std::chrono::steady_clock::time_point stream_started_at_;
     size_t stream_chunk_index_ = 0;
+    bool stream_subchunk_ = false;
+    size_t stream_frames_per_event_ = 32;
+    int64_t stream_lookahead_margin_ = 12;
+    bool stream_chunk_active_ = false;
+    size_t stream_event_seq_ = 0;
     bool stream_started_ = false;
 };
 

@@ -7,12 +7,14 @@
 #include "engine/framework/text/chunking.h"
 #include "engine/models/breeze_tts/generator.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace engine::models::breeze_tts {
@@ -78,6 +80,18 @@ void validate_session_options(
         validation_options.options.erase("breeze_tts.attention");
     }
     runtime::validate_spec_backed_session_options(validation_options, contract, kFamily, kModelName);
+}
+
+void validate_request_options(
+    const std::unordered_map<std::string, std::string> & options,
+    const engine::model_spec::ModelContract & contract) {
+    auto validation_options = options;
+    for (const char * key : {"stream_subchunk", "stream_frames_per_event", "stream_lookahead_margin"}) {
+        if (contract.request_option_keys.find(key) == contract.request_option_keys.end()) {
+            validation_options.erase(key);
+        }
+    }
+    runtime::validate_spec_backed_request_options(validation_options, contract, kModelName);
 }
 
 std::size_t reference_cache_slots_from_options(const runtime::SessionOptions & options) {
@@ -183,7 +197,7 @@ runtime::RunMode BreezeTTSSession::run_mode() const {
 }
 
 void BreezeTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    validate_request_options(request.options, *contract_);
     mark_prepared();
 }
 
@@ -225,7 +239,7 @@ BreezeSpeechCodes BreezeTTSSession::resolve_reference_codes(const runtime::Audio
 
 runtime::TaskResult BreezeTTSSession::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    validate_request_options(request.options, *contract_);
     require_prepared("BreezeTTS run");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("BreezeTTS run requires an offline session");
@@ -265,7 +279,7 @@ runtime::StreamingPolicy BreezeTTSSession::streaming_policy() const {
 }
 
 void BreezeTTSSession::start_stream(const runtime::TaskRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    validate_request_options(request.options, *contract_);
     require_prepared("BreezeTTS streaming");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("BreezeTTS start_stream requires a streaming session");
@@ -287,6 +301,27 @@ void BreezeTTSSession::start_stream(const runtime::TaskRequest & request) {
         request.voice->speaker->audio.has_value()) {
         stream_reference_codes_ = resolve_reference_codes(*request.voice->speaker->audio);
     }
+    stream_subchunk_ = false;
+    if (const auto subchunk = runtime::find_option(request.options, {"stream_subchunk"})) {
+        stream_subchunk_ = runtime::parse_bool_option(*subchunk, "stream_subchunk");
+    }
+    const auto frames_per_event = runtime::parse_i64_option(request.options, {"stream_frames_per_event"})
+        .value_or(static_cast<int64_t>(stream_frames_per_event_));
+    if (frames_per_event <= 0) {
+        throw std::runtime_error("BreezeTTS stream_frames_per_event must be positive");
+    }
+    stream_frames_per_event_ = static_cast<size_t>(frames_per_event);
+    stream_lookahead_margin_ = runtime::parse_i64_option(request.options, {"stream_lookahead_margin"})
+        .value_or(stream_lookahead_margin_);
+    if (stream_lookahead_margin_ < 0) {
+        throw std::runtime_error("BreezeTTS stream_lookahead_margin must be non-negative");
+    }
+    stream_merged_audio_ = runtime::AudioBuffer{24000, 1, {}};
+    stream_started_at_ = std::chrono::steady_clock::now();
+    engine::debug::trace_log_scalar("breeze_tts.streaming.subchunk", stream_subchunk_ ? 1 : 0);
+    engine::debug::trace_log_scalar(
+        "breeze_tts.streaming.frames_per_event", static_cast<int64_t>(stream_frames_per_event_));
+    engine::debug::trace_log_scalar("breeze_tts.streaming.lookahead_margin", stream_lookahead_margin_);
     stream_started_ = true;
 }
 
@@ -296,6 +331,9 @@ std::optional<runtime::StreamEvent> BreezeTTSSession::next_stream_event() {
     }
     if (stream_chunk_index_ >= stream_chunk_requests_.size()) {
         return std::nullopt;
+    }
+    if (stream_subchunk_) {
+        return next_subchunk_event();
     }
     const size_t chunk_index = stream_chunk_index_++;
     auto chunk_audio = generator_->generate(
@@ -310,6 +348,41 @@ std::optional<runtime::StreamEvent> BreezeTTSSession::next_stream_event() {
     return event;
 }
 
+std::optional<runtime::StreamEvent> BreezeTTSSession::next_subchunk_event() {
+    while (true) {
+        if (stream_chunk_index_ >= stream_chunk_requests_.size()) {
+            return std::nullopt;
+        }
+        const size_t chunk_index = stream_chunk_index_;
+        if (!stream_chunk_active_) {
+            generator_->begin_stream(build_generation_request(
+                stream_chunk_requests_[chunk_index],
+                stream_reference_codes_,
+                chunk_index));
+            stream_chunk_active_ = true;
+        }
+
+        auto event_audio = generator_->next_stream_audio(stream_frames_per_event_, stream_lookahead_margin_);
+        if (event_audio.done) {
+            generator_->end_stream();
+            stream_chunk_active_ = false;
+            ++stream_chunk_index_;
+        }
+        if (event_audio.audio.samples.empty()) {
+            continue;
+        }
+        runtime::append_audio_buffer(stream_merged_audio_, event_audio.audio);
+        runtime::StreamEvent event;
+        event.named_audio_outputs.push_back({
+            "chunk_" + std::to_string(chunk_index) + "_part_" + std::to_string(stream_event_seq_++),
+            std::move(event_audio.audio),
+            {},
+        });
+        engine::debug::trace_log_scalar("breeze_tts.streaming.event_index", static_cast<int64_t>(stream_event_seq_));
+        return event;
+    }
+}
+
 void BreezeTTSSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
     (void)sink;
 }
@@ -322,15 +395,24 @@ runtime::TaskResult BreezeTTSSession::finish_stream() {
     }
     runtime::TaskResult result;
     result.audio_output = std::move(stream_merged_audio_);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_started_at_));
     reset();
     return result;
 }
 
 void BreezeTTSSession::reset() {
+    if (stream_chunk_active_) {
+        generator_->end_stream();
+        stream_chunk_active_ = false;
+    }
     stream_chunk_requests_.clear();
     stream_reference_codes_.reset();
     stream_merged_audio_ = runtime::AudioBuffer{};
     stream_chunk_index_ = 0;
+    stream_subchunk_ = false;
+    stream_frames_per_event_ = 32;
+    stream_lookahead_margin_ = 12;
+    stream_event_seq_ = 0;
     stream_started_ = false;
 }
 
