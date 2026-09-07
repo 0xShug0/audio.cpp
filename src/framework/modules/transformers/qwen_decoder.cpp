@@ -591,10 +591,20 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
             dim,
             *attention_mask,
             config_.attention_precision);
-    } else if (allow_flash && attention_mask.has_value() &&
-                ((!prefix_key.has_value() &&
-                  config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGrouped) ||
-                 use_prefix_flash)) {
+    } else if (allow_flash && attention_mask.has_value() && use_prefix_flash) {
+        q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+        auto k_heads = TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k);
+        auto v_heads = TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v);
+        context = flash_attention_from_grouped_heads_view_kv(
+            ctx,
+            q_heads,
+            k_heads,
+            v_heads,
+            dim,
+            *attention_mask,
+            config_.attention_precision);
+    } else if (allow_flash && attention_mask.has_value() && !prefix_key.has_value() &&
+               config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGrouped) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
         auto k_heads = TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k);
         auto v_heads = TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v);
