@@ -254,6 +254,8 @@
     {"name": "route", "type": "choice", "label": "route（任务路线）", "default": "", "choices": ["", "style_preserved_vc", "style_converted_vc", "style_preserved_svc", "style_converted_svc", "singing_style_conversion", "editing"], "info": "留空=按任务默认；详见 webui/README.md"},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "流匹配步数"},
     {"name": "use_pitch_shift", "type": "choice", "label": "use_pitch_shift（自动音高对齐）", "default": "", "choices": ["", "true", "false"], "info": "留空=按路线默认"},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec（源音频分段秒数）", "default": 0.0, "minimum": 0.0, "step": 1.0, "info": "0=关闭；仅用于 source-audio VC/SVC 路线"},
+    {"name": "cross_fade_duration_sec", "type": "number", "label": "cross_fade_duration_sec（分段重叠/淡化秒数）", "default": 1.0, "minimum": 0.0, "step": 0.1, "info": "source-audio 分段启用时作为输入重叠和输出交叉淡化时长"},
     {"name": "temperature", "type": "slider", "label": "temperature（AR 路线用）", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "默认取自模型 generation_config.json"},
     {"name": "top_k", "type": "number", "label": "top_k（AR 路线用）", "default": 20, "minimum": 0, "step": 1, "precision": 0, "info": "默认取自模型 generation_config.json"},
     {"name": "top_p", "type": "slider", "label": "top_p（AR 路线用）", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
