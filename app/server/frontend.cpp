@@ -182,7 +182,9 @@ void serve_frontend_https(
     (void) config;
     throw std::runtime_error(
         "HTTPS frontend support is not available in this build; configure with "
-        "-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTEND_MODULES=https");
+        "-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON "
+        "-DAUDIOCPP_SERVER_FRONTENDS_DIR=/path/to/audio.cpp-server-frontends "
+        "-DAUDIOCPP_SERVER_FRONTEND_MODULES=https");
 }
 #endif
 

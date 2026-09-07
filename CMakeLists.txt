@@ -101,14 +101,15 @@ option(AUDIOCPP_STATIC_ESPEAK "Build and statically link GPL-3.0-or-later eSpeak
 option(AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER
     "Build native model-manager tools and server download/install support"
     OFF)
-include("${CMAKE_CURRENT_SOURCE_DIR}/app/server/frontends/server_frontends.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/app/server/server_frontends.cmake")
 option(AUDIOCPP_USE_SYSTEM_OPENSSL
     "Use system OpenSSL for native model management instead of bundled BoringSSL"
     OFF)
 if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER AND NOT AUDIOCPP_SERVER_FRONTEND_HTTPS_ENABLED)
     message(FATAL_ERROR
         "AUDIOCPP_USE_SYSTEM_OPENSSL requires AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON "
-        "or AUDIOCPP_BUILD_SERVER_FRONTENDS=ON with AUDIOCPP_SERVER_FRONTEND_MODULES=https")
+        "or AUDIOCPP_BUILD_SERVER_FRONTENDS=ON with AUDIOCPP_SERVER_FRONTENDS_DIR set "
+        "and AUDIOCPP_SERVER_FRONTEND_MODULES=https")
 endif()
 option(ENGINE_ENABLE_CPU_ALL_VARIANTS
     "Build CPU backends as dynamic libraries with per-ISA variants (for Docker/portable builds)"
