@@ -51,6 +51,7 @@ jobs:
         run: |
           cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DAUDIOCPP_VERSION=ci \
             -DENGINE_ENABLE_CUDA=OFF \
             -DENGINE_ENABLE_VULKAN=${{ matrix.enable_vulkan }}
 

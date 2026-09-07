@@ -66,6 +66,39 @@ std::vector<float> AudioDecoder::decode(
         use_full_sequence_path);
 }
 
+void AudioDecoder::reset_streaming_state() const {
+    decoder_.reset_streaming_state();
+}
+
+std::vector<float> AudioDecoder::decode_streaming_step(
+    ggml_backend_t backend,
+    int threads,
+    const models::pocket_tts::PocketTTSAssets & manifest,
+    const models::pocket_tts::PocketTTSBackendWeights & weights,
+    const std::vector<float> & normalized_latent,
+    size_t conv_graph_context_bytes,
+    size_t transformer_graph_context_bytes,
+    size_t tail_graph_context_bytes) const {
+    if (normalized_latent.size() != static_cast<size_t>(decoder_.config().latent_size)) {
+        throw std::runtime_error("PocketTTS streaming audio decoder expects one latent step");
+    }
+    const auto & emb_mean = weights.host.emb_mean;
+    const auto & emb_std = weights.host.emb_std;
+    if (emb_mean.size() != emb_std.size() || emb_mean.size() != static_cast<size_t>(decoder_.config().latent_size)) {
+        throw std::runtime_error("PocketTTS latent normalization stats must match Mimi latent_size");
+    }
+    auto denormalized = denormalize_latents(normalized_latent, emb_mean, emb_std);
+    return decoder_.decode_streaming_step(
+        backend,
+        threads,
+        manifest,
+        weights,
+        denormalized,
+        conv_graph_context_bytes,
+        transformer_graph_context_bytes,
+        tail_graph_context_bytes);
+}
+
 void AudioDecoder::clear_runtime_cache() const noexcept {
     decoder_.clear_runtime_cache();
 }

@@ -1,0 +1,20 @@
+{
+  "requests": [
+    {
+      "name": "stream_cold",
+      "text": "The first streaming request emits this sentence in several progressive audio segments. The listener can begin playback before the complete paragraph has finished synthesizing.",
+      "seed": 1234,
+      "max_tokens": 384,
+      "text_chunk_size": 72,
+      "text_chunk_mode": "default"
+    },
+    {
+      "name": "stream_repeat",
+      "text": "The first streaming request emits this sentence in several progressive audio segments. The listener can begin playback before the complete paragraph has finished synthesizing.",
+      "seed": 1234,
+      "max_tokens": 384,
+      "text_chunk_size": 72,
+      "text_chunk_mode": "default"
+    }
+  ]
+}

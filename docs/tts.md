@@ -3,8 +3,10 @@
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
 | Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
+| BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
 | Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
 | Confucius4-TTS | `confucius4_tts` | `clon` | [Confucius4-TTS](#confucius4-tts) |
+| CosyVoice3 | `cosyvoice3` | `tts`, `clon` | [CosyVoice3](models/cosyvoice3.md) |
 | DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
 | F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](community_models/f5_tts.md) |
@@ -29,6 +31,7 @@
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
+| sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VieNeu-TTS | `vietneu_tts` | `tts`, `clon` | [VieNeu-TTS](community_models/vietneu_tts.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
@@ -565,6 +568,7 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `--session-option voxcpm2.prompt_cache_slots=<n>` | integer | `1` | Prompt and prompt-audio embedding cache slots. Set to `0` to disable prompt caching. |
 | `--text-chunk-size` | integer chars | `2048` | Long-form chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form chunking mode; keeps style/tag controls attached to chunks by default. |
+| `--request-option voxcpm2.chunk_strategy=continuation\|stateless` | enum | `continuation` | Long-form chunk generation strategy. `stateless` synthesizes each text chunk from the same original prompt/reference and concatenates the audio; use it for plain text/reference-clone long-form input, not voice/emotion tag carry-over. |
 | `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
 | `--num-inference-steps` | integer | `10` | Flow matching steps. |
 | `--guidance-scale` | float | `2.0` | CFG strength. |
@@ -603,6 +607,7 @@ python3 tools/model_manager_v2.py install --models-root models higgs_audio_tts_4
 | `--top-k` | integer | `30` | AR top-k sampling limit. The narrower default is less prone to premature EOC than the Python client's `50`. |
 | `--top-p` | float | `0.8` | AR nucleus sampling limit. The Python client's unfiltered equivalent is `1.0`. |
 | `--repetition-penalty` | float | `1.1` | Accepted for Python API compatibility; Higgs audio-code sampling does not consume it. |
+| `--session-option higgs_audio_tts.attention=<mode>` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |
 
 ## Fish Audio S2 Pro
 
@@ -767,6 +772,27 @@ audiocpp_cli --task tts --family inflect_v2 \
 See the [Inflect v2 community model guide](community_models/inflect_v2.md) for
 eSpeak-ng paths, long-form behavior, source/conversion instructions, and
 limitations.
+
+## sanoTTS
+
+sanoTTS is a family of very small offline TTS voices (English, Vietnamese,
+Indonesian; 294k to 2.27M parameters) with native GGML runtimes; the
+smallest voice also runs on microcontrollers. The GGUF packages are
+standalone and download from Hugging Face. sanoTTS requires an external
+eSpeak-ng installation:
+
+```bash
+python3 tools/model_manager_v2.py install sanotts_heart_nano_orig --models-root models
+
+audiocpp_cli --task tts --family sanotts \
+  --model models/sanoTTS-heart-nano-GGUF --backend cpu \
+  --text "Hello from sano T T S, a very small neural text to speech model." \
+  --request-option speaking_rate=1.0 \
+  --out sanotts.wav
+```
+
+See the [sanoTTS community model guide](community_models/sanotts.md) for
+eSpeak-ng paths, seed semantics, parity evidence, and performance numbers.
 
 ## Supertonic
 

@@ -14,19 +14,44 @@
 namespace engine::modules {
 namespace {
 
+int64_t attention_size(const T5GemmaEncoderConfig & config) {
+    return config.attention_size > 0 ? config.attention_size : config.hidden_size;
+}
+
 void validate_config(const T5GemmaEncoderConfig & config) {
     if (config.hidden_size <= 0 || config.layers <= 0 || config.attention_heads <= 0 ||
         config.kv_heads <= 0 || config.head_dim <= 0 || config.intermediate_size <= 0 ||
         config.vocab_size <= 0) {
         throw std::runtime_error("T5GemmaEncoderConfig dimensions must be positive");
     }
-    if (config.attention_heads * config.head_dim != config.hidden_size) {
-        throw std::runtime_error("T5GemmaEncoderConfig attention_heads * head_dim must equal hidden_size");
+    if (config.attention_heads * config.head_dim != attention_size(config)) {
+        throw std::runtime_error("T5GemmaEncoderConfig attention_heads * head_dim must equal attention_size");
+    }
+    if (config.attention_heads % config.kv_heads != 0) {
+        throw std::runtime_error("T5GemmaEncoderConfig attention_heads must be divisible by kv_heads");
+    }
+    if (!config.layer_rope_theta.empty() && static_cast<int64_t>(config.layer_rope_theta.size()) != config.layers) {
+        throw std::runtime_error("T5GemmaEncoderConfig layer_rope_theta must match layer count");
+    }
+    if (!config.layer_rope_freq_scale.empty() && static_cast<int64_t>(config.layer_rope_freq_scale.size()) != config.layers) {
+        throw std::runtime_error("T5GemmaEncoderConfig layer_rope_freq_scale must match layer count");
     }
     if (!(config.rope_theta > 0.0F) || !(config.rms_norm_eps > 0.0F) ||
         !(config.query_pre_attn_scalar > 0.0F)) {
         throw std::runtime_error("T5GemmaEncoderConfig scalar values must be positive");
     }
+}
+
+float layer_rope_theta(const T5GemmaEncoderConfig & config, int64_t layer_index) {
+    return config.layer_rope_theta.empty()
+        ? config.rope_theta
+        : config.layer_rope_theta.at(static_cast<size_t>(layer_index));
+}
+
+float layer_rope_freq_scale(const T5GemmaEncoderConfig & config, int64_t layer_index) {
+    return config.layer_rope_freq_scale.empty()
+        ? config.rope_freq_scale
+        : config.layer_rope_freq_scale.at(static_cast<size_t>(layer_index));
 }
 
 core::TensorValue ensure_contiguous(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
@@ -63,15 +88,19 @@ core::TensorValue matmul_f32(core::ModuleBuildContext & ctx, const core::TensorV
     return core::wrap_tensor(output, output_shape, GGML_TYPE_F32);
 }
 
-core::TensorValue gemma_rms_norm(
+core::TensorValue t5_gemma_rms_norm(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & weight,
+    T5GemmaRMSNormStyle style,
     float eps,
     int64_t hidden_size) {
     core::validate_last_dim(input, hidden_size, "T5GemmaEncoder RMSNorm input");
     core::validate_shape(weight, core::TensorShape::from_dims({hidden_size}), "T5GemmaEncoder RMSNorm weight");
     auto normalized = core::wrap_tensor(ggml_rms_norm(ctx.ggml, ensure_contiguous(ctx, input).tensor, eps), input.shape, GGML_TYPE_F32);
+    if (style == T5GemmaRMSNormStyle::Direct) {
+        return core::wrap_tensor(ggml_mul(ctx.ggml, normalized.tensor, weight.tensor), input.shape, GGML_TYPE_F32);
+    }
     auto one_plus_weight = core::wrap_tensor(ggml_scale_bias(ctx.ggml, weight.tensor, 1.0F, 1.0F), weight.shape, GGML_TYPE_F32);
     return core::wrap_tensor(ggml_mul(ctx.ggml, normalized.tensor, one_plus_weight.tensor), input.shape, GGML_TYPE_F32);
 }
@@ -85,28 +114,62 @@ core::TensorValue reshape_heads(
     return core::reshape_tensor(ctx, contiguous, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
 }
 
+core::TensorValue repeat_kv_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t repeats) {
+    if (repeats == 1) {
+        return input;
+    }
+    core::validate_rank_between(input, 4, 4, "T5GemmaEncoder repeat_kv_heads input");
+    auto contiguous = ensure_contiguous(ctx, input);
+    const int64_t batch = contiguous.shape.dims[0];
+    const int64_t kv_heads = contiguous.shape.dims[1];
+    const int64_t steps = contiguous.shape.dims[2];
+    const int64_t dim = contiguous.shape.dims[3];
+    auto expanded = core::reshape_tensor(
+        ctx,
+        contiguous,
+        core::TensorShape::from_dims({batch, kv_heads, 1, steps * dim}));
+    expanded = RepeatModule({core::TensorShape::from_dims({batch, kv_heads, repeats, steps * dim})})
+        .build(ctx, expanded);
+    return core::reshape_tensor(
+        ctx,
+        expanded,
+        core::TensorShape::from_dims({batch, kv_heads * repeats, steps, dim}));
+}
+
 core::TensorValue self_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const core::TensorValue & additive_attention_mask,
     const T5GemmaEncoderLayerWeights & weights,
-    const T5GemmaEncoderConfig & config) {
+    const T5GemmaEncoderConfig & config,
+    int64_t layer_index) {
+    const int64_t attn_size = attention_size(config);
     const LinearModule q_proj({config.hidden_size, config.attention_heads * config.head_dim, false, GGML_PREC_F32});
     const LinearModule k_proj({config.hidden_size, config.kv_heads * config.head_dim, false, GGML_PREC_F32});
     const LinearModule v_proj({config.hidden_size, config.kv_heads * config.head_dim, false, GGML_PREC_F32});
-    const LinearModule o_proj({config.attention_heads * config.head_dim, config.hidden_size, false, GGML_PREC_F32});
+    const LinearModule o_proj({attn_size, config.hidden_size, false, GGML_PREC_F32});
     auto q = q_proj.build(ctx, input, weights.q_proj);
     auto k = k_proj.build(ctx, input, weights.k_proj);
     auto v = v_proj.build(ctx, input, weights.v_proj);
     q = reshape_heads(ctx, q, config.attention_heads, config.head_dim);
     k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
     v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = RoPEModule({config.head_dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, q, positions);
-    k = RoPEModule({config.head_dim, GGML_ROPE_TYPE_NEOX, config.rope_theta}).build(ctx, k, positions);
+    if (config.use_qk_norm) {
+        if (!weights.q_norm.weight.has_value() || !weights.k_norm.weight.has_value()) {
+            throw std::runtime_error("T5GemmaEncoder q/k norm weights are required when use_qk_norm is enabled");
+        }
+        q = t5_gemma_rms_norm(ctx, q, *weights.q_norm.weight, config.rms_norm_style, config.rms_norm_eps, config.head_dim);
+        k = t5_gemma_rms_norm(ctx, k, *weights.k_norm.weight, config.rms_norm_style, config.rms_norm_eps, config.head_dim);
+    }
+    q = RoPEModule({config.head_dim, GGML_ROPE_TYPE_NEOX, layer_rope_theta(config, layer_index), layer_rope_freq_scale(config, layer_index)}).build(ctx, q, positions);
+    k = RoPEModule({config.head_dim, GGML_ROPE_TYPE_NEOX, layer_rope_theta(config, layer_index), layer_rope_freq_scale(config, layer_index)}).build(ctx, k, positions);
     auto q_heads = TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
+    const int64_t kv_repeats = config.attention_heads / config.kv_heads;
+    k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
+    v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
     auto k_heads_contiguous = ensure_contiguous(ctx, k_heads);
     auto scores_raw = ggml_mul_mat(ctx.ggml, k_heads_contiguous.tensor, q_heads.tensor);
     ggml_mul_mat_set_prec(scores_raw, GGML_PREC_F32);
@@ -145,7 +208,7 @@ core::TensorValue self_attention(
     context = core::reshape_tensor(
         ctx,
         context,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.attention_heads * config.head_dim}));
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], attn_size}));
     return o_proj.build(ctx, context, weights.o_proj);
 }
 
@@ -169,14 +232,15 @@ core::TensorValue layer(
     const core::TensorValue & positions,
     const core::TensorValue & additive_attention_mask,
     const T5GemmaEncoderLayerWeights & weights,
-    const T5GemmaEncoderConfig & config) {
-    auto hidden = gemma_rms_norm(ctx, input, weights.pre_self_attn_norm, config.rms_norm_eps, config.hidden_size);
-    hidden = self_attention(ctx, hidden, positions, additive_attention_mask, weights, config);
-    hidden = gemma_rms_norm(ctx, hidden, weights.post_self_attn_norm, config.rms_norm_eps, config.hidden_size);
+    const T5GemmaEncoderConfig & config,
+    int64_t layer_index) {
+    auto hidden = t5_gemma_rms_norm(ctx, input, weights.pre_self_attn_norm, config.rms_norm_style, config.rms_norm_eps, config.hidden_size);
+    hidden = self_attention(ctx, hidden, positions, additive_attention_mask, weights, config, layer_index);
+    hidden = t5_gemma_rms_norm(ctx, hidden, weights.post_self_attn_norm, config.rms_norm_style, config.rms_norm_eps, config.hidden_size);
     auto output = AddModule{}.build(ctx, input, hidden);
-    hidden = gemma_rms_norm(ctx, output, weights.pre_ff_norm, config.rms_norm_eps, config.hidden_size);
+    hidden = t5_gemma_rms_norm(ctx, output, weights.pre_ff_norm, config.rms_norm_style, config.rms_norm_eps, config.hidden_size);
     hidden = mlp(ctx, hidden, weights, config);
-    hidden = gemma_rms_norm(ctx, hidden, weights.post_ff_norm, config.rms_norm_eps, config.hidden_size);
+    hidden = t5_gemma_rms_norm(ctx, hidden, weights.post_ff_norm, config.rms_norm_style, config.rms_norm_eps, config.hidden_size);
     return AddModule{}.build(ctx, output, hidden);
 }
 
@@ -213,9 +277,9 @@ core::TensorValue T5GemmaEncoderModule::build(
             GGML_TYPE_F32);
     }
     for (int64_t i = 0; i < config_.layers; ++i) {
-        hidden = layer(ctx, hidden, positions, additive_attention_mask, weights.layers[static_cast<size_t>(i)], config_);
+        hidden = layer(ctx, hidden, positions, additive_attention_mask, weights.layers[static_cast<size_t>(i)], config_, i);
     }
-    return gemma_rms_norm(ctx, hidden, weights.norm, config_.rms_norm_eps, config_.hidden_size);
+    return t5_gemma_rms_norm(ctx, hidden, weights.norm, config_.rms_norm_style, config_.rms_norm_eps, config_.hidden_size);
 }
 
 }  // namespace engine::modules

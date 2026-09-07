@@ -1,0 +1,34 @@
+{
+  "requests": [
+    {
+      "name": "clone_cold",
+      "text": "Good morning. This deterministic request checks the first synthesis in a newly prepared session.",
+      "seed": 1234,
+      "max_tokens": 256
+    },
+    {
+      "name": "clone_repeat",
+      "text": "Good morning. This deterministic request checks the first synthesis in a newly prepared session.",
+      "seed": 1234,
+      "max_tokens": 256
+    },
+    {
+      "name": "short_second_prompt",
+      "text": "The same loaded model now speaks a different sentence without restarting the process.",
+      "seed": 4321,
+      "max_tokens": 256
+    },
+    {
+      "name": "longform",
+      "text": "MiraTTS remains loaded while this longer paragraph exercises its autoregressive generator, acoustic processor, low resolution decoder, and audio upsampler. The benchmark records wall time, generated duration, real time factor, and a deterministic audio hash. A second sentence ensures that punctuation and a longer token budget are covered by the same warm session.",
+      "seed": 2468,
+      "max_tokens": 768
+    },
+    {
+      "name": "clone_repeat_after_longform",
+      "text": "Good morning. This deterministic request checks the first synthesis in a newly prepared session.",
+      "seed": 1234,
+      "max_tokens": 256
+    }
+  ]
+}

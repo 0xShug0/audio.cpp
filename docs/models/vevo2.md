@@ -236,6 +236,8 @@ audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --tas
 | `--style-shift-steps` | integer semitones | `0` | Manual style pitch shift. If `0` and pitch shift is enabled with a style reference, VeVo2 estimates it. |
 | `--target-duration-seconds` | float | not set | Flow-matching target duration hint. |
 | `--reference-duration-seconds` | float | not set | Trim target voice reference before conditioning. |
+| `--request-option audio_chunk_duration_sec=<seconds>` | float | `0` | Opt-in source-audio chunking for `style_preserved_vc` and `style_preserved_svc`. `0` keeps the existing one-shot path. |
+| `--request-option cross_fade_duration_sec=<seconds>` | float | `1.0` with source-audio chunking | Source chunk overlap and output crossfade duration when source-audio chunking is enabled. Must be smaller than `audio_chunk_duration_sec`. |
 | `--temperature` | float | `1.0` | AR sampling temperature. |
 | `--top-k` | integer | `25` | AR top-k. |
 | `--top-p` | float | `0.8` | AR top-p. |

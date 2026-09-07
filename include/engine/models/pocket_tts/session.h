@@ -9,6 +9,7 @@
 #include "engine/models/pocket_tts/text_conditioner.h"
 #include "engine/models/pocket_tts/voice_conditioner.h"
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -38,7 +39,8 @@ struct PocketTTSGraphCapacityConfig {
 
 class PocketTTSSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::IStreamingVoiceTaskSession {
 public:
     PocketTTSSession(
         runtime::TaskSpec task,
@@ -55,6 +57,14 @@ public:
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
+    runtime::StreamingPolicy streaming_policy() const override;
+    void start_stream(const runtime::TaskRequest & request) override;
+    std::optional<runtime::StreamEvent> next_stream_event() override;
+    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
+    runtime::TaskResult finish_stream() override;
+    void reset() override;
+    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
+    runtime::TaskResult finalize() override;
 
     void prepare_generation(const GenerationRequest & request);
     GenerationResult generate(const GenerationRequest & request);
@@ -72,6 +82,8 @@ private:
     runtime::MappedGraphCapacityAdapter make_prompt_capacity_adapter() const;
     runtime::MappedGraphCapacityAdapter make_generation_capacity_adapter() const;
     AcousticCapacitySelection select_acoustic_capacities(int64_t prompt_steps, int max_steps) const;
+    GenerationRequest effective_request_for_run(const runtime::TaskRequest & request) const;
+    bool start_next_stream_text_chunk();
     std::vector<int64_t> prepared_prompt_capacities() const;
     std::vector<int64_t> prepared_generation_capacities() const;
 
@@ -88,6 +100,17 @@ private:
     GenerationRequest prepared_session_request_;
     runtime::GraphCapacityController prompt_capacity_controller_;
     runtime::GraphCapacityController generation_capacity_controller_;
+
+    GenerationRequest stream_request_;
+    FlowLMState stream_voice_state_;
+    std::vector<std::string> stream_text_chunks_;
+    size_t stream_text_chunk_index_ = 0;
+    std::optional<AcousticStreamState> stream_acoustic_state_;
+    runtime::AudioBuffer stream_merged_audio_;
+    runtime::StreamEventCallback stream_event_sink_;
+    std::chrono::steady_clock::time_point stream_started_at_;
+    size_t stream_audio_chunk_index_ = 0;
+    bool stream_started_ = false;
 };
 
 }  // namespace engine::models::pocket_tts

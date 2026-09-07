@@ -97,6 +97,10 @@ static inline float op_trunc(float x) {
     return truncf(x);
 }
 
+static inline float op_round_bf16(float x) {
+    return bf16_to_f32(f32_to_bf16(x));
+}
+
 template <float (*op)(float), typename src0_t, typename dst_t>
 static inline void vec_unary_op(int64_t n, dst_t * y, const src0_t * x) {
     constexpr auto src0_to_f32 = type_conversion_table<src0_t>::to_f32;
@@ -320,6 +324,10 @@ void ggml_compute_forward_round(const ggml_compute_params * params, ggml_tensor 
 
 void ggml_compute_forward_trunc(const ggml_compute_params * params, ggml_tensor * dst) {
     unary_op<op_trunc>(params, dst);
+}
+
+void ggml_compute_forward_round_bf16(const ggml_compute_params * params, ggml_tensor * dst) {
+    unary_op<op_round_bf16>(params, dst);
 }
 
 void ggml_compute_forward_xielu(const ggml_compute_params * params, ggml_tensor * dst) {

@@ -474,8 +474,8 @@ PocketTTSSession::PocketTTSSession(
     if (task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("PocketTTS only supports VoiceTaskKind::Tts");
     }
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("PocketTTS only supports offline mode");
+    if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("PocketTTS only supports offline and streaming mode");
     }
     if (graph_capacity_.prompt_mode == runtime::GraphCapacityMode::Unsupported
         || graph_capacity_.generation_mode == runtime::GraphCapacityMode::Unsupported) {
@@ -761,6 +761,128 @@ void PocketTTSSession::prepare(const runtime::SessionPreparationRequest & reques
 runtime::TaskResult PocketTTSSession::run(const runtime::TaskRequest & request) {
     require_prepared("PocketTTS run()");
     audio_decoder_.clear_runtime_cache();
+    const GenerationRequest generation_request = effective_request_for_run(request);
+    const GenerationResult generated = generate(generation_request);
+    runtime::TaskResult result;
+    result.audio_output = runtime::AudioBuffer{
+        generated.sample_rate,
+        1,
+        generated.audio,
+    };
+    return result;
+}
+
+runtime::StreamingPolicy PocketTTSSession::streaming_policy() const {
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::None;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    return policy;
+}
+
+void PocketTTSSession::start_stream(const runtime::TaskRequest & request) {
+    require_prepared("PocketTTS streaming");
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("PocketTTS start_stream requires a streaming session");
+    }
+    reset();
+    stream_request_ = effective_request_for_run(request);
+    validate_generation_request(stream_request_);
+    const int64_t streaming_chunk_size =
+        engine::text::parse_text_chunk_size_override(request.options).value_or(stream_request_.max_tokens);
+    stream_text_chunks_ = engine::text::split_text_chunks(stream_request_.text, streaming_chunk_size);
+    if (stream_text_chunks_.empty()) {
+        throw std::runtime_error("PocketTTS streaming text chunking produced no segments");
+    }
+    const auto voice_plan = resolve_voice_conditioning_plan(model_dir_, stream_request_);
+    stream_voice_state_ = resolve_prepared_voice_state(voice_plan);
+    stream_merged_audio_ = runtime::AudioBuffer{manifest_->model_config.sample_rate, 1, {}};
+    audio_decoder_.reset_streaming_state();
+    stream_started_at_ = std::chrono::steady_clock::now();
+    stream_started_ = true;
+    engine::debug::trace_log_scalar("pocket_tts.streaming.text_chunk_size", streaming_chunk_size);
+    engine::debug::trace_log_scalar("pocket_tts.streaming.text_chunk_count", static_cast<int64_t>(stream_text_chunks_.size()));
+}
+
+std::optional<runtime::StreamEvent> PocketTTSSession::next_stream_event() {
+    if (!stream_started_) {
+        throw std::runtime_error("PocketTTS streaming has not been started");
+    }
+    while (true) {
+        if (!stream_acoustic_state_.has_value()) {
+            if (!start_next_stream_text_chunk()) {
+                return std::nullopt;
+            }
+        }
+        auto acoustic_step = acoustic_model_.next_stream_step(*stream_acoustic_state_);
+        if (!acoustic_step.has_value()) {
+            stream_acoustic_state_.reset();
+            continue;
+        }
+        auto audio = audio_decoder_.decode_streaming_step(
+            execution_context().backend(),
+            options().backend.threads,
+            *manifest_,
+            *weights_,
+            acoustic_step->next_latent,
+            graph_capacity_.mimi_conv_graph_context_bytes,
+            graph_capacity_.mimi_transformer_graph_context_bytes,
+            graph_capacity_.mimi_tail_graph_context_bytes);
+        runtime::AudioBuffer chunk{
+            manifest_->model_config.sample_rate,
+            1,
+            std::move(audio),
+        };
+        runtime::append_audio_buffer(stream_merged_audio_, chunk);
+
+        runtime::StreamEvent event;
+        event.named_audio_outputs.push_back({
+            "chunk_" + std::to_string(stream_audio_chunk_index_++),
+            std::move(chunk),
+            {},
+        });
+        return event;
+    }
+}
+
+void PocketTTSSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
+    stream_event_sink_ = std::move(sink);
+}
+
+runtime::TaskResult PocketTTSSession::finish_stream() {
+    if (!stream_started_) {
+        throw std::runtime_error("PocketTTS streaming has not been started");
+    }
+    while (next_stream_event().has_value()) {
+    }
+    runtime::TaskResult result;
+    result.audio_output = std::move(stream_merged_audio_);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_started_at_));
+    reset();
+    return result;
+}
+
+void PocketTTSSession::reset() {
+    stream_request_ = {};
+    stream_voice_state_ = {};
+    stream_text_chunks_.clear();
+    stream_text_chunk_index_ = 0;
+    stream_acoustic_state_.reset();
+    audio_decoder_.reset_streaming_state();
+    stream_merged_audio_ = {};
+    stream_audio_chunk_index_ = 0;
+    stream_started_ = false;
+}
+
+runtime::StreamEvent PocketTTSSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
+    (void) chunk;
+    throw std::runtime_error("PocketTTS streaming does not accept audio chunks");
+}
+
+runtime::TaskResult PocketTTSSession::finalize() {
+    return finish_stream();
+}
+
+GenerationRequest PocketTTSSession::effective_request_for_run(const runtime::TaskRequest & request) const {
     runtime::TaskRequest effective_request = request;
     effective_request.voice.reset();
     GenerationRequest generation_request =
@@ -774,14 +896,44 @@ runtime::TaskResult PocketTTSSession::run(const runtime::TaskRequest & request) 
     generation_request.noise_schedule = prepared_session_request_.noise_schedule;
     generation_request.noise_schedule_path = prepared_session_request_.noise_schedule_path;
     generation_request.voice = prepared_session_request_.voice;
-    const GenerationResult generated = generate(generation_request);
-    runtime::TaskResult result;
-    result.audio_output = runtime::AudioBuffer{
-        generated.sample_rate,
-        1,
-        generated.audio,
-    };
-    return result;
+    return generation_request;
+}
+
+bool PocketTTSSession::start_next_stream_text_chunk() {
+    if (stream_text_chunk_index_ >= stream_text_chunks_.size()) {
+        return false;
+    }
+    const auto & chunk = stream_text_chunks_[stream_text_chunk_index_++];
+    const TextConditioningResult text_state = text_conditioner_.prepare(*manifest_, weights_->host, chunk);
+    const AcousticGenerationConfig acoustic_config = resolve_acoustic_generation_config(
+        *manifest_,
+        text_state,
+        stream_request_,
+        acoustic_model_.config().latent_size);
+    const int64_t prompt_steps = static_cast<int64_t>(
+        text_state.text_embeddings.size() / static_cast<size_t>(acoustic_model_.config().hidden_size));
+    const AcousticCapacitySelection capacities = select_acoustic_capacities(prompt_steps, acoustic_config.max_steps);
+    AcousticPreparedRuntime acoustic_runtime = acoustic_model_.prepare_runtime(
+        execution_context().backend(),
+        options().backend.threads,
+        *manifest_,
+        *weights_,
+        text_state.text_embeddings,
+        stream_voice_state_,
+        acoustic_config,
+        capacities.prompt_capacity,
+        stream_voice_state_.current_end,
+        capacities.generation_capacity,
+        graph_capacity_.flow_weights_view_context_bytes,
+        graph_capacity_.flow_step_graph_context_bytes);
+    stream_acoustic_state_ = acoustic_model_.start_stream(
+        acoustic_runtime,
+        *manifest_,
+        *weights_,
+        text_state.text_embeddings,
+        stream_voice_state_,
+        acoustic_config);
+    return true;
 }
 
 void PocketTTSSession::prepare_generation(const GenerationRequest & request) {

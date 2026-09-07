@@ -156,6 +156,11 @@ packages come from the same repo, put the shared source in
 `package_defaults.download` and keep package-level `download` only for
 overrides.
 
+Experimental ports may use an empty `packages` array while conversion and
+runtime validation are still local-only. In that case `ui.recommended_package`
+is omitted, so model managers do not advertise a download that cannot yet be
+loaded. Community and supported families must publish at least one package.
+
 ```json
 {
   "package_defaults": {
@@ -180,6 +185,15 @@ overrides.
   ]
 }
 ```
+
+`kind: "modelscope_snapshot"` downloads the same way from a ModelScope
+(modelscope.cn) repo. It takes the same fields (`repo` required, `revision`
+optional); the only differences are that the default revision is `master`
+(ModelScope's default branch) and the `gated` flag does not apply. The native
+package manager resolves the endpoint through `AUDIOCPP_MS_BASE_URL`
+(default `https://www.modelscope.cn`), mirroring `AUDIOCPP_HF_BASE_URL` for
+Hugging Face. ModelScope requests authenticate with `AUDIOCPP_MS_TOKEN` only;
+the Hugging Face token is never sent to a ModelScope endpoint.
 
 Dependencies describe extra model-level resources required by runtime features.
 Use `kind: "model"` for another model family, and `kind: "bundled_model"` for an

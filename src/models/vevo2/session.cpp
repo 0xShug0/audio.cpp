@@ -1,6 +1,7 @@
 #include "engine/models/vevo2/session.h"
 
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/waveform_ops.h"
@@ -28,6 +29,8 @@ namespace {
 
 constexpr size_t kMaxAudioCacheEntries = 8;
 constexpr int64_t kDefaultTextChunkSize = 128;
+constexpr float kDefaultAudioChunkOverlapSec = 1.0F;
+constexpr float kPi = 3.141592653589793238462643383279502884F;
 
 std::shared_ptr<const Vevo2Assets> require_assets(std::shared_ptr<const Vevo2Assets> assets) {
     if (assets == nullptr) {
@@ -206,6 +209,93 @@ int64_t frame_count_24k(const runtime::AudioBuffer & audio) {
         audio.sample_rate,
         audio.channels,
         24000).size()) / 480;
+}
+
+uint32_t vevo2_chunk_seed(uint32_t seed, int64_t chunk_index) {
+    uint32_t value = seed + 0x9e3779b9u * static_cast<uint32_t>(chunk_index + 1);
+    value ^= value >> 16;
+    value *= 0x85ebca6bu;
+    value ^= value >> 13;
+    value *= 0xc2b2ae35u;
+    value ^= value >> 16;
+    return value;
+}
+
+std::vector<runtime::TimeSpan> plan_source_audio_chunks(
+    const runtime::AudioBuffer & audio,
+    float chunk_duration_sec,
+    float overlap_sec) {
+    if (audio.sample_rate <= 0 || audio.channels <= 0) {
+        throw std::runtime_error("Vevo2 audio chunking requires valid source audio");
+    }
+    if (chunk_duration_sec <= 0.0F) {
+        return {{0, static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels))}};
+    }
+    if (overlap_sec < 0.0F) {
+        throw std::runtime_error("Vevo2 cross_fade_duration_sec must be non-negative");
+    }
+    const int64_t frames = static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
+    const int64_t chunk_frames = static_cast<int64_t>(
+        std::llround(static_cast<double>(chunk_duration_sec) * static_cast<double>(audio.sample_rate)));
+    const int64_t overlap_frames = static_cast<int64_t>(
+        std::llround(static_cast<double>(overlap_sec) * static_cast<double>(audio.sample_rate)));
+    if (chunk_frames <= 0) {
+        throw std::runtime_error("Vevo2 audio_chunk_duration_sec must be positive");
+    }
+    if (overlap_frames >= chunk_frames) {
+        throw std::runtime_error("Vevo2 cross_fade_duration_sec must be smaller than audio_chunk_duration_sec");
+    }
+    if (frames <= chunk_frames) {
+        return {{0, frames}};
+    }
+
+    std::vector<runtime::TimeSpan> chunks;
+    const int64_t hop_frames = chunk_frames - overlap_frames;
+    for (int64_t start = 0; start < frames;) {
+        const int64_t end = std::min<int64_t>(frames, start + chunk_frames);
+        chunks.push_back({start, end});
+        if (end == frames) {
+            break;
+        }
+        start += hop_frames;
+    }
+    return chunks;
+}
+
+void append_cross_faded_audio(
+    runtime::AudioBuffer & merged,
+    const runtime::AudioBuffer & chunk,
+    int64_t fade_frames) {
+    if (fade_frames <= 0 || merged.samples.empty()) {
+        runtime::append_audio_buffer(merged, chunk);
+        return;
+    }
+    if (merged.sample_rate != chunk.sample_rate || merged.channels != chunk.channels || chunk.channels <= 0) {
+        throw std::runtime_error("Vevo2 audio chunk merge requires matching audio formats");
+    }
+    const int64_t channels = chunk.channels;
+    const int64_t merged_frames = static_cast<int64_t>(merged.samples.size()) / channels;
+    const int64_t chunk_frames = static_cast<int64_t>(chunk.samples.size()) / channels;
+    const int64_t effective = std::min<int64_t>(fade_frames, std::min(merged_frames, chunk_frames));
+    if (effective <= 1) {
+        runtime::append_audio_buffer(merged, chunk);
+        return;
+    }
+    const int64_t merged_tail = merged_frames - effective;
+    for (int64_t frame = 0; frame < effective; ++frame) {
+        const float alpha = static_cast<float>(frame) / static_cast<float>(effective - 1);
+        const float fade_out = std::cos(alpha * kPi * 0.5F);
+        const float fade_in = std::sin(alpha * kPi * 0.5F);
+        for (int64_t channel = 0; channel < channels; ++channel) {
+            const size_t dst = static_cast<size_t>((merged_tail + frame) * channels + channel);
+            const size_t src = static_cast<size_t>(frame * channels + channel);
+            merged.samples[dst] = merged.samples[dst] * fade_out + chunk.samples[src] * fade_in;
+        }
+    }
+    merged.samples.insert(
+        merged.samples.end(),
+        chunk.samples.begin() + static_cast<std::ptrdiff_t>(effective * channels),
+        chunk.samples.end());
 }
 
 uint64_t hash_audio_buffer(const runtime::AudioBuffer & audio) {
@@ -722,6 +812,15 @@ runtime::TaskResult Vevo2Session::run(const runtime::TaskRequest & request) {
     double fm_ms = 0.0;
     double vocoder_ms = 0.0;
     const auto text_chunk_size_override = engine::text::parse_text_chunk_size_override(request.options);
+    const auto audio_chunk_duration_override = engine::audio::parse_audio_chunk_seconds_override(request.options);
+    const auto audio_chunk_mode = engine::audio::parse_audio_chunk_mode(request.options);
+    const bool audio_chunking_enabled =
+        audio_chunk_mode != engine::audio::AudioChunkMode::None &&
+        audio_chunk_duration_override.has_value() &&
+        *audio_chunk_duration_override > 0.0F;
+    const float audio_chunk_duration_sec = audio_chunk_duration_override.value_or(0.0F);
+    const float audio_chunk_overlap_sec = runtime::parse_float_option(request.options, {"cross_fade_duration_sec"})
+        .value_or(kDefaultAudioChunkOverlapSec);
     auto vevo2_request = make_request(request);
     std::vector<Vevo2Request> chunk_requests;
     if (vevo2_request.path == Vevo2InferencePath::TextProsodyToTargetVoice) {
@@ -746,7 +845,25 @@ runtime::TaskResult Vevo2Session::run(const runtime::TaskRequest & request) {
             }
         }
     } else {
-        chunk_requests.push_back(std::move(vevo2_request));
+        const auto spans = audio_chunking_enabled
+            ? plan_source_audio_chunks(*vevo2_request.refs.source_audio, audio_chunk_duration_sec, audio_chunk_overlap_sec)
+            : std::vector<runtime::TimeSpan>{{0, static_cast<int64_t>(
+                vevo2_request.refs.source_audio->samples.size() /
+                static_cast<size_t>(vevo2_request.refs.source_audio->channels))}};
+        engine::debug::trace_log_scalar("vevo2.audio_chunk_duration_sec", audio_chunk_duration_sec);
+        engine::debug::trace_log_scalar("vevo2.audio_chunk_overlap_sec", audio_chunking_enabled ? audio_chunk_overlap_sec : 0.0F);
+        engine::debug::trace_log_scalar("vevo2.audio_chunk_count", static_cast<int64_t>(spans.size()));
+        chunk_requests.reserve(spans.size());
+        auto source_audio = std::move(*vevo2_request.refs.source_audio);
+        vevo2_request.refs.source_audio.reset();
+        for (size_t index = 0; index < spans.size(); ++index) {
+            Vevo2Request chunk_request = vevo2_request;
+            chunk_request.refs.source_audio = engine::audio::slice_audio_buffer(source_audio, spans[index]);
+            if (spans.size() > 1) {
+                chunk_request.generation.seed = vevo2_chunk_seed(vevo2_request.generation.seed, static_cast<int64_t>(index));
+            }
+            chunk_requests.push_back(std::move(chunk_request));
+        }
     }
 
     runtime::TaskResult result;
@@ -861,6 +978,10 @@ runtime::TaskResult Vevo2Session::run(const runtime::TaskRequest & request) {
         if (!have_audio_output) {
             merged_audio = chunk_audio;
             have_audio_output = true;
+        } else if (audio_chunking_enabled && chunk_request.path == Vevo2InferencePath::SourceAudioToTargetVoice) {
+            const int64_t fade_frames = static_cast<int64_t>(
+                std::llround(static_cast<double>(audio_chunk_overlap_sec) * static_cast<double>(chunk_audio.sample_rate)));
+            append_cross_faded_audio(merged_audio, chunk_audio, fade_frames);
         } else {
             runtime::append_audio_buffer(merged_audio, chunk_audio);
         }

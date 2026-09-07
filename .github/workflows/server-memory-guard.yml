@@ -36,7 +36,9 @@ jobs:
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DAUDIOCPP_VERSION=ci \
             -DENGINE_BUILD_TESTS=ON \
+            -DENGINE_BUILD_EXTENDED_TESTS=ON \
             -DENGINE_ENABLE_OPENMP=OFF \
             -DENGINE_ENABLE_CUDA=OFF \
             -DENGINE_ENABLE_VULKAN=OFF \
@@ -48,7 +50,9 @@ jobs:
         run: |
           cmake -S . -B build `
             -DCMAKE_BUILD_TYPE=Release `
+            -DAUDIOCPP_VERSION=ci `
             -DENGINE_BUILD_TESTS=ON `
+            -DENGINE_BUILD_EXTENDED_TESTS=ON `
             -DENGINE_ENABLE_OPENMP=OFF `
             -DENGINE_ENABLE_CUDA=OFF `
             -DENGINE_ENABLE_VULKAN=OFF `

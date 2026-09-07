@@ -23,6 +23,36 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr int64_t kDefaultTextChunkSize = 2048;
 
+enum class ChunkStrategy {
+  Continuation,
+  Stateless,
+};
+
+ChunkStrategy parse_chunk_strategy(
+    const std::unordered_map<std::string, std::string> &options) {
+  const auto value =
+      runtime::find_option(options, {"voxcpm2.chunk_strategy", "chunk_strategy"})
+          .value_or("continuation");
+  if (value == "continuation") {
+    return ChunkStrategy::Continuation;
+  }
+  if (value == "stateless") {
+    return ChunkStrategy::Stateless;
+  }
+  throw std::runtime_error(
+      "VoxCPM2 chunk_strategy must be continuation or stateless");
+}
+
+const char *chunk_strategy_name(ChunkStrategy strategy) {
+  switch (strategy) {
+  case ChunkStrategy::Continuation:
+    return "continuation";
+  case ChunkStrategy::Stateless:
+    return "stateless";
+  }
+  return "unknown";
+}
+
 std::shared_ptr<const VoxCPM2Assets>
 require_assets(std::shared_ptr<const VoxCPM2Assets> assets) {
   if (assets == nullptr) {
@@ -311,6 +341,7 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
           .value_or(engine::text::TextChunkMode::TagAware);
   const auto chunk_requests =
       chunk_voxcpm2_request(request, text_chunk_size, text_chunk_mode);
+  const auto chunk_strategy = parse_chunk_strategy(request.options);
   const auto generation_options = generation_options_from_request(request);
   const auto prompt_text =
       runtime::find_option(request.options, {"voxcpm2.prompt_text",
@@ -355,7 +386,8 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
     decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     runtime::append_audio_buffer(merged_audio, audio);
 
-    if (chunk_requests.size() > 1 && generated.generated_patches > 0) {
+    if (chunk_strategy == ChunkStrategy::Continuation &&
+        chunk_requests.size() > 1 && generated.generated_patches > 0) {
       VoxCPM2EncodedPrompt next_prompt;
       if (prompt != nullptr) {
         next_prompt.reference_features = prompt->reference_features;
@@ -376,6 +408,8 @@ runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskR
                           engine::text::text_chunk_mode_name(text_chunk_mode));
   debug::trace_log_scalar("voxcpm2.text_chunk_count",
                           static_cast<int64_t>(chunk_requests.size()));
+  debug::trace_log_scalar("voxcpm2.chunk_strategy",
+                          std::string_view(chunk_strategy_name(chunk_strategy)));
   debug::timing_log_scalar("voxcpm2.generator_ms", generator_ms);
   debug::timing_log_scalar("voxcpm2.audiovae_decoder_ms", decoder_ms);
   debug::timing_log_scalar("session.wall_ms",

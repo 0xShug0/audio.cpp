@@ -251,10 +251,27 @@ void load_merges(const std::filesystem::path & merges_path, BpeVocabulary & voca
     }
 }
 
+std::string replace_spaces(std::string text, const std::string & replacement) {
+    if (replacement.empty()) {
+        return text;
+    }
+    std::string out;
+    out.reserve(text.size());
+    for (const char ch : text) {
+        if (ch == ' ') {
+            out += replacement;
+        } else {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 struct LlamaBpeTokenizer::Impl {
     explicit Impl(const LlamaBpeTokenizerSpec & spec) {
+        normalizer_space_replacement = spec.normalizer_space_replacement;
         vocab.pre_type = convert_pre_type(spec.pre_type);
         const bool has_vocab = !spec.vocab_path.empty();
         const bool has_merges = !spec.merges_path.empty();
@@ -283,6 +300,7 @@ struct LlamaBpeTokenizer::Impl {
     }
 
     BpeVocabulary vocab;
+    std::string normalizer_space_replacement;
 };
 
 LlamaBpeTokenizer::LlamaBpeTokenizer(LlamaBpeTokenizerSpec spec)
@@ -297,11 +315,11 @@ TokenizedText LlamaBpeTokenizer::tokenize(const std::string & text) const {
 }
 
 std::vector<int32_t> LlamaBpeTokenizer::encode(const std::string & text) const {
-    return vendor::tokenize_bpe(impl_->vocab, text, true);
+    return vendor::tokenize_bpe(impl_->vocab, replace_spaces(text, impl_->normalizer_space_replacement), true);
 }
 
 std::vector<int32_t> LlamaBpeTokenizer::encode(const std::string & text, const bool parse_special) const {
-    return vendor::tokenize_bpe(impl_->vocab, text, parse_special);
+    return vendor::tokenize_bpe(impl_->vocab, replace_spaces(text, impl_->normalizer_space_replacement), parse_special);
 }
 
 std::string LlamaBpeTokenizer::decode(const std::vector<int32_t> & token_ids, const bool skip_special_tokens) const {

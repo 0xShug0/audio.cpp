@@ -13,6 +13,7 @@ ARG GCC_VERSION=14
 FROM docker.io/ubuntu:$UBUNTU_VERSION AS build
 
 ARG GCC_VERSION=14
+ARG AUDIOCPP_VERSION=dev
 
 # Install build toolchain
 RUN apt-get update && \
@@ -44,6 +45,7 @@ RUN cmake -S . -B build \
         -DENGINE_ENABLE_VULKAN=OFF \
         -DENGINE_ENABLE_OPENMP=ON \
         -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
+        -DAUDIOCPP_VERSION="${AUDIOCPP_VERSION}" \
         -DENGINE_BUILD_EXAMPLES=OFF \
         -DENGINE_BUILD_TESTS=OFF \
         -DENGINE_BUILD_WARMBENCH=OFF && \

@@ -145,6 +145,8 @@
   const exposeAllStudioPackageFamilies = new Set([
     'audiosr',
     'controlfoley',
+    'breeze_tts',
+    'cosyvoice3',
     'firered_audio',
     'fireredtts3',
     'meanvc2',
@@ -246,6 +248,10 @@
     }
   }
 
+  function requestText() {
+    return text.trim() ? text : (selected.default_text || '');
+  }
+
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
@@ -272,6 +278,8 @@
     qwen3_asr: 'Qwen3-ASR',
     vevo2: 'Vevo2',
     seed_vc: 'Seed-VC',
+    breeze_tts: 'BreezeTTS 2',
+    cosyvoice3: 'CosyVoice3',
     magpie_tts: 'MagpieTTS',
     meanvc2: 'MeanVC2',
     personaplex: 'PersonaPlex'
@@ -375,8 +383,9 @@
   $: modelGroups = groupCatalog(activeCatalog);
   $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
-  $: workflowModels = activeCatalog.filter((entry) =>
-    activeWorkflowSpec.tasks.some((task) => task === entry.task));
+  $: workflowModels = activeCatalog
+    .filter((entry) => activeWorkflowSpec.tasks.some((task) => task === entry.task))
+    .sort((left, right) => compareModelNames(left.display_name, right.display_name));
   $: filteredModelGroups = modelGroups.map((group) => ({
     ...group,
     entries: group.entries.filter((entry) => {
@@ -392,13 +401,17 @@
   $: usesDurationSecOption =
     selected?.family === 'controlfoley' ||
     selected?.family === 'midashenglm_gen';
+  $: supportsTextOnlyTts = (
+    selected?.family === 'breeze_tts' ||
+    selected?.family === 'chatterbox_turbo'
+  ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit;
   $: acceptsSource = needsSource || selected?.task === 'gen';
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
-    (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
+    (selected?.task === 'tts' && !['supertonic'].includes(selected?.family) && !supportsTextOnlyTts);
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
@@ -987,6 +1000,9 @@
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration), dit_acceleration: 'none' };
     } else if (selected?.task === 'gen') {
       duration = 30;
+    }
+    if (!text.trim() && selected?.default_text) {
+      text = selected.default_text;
     }
     advancedJson = '{}';
   }
@@ -1644,6 +1660,8 @@
         if (['gen', 's2s', 'align'].includes(selected.task) && text.trim()) request.text = text;
         if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
         if (selected.task === 'gen') {
+          const resolvedText = requestText();
+          if (resolvedText) request.text = resolvedText;
           if (lyrics.trim()) request.lyrics = lyrics;
           if (!isFireRedAudioEdit) {
             if (usesDurationSecOption) options.duration_sec = duration;
@@ -2227,12 +2245,9 @@
           {/if}
           {#if selected.task === 'gen'}
             <div>
-              <label for="duration">{tr('request.duration')}</label>
+              <label for="duration">{tr('request.duration')}{#if allowsAutoDuration} <span>{tr('request.autoDuration')}</span>{/if}</label>
               <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
                 on:input={(event) => setDuration(event.currentTarget.valueAsNumber)} />
-              {#if allowsAutoDuration}
-                <small>{tr('request.autoDuration')}</small>
-              {/if}
               {#if selected.family === 'minimax_h3'}
                 <small>{tr('request.minimaxFrames', { frames: Number(advancedValues.num_frames || 0) })}</small>
               {/if}

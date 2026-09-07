@@ -114,6 +114,11 @@ static __device__ __forceinline__ float op_trunc(float x) {
     return trunc(x);
 }
 
+static __device__ __forceinline__ float op_round_bf16(float x) {
+    // Matches the f32 -> bf16 -> f32 cpy round trip.
+    return __bfloat162float(__float2bfloat16(x));
+}
+
 template <float (*op)(float), typename T>
 static __global__ void unary_op_kernel(const T * x, T * dst, const int k) {
     const int i = blockDim.x*blockIdx.x + threadIdx.x;
@@ -123,6 +128,75 @@ static __global__ void unary_op_kernel(const T * x, T * dst, const int k) {
     }
 
     dst[i] = (T)op((float)x[i]);
+}
+
+// Variant for a src with contiguous rows but arbitrary row strides; dst must be contiguous.
+template <float (*op)(float), typename T>
+static __global__ void unary_op_kernel_strided(
+    const char * cx, T * dst, const int64_t k,
+    const int64_t ne0, const int64_t ne1, const int64_t ne2,
+    const int64_t nb01, const int64_t nb02, const int64_t nb03) {
+    const int64_t i = (int64_t)blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i >= k) {
+        return;
+    }
+
+    const int64_t i0 = i % ne0;
+    const int64_t i1 = (i / ne0) % ne1;
+    const int64_t i2 = (i / (ne0*ne1)) % ne2;
+    const int64_t i3 = i / (ne0*ne1*ne2);
+
+    const T * x = (const T *) (cx + i1*nb01 + i2*nb02 + i3*nb03);
+    dst[i] = (T)op((float)x[i0]);
+}
+
+// round-to-bf16 kernels: any of f32/f16/bf16 in, always f32 out.
+template <typename T>
+static __global__ void round_bf16_kernel(const T * x, float * dst, const int64_t k) {
+    const int64_t i = (int64_t)blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i >= k) {
+        return;
+    }
+
+    dst[i] = op_round_bf16((float)x[i]);
+}
+
+template <typename T>
+static __global__ void round_bf16_kernel_strided(
+    const char * cx, float * dst, const int64_t k,
+    const int64_t ne0, const int64_t ne1, const int64_t ne2,
+    const int64_t nb01, const int64_t nb02, const int64_t nb03) {
+    const int64_t i = (int64_t)blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i >= k) {
+        return;
+    }
+
+    const int64_t i0 = i % ne0;
+    const int64_t i1 = (i / ne0) % ne1;
+    const int64_t i2 = (i / (ne0*ne1)) % ne2;
+    const int64_t i3 = i / (ne0*ne1*ne2);
+
+    const T * x = (const T *) (cx + i1*nb01 + i2*nb02 + i3*nb03);
+    dst[i] = op_round_bf16((float)x[i0]);
+}
+
+template <typename T>
+static void round_bf16_cuda(const ggml_tensor * src0, float * dst, cudaStream_t stream) {
+    const int64_t k = ggml_nelements(src0);
+    const int64_t num_blocks = (k + CUDA_NEG_BLOCK_SIZE - 1) / CUDA_NEG_BLOCK_SIZE;
+    GGML_ASSERT(num_blocks < UINT_MAX);
+
+    if (ggml_is_contiguous(src0)) {
+        round_bf16_kernel<T><<<(unsigned int) num_blocks, CUDA_NEG_BLOCK_SIZE, 0, stream>>>(
+            (const T *) src0->data, dst, k);
+    } else {
+        round_bf16_kernel_strided<T><<<(unsigned int) num_blocks, CUDA_NEG_BLOCK_SIZE, 0, stream>>>(
+            (const char *) src0->data, dst, k, src0->ne[0], src0->ne[1], src0->ne[2],
+            src0->nb[1], src0->nb[2], src0->nb[3]);
+    }
 }
 
 template <float (*op)(float), typename T>
@@ -245,6 +319,31 @@ void ggml_cuda_op_round(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 
 void ggml_cuda_op_trunc(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_op_unary<op_trunc>(ctx, dst);
+}
+
+void ggml_cuda_op_round_bf16(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+
+    // ggml_round_bf16 always produces a contiguous f32 dst; src may be
+    // f32/f16/bf16 with contiguous rows.
+    GGML_ASSERT(dst->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(dst));
+    GGML_ASSERT(ggml_is_contiguous_rows(src0));
+
+    cudaStream_t stream = ctx.stream();
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            round_bf16_cuda<float>(src0, (float *) dst->data, stream);
+            break;
+        case GGML_TYPE_F16:
+            round_bf16_cuda<half>(src0, (float *) dst->data, stream);
+            break;
+        case GGML_TYPE_BF16:
+            round_bf16_cuda<nv_bfloat16>(src0, (float *) dst->data, stream);
+            break;
+        default:
+            GGML_ABORT("%s: unsupported src type %s", __func__, ggml_type_name(src0->type));
+    }
 }
 
 void ggml_cuda_op_expm1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {

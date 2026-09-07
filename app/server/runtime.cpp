@@ -657,6 +657,68 @@ std::unordered_map<std::string, std::string> timing_headers(
     };
 }
 
+// Transcript detail arrays shared by /v1/tasks/run and /v1/audio/transcriptions.
+// ASR models that produce timestamps populate only these fields, so a route that
+// omits them silently discards work the model already did.
+template <typename FieldFn>
+void write_transcript_detail_fields(
+    std::ostringstream & out,
+    const engine::runtime::TaskResult & result,
+    FieldFn field) {
+    if (!result.speech_segments.empty()) {
+        field("segments");
+        out << "[";
+        for (size_t i = 0; i < result.speech_segments.size(); ++i) {
+            if (i != 0) {
+                out << ",";
+            }
+            const auto & segment = result.speech_segments[i];
+            out << "{\"start_sample\":" << segment.span.start_sample
+                << ",\"end_sample\":" << segment.span.end_sample
+                << ",\"confidence\":" << segment.confidence;
+            if (!segment.text.empty()) {
+                out << ",\"text\":" << json_quote(segment.text);
+            }
+            out << "}";
+        }
+        out << "]";
+    }
+    if (!result.speaker_turns.empty()) {
+        field("speaker_turns");
+        out << "[";
+        for (size_t i = 0; i < result.speaker_turns.size(); ++i) {
+            if (i != 0) {
+                out << ",";
+            }
+            const auto & turn = result.speaker_turns[i];
+            out << "{\"start_sample\":" << turn.span.start_sample
+                << ",\"end_sample\":" << turn.span.end_sample
+                << ",\"speaker_id\":" << json_quote(turn.speaker_id)
+                << ",\"confidence\":" << turn.confidence;
+            if (!turn.text.empty()) {
+                out << ",\"text\":" << json_quote(turn.text);
+            }
+            out << "}";
+        }
+        out << "]";
+    }
+    if (!result.word_timestamps.empty()) {
+        field("words");
+        out << "[";
+        for (size_t i = 0; i < result.word_timestamps.size(); ++i) {
+            if (i != 0) {
+                out << ",";
+            }
+            const auto & word = result.word_timestamps[i];
+            out << "{\"word\":" << json_quote(word.word)
+                << ",\"start_sample\":" << word.span.start_sample
+                << ",\"end_sample\":" << word.span.end_sample
+                << ",\"confidence\":" << word.confidence << "}";
+        }
+        out << "]";
+    }
+}
+
 std::string task_result_json_with_timing(
     const engine::runtime::TaskResult & result,
     const std::string & timing) {
@@ -727,58 +789,7 @@ std::string task_result_json_with_timing(
         for (const auto & artifact : result.output_artifacts) write_artifact(artifact);
         out << "]";
     }
-    if (!result.speech_segments.empty()) {
-        field("segments");
-        out << "[";
-        for (size_t i = 0; i < result.speech_segments.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            const auto & segment = result.speech_segments[i];
-            out << "{\"start_sample\":" << segment.span.start_sample
-                << ",\"end_sample\":" << segment.span.end_sample
-                << ",\"confidence\":" << segment.confidence;
-            if (!segment.text.empty()) {
-                out << ",\"text\":" << json_quote(segment.text);
-            }
-            out << "}";
-        }
-        out << "]";
-    }
-    if (!result.speaker_turns.empty()) {
-        field("speaker_turns");
-        out << "[";
-        for (size_t i = 0; i < result.speaker_turns.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            const auto & turn = result.speaker_turns[i];
-            out << "{\"start_sample\":" << turn.span.start_sample
-                << ",\"end_sample\":" << turn.span.end_sample
-                << ",\"speaker_id\":" << json_quote(turn.speaker_id)
-                << ",\"confidence\":" << turn.confidence;
-            if (!turn.text.empty()) {
-                out << ",\"text\":" << json_quote(turn.text);
-            }
-            out << "}";
-        }
-        out << "]";
-    }
-    if (!result.word_timestamps.empty()) {
-        field("words");
-        out << "[";
-        for (size_t i = 0; i < result.word_timestamps.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            const auto & word = result.word_timestamps[i];
-            out << "{\"word\":" << json_quote(word.word)
-                << ",\"start_sample\":" << word.span.start_sample
-                << ",\"end_sample\":" << word.span.end_sample
-                << ",\"confidence\":" << word.confidence << "}";
-        }
-        out << "]";
-    }
+    write_transcript_detail_fields(out, result, field);
     field("timing");
     out << timing;
     out << "}";
@@ -1161,6 +1172,13 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
     }
     else if (request.method == "POST" && request.path == "/v1/audio/transcriptions") {
         response = handle_transcription(request);
+    }
+    // Same request shape as the route above, opt-in richer response: the models
+    // that align words or separate speakers report them through fields the
+    // transcription response drops. A separate path rather than a flag keeps the
+    // existing response schema fixed for every client already built against it.
+    else if (request.method == "POST" && request.path == "/v1/audio/transcriptions/details") {
+        response = handle_transcription(request, /*detail=*/true);
     }
     else if (request.method == "POST" && request.path == "/v1/audio/alignments") {
         response = handle_alignment(request);
@@ -2493,18 +2511,25 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
         });
 }
 
-HttpResponse ServerState::handle_transcription(const HttpRequest & request) {
+// The streaming response carries transcript deltas only, so it has nowhere to put
+// the detail arrays. Refusing is better than accepting the request and silently
+// returning none of what the route exists to return.
+constexpr const char * kDetailStreamUnsupported =
+    "streaming is not supported on /v1/audio/transcriptions/details; "
+    "use /v1/audio/transcriptions for a streamed transcript";
+
+HttpResponse ServerState::handle_transcription(const HttpRequest & request, bool detail) {
     std::string content_type;
     if (const auto it = request.headers.find("content-type"); it != request.headers.end()) {
         content_type = it->second;
     }
     if (const auto boundary = extract_multipart_boundary(content_type)) {
-        return handle_transcription_multipart(request.body, *boundary);
+        return handle_transcription_multipart(request.body, *boundary, detail);
     }
-    return handle_transcription_json(request.body);
+    return handle_transcription_json(request.body, detail);
 }
 
-HttpResponse ServerState::handle_transcription_json(const std::string & body_text) {
+HttpResponse ServerState::handle_transcription_json(const std::string & body_text, bool detail) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const auto request = apply_default_request_options(
@@ -2512,16 +2537,20 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
         build_openai_transcription_request(body, request_base_, model.accepts_language));
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     if (bool_field(body, "stream", false)) {
+        if (detail) {
+            return error_response(400, kDetailStreamUnsupported, "invalid_request_error");
+        }
         return run_transcription_stream(model, request, busy_timeout_ms);
     }
-    return run_transcription(model, request, busy_timeout_ms);
+    return run_transcription(model, request, busy_timeout_ms, detail);
 }
 
 // Accepts the same multipart/form-data shape OpenAI's Whisper API (and clients built against it,
 // e.g. Open WebUI) send: a "file" part with the audio bytes, plus "model" and optional "language"
 // fields. audio.cpp's native JSON request only takes a server-local path, so the uploaded bytes are
 // spooled to a temp file and routed through the existing JSON request builder.
-HttpResponse ServerState::handle_transcription_multipart(const std::string & body_text, const std::string & boundary) {
+HttpResponse ServerState::handle_transcription_multipart(
+    const std::string & body_text, const std::string & boundary, bool detail) {
     const auto parts = parse_multipart_body(body_text, boundary);
     log_multipart_request_summary_if_enabled(config_, parts);
 
@@ -2591,15 +2620,19 @@ HttpResponse ServerState::handle_transcription_multipart(const std::string & bod
         build_openai_transcription_request(
             body, request_base_, model.accepts_language, &file_part->data));
     if (stream) {
+        if (detail) {
+            return error_response(400, kDetailStreamUnsupported, "invalid_request_error");
+        }
         return run_transcription_stream(model, request, busy_timeout_ms);
     }
-    return run_transcription(model, request, busy_timeout_ms);
+    return run_transcription(model, request, busy_timeout_ms, detail);
 }
 
 HttpResponse ServerState::run_transcription(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
-    std::optional<int> busy_timeout_ms) {
+    std::optional<int> busy_timeout_ms,
+    bool detail) {
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
         ? run_streaming_model(model, request, {}, busy_timeout_ms)
         : run_model(model, request, busy_timeout_ms);
@@ -2610,9 +2643,31 @@ HttpResponse ServerState::run_transcription(
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("transcription timing requires audio_input");
     }
-    return json_response(
-        "{\"text\":" + json_quote(result.text_output->text) +
-        ",\"timing\":" + timing_json(timed_result.wall_ms, *request.audio_input) + "}");
+    if (!detail) {
+        return json_response(
+            "{\"text\":" + json_quote(result.text_output->text) +
+            ",\"timing\":" + timing_json(timed_result.wall_ms, *request.audio_input) + "}");
+    }
+    // Models that align words or separate speakers report them through the same
+    // detail fields /v1/tasks/run serialises, and the transcription response
+    // discards them. This is the opt-in route that keeps them, so the shape stays
+    // a superset of the plain one: text first, timing last, details in between.
+    std::ostringstream out;
+    out << "{\"text\":" << json_quote(result.text_output->text);
+    if (!result.text_output->language.empty()) {
+        out << ",\"language\":" << json_quote(result.text_output->language);
+    }
+    write_transcript_detail_fields(out, result, [&](const std::string & name) {
+        out << "," << json_quote(name) << ":";
+    });
+    // Detail spans are sample offsets, so the rate they are counted in has to
+    // travel with them or a client cannot turn them into timestamps.
+    if (!result.speech_segments.empty() || !result.speaker_turns.empty() ||
+        !result.word_timestamps.empty()) {
+        out << ",\"sample_rate\":" << request.audio_input->sample_rate;
+    }
+    out << ",\"timing\":" << timing_json(timed_result.wall_ms, *request.audio_input) << "}";
+    return json_response(out.str());
 }
 
 HttpResponse ServerState::run_transcription_stream(

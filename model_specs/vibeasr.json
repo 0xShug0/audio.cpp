@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "family": "vibeasr",
+  "display_name": "VibeVoice-ASR-BitNet",
+  "description": "VibeASR.cpp's CPU-first VibeVoice ASR port: an INT8 (I8_S) audio VAE encoder feeding a ternary (I2_S) Qwen2 decoder, ported to audio.cpp.",
+  "category": "asr",
+  "status": "community",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh",
+    "fr",
+    "it",
+    "ko",
+    "pt",
+    "vi"
+  ],
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "output_format",
+        "type": "enum",
+        "description": "Prompt suffix asked of the decoder: plain transcription text, or JSON rows with Start/End/Speaker/Content.",
+        "values": [
+          "text",
+          "json"
+        ],
+        "required": false,
+        "default": "text"
+      },
+      {
+        "name": "context",
+        "type": "string",
+        "description": "Extra context injected into the prompt (names, jargon) to bias the transcription.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "max_new_tokens",
+        "type": "int",
+        "description": "Cap on decoded tokens for one request.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      }
+    ],
+    "session": [
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "VAE encoder graph arena size in MB.",
+        "required": false,
+        "min": 16,
+        "default": 64
+      },
+      {
+        "name": "prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder prefill graph arena size in MB.",
+        "required": false,
+        "min": 16,
+        "default": 256
+      },
+      {
+        "name": "decode_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder single-step graph arena size in MB.",
+        "required": false,
+        "min": 16,
+        "default": 256
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cpu"
+    ]
+  },
+  "packages": [
+    {
+      "id": "vibeasr_bitnet_i2_s",
+      "display_name": "VibeVoice-ASR-BitNet I8_S encoder + I2_S decoder",
+      "description": "Upstream VibeASR.cpp GGUF package. The two GGUFs carry the VibeASR ggml fork's type ids and need one pass of tools/community_models/convert_vibeasr_gguf.py --in-place before audio.cpp can load them.",
+      "default": true,
+      "format": "gguf",
+      "precision": "native",
+      "target_directory": "VibeVoice-ASR-BitNet",
+      "files": [
+        "vibeasr-vae-encoder-i8_s.gguf",
+        "vibeasr-lm-i2_s-embed-q6_k.gguf",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "microsoft/VibeVoice-ASR-BitNet",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "vibeasr_bitnet_i2_s",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/vibeasr.md"
+    ],
+    "summary": "INT8 encoder plus ternary Qwen2 decoder transcription on CPU."
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {},
+      "tensors": {
+        "vae_weights": "model:vibeasr-vae-encoder-i8_s.gguf",
+        "lm_weights": "model:vibeasr-lm-i2_s-embed-q6_k.gguf"
+      }
+    }
+  ]
+}

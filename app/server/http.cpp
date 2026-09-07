@@ -597,8 +597,32 @@ HttpRequest read_http_request(
         request.headers[name] = value;
     }
 
+    const auto transfer_encoding_it = request.headers.find("transfer-encoding");
+    const bool chunked_body =
+        transfer_encoding_it != request.headers.end() &&
+        is_chunked_only(transfer_encoding_it->second);
+
     if (wants_incremental_body(request)) {
         leftover = data.substr(header_end + 4);
+        return request;
+    }
+
+    if (chunked_body) {
+        LiveIngestLimits limits;
+        limits.max_body_bytes = static_cast<size_t>(std::min<uint64_t>(
+            max_request_body_bytes,
+            static_cast<uint64_t>(std::numeric_limits<size_t>::max())));
+        ChunkedSocketStreambuf body_buffer(
+            socket,
+            data.substr(header_end + 4),
+            limits);
+        std::istream body_stream(&body_buffer);
+        body_stream.exceptions(std::ios::badbit);
+        std::array<char, 8192> chunk_buffer{};
+        while (body_stream) {
+            body_stream.read(chunk_buffer.data(), static_cast<std::streamsize>(chunk_buffer.size()));
+            request.body.append(chunk_buffer.data(), static_cast<size_t>(body_stream.gcount()));
+        }
         return request;
     }
 

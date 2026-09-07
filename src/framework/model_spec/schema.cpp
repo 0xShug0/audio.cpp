@@ -104,7 +104,7 @@ const std::unordered_set<std::string> & precisions() {
 
 const std::unordered_set<std::string> & download_kinds() {
     static const std::unordered_set<std::string> values = {
-        "huggingface_snapshot", "local_snapshot", "converter", "unsupported",
+        "huggingface_snapshot", "modelscope_snapshot", "local_snapshot", "converter", "unsupported",
     };
     return values;
 }
@@ -408,7 +408,7 @@ void validate_runtime(const json::Value & value, std::string_view path) {
     validate_string_array(require_spec_field(value, "tags", path), &runtime_tags(), std::string(path) + ".tags", "runtime tag");
 }
 
-void validate_hf_snapshot_download(const json::Value & value, std::string_view path) {
+void validate_snapshot_download(const json::Value & value, std::string_view path) {
     require_spec_object(value, path);
     (void) require_spec_string(require_spec_field(value, "repo", path), std::string(path) + ".repo");
     if (const auto * revision = value.find("revision")) {
@@ -431,8 +431,8 @@ void validate_download(const json::Value & value, std::string_view path) {
     require_spec_object(value, path);
     const auto kind = require_spec_string(require_spec_field(value, "kind", path), std::string(path) + ".kind");
     validate_enum(kind, download_kinds(), std::string(path) + ".kind", "download kind");
-    if (kind == "huggingface_snapshot") {
-        validate_hf_snapshot_download(value, path);
+    if (kind == "huggingface_snapshot" || kind == "modelscope_snapshot") {
+        validate_snapshot_download(value, path);
     } else if (kind == "local_snapshot") {
         (void) require_spec_string(require_spec_field(value, "path", path), std::string(path) + ".path");
         if (const auto * array = value.find("include")) {
@@ -546,10 +546,14 @@ ValidatedPackage validate_package(const json::Value & value, std::string_view pa
 std::unordered_set<std::string> validate_packages(
     const json::Value & value,
     std::string_view path,
-    bool has_default_download) {
+    bool has_default_download,
+    bool allow_empty) {
     const auto & packages = require_spec_array(value, path);
     if (packages.empty()) {
-        fail(path, "packages must not be empty");
+        if (allow_empty) {
+            return {};
+        }
+        fail(path, "packages must not be empty unless status is experimental");
     }
     bool has_default = false;
     std::unordered_set<std::string> package_ids;
@@ -651,10 +655,14 @@ void validate_dependencies(
 
 void validate_ui(const json::Value & value, const std::unordered_set<std::string> & package_ids, std::string_view path) {
     require_spec_object(value, path);
-    const auto recommended = require_spec_string(require_spec_field(value, "recommended_package", path),
-                                            std::string(path) + ".recommended_package");
-    if (package_ids.find(recommended) == package_ids.end()) {
-        fail(std::string(path) + ".recommended_package", "unknown package '" + recommended + "'");
+    if (const auto * recommended_value = value.find("recommended_package")) {
+        const auto recommended = require_spec_string(
+            *recommended_value, std::string(path) + ".recommended_package");
+        if (package_ids.find(recommended) == package_ids.end()) {
+            fail(std::string(path) + ".recommended_package", "unknown package '" + recommended + "'");
+        }
+    } else if (!package_ids.empty()) {
+        fail(std::string(path) + ".recommended_package", "missing required field");
     }
     if (const auto * min_vram = value.find("min_vram_gb")) {
         require_spec_number(*min_vram, std::string(path) + ".min_vram_gb");
@@ -675,8 +683,9 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
     (void) require_spec_string(require_spec_field(spec, "display_name", source_name), std::string(source_name) + ".display_name");
     validate_enum(require_spec_string(require_spec_field(spec, "category", source_name), std::string(source_name) + ".category"),
                   categories(), std::string(source_name) + ".category", "category");
-    validate_enum(require_spec_string(require_spec_field(spec, "status", source_name), std::string(source_name) + ".status"),
-                  statuses(), std::string(source_name) + ".status", "status");
+    const auto status = require_spec_string(
+        require_spec_field(spec, "status", source_name), std::string(source_name) + ".status");
+    validate_enum(status, statuses(), std::string(source_name) + ".status", "status");
     const auto task_ids = validate_nonempty_string_set(
         require_spec_field(spec, "tasks", source_name), &tasks(), std::string(source_name) + ".tasks", "task");
     validate_nonempty_string_set(
@@ -698,7 +707,8 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
 
     const auto packages_path = std::string(source_name) + ".packages";
     const auto & packages_field = require_spec_field(spec, "packages", source_name);
-    const auto package_ids = validate_packages(packages_field, packages_path, has_default_download);
+    const auto package_ids = validate_packages(
+        packages_field, packages_path, has_default_download, status == "experimental");
     validate_dependencies(
         require_spec_field(spec, "dependencies", source_name),
         family,

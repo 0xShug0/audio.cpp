@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "family": "sanotts",
+  "display_name": "sanoTTS Nano",
+  "description": "Very small English, Vietnamese and Indonesian text-to-speech. Two graphs: the nano lineage (duration student, contextual acoustic student to mel-100, noise-fed ConvNeXt-1D decoder with an iSTFT head; voices heart 2.27M and heart-nano 294k, 24 kHz) and the deterministic piperlite lineage (duration student, acoustic student to a 192-channel latent, 3-stage ConvTranspose1d decoder with dilated residual banks; voices amy, hfc, kristin, vi, id at 1.1-1.8M parameters, 22.05 kHz). Uses an external eSpeak-ng phonemizer.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "vi",
+    "id"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "speaking_rate",
+        "type": "float",
+        "description": "Duration multiplier on the voice's tuned length scale; larger is slower. Applied before the per-token clamp.",
+        "required": false,
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Decoder noise seed. The decoder is noise-fed, so a given seed picks one of many valid renderings; 0 derives it from the text as sha256(text)[:8], which is what the reference implementations do. Piperlite voices are deterministic and ignore the seed.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode.",
+        "values": [
+          "word_budget"
+        ],
+        "required": false,
+        "default": "word_budget"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 280.",
+        "required": false,
+        "min": 1,
+        "default": 280
+      }
+    ],
+    "session": [
+      {
+        "name": "espeak_library_path",
+        "type": "path",
+        "description": "Optional explicit path to the eSpeak-ng shared library.",
+        "required": false
+      },
+      {
+        "name": "espeak_data_path",
+        "type": "path",
+        "description": "Optional explicit path to the directory containing espeak-ng-data.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "ampixa/sanoTTS",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "sanotts_heart_nano_orig",
+      "display_name": "sanoTTS heart-nano 294k FP32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-heart-nano-GGUF",
+      "files": [
+        "gguf/heart-nano-f32.gguf",
+        "gguf/config.json"
+      ],
+      "strip_prefix": "gguf"
+    },
+    {
+      "id": "sanotts_heart_orig",
+      "display_name": "sanoTTS heart 2.27M FP32 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-heart-GGUF",
+      "files": [
+        "gguf/heart/heart-f32.gguf",
+        "gguf/heart/config.json"
+      ],
+      "strip_prefix": "gguf/heart"
+    },
+    {
+      "id": "sanotts_amy_orig",
+      "display_name": "sanoTTS amy 1.46M FP32 GGUF (English, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-amy-GGUF",
+      "files": [
+        "gguf/amy/amy-f32.gguf",
+        "gguf/amy/config.json"
+      ],
+      "strip_prefix": "gguf/amy"
+    },
+    {
+      "id": "sanotts_hfc_orig",
+      "display_name": "sanoTTS hfc 1.83M FP32 GGUF (English, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-hfc-GGUF",
+      "files": [
+        "gguf/hfc/hfc-f32.gguf",
+        "gguf/hfc/config.json"
+      ],
+      "strip_prefix": "gguf/hfc"
+    },
+    {
+      "id": "sanotts_kristin_orig",
+      "display_name": "sanoTTS kristin 1.40M FP32 GGUF (English, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-kristin-GGUF",
+      "files": [
+        "gguf/kristin/kristin-f32.gguf",
+        "gguf/kristin/config.json"
+      ],
+      "strip_prefix": "gguf/kristin"
+    },
+    {
+      "id": "sanotts_vi_orig",
+      "display_name": "sanoTTS vi 1.57M FP32 GGUF (Vietnamese, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-vi-GGUF",
+      "files": [
+        "gguf/vi/vi-f32.gguf",
+        "gguf/vi/config.json"
+      ],
+      "strip_prefix": "gguf/vi"
+    },
+    {
+      "id": "sanotts_id_orig",
+      "display_name": "sanoTTS id 1.56M FP32 GGUF (Indonesian, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-id-GGUF",
+      "files": [
+        "gguf/id/id-f32.gguf",
+        "gguf/id/config.json"
+      ],
+      "strip_prefix": "gguf/id"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "sanotts_heart_nano_orig",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/community_models/sanotts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    }
+  ]
+}
