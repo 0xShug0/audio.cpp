@@ -387,7 +387,7 @@ void BreezeTTSSession::reset() {
     stream_reference_codes_.reset();
     stream_merged_audio_ = runtime::AudioBuffer{};
     stream_chunk_index_ = 0;
-    stream_frames_per_event_ = 32;
+    stream_frames_per_event_ = 16;
     stream_lookahead_margin_ = 12;
     stream_event_seq_ = 0;
     stream_started_ = false;

@@ -80,7 +80,7 @@ private:
     engine::runtime::AudioBuffer stream_merged_audio_;
     std::chrono::steady_clock::time_point stream_started_at_;
     size_t stream_chunk_index_ = 0;
-    size_t stream_frames_per_event_ = 32;
+    size_t stream_frames_per_event_ = 16;
     int64_t stream_lookahead_margin_ = 12;
     bool stream_chunk_active_ = false;
     size_t stream_event_seq_ = 0;

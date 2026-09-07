@@ -134,7 +134,7 @@
         "description": "Generated codec frames per streaming audio event.",
         "required": false,
         "min": 1,
-        "default": 32
+        "default": 16
       },
       {
         "name": "stream_lookahead_margin",
