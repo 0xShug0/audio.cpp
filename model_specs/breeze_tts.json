@@ -127,6 +127,22 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Generated codec frames per streaming audio event.",
+        "required": false,
+        "min": 1,
+        "default": 16
+      },
+      {
+        "name": "stream_lookahead_margin",
+        "type": "int",
+        "description": "Trailing codec frames held before emission to reduce streaming boundary artifacts.",
+        "required": false,
+        "min": 0,
+        "default": 12
       }
     ],
     "session": [
