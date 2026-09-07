@@ -10,7 +10,11 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 
-#ifdef GGML_USE_CUDA
+// ggml-hip publicly defines GGML_USE_CUDA for its consumers (hipified CUDA
+// sources), so GGML_USE_CUDA alone does not imply a real CUDA toolchain with
+// the driver library linked. ENGINE_GGML_HIP_BACKEND marks the HIP case.
+#if defined(GGML_USE_CUDA) && !defined(ENGINE_GGML_HIP_BACKEND)
+#define AUDIOCPP_CUDA_DRIVER_PROBE 1
 // CUDA driver API, declared manually so this translation unit needs neither
 // the CUDA headers on its include path nor any CMake changes. The driver
 // library is already linked transitively through ggml-cuda. Attribute ids
@@ -21,7 +25,7 @@ typedef int kCcProbeCuResult;
 kCcProbeCuResult cuDeviceGet(kCcProbeCuDevice * device, int ordinal);
 kCcProbeCuResult cuDeviceGetAttribute(int * value, int attrib, kCcProbeCuDevice device);
 }
-#endif  // GGML_USE_CUDA
+#endif
 
 namespace engine::core {
 namespace {
@@ -59,7 +63,7 @@ AttentionPreference parse_preference_value(const std::string & value, const char
 // select the MMA kernel with no usable device code. Unknown backends and
 // query failures fail OPEN to preserve current behavior.
 bool cuda_device_wants_eager(ggml_backend_t backend) {
-#ifdef GGML_USE_CUDA
+#ifdef AUDIOCPP_CUDA_DRIVER_PROBE
     if (backend == nullptr) {
         return false;
     }
@@ -96,7 +100,7 @@ bool cuda_device_wants_eager(ggml_backend_t backend) {
 #else
     (void) backend;
     return false;
-#endif  // GGML_USE_CUDA
+#endif  // AUDIOCPP_CUDA_DRIVER_PROBE
 }
 
 }  // namespace

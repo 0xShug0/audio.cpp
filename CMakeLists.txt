@@ -1911,6 +1911,11 @@ target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_ven
 if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
     target_compile_definitions(engine_runtime PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
 endif()
+if (ENGINE_ENABLE_HIP)
+    # ggml-hip publicly defines GGML_USE_CUDA for consumers, so engine code
+    # needs this marker to tell a real CUDA build apart from a HIP build.
+    target_compile_definitions(engine_core PRIVATE ENGINE_GGML_HIP_BACKEND=1)
+endif()
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(engine_runtime PRIVATE OpenMP::OpenMP_CXX)
     if (MSVC)
