@@ -22,6 +22,7 @@ export interface CatalogEntry {
   min_vram_gb?: number;
   input_hint?: string;
   input_hint_en?: string;
+  default_text?: string;
   default_options?: Record<string, unknown>;
   load_options?: StringMap;
   session_options?: StringMap;

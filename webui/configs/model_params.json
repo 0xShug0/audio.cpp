@@ -260,7 +260,7 @@
   ],
 
   "heartmula": [
-    {"name": "tags", "type": "text", "label": "tags（必填，逗号分隔）", "default": "", "placeholder": "pop,bright,drums,female vocals", "info": "风格/情绪/乐器/人声标签，模型必需"},
+    {"name": "tags", "type": "text", "label": "tags（逗号分隔）", "default": "pop", "placeholder": "pop,bright,drums,female vocals", "info": "风格/情绪/乐器/人声标签"},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale（MuLa CFG）", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1},

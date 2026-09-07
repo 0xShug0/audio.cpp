@@ -248,6 +248,10 @@
     }
   }
 
+  function requestText() {
+    return text.trim() ? text : (selected.default_text || '');
+  }
+
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
@@ -997,6 +1001,9 @@
     } else if (selected?.task === 'gen') {
       duration = 30;
     }
+    if (!text.trim() && selected?.default_text) {
+      text = selected.default_text;
+    }
     advancedJson = '{}';
   }
 
@@ -1653,6 +1660,8 @@
         if (['gen', 's2s', 'align'].includes(selected.task) && text.trim()) request.text = text;
         if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
         if (selected.task === 'gen') {
+          const resolvedText = requestText();
+          if (resolvedText) request.text = resolvedText;
           if (lyrics.trim()) request.lyrics = lyrics;
           if (!isFireRedAudioEdit) {
             if (usesDurationSecOption) options.duration_sec = duration;
@@ -2236,12 +2245,9 @@
           {/if}
           {#if selected.task === 'gen'}
             <div>
-              <label for="duration">{tr('request.duration')}</label>
+              <label for="duration">{tr('request.duration')}{#if allowsAutoDuration} <span>{tr('request.autoDuration')}</span>{/if}</label>
               <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
                 on:input={(event) => setDuration(event.currentTarget.valueAsNumber)} />
-              {#if allowsAutoDuration}
-                <small>{tr('request.autoDuration')}</small>
-              {/if}
               {#if selected.family === 'minimax_h3'}
                 <small>{tr('request.minimaxFrames', { frames: Number(advancedValues.num_frames || 0) })}</small>
               {/if}
