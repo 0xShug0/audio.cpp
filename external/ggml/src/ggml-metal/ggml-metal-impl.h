@@ -208,6 +208,17 @@ typedef struct {
 typedef struct {
     int32_t  ne00;
     int32_t  ne01;
+    uint64_t nb00;
+    uint64_t nb01;
+    int32_t  ne0;
+    int32_t  ne1;
+    uint64_t nb0;
+    uint64_t nb1;
+} ggml_metal_kargs_snake_1d;
+
+typedef struct {
+    int32_t  ne00;
+    int32_t  ne01;
     int32_t  ne02;
     int32_t  ne03;
     uint64_t nb00;
