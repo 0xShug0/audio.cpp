@@ -340,7 +340,14 @@ std::optional<runtime::StreamEvent> BreezeTTSSession::next_stream_event() {
             stream_chunk_active_ = true;
         }
 
-        auto event_audio = generator_->next_stream_audio(stream_frames_per_event_, stream_lookahead_margin_);
+        BreezeStreamEvent event_audio;
+        try {
+            event_audio = generator_->next_stream_audio(stream_frames_per_event_, stream_lookahead_margin_);
+        } catch (...) {
+            generator_->end_stream();
+            stream_chunk_active_ = false;
+            throw;
+        }
         if (event_audio.done) {
             generator_->end_stream();
             stream_chunk_active_ = false;
