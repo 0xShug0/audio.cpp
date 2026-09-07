@@ -86,7 +86,7 @@ void validate_request_options(
     const std::unordered_map<std::string, std::string> & options,
     const engine::model_spec::ModelContract & contract) {
     auto validation_options = options;
-    for (const char * key : {"stream_subchunk", "stream_frames_per_event", "stream_lookahead_margin"}) {
+    for (const char * key : {"stream_frames_per_event", "stream_lookahead_margin"}) {
         if (contract.request_option_keys.find(key) == contract.request_option_keys.end()) {
             validation_options.erase(key);
         }
@@ -301,10 +301,6 @@ void BreezeTTSSession::start_stream(const runtime::TaskRequest & request) {
         request.voice->speaker->audio.has_value()) {
         stream_reference_codes_ = resolve_reference_codes(*request.voice->speaker->audio);
     }
-    stream_subchunk_ = false;
-    if (const auto subchunk = runtime::find_option(request.options, {"stream_subchunk"})) {
-        stream_subchunk_ = runtime::parse_bool_option(*subchunk, "stream_subchunk");
-    }
     const auto frames_per_event = runtime::parse_i64_option(request.options, {"stream_frames_per_event"})
         .value_or(static_cast<int64_t>(stream_frames_per_event_));
     if (frames_per_event <= 0) {
@@ -318,7 +314,6 @@ void BreezeTTSSession::start_stream(const runtime::TaskRequest & request) {
     }
     stream_merged_audio_ = runtime::AudioBuffer{24000, 1, {}};
     stream_started_at_ = std::chrono::steady_clock::now();
-    engine::debug::trace_log_scalar("breeze_tts.streaming.subchunk", stream_subchunk_ ? 1 : 0);
     engine::debug::trace_log_scalar(
         "breeze_tts.streaming.frames_per_event", static_cast<int64_t>(stream_frames_per_event_));
     engine::debug::trace_log_scalar("breeze_tts.streaming.lookahead_margin", stream_lookahead_margin_);
@@ -332,23 +327,6 @@ std::optional<runtime::StreamEvent> BreezeTTSSession::next_stream_event() {
     if (stream_chunk_index_ >= stream_chunk_requests_.size()) {
         return std::nullopt;
     }
-    if (stream_subchunk_) {
-        return next_subchunk_event();
-    }
-    const size_t chunk_index = stream_chunk_index_++;
-    auto chunk_audio = generator_->generate(
-        build_generation_request(stream_chunk_requests_[chunk_index], stream_reference_codes_, chunk_index));
-    runtime::append_audio_buffer(stream_merged_audio_, chunk_audio);
-    runtime::StreamEvent event;
-    event.named_audio_outputs.push_back({
-        "chunk_" + std::to_string(chunk_index),
-        std::move(chunk_audio),
-        {},
-    });
-    return event;
-}
-
-std::optional<runtime::StreamEvent> BreezeTTSSession::next_subchunk_event() {
     while (true) {
         if (stream_chunk_index_ >= stream_chunk_requests_.size()) {
             return std::nullopt;
@@ -409,7 +387,6 @@ void BreezeTTSSession::reset() {
     stream_reference_codes_.reset();
     stream_merged_audio_ = runtime::AudioBuffer{};
     stream_chunk_index_ = 0;
-    stream_subchunk_ = false;
     stream_frames_per_event_ = 32;
     stream_lookahead_margin_ = 12;
     stream_event_seq_ = 0;

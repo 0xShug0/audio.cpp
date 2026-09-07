@@ -129,13 +129,6 @@
         "default": 0
       },
       {
-        "name": "stream_subchunk",
-        "type": "bool",
-        "description": "Emit multiple streaming audio events per text chunk.",
-        "required": false,
-        "default": false
-      },
-      {
         "name": "stream_frames_per_event",
         "type": "int",
         "description": "Generated codec frames per streaming audio event.",
