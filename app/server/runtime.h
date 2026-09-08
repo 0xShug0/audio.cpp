@@ -40,6 +40,7 @@ public:
     HttpResponse forward_to_core(const HttpRequest & request) override;
     std::filesystem::path resolve_request_path(const std::filesystem::path & path) const override;
     std::filesystem::path make_frontend_temp_path(std::string_view filename) override;
+    std::unique_ptr<ServerFrontendListener> make_frontend_listener(std::string_view name) const;
 
     // Server-level `live_ingest` policy with this request's model override applied.
     // Deliberately does not reject an unknown or non-streaming model: it runs before

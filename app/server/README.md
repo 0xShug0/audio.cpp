@@ -24,7 +24,7 @@ Pick the mode that matches the behavior you want:
 | Offline/reproducible native-manager build | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz` | `audiocpp_server --ui --ui-management --backend <backend>` | Configure does not fetch BoringSSL from the network. |
 | Distro-packaged TLS instead of bundled BoringSSL | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | Uses system OpenSSL; useful for packagers. |
 | Optional in-process frontend pipeline | `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends -DAUDIOCPP_SERVER_FRONTEND_MODULES="audio_decode;mp3_encode"` | `audiocpp_server --config server.json` | Adds compiled-in pre/post processing modules around the stable core API. The external frontend package owns modules and private dependencies such as miniaudio and libmp3lame. The default server build includes none of these modules or dependencies. |
-| Optional HTTPS frontend listener | `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends -DAUDIOCPP_SERVER_FRONTEND_MODULES=https` | `audiocpp_server --config server.json --https-cert-file cert.pem --https-key-file key.pem` | Serves the same in-process server over HTTPS through the frontend layer. The default server build does not include this TLS dependency. |
+| Optional frontend listener | `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends -DAUDIOCPP_SERVER_FRONTEND_MODULES=<listener>` | `audiocpp_server --config server.json --frontend-listener <listener> --frontend-option key=value` | Runs a selected frontend-owned transport listener, such as HTTPS or WebSocket, over the same in-process server handler. Listener code and private dependencies live in the external frontend package. |
 
 Native model management uses bundled BoringSSL by default. Normal server builds
 do not build or link that HTTP/TLS dependency.
@@ -40,15 +40,18 @@ git submodule update --init external/audio.cpp-server-frontends
 
 For a fresh clone, `git clone --recurse-submodules` also fetches it.
 
-The server runs selected modules as an
-ordered pipeline: every module gets a pre-processing pass before the core handler,
-then every module gets a post-processing pass after the core handler. A module that
-does not need one side leaves that method empty. Each active side declares a simple
-contract over the HTTP envelope state (`method`, `path`, `request_in/request_out`
-for pre-processing, or `response_in/response_out` for post-processing), and module
-registration rejects incompatible adjacent transforms on the same route. The main
-repo owns only this interface; module implementations, docs, and private dependency
-detection live in the external frontend package.
+The server runs selected modules as an ordered pipeline: every module gets a
+pre-processing pass before the core handler, then every module gets a
+post-processing pass after the core handler. A module that does not need one side
+leaves that method empty. Each active side declares a simple contract over the
+HTTP envelope state (`method`, `path`, `request_in/request_out` for
+pre-processing, or `response_in/response_out` for post-processing), and module
+registration rejects incompatible adjacent transforms on the same route.
+
+Listener frontends are selected through the same external package but are not
+part of the pre/post pipeline. The server core only knows a listener name plus
+string options; the external package owns listener implementations, docs, and
+dependency detection.
 
 ## Config
 
@@ -128,10 +131,10 @@ Set per-model `"default_request_options"` to apply request-option defaults to ev
 
 Set top-level `"max_request_body_bytes"` to bound the largest HTTP request body buffered in host RAM before routing. This protects endpoints that accept JSON or audio uploads from unbounded `Content-Length` claims. The default is `2147483648` bytes (2 GiB). Raise or lower it to match the largest upload your deployment intends to accept. Values above `2^53 - 1` are rejected because this config parser stores JSON numbers as doubles.
 
-Set top-level `"https_cert_file"` and `"https_key_file"` together to serve HTTPS
-when the server was built with the optional `https` frontend capability. Relative
-paths are resolved from the config file directory. The equivalent command-line
-options are `--https-cert-file <pem>` and `--https-key-file <pem>`.
+Set top-level `"frontend_listener"` to use an optional frontend transport
+listener compiled from the external frontend package. Listener-specific string
+settings go under `"frontend_options"`. The equivalent command-line options are
+`--frontend-listener <name>` and repeated `--frontend-option key=value`.
 
 Set top-level `"log_request_body": true` and start the server with `--log` to print full JSON request bodies for debugging. This is off by default, and both switches are required so prompt text, paths, and request options are not logged accidentally. Audio bodies are not printed; multipart uploads log filename and byte count, while raw or live/chunked audio requests log only route, content type, query, and size/stream metadata.
 

@@ -7,6 +7,8 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace minitts::server {
@@ -68,28 +70,36 @@ public:
 
 using ServerFrontendModuleFactory = std::unique_ptr<ServerFrontendModule> (*)();
 
-struct ServerFrontendHttpsConfig {
-    std::filesystem::path cert_file;
-    std::filesystem::path key_file;
+using ServerFrontendOptions = std::unordered_map<std::string, std::string>;
+
+class ServerFrontendListener {
+public:
+    virtual ~ServerFrontendListener() = default;
+    virtual std::string_view name() const = 0;
+    virtual void serve(
+        const std::string & host,
+        int port,
+        IHttpHandler & handler,
+        ShutdownRequested shutdown_requested,
+        uint64_t max_request_body_bytes,
+        const ServerFrontendOptions & options) = 0;
 };
+
+using ServerFrontendListenerFactory = std::unique_ptr<ServerFrontendListener> (*)();
 
 class ServerFrontendRegistry {
 public:
     void add(ServerFrontendModuleFactory factory);
+    void add_listener(std::string name, ServerFrontendListenerFactory factory);
     bool empty() const;
     HttpResponse handle(ServerFrontendContext & context, const HttpRequest & request) const;
+    std::unique_ptr<ServerFrontendListener> make_listener(std::string_view name) const;
 
 private:
     std::vector<std::unique_ptr<ServerFrontendModule>> modules_;
+    std::unordered_map<std::string, ServerFrontendListenerFactory> listeners_;
 };
 
 void register_static_server_frontends(ServerFrontendRegistry & registry);
-void serve_frontend_https(
-    const std::string & host,
-    int port,
-    IHttpHandler & handler,
-    ShutdownRequested shutdown_requested,
-    uint64_t max_request_body_bytes,
-    const ServerFrontendHttpsConfig & config);
 
 } // namespace minitts::server

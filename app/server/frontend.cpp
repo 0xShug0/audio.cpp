@@ -111,6 +111,18 @@ void ServerFrontendRegistry::add(ServerFrontendModuleFactory factory) {
     modules_.push_back(std::move(module));
 }
 
+void ServerFrontendRegistry::add_listener(std::string name, ServerFrontendListenerFactory factory) {
+    if (name.empty()) {
+        throw std::runtime_error("server frontend listener registration requires a name");
+    }
+    if (factory == nullptr) {
+        throw std::runtime_error("server frontend listener registration requires a factory");
+    }
+    if (!listeners_.emplace(std::move(name), factory).second) {
+        throw std::runtime_error("duplicate server frontend listener registration");
+    }
+}
+
 bool ServerFrontendRegistry::empty() const { return modules_.empty(); }
 
 HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, const HttpRequest & request) const {
@@ -118,7 +130,7 @@ HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, con
     if (engine::debug::log_enabled()) {
         const auto content_type = request.headers.find("content-type");
         engine::debug::log_message(
-            "[MP3_FRONTEND_DEBUG] frontend.enter method=" + request.method +
+            "[SERVER_FRONTEND_DEBUG] frontend.enter method=" + request.method +
             " path=" + request.path +
             " content_type=" +
             (content_type == request.headers.end() ? std::string("<none>") : content_type->second) +
@@ -127,7 +139,7 @@ HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, con
     for (const auto & module : modules_) {
         if (engine::debug::log_enabled()) {
             engine::debug::log_message(
-                "[MP3_FRONTEND_DEBUG] frontend.pre.begin module=" + std::string(module->name()) +
+                "[SERVER_FRONTEND_DEBUG] frontend.pre.begin module=" + std::string(module->name()) +
                 " path=" + frontend_request.request.path +
                 " body_bytes=" + std::to_string(frontend_request.request.body.size()));
         }
@@ -135,7 +147,7 @@ HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, con
         if (engine::debug::log_enabled()) {
             const auto content_type = frontend_request.request.headers.find("content-type");
             engine::debug::log_message(
-                "[MP3_FRONTEND_DEBUG] frontend.pre.end module=" + std::string(module->name()) +
+                "[SERVER_FRONTEND_DEBUG] frontend.pre.end module=" + std::string(module->name()) +
                 " path=" + frontend_request.request.path +
                 " content_type=" +
                 (content_type == frontend_request.request.headers.end() ? std::string("<none>") : content_type->second) +
@@ -150,7 +162,7 @@ HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, con
     auto core_response = context.forward_to_core(frontend_request.request);
     if (engine::debug::log_enabled()) {
         engine::debug::log_message(
-            "[MP3_FRONTEND_DEBUG] frontend.core_response status=" + std::to_string(core_response.status) +
+            "[SERVER_FRONTEND_DEBUG] frontend.core_response status=" + std::to_string(core_response.status) +
             " content_type=" + core_response.content_type +
             " body_bytes=" + std::to_string(core_response.body.size()));
     }
@@ -161,31 +173,17 @@ HttpResponse ServerFrontendRegistry::handle(ServerFrontendContext & context, con
     return std::move(frontend_response.response);
 }
 
+std::unique_ptr<ServerFrontendListener> ServerFrontendRegistry::make_listener(std::string_view name) const {
+    const auto it = listeners_.find(std::string(name));
+    if (it == listeners_.end()) {
+        throw std::runtime_error("server frontend listener is not available in this build: " + std::string(name));
+    }
+    return it->second();
+}
+
 void register_static_server_frontends(ServerFrontendRegistry & registry) {
     (void) registry;
 #include "server_frontend_module_registrations.inc"
 }
-
-#if !defined(AUDIOCPP_SERVER_FRONTEND_HAS_HTTPS)
-void serve_frontend_https(
-    const std::string & host,
-    int port,
-    IHttpHandler & handler,
-    ShutdownRequested shutdown_requested,
-    uint64_t max_request_body_bytes,
-    const ServerFrontendHttpsConfig & config) {
-    (void) host;
-    (void) port;
-    (void) handler;
-    (void) shutdown_requested;
-    (void) max_request_body_bytes;
-    (void) config;
-    throw std::runtime_error(
-        "HTTPS frontend support is not available in this build; configure with "
-        "-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON "
-        "-DAUDIOCPP_SERVER_FRONTENDS_DIR=/path/to/audio.cpp-server-frontends "
-        "-DAUDIOCPP_SERVER_FRONTEND_MODULES=https");
-}
-#endif
 
 } // namespace minitts::server

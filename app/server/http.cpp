@@ -605,7 +605,7 @@ HttpRequest read_http_request(
     if (engine::debug::log_enabled()) {
         const auto content_length_it = request.headers.find("content-length");
         engine::debug::log_message(
-            "[MP3_FRONTEND_DEBUG] http.headers method=" + request.method +
+            "[SERVER_HTTP_DEBUG] http.headers method=" + request.method +
             " path=" + request.path +
             " content_length=" +
             (content_length_it == request.headers.end() ? std::string("<none>") : content_length_it->second) +
@@ -619,7 +619,7 @@ HttpRequest read_http_request(
         leftover = data.substr(header_end + 4);
         if (engine::debug::log_enabled()) {
             engine::debug::log_message(
-                "[MP3_FRONTEND_DEBUG] http.body_deferred path=" + request.path +
+                "[SERVER_HTTP_DEBUG] http.body_deferred path=" + request.path +
                 " leftover_bytes=" + std::to_string(leftover.size()));
         }
         return request;
@@ -685,7 +685,7 @@ HttpRequest read_http_request(
     }
     if (engine::debug::log_enabled()) {
         engine::debug::log_message(
-            "[MP3_FRONTEND_DEBUG] http.body_ready path=" + request.path +
+            "[SERVER_HTTP_DEBUG] http.body_ready path=" + request.path +
             " body_bytes=" + std::to_string(request.body.size()));
     }
     return request;
@@ -823,7 +823,7 @@ void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_req
         }
     } catch (const std::exception & ex) {
         if (engine::debug::log_enabled()) {
-            engine::debug::log_message(std::string("[MP3_FRONTEND_DEBUG] http.error ") + ex.what());
+            engine::debug::log_message(std::string("[SERVER_HTTP_DEBUG] http.error ") + ex.what());
         }
         try {
             send_all(socket.get(), serialize_response(error_response(500, ex.what(), "server_error")));

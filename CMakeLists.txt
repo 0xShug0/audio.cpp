@@ -105,11 +105,12 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/app/server/server_frontends.cmake")
 option(AUDIOCPP_USE_SYSTEM_OPENSSL
     "Use system OpenSSL for native model management instead of bundled BoringSSL"
     OFF)
-if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER AND NOT AUDIOCPP_SERVER_FRONTEND_HTTPS_ENABLED)
+audiocpp_server_frontends_use_library(audiocpp_cpp_httplib AUDIOCPP_SERVER_FRONTENDS_USE_CPP_HTTPLIB)
+if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER AND NOT AUDIOCPP_SERVER_FRONTENDS_USE_CPP_HTTPLIB)
     message(FATAL_ERROR
         "AUDIOCPP_USE_SYSTEM_OPENSSL requires AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON "
         "or AUDIOCPP_BUILD_SERVER_FRONTENDS=ON with AUDIOCPP_SERVER_FRONTENDS_DIR set "
-        "and AUDIOCPP_SERVER_FRONTEND_MODULES=https")
+        "and a frontend module that uses cpp-httplib")
 endif()
 option(ENGINE_ENABLE_CPU_ALL_VARIANTS
     "Build CPU backends as dynamic libraries with per-ISA variants (for Docker/portable builds)"
@@ -1926,7 +1927,7 @@ target_include_directories(cjson_vendor PUBLIC
 # builds do not configure an HTTP/TLS dependency. When enabled, package specs
 # remain embedded so the standalone manager and managed WebUI do not require a
 # source checkout or an external model_specs directory.
-if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER OR AUDIOCPP_SERVER_FRONTEND_HTTPS_ENABLED)
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER OR AUDIOCPP_SERVER_FRONTENDS_USE_CPP_HTTPLIB)
     add_subdirectory(external/cpp-httplib)
 endif()
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)

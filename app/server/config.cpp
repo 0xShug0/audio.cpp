@@ -249,22 +249,17 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         }
         config.voice_dir = resolve_path(base, value->as_string());
     }
-    const auto * https_cert_file = root.find("https_cert_file");
-    const auto * https_key_file = root.find("https_key_file");
-    if (https_cert_file != nullptr || https_key_file != nullptr) {
-        if (https_cert_file == nullptr || https_key_file == nullptr) {
-            throw std::runtime_error("server https_cert_file and https_key_file must be set together");
+    config.frontend_listener = engine::io::json::optional_string(root, "frontend_listener", config.frontend_listener);
+    if (const auto * value = root.find("frontend_options")) {
+        if (!value->is_object()) {
+            throw std::runtime_error("server frontend_options must be an object");
         }
-        if (!https_cert_file->is_string()) {
-            throw std::runtime_error("server https_cert_file must be a string");
+        for (const auto & [key, option] : value->as_object()) {
+            if (!option.is_string()) {
+                throw std::runtime_error("server frontend_options values must be strings");
+            }
+            config.frontend_options[key] = option.as_string();
         }
-        if (!https_key_file->is_string()) {
-            throw std::runtime_error("server https_key_file must be a string");
-        }
-        config.https = ServerFrontendHttpsConfig{
-            resolve_path(base, https_cert_file->as_string()),
-            resolve_path(base, https_key_file->as_string()),
-        };
     }
     if (config.port <= 0 || config.port > 65535) {
         throw std::runtime_error("server port must be in 1..65535");
@@ -280,6 +275,9 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     }
     if (config.min_free_memory_mb < 0) {
         throw std::runtime_error("server min_free_memory_mb must be >= 0 (0 disables the memory guard)");
+    }
+    if (config.frontend_listener.empty() && !config.frontend_options.empty()) {
+        throw std::runtime_error("server frontend_options requires frontend_listener");
     }
     if (config.threads <= 0) {
         throw std::runtime_error("server threads must be positive");
