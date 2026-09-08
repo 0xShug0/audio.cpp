@@ -999,33 +999,6 @@ audiocpp_add_model(fish_audio
         engine::models::fish_audio::make_fish_audio_loader
 )
 
-# Fish Fast-AR emits a 4096-entry logits tensor for each acoustic codebook.
-# On Linux HIP, use a small device-side exact top-k helper so only the compact
-# sampling candidates cross back to the host. Other backends stay unchanged.
-if (ENGINE_ENABLE_HIP AND UNIX AND NOT APPLE)
-    find_program(AUDIOCPP_HIPCC hipcc REQUIRED)
-    set(AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ "${CMAKE_CURRENT_BINARY_DIR}/fish_hip_fast_sampler.o")
-    set(AUDIOCPP_FISH_HIP_TARGETS ${CMAKE_HIP_ARCHITECTURES})
-    if (NOT AUDIOCPP_FISH_HIP_TARGETS)
-        set(AUDIOCPP_FISH_HIP_TARGETS ${GPU_TARGETS})
-    endif()
-    set(AUDIOCPP_FISH_HIP_ARCH_FLAGS)
-    foreach(AUDIOCPP_FISH_HIP_ARCH IN LISTS AUDIOCPP_FISH_HIP_TARGETS)
-        list(APPEND AUDIOCPP_FISH_HIP_ARCH_FLAGS "--offload-arch=${AUDIOCPP_FISH_HIP_ARCH}")
-    endforeach()
-    add_custom_command(
-        OUTPUT ${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ}
-        COMMAND ${AUDIOCPP_HIPCC} -O3 -fPIC ${AUDIOCPP_FISH_HIP_ARCH_FLAGS} -std=c++17
-            -c ${CMAKE_CURRENT_SOURCE_DIR}/src/models/fish_audio/hip_fast_sampler.cu
-            -o ${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ}
-        DEPENDS
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/models/fish_audio/hip_fast_sampler.cu
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/models/fish_audio/hip_fast_sampler.h
-        VERBATIM)
-    set_source_files_properties(${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ} PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
-    target_compile_definitions(engine_model_fish_audio PRIVATE ENGINE_HAS_HIP_FISH_FAST_SAMPLER=1)
-endif()
-
 audiocpp_add_model(audio8_tts
     SOURCES
         src/community_models/audio8_tts/ar.cpp
@@ -1841,9 +1814,6 @@ set(AUDIOCPP_RUNTIME_OBJECTS
 foreach(model_name IN LISTS AUDIOCPP_LINKED_MODELS)
     list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:engine_model_${model_name}>)
 endforeach()
-if (ENGINE_ENABLE_HIP AND UNIX AND NOT APPLE AND "fish_audio" IN_LIST AUDIOCPP_LINKED_MODELS)
-    list(APPEND AUDIOCPP_RUNTIME_OBJECTS ${AUDIOCPP_FISH_HIP_FAST_SAMPLER_OBJ})
-endif()
 
 message(STATUS "audio.cpp model composite: ${AUDIOCPP_MODEL_SET} selected [${AUDIOCPP_ENABLED_MODELS}] linked [${AUDIOCPP_LINKED_MODELS}]")
 add_library(engine_runtime STATIC
@@ -1912,16 +1882,21 @@ if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
     target_compile_definitions(engine_runtime PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
 endif()
 if (ENGINE_ENABLE_HIP)
-    # The Fish HIP sampler is compiled as an external HIP object and linked
-    # into the static runtime. Its HIP host-runtime dependency must therefore
-    # be propagated to executables, especially with dynamic ggml backends.
-    find_package(hip REQUIRED)
-    target_link_libraries(engine_runtime PRIVATE hip::host)
-
     # ggml-hip publicly defines GGML_USE_CUDA for consumers, so engine code
     # needs this marker to tell a real CUDA build apart from a HIP build.
     target_compile_definitions(engine_core PRIVATE ENGINE_GGML_HIP_BACKEND=1)
 endif()
+
+# Fish Fast-AR emits a 4096-entry logits tensor for each acoustic codebook.
+# On Linux HIP, a small device-side exact top-k helper keeps only the compact
+# sampling candidates crossing back to the host. Built as a proper HIP target
+# so CMake tracks its HIP runtime dependency; other backends stay unchanged.
+if (ENGINE_ENABLE_HIP AND UNIX AND NOT APPLE)
+    add_subdirectory(src/models/fish_audio)
+    target_link_libraries(engine_runtime PRIVATE engine_fish_audio_hip_sampler)
+    target_compile_definitions(engine_model_fish_audio PRIVATE ENGINE_HAS_HIP_FISH_FAST_SAMPLER=1)
+endif()
+
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(engine_runtime PRIVATE OpenMP::OpenMP_CXX)
     if (MSVC)
