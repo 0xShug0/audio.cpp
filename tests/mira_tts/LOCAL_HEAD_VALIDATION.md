@@ -11,8 +11,12 @@ prompt and generated token IDs still use the full embedding vocabulary.
 
 The shared `qwen_causal_decode_runtime.h` and `.cpp` are restored to upstream
 `origin/main` at `a8fccb4`, with no sparse-head field, slicing, or index rebasing.
-GPU backends retain their full output projection. The model-local CPU
+At that revision, GPU backends retained their full output projection. The model-local CPU
 `AUDIOCPP_MIRA_TTS_SPARSE_HEAD=0` diagnostic remains available.
+
+This describes the September 6 validation. The subsequent CPU/Vulkan
+optimization extends the local head to Vulkan as well; CUDA remains unchanged.
+See [CPU/Vulkan optimization validation](CPU_VULKAN_OPTIMIZATION.md).
 
 ## Output preservation
 
