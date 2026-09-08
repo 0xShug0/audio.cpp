@@ -1912,6 +1912,12 @@ if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
     target_compile_definitions(engine_runtime PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
 endif()
 if (ENGINE_ENABLE_HIP)
+    # The Fish HIP sampler is compiled as an external HIP object and linked
+    # into the static runtime. Its HIP host-runtime dependency must therefore
+    # be propagated to executables, especially with dynamic ggml backends.
+    find_package(hip REQUIRED)
+    target_link_libraries(engine_runtime PRIVATE hip::host)
+
     # ggml-hip publicly defines GGML_USE_CUDA for consumers, so engine code
     # needs this marker to tell a real CUDA build apart from a HIP build.
     target_compile_definitions(engine_core PRIVATE ENGINE_GGML_HIP_BACKEND=1)
