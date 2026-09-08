@@ -111,3 +111,20 @@ frame-count, token-boundary, or sampling mismatch.
 Run deterministic checks before experimenting with unseeded sampling. If a
 repeat hash changes, inspect generated speech-token boundaries, prompt/context
 tokens, and component traces before comparing subjective audio quality.
+
+## Exact-output optimization comparisons
+
+For performance-only changes, run the same fixtures with the same model,
+reference, seed, thread count, device, and request options before and after the
+change. Then compare each offline/streaming summary pair:
+
+```powershell
+python tests/mira_tts/compare_optimization.py --before <baseline.json> --after <candidate.json>
+python -m unittest discover -s tests/mira_tts -p test_compare_optimization.py
+```
+
+The comparison rejects changed request sets, audio hashes, WAV bytes, sample
+metadata, or streaming event counts. It reports timing changes without treating
+a single noisy measurement as a performance failure. Run `validate_bench.py`
+as well to check repeat determinism and streaming lifecycle behavior. Relative
+WAV paths are resolved from the current directory, normally the repository root.
