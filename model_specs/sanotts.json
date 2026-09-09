@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "sanotts",
   "display_name": "sanoTTS Nano",
-  "description": "Very small English, Vietnamese and Indonesian text-to-speech. Two graphs: the nano lineage (duration student, contextual acoustic student to mel-100, noise-fed ConvNeXt-1D decoder with an iSTFT head; voices heart 2.27M and heart-nano 294k, 24 kHz) and the deterministic piperlite lineage (duration student, acoustic student to a 192-channel latent, 3-stage ConvTranspose1d decoder with dilated residual banks; voices amy, hfc, kristin, vi, id at 1.1-1.8M parameters, 22.05 kHz). Uses an external eSpeak-ng phonemizer.",
+  "description": "Very small multilingual text-to-speech across fourteen languages. Two graphs: the nano lineage (duration student, contextual acoustic student to mel-100, noise-fed ConvNeXt-1D decoder with an iSTFT head; voices heart 2.27M and heart-nano 294k, English, 24 kHz) and the deterministic piperlite lineage (duration student, acoustic student to a 192-channel latent, optionally through a calibration adapter, then a 3-stage ConvTranspose1d decoder with dilated residual banks; voices amy, hfc and kristin for English, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne and hi at 1.1-1.8M parameters, 22.05 kHz). Uses an external eSpeak-ng phonemizer.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -14,7 +14,18 @@
   "languages": [
     "en",
     "vi",
-    "id"
+    "id",
+    "cs",
+    "de",
+    "es",
+    "fr",
+    "it",
+    "pt",
+    "ro",
+    "ru",
+    "tr",
+    "ne",
+    "hi"
   ],
   "runtime": {
     "tags": [
@@ -179,6 +190,149 @@
         "gguf/id/config.json"
       ],
       "strip_prefix": "gguf/id"
+    },
+    {
+      "id": "sanotts_cs_orig",
+      "display_name": "sanoTTS cs 1.57M FP32 GGUF (Czech, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-cs-GGUF",
+      "files": [
+        "gguf/cs/cs-f32.gguf",
+        "gguf/cs/config.json"
+      ],
+      "strip_prefix": "gguf/cs"
+    },
+    {
+      "id": "sanotts_de_orig",
+      "display_name": "sanoTTS de 1.57M FP32 GGUF (German, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-de-GGUF",
+      "files": [
+        "gguf/de/de-f32.gguf",
+        "gguf/de/config.json"
+      ],
+      "strip_prefix": "gguf/de"
+    },
+    {
+      "id": "sanotts_es_orig",
+      "display_name": "sanoTTS es 1.56M FP32 GGUF (Spanish, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-es-GGUF",
+      "files": [
+        "gguf/es/es-f32.gguf",
+        "gguf/es/config.json"
+      ],
+      "strip_prefix": "gguf/es"
+    },
+    {
+      "id": "sanotts_fr_orig",
+      "display_name": "sanoTTS fr 1.57M FP32 GGUF (French, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-fr-GGUF",
+      "files": [
+        "gguf/fr/fr-f32.gguf",
+        "gguf/fr/config.json"
+      ],
+      "strip_prefix": "gguf/fr"
+    },
+    {
+      "id": "sanotts_it_orig",
+      "display_name": "sanoTTS it 1.57M FP32 GGUF (Italian, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-it-GGUF",
+      "files": [
+        "gguf/it/it-f32.gguf",
+        "gguf/it/config.json"
+      ],
+      "strip_prefix": "gguf/it"
+    },
+    {
+      "id": "sanotts_pt_orig",
+      "display_name": "sanoTTS pt 1.57M FP32 GGUF (Portuguese (Brazil), piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-pt-GGUF",
+      "files": [
+        "gguf/pt/pt-f32.gguf",
+        "gguf/pt/config.json"
+      ],
+      "strip_prefix": "gguf/pt"
+    },
+    {
+      "id": "sanotts_ro_orig",
+      "display_name": "sanoTTS ro 1.57M FP32 GGUF (Romanian, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-ro-GGUF",
+      "files": [
+        "gguf/ro/ro-f32.gguf",
+        "gguf/ro/config.json"
+      ],
+      "strip_prefix": "gguf/ro"
+    },
+    {
+      "id": "sanotts_ru_orig",
+      "display_name": "sanoTTS ru 1.57M FP32 GGUF (Russian, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-ru-GGUF",
+      "files": [
+        "gguf/ru/ru-f32.gguf",
+        "gguf/ru/config.json"
+      ],
+      "strip_prefix": "gguf/ru"
+    },
+    {
+      "id": "sanotts_tr_orig",
+      "display_name": "sanoTTS tr 1.56M FP32 GGUF (Turkish, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-tr-GGUF",
+      "files": [
+        "gguf/tr/tr-f32.gguf",
+        "gguf/tr/config.json"
+      ],
+      "strip_prefix": "gguf/tr"
+    },
+    {
+      "id": "sanotts_ne_orig",
+      "display_name": "sanoTTS ne 1.47M FP32 GGUF (Nepali, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-ne-GGUF",
+      "files": [
+        "gguf/ne/ne-f32.gguf",
+        "gguf/ne/config.json"
+      ],
+      "strip_prefix": "gguf/ne"
+    },
+    {
+      "id": "sanotts_hi_orig",
+      "display_name": "sanoTTS hi 1.50M FP32 GGUF (Hindi, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-hi-GGUF",
+      "files": [
+        "gguf/hi/hi-f32.gguf",
+        "gguf/hi/config.json"
+      ],
+      "strip_prefix": "gguf/hi"
     }
   ],
   "dependencies": [],
