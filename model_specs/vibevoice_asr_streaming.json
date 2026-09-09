@@ -12,8 +12,16 @@
     "streaming"
   ],
   "languages": [
-    "auto",
-    "51 languages"
+    "en",
+    "zh",
+    "es",
+    "pt",
+    "de",
+    "ja",
+    "ko",
+    "fr",
+    "ru",
+    "it"
   ],
   "capabilities": {
     "asr": [
@@ -123,7 +131,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "vibevoice_asr_streaming_7b_bf16",
+    "recommended_package": "vibevoice_asr_streaming_7b_q8_0",
     "tags": [
       "ASR",
       "Streaming",
@@ -137,23 +145,42 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "audio-cpp/audio.cpp-gguf",
+      "repo": "audio-cpp/VibeVoice-ASR-Streaming-7B-GGUF",
       "revision": "main",
       "gated": false
     }
   },
   "packages": [
     {
+      "id": "vibevoice_asr_streaming_7b_q8_0",
+      "display_name": "VibeVoice ASR Streaming 7B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-ASR-Streaming-7B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-7b-q8_0.gguf"
+      ]
+    },
+    {
       "id": "vibevoice_asr_streaming_7b_bf16",
       "display_name": "VibeVoice ASR Streaming 7B BF16 GGUF",
-      "default": true,
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "VibeVoice-ASR-Streaming-7B-GGUF",
       "files": [
-        "VibeVoice-ASR-Streaming-7B-GGUF/vibevoice-asr-streaming-7b-bf16.gguf"
-      ],
-      "strip_prefix": "VibeVoice-ASR-Streaming-7B-GGUF"
+        "vibevoice-asr-streaming-7b-bf16.gguf"
+      ]
+    },
+    {
+      "id": "vibevoice_asr_streaming_7b_q4_k",
+      "display_name": "VibeVoice ASR Streaming 7B Q4_K GGUF",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "VibeVoice-ASR-Streaming-7B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-7b-q4_k.gguf"
+      ]
     }
   ],
   "sources": [
