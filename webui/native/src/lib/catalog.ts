@@ -46,6 +46,7 @@ const exposeAllGgufPackageFamilies = new Set([
   'cosyvoice3',
   'firered_audio',
   'fireredtts3',
+  'irodori_tts',
   'meanvc2',
   'midashenglm_gen',
   'sanotts'
@@ -158,6 +159,7 @@ function packageLabel(entry: PackageEntry): string {
     if (entry.id.includes('_turbo_')) return `GGUF Turbo ${precision}`;
     return `GGUF ${precision}`;
   }
+  if (entry.family === 'irodori_tts' && entry.id.includes('_anime_')) return 'Anime Q8';
   if (entry.format === 'safetensors') return 'Safetensors';
   if (entry.id.includes('int8_dit')) return 'GGUF Q4 ConvRot';
   if (entry.precision === 'q4_k' || entry.precision === 'q4_0') return 'GGUF Q4';

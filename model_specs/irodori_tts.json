@@ -301,7 +301,7 @@
   "packages": [
     {
       "id": "irodori_tts_v4_small_q8_0",
-      "display_name": "Irodori-TTS v4 Small Q8_0 GGUF",
+      "display_name": "Irodori-TTS v4.1 Small Q8_0 GGUF",
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
@@ -312,8 +312,19 @@
       "strip_prefix": "Irodori-TTS-v4-Small-GGUF"
     },
     {
+      "id": "irodori_tts_v4_1_anime_q8_0",
+      "display_name": "Irodori-TTS v4.1 Anime Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Irodori-TTS-v4-Small-GGUF",
+      "files": [
+        "Irodori-TTS-v4-Small-GGUF/irodori-tts-v4.1-anime-q8_0.gguf"
+      ],
+      "strip_prefix": "Irodori-TTS-v4-Small-GGUF"
+    },
+    {
       "id": "irodori_tts_v4_small_f16",
-      "display_name": "Irodori-TTS v4 Small F16 GGUF",
+      "display_name": "Irodori-TTS v4.1 Small F16 GGUF",
       "format": "gguf",
       "precision": "f16",
       "target_directory": "Irodori-TTS-v4-Small-GGUF",

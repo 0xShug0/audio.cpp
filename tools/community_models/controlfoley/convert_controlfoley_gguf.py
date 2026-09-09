@@ -4,7 +4,7 @@
 Example:
   build/debug/bin/audiocpp_gguf must exist before running this script.
 
-  python scripts/controlfoley/convert_controlfoley_gguf.py \
+  python tools/community_models/controlfoley/convert_controlfoley_gguf.py \
     --model-dir models/ControlFoley \
     --bigvgan-dir /home/leo/.cache/huggingface/hub/models--nvidia--bigvgan_v2_44khz_128band_512x/snapshots/95a9d1dcb12906c03edd938d77b9333d6ded7dfb \
     --output-dir models/ControlFoley-GGUF

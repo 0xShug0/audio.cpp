@@ -12,6 +12,8 @@ ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gg
 
 > [!IMPORTANT]
 >
+> **2026-09-09 - Irodori-TTS v4.1 Anime:** The anime fine-tuned Irodori-TTS v4.1 Q8 GGUF is available as an Irodori-TTS v4.1 Small package variant.
+>
 > **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
 > **CUDA performance headline:** multiple TTS paths already run **1.8x to up to 8x faster than their Python reference paths** while cutting end-to-end latency by **45%-85%**.

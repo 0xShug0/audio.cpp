@@ -149,6 +149,7 @@
     'cosyvoice3',
     'firered_audio',
     'fireredtts3',
+    'irodori_tts',
     'meanvc2',
     'midashenglm_gen'
   ]);
