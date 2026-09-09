@@ -498,6 +498,7 @@ add_library(engine_core OBJECT
     src/framework/audio/deepfilternet2.cpp
     src/framework/audio/dsp.cpp
     src/framework/audio/flashsr.cpp
+    src/framework/audio/gtcrn.cpp
     src/framework/audio/istft_graph.cpp
     src/framework/audio/mixing.cpp
     src/framework/audio/resampling.cpp
@@ -2267,6 +2268,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
         )
         add_test(NAME zipenhancer_utility_test COMMAND zipenhancer_utility_test)
+
+        add_engine_unittest(gtcrn_utility_test tests/unittests/test_gtcrn_utility.cpp)
+        target_compile_definitions(gtcrn_utility_test PRIVATE
+            ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+        )
+        add_test(NAME gtcrn_utility_test COMMAND gtcrn_utility_test)
 
         add_engine_unittest(audio_utility_api_test tests/unittests/test_audio_utility_api.cpp)
         target_compile_definitions(audio_utility_api_test PRIVATE

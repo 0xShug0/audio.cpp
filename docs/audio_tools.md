@@ -4,6 +4,7 @@
 |---|---|---|---|
 | AudioSR | `audiosr` | `s2s` audio super-resolution | [AudioSR](#audiosr) |
 | ControlFoley | `controlfoley` | `gen` Foley/SFX generation | [ControlFoley](#controlfoley) |
+| GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility | [GTCRN](#gtcrn) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
@@ -53,6 +54,33 @@ audiocpp_cli --task gen --family controlfoley \
   --backend cuda \
   --text "A wooden door closes in a quiet hallway." \
   --out foley.wav
+```
+
+## GTCRN
+
+GTCRN is a tiny 16 kHz speech-enhancement utility exposed through the framework
+audio utility API. The native runtime supports the DNS3, VCTK, and streaming
+checkpoints converted from the official PyTorch weights to SafeTensors.
+
+| Utility model | Checkpoint |
+|---|---|
+| `gtcrn` | Alias for `gtcrn_streaming` |
+| `gtcrn_streaming` | Official streaming DNS3 checkpoint |
+| `gtcrn_dns3` | Official DNS3 checkpoint |
+| `gtcrn_vctk` | Official VCTK checkpoint |
+
+Offline file processing through the utility API:
+
+```cpp
+engine::audio::denoise_file("input.wav", "enhanced.wav", "gtcrn");
+```
+
+Native streaming uses one 512-point STFT frame at a time:
+
+```cpp
+auto model = engine::audio::GTCRNModel::load_from_safetensors("gtcrn_streaming.safetensors");
+auto session = model.create_streaming_session();
+session->process_stft_frame(input_257x2, output_257x2);
 ```
 
 ## MeanVC2
