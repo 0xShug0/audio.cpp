@@ -83,7 +83,8 @@ VibeVoiceASRSpeechEncoder::VibeVoiceASRSpeechEncoder(
 
 VibeVoiceASRSpeechFeatures VibeVoiceASRSpeechEncoder::encode(
     const runtime::AudioBuffer & audio,
-    uint64_t seed) const {
+    uint64_t seed,
+    uint64_t rng_offset) const {
     const int64_t total_frames = audio_frame_count(audio);
     const int64_t segment_samples = static_cast<int64_t>(audio.sample_rate) * kStreamingSegmentSeconds;
     VibeVoiceTokenizerLatents acoustic_mean;
@@ -115,7 +116,7 @@ VibeVoiceASRSpeechFeatures VibeVoiceASRSpeechEncoder::encode(
         {acoustic_mean},
         assets_->config.acoustic_tokenizer.fix_std,
         seed,
-        0,
+        rng_offset,
         sampling::TorchRandnPrecision::BFloat16,
         sampling_policy_ ? &*sampling_policy_ : nullptr);
     const auto acoustic = connector_.project_acoustic(

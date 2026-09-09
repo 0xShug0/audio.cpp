@@ -968,6 +968,7 @@ audiocpp_add_model(vibevoice_asr
         engine/models/vibevoice_asr/loader.h
     LOADERS
         engine::models::vibevoice_asr::make_vibevoice_asr_loader
+        engine::models::vibevoice_asr::make_vibevoice_asr_streaming_loader
 )
 
 audiocpp_add_model(voxtral_realtime
