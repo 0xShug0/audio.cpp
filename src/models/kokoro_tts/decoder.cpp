@@ -1,4 +1,5 @@
 #include "engine/models/kokoro_tts/decoder.h"
+#include "cpu_kernels.h"
 
 #include "engine/models/kokoro_tts/assets.h"
 
@@ -205,10 +206,16 @@ ggml_tensor * reflect_pad_left_1_bct_decoder(ggml_context * ctx, ggml_tensor * x
     return output.tensor;
 }
 
+
 ggml_tensor * build_snake1d_bct_decoder(
     ggml_context * ctx,
     ggml_tensor * x,
-    const core::TensorValue & alpha) {
+    const core::TensorValue & alpha,
+    bool use_cpu_fastpath) {
+    if (use_cpu_fastpath && x->type == GGML_TYPE_F32 &&
+        alpha.type == GGML_TYPE_F32 && ggml_is_contiguous(x) && ggml_is_contiguous(alpha.tensor)) {
+        return ggml_map_custom2(ctx, x, alpha.tensor, cpu_detail::kokoro_snake_cpu, GGML_N_TASKS_MAX, nullptr);
+    }
     core::ModuleBuildContext build_ctx = {};
     build_ctx.ggml = ctx;
     const int64_t batch = x->ne[2];
@@ -230,7 +237,8 @@ ggml_tensor * build_adaptive_instance_norm_bct_decoder(
     const KokoroWeights::AdaIn1dWeights & weights,
     const core::TensorValue & style,
     std::vector<TimeMaskInputs> & masks,
-    bool use_time_masks) {
+    bool use_time_masks,
+    bool use_cpu_fastpath) {
     const int64_t batch = x->ne[2];
     const int64_t channels = x->ne[1];
     const int64_t frames = x->ne[0];
@@ -275,6 +283,10 @@ ggml_tensor * build_adaptive_instance_norm_bct_decoder(
         GGML_TYPE_F32);
     (void)batch;
     (void)frames;
+    if (use_cpu_fastpath && !use_time_masks && x->type == GGML_TYPE_F32 && ggml_is_contiguous(x)) {
+        return ggml_map_custom3(ctx, x, gamma.tensor, beta.tensor,
+            cpu_detail::kokoro_adain_cpu, GGML_N_TASKS_MAX, const_cast<float *>(&weights.eps));
+    }
     if (use_time_masks) {
         return build_masked_adain_bct(build_ctx, x, gamma, beta, channels, weights.eps, masks);
     }
@@ -304,21 +316,22 @@ modules::ConvTranspose1dWeights make_conv_transpose1d_weights(
     return weights;
 }
 
+
 template <typename ConvWeightsT>
 ggml_tensor * build_decoder_conv1d_bct(
     ggml_context * ctx,
     ggml_tensor * input,
     const ConvWeightsT & conv,
-    bool allow_pointwise_fastpath) {
+    bool allow_cpu_fastpath) {
     if (conv.groups != 1) {
         throw std::runtime_error("kokoro decoder conv1d requires groups == 1");
     }
-    if (allow_pointwise_fastpath &&
+    if (allow_cpu_fastpath &&
         conv.kernel == 1 &&
         conv.stride == 1 &&
         conv.padding == 0 &&
         conv.dilation == 1) {
-        ggml_tensor * x = ggml_cont(ctx, input);
+        ggml_tensor * x = ggml_is_contiguous(input) ? input : ggml_cont(ctx, input);
         ggml_tensor * x_2d = ggml_reshape_2d(ctx, x, input->ne[0], input->ne[1]);
         ggml_tensor * x_t = ggml_cont(ctx, ggml_transpose(ctx, x_2d));
         ggml_tensor * w = ggml_reshape_2d(ctx, conv.weight.tensor, conv.in_channels, conv.out_channels);
@@ -329,6 +342,25 @@ ggml_tensor * build_decoder_conv1d_bct(
             y_2d = ggml_add(ctx, y_2d, b);
         }
         return ggml_reshape_3d(ctx, y_2d, y_2d->ne[0], y_2d->ne[1], 1);
+    }
+    // Keep the existing device/non-F32 paths. Weight objects outlive this graph.
+    if (allow_cpu_fastpath && input->ne[2] == 1 &&
+        input->type == GGML_TYPE_F32 && conv.weight.tensor->type == GGML_TYPE_F32) {
+        const int64_t frames = (input->ne[0] + 2 * conv.padding -
+            conv.dilation * (conv.kernel - 1) - 1) / conv.stride + 1;
+        // im2col understands channel strides; only the time axis must be packed.
+        ggml_tensor * args[] = {input->nb[0] == sizeof(float) ? input : ggml_cont(ctx, input)};
+        ggml_tensor * columns = ggml_custom_4d(ctx, GGML_TYPE_F32,
+            conv.in_channels * conv.kernel, frames, 1, 1, args, 1,
+            cpu_detail::kokoro_im2col_rows<ConvWeightsT>, GGML_N_TASKS_MAX, const_cast<ConvWeightsT *>(&conv));
+        ggml_tensor * weights = ggml_reshape_2d(ctx, conv.weight.tensor,
+            conv.in_channels * conv.kernel, conv.out_channels);
+        ggml_tensor * y = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, columns, weights),
+            frames, conv.out_channels, 1);
+        if (conv.use_bias) {
+            y = ggml_add(ctx, y, ggml_reshape_3d(ctx, conv.bias->tensor, 1, conv.out_channels, 1));
+        }
+        return y;
     }
     core::ModuleBuildContext build_ctx = {};
     build_ctx.ggml = ctx;
@@ -868,18 +900,18 @@ ggml_tensor * build_generator_resblock(
     ggml_tensor * x,
     const KokoroWeights::GeneratorResBlockWeights & block,
     const core::TensorValue & style,
-    bool allow_cpu_pointwise_fastpath,
+    bool allow_cpu_fastpath,
     std::vector<TimeMaskInputs> & time_masks,
     bool use_time_masks) {
     ggml_tensor * current = x;
     for (size_t i = 0; i < block.convs1.size(); ++i) {
         ggml_tensor * xt =
-            build_adaptive_instance_norm_bct_decoder(ctx, current, block.adain1[i], style, time_masks, use_time_masks);
-        xt = build_snake1d_bct_decoder(ctx, xt, block.alpha1[i]);
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_pointwise_fastpath);
-        xt = build_adaptive_instance_norm_bct_decoder(ctx, xt, block.adain2[i], style, time_masks, use_time_masks);
-        xt = build_snake1d_bct_decoder(ctx, xt, block.alpha2[i]);
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_pointwise_fastpath);
+            build_adaptive_instance_norm_bct_decoder(ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        xt = build_snake1d_bct_decoder(ctx, xt, block.alpha1[i], allow_cpu_fastpath);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath);
+        xt = build_adaptive_instance_norm_bct_decoder(ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        xt = build_snake1d_bct_decoder(ctx, xt, block.alpha2[i], allow_cpu_fastpath);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath);
         current = ggml_add(ctx, xt, current);
     }
     return current;
@@ -929,7 +961,7 @@ struct GeneratorGraphSession {
         }
 
         try {
-            const bool allow_cpu_pointwise_fastpath = !use_device_backend;
+            const bool allow_cpu_fastpath = !use_device_backend;
 
             decoder_x_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, decoder_frame_capacity, 512, 1);
             conditioning_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, conditioning_frame_capacity, 22, 1);
@@ -945,13 +977,13 @@ struct GeneratorGraphSession {
             ggml_tensor * current = decoder_x_in;
             for (size_t i = 0; i < stages.size(); ++i) {
                 const GeneratorGraphStage & stage = stages[i];
-                ggml_tensor * source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv, allow_cpu_pointwise_fastpath);
+                ggml_tensor * source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv, allow_cpu_fastpath);
                 source = build_generator_resblock(
                     ctx,
                     source,
                     *stage.noise_res,
                     style,
-                    allow_cpu_pointwise_fastpath,
+                    allow_cpu_fastpath,
                     time_masks,
                     false);
 
@@ -971,7 +1003,7 @@ struct GeneratorGraphSession {
                         x,
                         *stage.resblocks[j],
                         style,
-                        allow_cpu_pointwise_fastpath,
+                        allow_cpu_fastpath,
                         time_masks,
                         false);
                     stage_sum = stage_sum == nullptr ? block : ggml_add(ctx, stage_sum, block);
@@ -980,7 +1012,7 @@ struct GeneratorGraphSession {
             }
 
             current = ggml_leaky_relu(ctx, current, 0.01f, false);
-            output = build_decoder_conv1d_bct(ctx, current, weights->conv_post, allow_cpu_pointwise_fastpath);
+            output = build_decoder_conv1d_bct(ctx, current, weights->conv_post, allow_cpu_fastpath);
             output = ggml_cont(ctx, output);
             set_graph_output(output);
 

@@ -1,4 +1,5 @@
 #include "engine/models/kokoro_tts/predictor.h"
+#include "cpu_kernels.h"
 
 #include "engine/models/kokoro_tts/plbert.h"
 #include "engine/models/kokoro_tts/assets.h"
@@ -588,7 +589,8 @@ ggml_tensor * build_adaptive_instance_norm_ct_predictor(
     const KokoroWeights::AdaIn1dWeights & weights,
     const core::TensorValue & style,
     std::vector<TimeMaskInputs> & masks,
-    bool use_time_masks) {
+    bool use_time_masks,
+    bool use_cpu_fastpath) {
     const int64_t channels = x->ne[1];
     core::ModuleBuildContext build_ctx = {};
     build_ctx.ggml = ctx;
@@ -616,6 +618,10 @@ ggml_tensor * build_adaptive_instance_norm_ct_predictor(
         ggml_reshape_1d(ctx, shift.tensor, channels),
         core::TensorShape::from_dims({channels}),
         GGML_TYPE_F32);
+    if (use_cpu_fastpath && !use_time_masks && x->type == GGML_TYPE_F32 && ggml_is_contiguous(x)) {
+        return ggml_map_custom3(ctx, x, gamma.tensor, beta.tensor,
+            cpu_detail::kokoro_adain_cpu, GGML_N_TASKS_MAX, const_cast<float *>(&weights.eps));
+    }
     if (use_time_masks) {
         return build_masked_adain_ct(build_ctx, x, gamma, beta, channels, weights.eps, masks);
     }
@@ -630,7 +636,8 @@ ggml_tensor * build_adain_resblock_ct_predictor(
     const core::TensorValue & style_decoder,
     bool use_decoder_style,
     std::vector<TimeMaskInputs> & masks,
-    bool use_time_masks) {
+    bool use_time_masks,
+    bool use_cpu_fastpath) {
     const auto & style = use_decoder_style ? style_decoder : style_predictor;
     ggml_tensor * shortcut = x;
     if (block.upsample) {
@@ -647,7 +654,7 @@ ggml_tensor * build_adain_resblock_ct_predictor(
         shortcut = build_standard_conv1d_ct_predictor(ctx, shortcut, block.conv1x1);
     }
 
-    ggml_tensor * residual = build_adaptive_instance_norm_ct_predictor(ctx, x, block.norm1, style, masks, use_time_masks);
+    ggml_tensor * residual = build_adaptive_instance_norm_ct_predictor(ctx, x, block.norm1, style, masks, use_time_masks, use_cpu_fastpath);
     residual = ggml_leaky_relu(ctx, residual, 0.2f, false);
     if (block.use_pool) {
         residual = build_conv_transpose1d_ct_predictor(ctx, residual, block.pool);
@@ -659,7 +666,8 @@ ggml_tensor * build_adain_resblock_ct_predictor(
         block.norm2,
         style,
         masks,
-        use_time_masks);
+        use_time_masks,
+        use_cpu_fastpath);
     residual = ggml_leaky_relu(ctx, residual, 0.2f, false);
     residual = build_standard_conv1d_ct_predictor(ctx, residual, block.conv2);
     ggml_tensor * out = ggml_scale(ctx, ggml_add(ctx, residual, shortcut), 0.7071067811865475f);
@@ -1726,7 +1734,7 @@ private:
                                 style_decoder,
                                 false,
                                 time_masks,
-                                false);
+                                false, !use_device_backend);
                         }
                         for (size_t i = 0; i < weights->predictor.n_blocks.size(); ++i) {
                             n = build_adain_resblock_ct_predictor(
@@ -1737,7 +1745,7 @@ private:
                                 style_decoder,
                                 false,
                                 time_masks,
-                                false);
+                                false, !use_device_backend);
                         }
 
                         f0_out = build_standard_conv1d_ct_predictor(ctx, f0, weights->predictor.f0_proj);
@@ -1760,7 +1768,7 @@ private:
                             style_decoder,
                             true,
                             time_masks,
-                            false);
+                            false, !use_device_backend);
                         ggml_tensor * asr_res = build_standard_conv1d_ct_predictor(ctx, asr_in, weights->decoder.asr_res);
                         const auto asr_res_tv =
                             core::wrap_tensor(asr_res, core::TensorShape::from_dims({asr_res->ne[1], asr_res->ne[0]}), GGML_TYPE_F32);
@@ -1781,7 +1789,7 @@ private:
                                 style_decoder,
                                 true,
                                 time_masks,
-                                false);
+                                false, !use_device_backend);
                             if (weights->decoder.decode[i].upsample) {
                                 use_residual_conditioning = false;
                             }
