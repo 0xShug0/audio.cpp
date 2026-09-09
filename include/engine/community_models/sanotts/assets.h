@@ -66,6 +66,26 @@ struct SanoTtsPiperConfig {
     int64_t acoustic_kernel = 5;
     int64_t acoustic_out_channels = 0;
 
+    /**
+     * Output adapter of a `calibrated` acoustic student: a latent calibration
+     * layer trained onto an already-finished token_context body, so a voice
+     * either carries one or omits it entirely. Modes match the reference
+     * exporter; `None` is the case where the config has no `adapter` key.
+     */
+    enum class AdapterMode { None = 0, Affine = 1, Depthwise = 2, LowRank = 3, DepthwiseLowRank = 4 };
+    AdapterMode adapter_mode = AdapterMode::None;
+    int64_t adapter_kernel = 0;
+    int64_t adapter_rank = 0;
+
+    bool adapter_has_depthwise() const {
+        return adapter_mode == AdapterMode::Depthwise ||
+               adapter_mode == AdapterMode::DepthwiseLowRank;
+    }
+    bool adapter_has_lowrank() const {
+        return adapter_mode == AdapterMode::LowRank ||
+               adapter_mode == AdapterMode::DepthwiseLowRank;
+    }
+
     std::array<int64_t, 4> channels = {0, 0, 0, 0};
     std::array<std::vector<int64_t>, 3> stage_branches;
     int64_t post_filter_channels = 0;

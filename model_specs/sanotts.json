@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "sanotts",
   "display_name": "sanoTTS Nano",
-  "description": "Very small multilingual text-to-speech across twelve languages. Two graphs: the nano lineage (duration student, contextual acoustic student to mel-100, noise-fed ConvNeXt-1D decoder with an iSTFT head; voices heart 2.27M and heart-nano 294k, English, 24 kHz) and the deterministic piperlite lineage (duration student, acoustic student to a 192-channel latent, 3-stage ConvTranspose1d decoder with dilated residual banks; voices amy, hfc and kristin for English, vi, id, cs, de, es, fr, it, pt, ro, ru and tr at 1.1-1.8M parameters, 22.05 kHz). Uses an external eSpeak-ng phonemizer.",
+  "description": "Very small multilingual text-to-speech across fourteen languages. Two graphs: the nano lineage (duration student, contextual acoustic student to mel-100, noise-fed ConvNeXt-1D decoder with an iSTFT head; voices heart 2.27M and heart-nano 294k, English, 24 kHz) and the deterministic piperlite lineage (duration student, acoustic student to a 192-channel latent, optionally through a calibration adapter, then a 3-stage ConvTranspose1d decoder with dilated residual banks; voices amy, hfc and kristin for English, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne and hi at 1.1-1.8M parameters, 22.05 kHz). Uses an external eSpeak-ng phonemizer.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -23,7 +23,9 @@
     "pt",
     "ro",
     "ru",
-    "tr"
+    "tr",
+    "ne",
+    "hi"
   ],
   "runtime": {
     "tags": [
@@ -305,6 +307,32 @@
         "gguf/tr/config.json"
       ],
       "strip_prefix": "gguf/tr"
+    },
+    {
+      "id": "sanotts_ne_orig",
+      "display_name": "sanoTTS ne 1.47M FP32 GGUF (Nepali, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-ne-GGUF",
+      "files": [
+        "gguf/ne/ne-f32.gguf",
+        "gguf/ne/config.json"
+      ],
+      "strip_prefix": "gguf/ne"
+    },
+    {
+      "id": "sanotts_hi_orig",
+      "display_name": "sanoTTS hi 1.50M FP32 GGUF (Hindi, piperlite)",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "sanoTTS-hi-GGUF",
+      "files": [
+        "gguf/hi/hi-f32.gguf",
+        "gguf/hi/config.json"
+      ],
+      "strip_prefix": "gguf/hi"
     }
   ],
   "dependencies": [],

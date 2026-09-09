@@ -158,6 +158,37 @@ SanoTtsPiperConfig parse_piper_config(const engine::io::json::Value & root) {
     out.acoustic_kernel = acoustic.require("kernel").as_i64();
     out.acoustic_out_channels = acoustic.require("out_channels").as_i64();
 
+    // A `calibrated` acoustic student ends in a small output adapter. Voices
+    // without one omit the key entirely, which is why this is optional rather
+    // than a mode of "none".
+    if (const auto * adapter = acoustic.find("adapter"); adapter != nullptr && !adapter->is_null()) {
+        const auto & mode = adapter->require("mode").as_string();
+        if (mode == "affine") {
+            out.adapter_mode = SanoTtsPiperConfig::AdapterMode::Affine;
+        } else if (mode == "depthwise") {
+            out.adapter_mode = SanoTtsPiperConfig::AdapterMode::Depthwise;
+        } else if (mode == "lowrank") {
+            out.adapter_mode = SanoTtsPiperConfig::AdapterMode::LowRank;
+        } else if (mode == "depthwise_lowrank") {
+            out.adapter_mode = SanoTtsPiperConfig::AdapterMode::DepthwiseLowRank;
+        } else {
+            throw std::runtime_error("sanoTTS piperlite unsupported acoustic adapter mode: " + mode);
+        }
+        out.adapter_kernel = json::optional_i64(*adapter, "kernel", 0);
+        out.adapter_rank = json::optional_i64(*adapter, "rank", 0);
+        // Same-padding needs an odd kernel, and the low-rank branch is a
+        // bottleneck; a wrong value here would misread the weight blob rather
+        // than fail, so both are checked before any tensor is bound.
+        if (out.adapter_has_depthwise() &&
+            (out.adapter_kernel <= 0 || out.adapter_kernel % 2 == 0)) {
+            throw std::runtime_error(
+                "sanoTTS piperlite acoustic adapter kernel must be positive and odd");
+        }
+        if (out.adapter_has_lowrank() && out.adapter_rank <= 0) {
+            throw std::runtime_error("sanoTTS piperlite acoustic adapter rank must be positive");
+        }
+    }
+
     const auto & decoder = root.require("decoder");
     const auto channels = decoder.require("channels").as_array();
     if (channels.size() != 4) {
@@ -265,6 +296,23 @@ void validate_piper_tensors(const SanoTtsAssets & assets) {
         expected.emplace_back(prefix + ".scale", std::vector<int64_t>{1});
     }
     conv("acoustic.output", c.acoustic_out_channels, c.acoustic_hidden, 1);
+
+    if (c.adapter_mode != SanoTtsPiperConfig::AdapterMode::None) {
+        // Depthwise conv is bias-free; the low-rank pair are 1x1 convs.
+        if (c.adapter_has_depthwise()) {
+            expected.emplace_back(
+                "acoustic.adapter.depthwise.weight",
+                std::vector<int64_t>{c.acoustic_out_channels, 1, c.adapter_kernel});
+        }
+        if (c.adapter_has_lowrank()) {
+            conv("acoustic.adapter.lowrank_down", c.adapter_rank, c.acoustic_out_channels, 1);
+            conv("acoustic.adapter.lowrank_up", c.acoustic_out_channels, c.adapter_rank, 1);
+        }
+        expected.emplace_back("acoustic.adapter.scale",
+                              std::vector<int64_t>{c.acoustic_out_channels});
+        expected.emplace_back("acoustic.adapter.bias",
+                              std::vector<int64_t>{c.acoustic_out_channels});
+    }
 
     conv_any_kernel("decoder.pre", c.channels[0], c.acoustic_out_channels);
     const int64_t up_kernels[3] = {16, 16, 8};

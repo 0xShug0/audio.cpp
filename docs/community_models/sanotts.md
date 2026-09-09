@@ -2,8 +2,8 @@
 
 `sanotts` provides native GGML inference for the
 [sanoTTS](https://github.com/Ampixa/sanoTTS) voice family — very small
-text-to-speech models across twelve languages, the smallest of which also runs
-on microcontrollers.
+text-to-speech models across fourteen languages, the smallest of which also
+runs on microcontrollers.
 All packages download from Hugging Face
 ([ampixa/sanoTTS](https://huggingface.co/ampixa/sanoTTS) `gguf/`) as
 standalone FP32 GGUFs with embedded model specs. Offline FP32 inference only.
@@ -14,8 +14,16 @@ Two graphs share one family:
   noise-fed ConvNeXt-1D decoder → [log-magnitude | phase] head → inverse
   STFT. 24 kHz. A seed picks one of many valid renderings.
 - **piperlite** — duration student → contextual acoustic student → 192-channel
-  latent → 3-stage ConvTranspose1d decoder with dilated residual banks →
-  tanh waveform. 22.05 kHz. Fully deterministic (no seed).
+  latent → optional calibration adapter → 3-stage ConvTranspose1d decoder with
+  dilated residual banks → tanh waveform. 22.05 kHz. Fully deterministic
+  (no seed).
+
+  The adapter is a small layer trained onto an already-finished acoustic
+  student to re-calibrate the latent it hands the decoder: a bias-free
+  depthwise convolution, a low-rank residual `x + up(tanh(down(x)))`, then a
+  per-channel scale and bias. Voices that carry one declare it in
+  `acoustic.adapter`; the rest omit the key and the latent goes straight to
+  the decoder. Of the packages below only `hi` has one.
 
 | Package | Voice | Graph | Params | Language | Notes |
 |---|---|---|---:|---|---|
@@ -35,6 +43,8 @@ Two graphs share one family:
 | `sanotts_ro_orig` | ro | piperlite | 1,565,164 | ro | Romanian, from `ro_RO-mihai-medium` |
 | `sanotts_ru_orig` | ru | piperlite | 1,566,764 | ru | Russian, from `ru_RU-irina-medium` |
 | `sanotts_tr_orig` | tr | piperlite | 1,562,284 | tr | Turkish, from `tr_TR-dfki-medium` |
+| `sanotts_ne_orig` | ne | piperlite | 1,474,771 | ne | Nepali, from `ne_NP-chitwan-medium` |
+| `sanotts_hi_orig` | hi | piperlite | 1,499,407 | hi | Hindi, from `hi_IN-pratham-medium`; carries a calibration adapter |
 
 ## Install
 
@@ -69,7 +79,8 @@ audiocpp_cli --task tts --family sanotts \
 Swap `--model` for any installed package directory
 (`models/sanoTTS-amy-GGUF`, `models/sanoTTS-de-GGUF`, ...). Each non-English
 voice accepts its own `--language` code (`vi`, `id`, `cs`, `de`, `es`, `fr`,
-`it`, `pt`, `ro`, `ru`); a session rejects text tagged with a language the
+`it`, `pt`, `ro`, `ru`, `tr`, `ne`, `hi`); a session rejects text tagged with a
+language the
 voice was not trained on. Every voice drives the eSpeak-ng voice its Piper
 teacher was trained against — `pt` uses `pt-br`, the rest use the bare
 language code — so eSpeak-ng must have that language's data installed.
@@ -155,6 +166,23 @@ voices, but two of the four Russian sentences phonemize differently there and
 come out 3.5-8% shorter. Any voice is only as reproducible as the eSpeak-ng
 build under it.
 
+Nepali and Hindi were measured on the same harness, four out-of-domain Tatoeba
+sentences each:
+
+| Voice | Sample counts | Min correlation | Samples that quantise identically | Max int16 gap |
+|---|---|---:|---:|---:|
+| ne | identical | 0.9999999865 | 99.916% | 1 LSB |
+| hi | identical | 0.9999999943 | 99.859% | 1 LSB |
+
+Both clear the 0.99999996 of PR #449, and the implied divergence between the
+two runtimes is at most 5.3e-07 (ne) and 1.9e-06 (hi). Hindi is the first
+package to exercise the acoustic calibration adapter, so its number is also the
+evidence that the new adapter path matches the reference: an adapter
+implemented wrongly would not land within half an int16 LSB of a reference that
+computes it. The ten voices that predate the adapter re-measure to correlations
+identical to the ones above, digit for digit, which is what says the new code
+path is inert when a voice does not declare an adapter.
+
 ## Performance
 
 CPU-only, 12-thread x86 (default 4 backend threads), FP32, the shared 6 kB
@@ -175,10 +203,9 @@ cached per token count (duration and token stages) and per frame count
 
 ## Intelligibility of the language voices
 
-The only quality evidence for the nine language voices is automatic
-transcription. 16 out-of-domain Tatoeba sentences per language, rendered by the
-numpy reference and transcribed by Whisper small, scored against the source
-text:
+The only quality evidence for the language voices is automatic transcription.
+16 out-of-domain Tatoeba sentences per language, rendered by the numpy
+reference and transcribed by Whisper small, scored against the source text:
 
 | Voice | CER | WER |
 |---|---:|---:|
@@ -191,11 +218,31 @@ text:
 | fr | 0.088 | 0.221 |
 | ro | 0.104 | 0.392 |
 | cs | 0.111 | 0.351 |
+| hi | 0.289 | 0.662 |
+| ne | 0.576 | 1.116 |
 
 This measures whether the words survive, nothing else. 16 sentences per language
 is directional, not precise. No listening study has been run on any of these
 voices and there is no SCOREQ or MOS estimate for any of them, so nothing here
 says how natural they sound.
+
+CER is also not comparable across languages, because Whisper is far better at
+some than at others, and Nepali and Hindi are two it is weak at. The comparable
+number is each student against its own Piper teacher through the same ASR,
+since the teacher is the ceiling on what any distillation of it can reach:
+
+| Voice | Student CER | Teacher CER | Retained |
+|---|---:|---:|---:|
+| ne | 0.576 | 0.515 | 0.89× |
+| hi | 0.289 | 0.154 | 0.53× |
+
+Read the gap rather than the absolute for these two. Whisper small puts the
+Nepali *teacher* — a published Piper voice, not ours — at 0.515, so the Nepali
+absolute is mostly a statement about the transcriber, and only the small gap to
+its teacher is evidence about the voice. Hindi keeps about half its teacher's
+margin, the same retention German shipped at (0.475). Both are materially
+weaker than the nine European voices above, and no human has listened to
+either.
 
 ## Not included
 
@@ -205,6 +252,23 @@ says how natural they sound.
   the phoneme ids are wrong, which produces different words rather than a
   degraded voice, and this front end has no diacritizer. Arabic ships once one
   exists.
+- **Chinese.** The weights exist, run, and phonemize correctly — the question of
+  the front end is settled, not open. Piper ships Chinese voices under two
+  different front ends: `zh_CN-chaowen-medium` and `zh_CN-xiao_ya-medium`
+  declare `phoneme_type: "pinyin"` over an 85-symbol pinyin inventory, which
+  eSpeak-ng cannot drive, while this voice's teacher `zh_CN-huayan-medium`
+  declares `phoneme_type: "espeak"` with `espeak.voice: "cmn"` over the same
+  152-symbol IPA inventory every other eSpeak Piper voice uses. It is the
+  eSpeak one, and eSpeak-ng's `cmn` reads it correctly: the teacher transcribes
+  at 0.090 CER through exactly this path. What fails is the distilled student,
+  which comes in at 0.468 CER on the same sentences — it keeps 0.19× of its
+  teacher, against 0.475× for the weakest voice that has shipped. Nearly half
+  the characters are wrong, so it is held back for being unintelligible rather
+  than for being mis-phonemized. Chinese ships when a student worth shipping
+  exists. (Both numbers fold traditional and simplified to simplified before
+  scoring; Tatoeba mixes the two and Whisper answers in either, which charges a
+  voice for orthography it never pronounced. Unfolded the same rows read 0.144
+  teacher and 0.502 student — the gap is the same.)
 - **The ~511k "tiny" variants** of eight of these languages. They are a separate
   size tier and need their own evidence.
 

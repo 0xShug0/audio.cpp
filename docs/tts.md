@@ -777,7 +777,8 @@ limitations.
 
 sanoTTS is a family of very small offline TTS voices (English, Vietnamese,
 Indonesian, Czech, German, Spanish, French, Italian, Portuguese, Romanian,
-Russian and Turkish; 294k to 2.27M parameters) with native GGML runtimes; the
+Russian, Turkish, Nepali and Hindi; 294k to 2.27M parameters) with native GGML
+runtimes; the
 smallest voice also runs on microcontrollers. The GGUF packages are
 standalone and download from Hugging Face. sanoTTS requires an external
 eSpeak-ng installation:
