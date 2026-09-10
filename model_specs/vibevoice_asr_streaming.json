@@ -25,7 +25,6 @@
   ],
   "capabilities": {
     "asr": [
-      "segments",
       "speaker_turns",
       "vad_chunking"
     ]

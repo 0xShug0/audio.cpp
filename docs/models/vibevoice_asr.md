@@ -115,6 +115,12 @@ VibeVoice ASR Streaming 7B is the streaming VibeVoice ASR model. It keeps a
 persistent decoder state and can emit speaker-attributed transcript deltas as
 audio arrives. It can also run in offline mode through the same family.
 
+The upstream streaming model emits speaker-attributed text such as
+`Speaker 0: ...`, but it does not emit timestamped segments. In audio.cpp,
+`--turns-out` can expose those speaker/text turns when the model emits speaker
+labels; `--segments-out` is not populated by this streaming model. Use the
+non-streaming `vibevoice_asr` family when timestamped segment output is needed.
+
 The recommended audio.cpp package is the Q8_0 GGUF in the dedicated model repo:
 <https://huggingface.co/audio-cpp/VibeVoice-ASR-Streaming-7B-GGUF>. BF16 and
 Q4_K GGUF variants are also available in the same repo.
@@ -130,7 +136,8 @@ Upstream lists ten supported language codes for this streaming model: `en`,
 | Task | `asr` |
 | Modes | `offline`, `streaming` |
 | Required tokenizer files | Embedded in the standalone GGUF |
-| Output | Transcript text; speaker-attributed text when produced by the model |
+| Output | Transcript text; speaker/text turns when produced by the model |
+| Timestamps | Not produced by the streaming model |
 | Streaming | Live audio chunks over the `/v1/audio/transcriptions/live` endpoint |
 
 Install:
@@ -149,6 +156,7 @@ audiocpp_cli --task asr \
   --threads 8 \
   --audio assets/resources/sample_16k.wav \
   --text-out transcript.txt \
+  --turns-out speaker_turns.json \
   --metrics \
   --log
 ```

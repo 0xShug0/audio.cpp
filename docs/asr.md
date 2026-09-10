@@ -330,7 +330,8 @@ chunking, server usage, and validation notes.
 
 VibeVoice ASR covers the original offline ASR family and the new Streaming 7B
 family. The streaming family has its own dedicated GGUF repo and supports both
-offline and live streaming transcription.
+offline and live streaming transcription. The Streaming 7B model can emit
+speaker-attributed text, but it does not produce timestamped segments.
 
 See [VibeVoice ASR models](models/vibevoice_asr.md) for package IDs, conversion
 notes, CLI examples, live server configuration, and request options.

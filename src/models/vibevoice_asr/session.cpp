@@ -1242,6 +1242,14 @@ runtime::TaskResult VibeVoiceASRSession::run_streaming_model(const VibeVoiceASRR
     }
     const auto decoder_end = Clock::now();
     auto result = streaming_result_;
+    if (result.text_output.has_value()) {
+        for (const auto & segment : postprocessor_.decode_speaker_attributed_text(result.text_output->text)) {
+            runtime::SpeakerTurn turn;
+            turn.speaker_id = segment.speaker_id;
+            turn.text = segment.text;
+            result.speaker_turns.push_back(std::move(turn));
+        }
+    }
     streaming_decoder_state_.reset();
     streaming_audio_buffer_ = runtime::AudioBuffer{};
     debug::timing_log_scalar("vibevoice_asr_streaming.frontend_ms", engine::debug::elapsed_ms(frontend_start, frontend_end));
