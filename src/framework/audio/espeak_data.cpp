@@ -97,16 +97,22 @@ bool valid_cache(const fs::path & root, const Files & files) {
     } catch (...) { return false; }
 }
 fs::path cache_base() {
+    // User/system cache locations may contain legitimate directory aliases
+    // (for example /var -> /private/var on macOS). Resolve that anchor before
+    // appending our own cache directories, whose symlink checks remain strict.
+    const auto anchored = [](const fs::path & path) {
+        return fs::weakly_canonical(fs::absolute(path)) / "audio.cpp" / "espeak-data";
+    };
 #ifdef _WIN32
     const char * base = std::getenv("LOCALAPPDATA");
     if (!base || !*base) throw std::runtime_error("LOCALAPPDATA is required for the eSpeak cache");
-    return fs::path(base) / "audio.cpp" / "espeak-data";
+    return anchored(base);
 #else
     const char * base = std::getenv("XDG_CACHE_HOME");
-    if (base && *base && fs::path(base).is_absolute()) return fs::path(base) / "audio.cpp" / "espeak-data";
+    if (base && *base && fs::path(base).is_absolute()) return anchored(base);
     base = std::getenv("HOME");
     if (!base || !*base) throw std::runtime_error("HOME is required for the eSpeak cache");
-    return fs::path(base) / ".cache" / "audio.cpp" / "espeak-data";
+    return anchored(fs::path(base) / ".cache");
 #endif
 }
 }

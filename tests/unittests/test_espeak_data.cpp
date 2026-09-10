@@ -23,7 +23,11 @@ int main() try {
 #ifdef _WIN32
     _putenv_s("LOCALAPPDATA", root.string().c_str());
 #else
-    setenv("XDG_CACHE_HOME", root.string().c_str(), 1);
+    // Exercise a system-style cache alias, as used by macOS /var and /tmp.
+    const auto actual_cache = root / "actual-cache", cache_alias = root / "cache-alias";
+    fs::create_directory(actual_cache);
+    fs::create_directory_symlink(actual_cache, cache_alias);
+    setenv("XDG_CACHE_HOME", cache_alias.string().c_str(), 1);
 #endif
     const auto source = root / "source", package = root / "data.bin";
     for (const auto * name : {"phontab", "phondata", "phonindex", "intonations", "en_dict", "lang/en", "voices/!v/Mr serious"})
@@ -39,6 +43,18 @@ int main() try {
     const auto legacy = root / "data.gguf";
     fs::copy_file(package, legacy);
     require(materialize_espeak_data(legacy) == cached, "legacy extension shares cache");
+#ifndef _WIN32
+    require(cached.parent_path().parent_path().parent_path() == fs::canonical(actual_cache) / "audio.cpp",
+            "cache anchor resolves directory aliases");
+    const auto redirected_cache = root / "redirected-cache";
+    fs::create_directory(redirected_cache);
+    fs::create_directory_symlink(actual_cache / "audio.cpp", redirected_cache / "audio.cpp");
+    setenv("XDG_CACHE_HOME", redirected_cache.string().c_str(), 1);
+    bool cache_link_rejected = false;
+    try { materialize_espeak_data(package); } catch (const std::exception &) { cache_link_rejected = true; }
+    require(cache_link_rejected, "reject symlink inside cache anchor");
+    setenv("XDG_CACHE_HOME", cache_alias.string().c_str(), 1);
+#endif
     require(timestamp == fs::last_write_time(cached / "phontab"), "cache must not be rewritten");
     for (const auto & entry : fs::recursive_directory_iterator(source)) {
         if (!entry.is_regular_file()) continue;
