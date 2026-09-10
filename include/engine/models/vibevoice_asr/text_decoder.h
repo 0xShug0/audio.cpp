@@ -29,6 +29,7 @@ class VibeVoiceDecoderPrefillGraph;
 class VibeVoiceDecoderCachedStepGraph;
 class VibeVoiceDecoderCachedSuffixGraph;
 class VibeVoiceDecoderEmbeddingGraph;
+class VibeVoiceDecoderKVCache;
 
 class VibeVoiceDecoderCachedState final {
 public:
@@ -45,9 +46,9 @@ private:
 
     std::unique_ptr<VibeVoiceDecoderCachedStepGraph> graph_;
     std::unique_ptr<VibeVoiceDecoderCachedSuffixGraph> suffix_graph_;
+    std::unique_ptr<VibeVoiceDecoderKVCache> cache_;
     runtime::TransformerKVState pending_state_;
-    bool graph_has_state_ = false;
-    bool suffix_graph_has_state_ = false;
+    bool cache_has_state_ = false;
 };
 
 struct VibeVoiceDecoderLogits {
