@@ -161,6 +161,13 @@ function packageLabel(entry: PackageEntry): string {
     return `GGUF ${precision}`;
   }
   if (entry.family === 'irodori_tts' && entry.id.includes('_anime_')) return 'Anime Q8';
+  if (entry.family === 'yue2') {
+    if (entry.id === 'yue2_main_q8_0') return 'Main Q8_0';
+    if (entry.id === 'yue2_main_bf16') return 'Main BF16';
+    if (entry.id === 'yue2_vae_f16') return 'VAE F16';
+    if (entry.id === 'yue2_vae_f32') return 'VAE F32';
+    return entry.display_name || 'Yue2 component';
+  }
   if (entry.format === 'safetensors') return 'Safetensors';
   if (entry.id.includes('int8_dit')) return 'GGUF Q4 ConvRot';
   if (entry.precision === 'q4_k' || entry.precision === 'q4_0') return 'GGUF Q4';
@@ -175,7 +182,7 @@ function packageModelPath(entry: PackageEntry): string {
   if (entry.format === 'gguf' && entry.family === 'minimax_h3') {
     const entryName = entry.id.includes('int8_dit') ? 'dit_int8.gguf' : 'dit.gguf';
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith(`/${entryName}`));
-  } else if (entry.format === 'gguf' && entry.family === 'minimax_music3') {
+  } else if (entry.format === 'gguf' && (entry.family === 'minimax_music3' || entry.family === 'yue2')) {
     return `models/${entry.target_directory}`;
   } else if (entry.format === 'gguf') {
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'));
@@ -190,33 +197,55 @@ function packageModelPath(entry: PackageEntry): string {
 }
 
 function packageSessionOptions(entry: PackageEntry): Record<string, string> | undefined {
-  if (entry.family !== 'minimax_music3') return undefined;
-  if (entry.id === 'minimax_music3_q8_0') {
-    return {
-      'minimax_music3.language_model_gguf': 'language_model_q8_0.gguf',
-      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
-      'minimax_music3.flow_transformer_gguf': 'transformer_q8_0.gguf'
-    };
-  }
-  if (entry.id === 'minimax_music3_bf16') {
-    return {
-      'minimax_music3.language_model_gguf': 'language_model_bf16.gguf',
-      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_bf16.gguf',
-      'minimax_music3.flow_transformer_gguf': 'transformer_bf16.gguf'
-    };
-  }
-  if (entry.id === 'minimax_music3_q4_0') {
-    return {
-      'minimax_music3.language_model_gguf': 'language_model_q4_0.gguf',
-      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
-      'minimax_music3.flow_transformer_gguf': 'transformer_q4_0.gguf'
-    };
+  if (entry.family === 'minimax_music3') {
+    if (entry.id === 'minimax_music3_q8_0') {
+      return {
+        'minimax_music3.language_model_gguf': 'language_model_q8_0.gguf',
+        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
+        'minimax_music3.flow_transformer_gguf': 'transformer_q8_0.gguf'
+      };
+    }
+    if (entry.id === 'minimax_music3_bf16') {
+      return {
+        'minimax_music3.language_model_gguf': 'language_model_bf16.gguf',
+        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_bf16.gguf',
+        'minimax_music3.flow_transformer_gguf': 'transformer_bf16.gguf'
+      };
+    }
+    if (entry.id === 'minimax_music3_q4_0') {
+      return {
+        'minimax_music3.language_model_gguf': 'language_model_q4_0.gguf',
+        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
+        'minimax_music3.flow_transformer_gguf': 'transformer_q4_0.gguf'
+      };
+    }
   }
   return undefined;
 }
 
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
   const exposesAllGguf = exposeAllGgufPackageFamilies.has(entry.family);
+  if (entry.family === 'yue2') {
+    const related = packages.filter((candidate) =>
+      candidate.family === entry.family && candidate.format === 'gguf');
+    const order = new Map([
+      ['yue2_main_q8_0', 0],
+      ['yue2_main_bf16', 1],
+      ['yue2_vae_f16', 2],
+      ['yue2_vae_f32', 3]
+    ]);
+    return related
+      .filter((candidate) => candidate.format === 'gguf')
+      .sort((left, right) => (order.get(left.id) ?? 99) - (order.get(right.id) ?? 99))
+      .map((candidate) => ({
+        id: candidate.id,
+        label: packageLabel(candidate),
+        path: packageModelPath(candidate),
+        format: candidate.format,
+        precision: candidate.precision,
+        session_options: packageSessionOptions(candidate)
+      }));
+  }
   const related = exposesAllGguf ? relatedExposeAllGgufPackages(entry) : relatedPackages(entry);
   if (entry.family === 'ace_step' || entry.family === 'minimax_music3' ||
       exposesAllGguf) {

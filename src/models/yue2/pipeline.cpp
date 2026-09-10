@@ -322,6 +322,9 @@ public:
         const auto vae_start = Clock::now();
         auto audio = decode_audio(latents, frames);
         engine::debug::timing_log_scalar("yue2.vae_decode_ms", engine::debug::elapsed_ms(vae_start, Clock::now()));
+        if (vae) {
+            vae->release_runtime_graphs();
+        }
         return audio;
     }
 
