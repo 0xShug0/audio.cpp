@@ -121,6 +121,12 @@ The upstream streaming model emits speaker-attributed text such as
 labels; `--segments-out` is not populated by this streaming model. Use the
 non-streaming `vibevoice_asr` family when timestamped segment output is needed.
 
+> [!WARNING]
+> Speaker-turn segmentation can differ from the offline VibeVoice ASR family.
+> In local validation, the streaming 7B model merged adjacent speech into fewer
+> speaker turns than the offline model; the same behavior was reproduced with
+> the official Python streaming reference.
+
 The recommended audio.cpp package is the Q8_0 GGUF in the dedicated model repo:
 <https://huggingface.co/audio-cpp/VibeVoice-ASR-Streaming-7B-GGUF>. BF16 and
 Q4_K GGUF variants are also available in the same repo.

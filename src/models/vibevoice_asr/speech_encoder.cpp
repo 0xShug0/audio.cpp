@@ -91,7 +91,6 @@ VibeVoiceASRSpeechFeatures VibeVoiceASRSpeechEncoder::encode(
     VibeVoiceTokenizerLatents semantic_tokens;
     if (total_frames > segment_samples) {
         VibeVoiceTokenizerStreamingState acoustic_state;
-        VibeVoiceTokenizerStreamingState semantic_state;
         for (int64_t start = 0; start < total_frames; start += segment_samples) {
             runtime::TimeSpan span;
             span.start_sample = start;
@@ -99,11 +98,23 @@ VibeVoiceASRSpeechFeatures VibeVoiceASRSpeechEncoder::encode(
             const auto chunk = audio::slice_audio_buffer(audio, span);
             const bool is_final_chunk = span.end_sample == total_frames;
             append_latents(acoustic_mean, tokenizer_.encode_acoustic_streaming(chunk, acoustic_state, is_final_chunk));
+        }
+        tokenizer_.release_cached_graphs();
+        VibeVoiceTokenizerStreamingState semantic_state;
+        for (int64_t start = 0; start < total_frames; start += segment_samples) {
+            runtime::TimeSpan span;
+            span.start_sample = start;
+            span.end_sample = std::min(total_frames, start + segment_samples);
+            const auto chunk = audio::slice_audio_buffer(audio, span);
+            const bool is_final_chunk = span.end_sample == total_frames;
             append_latents(semantic_tokens, tokenizer_.encode_semantic_streaming(chunk, semantic_state, is_final_chunk));
         }
+        tokenizer_.release_cached_graphs();
     } else {
         acoustic_mean = tokenizer_.encode_acoustic(audio);
+        tokenizer_.release_cached_graphs();
         semantic_tokens = tokenizer_.encode_semantic(audio);
+        tokenizer_.release_cached_graphs();
     }
     if (acoustic_mean.frames != semantic_tokens.frames) {
         const int64_t frames = std::min(acoustic_mean.frames, semantic_tokens.frames);
@@ -123,10 +134,12 @@ VibeVoiceASRSpeechFeatures VibeVoiceASRSpeechEncoder::encode(
         sampled.latents.front().values,
         sampled.latents.front().frames,
         sampled.latents.front().dim);
+    connector_.release_cached_graphs();
     const auto semantic = connector_.project_semantic(
         semantic_tokens.values,
         semantic_tokens.frames,
         semantic_tokens.dim);
+    connector_.release_cached_graphs();
     if (acoustic.frames != semantic.frames || acoustic.hidden_size != semantic.hidden_size) {
         throw std::runtime_error("VibeVoice-ASR acoustic and semantic connector shapes mismatch");
     }
