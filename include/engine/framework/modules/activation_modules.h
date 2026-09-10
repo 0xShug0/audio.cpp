@@ -145,6 +145,32 @@ private:
     Snake1dConfig config_;
 };
 
+struct SnakeBeta1dConfig {
+    int64_t hidden_size = 0;
+    bool logscale = true;
+};
+
+struct SnakeBeta1dWeights {
+    core::TensorValue alpha;
+    core::TensorValue beta;
+};
+
+class SnakeBeta1dModule {
+public:
+    explicit SnakeBeta1dModule(SnakeBeta1dConfig config);
+
+    const SnakeBeta1dConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const SnakeBeta1dWeights & weights) const;
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    SnakeBeta1dConfig config_;
+};
+
 enum class AliasFreeActivationKind {
     SnakeBeta,
 };

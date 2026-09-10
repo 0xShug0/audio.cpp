@@ -1,0 +1,56 @@
+{
+  "direct_off_medium": {
+    "id": "direct_off_medium",
+    "style": "English, indie pop, bright acoustic guitar, soft drums, warm lead vocal, polished demo mix",
+    "lyrics": "[Verse]\nAudio dot cpp starts the demo tonight.\nSmall sparks of music glow in the light.\nA local engine keeps the rhythm tight.\nNo cloud in the loop, just code taking flight.\n[Pre-Chorus]\nEvery buffer finds its place.\nEvery model joins the race.\n[Chorus]\nTurn the signal into song.\nLet the native runtime carry it along.\nFrom text to melody, clear and strong.\nAudio dot cpp keeps the demo moving on.",
+    "cot": "off",
+    "seed": 20260910,
+    "cfg_scale": 1.01,
+    "abc_max_tokens": 1,
+    "abc_min_tokens": 0,
+    "semantic_max_tokens": 640,
+    "semantic_min_tokens": 192,
+    "ode_steps": 8
+  },
+  "create_full_plan_medium": {
+    "id": "create_full_plan_medium",
+    "style": "English, piano pop, clear lead vocal, gentle bass, 92 BPM, warm chorus harmonies, soft room reverb",
+    "lyrics": "[Verse]\nA quiet room begins to sing.\nThe keys reply with silver rings.\nA metronome is counting time.\nA simple phrase becomes a line.\n[Pre-Chorus]\nThe bass walks in with patient grace.\nThe melody opens more space.\n[Chorus]\nHold the note and let it rise.\nMorning opens up the sky.\nEvery word can find a place.\nEvery phrase can leave a trace.\n[Bridge]\nIf the plan is clear and bright.\nThe song can travel through the night.",
+    "cot": "full",
+    "seed": 20260911,
+    "cfg_scale": 1.0,
+    "abc_max_tokens": 512,
+    "abc_min_tokens": 128,
+    "semantic_max_tokens": 768,
+    "semantic_min_tokens": 224,
+    "ode_steps": 8
+  },
+  "cover_melody_score_medium": {
+    "id": "cover_melody_score_medium",
+    "style": "English, jazz funk cover, warm Rhodes, round bass, light drums, relaxed vocal, clean live band feel",
+    "lyrics": "[Verse]\nWe follow the melody line.\nThe rhythm keeps everything fine.\nA Rhodes chord lands behind the beat.\nThe bass keeps walking down the street.\n[Chorus]\nHold that shape and make it new.\nChange the color, keep the view.\nEvery phrase can still belong.\nWhen the cover turns into a song.",
+    "cot": "melody",
+    "abc_file": "reference/YuE/examples/melody.abc",
+    "seed": 20260912,
+    "cfg_scale": 1.0,
+    "abc_max_tokens": 1,
+    "abc_min_tokens": 0,
+    "semantic_max_tokens": 640,
+    "semantic_min_tokens": 192,
+    "ode_steps": 8
+  },
+  "edit_full_score_medium": {
+    "id": "edit_full_score_medium",
+    "style": "English, piano pop with jazz harmony, clear lead vocal, gentle bass, 92 BPM, wider chorus, tasteful drum fills",
+    "lyrics": "[Verse]\nA quiet room begins to sing.\nThe keys reply with silver rings.\nA brushed snare paints the second line.\nThe harmony turns right on time.\n[Chorus]\nHold the note and let it rise.\nMorning opens up the sky.\nKeep the score but change the light.\nMake the ending open wide.\n[Outro]\nLet the last chord slowly fade.\nLeave the echo we have made.",
+    "cot": "full",
+    "abc_file": "reference/YuE/examples/score-jazz.abc",
+    "seed": 20260913,
+    "cfg_scale": 1.0,
+    "abc_max_tokens": 1,
+    "abc_min_tokens": 0,
+    "semantic_max_tokens": 640,
+    "semantic_min_tokens": 192,
+    "ode_steps": 8
+  }
+}
