@@ -180,6 +180,66 @@ jobs:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan
           path: build/bin/*
 
+  linux-cuda-colab:
+    name: Ubuntu x64 (CUDA 12.8, Colab T4)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
+      CUDAHOSTCXX: g++-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq software-properties-common
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc-13 g++-13 cmake ninja-build libssl-dev
+      - name: Configure
+        run: |
+          cmake -S . -B build/colab-cuda -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CUDA_ARCHITECTURES=75 \
+            -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc' \
+            -DENGINE_ENABLE_CUDA=ON \
+            -DENGINE_ENABLE_VULKAN=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF \
+            -DENGINE_BUILD_TESTS=OFF \
+            -DAUDIOCPP_VERSION=${{ needs.get-version.outputs.version }} \
+            -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
+            -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
+            -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON \
+            -DENGINE_ENABLE_LLAMAFILE=ON \
+            -DENGINE_ENABLE_CUDA_GRAPHS=ON
+      - name: Build server
+        run: cmake --build build/colab-cuda --parallel "$(nproc)" --target audiocpp_server
+      - name: Verify portable executable
+        run: |
+          build/colab-cuda/bin/audiocpp_server --version
+          if ldd build/colab-cuda/bin/audiocpp_server | grep -Eq 'not found|libstdc\+\+|libgcc_s'; then
+            echo "::error::The Colab executable has missing or non-portable runtime dependencies."
+            ldd build/colab-cuda/bin/audiocpp_server
+            exit 1
+          fi
+      - name: Stage bundle
+        run: |
+          mkdir -p dist/models
+          install -m 0755 build/colab-cuda/bin/audiocpp_server dist/audiocpp_server
+          install -m 0644 LICENSE dist/LICENSE
+          cp -r tools dist/tools
+          cp -r model_specs dist/model_specs
+          sha256sum dist/audiocpp_server > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cuda12.8-colab
+          path: dist/*
+
   windows-cpu:
     name: Windows x64 (CPU)
     needs: [check-release, get-version]
@@ -459,6 +519,7 @@ jobs:
       - macos-metal
       - linux-cpu
       - linux-vulkan
+      - linux-cuda-colab
       - windows-cpu
       - windows-cpu-portable
       - windows-vulkan
