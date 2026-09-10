@@ -27,7 +27,7 @@
   },
   "dependencies": [],
   "ui": {
-    "recommended_package": "yue2_3b_q8_0",
+    "recommended_package": "yue2_main_q8_0",
     "tags": [
       "Music",
       "GGUF"
@@ -50,7 +50,7 @@
         "name": "lyrics",
         "type": "string",
         "description": "Lyrics text. If omitted, the CLI text input is used.",
-        "required": false
+        "required": true
       },
       {
         "name": "cot",
@@ -339,8 +339,8 @@
   },
   "packages": [
     {
-      "id": "yue2_3b_q8_0",
-      "display_name": "Yue2 3B Q8_0 GGUF",
+      "id": "yue2_main_q8_0",
+      "display_name": "Yue2 3B Main Q8_0",
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
@@ -350,13 +350,12 @@
         "sidecars/yue2-generation-config.json",
         "sidecars/yue2-qwen.tiktoken",
         "sidecars/yue2-vae-config.json",
-        "yue2-3b-q8_0.gguf",
-        "yue2-vae-f16.gguf"
+        "yue2-3b-q8_0.gguf"
       ]
     },
     {
-      "id": "yue2_3b_bf16",
-      "display_name": "Yue2 3B BF16 GGUF",
+      "id": "yue2_main_bf16",
+      "display_name": "Yue2 3B Main BF16",
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Yue2-3B-GGUF",
@@ -365,7 +364,34 @@
         "sidecars/yue2-generation-config.json",
         "sidecars/yue2-qwen.tiktoken",
         "sidecars/yue2-vae-config.json",
-        "yue2-3b-bf16.gguf",
+        "yue2-3b-bf16.gguf"
+      ]
+    },
+    {
+      "id": "yue2_vae_f16",
+      "display_name": "Yue2 VAE F16",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Yue2-3B-GGUF",
+      "files": [
+        "sidecars/yue2-model-config.json",
+        "sidecars/yue2-generation-config.json",
+        "sidecars/yue2-qwen.tiktoken",
+        "sidecars/yue2-vae-config.json",
+        "yue2-vae-f16.gguf"
+      ]
+    },
+    {
+      "id": "yue2_vae_f32",
+      "display_name": "Yue2 VAE F32",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Yue2-3B-GGUF",
+      "files": [
+        "sidecars/yue2-model-config.json",
+        "sidecars/yue2-generation-config.json",
+        "sidecars/yue2-qwen.tiktoken",
+        "sidecars/yue2-vae-config.json",
         "yue2-vae-f32.gguf"
       ]
     }
