@@ -79,6 +79,8 @@ struct BatchedKVLayerState {
 struct TransformerBatchedKVState {
     int64_t batch_size = 0;
     int64_t current_end = 0;
+    std::vector<int64_t> current_end_by_batch;
+    std::vector<int64_t> valid_steps_by_batch;
     std::vector<BatchedKVLayerState> layers;
 };
 
@@ -108,6 +110,8 @@ public:
     int64_t valid_steps() const noexcept;
     int64_t current_end() const noexcept;
     int64_t cache_steps() const noexcept;
+    const std::vector<int64_t> & valid_steps_by_batch() const noexcept;
+    const std::vector<int64_t> & current_end_by_batch() const noexcept;
 
 private:
     struct LayerCache {
@@ -122,6 +126,8 @@ private:
     int64_t row_elems_ = 0;
     int64_t valid_steps_ = 0;
     int64_t current_end_ = 0;
+    std::vector<int64_t> valid_steps_by_batch_;
+    std::vector<int64_t> current_end_by_batch_;
     TransformerKVCacheOptions options_;
     std::vector<LayerCache> layers_;
 };
