@@ -171,6 +171,51 @@ engine::modules::QwenCausalDecodeRuntimeConfig make_runtime_config(
     return out;
 }
 
+runtime::TransformerBatchedKVState make_cfg_batched_state(
+    const runtime::TransformerKVState & positive,
+    const runtime::TransformerKVState & negative) {
+    if (positive.layers.size() != negative.layers.size()) {
+        throw std::runtime_error("Yue2 CFG batched state layer count mismatch");
+    }
+    const int64_t positive_steps = positive.layers.empty() ? 0 : positive.layers.front().valid_steps;
+    const int64_t negative_steps = negative.layers.empty() ? 0 : negative.layers.front().valid_steps;
+    const int64_t max_steps = std::max(positive_steps, negative_steps);
+    if (positive_steps <= 0 || negative_steps <= 0 || max_steps <= 0) {
+        throw std::runtime_error("Yue2 CFG batched state requires non-empty prefix states");
+    }
+    runtime::TransformerBatchedKVState out;
+    out.batch_size = 2;
+    out.current_end = std::max(positive.current_end, negative.current_end);
+    out.current_end_by_batch = {positive.current_end, negative.current_end};
+    out.valid_steps_by_batch = {positive_steps, negative_steps};
+    out.layers.resize(positive.layers.size());
+    for (size_t layer = 0; layer < positive.layers.size(); ++layer) {
+        const auto & pos = positive.layers[layer];
+        const auto & neg = negative.layers[layer];
+        if (pos.valid_steps != positive_steps || neg.valid_steps != negative_steps ||
+            pos.key.size() != pos.value.size() || neg.key.size() != neg.value.size()) {
+            throw std::runtime_error("Yue2 CFG batched state source shape mismatch");
+        }
+        if (pos.key.size() % static_cast<size_t>(positive_steps) != 0 ||
+            neg.key.size() % static_cast<size_t>(negative_steps) != 0) {
+            throw std::runtime_error("Yue2 CFG batched state source step shape mismatch");
+        }
+        const size_t row_elems = pos.key.size() / static_cast<size_t>(positive_steps);
+        if (neg.key.size() / static_cast<size_t>(negative_steps) != row_elems) {
+            throw std::runtime_error("Yue2 CFG batched state row size mismatch");
+        }
+        auto & dst = out.layers[layer];
+        dst.valid_steps = max_steps;
+        dst.key.resize((static_cast<size_t>(positive_steps) + static_cast<size_t>(negative_steps)) * row_elems);
+        dst.value.assign(dst.key.size(), 0.0F);
+        std::copy(pos.key.begin(), pos.key.end(), dst.key.begin());
+        std::copy(pos.value.begin(), pos.value.end(), dst.value.begin());
+        std::copy(neg.key.begin(), neg.key.end(), dst.key.begin() + static_cast<std::ptrdiff_t>(pos.key.size()));
+        std::copy(neg.value.begin(), neg.value.end(), dst.value.begin() + static_cast<std::ptrdiff_t>(pos.value.size()));
+    }
+    return out;
+}
+
 void apply_repetition_penalty(
     std::vector<float> & logits,
     const std::vector<int32_t> & emitted,
@@ -725,10 +770,8 @@ struct Yue2ArRuntime::Impl {
         }
         const bool compact_semantic = is_semantic_window(window);
         const bool compact_abc = is_abc_window(window);
-        ensure_generation_runtime(true, compact_semantic, compact_abc);
+        ensure_generation_runtime(false, compact_semantic, compact_abc);
         auto & positive_runtime = compact_semantic ? semantic_runtime : (compact_abc ? abc_runtime : runtime);
-        auto & negative_decode_runtime =
-            compact_semantic ? semantic_negative_runtime : (compact_abc ? abc_negative_runtime : negative_runtime);
         const auto total_start = Clock::now();
         engine::debug::timing_log_scalar("yue2.ar.cfg.positive_prefix_tokens", positive_prefix.size());
         engine::debug::timing_log_scalar("yue2.ar.cfg.negative_prefix_tokens", negative_prefix.size());
@@ -738,13 +781,17 @@ struct Yue2ArRuntime::Impl {
         auto positive = positive_runtime->prefill_tokens(positive_prefix);
         engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_positive_ms", engine::debug::elapsed_ms(positive_prefill_start));
         const auto negative_prefill_start = Clock::now();
-        auto negative = negative_decode_runtime->prefill_tokens(negative_prefix);
+        auto negative = positive_runtime->prefill_tokens(negative_prefix);
         engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_negative_ms", engine::debug::elapsed_ms(negative_prefill_start));
         const auto start_decode_start = Clock::now();
-        positive_runtime->start_decode_tokens(positive.state, static_cast<int64_t>(positive_prefix.size()) + window.max_tokens);
-        negative_decode_runtime->start_decode_tokens(
-            negative.state,
-            static_cast<int64_t>(negative_prefix.size()) + window.max_tokens);
+        const int64_t cache_steps =
+            std::max<int64_t>(
+                static_cast<int64_t>(positive_prefix.size()),
+                static_cast<int64_t>(negative_prefix.size())) +
+            window.max_tokens;
+        positive_runtime->start_decode_tokens_batched(
+            make_cfg_batched_state(positive.state, negative.state),
+            cache_steps);
         engine::debug::timing_log_scalar("yue2.ar.cfg.start_decode_ms", engine::debug::elapsed_ms(start_decode_start));
         std::vector<int32_t> emitted;
         emitted.reserve(static_cast<size_t>(window.max_tokens));
@@ -753,8 +800,7 @@ struct Yue2ArRuntime::Impl {
         std::vector<float> logits(positive.logits.size(), 0.0F);
         double guidance_ms = 0.0;
         double sample_ms = 0.0;
-        double decode_positive_ms = 0.0;
-        double decode_negative_ms = 0.0;
+        double decode_batched_ms = 0.0;
         for (int64_t step = 0; step < window.max_tokens; ++step) {
             if (positive.logits.size() != negative.logits.size()) {
                 throw std::runtime_error("Yue2 CFG logits size mismatch");
@@ -772,8 +818,7 @@ struct Yue2ArRuntime::Impl {
             if (token == window.stop_token) {
                 engine::debug::timing_log_scalar("yue2.ar.cfg.guidance_ms", guidance_ms);
                 engine::debug::timing_log_scalar("yue2.ar.cfg.sample_ms", sample_ms);
-                engine::debug::timing_log_scalar("yue2.ar.cfg.decode_positive_ms", decode_positive_ms);
-                engine::debug::timing_log_scalar("yue2.ar.cfg.decode_negative_ms", decode_negative_ms);
+                engine::debug::timing_log_scalar("yue2.ar.cfg.decode_batched_ms", decode_batched_ms);
                 engine::debug::timing_log_scalar("yue2.ar.cfg.emitted_tokens", emitted.size());
                 engine::debug::timing_log_scalar("yue2.ar.cfg.total_ms", engine::debug::elapsed_ms(total_start));
                 return emitted;
@@ -782,17 +827,19 @@ struct Yue2ArRuntime::Impl {
             if (static_cast<int64_t>(emitted.size()) >= window.max_tokens) {
                 break;
             }
-            const auto positive_decode_start = Clock::now();
-            positive.logits = positive_runtime->decode_token(token).logits;
-            decode_positive_ms += engine::debug::elapsed_ms(positive_decode_start);
-            const auto negative_decode_start = Clock::now();
-            negative.logits = negative_decode_runtime->decode_token(token).logits;
-            decode_negative_ms += engine::debug::elapsed_ms(negative_decode_start);
+            const auto decode_start = Clock::now();
+            auto batched = positive_runtime->decode_tokens_batched({token, token});
+            decode_batched_ms += engine::debug::elapsed_ms(decode_start);
+            if (batched.logits.size() % 2 != 0) {
+                throw std::runtime_error("Yue2 CFG batched logits shape mismatch");
+            }
+            const size_t row = batched.logits.size() / 2;
+            positive.logits.assign(batched.logits.begin(), batched.logits.begin() + static_cast<std::ptrdiff_t>(row));
+            negative.logits.assign(batched.logits.begin() + static_cast<std::ptrdiff_t>(row), batched.logits.end());
         }
         engine::debug::timing_log_scalar("yue2.ar.cfg.guidance_ms", guidance_ms);
         engine::debug::timing_log_scalar("yue2.ar.cfg.sample_ms", sample_ms);
-        engine::debug::timing_log_scalar("yue2.ar.cfg.decode_positive_ms", decode_positive_ms);
-        engine::debug::timing_log_scalar("yue2.ar.cfg.decode_negative_ms", decode_negative_ms);
+        engine::debug::timing_log_scalar("yue2.ar.cfg.decode_batched_ms", decode_batched_ms);
         engine::debug::timing_log_scalar("yue2.ar.cfg.emitted_tokens", emitted.size());
         engine::debug::timing_log_scalar("yue2.ar.cfg.total_ms", engine::debug::elapsed_ms(total_start));
         return emitted;

@@ -224,6 +224,40 @@ core::TensorValue cache_view(
         GGML_TYPE_F32);
 }
 
+void apply_batched_static_rope(
+    core::ModuleBuildContext & ctx,
+    const QwenDecoderLayerConfig & config,
+    const QwenDecoderLayerWeights & weights,
+    const core::TensorValue & positions,
+    core::TensorValue & q,
+    core::TensorValue & k,
+    int64_t dim) {
+    const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
+        ? &*weights.rope_frequency_factors
+        : nullptr;
+    if (positions.shape.rank == 1 && positions.shape.dims[0] == q.shape.dims[1]) {
+        q = RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, q, positions, rope_factors);
+        k = RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, k, positions, rope_factors);
+        return;
+    }
+    if (q.shape.dims[1] != 1 || positions.shape.rank != 1 || positions.shape.dims[0] != q.shape.dims[0]) {
+        throw std::runtime_error("Qwen decoder batched static-cache RoPE positions must be [1] or [batch]");
+    }
+    std::vector<core::TensorValue> q_rows;
+    std::vector<core::TensorValue> k_rows;
+    q_rows.reserve(static_cast<size_t>(q.shape.dims[0]));
+    k_rows.reserve(static_cast<size_t>(q.shape.dims[0]));
+    for (int64_t batch = 0; batch < q.shape.dims[0]; ++batch) {
+        auto q_row = SliceModule({0, batch, 1}).build(ctx, q);
+        auto k_row = SliceModule({0, batch, 1}).build(ctx, k);
+        const auto pos_row = SliceModule({0, batch, 1}).build(ctx, positions);
+        q_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, q_row, pos_row, rope_factors));
+        k_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, k_row, pos_row, rope_factors));
+    }
+    q = concat_all(ctx, q_rows, 0);
+    k = concat_all(ctx, k_rows, 0);
+}
+
 LinearWeights require_linear(const LinearWeights & weights, bool use_bias, const char * name) {
     if (use_bias && !weights.bias.has_value()) {
         throw std::runtime_error(std::string(name) + " bias is required");
@@ -886,11 +920,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
     auto v = reshape_qwen_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
 
     if (config_.position_encoding == QwenDecoderPositionEncoding::Rotary) {
-        const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
-            ? &*weights.rope_frequency_factors
-            : nullptr;
-        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        apply_batched_static_rope(ctx, config_, weights, positions, q, k, dim);
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);
