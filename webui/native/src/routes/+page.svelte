@@ -435,7 +435,6 @@
   $: yue2AbcSpecs = isYue2 ? parameterSpecsByName(yue2AbcParamNames) : [];
   $: yue2SemanticSpecs = isYue2 ? parameterSpecsByName(yue2SemanticParamNames) : [];
   $: yue2PlannerSpecs = isYue2 ? parameterSpecsByName(yue2PlannerParamNames) : [];
-  $: if (isYue2 && !lyrics.trim()) ensureYue2DefaultLyrics();
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
