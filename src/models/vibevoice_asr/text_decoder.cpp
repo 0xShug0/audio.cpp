@@ -1,5 +1,6 @@
 #include "engine/models/vibevoice_asr/text_decoder.h"
 
+#include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
@@ -32,8 +33,8 @@ namespace {
 
 namespace binding = modules::binding;
 
-constexpr int64_t kScratchTailCachedAttentionMinSteps = 32768;
-constexpr int64_t kLargeCacheGrowthStep = 2048;
+constexpr int64_t kCacheInitialGraphSteps = 1024;
+constexpr int64_t kCacheGraphGrowthStep = 512;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -70,8 +71,10 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoder
     out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     out.logits_size = config.vocab_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.static_cache_type = GGML_TYPE_F16;
     return out;
 }
 
@@ -175,19 +178,12 @@ int64_t cache_graph_capacity(int64_t required_capacity, int64_t model_capacity) 
     if (model_capacity > 0 && required_capacity > model_capacity) {
         throw std::runtime_error("VibeVoice decoder cache requirement exceeds model position capacity");
     }
-    int64_t capacity = required_capacity;
-    if (required_capacity < kScratchTailCachedAttentionMinSteps) {
-        capacity = 1;
-        while (capacity < required_capacity) {
-            if (capacity > std::numeric_limits<int64_t>::max() / 2) {
-                throw std::runtime_error("VibeVoice decoder cache capacity overflow");
-            }
-            capacity *= 2;
-        }
-    } else {
-        capacity = ((required_capacity + kLargeCacheGrowthStep - 1) / kLargeCacheGrowthStep) *
-            kLargeCacheGrowthStep;
+    const int64_t requested = std::max<int64_t>(required_capacity, kCacheInitialGraphSteps);
+    if (requested > std::numeric_limits<int64_t>::max() - (kCacheGraphGrowthStep - 1)) {
+        throw std::runtime_error("VibeVoice decoder cache capacity overflow");
     }
+    int64_t capacity = ((requested + kCacheGraphGrowthStep - 1) / kCacheGraphGrowthStep) *
+        kCacheGraphGrowthStep;
     return model_capacity > 0 ? std::min(capacity, model_capacity) : capacity;
 }
 
@@ -292,10 +288,11 @@ public:
     }
 
     ~VibeVoiceDecoderEmbeddingGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
+        engine::core::trim_backend_pools(runtime_->backend());
     }
 
     bool matches(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t steps) const {
@@ -448,10 +445,11 @@ public:
     }
 
     ~VibeVoiceDecoderPrefillGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
+        engine::core::trim_backend_pools(runtime_->backend());
     }
 
     bool matches(
@@ -604,87 +602,68 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class VibeVoiceDecoderCachedStepGraph {
+class VibeVoiceDecoderKVCache {
 public:
-    VibeVoiceDecoderCachedStepGraph(
+    VibeVoiceDecoderKVCache(
         const VibeVoiceDecoderWeightsRuntime & runtime,
-        int64_t cache_steps,
-        size_t graph_arena_bytes)
+        int64_t cache_steps)
         : runtime_(&runtime),
           cache_steps_(cache_steps) {
         if (cache_steps_ <= 0) {
-            throw std::runtime_error("VibeVoice decoder cached step graph requires positive cache steps");
+            throw std::runtime_error("VibeVoice decoder KV cache requires positive capacity");
         }
         const auto & config = runtime_->assets().config.decoder;
-        scratch_tail_ = cache_steps_ >= kScratchTailCachedAttentionMinSteps;
-        const int64_t cache_tensor_steps = cache_steps_ + (scratch_tail_ ? 1 : 0);
-        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        const int64_t step_elems = config.num_key_value_heads * require_head_dim(config);
+        ggml_init_params params{4ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize VibeVoice decoder cached step graph context");
+            throw std::runtime_error("failed to initialize VibeVoice decoder KV cache context");
         }
-
-        core::ModuleBuildContext ctx{ctx_.get(), "vibevoice.decoder.cached_step"};
-        auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.hidden_size}));
-        input_ = x.tensor;
-        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
-        auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
-        auto cache_slot_value = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
-        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_tensor_steps, 1, 1, 1);
-        auto attention_mask_value = core::wrap_tensor(
-            attention_mask_,
-            core::TensorShape::from_dims({1, 1, 1, cache_tensor_steps}),
-            GGML_TYPE_F16);
-
-        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        auto & constants = runtime_->constants();
-        constants.begin_graph();
-        auto decoder_config = make_qwen_decoder_config(config);
-        if (scratch_tail_) {
-            decoder_config.stack.runtime.static_cache.update_mode =
-                modules::QwenDecoderStaticCacheUpdateMode::ScratchTail;
+        core::ModuleBuildContext ctx{ctx_.get(), "vibevoice.decoder.kv_cache"};
+        std::vector<core::TensorValue> keys;
+        std::vector<core::TensorValue> values;
+        keys.reserve(runtime_->weights().layers.size());
+        values.reserve(runtime_->weights().layers.size());
+        for (size_t layer = 0; layer < runtime_->weights().layers.size(); ++layer) {
+            keys.push_back(core::make_tensor(
+                ctx,
+                GGML_TYPE_F16,
+                core::TensorShape::from_dims({1, cache_steps_, config.num_key_value_heads, config.head_dim})));
+            values.push_back(core::make_tensor(
+                ctx,
+                GGML_TYPE_F16,
+                core::TensorShape::from_dims({1, cache_steps_, config.num_key_value_heads, config.head_dim})));
         }
-        auto decoder_out = modules::QwenCausalDecoderModule(decoder_config)
-                               .build_static_cache_tail(
-                                   ctx,
-                                   graph_,
-                                   x,
-                                   positions_value,
-                                   make_qwen_decoder_weights(runtime_->weights(), constants),
-                                   cache_tensor_steps,
-                                   attention_mask_value,
-                                   scratch_tail_
-                                       ? std::optional<core::TensorValue>{}
-                                       : std::optional<core::TensorValue>{cache_slot_value});
-        cache_ = std::move(decoder_out.cache);
-        if (scratch_tail_) {
-            build_scratch_transfer_views(config.num_key_value_heads * require_head_dim(config));
-        }
-        hidden_output_ = ggml_cpy(ctx_.get(), decoder_out.hidden.tensor, ggml_dup_tensor(ctx_.get(), decoder_out.hidden.tensor));
-        ggml_set_output(hidden_output_);
-        logits_output_ = decoder_out.logits.tensor;
-        ggml_set_output(logits_output_);
-        ggml_build_forward_expand(graph_, hidden_output_);
-        ggml_build_forward_expand(graph_, logits_output_);
-        constants.finish_graph();
-        constants.ensure_uploaded();
+        runtime::TransformerKVCacheOptions cache_options;
+        cache_options.allow_f16_storage = true;
+        cache_ = runtime::TransformerKVCache(
+            cache_steps_,
+            step_elems,
+            std::move(keys),
+            std::move(values),
+            cache_options);
         buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
         if (buffer_ == nullptr) {
-            throw std::runtime_error("failed to allocate VibeVoice decoder cached step graph");
+            throw std::runtime_error("failed to allocate VibeVoice decoder KV cache");
         }
-        attention_mask_buffer_.assign(static_cast<size_t>(cache_tensor_steps), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
-    ~VibeVoiceDecoderCachedStepGraph() {
-        engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
+    ~VibeVoiceDecoderKVCache() {
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
     }
 
-    bool can_decode(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t required_capacity) const {
-        return runtime_ == &runtime && cache_steps_ >= required_capacity;
+    bool can_run(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t required_steps) const {
+        return runtime_ == &runtime && cache_steps_ >= required_steps;
+    }
+
+    int64_t cache_steps() const noexcept {
+        return cache_.cache_steps();
+    }
+
+    int64_t valid_steps() const noexcept {
+        return cache_.valid_steps();
     }
 
     int64_t current_end() const noexcept {
@@ -699,57 +678,127 @@ public:
         return cache_.export_state();
     }
 
-    void clone_state_from(const VibeVoiceDecoderCachedStepGraph & source) {
-        if (runtime_ != source.runtime_) {
-            throw std::runtime_error("VibeVoice decoder cached step clone requires matching runtime");
+    void advance_after_direct_append(int64_t steps) {
+        cache_.advance_after_direct_append(steps);
+    }
+
+    const core::TensorValue & key_tensor(size_t layer) const {
+        return cache_.key_tensor(layer);
+    }
+
+    const core::TensorValue & value_tensor(size_t layer) const {
+        return cache_.value_tensor(layer);
+    }
+
+private:
+    const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
+    int64_t cache_steps_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    runtime::TransformerKVCache cache_;
+    ggml_backend_buffer_t buffer_ = nullptr;
+};
+
+class VibeVoiceDecoderCachedStepGraph {
+public:
+    VibeVoiceDecoderCachedStepGraph(
+        const VibeVoiceDecoderWeightsRuntime & runtime,
+        VibeVoiceDecoderKVCache & cache,
+        size_t graph_arena_bytes)
+        : runtime_(&runtime),
+          cache_(&cache),
+          cache_steps_(cache.cache_steps()) {
+        if (cache_steps_ <= 0) {
+            throw std::runtime_error("VibeVoice decoder cached step graph requires positive cache steps");
         }
-        if (cache_steps_ < source.cache_.valid_steps()) {
-            throw std::runtime_error("VibeVoice decoder cached step clone target capacity is too small");
+        if (!cache_->can_run(runtime, cache_steps_)) {
+            throw std::runtime_error("VibeVoice decoder cached step graph requires matching KV cache");
         }
-        if (source.cache_.current_end() != source.cache_.valid_steps()) {
-            throw std::runtime_error("VibeVoice decoder cached step clone requires contiguous cache positions");
+        const auto & config = runtime_->assets().config.decoder;
+        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ctx_.reset(ggml_init(params));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize VibeVoice decoder cached step graph context");
         }
-        for (size_t layer = 0; layer < runtime_->weights().layers.size(); ++layer) {
-            ggml_backend_tensor_copy(
-                source.cache_.key_tensor(layer).tensor,
-                cache_.key_tensor(layer).tensor);
-            ggml_backend_tensor_copy(
-                source.cache_.value_tensor(layer).tensor,
-                cache_.value_tensor(layer).tensor);
+
+        core::ModuleBuildContext ctx{ctx_.get(), "vibevoice.decoder.cached_step"};
+        auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.hidden_size}));
+        input_ = x.tensor;
+        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
+        auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
+        auto cache_slot_value = core::wrap_tensor(cache_slot_, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
+        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, cache_steps_, 1, 1, 1);
+        auto attention_mask_value = core::wrap_tensor(
+            attention_mask_,
+            core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
+            GGML_TYPE_F16);
+
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
+        auto & constants = runtime_->constants();
+        constants.begin_graph();
+        auto decoder_config = make_qwen_decoder_config(config);
+        auto layer_input = x;
+        const modules::QwenDecoderLayerModule layer_module(
+            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        for (size_t layer_index = 0; layer_index < runtime_->weights().layers.size(); ++layer_index) {
+            auto layer_out = layer_module.build_with_static_cache_tail(
+                ctx,
+                graph_,
+                layer_input,
+                positions_value,
+                to_qwen_layer_weights(runtime_->weights().layers[layer_index], constants),
+                cache_->key_tensor(layer_index),
+                cache_->value_tensor(layer_index),
+                cache_slot_value,
+                attention_mask_value);
+            layer_input = layer_out.output;
         }
-        cache_.retain_prefix(0);
-        cache_.advance_after_direct_append(source.cache_.valid_steps());
+        auto hidden = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
+                          .build(ctx, layer_input, binding::norm_data(constants, runtime_->weights().norm));
+        auto logits = modules::LinearModule({
+                          config.hidden_size,
+                          config.vocab_size,
+                          false,
+                      })
+                          .build(ctx, hidden, {runtime_->weights().lm_head, std::nullopt});
+        hidden_output_ = ggml_cpy(ctx_.get(), hidden.tensor, ggml_dup_tensor(ctx_.get(), hidden.tensor));
+        ggml_set_output(hidden_output_);
+        logits_output_ = logits.tensor;
+        ggml_set_output(logits_output_);
+        ggml_build_forward_expand(graph_, hidden_output_);
+        ggml_build_forward_expand(graph_, logits_output_);
+        constants.finish_graph();
+        constants.ensure_uploaded();
+        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
+        if (buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate VibeVoice decoder cached step graph");
+        }
+        attention_mask_buffer_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
+    }
+
+    ~VibeVoiceDecoderCachedStepGraph() {
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+        if (buffer_ != nullptr) {
+            ggml_backend_buffer_free(buffer_);
+        }
+        engine::core::trim_backend_pools(runtime_->backend());
+    }
+
+    bool can_decode(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t required_capacity) const {
+        return runtime_ == &runtime && cache_ != nullptr && cache_->can_run(runtime, required_capacity);
+    }
+
+    int64_t current_end() const noexcept {
+        return cache_->current_end();
+    }
+
+    int64_t cache_steps() const noexcept {
+        return cache_->cache_steps();
     }
 
     VibeVoiceDecoderResult run_step(const std::vector<float> & embedding) {
+        run_step_no_readback(embedding);
         const auto & config = runtime_->assets().config.decoder;
-        if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
-            throw std::runtime_error("VibeVoice decoder cached step embedding size mismatch");
-        }
-        if (cache_.valid_steps() >= cache_steps_) {
-            throw std::runtime_error("VibeVoice decoder cached step exceeds cache capacity");
-        }
-        ggml_backend_tensor_set(input_, embedding.data(), 0, embedding.size() * sizeof(float));
-        const int32_t position = static_cast<int32_t>(cache_.current_end());
-        ggml_backend_tensor_set(positions_, &position, 0, sizeof(position));
-        const int32_t cache_slot = static_cast<int32_t>(cache_.valid_steps());
-        if (!scratch_tail_) {
-            ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(cache_slot));
-        }
-        modules::write_qwen_cached_step_mask(
-            attention_mask_,
-            attention_mask_buffer_,
-            static_cast<int64_t>(attention_mask_buffer_.size()),
-            cache_.valid_steps(),
-            scratch_tail_ ? cache_steps_ : cache_.valid_steps());
-
-        core::set_backend_threads(runtime_->backend(), runtime_->threads());
-        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
-        ggml_backend_synchronize(runtime_->backend());
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("VibeVoice decoder cached step graph compute failed");
-        }
-
         VibeVoiceDecoderResult out;
         out.logits.vocab_size = config.vocab_size;
         out.logits.values.resize(static_cast<size_t>(config.vocab_size));
@@ -757,49 +806,43 @@ public:
         out.last_hidden.values.resize(static_cast<size_t>(config.hidden_size));
         ggml_backend_tensor_get(logits_output_, out.logits.values.data(), 0, out.logits.values.size() * sizeof(float));
         ggml_backend_tensor_get(hidden_output_, out.last_hidden.values.data(), 0, out.last_hidden.values.size() * sizeof(float));
-        if (scratch_tail_) {
-            const size_t dst_slot = static_cast<size_t>(cache_.valid_steps());
-            for (size_t layer = 0; layer < scratch_key_sources_.size(); ++layer) {
-                ggml_backend_tensor_copy(scratch_key_sources_[layer], scratch_key_destinations_[dst_slot][layer]);
-                ggml_backend_tensor_copy(scratch_value_sources_[layer], scratch_value_destinations_[dst_slot][layer]);
-            }
-        }
-        cache_.advance_after_direct_append(1);
+        ggml_backend_synchronize(runtime_->backend());
         return out;
     }
 
-private:
-    void build_scratch_transfer_views(int64_t step_elems) {
-        scratch_key_sources_.reserve(runtime_->weights().layers.size());
-        scratch_value_sources_.reserve(runtime_->weights().layers.size());
-        const size_t scratch_offset = static_cast<size_t>(cache_steps_ * step_elems) * sizeof(float);
-        for (size_t layer = 0; layer < runtime_->weights().layers.size(); ++layer) {
-            scratch_key_sources_.push_back(
-                ggml_view_1d(ctx_.get(), cache_.key_tensor(layer).tensor, step_elems, scratch_offset));
-            scratch_value_sources_.push_back(
-                ggml_view_1d(ctx_.get(), cache_.value_tensor(layer).tensor, step_elems, scratch_offset));
+    void run_step_no_readback(const std::vector<float> & embedding) {
+        const auto & config = runtime_->assets().config.decoder;
+        if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
+            throw std::runtime_error("VibeVoice decoder cached step embedding size mismatch");
         }
+        if (cache_->valid_steps() >= cache_steps_) {
+            throw std::runtime_error("VibeVoice decoder cached step exceeds cache capacity");
+        }
+        ggml_backend_tensor_set(input_, embedding.data(), 0, embedding.size() * sizeof(float));
+        const int32_t position = static_cast<int32_t>(cache_->current_end());
+        ggml_backend_tensor_set(positions_, &position, 0, sizeof(position));
+        const int32_t cache_slot = static_cast<int32_t>(cache_->valid_steps());
+        ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(cache_slot));
+        modules::write_qwen_cached_step_mask(
+            attention_mask_,
+            attention_mask_buffer_,
+            static_cast<int64_t>(attention_mask_buffer_.size()),
+            cache_->valid_steps(),
+            cache_->valid_steps());
 
-        scratch_key_destinations_.assign(static_cast<size_t>(cache_steps_), {});
-        scratch_value_destinations_.assign(static_cast<size_t>(cache_steps_), {});
-        for (int64_t slot = 0; slot < cache_steps_; ++slot) {
-            const size_t byte_offset = static_cast<size_t>(slot * step_elems) * sizeof(float);
-            auto & key_slot = scratch_key_destinations_[static_cast<size_t>(slot)];
-            auto & value_slot = scratch_value_destinations_[static_cast<size_t>(slot)];
-            key_slot.reserve(scratch_key_sources_.size());
-            value_slot.reserve(scratch_value_sources_.size());
-            for (size_t layer = 0; layer < scratch_key_sources_.size(); ++layer) {
-                key_slot.push_back(
-                    ggml_view_1d(ctx_.get(), cache_.key_tensor(layer).tensor, step_elems, byte_offset));
-                value_slot.push_back(
-                    ggml_view_1d(ctx_.get(), cache_.value_tensor(layer).tensor, step_elems, byte_offset));
-            }
+        core::set_backend_threads(runtime_->backend(), runtime_->threads());
+        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        ggml_backend_synchronize(runtime_->backend());
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("VibeVoice decoder cached step graph compute failed");
         }
+        cache_->advance_after_direct_append(1);
     }
 
+private:
     const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
+    VibeVoiceDecoderKVCache * cache_ = nullptr;
     int64_t cache_steps_ = 0;
-    bool scratch_tail_ = false;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * positions_ = nullptr;
@@ -808,11 +851,228 @@ private:
     ggml_tensor * hidden_output_ = nullptr;
     ggml_tensor * logits_output_ = nullptr;
     std::vector<ggml_fp16_t> attention_mask_buffer_;
-    runtime::TransformerKVCache cache_;
-    std::vector<ggml_tensor *> scratch_key_sources_;
-    std::vector<ggml_tensor *> scratch_value_sources_;
-    std::vector<std::vector<ggml_tensor *>> scratch_key_destinations_;
-    std::vector<std::vector<ggml_tensor *>> scratch_value_destinations_;
+    ggml_cgraph * graph_ = nullptr;
+    ggml_backend_buffer_t buffer_ = nullptr;
+};
+
+class VibeVoiceDecoderCachedSuffixGraph {
+public:
+    VibeVoiceDecoderCachedSuffixGraph(
+        const VibeVoiceDecoderWeightsRuntime & runtime,
+        int64_t suffix_steps,
+        VibeVoiceDecoderKVCache & cache,
+        size_t graph_arena_bytes)
+        : runtime_(&runtime),
+          cache_(&cache),
+          suffix_steps_(suffix_steps),
+          cache_steps_(cache.cache_steps()) {
+        if (suffix_steps_ <= 0) {
+            throw std::runtime_error("VibeVoice decoder cached suffix graph requires positive suffix steps");
+        }
+        if (cache_steps_ <= 0) {
+            throw std::runtime_error("VibeVoice decoder cached suffix graph requires positive cache steps");
+        }
+        if (!cache_->can_run(runtime, cache_steps_)) {
+            throw std::runtime_error("VibeVoice decoder cached suffix graph requires matching KV cache");
+        }
+        const auto & config = runtime_->assets().config.decoder;
+        ggml_init_params params{graph_arena_bytes, nullptr, true};
+        ctx_.reset(ggml_init(params));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize VibeVoice decoder cached suffix graph context");
+        }
+
+        core::ModuleBuildContext ctx{ctx_.get(), "vibevoice.decoder.cached_suffix"};
+        auto x = core::make_tensor(
+            ctx,
+            GGML_TYPE_F32,
+            core::TensorShape::from_dims({1, suffix_steps_, config.hidden_size}));
+        input_ = x.tensor;
+        positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, suffix_steps_);
+        auto positions_value = core::wrap_tensor(
+            positions_,
+            core::TensorShape::from_dims({suffix_steps_}),
+            GGML_TYPE_I32);
+        cache_slot_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, suffix_steps_);
+        auto cache_slot_value = core::wrap_tensor(
+            cache_slot_,
+            core::TensorShape::from_dims({suffix_steps_}),
+            GGML_TYPE_I32);
+        attention_key_steps_ = cache_steps_ + suffix_steps_;
+        attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, attention_key_steps_, suffix_steps_, 1, 1);
+        auto attention_mask_value = core::wrap_tensor(
+            attention_mask_,
+            core::TensorShape::from_dims({1, 1, suffix_steps_, attention_key_steps_}),
+            GGML_TYPE_F16);
+
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
+        auto & constants = runtime_->constants();
+        constants.begin_graph();
+        auto decoder_config = make_qwen_decoder_config(config);
+        const int64_t step_elems = config.num_key_value_heads * require_head_dim(config);
+        auto layer_input = x;
+        const modules::QwenDecoderLayerModule layer_module(
+            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        for (size_t layer_index = 0; layer_index < runtime_->weights().layers.size(); ++layer_index) {
+            const auto & key_cache = cache_->key_tensor(layer_index);
+            const auto & value_cache = cache_->value_tensor(layer_index);
+            auto layer_out = layer_module.build(
+                ctx,
+                layer_input,
+                positions_value,
+                to_qwen_layer_weights(runtime_->weights().layers[layer_index], constants),
+                key_cache,
+                value_cache,
+                attention_mask_value);
+            layer_input = layer_out.output;
+
+            auto key_rows = core::ensure_backend_addressable_layout(ctx, layer_out.key);
+            auto value_rows = core::ensure_backend_addressable_layout(ctx, layer_out.value);
+            auto flat_key_cache = core::reshape_tensor(
+                ctx,
+                key_cache,
+                core::TensorShape::from_dims({cache_steps_, step_elems}));
+            auto flat_value_cache = core::reshape_tensor(
+                ctx,
+                value_cache,
+                core::TensorShape::from_dims({cache_steps_, step_elems}));
+            auto flat_key_rows = core::reshape_tensor(
+                ctx,
+                key_rows,
+                core::TensorShape::from_dims({suffix_steps_, step_elems}));
+            auto flat_value_rows = core::reshape_tensor(
+                ctx,
+                value_rows,
+                core::TensorShape::from_dims({suffix_steps_, step_elems}));
+            ggml_build_forward_expand(
+                graph_,
+                ggml_set_rows(ctx.ggml, flat_key_cache.tensor, flat_key_rows.tensor, cache_slot_value.tensor));
+            ggml_build_forward_expand(
+                graph_,
+                ggml_set_rows(ctx.ggml, flat_value_cache.tensor, flat_value_rows.tensor, cache_slot_value.tensor));
+        }
+
+        auto last_layer_input = modules::SliceModule({1, suffix_steps_ - 1, 1}).build(ctx, layer_input);
+        auto hidden = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
+                          .build(ctx, last_layer_input, binding::norm_data(constants, runtime_->weights().norm));
+        auto logits = modules::LinearModule({
+                          config.hidden_size,
+                          config.vocab_size,
+                          false,
+                      })
+                          .build(ctx, hidden, {runtime_->weights().lm_head, std::nullopt});
+        hidden_output_ = ggml_cpy(ctx_.get(), hidden.tensor, ggml_dup_tensor(ctx_.get(), hidden.tensor));
+        ggml_set_output(hidden_output_);
+        logits_output_ = logits.tensor;
+        ggml_set_output(logits_output_);
+        ggml_build_forward_expand(graph_, hidden_output_);
+        ggml_build_forward_expand(graph_, logits_output_);
+        constants.finish_graph();
+        constants.ensure_uploaded();
+        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
+        if (buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate VibeVoice decoder cached suffix graph");
+        }
+        position_values_.resize(static_cast<size_t>(suffix_steps_));
+        cache_slot_values_.resize(static_cast<size_t>(suffix_steps_));
+        attention_mask_buffer_.resize(static_cast<size_t>(suffix_steps_ * attention_key_steps_));
+    }
+
+    ~VibeVoiceDecoderCachedSuffixGraph() {
+        engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+        if (buffer_ != nullptr) {
+            ggml_backend_buffer_free(buffer_);
+        }
+        engine::core::trim_backend_pools(runtime_->backend());
+    }
+
+    bool can_decode(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t suffix_steps, int64_t required_capacity) const {
+        return runtime_ == &runtime && this->suffix_steps_ == suffix_steps && cache_ != nullptr &&
+            cache_->can_run(runtime, required_capacity);
+    }
+
+    int64_t current_end() const noexcept {
+        return cache_->current_end();
+    }
+
+    int64_t cache_steps() const noexcept {
+        return cache_->cache_steps();
+    }
+
+    VibeVoiceDecoderResult run_suffix(const std::vector<float> & embeddings) {
+        const auto & config = runtime_->assets().config.decoder;
+        if (static_cast<int64_t>(embeddings.size()) != suffix_steps_ * config.hidden_size) {
+            throw std::runtime_error("VibeVoice decoder cached suffix embedding size mismatch");
+        }
+        if (cache_->valid_steps() + suffix_steps_ > cache_steps_) {
+            throw std::runtime_error("VibeVoice decoder cached suffix exceeds cache capacity");
+        }
+        ggml_backend_tensor_set(input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
+        for (int64_t step = 0; step < suffix_steps_; ++step) {
+            position_values_[static_cast<size_t>(step)] = static_cast<int32_t>(cache_->current_end() + step);
+            cache_slot_values_[static_cast<size_t>(step)] = static_cast<int32_t>(cache_->valid_steps() + step);
+        }
+        ggml_backend_tensor_set(positions_, position_values_.data(), 0, position_values_.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(cache_slot_, cache_slot_values_.data(), 0, cache_slot_values_.size() * sizeof(int32_t));
+
+        const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
+        const auto visible = ggml_fp32_to_fp16(0.0F);
+        std::fill(attention_mask_buffer_.begin(), attention_mask_buffer_.end(), masked);
+        for (int64_t row = 0; row < suffix_steps_; ++row) {
+            const size_t row_offset = static_cast<size_t>(row * attention_key_steps_);
+            std::fill_n(
+                attention_mask_buffer_.begin() + static_cast<std::ptrdiff_t>(row_offset),
+                static_cast<size_t>(cache_->valid_steps()),
+                visible);
+            std::fill_n(
+                attention_mask_buffer_.begin() + static_cast<std::ptrdiff_t>(row_offset + cache_steps_),
+                static_cast<size_t>(row + 1),
+                visible);
+        }
+        ggml_backend_tensor_set(
+            attention_mask_,
+            attention_mask_buffer_.data(),
+            0,
+            attention_mask_buffer_.size() * sizeof(ggml_fp16_t));
+
+        core::set_backend_threads(runtime_->backend(), runtime_->threads());
+        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        ggml_backend_synchronize(runtime_->backend());
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("VibeVoice decoder cached suffix graph compute failed");
+        }
+        cache_->advance_after_direct_append(suffix_steps_);
+
+        std::vector<float> logits(static_cast<size_t>(config.vocab_size));
+        std::vector<float> hidden(static_cast<size_t>(config.hidden_size));
+        ggml_backend_tensor_get(logits_output_, logits.data(), 0, logits.size() * sizeof(float));
+        ggml_backend_tensor_get(hidden_output_, hidden.data(), 0, hidden.size() * sizeof(float));
+        ggml_backend_synchronize(runtime_->backend());
+
+        VibeVoiceDecoderResult out;
+        out.logits.vocab_size = config.vocab_size;
+        out.logits.values = std::move(logits);
+        out.last_hidden.dims = config.hidden_size;
+        out.last_hidden.values = std::move(hidden);
+        return out;
+    }
+
+private:
+    const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
+    VibeVoiceDecoderKVCache * cache_ = nullptr;
+    int64_t suffix_steps_ = 0;
+    int64_t cache_steps_ = 0;
+    int64_t attention_key_steps_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    ggml_tensor * input_ = nullptr;
+    ggml_tensor * positions_ = nullptr;
+    ggml_tensor * cache_slot_ = nullptr;
+    ggml_tensor * attention_mask_ = nullptr;
+    ggml_tensor * hidden_output_ = nullptr;
+    ggml_tensor * logits_output_ = nullptr;
+    std::vector<int32_t> position_values_;
+    std::vector<int32_t> cache_slot_values_;
+    std::vector<ggml_fp16_t> attention_mask_buffer_;
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_buffer_t buffer_ = nullptr;
 };
@@ -960,15 +1220,48 @@ VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_prompt(
 void VibeVoiceDecoderWeightsRuntime::reset_cached_state(
     VibeVoiceDecoderCachedState & state,
     runtime::TransformerKVState prefill_state) const {
+    state.graph_.reset();
+    state.suffix_graph_.reset();
+    state.cache_.reset();
     state.pending_state_ = std::move(prefill_state);
-    state.graph_has_state_ = false;
+    state.cache_has_state_ = false;
+}
+
+void VibeVoiceDecoderWeightsRuntime::prepare_cached_state(
+    VibeVoiceDecoderCachedState & state,
+    int64_t cache_capacity) const {
+    const auto & config = assets_->config.decoder;
+    if (cache_capacity <= 0) {
+        throw std::runtime_error("VibeVoice decoder cached state prepare requires positive cache capacity");
+    }
+    const int64_t required_capacity = cache_graph_capacity(cache_capacity, config.max_position_embeddings);
+    if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
+        state.pending_state_ = state.cache_->export_state();
+        state.cache_has_state_ = false;
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_.reset();
+    }
+    if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+    }
+    if (!state.cache_has_state_) {
+        if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
+            state.pending_state_ = empty_decoder_state(weights_->layers.size());
+        }
+        state.cache_->import_state(state.pending_state_);
+        state.pending_state_ = {};
+        state.cache_has_state_ = true;
+    }
 }
 
 runtime::TransformerKVState VibeVoiceDecoderWeightsRuntime::export_cached_state(
     VibeVoiceDecoderCachedState & state) const {
-    if (state.graph_has_state_ && state.graph_ != nullptr) {
-        state.pending_state_ = state.graph_->export_state();
-        state.graph_has_state_ = false;
+    if (state.cache_has_state_ && state.cache_ != nullptr) {
+        state.pending_state_ = state.cache_->export_state();
+        state.cache_has_state_ = false;
     }
     return state.pending_state_;
 }
@@ -981,23 +1274,21 @@ void VibeVoiceDecoderWeightsRuntime::clone_cached_state(
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached state clone requires positive cache capacity");
     }
-    if (!source.graph_has_state_ || source.graph_ == nullptr) {
+    if (!source.cache_has_state_ || source.cache_ == nullptr) {
         throw std::runtime_error("VibeVoice decoder cached state clone requires live source graph state");
     }
+    const auto source_state = source.cache_->export_state();
     const int64_t required_capacity = cache_graph_capacity(
-        std::max<int64_t>(cache_capacity, source.graph_->current_end() + 1),
+        std::max<int64_t>(cache_capacity, source.cache_->current_end() + 1),
         config.max_position_embeddings);
-    if (target.graph_ == nullptr || !target.graph_->can_decode(*this, required_capacity)) {
+    if (target.cache_ == nullptr || !target.cache_->can_run(*this, required_capacity)) {
         target.graph_.reset();
-        const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
-        target.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
-            *this,
-            required_capacity,
-            graph_arena_bytes);
+        target.suffix_graph_.reset();
+        target.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
     }
-    target.graph_->clone_state_from(*source.graph_);
+    target.cache_->import_state(source_state);
     target.pending_state_ = {};
-    target.graph_has_state_ = true;
+    target.cache_has_state_ = true;
 }
 
 VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
@@ -1011,33 +1302,145 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached step requires positive cache capacity");
     }
-    const int64_t current_end = state.graph_has_state_ && state.graph_ != nullptr
-        ? state.graph_->current_end()
+    const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
+        ? state.cache_->current_end()
         : state.pending_state_.current_end;
     const int64_t required_capacity = cache_graph_capacity(
         std::max<int64_t>(cache_capacity, current_end + 1),
         config.max_position_embeddings);
-    if (state.graph_ != nullptr && state.graph_has_state_ && !state.graph_->can_decode(*this, required_capacity)) {
-        state.pending_state_ = state.graph_->export_state();
-        state.graph_has_state_ = false;
+    if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
+        state.pending_state_ = state.cache_->export_state();
+        state.cache_has_state_ = false;
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_.reset();
     }
+    if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+    }
+    if (!state.cache_has_state_) {
+        if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
+            state.pending_state_ = empty_decoder_state(weights_->layers.size());
+        }
+        state.cache_->import_state(state.pending_state_);
+        state.pending_state_ = {};
+        state.cache_has_state_ = true;
+    }
+    state.suffix_graph_.reset();
     if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
         state.graph_.reset();
         const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
         state.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
             *this,
-            required_capacity,
+            *state.cache_,
             graph_arena_bytes);
     }
-    if (!state.graph_has_state_) {
+    return state.graph_->run_step(embedding);
+}
+
+void VibeVoiceDecoderWeightsRuntime::append_cached_step(
+    const std::vector<float> & embedding,
+    VibeVoiceDecoderCachedState & state,
+    int64_t cache_capacity) const {
+    const auto & config = assets_->config.decoder;
+    if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
+        throw std::runtime_error("VibeVoice decoder cached append embedding payload size mismatch");
+    }
+    if (cache_capacity <= 0) {
+        throw std::runtime_error("VibeVoice decoder cached append requires positive cache capacity");
+    }
+    const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
+        ? state.cache_->current_end()
+        : state.pending_state_.current_end;
+    const int64_t required_capacity = cache_graph_capacity(
+        std::max<int64_t>(cache_capacity, current_end + 1),
+        config.max_position_embeddings);
+    if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
+        state.pending_state_ = state.cache_->export_state();
+        state.cache_has_state_ = false;
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_.reset();
+    }
+    if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+    }
+    if (!state.cache_has_state_) {
         if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
             state.pending_state_ = empty_decoder_state(weights_->layers.size());
         }
-        state.graph_->import_state(state.pending_state_);
+        state.cache_->import_state(state.pending_state_);
         state.pending_state_ = {};
-        state.graph_has_state_ = true;
+        state.cache_has_state_ = true;
     }
-    return state.graph_->run_step(embedding);
+    state.suffix_graph_.reset();
+    if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
+        state.graph_.reset();
+        const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+        state.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
+            *this,
+            *state.cache_,
+            graph_arena_bytes);
+    }
+    state.graph_->run_step_no_readback(embedding);
+}
+
+VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_suffix(
+    const std::vector<float> & embeddings,
+    int64_t steps,
+    VibeVoiceDecoderCachedState & state,
+    int64_t cache_capacity) const {
+    const auto & config = assets_->config.decoder;
+    if (steps <= 0) {
+        throw std::runtime_error("VibeVoice decoder cached suffix requires positive steps");
+    }
+    if (static_cast<int64_t>(embeddings.size()) != steps * config.hidden_size) {
+        throw std::runtime_error("VibeVoice decoder cached suffix embedding payload size mismatch");
+    }
+    if (cache_capacity <= 0) {
+        throw std::runtime_error("VibeVoice decoder cached suffix requires positive cache capacity");
+    }
+    const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
+        ? state.cache_->current_end()
+        : state.pending_state_.current_end;
+    const int64_t required_capacity = cache_graph_capacity(
+        std::max<int64_t>(cache_capacity, current_end + steps),
+        config.max_position_embeddings);
+    if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
+        state.pending_state_ = state.cache_->export_state();
+        state.cache_has_state_ = false;
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_.reset();
+    }
+    if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
+        state.graph_.reset();
+        state.suffix_graph_.reset();
+        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+    }
+    if (!state.cache_has_state_) {
+        if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
+            state.pending_state_ = empty_decoder_state(weights_->layers.size());
+        }
+        state.cache_->import_state(state.pending_state_);
+        state.pending_state_ = {};
+        state.cache_has_state_ = true;
+    }
+    state.graph_.reset();
+    if (state.suffix_graph_ == nullptr || !state.suffix_graph_->can_decode(*this, steps, required_capacity)) {
+        state.suffix_graph_.reset();
+        const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+        state.suffix_graph_ = std::make_unique<VibeVoiceDecoderCachedSuffixGraph>(
+            *this,
+            steps,
+            *state.cache_,
+            graph_arena_bytes);
+    }
+    return state.suffix_graph_->run_suffix(embeddings);
 }
 
 }  // namespace engine::models::vibevoice_asr

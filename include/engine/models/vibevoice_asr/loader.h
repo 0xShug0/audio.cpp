@@ -4,6 +4,7 @@
 #include "engine/models/vibevoice_asr/assets.h"
 
 #include <memory>
+#include <string>
 
 namespace engine::models::vibevoice_asr {
 
@@ -26,7 +27,10 @@ private:
     std::shared_ptr<const VibeVoiceASRAssets> assets_;
 };
 
-std::unique_ptr<VibeVoiceASRLoadedModel> load_vibevoice_asr_model(const std::filesystem::path & model_path);
+std::unique_ptr<VibeVoiceASRLoadedModel> load_vibevoice_asr_model(
+    const std::filesystem::path & model_path,
+    const std::string & family = "vibevoice_asr");
 std::shared_ptr<runtime::IVoiceModelLoader> make_vibevoice_asr_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_vibevoice_asr_streaming_loader();
 
 }  // namespace engine::models::vibevoice_asr

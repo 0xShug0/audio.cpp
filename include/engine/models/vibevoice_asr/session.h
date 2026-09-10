@@ -57,6 +57,30 @@ private:
     std::vector<AudioChunkPlan> audio_chunk_plan(const runtime::TaskRequest & request);
     runtime::IOfflineVoiceTaskSession & vad_session();
     runtime::TaskResult run_single(const VibeVoiceASRRequest & request);
+    runtime::TaskResult run_streaming_model(const VibeVoiceASRRequest & request);
+    runtime::StreamEvent process_streaming_model_normalized_chunk(
+        const VibeVoiceASRRequest & request,
+        const runtime::AudioBuffer & audio,
+        int64_t start_sample);
+    void ensure_streaming_decoder_state(const VibeVoiceASRRequest & request);
+    VibeVoiceASRSpeechFeatures encode_streaming_chunk(
+        const runtime::AudioBuffer & audio,
+        const VibeVoiceASRRequest & request);
+    VibeVoiceDecoderResult append_stream_embedding(
+        const std::vector<float> & embedding,
+        VibeVoiceDecoderCachedState & state,
+        int64_t & steps);
+    VibeVoiceDecoderResult append_stream_suffix(
+        const std::vector<float> & embeddings,
+        int64_t steps_to_append,
+        VibeVoiceDecoderCachedState & state,
+        int64_t & steps);
+    std::string generate_streaming_text_chunk(
+        const VibeVoiceASRRequest & request,
+        VibeVoiceDecoderResult next_logits,
+        VibeVoiceDecoderCachedState & state,
+        int64_t & steps);
+    std::vector<AudioChunkPlan> streaming_audio_chunk_plan(const runtime::AudioBuffer & audio) const;
     std::vector<int32_t> generate_tokens(
         const VibeVoiceASRRequest & request,
         const VibeVoiceASRPrompt & prompt,
@@ -93,11 +117,17 @@ private:
     std::filesystem::path vad_model_path_;
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
     std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
+    std::unique_ptr<VibeVoiceDecoderCachedState> streaming_decoder_state_;
+    runtime::AudioBuffer streaming_audio_buffer_;
     runtime::TaskRequest streaming_request_;
     runtime::TaskResult streaming_result_;
     runtime::StreamEventCallback stream_event_sink_;
     bool stream_started_ = false;
     int64_t streaming_chunks_processed_ = 0;
+    int64_t streaming_decoder_steps_ = 0;
+    int64_t streaming_history_steps_ = 0;
+    int64_t streaming_buffer_start_sample_ = 0;
+    uint64_t streaming_rng_offset_ = 0;
 };
 
 }  // namespace engine::models::vibevoice_asr

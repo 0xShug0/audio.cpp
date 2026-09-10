@@ -106,6 +106,7 @@ Status labels:
 | `vevo2` | Done | Pass | Pass | Pass (drift) | No (mixed route drift; speech ASR match) |
 | `vibevoice` | Done | Pass | --- | Pass | Pass (drift) |
 | `vibevoice_asr` | Done | Pass | --- | Pass | Pass |
+| `vibevoice_asr_streaming` | Done | --- | --- | Pass | Pass |
 | `voxcpm2` | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `voxtral_realtime` | Done | Pass | --- | Pass | Pass |
 
@@ -115,6 +116,7 @@ Additional lower-bit checks:
 |---|---|---|
 | `meanvc2` | `q4_k` | Pass |
 | `personaplex` | `q4_k` | Pass |
+| `vibevoice_asr_streaming` | `q4_k` | Pass (quick CUDA check; transcript stays usable and matches the BF16 wording class) |
 | `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
 
 Q8 packaging notes:
@@ -145,6 +147,9 @@ Q8 packaging notes:
 - `voxtral_realtime` also has a tested `q4_k` package. In a quick CUDA path
   check it was smaller and faster than Q8_0, while transcript output matched
   Q8_0 except for one capitalization-only difference.
+- `vibevoice_asr_streaming` also has a tested `q4_k` package. In a quick CUDA
+  check, BF16 and Q4_K produced the same transcript wording on the validation
+  clip; Q8_0 produced the same sentence with minor wording drift.
 
 ## Build The Converter
 

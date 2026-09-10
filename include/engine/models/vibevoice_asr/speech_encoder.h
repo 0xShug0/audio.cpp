@@ -23,7 +23,10 @@ public:
         assets::TensorStorageType tokenizer_weight_storage_type,
         assets::TensorStorageType connector_weight_storage_type);
 
-    VibeVoiceASRSpeechFeatures encode(const runtime::AudioBuffer & audio, uint64_t seed) const;
+    VibeVoiceASRSpeechFeatures encode(
+        const runtime::AudioBuffer & audio,
+        uint64_t seed,
+        uint64_t rng_offset = 0) const;
 
 private:
     std::shared_ptr<const VibeVoiceASRAssets> assets_;

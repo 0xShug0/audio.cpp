@@ -28,6 +28,11 @@ int32_t require_token_id(const engine::tokenizers::LlamaBpeTokenizer & tokenizer
     return *id;
 }
 
+int32_t optional_token_id(const engine::tokenizers::LlamaBpeTokenizer & tokenizer, const char * token) {
+    const auto id = tokenizer.find_token_id(token);
+    return id.value_or(-1);
+}
+
 std::string format_seconds(double seconds) {
     std::ostringstream stream;
     stream << std::fixed << std::setprecision(2) << seconds;
@@ -56,6 +61,7 @@ struct VibeVoiceASRTextTokenizer::Impl {
           speech_start(require_token_id(tokenizer, "<|object_ref_start|>")),
           speech_end(require_token_id(tokenizer, "<|object_ref_end|>")),
           speech_pad(require_token_id(tokenizer, "<|box_start|>")),
+          text_chunk_end(optional_token_id(tokenizer, "<|text_chunk_end|>")),
           eos(require_token_id(tokenizer, "<|endoftext|>")),
           pad(require_token_id(tokenizer, "<|image_pad|>")) {}
 
@@ -63,6 +69,7 @@ struct VibeVoiceASRTextTokenizer::Impl {
     int32_t speech_start = 0;
     int32_t speech_end = 0;
     int32_t speech_pad = 0;
+    int32_t text_chunk_end = 0;
     int32_t eos = 0;
     int32_t pad = 0;
 };
@@ -121,6 +128,18 @@ VibeVoiceASRPrompt VibeVoiceASRTextTokenizer::build_prompt(
     return prompt;
 }
 
+std::vector<int32_t> VibeVoiceASRTextTokenizer::build_streaming_prompt(const std::string & context) const {
+    const std::string keys = "speaker, content";
+    std::string prompt =
+        "You are a helpful assistant that transcribes audio input into text output. "
+        "Please transcribe the following audios streamingly with these keys: " + keys;
+    if (!context.empty()) {
+        prompt += " and extra info: " + context;
+    }
+    prompt.push_back('\n');
+    return impl_->tokenizer.encode(prompt);
+}
+
 std::string VibeVoiceASRTextTokenizer::decode(
     const std::vector<int32_t> & token_ids,
     bool skip_special_tokens) const {
@@ -135,8 +154,20 @@ int32_t VibeVoiceASRTextTokenizer::pad_id() const noexcept {
     return impl_->pad;
 }
 
+int32_t VibeVoiceASRTextTokenizer::speech_start_id() const noexcept {
+    return impl_->speech_start;
+}
+
+int32_t VibeVoiceASRTextTokenizer::speech_end_id() const noexcept {
+    return impl_->speech_end;
+}
+
 int32_t VibeVoiceASRTextTokenizer::speech_pad_id() const noexcept {
     return impl_->speech_pad;
+}
+
+int32_t VibeVoiceASRTextTokenizer::text_chunk_end_id() const noexcept {
+    return impl_->text_chunk_end;
 }
 
 }  // namespace engine::models::vibevoice_asr

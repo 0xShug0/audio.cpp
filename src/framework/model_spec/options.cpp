@@ -28,6 +28,7 @@ const std::unordered_map<std::string, std::unordered_set<std::string>> & shared_
         {"batch_size", {"int"}},
         {"codec_weight_type", {"enum"}},
         {"connector_weight_type", {"enum"}},
+        {"context", {"string"}},
         {"conv_weight_type", {"enum"}},
         {"cross_fade_duration_sec", {"float"}},
         {"decoder_weight_type", {"enum"}},

@@ -190,6 +190,8 @@ VibeVoiceProcessorConfig parse_processor_config(const assets::ResourceBundle & r
     VibeVoiceProcessorConfig config;
     config.speech_tok_compress_ratio =
         json::optional_i64(root, "speech_tok_compress_ratio", config.speech_tok_compress_ratio);
+    config.chunk_frames = json::optional_i64(root, "chunk_frames", config.chunk_frames);
+    config.lookahead_frames = json::optional_i64(root, "lookahead_frames", config.lookahead_frames);
     config.db_normalize = json::optional_bool(root, "db_normalize", config.db_normalize);
     config.language_model_pretrained_name =
         json::optional_string(root, "language_model_pretrained_name", config.language_model_pretrained_name);
@@ -204,6 +206,9 @@ VibeVoiceProcessorConfig parse_processor_config(const assets::ResourceBundle & r
     }
     engine::io::require_positive(config.speech_tok_compress_ratio, "processor speech_tok_compress_ratio");
     engine::io::require_positive(config.audio_processor.sample_rate, "processor sampling_rate");
+    if (config.chunk_frames < 0 || config.lookahead_frames < 0) {
+        throw std::runtime_error("VibeVoice processor chunk_frames/lookahead_frames must be non-negative");
+    }
     if (config.language_model_pretrained_name.empty()) {
         throw std::runtime_error("VibeVoice processor language_model_pretrained_name must not be empty");
     }
@@ -253,12 +258,15 @@ void validate_weight_anchors(const VibeVoiceASRAssets & assets) {
 
 }  // namespace
 
-std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(const std::filesystem::path & model_path) {
+std::shared_ptr<const VibeVoiceASRAssets> load_vibevoice_asr_assets(
+    const std::filesystem::path & model_path,
+    const std::string & family) {
     auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        engine::model_spec::default_spec_path("vibevoice_asr"));
+        engine::model_spec::default_spec_path(family));
     VibeVoiceASRAssets assets;
     assets.resources = std::move(resources);
+    assets.family = family;
     assets.config = parse_config(assets.resources);
     assets.processor = parse_processor_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("model_weights");
