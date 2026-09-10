@@ -149,6 +149,12 @@ const core::ModulePortSpec kSnakeInputs[] = {
     {"alpha", core::PortKind::Parameter, false},
 };
 
+const core::ModulePortSpec kSnakeBetaInputs[] = {
+    {"input", core::PortKind::Activation, false},
+    {"alpha", core::PortKind::Parameter, false},
+    {"beta", core::PortKind::Parameter, false},
+};
+
 const core::ModulePortSpec kAliasFreeActivationInputs[] = {
     {"input", core::PortKind::Activation, false},
     {"alpha", core::PortKind::Parameter, false},
@@ -166,6 +172,16 @@ const core::ModuleSchema kSnake1dSchema = {
     kActivationOutputs,
     1,
     "Applies Snake activation over channel-time tensors using per-channel alpha.",
+};
+
+const core::ModuleSchema kSnakeBeta1dSchema = {
+    "SnakeBeta1d",
+    "nn.activation",
+    kSnakeBetaInputs,
+    3,
+    kActivationOutputs,
+    1,
+    "Applies SnakeBeta activation over channel-time tensors using per-channel alpha and beta.",
 };
 
 const core::ModuleSchema kAliasFreeActivationSchema = {
@@ -597,6 +613,55 @@ core::TensorValue Snake1dModule::build(
 
 const core::ModuleSchema & Snake1dModule::static_schema() noexcept {
     return kSnake1dSchema;
+}
+
+SnakeBeta1dModule::SnakeBeta1dModule(SnakeBeta1dConfig config) : config_(config) {
+    if (config_.hidden_size <= 0) {
+        throw std::runtime_error("SnakeBeta1dConfig.hidden_size must be positive");
+    }
+}
+
+const SnakeBeta1dConfig & SnakeBeta1dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & SnakeBeta1dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue SnakeBeta1dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const SnakeBeta1dWeights & weights) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 2, core::kMaxTensorRank, "input");
+    if (input.shape.dims[input.shape.rank - 2] != config_.hidden_size) {
+        throw std::runtime_error("SnakeBeta1d input hidden dimension mismatch");
+    }
+    core::validate_shape(weights.alpha, core::TensorShape::from_dims({config_.hidden_size}), "alpha");
+    core::validate_shape(weights.beta, core::TensorShape::from_dims({config_.hidden_size}), "beta");
+
+    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+    const auto input_f32 = ensure_f32(ctx, contiguous);
+    const auto channel_shape = make_snake_alpha_shape(input.shape, config_.hidden_size);
+    auto alpha = core::reshape_tensor(ctx, ensure_f32(ctx, weights.alpha), channel_shape);
+    auto beta = core::reshape_tensor(ctx, ensure_f32(ctx, weights.beta), channel_shape);
+    if (config_.logscale) {
+        alpha = core::wrap_tensor(ggml_exp(ctx.ggml, alpha.tensor), alpha.shape, GGML_TYPE_F32);
+        beta = core::wrap_tensor(ggml_exp(ctx.ggml, beta.tensor), beta.shape, GGML_TYPE_F32);
+    }
+    const auto ax = core::wrap_tensor(ggml_mul(ctx.ggml, input_f32.tensor, alpha.tensor), input_f32.shape, GGML_TYPE_F32);
+    const auto s = core::wrap_tensor(ggml_sin(ctx.ggml, ax.tensor), input_f32.shape, GGML_TYPE_F32);
+    const auto s2 = core::wrap_tensor(ggml_mul(ctx.ggml, s.tensor, s.tensor), input_f32.shape, GGML_TYPE_F32);
+    const auto denom = core::wrap_tensor(ggml_scale_bias(ctx.ggml, beta.tensor, 1.0F, 1.0e-9F), beta.shape, GGML_TYPE_F32);
+    const auto periodic = core::wrap_tensor(ggml_div(ctx.ggml, s2.tensor, denom.tensor), input_f32.shape, GGML_TYPE_F32);
+    return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, periodic.tensor), input_f32.shape, GGML_TYPE_F32);
+}
+
+const core::ModuleSchema & SnakeBeta1dModule::static_schema() noexcept {
+    return kSnakeBeta1dSchema;
 }
 
 AliasFreeActivationModule::AliasFreeActivationModule(AliasFreeActivationConfig config) : config_(config) {

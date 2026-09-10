@@ -1107,6 +1107,120 @@
       ]
     },
     {
+      "id": "yue2_direct_off_medium",
+      "coverage": "YuE2 direct text-to-music route without ABC planning",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "direct_off_medium",
+          "text": "[Verse]\nAudio dot cpp starts the demo tonight.\nSmall sparks of music glow in the light.\nA local engine keeps the rhythm tight.\nNo cloud in the loop, just code taking flight.\n[Pre-Chorus]\nEvery buffer finds its place.\nEvery model joins the race.\n[Chorus]\nTurn the signal into song.\nLet the native runtime carry it along.\nFrom text to melody, clear and strong.\nAudio dot cpp keeps the demo moving on.",
+          "seed": 20260910,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.01,
+            "style": "English, indie pop, bright acoustic guitar, soft drums, warm lead vocal, polished demo mix",
+            "cot": "off",
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_create_full_plan_medium",
+      "coverage": "YuE2 full ABC planning route",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "create_full_plan_medium",
+          "text": "[Verse]\nA quiet room begins to sing.\nThe keys reply with silver rings.\nA metronome is counting time.\nA simple phrase becomes a line.\n[Pre-Chorus]\nThe bass walks in with patient grace.\nThe melody opens more space.\n[Chorus]\nHold the note and let it rise.\nMorning opens up the sky.\nEvery word can find a place.\nEvery phrase can leave a trace.\n[Bridge]\nIf the plan is clear and bright.\nThe song can travel through the night.",
+          "seed": 20260911,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, piano pop, clear lead vocal, gentle bass, 92 BPM, warm chorus harmonies, soft room reverb",
+            "cot": "full",
+            "abc_min_tokens": 128,
+            "abc_max_tokens": 512,
+            "semantic_min_tokens": 224,
+            "semantic_max_tokens": 768
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_cover_melody_score_medium",
+      "coverage": "YuE2 melody score conditioning route with external ABC",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "cover_melody_score_medium",
+          "text": "[Verse]\nWe follow the melody line.\nThe rhythm keeps everything fine.\nA Rhodes chord lands behind the beat.\nThe bass keeps walking down the street.\n[Chorus]\nHold that shape and make it new.\nChange the color, keep the view.\nEvery phrase can still belong.\nWhen the cover turns into a song.",
+          "seed": 20260912,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, jazz funk cover, warm Rhodes, round bass, light drums, relaxed vocal, clean live band feel",
+            "cot": "melody",
+            "abc_file": "reference/YuE/examples/melody.abc",
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_edit_full_score_medium",
+      "coverage": "YuE2 full score edit route with external ABC",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "edit_full_score_medium",
+          "text": "[Verse]\nA quiet room begins to sing.\nThe keys reply with silver rings.\nA brushed snare paints the second line.\nThe harmony turns right on time.\n[Chorus]\nHold the note and let it rise.\nMorning opens up the sky.\nKeep the score but change the light.\nMake the ending open wide.\n[Outro]\nLet the last chord slowly fade.\nLeave the echo we have made.",
+          "seed": 20260913,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, piano pop with jazz harmony, clear lead vocal, gentle bass, 92 BPM, wider chorus, tasteful drum fills",
+            "cot": "full",
+            "abc_file": "reference/YuE/examples/score-jazz.abc",
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
       "id": "irodori_tts_500m_emoji_style_clone",
       "coverage": "Irodori-TTS 500M no-reference emoji/style requests and reference clone path in one session",
       "family": "irodori_tts",
