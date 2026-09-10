@@ -1,12 +1,11 @@
 #include "engine/community_models/sanotts/frontend.h"
 
-#include "engine/framework/io/dynamic_library.h"
+#include "engine/framework/audio/espeak_phonemizer.h"
 
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <deque>
-#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -15,13 +14,6 @@
 namespace engine::models::sanotts {
 namespace {
 
-using InitializeFn = int (*)(int, int, const char *, int);
-using SetVoiceFn = int (*)(const char *);
-using TextToPhonemesFn = const char * (*)(const void **, int, int);
-using TerminateFn = int (*)();
-
-constexpr int kEspeakSynchronous = 2;
-constexpr int kEspeakCharsUtf8 = 1;
 // IPA output (0x02), tie flag (bit 7), and U+0361 COMBINING DOUBLE INVERTED
 // BREVE in bits 8..23 as the tie character -- exactly the phonemes_mode
 // phonemizer computes, so the E2M diphthong patterns ("a͡ɪ" -> "I") can match.
@@ -877,121 +869,24 @@ std::string nfd_decompose(const std::string & text) {
 }
 
 struct EspeakApi {
-    io::DynamicLibraryHandle library = nullptr;
-    InitializeFn initialize = nullptr;
-    SetVoiceFn set_voice = nullptr;
-    TextToPhonemesFn text_to_phonemes = nullptr;
-    TerminateFn terminate = nullptr;
-    mutable std::mutex call_mutex;
+    audio::EspeakPhonemizer phonemizer;
 
-    EspeakApi(const std::filesystem::path & requested_library,
-              const std::filesystem::path & requested_data,
-              const std::string & voice) {
-        if (!requested_library.empty() &&
-            !std::filesystem::is_regular_file(requested_library)) {
-            throw std::runtime_error(
-                "sanoTTS eSpeak-ng library does not exist: " + requested_library.string());
-        }
-        if (!requested_data.empty() &&
-            (!std::filesystem::is_directory(requested_data) ||
-             !std::filesystem::is_regular_file(requested_data / "phontab"))) {
-            throw std::runtime_error(
-                "sanoTTS eSpeak-ng data path is invalid; expected the espeak-ng-data "
-                "directory containing phontab: " + requested_data.string());
-        }
-        if (!requested_library.empty()) {
-            library = io::open_dynamic_library(requested_library.string());
-        } else {
-            library = io::open_dynamic_library({
-#ifdef _WIN32
-                "espeak-ng.dll", "libespeak-ng.dll",
-#elif defined(__APPLE__)
-                "libespeak-ng.dylib", "libespeak-ng.1.dylib",
-#else
-                "libespeak-ng.so.1", "libespeak-ng.so",
-#endif
-            });
-        }
-        if (library == nullptr) {
-            throw std::runtime_error(
-                "sanoTTS could not load eSpeak-ng. Install it (apt install espeak-ng, "
-                "brew install espeak-ng) or pass "
-                "--session-option sanotts.espeak_library_path=/path/to/libespeak-ng.so");
-        }
-        initialize = reinterpret_cast<InitializeFn>(
-            io::dynamic_library_symbol(library, "espeak_Initialize"));
-        set_voice = reinterpret_cast<SetVoiceFn>(
-            io::dynamic_library_symbol(library, "espeak_SetVoiceByName"));
-        text_to_phonemes = reinterpret_cast<TextToPhonemesFn>(
-            io::dynamic_library_symbol(library, "espeak_TextToPhonemes"));
-        terminate = reinterpret_cast<TerminateFn>(
-            io::dynamic_library_symbol(library, "espeak_Terminate"));
-        if (initialize == nullptr || set_voice == nullptr || text_to_phonemes == nullptr) {
-            throw std::runtime_error("sanoTTS eSpeak-ng is missing required symbols");
-        }
-        // espeak appends "/espeak-ng-data" to the path it is given, so the
-        // PARENT of the data directory is what it wants. Handing it the data
-        // directory itself makes it fall back to its compiled-in default.
-        const std::string data =
-            requested_data.empty() ? std::string() : requested_data.parent_path().string();
-        if (initialize(kEspeakSynchronous, 0, data.empty() ? nullptr : data.c_str(), 0) <= 0) {
-            throw std::runtime_error(
-                "sanoTTS eSpeak-ng failed to initialize; pass "
-                "--session-option sanotts.espeak_data_path=/path/to/espeak-ng-data");
-        }
-        // Some packages name a bare language code ("en"). phonemizer, which
-        // the reference front end drives, rejects bare codes on every
-        // espeak-ng >= 1.49 and falls back to the regional variant, even
-        // though espeak_SetVoiceByName itself would accept "en" (and select
-        // a different accent). Prefer the regional variants first so both
-        // stacks phonemize identically; a code with no variant (vi, id)
-        // falls through to itself.
-        std::vector<std::string> candidates;
+    // Preserve SanoTTS/phonemizer's regional-voice preference, rather than
+    // imposing this model-specific fallback on every shared-component user.
+    static std::vector<std::string> candidates(const std::string & voice) {
+        std::vector<std::string> result;
         if (voice.find('-') == std::string::npos) {
-            candidates.push_back(voice + "-us");
-            candidates.push_back(voice + "-gb");
+            result.push_back(voice + "-us");
+            result.push_back(voice + "-gb");
         }
-        candidates.push_back(voice);
-        bool selected = false;
-        for (const auto & candidate : candidates) {
-            if (set_voice(candidate.c_str()) == 0) {
-                selected = true;
-                break;
-            }
-        }
-        if (!selected) {
-            throw std::runtime_error("sanoTTS eSpeak-ng has no voice matching '" + voice + "'");
-        }
+        result.push_back(voice);
+        return result;
     }
-
-    ~EspeakApi() {
-        if (terminate != nullptr) {
-            terminate();
-        }
-        if (library != nullptr) {
-            io::close_dynamic_library(library);
-        }
-    }
-
-    [[nodiscard]] std::string phonemize(const std::string & text, int phonemes_mode) const {
-        const std::lock_guard<std::mutex> guard(call_mutex);
-        std::string out;
-        const char * cursor = text.c_str();
-        const void * position = cursor;
-        // espeak consumes one clause per call and advances the pointer; it
-        // returns null when the input is spent.
-        while (position != nullptr) {
-            const char * clause =
-                text_to_phonemes(&position, kEspeakCharsUtf8, phonemes_mode);
-            if (clause == nullptr) {
-                break;
-            }
-            if (!out.empty()) {
-                out.push_back(' ');
-            }
-            out.append(clause);
-        }
-        return out;
+    EspeakApi(const std::filesystem::path & library,
+              const std::filesystem::path & data, const std::string & voice)
+        : phonemizer(library, data, candidates(voice)) {}
+    std::string phonemize(const std::string & text, int mode) const {
+        return phonemizer.phonemize(text, mode);
     }
 };
 

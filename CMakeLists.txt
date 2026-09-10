@@ -412,6 +412,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/workspace.cpp
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
+    src/framework/audio/espeak_phonemizer.cpp
     src/framework/io/config.cpp
     src/framework/io/json.cpp
     src/framework/io/text.cpp
@@ -1879,6 +1880,8 @@ target_include_directories(engine_runtime PRIVATE
 )
 
 target_link_libraries(engine_runtime PUBLIC ggml)
+find_package(Threads REQUIRED)
+target_link_libraries(engine_runtime PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor)
 if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
     target_compile_definitions(engine_runtime PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
@@ -2143,6 +2146,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endfunction()
 
     if (ENGINE_BUILD_TESTS)
+        add_library(espeak_test_library SHARED tests/unittests/espeak_test_library.cpp)
+        add_library(espeak_test_missing_symbol SHARED tests/unittests/espeak_test_library.cpp)
+        target_link_libraries(espeak_test_library PRIVATE Threads::Threads)
+        target_link_libraries(espeak_test_missing_symbol PRIVATE Threads::Threads)
+        target_compile_definitions(espeak_test_missing_symbol PRIVATE ESPEAK_TEST_MISSING_SYMBOL=1)
+        add_engine_unittest(espeak_phonemizer_test tests/unittests/test_espeak_phonemizer.cpp)
+        target_link_libraries(espeak_phonemizer_test PRIVATE Threads::Threads)
+        add_dependencies(espeak_phonemizer_test espeak_test_library espeak_test_missing_symbol)
+        add_test(NAME espeak_phonemizer_test COMMAND espeak_phonemizer_test
+            $<TARGET_FILE:espeak_test_library> $<TARGET_FILE:espeak_test_missing_symbol>)
         add_executable(sentencepiece_tokenizer1_test
             tests/unittests/test_sentencepiece_tokenizer1.cpp
         )
@@ -2402,6 +2415,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS)
+        if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS AND inflect_v2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(espeak_frontend_probe tests/unittests/espeak_frontend_probe.cpp)
+            if (MSVC)
+                target_compile_options(espeak_frontend_probe PRIVATE /utf-8)
+            endif()
+        endif()
         # Model-specific tests and probes.
         if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             target_compile_definitions(engine_model_f5_tts PRIVATE F5_MEL_TEST=1)

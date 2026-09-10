@@ -48,6 +48,9 @@ Two graphs share one family:
 
 ## Install
 
+SanoTTS uses the [shared eSpeak-ng phonemizer](../espeak_phonemizer.md),
+including shared synchronization with other model frontends.
+
 Install eSpeak-ng and its voice data first. On Debian or Ubuntu:
 
 ```bash

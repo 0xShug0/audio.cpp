@@ -1,6 +1,6 @@
 #include "engine/community_models/inflect_v2/frontend.h"
 
-#include "engine/framework/io/dynamic_library.h"
+#include "engine/framework/audio/espeak_phonemizer.h"
 
 #include <algorithm>
 #include <array>
@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <regex>
 #include <stdexcept>
 #include <string_view>
@@ -19,13 +18,6 @@
 namespace engine::models::inflect_v2 {
 namespace {
 
-using InitializeFn = int (*)(int, int, const char *, int);
-using SetVoiceFn = int (*)(const char *);
-using TextToPhonemesFn = const char * (*)(const void **, int, int);
-using TerminateFn = int (*)();
-
-constexpr int kEspeakSynchronous = 2;
-constexpr int kEspeakCharsUtf8 = 1;
 constexpr int kEspeakPhonemesIpa = 2;
 
 void replace_all(std::string & value, std::string_view from, std::string_view to) {
@@ -317,114 +309,15 @@ const std::unordered_map<uint32_t, int32_t> & symbol_ids() {
 }
 
 struct EspeakApi {
-    io::DynamicLibraryHandle library = nullptr;
-    InitializeFn initialize = nullptr;
-    SetVoiceFn set_voice = nullptr;
-    TextToPhonemesFn text_to_phonemes = nullptr;
-    TerminateFn terminate = nullptr;
-    std::filesystem::path library_path;
-    std::filesystem::path data_path;
-    std::mutex call_mutex;
-
-    EspeakApi(std::filesystem::path requested_library, std::filesystem::path requested_data)
-        : library_path(std::move(requested_library)),
-          data_path(std::move(requested_data)) {
-        if (!library_path.empty() &&
-            !std::filesystem::is_regular_file(library_path)) {
-            throw std::runtime_error(
-                "Inflect v2 eSpeak-ng library does not exist: " +
-                library_path.string());
-        }
-        if (!data_path.empty() &&
-            (!std::filesystem::is_directory(data_path) ||
-             !std::filesystem::is_regular_file(data_path / "phontab"))) {
-            throw std::runtime_error(
-                "Inflect v2 eSpeak-ng data path is invalid; expected the "
-                "espeak-ng-data directory containing phontab: " +
-                data_path.string());
-        }
-        if (!library_path.empty()) {
-            library = io::open_dynamic_library(library_path.string());
-        } else {
-            library = io::open_dynamic_library({
-#ifdef _WIN32
-                "espeak-ng.dll", "libespeak-ng.dll",
-#elif __APPLE__
-                "libespeak-ng.dylib", "libespeak-ng.1.dylib",
-#else
-                "libespeak-ng.so.1", "libespeak-ng.so",
-#endif
-            });
-        }
-        if (library == nullptr) {
-            throw std::runtime_error(
-                "Inflect v2 requires eSpeak-ng. Install it so its shared "
-                "library is discoverable, or pass both --session-option "
-                "inflect_v2.espeak_library_path=<library> and --session-option "
-                "inflect_v2.espeak_data_path=<espeak-ng-data>");
-        }
-        initialize = symbol<InitializeFn>("espeak_Initialize");
-        set_voice = symbol<SetVoiceFn>("espeak_SetVoiceByName");
-        text_to_phonemes = symbol<TextToPhonemesFn>("espeak_TextToPhonemes");
-        terminate = symbol<TerminateFn>("espeak_Terminate");
-        const std::string data = data_path.empty() ? std::string{} : data_path.string();
-        if (initialize(kEspeakSynchronous, 0, data.empty() ? nullptr : data.c_str(), 0) <= 0) {
-            io::close_dynamic_library(library);
-            library = nullptr;
-            throw std::runtime_error(
-                "Inflect v2 could not initialize eSpeak-ng data; set "
-                "inflect_v2.espeak_data_path to the espeak-ng-data directory");
-        }
-        if (set_voice("en-us") != 0) {
-            terminate();
-            io::close_dynamic_library(library);
-            library = nullptr;
-            throw std::runtime_error("Inflect v2 eSpeak-ng installation has no en-us voice");
-        }
-    }
-
-    ~EspeakApi() {
-        if (library != nullptr) {
-            terminate();
-            io::close_dynamic_library(library);
-        }
-    }
-
-    template <typename Fn>
-    Fn symbol(const char * name) {
-        auto * address = io::dynamic_library_symbol(library, name);
-        if (address == nullptr) {
-            io::close_dynamic_library(library);
-            library = nullptr;
-            throw std::runtime_error(std::string("Inflect v2 eSpeak-ng is missing symbol ") + name);
-        }
-        return reinterpret_cast<Fn>(address);
-    }
+    audio::EspeakPhonemizer phonemizer;
+    EspeakApi(std::filesystem::path library, std::filesystem::path data)
+        : phonemizer(std::move(library), std::move(data), {"en-us"}) {}
 
     std::string phonemize_segment(const std::string & text) {
-        const void * cursor = text.c_str();
-        std::string out;
-        while (cursor != nullptr && *static_cast<const char *>(cursor) != '\0') {
-            const void * before = cursor;
-            const char * clause = text_to_phonemes(
-                &cursor,
-                kEspeakCharsUtf8,
-                kEspeakPhonemesIpa);
-            if (clause != nullptr && *clause != '\0') {
-                if (!out.empty() && !std::isspace(static_cast<unsigned char>(out.back()))) {
-                    out.push_back(' ');
-                }
-                out += clause;
-            }
-            if (cursor == before) {
-                break;
-            }
-        }
-        return collapse_space(std::move(out));
+        return collapse_space(phonemizer.phonemize(text, kEspeakPhonemesIpa));
     }
 
     std::string phonemize(const std::string & text) {
-        std::lock_guard<std::mutex> lock(call_mutex);
         std::string out;
         size_t segment_start = 0;
         const auto append_segment = [&](size_t end) {
@@ -474,26 +367,6 @@ struct EspeakApi {
     }
 };
 
-std::mutex g_espeak_mutex;
-std::shared_ptr<EspeakApi> g_espeak;
-
-std::shared_ptr<EspeakApi> acquire_espeak(
-    const std::filesystem::path & library_path,
-    const std::filesystem::path & data_path) {
-    std::lock_guard<std::mutex> lock(g_espeak_mutex);
-    if (g_espeak != nullptr) {
-        if ((!library_path.empty() && g_espeak->library_path != library_path) ||
-            (!data_path.empty() && g_espeak->data_path != data_path)) {
-            throw std::runtime_error(
-                "Inflect v2 eSpeak-ng is already initialized with different paths");
-        }
-        return g_espeak;
-    }
-    auto created = std::make_shared<EspeakApi>(library_path, data_path);
-    g_espeak = created;
-    return created;
-}
-
 size_t utf8_prefix_bytes(const std::string & value, size_t codepoints) {
     size_t index = 0;
     for (size_t count = 0; count < codepoints && index < value.size(); ++count) {
@@ -509,9 +382,9 @@ struct InflectV2Frontend::State {
     State(
         const std::filesystem::path & library_path,
         const std::filesystem::path & data_path)
-        : espeak(acquire_espeak(library_path, data_path)) {}
+        : espeak(std::make_unique<EspeakApi>(library_path, data_path)) {}
 
-    std::shared_ptr<EspeakApi> espeak;
+    std::unique_ptr<EspeakApi> espeak;
 };
 
 InflectV2Frontend::InflectV2Frontend(
