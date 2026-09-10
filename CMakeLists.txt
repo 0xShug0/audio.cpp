@@ -1324,6 +1324,27 @@ audiocpp_add_model(sortformer_diar
         engine::models::sortformer_diar::make_sortformer_diar_loader
 )
 
+audiocpp_add_model(sortformer_diar_v2
+    SOURCES
+        src/community_models/sortformer_diar/assets.cpp
+        src/community_models/sortformer_diar/frontend.cpp
+        src/community_models/sortformer_diar/weights.cpp
+        src/community_models/sortformer_diar/aosc_state.cpp
+        src/community_models/sortformer_diar/stream_schedule.cpp
+        src/community_models/sortformer_diar/encoder.cpp
+        src/community_models/sortformer_diar/session.cpp
+    INCLUDES
+        engine/community_models/sortformer_diar/aosc_state.h
+        engine/community_models/sortformer_diar/stream_schedule.h
+        engine/community_models/sortformer_diar/encoder.h
+        engine/community_models/sortformer_diar/session.h
+        engine/community_models/sortformer_diar/frontend.h
+        engine/community_models/sortformer_diar/weights.h
+        engine/community_models/sortformer_diar/assets.h
+    LOADERS
+        engine::community_models::sortformer_diar::make_sortformer_diar_v2_loader
+)
+
 audiocpp_add_model(stable_audio
     SOURCES
         src/models/stable_audio/assets.cpp
@@ -2141,6 +2162,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_executable(${target} ${source})
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
+
+    add_engine_unittest(sortformer_v2_aosc_test tests/community_models/sortformer_diar/sortformer_v2_aosc_test.cpp)
+    add_test(NAME sortformer_v2_aosc_test COMMAND sortformer_v2_aosc_test)
+
+    add_engine_unittest(sortformer_v2_schedule_test tests/community_models/sortformer_diar/sortformer_v2_schedule_test.cpp)
+    add_test(NAME sortformer_v2_schedule_test COMMAND sortformer_v2_schedule_test)
 
     if (ENGINE_BUILD_TESTS)
         add_executable(sentencepiece_tokenizer1_test

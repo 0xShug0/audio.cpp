@@ -5,6 +5,7 @@
 | Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
 | Sortformer Diarization | `sortformer_diar` | `diar` | [Sortformer Diarization](#sortformer-diarization) |
+| Sortformer Diarization v2.1 | `sortformer_diar_v2` | `diar` | [Sortformer Diarization v2.1](#sortformer-diarization-v21) |
 | MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
 | Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3.md#qwen3-forced-aligner) |
 
@@ -149,6 +150,40 @@ Compatibility aliases are applied before v1 option validation:
 | `conv_weight_type` | `sortformer_diar.conv_weight_type` |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
+
+## Sortformer Diarization v2.1
+
+Sortformer v2.1 is the streaming four-speaker successor to the v1 family. It
+uses a continuous frontend and bounded-context AOSC state to preserve speaker
+identities across audio chunks. The v1 `sortformer_diar` family remains
+unchanged.
+
+| Field | Value |
+|---|---|
+| Family | `sortformer_diar_v2` |
+| Model directory | `models/Sortformer-Diar-v2.1-local` |
+| Task | `diar` |
+| Modes | `offline`, `streaming` |
+| Input | Mono 16 kHz audio |
+| Output | Speaker turn JSON through `--turns-out` |
+
+The checkpoint is local-use only pending NVIDIA Open Model License
+redistribution approval. Convert it with
+[`tools/community_models/convert_sortformer_v2_1.py`](community_models/sortformer_diar_v2.md#local-conversion).
+
+```bash
+audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \
+  --model models/Sortformer-Diar-v2.1-local/sortformer-v2.1-f16-mixed.gguf \
+  --backend cuda --audio meeting_16k.wav --turns-out turns.json
+```
+
+Use `sortformer_diar_v2.speaker_threshold`,
+`sortformer_diar_v2.speaker_min_frames`, and
+`sortformer_diar_v2.speaker_pad_frames` for request/session decoding controls.
+See the [community-model guide](community_models/sortformer_diar_v2.md) for
+conversion commands, weight profiles, streaming geometry, and validation
+limits. CUDA offline F32 execution is memory-heavy; streaming is the supported
+path for long recordings.
 
 ## MMS Forced Aligner
 
