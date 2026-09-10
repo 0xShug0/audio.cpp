@@ -12,9 +12,9 @@ ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gg
 
 > [!IMPORTANT]
 >
-> **2026-09-09 - VibeVoice ASR Streaming 7B:** The streaming VibeVoice ASR 7B GGUF package is available with offline and live-streaming ASR, long-audio decode, and speaker-turn output.
+> **2026-09-10 - Dev testing: Yue2 3B:** Yue2 native song generation is available on the [dev branch](https://github.com/0xShug0/audio.cpp/tree/dev) for community testing and optimization.
 >
-> **2026-09-09 - Irodori-TTS v4.1 Anime:** The anime fine-tuned Irodori-TTS v4.1 Q8 GGUF is available as an Irodori-TTS v4.1 Small package variant.
+> **2026-09-09 - VibeVoice ASR Streaming 7B and Irodori-TTS v4.1 Anime:** New GGUF packages are available for streaming VibeVoice ASR 7B and the anime fine-tuned Irodori-TTS v4.1 Small variant.
 >
 > **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
