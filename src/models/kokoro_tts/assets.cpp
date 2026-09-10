@@ -3,6 +3,8 @@
 #include "engine/framework/io/binary.h"
 #include "engine/framework/io/json.h"
 #include "engine/models/kokoro_tts/assets.h"
+#include "engine/models/kokoro_tts/package.h"
+#include "engine/models/kokoro_tts/g2p_multilingual.h"
 
 #include "engine/models/kokoro_tts/g2p_en.h"
 
@@ -715,6 +717,7 @@ namespace engine::models::kokoro_tts {
 namespace {
 
 struct KokoroAssetResources {
+    std::shared_ptr<KokoroPackage> package;
     assets::ResourceBundle bundle;
     io::json::Value config;
     io::json::Value voices;
@@ -723,11 +726,11 @@ struct KokoroAssetResources {
 
 KokoroAssetResources load_asset_resources(const std::filesystem::path & model_root) {
     KokoroAssetResources resources;
-    resources.bundle = assets::ResourceBundle(std::filesystem::weakly_canonical(model_root));
+    resources.package = open_kokoro_package(model_root);
+    resources.bundle = assets::ResourceBundle(resources.package->root);
     resources.bundle.add_model_files({
         {"config", "config.json"},
         {"voices", "voices.json"},
-        {"weights", "kokoro-v1_0.safetensors"},
     });
     resources.config = resources.bundle.parse_json("config");
     if (!resources.config.is_object()) {
@@ -737,7 +740,7 @@ KokoroAssetResources load_asset_resources(const std::filesystem::path & model_ro
     if (!resources.voices.is_object()) {
         throw std::runtime_error("Kokoro voices.json root must be an object");
     }
-    resources.weights = resources.bundle.open_tensor_source("weights");
+    resources.weights = resources.package->weights;
     return resources;
 }
 
@@ -769,6 +772,8 @@ std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::pa
     const auto & root = resources.bundle.model_root();
 
     auto assets = std::make_shared<KokoroAssets>();
+    assets->package = resources.package;
+    assets->multilingual_g2p = std::make_shared<MultilingualG2P>(root);
     assets->model_root = root;
     assets->config = std::move(resources.config);
     assets->model_weights = std::move(resources.weights);

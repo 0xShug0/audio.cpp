@@ -196,6 +196,8 @@ add_library(engine_runtime STATIC
     src/models/omnivoice/session.cpp
     src/models/omnivoice/loader.cpp
     src/models/kokoro_tts/assets.cpp
+    src/models/kokoro_tts/package.cpp
+    src/models/kokoro_tts/g2p_multilingual.cpp
     src/models/kokoro_tts/loader.cpp
     src/models/kokoro_tts/frontend.cpp
     src/models/kokoro_tts/g2p_en.cpp
@@ -402,7 +404,10 @@ target_include_directories(engine_runtime PRIVATE
 )
 
 target_link_libraries(engine_runtime PUBLIC ggml)
-target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor)
+target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor ${CMAKE_DL_LIBS})
+if (MSVC)
+    set_source_files_properties(src/models/kokoro_tts/g2p_multilingual.cpp PROPERTIES COMPILE_OPTIONS /utf-8)
+endif()
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(engine_runtime PRIVATE OpenMP::OpenMP_CXX)
 endif()
@@ -556,6 +561,7 @@ if (ENGINE_BUILD_TESTS)
     )
 
     add_engine_unittest(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
+    add_engine_unittest(kokoro_g2p_probe tests/kokoro_tts/kokoro_g2p_probe.cpp)
 
     add_test(
         NAME kokoro_cpu_kernel_test

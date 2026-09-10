@@ -259,6 +259,8 @@ struct KokoroVoicePack {
 };
 
 struct KokoroAssets {
+    std::shared_ptr<struct KokoroPackage> package;
+    std::shared_ptr<class MultilingualG2P> multilingual_g2p;
     std::filesystem::path model_root;
     engine::io::json::Value config;
     std::shared_ptr<const engine::assets::TensorSource> model_weights;

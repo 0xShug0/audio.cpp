@@ -1,4 +1,5 @@
 #include "engine/models/kokoro_tts/loader.h"
+#include "engine/models/kokoro_tts/package.h"
 #include "engine/models/kokoro_tts/session.h"
 
 #include "engine/framework/io/filesystem.h"
@@ -13,7 +14,9 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
     if (engine::io::is_existing_directory(model_path)) {
         return std::filesystem::weakly_canonical(model_path);
     }
-    throw std::runtime_error("Kokoro TTS expects a model directory: " + model_path.string());
+    if (engine::io::is_existing_file(model_path) && model_path.extension() == ".gguf")
+        return std::filesystem::weakly_canonical(model_path);
+    throw std::runtime_error("Kokoro TTS expects a model directory or GGUF: " + model_path.string());
 }
 
 std::vector<runtime::NamedAsset> discover_config_assets(const runtime::ModelLoadRequest & request) {
@@ -33,6 +36,8 @@ public:
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         try {
             const auto root = resolve_model_root(request.model_path);
+            if (root.extension() == ".gguf" && engine::io::is_existing_file(root))
+                return (!request.family_hint.has_value() || *request.family_hint == family()) && is_kokoro_gguf(root);
             return engine::io::is_existing_file(root / "config.json")
                 && engine::io::is_existing_file(root / "voices.json")
                 && engine::io::is_existing_file(root / "kokoro-v1_0.safetensors")
@@ -54,7 +59,7 @@ public:
         inspection.capabilities.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
         };
-        inspection.capabilities.languages = {"a", "b"};
+        inspection.capabilities.languages = {"a", "b", "e", "f", "h", "i", "j", "p", "z"};
         inspection.capabilities.supports_style_condition = true;
         inspection.discovered_configs = discover_config_assets(request);
         inspection.discovered_weights = discover_weight_assets(request);
@@ -108,7 +113,7 @@ std::unique_ptr<KokoroTTSLoadedModel> load_kokoro_tts_model(const std::filesyste
     capabilities.supported_tasks = {
         {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
     };
-    capabilities.languages = {"a", "b"};
+    capabilities.languages = {"a", "b", "e", "f", "h", "i", "j", "p", "z"};
     capabilities.supports_style_condition = true;
 
     return std::make_unique<KokoroTTSLoadedModel>(std::move(metadata), std::move(capabilities), std::move(assets));

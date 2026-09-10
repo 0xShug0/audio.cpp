@@ -1,6 +1,7 @@
 #include "engine/models/kokoro_tts/frontend.h"
 
 #include "engine/models/kokoro_tts/g2p_en.h"
+#include "engine/models/kokoro_tts/g2p_multilingual.h"
 
 #include <algorithm>
 #include <cctype>
@@ -46,7 +47,13 @@ std::string resolve_language_code_alias(const std::string & value) {
     if (normalized == "b" || normalized == "en-gb" || normalized == "gb" || normalized == "uk" || normalized == "british" || normalized == "british english") {
         return "b";
     }
-    throw std::runtime_error("unsupported Kokoro language: " + value + " (English only: en-us/a or en-gb/b)");
+    for (const auto & pair : std::vector<std::pair<std::string, std::string>>{
+        {"e", "e"}, {"es", "e"}, {"es-es", "e"}, {"f", "f"}, {"fr", "f"}, {"fr-fr", "f"},
+        {"h", "h"}, {"hi", "h"}, {"hi-in", "h"}, {"i", "i"}, {"it", "i"}, {"it-it", "i"},
+        {"j", "j"}, {"ja", "j"}, {"ja-jp", "j"}, {"p", "p"}, {"pt", "p"}, {"pt-br", "p"},
+        {"z", "z"}, {"zh", "z"}, {"zh-cn", "z"}, {"cmn", "z"}})
+        if (normalized == pair.first) return pair.second;
+    throw std::runtime_error("unsupported Kokoro language: " + value);
 }
 
 std::string voice_language_code(const std::string & voice_id) {
@@ -67,11 +74,7 @@ std::string resolve_voice_id(
         throw std::runtime_error("unknown Kokoro voice id: " + voice_id);
     }
     const std::string language_code = voice_language_code(voice_id);
-    if (language_code != "a" && language_code != "b") {
-        throw std::runtime_error(
-            "Kokoro currently supports only English voices; got voice id " + voice_id +
-            " with lang_code=" + language_code);
-    }
+    (void) resolve_language_code_alias(language_code);
     return voice_id;
 }
 
@@ -111,9 +114,8 @@ std::string phonemize_text(
         }
         return (*g2p)(text.text).first;
     }
-    throw std::runtime_error(
-        "unsupported Kokoro language code: " + language_code +
-        " (English only: a/en-us or b/en-gb)");
+    if (!assets.multilingual_g2p) throw std::runtime_error("Kokoro multilingual resources were not prepared");
+    return assets.multilingual_g2p->phonemize(text.text, language_code);
 }
 
 struct EncodedInputIds {
