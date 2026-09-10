@@ -1,5 +1,3 @@
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
 #pragma once
 
 #include "engine/community_models/sortformer_diar/aosc_state.h"

@@ -1,5 +1,3 @@
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
 #include "engine/community_models/sortformer_diar/session.h"
 
 #include "engine/framework/core/backend.h"
