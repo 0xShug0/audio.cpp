@@ -1,13 +1,47 @@
 #include "engine/framework/audio/espeak_phonemizer.h"
+#include "engine/framework/audio/espeak_data.h"
 #include "engine/framework/io/dynamic_library.h"
 
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
+#ifdef AUDIOCPP_STATIC_ESPEAK
+#include <espeak-ng/speak_lib.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif !defined(_WIN32)
+#include <unistd.h>
+#endif
+#endif
 
 namespace engine::audio {
 namespace {
+#ifdef AUDIOCPP_STATIC_ESPEAK
+std::filesystem::path executable_directory() {
+#ifdef _WIN32
+    std::vector<wchar_t> buffer(32768);
+    const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length && length < buffer.size()) return std::filesystem::path(std::wstring(buffer.data(), length)).parent_path();
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> buffer(size);
+    if (_NSGetExecutablePath(buffer.data(), &size) == 0)
+        return std::filesystem::weakly_canonical(buffer.data()).parent_path();
+#else
+    std::vector<char> buffer(4096);
+    for (;;) {
+        const auto size = readlink("/proc/self/exe", buffer.data(), buffer.size());
+        if (size < 0) break;
+        if (static_cast<size_t>(size) < buffer.size())
+            return std::filesystem::path(std::string(buffer.data(), size)).parent_path();
+        buffer.resize(buffer.size() * 2);
+    }
+#endif
+    throw std::runtime_error("Cannot locate executable for eSpeak-ng data; specify the model's espeak_data_path option");
+}
+#endif
 struct Runtime {
     io::DynamicLibraryHandle library = nullptr;
     int (*initialize)(int, int, const char *, int) = nullptr;
@@ -24,6 +58,16 @@ struct Runtime {
     void open(const std::filesystem::path & path, const std::filesystem::path & data) {
         library_path = path;
         data_path = data;
+#ifdef AUDIOCPP_STATIC_ESPEAK
+        if (path.empty()) {
+            initialize = [](int output, int size, const char * root, int options) {
+                return espeak_Initialize(static_cast<espeak_AUDIO_OUTPUT>(output), size, root, options);
+            };
+            voice = [](const char * name) { return static_cast<int>(espeak_SetVoiceByName(name)); };
+            phonemes = espeak_TextToPhonemes;
+            terminate = [] { return static_cast<int>(espeak_Terminate()); };
+        } else {
+#endif
         if (!path.empty()) {
 #ifdef _WIN32
             library = LoadLibraryW(path.c_str());
@@ -48,6 +92,9 @@ struct Runtime {
         terminate = reinterpret_cast<decltype(terminate)>(io::dynamic_library_symbol(library, "espeak_Terminate"));
         if (!initialize || !voice || !phonemes || !terminate)
             throw std::runtime_error("eSpeak-ng is missing required symbols");
+#ifdef AUDIOCPP_STATIC_ESPEAK
+        }
+#endif
         // eSpeak appends espeak-ng-data to this path. DONT_EXIT (0x8000)
         // prevents a missing data installation from exiting the host process.
         const auto parent = data.empty() ? std::string() : data.parent_path().u8string();
@@ -72,6 +119,17 @@ EspeakPhonemizer::EspeakPhonemizer(std::filesystem::path library,
     : library_(library.empty() ? library : std::filesystem::absolute(library).lexically_normal()),
       data_(data.empty() ? data : std::filesystem::absolute(data).lexically_normal()),
       voices_(std::move(voices)) {
+#ifdef AUDIOCPP_STATIC_ESPEAK
+    if (library_.empty() && data_.empty()) {
+        const auto root = executable_directory();
+        data_ = std::filesystem::is_regular_file(root / "espeak-ng-data.bin")
+            ? root / "espeak-ng-data.bin"
+            : std::filesystem::is_regular_file(root / "espeak-ng-data.gguf")
+                ? root / "espeak-ng-data.gguf" : root / "espeak-ng-data";
+    }
+#endif
+    if (data_.extension() == ".bin" || data_.extension() == ".gguf")
+        data_ = materialize_espeak_data(data_);
     if (!data_.empty() && data_.filename().empty()) data_ = data_.parent_path();
     if (!library_.empty() && !std::filesystem::is_regular_file(library_))
         throw std::runtime_error("eSpeak-ng library does not exist: " + library_.string());

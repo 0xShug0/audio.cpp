@@ -10,8 +10,9 @@ namespace engine::audio {
 // punctuation restoration and token mapping belong to each model frontend.
 class EspeakPhonemizer {
 public:
-    // data_directory is espeak-ng-data itself, not its parent. Empty paths
-    // use the system library/data defaults. Voices are tried in order.
+    // data_directory accepts espeak-ng-data itself or an eSpeak data package.
+    // Empty paths use static/executable-local or dynamic/system defaults.
+    // Voices are tried in order.
     EspeakPhonemizer(std::filesystem::path library,
                      std::filesystem::path data_directory,
                      std::vector<std::string> voices);

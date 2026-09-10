@@ -97,6 +97,7 @@ option(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS
     OFF)
 option(ENGINE_ENABLE_NATIVE_CPU "Build ggml CPU kernels with native host ISA flags" ${ENGINE_DEFAULT_ENABLE_NATIVE_CPU})
 option(ENGINE_ENABLE_OPENMP "Build host code with OpenMP support" ON)
+option(AUDIOCPP_STATIC_ESPEAK "Build and statically link GPL-3.0-or-later eSpeak-ng; keep data separate" OFF)
 option(AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER
     "Build native model-manager tools and server download/install support"
     OFF)
@@ -413,6 +414,7 @@ add_library(engine_core OBJECT
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
     src/framework/audio/espeak_phonemizer.cpp
+    src/framework/audio/espeak_data.cpp
     src/framework/io/config.cpp
     src/framework/io/json.cpp
     src/framework/io/text.cpp
@@ -1883,6 +1885,9 @@ target_link_libraries(engine_runtime PUBLIC ggml)
 find_package(Threads REQUIRED)
 target_link_libraries(engine_runtime PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor)
+if(AUDIOCPP_STATIC_ESPEAK)
+    include(tools/cmake/espeak_static.cmake)
+endif()
 if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
     target_compile_definitions(engine_runtime PRIVATE ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS=1)
 endif()
@@ -1951,6 +1956,9 @@ add_executable(audiocpp_cli
 )
 
 target_link_libraries(audiocpp_cli PRIVATE engine_runtime ggml)
+if(AUDIOCPP_STATIC_ESPEAK)
+    audiocpp_stage_espeak(audiocpp_cli)
+endif()
 target_include_directories(audiocpp_cli PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 # MinGW selects the wmain() entry point only when linked with -municode;
 # without it the CLI fails to link (undefined reference / ld error 5).
@@ -2024,6 +2032,9 @@ add_executable(audiocpp_server
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
+if(AUDIOCPP_STATIC_ESPEAK)
+    audiocpp_stage_espeak(audiocpp_server)
+endif()
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_sources(audiocpp_server PRIVATE app/server/model_installer.cpp)
     target_link_libraries(audiocpp_server PRIVATE audiocpp_package_manager)
@@ -2146,6 +2157,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endfunction()
 
     if (ENGINE_BUILD_TESTS)
+        add_engine_unittest(espeak_data_test tests/unittests/test_espeak_data.cpp)
+        target_link_libraries(espeak_data_test PRIVATE Threads::Threads)
+        add_test(NAME espeak_data_test COMMAND espeak_data_test)
         add_library(espeak_test_library SHARED tests/unittests/espeak_test_library.cpp)
         add_library(espeak_test_missing_symbol SHARED tests/unittests/espeak_test_library.cpp)
         target_link_libraries(espeak_test_library PRIVATE Threads::Threads)
@@ -2417,6 +2431,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     if (ENGINE_BUILD_MODEL_TESTS)
         if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS AND inflect_v2 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(espeak_frontend_probe tests/unittests/espeak_frontend_probe.cpp)
+            if(AUDIOCPP_STATIC_ESPEAK)
+                audiocpp_stage_espeak(espeak_frontend_probe)
+                add_test(NAME espeak_static_frontend_test COMMAND espeak_frontend_probe - - concurrent)
+            endif()
             if (MSVC)
                 target_compile_options(espeak_frontend_probe PRIVATE /utf-8)
             endif()

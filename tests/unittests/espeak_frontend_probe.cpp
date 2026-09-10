@@ -27,6 +27,9 @@ int main(int argc, char ** argv) try {
     using engine::models::sanotts::SanoTtsFrontend;
     using engine::models::inflect_v2::InflectV2Frontend;
     const std::string mode = argv[3];
+    // '-' selects the compiled-in engine / executable-local data in static builds.
+    if (std::string(argv[1]) == "-") argv[1][0] = '\0';
+    if (std::string(argv[2]) == "-") argv[2][0] = '\0';
     if (mode == "sanotts") { SanoTtsFrontend f(argv[1], argv[2], 1000); print(f); }
     else if (mode == "inflect") { InflectV2Frontend f(argv[1], argv[2]); print(f); }
     else if (mode == "piper") {
