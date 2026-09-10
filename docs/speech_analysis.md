@@ -177,9 +177,8 @@ audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \
   --backend cuda --audio meeting_16k.wav --turns-out turns.json
 ```
 
-Use `sortformer_diar_v2.speaker_threshold`,
-`sortformer_diar_v2.speaker_min_frames`, and
-`sortformer_diar_v2.speaker_pad_frames` for request/session decoding controls.
+Use request options `speaker_threshold`, `speaker_min_frames`, and
+`speaker_pad_frames` for decoding controls.
 See the [community-model guide](community_models/sortformer_diar_v2.md) for
 conversion commands, weight profiles, streaming geometry, and validation
 limits. CUDA offline F32 execution is memory-heavy; streaming is the supported
