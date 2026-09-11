@@ -368,6 +368,20 @@
       ]
     },
     {
+      "id": "yue2_main_q4_0",
+      "display_name": "Yue2 3B Main Q4_0",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "Yue2-3B-GGUF",
+      "files": [
+        "sidecars/yue2-model-config.json",
+        "sidecars/yue2-generation-config.json",
+        "sidecars/yue2-qwen.tiktoken",
+        "sidecars/yue2-vae-config.json",
+        "yue2-3b-q4_0.gguf"
+      ]
+    },
+    {
       "id": "yue2_vae_f16",
       "display_name": "Yue2 VAE F16",
       "format": "gguf",
