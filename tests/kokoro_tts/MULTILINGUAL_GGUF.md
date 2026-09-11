@@ -23,9 +23,9 @@ segmentation dictionaries. Executable libraries are not embedded in the model.
 
 ## Runtime dependencies
 
-English retains the existing native frontend. Spanish, French, Hindi, Italian,
-and Portuguese use the native eSpeak library. Japanese uses native MeCab with
-embedded UniDic data. Chinese uses native dictionary/DAG/HMM processing.
+English, Spanish, French, Hindi, Italian, and Portuguese use the shared native
+eSpeak library. Japanese uses native MeCab with embedded UniDic data. Chinese
+uses native dictionary/DAG/HMM processing.
 Python is used only for conversion and upstream comparison, never inference.
 
 Kokoro uses the shared `engine::audio::EspeakPhonemizer` introduced in PR #502.
@@ -56,7 +56,7 @@ lifetime and removed when its assets are released.
 Use a preparation environment containing numpy, safetensors, gguf (tested with
 0.19), misaki[ja,zh] (tested with 0.9.4), espeakng-loader, unidic, and Jieba.
 Run `python -m unidic download` first. Start from the original extracted Kokoro
-directory containing weights, config, all voices, and English resources.
+directory containing weights, config, and all voices.
 
 ```powershell
 python tools/prepare_kokoro_gguf.py --source ../models_v3_test/kokoro-82m-v1_0-ggml --resources ../models_v3_test/Kokoro-multilingual-resources --output-dir ../models_v3_test/Kokoro-GGUF
@@ -90,7 +90,8 @@ shared dynamic and static eSpeak modes. All 12 multilingual pronunciation cases
 match exactly in both modes on Windows, including punctuation and number cases.
 The script exits with failure on any mismatch or frontend error.
 
-`compare_multilingual_g2p.py` compares `kokoro_g2p_probe` against installed Misaki.
+`compare_multilingual_g2p.py` compares `kokoro_g2p_probe` against installed
+eSpeak and Misaki-compatible Japanese/Chinese frontends.
 `validate_multilingual_packages.py` synthesizes each of the nine language variants
 with both precisions and saves WAV files, command logs, and `validation.json`.
 

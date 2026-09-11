@@ -6,8 +6,6 @@
 #include "engine/models/kokoro_tts/package.h"
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
 
-#include "engine/models/kokoro_tts/g2p_en.h"
-
 #include <filesystem>
 #include <cmath>
 #include <cstring>
@@ -778,9 +776,6 @@ std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::pa
     assets->config = std::move(resources.config);
     assets->model_weights = std::move(resources.weights);
     assets->context_length = kokoro_ggml::parse_kokoro_config_metadata(assets->config).plbert_max_position_embeddings;
-    assets->english_lexicon_dir = root / "misaki_en";
-    assets->english_g2p_us = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(assets->english_lexicon_dir, false);
-    assets->english_g2p_gb = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(assets->english_lexicon_dir, true);
 
     const auto * vocab = assets->config.find("vocab");
     if (vocab == nullptr || !vocab->is_object()) {

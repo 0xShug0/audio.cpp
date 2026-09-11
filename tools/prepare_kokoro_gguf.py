@@ -92,6 +92,7 @@ def convert(root, output, precision, overwrite=False):
     names, offsets, data = [], [0], bytearray()
     for file in sorted(root.rglob('*')):
         if not file.is_file() or file.suffix in ['.safetensors', '.gguf']: continue
+        if 'misaki_en' in file.relative_to(root).parts: continue
         names.append(file.relative_to(root).as_posix())
         data.extend(file.read_bytes())
         offsets.append(len(data))

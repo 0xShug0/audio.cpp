@@ -386,8 +386,8 @@ MultilingualG2P::~MultilingualG2P() = default;
 std::string MultilingualG2P::phonemize(const std::string & text, const std::string & language) const {
     if (language == "j") return impl_->japanese(text);
     if (language == "z") return impl_->chinese(text);
-    static const std::map<std::string, std::string> langs = {{"e", "es"}, {"f", "fr-fr"},
-        {"h", "hi"}, {"i", "it"}, {"p", "pt-br"}};
+    static const std::map<std::string, std::string> langs = {{"a", "en-us"}, {"b", "en"},
+        {"e", "es"}, {"f", "fr-fr"}, {"h", "hi"}, {"i", "it"}, {"p", "pt-br"}};
     auto it = langs.find(language);
     if (it == langs.end()) throw std::runtime_error("Unsupported Kokoro language: " + language);
     return espeak_text(text, it->second, impl_->root);

@@ -1,6 +1,5 @@
 #include "engine/models/kokoro_tts/frontend.h"
 
-#include "engine/models/kokoro_tts/g2p_en.h"
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
 
 #include <algorithm>
@@ -106,13 +105,6 @@ std::string phonemize_text(
     const KokoroAssets & assets) {
     if (text.text.empty()) {
         throw std::runtime_error("Kokoro TTS requires non-empty text");
-    }
-    if (language_code == "a" || language_code == "b") {
-        const auto & g2p = language_code == "b" ? assets.english_g2p_gb : assets.english_g2p_us;
-        if (!g2p) {
-            throw std::runtime_error("Kokoro English G2P assets were not prepared");
-        }
-        return (*g2p)(text.text).first;
     }
     if (!assets.multilingual_g2p) throw std::runtime_error("Kokoro multilingual resources were not prepared");
     return assets.multilingual_g2p->phonemize(text.text, language_code);
