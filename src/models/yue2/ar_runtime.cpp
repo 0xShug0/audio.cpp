@@ -540,12 +540,13 @@ struct Yue2ArRuntime::Impl {
                 if (!layer.key.has_value() || !layer.value.has_value()) {
                     throw std::runtime_error("Yue2 AR prefix-state graph did not return K/V state");
                 }
+                const bool skip_bf16_round = owner.execution.backend_type() == core::BackendType::Metal;
                 auto key_value = core::wrap_tensor(
-                    ggml_round_bf16(ctx.get(), layer.key->tensor),
+                    skip_bf16_round ? layer.key->tensor : ggml_round_bf16(ctx.get(), layer.key->tensor),
                     layer.key->shape,
                     GGML_TYPE_F32);
                 auto value_value = core::wrap_tensor(
-                    ggml_round_bf16(ctx.get(), layer.value->tensor),
+                    skip_bf16_round ? layer.value->tensor : ggml_round_bf16(ctx.get(), layer.value->tensor),
                     layer.value->shape,
                     GGML_TYPE_F32);
                 key_value = core::wrap_tensor(
