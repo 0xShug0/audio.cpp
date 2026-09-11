@@ -47,6 +47,7 @@ const exposeAllGgufPackageFamilies = new Set([
   'firered_audio',
   'fireredtts3',
   'irodori_tts',
+  'kokoro_tts',
   'meanvc2',
   'midashenglm_gen',
   'sanotts'
