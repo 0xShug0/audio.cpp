@@ -48,6 +48,9 @@ Two graphs share one family:
 
 ## Install
 
+SanoTTS uses the [shared eSpeak-ng phonemizer](../espeak_phonemizer.md),
+including shared synchronization with other model frontends.
+
 Install eSpeak-ng and its voice data first. On Debian or Ubuntu:
 
 ```bash
@@ -85,7 +88,9 @@ voice was not trained on. Every voice drives the eSpeak-ng voice its Piper
 teacher was trained against — `pt` uses `pt-br`, the rest use the bare
 language code — so eSpeak-ng must have that language's data installed.
 
-eSpeak-ng is loaded dynamically at runtime, never linked. If it is not on the
+By default eSpeak-ng is loaded dynamically. Static builds with
+`AUDIOCPP_STATIC_ESPEAK=ON` instead include its code and use executable-local data.
+For a dynamic build, if eSpeak-ng is not on the
 default library path:
 
 ```bash
@@ -274,6 +279,9 @@ either.
 
 ## Licensing
 
-The sanoTTS runtimes and weights are MIT-licensed. eSpeak-ng is GPL-3.0 and
-is therefore opened with `dlopen` at runtime and never linked, matching how
-`inflect_v2` treats it.
+The sanoTTS runtimes and weights are MIT-licensed. eSpeak-ng is GPL-3.0-or-later.
+The default build loads an external library; `AUDIOCPP_STATIC_ESPEAK=ON`
+statically links it. Distributors must comply with the applicable license terms
+for their build, including corresponding-source requirements for combined static
+builds. Dynamic loading does not itself waive license obligations. See the
+[shared component documentation](../espeak_phonemizer.md).
