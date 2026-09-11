@@ -1410,6 +1410,25 @@ audiocpp_add_model(granite5asr
         granite_speech5_ctc
 )
 
+audiocpp_add_model(niagara_asr
+    SOURCES
+        src/models/niagara_asr/assets.cpp
+        src/models/niagara_asr/encoder.cpp
+        src/models/niagara_asr/frontend.cpp
+        src/models/niagara_asr/runtime.cpp
+        src/models/niagara_asr/session.cpp
+        src/models/niagara_asr/weights.cpp
+    INCLUDES
+        engine/models/niagara_asr/assets.h
+        engine/models/niagara_asr/encoder.h
+        engine/models/niagara_asr/frontend.h
+        engine/models/niagara_asr/runtime.h
+        engine/models/niagara_asr/session.h
+        engine/models/niagara_asr/weights.h
+    LOADERS
+        engine::models::niagara_asr::make_niagara_asr_loader
+)
+
 audiocpp_add_model(audio8_asr
     SOURCES
         src/community_models/audio8_asr/assets.cpp
@@ -2126,6 +2145,7 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
     add_engine_warmbench(mira_tts_warm_bench tests/mira_tts/mira_tts_warm_bench.cpp)
     add_engine_warmbench(muscriptor_warm_bench tests/muscriptor/muscriptor_warm_bench.cpp)
+    add_engine_warmbench(niagara_asr_warm_bench tests/niagara_asr/niagara_asr_warm_bench.cpp)
     add_engine_warmbench(moss_tts_nano_warm_bench tests/moss_tts_nano/moss_tts_nano_warm_bench.cpp)
     add_engine_warmbench(moss_tts_local_warm_bench tests/moss_tts_local/moss_tts_local_warm_bench.cpp)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
@@ -2282,6 +2302,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(encoder_module_test tests/unittests/test_encoder_modules.cpp)
         add_test(NAME encoder_module_test COMMAND encoder_module_test)
+
+        add_engine_unittest(transpose_module_test tests/unittests/test_transpose_module.cpp)
+        target_include_directories(transpose_module_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME transpose_module_test COMMAND transpose_module_test)
 
         add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
         target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)

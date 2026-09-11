@@ -259,7 +259,8 @@ core::TensorValue TransposeModule::build(core::ModuleBuildContext & ctx, const c
     for (size_t out_logical_axis = 0; out_logical_axis < input.shape.rank; ++out_logical_axis) {
         const int in_logical_axis = config_.axes[out_logical_axis];
         const int out_ggml_axis = static_cast<int>(input.shape.rank) - 1 - static_cast<int>(out_logical_axis);
-        ggml_axes[out_ggml_axis] = core::logical_axis_to_ggml_axis(input.shape.rank, in_logical_axis);
+        const int in_ggml_axis = core::logical_axis_to_ggml_axis(input.shape.rank, in_logical_axis);
+        ggml_axes[static_cast<size_t>(in_ggml_axis)] = out_ggml_axis;
     }
 
     return core::wrap_tensor(
