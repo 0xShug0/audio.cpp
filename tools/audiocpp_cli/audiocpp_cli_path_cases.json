@@ -2470,6 +2470,33 @@
       ]
     },
     {
+      "id": "niagara_asr_paths",
+      "coverage": "Niagara ASR offline CPU CTC decode on short and longer Librispeech inputs with session reuse",
+      "family": "niagara_asr",
+      "model": "models/Niagara-19M-Batch-EN-GGUF",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "librispeech_clean_short",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+          "options": {
+            "audio_chunk_mode": "none"
+          }
+        },
+        {
+          "id": "librispeech_clean_long",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav",
+          "options": {
+            "audio_chunk_mode": "none"
+          }
+        }
+      ]
+    },
+    {
       "id": "higgs_audio_stt_paths",
       "coverage": "Higgs Audio STT default prompt, custom prompt, enable_thinking on/off, max-token variation, and session reuse paths",
       "family": "higgs_audio_stt",

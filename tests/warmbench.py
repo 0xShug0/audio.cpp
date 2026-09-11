@@ -309,6 +309,16 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "case_catalog": "tests/nemotron_asr/nemotron_asr_warm_bench_cases.json",
         "default_requests_per_session": 1,
     },
+    "niagara_asr": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/niagara_asr_warm_bench",
+        "python_script": "tests/niagara_asr/niagara_asr_python_warm_bench.py",
+        "model": "models/Niagara-19M-Batch-EN-GGUF",
+        "python_model": "models/niagara-19m-batch.en",
+        "case_catalog": "tests/niagara_asr/niagara_asr_warm_bench_cases.json",
+        "default_requests_per_session": 2,
+    },
     "muscriptor": {
         "kind": "asr",
         "modes": ["offline"],
@@ -3909,6 +3919,8 @@ def build_catalog_asr_commands(
             "--keep-language-tags-sequence",
             csv_bools(request_cases, "keep_language_tags", bool(warmup_case.get("keep_language_tags", False))),
         ])
+    elif family == "niagara_asr":
+        pass
     elif family == "muscriptor":
         common.extend([
             "--instruments",
@@ -5549,7 +5561,7 @@ def run_scenario(
                 "transcripts": getattr(args, f"{family}_request_transcripts"),
                 "expected_words": [item.get("expected_words", []) for item in request_cases],
             }
-        elif family in {"higgs_audio_stt", "hviske_asr", "nemotron_asr", "muscriptor", "vibevoice_asr", "voxtral_realtime"}:
+        elif family in {"higgs_audio_stt", "hviske_asr", "nemotron_asr", "niagara_asr", "muscriptor", "vibevoice_asr", "voxtral_realtime"}:
             if len(args.case_names) > 1:
                 raise RuntimeError(f"{family} warmbench accepts at most one --case-name")
             case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", ""))

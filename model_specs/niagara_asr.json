@@ -1,0 +1,133 @@
+{
+  "family": "niagara_asr",
+  "schema_version": 1,
+  "display_name": "Niagara ASR",
+  "description": "ABR Niagara English batch ASR state-space models with attention, greedy CTC decoding, and SentencePiece tokenization.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {},
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Recognition language; Niagara batch models are English-only.",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode.",
+        "values": [
+          "none"
+        ],
+        "required": false,
+        "default": "none"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Inference graph arena size in MiB.",
+        "required": false,
+        "min": 64,
+        "default": 1024
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight descriptor context size in MiB.",
+        "required": false,
+        "min": 16,
+        "default": 256
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cpu"
+    ]
+  },
+  "ui": {
+    "recommended_package": "niagara_19m_orig",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ],
+    "summary": "ABR Niagara compact English speech recognition."
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "unsupported",
+      "reason": "convert the original ABR Niagara PT2 CPU package with tools/community_models/convert_niagara_asr.py"
+    }
+  },
+  "packages": [
+    {
+      "id": "niagara_19m_orig",
+      "display_name": "Niagara 19M Batch English Original GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Niagara-19M-Batch-EN-GGUF",
+      "files": [
+        "Niagara-19M-Batch-EN-GGUF/niagara-19m-batch.en.gguf"
+      ],
+      "strip_prefix": "Niagara-19M-Batch-EN-GGUF"
+    },
+    {
+      "id": "niagara_38m_orig",
+      "display_name": "Niagara 38M Batch English Original GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Niagara-38M-Batch-EN-GGUF",
+      "files": [
+        "Niagara-38M-Batch-EN-GGUF/niagara-38m-batch.en.gguf"
+      ],
+      "strip_prefix": "Niagara-38M-Batch-EN-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "tokenizer_spm": "model:sentencepiece.model"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    }
+  ]
+}

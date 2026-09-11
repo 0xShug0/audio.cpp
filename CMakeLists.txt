@@ -1410,6 +1410,25 @@ audiocpp_add_model(granite5asr
         granite_speech5_ctc
 )
 
+audiocpp_add_model(niagara_asr
+    SOURCES
+        src/community_models/niagara_asr/assets.cpp
+        src/community_models/niagara_asr/encoder.cpp
+        src/community_models/niagara_asr/frontend.cpp
+        src/community_models/niagara_asr/runtime.cpp
+        src/community_models/niagara_asr/session.cpp
+        src/community_models/niagara_asr/weights.cpp
+    INCLUDES
+        engine/community_models/niagara_asr/assets.h
+        engine/community_models/niagara_asr/encoder.h
+        engine/community_models/niagara_asr/frontend.h
+        engine/community_models/niagara_asr/runtime.h
+        engine/community_models/niagara_asr/session.h
+        engine/community_models/niagara_asr/weights.h
+    LOADERS
+        engine::community_models::niagara_asr::make_niagara_asr_loader
+)
+
 audiocpp_add_model(audio8_asr
     SOURCES
         src/community_models/audio8_asr/assets.cpp
@@ -2126,6 +2145,10 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
     add_engine_warmbench(mira_tts_warm_bench tests/mira_tts/mira_tts_warm_bench.cpp)
     add_engine_warmbench(muscriptor_warm_bench tests/muscriptor/muscriptor_warm_bench.cpp)
+    add_engine_warmbench(niagara_asr_warm_bench tests/niagara_asr/niagara_asr_warm_bench.cpp)
+    add_engine_warmbench(niagara_asr_native_ffn_probe tests/niagara_asr/niagara_asr_native_ffn_probe.cpp)
+    add_engine_warmbench(niagara_asr_native_state_space_probe tests/niagara_asr/niagara_asr_native_state_space_probe.cpp)
+    add_engine_warmbench(niagara_asr_weight_load_probe tests/niagara_asr/niagara_asr_weight_load_probe.cpp)
     add_engine_warmbench(moss_tts_nano_warm_bench tests/moss_tts_nano/moss_tts_nano_warm_bench.cpp)
     add_engine_warmbench(moss_tts_local_warm_bench tests/moss_tts_local/moss_tts_local_warm_bench.cpp)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)

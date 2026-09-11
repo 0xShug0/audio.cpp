@@ -1,0 +1,17 @@
+{
+  "warmup": {
+    "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"
+  },
+  "requests": [
+    {
+      "id": "librispeech_clean_short",
+      "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+      "expected_text": "concord returned to its place amidst the tents"
+    },
+    {
+      "id": "librispeech_clean_long",
+      "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav",
+      "expected_text": "the english forwarded to the french baskets of flowers of which they had made a plentiful provision to greet the arrival of the young princess the french in return invited the english to a supper which was to be given the next day"
+    }
+  ]
+}
