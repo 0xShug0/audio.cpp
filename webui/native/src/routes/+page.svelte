@@ -271,9 +271,9 @@
     'abc_max_tokens'
   ];
 
-  function parameterSpecsByName(names: string[]) {
+  function parameterSpecsByName(names: string[], specs: ParamSpec[]) {
     return names
-      .map((name) => paramSpecs.find((spec) => spec.name === name))
+      .map((name) => specs.find((spec) => spec.name === name))
       .filter((spec): spec is ParamSpec => spec !== undefined);
   }
 
@@ -430,11 +430,14 @@
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
   $: isYue2 = selected?.family === 'yue2';
-  $: yue2ComponentSpecs = isYue2 ? parameterSpecsByName(yue2ComponentParamNames) : [];
-  $: yue2CoreSpecs = isYue2 ? parameterSpecsByName(yue2CoreParamNames) : [];
-  $: yue2AbcSpecs = isYue2 ? parameterSpecsByName(yue2AbcParamNames) : [];
-  $: yue2SemanticSpecs = isYue2 ? parameterSpecsByName(yue2SemanticParamNames) : [];
-  $: yue2PlannerSpecs = isYue2 ? parameterSpecsByName(yue2PlannerParamNames) : [];
+  // paramSpecs must be read in the statement itself: Svelte 5 derives $:
+  // dependencies statically, so reading it only inside parameterSpecsByName()
+  // left these lists stale when the yue2 model was selected after another one.
+  $: yue2ComponentSpecs = isYue2 ? parameterSpecsByName(yue2ComponentParamNames, paramSpecs) : [];
+  $: yue2CoreSpecs = isYue2 ? parameterSpecsByName(yue2CoreParamNames, paramSpecs) : [];
+  $: yue2AbcSpecs = isYue2 ? parameterSpecsByName(yue2AbcParamNames, paramSpecs) : [];
+  $: yue2SemanticSpecs = isYue2 ? parameterSpecsByName(yue2SemanticParamNames, paramSpecs) : [];
+  $: yue2PlannerSpecs = isYue2 ? parameterSpecsByName(yue2PlannerParamNames, paramSpecs) : [];
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
