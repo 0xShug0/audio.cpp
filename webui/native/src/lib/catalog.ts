@@ -162,6 +162,7 @@ function packageLabel(entry: PackageEntry): string {
   if (entry.family === 'irodori_tts' && entry.id.includes('_anime_')) return 'Anime Q8';
   if (entry.family === 'yue2') {
     if (entry.id === 'yue2_main_q8_0') return 'Main Q8_0';
+    if (entry.id === 'yue2_main_q4_0') return 'Main Q4_0';
     if (entry.id === 'yue2_main_bf16') return 'Main BF16';
     if (entry.id === 'yue2_vae_f16') return 'VAE F16';
     if (entry.id === 'yue2_vae_f32') return 'VAE F32';
@@ -229,9 +230,10 @@ function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
       candidate.family === entry.family && candidate.format === 'gguf');
     const order = new Map([
       ['yue2_main_q8_0', 0],
-      ['yue2_main_bf16', 1],
-      ['yue2_vae_f16', 2],
-      ['yue2_vae_f32', 3]
+      ['yue2_main_q4_0', 1],
+      ['yue2_main_bf16', 2],
+      ['yue2_vae_f16', 3],
+      ['yue2_vae_f32', 4]
     ]);
     return related
       .filter((candidate) => candidate.format === 'gguf')
