@@ -5,9 +5,11 @@ GGUF produced by `tools/prepare_kokoro_gguf.py`. Specify `--family kokoro_tts` f
 GGUF loading. This is a Kokoro-specific container; arbitrary third-party Kokoro
 GGUF layouts are not supported.
 
-Each package includes all 54 source voices, configuration, English pronunciation
-resources, eSpeak data, the full UniDic dictionary, and Chinese pronunciation and
-segmentation dictionaries. Executable libraries are not embedded in the model.
+Release packages include all 54 source voices, configuration, vocabulary,
+weights, and the generated `g2p/ja.json` / `g2p/zh.json` tables. Heavy frontend
+runtime resources such as eSpeak data and UniDic are not included by default to
+keep the GGUFs small. Users who want a fully bundled local package can pass
+`--embed-multilingual-resources` during conversion.
 
 | Language | CLI language | Example voice |
 | --- | --- | --- |
@@ -23,9 +25,10 @@ segmentation dictionaries. Executable libraries are not embedded in the model.
 
 ## Runtime dependencies
 
-English retains the existing native frontend. Spanish, French, Hindi, Italian,
-and Portuguese use the native eSpeak library. Japanese uses native MeCab with
-embedded UniDic data. Chinese uses native dictionary/DAG/HMM processing.
+English, Spanish, French, Hindi, Italian, and Portuguese use the shared native
+eSpeak library and runtime eSpeak data. Chinese uses the bundled `g2p/zh.json`
+dictionary/DAG/HMM data. Japanese uses the bundled `g2p/ja.json` plus native
+MeCab and UniDic data when a fully bundled package is exported.
 Python is used only for conversion and upstream comparison, never inference.
 
 Kokoro uses the shared `engine::audio::EspeakPhonemizer` introduced in PR #502.
@@ -46,32 +49,39 @@ explicit library and retains the existing model-local eSpeak data default.
 `AUDIOCPP_ESPEAK_DATA` overrides the data location with a directory or a
 `.bin`/`.gguf` data package in either build mode.
 
-Japanese still requires `libmecab.dll` on Windows or an installed MeCab library.
-`AUDIOCPP_MECAB_LIBRARY` selects its absolute path.
-Embedded data is extracted to a temporary directory for the loaded model's
-lifetime and removed when its assets are released.
+Japanese still requires `libmecab.dll` on Windows or an installed MeCab library;
+`AUDIOCPP_MECAB_LIBRARY` selects its absolute path. The small release GGUF does
+not include UniDic. Export a local GGUF with `--embed-multilingual-resources`
+for the full multilingual resource bundle. Bundled data is extracted to a
+temporary directory for the loaded model's lifetime and removed when its assets
+are released.
 
 ## Conversion
 
-Use a preparation environment containing numpy, safetensors, gguf (tested with
-0.19), misaki[ja,zh] (tested with 0.9.4), espeakng-loader, unidic, and Jieba.
-Run `python -m unidic download` first. Start from the original extracted Kokoro
-directory containing weights, config, all voices, and English resources.
+Use a preparation environment containing numpy, gguf, and torch. Start from the
+official hexgrad/Kokoro-82M source checkout containing `config.json`,
+`kokoro-v1_0.pth`, and `voices/*.pt`.
 
 ```powershell
-python tools/prepare_kokoro_gguf.py --source ../models_v3_test/kokoro-82m-v1_0-ggml --resources ../models_v3_test/Kokoro-multilingual-resources --output-dir ../models_v3_test/Kokoro-GGUF
+python tools/prepare_kokoro_gguf.py --source ../models_v3_test/Kokoro-82M --output-dir ../models_v3_test/Kokoro-GGUF
 ```
 
-Outputs are `kokoro-v1.0-q8_0.gguf` and `kokoro-v1.0-bf16.gguf`. Q8 quantizes
+Outputs are `kokoro-82m-q8_0.gguf` and `kokoro-82m-bf16.gguf`. Q8 quantizes
 eligible matrices; unsupported weight layouts remain BF16, while sensitive
 small tensors remain F32 in both packages. Q8 does not mean every tensor is Q8.
-The full embedded dictionaries dominate file size: approximately 943 MB for Q8
-and 965 MB for BF16. Language resources are identical in both.
+
+To build a large fully bundled multilingual package for local redistribution or
+offline deployment, also install misaki[ja,zh] (tested with 0.9.4),
+espeakng-loader, unidic, and Jieba, then run `python -m unidic download` first:
+
+```powershell
+python tools/prepare_kokoro_gguf.py --source ../models_v3_test/Kokoro-82M --output-dir ../models_v3_test/Kokoro-GGUF --embed-multilingual-resources
+```
 
 ## Synthesis
 
 ```powershell
-.\build\windows-cpu-release\bin\audiocpp_cli.exe --task tts --family kokoro_tts --model ..\models_v3_test\Kokoro-GGUF\kokoro-v1.0-q8_0.gguf --backend cpu --threads 8 --language en-us --voice-id af_heart --text "Hello, this is a native Kokoro TTS test." --out kokoro-q8.wav
+.\build\windows-cpu-release\bin\audiocpp_cli.exe --task tts --family kokoro_tts --model ..\models_v3_test\Kokoro-GGUF\kokoro-82m-q8_0.gguf --backend cpu --threads 8 --language en-us --voice-id af_heart --text "Hello, this is a native Kokoro TTS test." --out kokoro-q8.wav
 ```
 
 For non-Latin text on Windows, use a UTF-8 text file with
@@ -90,9 +100,11 @@ shared dynamic and static eSpeak modes. All 12 multilingual pronunciation cases
 match exactly in both modes on Windows, including punctuation and number cases.
 The script exits with failure on any mismatch or frontend error.
 
-`compare_multilingual_g2p.py` compares `kokoro_g2p_probe` against installed Misaki.
-`validate_multilingual_packages.py` synthesizes each of the nine language variants
-with both precisions and saves WAV files, command logs, and `validation.json`.
+`compare_multilingual_g2p.py` compares `kokoro_g2p_probe` against installed
+eSpeak and Misaki-compatible Japanese/Chinese frontends.
+`validate_multilingual_packages.py` synthesizes each of the nine language
+variants with both precisions from fully bundled packages and saves WAV files,
+command logs, and `validation.json`.
 
 Initial Windows CPU results: 12/12 pronunciation cases matched upstream exactly;
 18/18 synthesis cases produced non-silent 24 kHz audio. These are smoke tests,

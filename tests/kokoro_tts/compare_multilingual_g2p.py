@@ -1,4 +1,4 @@
-"""Compare native pronunciation with the upstream Misaki frontends."""
+"""Compare native pronunciation with upstream eSpeak and Misaki frontends."""
 import argparse
 import json
 import os

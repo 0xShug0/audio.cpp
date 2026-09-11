@@ -1,6 +1,5 @@
 #include "engine/models/kokoro_tts/frontend.h"
 
-#include "engine/models/kokoro_tts/g2p_en.h"
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
 
 #include <algorithm>
@@ -107,13 +106,6 @@ std::string phonemize_text(
     if (text.text.empty()) {
         throw std::runtime_error("Kokoro TTS requires non-empty text");
     }
-    if (language_code == "a" || language_code == "b") {
-        const auto & g2p = language_code == "b" ? assets.english_g2p_gb : assets.english_g2p_us;
-        if (!g2p) {
-            throw std::runtime_error("Kokoro English G2P assets were not prepared");
-        }
-        return (*g2p)(text.text).first;
-    }
     if (!assets.multilingual_g2p) throw std::runtime_error("Kokoro multilingual resources were not prepared");
     return assets.multilingual_g2p->phonemize(text.text, language_code);
 }
@@ -218,33 +210,6 @@ KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
     state.voice_pack = &voice_it->second;
     state.speaking_rate = resolve_speaking_rate(voice);
     return state;
-}
-
-void validate_kokoro_frontend_session_state(
-    const runtime::Transcript & text,
-    const std::optional<runtime::VoiceCondition> & voice,
-    const KokoroFrontendSessionState & state,
-    const KokoroAssets & assets) {
-    const std::string resolved_voice_id = resolve_voice_id(voice, assets);
-    if (resolved_voice_id != state.voice_id) {
-        throw std::runtime_error(
-            "Kokoro session voice_id changed after launch: " +
-            state.voice_id + " -> " + resolved_voice_id);
-    }
-    const std::string resolved_language_code = resolve_language_code(text, voice, state.voice_id);
-    if (resolved_language_code != state.language_code) {
-        throw std::runtime_error(
-            "Kokoro session language_code changed after launch: " +
-            state.language_code + " -> " + resolved_language_code);
-    }
-    const auto voice_it = assets.voices.find(state.voice_id);
-    if (voice_it == assets.voices.end() || &voice_it->second != state.voice_pack) {
-        throw std::runtime_error("Kokoro session voice pack changed after launch");
-    }
-    const float resolved_speaking_rate = resolve_speaking_rate(voice);
-    if (resolved_speaking_rate != state.speaking_rate) {
-        throw std::runtime_error("Kokoro session speaking_rate changed after launch");
-    }
 }
 
 KokoroSynthesisInput build_kokoro_synthesis_input(

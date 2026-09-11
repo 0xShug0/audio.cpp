@@ -2,11 +2,9 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/models/kokoro_tts/assets.h"
-#include "engine/models/kokoro_tts/package.h"
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
-
-#include "engine/models/kokoro_tts/g2p_en.h"
 
 #include <filesystem>
 #include <cmath>
@@ -716,34 +714,6 @@ namespace engine::models::kokoro_tts {
 
 namespace {
 
-struct KokoroAssetResources {
-    std::shared_ptr<KokoroPackage> package;
-    assets::ResourceBundle bundle;
-    io::json::Value config;
-    io::json::Value voices;
-    std::shared_ptr<const assets::TensorSource> weights;
-};
-
-KokoroAssetResources load_asset_resources(const std::filesystem::path & model_root) {
-    KokoroAssetResources resources;
-    resources.package = open_kokoro_package(model_root);
-    resources.bundle = assets::ResourceBundle(resources.package->root);
-    resources.bundle.add_model_files({
-        {"config", "config.json"},
-        {"voices", "voices.json"},
-    });
-    resources.config = resources.bundle.parse_json("config");
-    if (!resources.config.is_object()) {
-        throw std::runtime_error("Kokoro config root must be an object");
-    }
-    resources.voices = resources.bundle.parse_json("voices");
-    if (!resources.voices.is_object()) {
-        throw std::runtime_error("Kokoro voices.json root must be an object");
-    }
-    resources.weights = resources.package->weights;
-    return resources;
-}
-
 std::string language_code_from_voice_id(const std::string & voice_id) {
     if (voice_id.size() < 2 || (voice_id[1] != 'f' && voice_id[1] != 'm')) {
         throw std::runtime_error("invalid Kokoro voice id: " + voice_id);
@@ -767,20 +737,26 @@ std::vector<float> read_f32_file_exact(const std::filesystem::path & path, size_
 
 }  // namespace
 
-std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::path & model_root) {
-    auto resources = load_asset_resources(model_root);
-    const auto & root = resources.bundle.model_root();
+std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::path & model_path) {
+    auto resources = engine::model_spec::load_resource_bundle_for_family(model_path, "kokoro_tts");
+    auto config = resources.parse_json("config");
+    if (!config.is_object()) {
+        throw std::runtime_error("Kokoro config root must be an object");
+    }
+    auto voices = resources.parse_json("voices");
+    if (!voices.is_object()) {
+        throw std::runtime_error("Kokoro voices.json root must be an object");
+    }
+    auto weights = resources.open_tensor_source("weights");
+    const auto & root = resources.model_root();
 
     auto assets = std::make_shared<KokoroAssets>();
-    assets->package = resources.package;
+    assets->resources = resources;
     assets->multilingual_g2p = std::make_shared<MultilingualG2P>(root);
     assets->model_root = root;
-    assets->config = std::move(resources.config);
-    assets->model_weights = std::move(resources.weights);
+    assets->config = std::move(config);
+    assets->model_weights = std::move(weights);
     assets->context_length = kokoro_ggml::parse_kokoro_config_metadata(assets->config).plbert_max_position_embeddings;
-    assets->english_lexicon_dir = root / "misaki_en";
-    assets->english_g2p_us = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(assets->english_lexicon_dir, false);
-    assets->english_g2p_gb = std::make_shared<const kokoro_ggml::g2p_en::EnglishG2P>(assets->english_lexicon_dir, true);
 
     const auto * vocab = assets->config.find("vocab");
     if (vocab == nullptr || !vocab->is_object()) {
@@ -790,7 +766,7 @@ std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::pa
         assets->vocab[symbol] = static_cast<int32_t>(value.as_i64());
     }
 
-    for (const auto & [voice_id, value] : resources.voices.as_object()) {
+    for (const auto & [voice_id, value] : voices.as_object()) {
         if (!value.is_object()) {
             throw std::runtime_error("Kokoro voice entry must be an object: " + voice_id);
         }

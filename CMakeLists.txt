@@ -586,16 +586,13 @@ audiocpp_add_model(demucs
 audiocpp_add_model(kokoro_tts
     SOURCES
         src/models/kokoro_tts/assets.cpp
-        src/models/kokoro_tts/package.cpp
         src/models/kokoro_tts/g2p_multilingual.cpp
-        src/models/kokoro_tts/loader.cpp
         src/models/kokoro_tts/frontend.cpp
-        src/models/kokoro_tts/g2p_en.cpp
         src/models/kokoro_tts/predictor.cpp
         src/models/kokoro_tts/decoder.cpp
         src/models/kokoro_tts/plbert.cpp
         src/models/kokoro_tts/session.cpp
-    INCLUDES engine/models/kokoro_tts/loader.h
+    INCLUDES engine/models/kokoro_tts/session.h
     LOADERS engine::models::kokoro_tts::make_kokoro_tts_loader
 )
 if(MSVC)

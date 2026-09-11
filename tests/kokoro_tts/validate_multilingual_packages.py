@@ -22,7 +22,7 @@ codes = {'e':'es', 'f':'fr-fr', 'h':'hi', 'i':'it', 'p':'pt-br', 'j':'ja', 'z':'
 a.output.mkdir(parents=True, exist_ok=True)
 report = []
 for precision in a.types:
-    model = a.models.resolve() / ('kokoro-v1.0-' + precision + '.gguf')
+    model = a.models.resolve() / ('kokoro-82m-' + precision + '.gguf')
     for case in cases:
         lang = codes.get(case['language'], case['language'])
         dest = a.output.resolve() / (precision + '-' + lang)
@@ -33,7 +33,8 @@ for precision in a.types:
         command = [str(a.cli.resolve()), '--task', 'tts', '--family', 'kokoro_tts',
             '--model', str(model), '--backend', 'cpu', '--threads', '8', '--seed', '1234',
             '--voice-id', case['voice'], '--language', lang, '--batch-text-file', str(textfile),
-            '--batch-merge-audio', 'concat', '--out', str(wav)]
+            '--batch-merge-audio', 'concat', '--out', str(wav),
+            '--log', '--log-file', str(dest / 'inference.log')]
         start = time.perf_counter()
         run = subprocess.run(command, capture_output=True, encoding='utf-8', errors='replace', timeout=180)
         elapsed = time.perf_counter() - start
