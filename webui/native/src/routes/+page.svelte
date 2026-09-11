@@ -425,7 +425,10 @@
   $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
     (Boolean(voiceFile) && isQwenBase);
   $: quickStartVoices = server && !server.ui_management
-    ? configuredVoices
+    ? Array.from(new Set([
+        ...configuredVoices,
+        ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+      ]))
     : usesBuiltInVoiceSelector
       ? selected?.builtin_voices || []
     : Object.entries(demoVoiceSources)
@@ -1435,7 +1438,13 @@
     }
     try {
       configuredVoices = await availableVoices(selectedId);
-      if (quickStartVoice && !configuredVoices.includes(quickStartVoice)) quickStartVoice = '';
+      if (quickStartVoice) {
+        const allowed = new Set([
+          ...configuredVoices,
+          ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+        ]);
+        if (!allowed.has(quickStartVoice)) quickStartVoice = '';
+      }
     } catch (error) {
       configuredVoices = [];
       log(`Configured voices unavailable: ${error instanceof Error ? error.message : error}`);

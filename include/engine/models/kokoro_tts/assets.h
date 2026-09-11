@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/io/json.h"
@@ -256,9 +257,9 @@ struct KokoroVoicePack {
 };
 
 struct KokoroAssets {
-    std::shared_ptr<struct KokoroPackage> package;
     std::shared_ptr<class MultilingualG2P> multilingual_g2p;
     std::filesystem::path model_root;
+    engine::assets::ResourceBundle resources;
     engine::io::json::Value config;
     std::shared_ptr<const engine::assets::TensorSource> model_weights;
     int64_t context_length = 512;
@@ -266,7 +267,7 @@ struct KokoroAssets {
     std::unordered_map<std::string, KokoroVoicePack> voices;
 };
 
-std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::path & model_root);
+std::shared_ptr<const KokoroAssets> load_kokoro_assets(const std::filesystem::path & model_path);
 
 std::shared_ptr<const kokoro_ggml::KokoroWeights> load_kokoro_backend_weights(
     const KokoroAssets & assets,

@@ -90,9 +90,9 @@ std::string espeak_text(const std::string & text, const std::string & language, 
     std::filesystem::path data;
     if (data_override && *data_override) data = std::filesystem::u8path(data_override);
 #ifdef AUDIOCPP_STATIC_ESPEAK
-    else if (!library.empty()) data = root / "espeak-ng-data";
+    else if (!library.empty() && std::filesystem::is_regular_file(root / "espeak-ng-data" / "phontab")) data = root / "espeak-ng-data";
 #else
-    else data = root / "espeak-ng-data";
+    else if (std::filesystem::is_regular_file(root / "espeak-ng-data" / "phontab")) data = root / "espeak-ng-data";
 #endif
     engine::audio::EspeakPhonemizer phonemizer(library, data, {language == "fr-fr" ? "fr" : language});
     // Preserve punctuation ourselves: TextToPhonemes consumes clause punctuation.
@@ -174,7 +174,19 @@ struct MultilingualG2P::Impl {
     explicit Impl(std::filesystem::path path) : root(std::move(path)) {}
     void load_ja() const {
         std::call_once(ja_once, [&] {
-            auto value = engine::io::json::parse_file(root / "g2p/ja.json");
+            const auto g2p_path = root / "g2p/ja.json";
+            if (!std::filesystem::is_regular_file(g2p_path)) {
+                throw std::runtime_error(
+                    "Kokoro Japanese G2P resources are not bundled in this GGUF; "
+                    "re-export the model with --embed-multilingual-resources to use Japanese voices");
+            }
+            const auto unidic_path = root / "unidic";
+            if (!std::filesystem::is_regular_file(unidic_path / "dicrc")) {
+                throw std::runtime_error(
+                    "Kokoro UniDic resources are not bundled in this GGUF; "
+                    "re-export the model with --embed-multilingual-resources to use Japanese voices");
+            }
+            auto value = engine::io::json::parse_file(g2p_path);
             for (const auto & [k, v] : value.require("kana").as_object()) kana.emplace(decode(k), decode(v.as_string()));
             for (const auto & v : value.require("words").as_array()) ja_words.insert(v.as_string());
         });
@@ -275,7 +287,15 @@ struct MultilingualG2P::Impl {
     }
 
     std::string chinese(const std::string & text) const {
-        std::call_once(zh_once, [&] { zh = engine::io::json::parse_file(root / "g2p/zh.json"); });
+        std::call_once(zh_once, [&] {
+            const auto g2p_path = root / "g2p/zh.json";
+            if (!std::filesystem::is_regular_file(g2p_path)) {
+                throw std::runtime_error(
+                    "Kokoro Chinese G2P resources are not bundled in this GGUF; "
+                    "re-export the model with --embed-multilingual-resources to use Chinese voices");
+            }
+            zh = engine::io::json::parse_file(g2p_path);
+        });
         const auto & frequencies = zh.require("frequency").as_object();
         const auto & characters = zh.require("chars").as_object();
         const auto & phrases = zh.require("phrases").as_object();

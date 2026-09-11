@@ -31,12 +31,6 @@ KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
     const std::optional<runtime::VoiceCondition> & voice,
     const KokoroAssets & assets);
 
-void validate_kokoro_frontend_session_state(
-    const runtime::Transcript & text,
-    const std::optional<runtime::VoiceCondition> & voice,
-    const KokoroFrontendSessionState & state,
-    const KokoroAssets & assets);
-
 KokoroSynthesisInput build_kokoro_synthesis_input(
     const runtime::Transcript & text,
     const KokoroFrontendSessionState & state,

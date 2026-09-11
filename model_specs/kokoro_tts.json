@@ -17,17 +17,30 @@
   "options": {
     "request": [
       {
+        "name": "language",
+        "type": "string",
+        "description": "Text language code; defaults to the selected voice prefix.",
+        "required": false
+      },
+      {
         "name": "seed",
         "type": "int",
         "description": "Decoder noise seed; omitted requests choose a random seed.",
         "required": false,
         "min": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum codepoints per text chunk before synthesis. Default 240.",
+        "required": false,
+        "min": 32,
+        "default": 240
       }
     ],
-    "session": [],
-    "load": [
+    "session": [
       {
-        "name": "matmul_weight_type",
+        "name": "weight_type",
         "type": "enum",
         "preset": "weight_type_full",
         "required": false,
@@ -39,10 +52,66 @@
         "type": "enum",
         "preset": "weight_type_conv",
         "required": false,
-        "default": "f32",
+        "default": "native",
         "description": "Storage type for convolution weights."
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "predictor_duration_graph_mb",
+        "type": "int",
+        "description": "Predictor duration graph arena size in MiB; default 384.",
+        "required": false,
+        "min": 1,
+        "default": 384
+      },
+      {
+        "name": "predictor_text_graph_mb",
+        "type": "int",
+        "description": "Predictor text graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "predictor_tail_graph_mb",
+        "type": "int",
+        "description": "Predictor tail graph arena size in MiB; default 640.",
+        "required": false,
+        "min": 1,
+        "default": 640
+      },
+      {
+        "name": "graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy; default fixed.",
+        "values": ["fixed", "tiered", "grow", "double"],
+        "required": false,
+        "default": "fixed"
+      },
+      {
+        "name": "max_input_tokens",
+        "type": "int",
+        "description": "Predictor graph input token capacity; default min(512, model context length).",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "pre_tail_tokens",
+        "type": "int",
+        "description": "Optional prebuilt predictor tail token capacity; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
       }
-    ]
+    ],
+    "load": []
   },
   "package_defaults": {
     "download": {
@@ -79,7 +148,8 @@
   ],
   "dependencies": [],
   "ui": {
-    "tags": ["TTS", "Preset voices"],
+    "recommended_package": "kokoro_82m_q8_0",
+    "tags": ["TTS", "GGUF"],
     "builtin_voices": [
       "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
       "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
@@ -108,20 +178,6 @@
           "source": "weights:",
           "prefix": "kokoro"
         }
-      }
-    },
-    {
-      "format": "safetensors",
-      "roots": {
-        "model": "."
-      },
-      "files": {
-        "config": "model:config.json",
-        "voices": "model:voices.json",
-        "vocabulary": "model:vocab.tsv"
-      },
-      "tensors": {
-        "weights": "model:kokoro-v1_0.safetensors"
       }
     }
   ]

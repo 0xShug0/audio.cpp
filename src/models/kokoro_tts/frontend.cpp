@@ -212,33 +212,6 @@ KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
     return state;
 }
 
-void validate_kokoro_frontend_session_state(
-    const runtime::Transcript & text,
-    const std::optional<runtime::VoiceCondition> & voice,
-    const KokoroFrontendSessionState & state,
-    const KokoroAssets & assets) {
-    const std::string resolved_voice_id = resolve_voice_id(voice, assets);
-    if (resolved_voice_id != state.voice_id) {
-        throw std::runtime_error(
-            "Kokoro session voice_id changed after launch: " +
-            state.voice_id + " -> " + resolved_voice_id);
-    }
-    const std::string resolved_language_code = resolve_language_code(text, voice, state.voice_id);
-    if (resolved_language_code != state.language_code) {
-        throw std::runtime_error(
-            "Kokoro session language_code changed after launch: " +
-            state.language_code + " -> " + resolved_language_code);
-    }
-    const auto voice_it = assets.voices.find(state.voice_id);
-    if (voice_it == assets.voices.end() || &voice_it->second != state.voice_pack) {
-        throw std::runtime_error("Kokoro session voice pack changed after launch");
-    }
-    const float resolved_speaking_rate = resolve_speaking_rate(voice);
-    if (resolved_speaking_rate != state.speaking_rate) {
-        throw std::runtime_error("Kokoro session speaking_rate changed after launch");
-    }
-}
-
 KokoroSynthesisInput build_kokoro_synthesis_input(
     const runtime::Transcript & text,
     const KokoroFrontendSessionState & state,
