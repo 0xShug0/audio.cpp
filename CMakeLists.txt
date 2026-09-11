@@ -1228,6 +1228,18 @@ audiocpp_add_model(nemotron_asr
         engine::models::nemotron_asr::make_nemotron_asr_loader
 )
 
+audiocpp_add_model(moonshine_stt
+    SOURCES
+        src/models/moonshine_stt/assets.cpp
+        src/models/moonshine_stt/loader.cpp
+        src/models/moonshine_stt/session.cpp
+        src/models/moonshine_stt/weights.cpp
+    INCLUDES
+        engine/models/moonshine_stt/loader.h
+    LOADERS
+        engine::models::moonshine_stt::make_moonshine_stt_loader
+)
+
 audiocpp_add_model(qwen3_tts
     SOURCES
         src/models/qwen3_tts/assets.cpp
