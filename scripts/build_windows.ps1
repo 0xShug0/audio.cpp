@@ -197,12 +197,25 @@ function Add-MsvcEnvironment {
         [Parameter(Mandatory = $true)][string]$SdkTool
     )
 
+    # A stray double quote in PATH (some installers write one) is fatal here:
+    # nvcc re-runs vcvars64.bat for every .cu file, and on that nested run
+    # vcvarsall restores PATH from the __VSCMD_PREINIT_PATH copy taken below.
+    # The unbalanced quote breaks cmd's parser, the script exits 255, and nvcc
+    # reports "Could not set up the environment for Microsoft Visual Studio".
+    # Strip quotes from PATH going in, and from both PATH copies coming back.
+    $env:PATH = $env:PATH -replace '"', ''
+
     $vcvars = Join-Path $VsInstall "VC\Auxiliary\Build\vcvars64.bat"
     if (Test-Path $vcvars) {
         $cmd = "`"$vcvars`" >nul && set"
         foreach ($line in (& cmd.exe /d /s /c $cmd)) {
             if ($line -match "^([^=]+)=(.*)$") {
-                [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], "Process")
+                $name = $Matches[1]
+                $value = $Matches[2]
+                if ($name -eq "PATH" -or $name -eq "__VSCMD_PREINIT_PATH") {
+                    $value = $value -replace '"', ''
+                }
+                [Environment]::SetEnvironmentVariable($name, $value, "Process")
             }
         }
     }
