@@ -3,22 +3,55 @@
 #include "engine/models/moonshine_stt/runtime.h"
 #include "engine/models/moonshine_stt/assets.h"
 #include "engine/models/moonshine_stt/weights.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <stdexcept>
 #include <utility>
 
 namespace engine::models::moonshine_stt {
+namespace {
+
+constexpr const char * kFamily = "moonshine_stt";
+
+std::shared_ptr<const MoonshineAssets> require_assets(std::shared_ptr<const MoonshineAssets> assets) {
+    if (assets == nullptr) {
+        throw std::runtime_error("Moonshine STT session requires assets");
+    }
+    return assets;
+}
+
+std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    if (contract == nullptr) {
+        throw std::runtime_error("Moonshine STT session requires a model contract");
+    }
+    return contract;
+}
+
+std::unique_ptr<runtime::IVoiceTaskSession> create_moonshine_stt_session(
+    const runtime::TaskSpec & task,
+    const runtime::SessionOptions & options,
+    std::shared_ptr<const MoonshineAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+    return std::make_unique<MoonshineSTTSession>(
+        task,
+        options,
+        std::move(assets),
+        std::move(contract));
+}
+
+}  // namespace
 
 MoonshineSTTSession::MoonshineSTTSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const MoonshineAssets> assets)
+    std::shared_ptr<const MoonshineAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
-      assets_(std::move(assets)) {
-    if (assets_ == nullptr) {
-        throw std::runtime_error("Moonshine STT session requires assets");
-    }
+      assets_(require_assets(std::move(assets))),
+      contract_(require_contract(std::move(contract))) {
+    runtime::validate_spec_backed_session_options(RuntimeSessionBase::options(), *contract_, kFamily, "Moonshine STT");
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Moonshine STT only supports VoiceTaskKind::Asr");
     }
@@ -39,7 +72,7 @@ MoonshineSTTSession::MoonshineSTTSession(
 MoonshineSTTSession::~MoonshineSTTSession() = default;
 
 std::string MoonshineSTTSession::family() const {
-    return "moonshine_stt";
+    return kFamily;
 }
 
 runtime::VoiceTaskKind MoonshineSTTSession::task_kind() const {
@@ -50,7 +83,8 @@ runtime::RunMode MoonshineSTTSession::run_mode() const {
     return task_.mode;
 }
 
-void MoonshineSTTSession::prepare(const runtime::SessionPreparationRequest &) {
+void MoonshineSTTSession::prepare(const runtime::SessionPreparationRequest & request) {
+    runtime::validate_spec_backed_request_options(request.options, *contract_, "Moonshine STT");
     mark_prepared();
 }
 
@@ -62,6 +96,7 @@ runtime::TaskResult MoonshineSTTSession::run(const runtime::TaskRequest & reques
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("Moonshine STT requires audio input");
     }
+    runtime::validate_spec_backed_request_options(request.options, *contract_, "Moonshine STT");
     return transcribe_moonshine_stt(
         *assets_,
         *weights_,
@@ -85,6 +120,7 @@ void MoonshineSTTSession::start_stream(const runtime::TaskRequest & request) {
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Moonshine STT start_stream() requires a streaming session");
     }
+    runtime::validate_spec_backed_request_options(request.options, *contract_, "Moonshine STT");
     reset();
     streaming_request_ = request;
     streaming_request_.audio_input = std::nullopt;
@@ -136,6 +172,7 @@ runtime::TaskResult MoonshineSTTSession::finalize() {
     if (!stream_started_) {
         throw std::runtime_error("Moonshine STT finalize() requires start_stream()");
     }
+    runtime::validate_spec_backed_request_options(streaming_request_.options, *contract_, "Moonshine STT");
     auto result = transcribe_moonshine_stt(
         *assets_,
         *weights_,
@@ -149,6 +186,14 @@ runtime::TaskResult MoonshineSTTSession::finalize() {
 
 runtime::TaskResult MoonshineSTTSession::finish_stream() {
     return finalize();
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_moonshine_stt_loader() {
+    runtime::SpecBackedVoiceModelConfig<MoonshineAssets> config;
+    config.family = kFamily;
+    config.load_assets = load_moonshine_stt_assets;
+    config.create_session = create_moonshine_stt_session;
+    return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
 }  // namespace engine::models::moonshine_stt

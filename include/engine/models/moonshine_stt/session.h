@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/moonshine_stt/runtime.h"
 
@@ -11,6 +13,8 @@ namespace engine::models::moonshine_stt {
 struct MoonshineAssets;
 struct MoonshineWeights;
 
+std::shared_ptr<runtime::IVoiceModelLoader> make_moonshine_stt_loader();
+
 class MoonshineSTTSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession
@@ -19,7 +23,8 @@ public:
     MoonshineSTTSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const MoonshineAssets> assets);
+        std::shared_ptr<const MoonshineAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
     ~MoonshineSTTSession() override;
 
     std::string family() const override;
@@ -38,6 +43,7 @@ public:
 private:
     runtime::TaskSpec task_;
     std::shared_ptr<const MoonshineAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     MoonshineRuntimeConfig runtime_config_;
     std::shared_ptr<const MoonshineWeights> weights_;
     runtime::StreamEventCallback stream_event_sink_;

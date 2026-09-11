@@ -14,6 +14,13 @@ SPEC = REPO_ROOT / "model_specs" / "moonshine_stt.json"
 SCALAR_TENSORS = {"model.encoder.embedder.comp.log_k"}
 
 
+def require_v1_spec(path: Path) -> None:
+    with path.open("r", encoding="utf-8") as handle:
+        spec = json.load(handle)
+    if spec.get("schema_version") != 1:
+        raise SystemExit(f"{path} must be a schema_version 1 model spec")
+
+
 def rank1_scalar_safetensors(source: Path, destination: Path) -> None:
     """Copy safetensors while exposing known rank-0 scalars as length-1 tensors."""
     with source.open("rb") as f:
@@ -38,6 +45,7 @@ def rank1_scalar_safetensors(source: Path, destination: Path) -> None:
 
 
 def convert(converter: Path, checkpoint: Path, output: Path, quant_type: str, overwrite: bool) -> None:
+    require_v1_spec(SPEC)
     ckpt = checkpoint / "model.safetensors"
     if not ckpt.exists():
         candidates = sorted(checkpoint.glob("*.safetensors"))

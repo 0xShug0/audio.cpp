@@ -154,9 +154,7 @@ std::string replace_metaspace(std::string text) {
 
 std::shared_ptr<const MoonshineAssets> load_moonshine_stt_assets(const std::filesystem::path & model_path) {
     MoonshineAssets assets;
-    assets.resources = engine::model_spec::load_resource_bundle(
-        model_path,
-        engine::model_spec::default_spec_path("moonshine_stt"));
+    assets.resources = engine::model_spec::load_resource_bundle_for_family(model_path, "moonshine_stt");
     assets.config = parse_config(assets.resources);
     assets.source = assets.resources.open_tensor_source("weights");
     assets.tokens = load_tokens(assets.resources.require_file("tokenizer_json"));

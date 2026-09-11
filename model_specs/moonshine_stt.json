@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "family": "moonshine_stt",
   "display_name": "Moonshine Streaming STT",
   "description": "Moonshine tiny/small/medium streaming English speech recognition models.",
@@ -15,7 +16,6 @@
     "en"
   ],
   "capabilities": {
-    "asr": []
   },
   "options": {
     "request": [
@@ -43,6 +43,33 @@
         "description": "Frontend convolution weight storage type.",
         "preset": "weight_type_conv",
         "required": false
+      },
+      {
+        "name": "decoder_weight_type",
+        "type": "enum",
+        "description": "Decoder matmul weight storage type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "encoder_gelu",
+        "type": "enum",
+        "description": "Encoder GELU lowering.",
+        "values": [
+          "erf",
+          "exact",
+          "tanh",
+          "quick"
+        ],
+        "required": false,
+        "default": "quick"
+      },
+      {
+        "name": "cpu_blas_scheduler",
+        "type": "bool",
+        "description": "Use BLAS/Accelerate for supported CPU encoder matmuls.",
+        "required": false,
+        "default": true
       },
       {
         "name": "weight_context_mb",
@@ -129,7 +156,7 @@
       "id": "moonshine_streaming_tiny_safetensors",
       "display_name": "Moonshine Streaming Tiny Safetensors",
       "format": "safetensors",
-      "precision": "float32",
+      "precision": "f32",
       "target_directory": "moonshine-streaming-tiny",
       "files": [
         "config.json",
@@ -147,7 +174,7 @@
       "id": "moonshine_streaming_small_safetensors",
       "display_name": "Moonshine Streaming Small Safetensors",
       "format": "safetensors",
-      "precision": "float32",
+      "precision": "f32",
       "target_directory": "moonshine-streaming-small",
       "files": [
         "config.json",
@@ -165,7 +192,7 @@
       "id": "moonshine_streaming_medium_safetensors",
       "display_name": "Moonshine Streaming Medium Safetensors",
       "format": "safetensors",
-      "precision": "float32",
+      "precision": "f32",
       "target_directory": "moonshine-streaming-medium",
       "files": [
         "config.json",
@@ -180,6 +207,7 @@
       }
     }
   ],
+  "dependencies": [],
   "sources": [
     {
       "format": "gguf",
