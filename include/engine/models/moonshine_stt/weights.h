@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -19,20 +21,11 @@ struct MoonshineFrontendWeights {
     engine::modules::Conv1dWeights conv2;
 };
 
-struct MoonshineAttentionWeights {
-    std::optional<engine::modules::LinearWeights> qkv_proj;
-    engine::modules::LinearWeights q_proj;
-    engine::modules::LinearWeights k_proj;
-    engine::modules::LinearWeights v_proj;
-    engine::modules::LinearWeights o_proj;
-};
-
 struct MoonshineEncoderLayerWeights {
     engine::modules::NormWeights input_norm;
-    MoonshineAttentionWeights self_attn;
+    engine::modules::AttentionWeights self_attn;
     engine::modules::NormWeights post_attention_norm;
-    engine::modules::LinearWeights mlp_fc1;
-    engine::modules::LinearWeights mlp_fc2;
+    engine::modules::FeedForwardWeights feed_forward;
 };
 
 struct MoonshineEncoderWeights {
@@ -43,9 +36,9 @@ struct MoonshineEncoderWeights {
 
 struct MoonshineDecoderLayerWeights {
     engine::modules::NormWeights input_norm;
-    MoonshineAttentionWeights self_attn;
+    engine::modules::AttentionWeights self_attn;
     engine::modules::NormWeights post_attention_norm;
-    MoonshineAttentionWeights cross_attn;
+    engine::modules::AttentionWeights cross_attn;
     engine::modules::NormWeights final_norm;
     engine::modules::LinearWeights mlp_fc1;
     engine::modules::LinearWeights mlp_fc2;

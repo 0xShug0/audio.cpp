@@ -1232,10 +1232,12 @@ audiocpp_add_model(moonshine_stt
     SOURCES
         src/models/moonshine_stt/assets.cpp
         src/models/moonshine_stt/loader.cpp
+        src/models/moonshine_stt/runtime.cpp
         src/models/moonshine_stt/session.cpp
         src/models/moonshine_stt/weights.cpp
     INCLUDES
         engine/models/moonshine_stt/loader.h
+        engine/models/moonshine_stt/runtime.h
     LOADERS
         engine::models::moonshine_stt::make_moonshine_stt_loader
 )
