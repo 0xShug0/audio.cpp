@@ -103,7 +103,11 @@ private:
     std::shared_ptr<const VibeVoiceASRAssets> assets_;
     size_t tokenizer_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
     size_t connector_weight_context_bytes_ = 128ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+    size_t decoder_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+#else
     size_t decoder_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
+#endif
     assets::TensorStorageType tokenizer_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType connector_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType decoder_weight_storage_type_ = assets::TensorStorageType::Native;
