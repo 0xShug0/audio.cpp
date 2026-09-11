@@ -62,7 +62,7 @@ directory containing weights, config, and all voices.
 python tools/prepare_kokoro_gguf.py --source ../models_v3_test/kokoro-82m-v1_0-ggml --resources ../models_v3_test/Kokoro-multilingual-resources --output-dir ../models_v3_test/Kokoro-GGUF
 ```
 
-Outputs are `kokoro-v1.0-q8_0.gguf` and `kokoro-v1.0-bf16.gguf`. Q8 quantizes
+Outputs are `kokoro-82m-q8_0.gguf` and `kokoro-82m-bf16.gguf`. Q8 quantizes
 eligible matrices; unsupported weight layouts remain BF16, while sensitive
 small tensors remain F32 in both packages. Q8 does not mean every tensor is Q8.
 The full embedded dictionaries dominate file size: approximately 943 MB for Q8
@@ -71,7 +71,7 @@ and 965 MB for BF16. Language resources are identical in both.
 ## Synthesis
 
 ```powershell
-.\build\windows-cpu-release\bin\audiocpp_cli.exe --task tts --family kokoro_tts --model ..\models_v3_test\Kokoro-GGUF\kokoro-v1.0-q8_0.gguf --backend cpu --threads 8 --language en-us --voice-id af_heart --text "Hello, this is a native Kokoro TTS test." --out kokoro-q8.wav
+.\build\windows-cpu-release\bin\audiocpp_cli.exe --task tts --family kokoro_tts --model ..\models_v3_test\Kokoro-GGUF\kokoro-82m-q8_0.gguf --backend cpu --threads 8 --language en-us --voice-id af_heart --text "Hello, this is a native Kokoro TTS test." --out kokoro-q8.wav
 ```
 
 For non-Latin text on Windows, use a UTF-8 text file with

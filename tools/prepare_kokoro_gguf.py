@@ -139,4 +139,4 @@ if __name__ == '__main__':
     args = p.parse_args()
     if not args.skip_prepare: prepare(args.source, args.resources)
     for precision in (['q8_0', 'bf16'] if args.type == 'both' else [args.type]):
-        convert(args.resources, args.output_dir / ('kokoro-v1.0-' + precision + '.gguf'), precision, args.overwrite)
+        convert(args.resources, args.output_dir / ('kokoro-82m-' + precision + '.gguf'), precision, args.overwrite)

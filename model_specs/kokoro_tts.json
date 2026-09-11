@@ -44,7 +44,39 @@
       }
     ]
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "kokoro_82m_q8_0",
+      "display_name": "Kokoro 82M Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Kokoro-82M-GGUF",
+      "files": [
+        "Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf"
+      ],
+      "strip_prefix": "Kokoro-82M-GGUF"
+    },
+    {
+      "id": "kokoro_82m_bf16",
+      "display_name": "Kokoro 82M BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Kokoro-82M-GGUF",
+      "files": [
+        "Kokoro-82M-GGUF/kokoro-82m-bf16.gguf"
+      ],
+      "strip_prefix": "Kokoro-82M-GGUF"
+    }
+  ],
   "dependencies": [],
   "ui": {
     "tags": ["TTS", "Preset voices"],
