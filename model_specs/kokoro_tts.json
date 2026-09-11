@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "family": "kokoro_tts",
+  "display_name": "Kokoro 82M",
+  "description": "Kokoro 82M multilingual text-to-speech with 54 preset voices, optimized native CPU inference, and shared eSpeak-ng phonemization.",
+  "category": "tts",
+  "status": "community",
+  "tasks": ["tts"],
+  "modes": ["offline"],
+  "languages": ["en-us", "en-gb", "es", "fr-fr", "hi", "it", "ja", "pt-br", "zh"],
+  "runtime": {
+    "tags": ["gguf"]
+  },
+  "capabilities": {
+    "tts": ["built_in_voices", "long_form"]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Decoder noise seed; omitted requests choose a random seed.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [],
+    "load": [
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native",
+        "description": "Storage type for matrix multiplication weights."
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "f32",
+        "description": "Storage type for convolution weights."
+      }
+    ]
+  },
+  "packages": [],
+  "dependencies": [],
+  "ui": {
+    "tags": ["TTS", "Preset voices"],
+    "docs": ["tests/kokoro_tts/MULTILINGUAL_GGUF.md"]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "voices": "model:voices.json",
+        "vocabulary": "model:vocab.tsv"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "kokoro"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "voices": "model:voices.json",
+        "vocabulary": "model:vocab.tsv"
+      },
+      "tensors": {
+        "weights": "model:kokoro-v1_0.safetensors"
+      }
+    }
+  ]
+}
