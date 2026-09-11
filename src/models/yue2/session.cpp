@@ -131,6 +131,7 @@ const runtime::ModelMetadata & yue2_metadata() noexcept {
         },
         {
             "yue2-3b-q8_0.gguf",
+            "yue2-3b-q4_0.gguf",
             "yue2-3b-bf16.gguf",
             "yue2-vae-f16.gguf",
             "yue2-vae-f32.gguf",
