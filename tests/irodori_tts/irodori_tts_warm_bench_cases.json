@@ -53,6 +53,48 @@
       }
     ]
   },
+  "v4_independent_fixed_duration": {
+    "requests": [
+      {
+        "text": "今日は新しいバージョンの短い確認です。自然で聞き取りやすい声でお願いします。",
+        "caption": "落ち着いた若い女性。明るく丁寧に、少し微笑みながら話している。",
+        "no_ref": true,
+        "num_inference_steps": 40,
+        "seed": 1234,
+        "duration_sec": 8.0,
+        "guidance_mode": "independent",
+        "guidance_scale": 3.0
+      }
+    ]
+  },
+  "v4_joint_fixed_duration": {
+    "requests": [
+      {
+        "text": "今日は新しいバージョンの短い確認です。自然で聞き取りやすい声でお願いします。",
+        "caption": "落ち着いた若い女性。明るく丁寧に、少し微笑みながら話している。",
+        "no_ref": true,
+        "num_inference_steps": 40,
+        "seed": 1234,
+        "duration_sec": 8.0,
+        "guidance_mode": "joint",
+        "guidance_scale": 3.0
+      }
+    ]
+  },
+  "v4_alternating_fixed_duration": {
+    "requests": [
+      {
+        "text": "今日は新しいバージョンの短い確認です。自然で聞き取りやすい声でお願いします。",
+        "caption": "落ち着いた若い女性。明るく丁寧に、少し微笑みながら話している。",
+        "no_ref": true,
+        "num_inference_steps": 40,
+        "seed": 1234,
+        "duration_sec": 8.0,
+        "guidance_mode": "alternating",
+        "guidance_scale": 3.0
+      }
+    ]
+  },
   "long_session_mixed": {
     "use_all_requests_by_default": true,
     "requests": [

@@ -9,6 +9,7 @@
 #include "engine/framework/audio/output.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/text/subtitle.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -19,6 +20,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -41,6 +44,7 @@ struct WorkflowContext {
     std::filesystem::path workflow_dir;
     std::filesystem::path output_dir;
     std::unordered_map<std::string, std::string> values;
+    std::unordered_map<std::string, std::vector<std::unordered_map<std::string, std::string>>> batches;
 };
 
 std::string workflow_string(const engine::io::json::Value & object, const std::string & key) {
@@ -51,12 +55,22 @@ std::string workflow_string(const engine::io::json::Value & object, const std::s
     return value->as_string();
 }
 
+std::istringstream workflow_buffer(const engine::io::json::Value & object, const std::string & key) {
+    const auto str = workflow_string(object, key);
+    return std::istringstream(str);
+}
+
 std::string workflow_string_or(
     const engine::io::json::Value & object,
     const std::string & key,
     std::string fallback) {
     const auto * value = object.find(key);
     return value == nullptr || value->is_null() ? std::move(fallback) : value->as_string();
+}
+
+bool workflow_has_field(const engine::io::json::Value & object, const std::string & key) {
+    const auto * value = object.find(key);
+    return value != nullptr && !value->is_null();
 }
 
 std::optional<std::string> workflow_optional_string(
@@ -123,6 +137,19 @@ std::string expand_value(std::string value, const WorkflowContext & context) {
     return value;
 }
 
+std::string safe_workflow_id(std::string value) {
+    if (value.empty()) {
+        throw std::runtime_error("workflow batch item id must not be empty");
+    }
+    for (char & ch : value) {
+        const unsigned char uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch) == 0 && ch != '-' && ch != '_') {
+            ch = '_';
+        }
+    }
+    return value;
+}
+
 std::filesystem::path resolve_workflow_path(const std::string & value, const WorkflowContext & context) {
     std::filesystem::path path(expand_value(value, context));
     if (path.is_absolute()) {
@@ -136,6 +163,88 @@ std::filesystem::path resolve_workflow_path(const std::string & value, const Wor
             " -> " + path.string());
     }
     return context.workflow_dir / path;
+}
+
+std::string lowercase_extension(const std::filesystem::path & path) {
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return ext;
+}
+
+bool is_wav_path(const std::filesystem::path & path) {
+    return lowercase_extension(path) == ".wav";
+}
+
+std::string read_text_file(const std::filesystem::path & path) {
+    std::ifstream input(path);
+    if (!input) {
+        throw std::runtime_error("failed to open workflow batch text file: " + path.string());
+    }
+    std::ostringstream raw;
+    raw << input.rdbuf();
+    return raw.str();
+}
+
+std::string normalize_text_as_paragraph(const std::string & text) {
+    std::string normalized;
+    bool in_space = false;
+    for (unsigned char ch : text) {
+        if (std::isspace(ch) != 0) {
+            in_space = !normalized.empty();
+            continue;
+        }
+        if (in_space) {
+            normalized.push_back(' ');
+            in_space = false;
+        }
+        normalized.push_back(static_cast<char>(ch));
+    }
+    return normalized;
+}
+
+std::string read_batch_text_payload(const std::filesystem::path & path) {
+    const auto ext = lowercase_extension(path);
+    if (ext == ".txt" || ext == ".md") {
+        return normalize_text_as_paragraph(read_text_file(path));
+    }
+    if (ext == ".json") {
+        const auto root = engine::io::json::parse_file(path);
+        if (root.is_string()) {
+            return normalize_text_as_paragraph(root.as_string());
+        }
+        if (root.is_object()) {
+            if (const auto * input = root.find("input"); input != nullptr && input->is_string()) {
+                return normalize_text_as_paragraph(input->as_string());
+            }
+            if (const auto * text = root.find("text"); text != nullptr && text->is_string()) {
+                return normalize_text_as_paragraph(text->as_string());
+            }
+        }
+        throw std::runtime_error("workflow batch JSON text file requires a string root, input, or text: " + path.string());
+    }
+    throw std::runtime_error("unsupported workflow batch text extension: " + ext);
+}
+
+bool is_text_batch_path(const std::filesystem::path & path) {
+    const auto ext = lowercase_extension(path);
+    return ext == ".txt" || ext == ".md" || ext == ".json";
+}
+
+void validate_unique_batch_ids(
+    const std::vector<std::unordered_map<std::string, std::string>> & items,
+    const std::string & step_id) {
+    std::unordered_set<std::string> ids;
+    for (const auto & item : items) {
+        const auto it = item.find("id");
+        if (it == item.end()) {
+            throw std::runtime_error("workflow batch item missing id: " + step_id);
+        }
+        if (!ids.insert(it->second).second) {
+            throw std::runtime_error("workflow batch item id collision in " + step_id + ": " + it->second);
+        }
+    }
 }
 
 void load_workflow_inputs(
@@ -160,6 +269,77 @@ void load_workflow_inputs(
     for (auto & [_, value] : context.values) {
         value = expand_value(value, context);
     }
+}
+
+void run_batch_inputs_step(
+    const engine::io::json::Value & step,
+    WorkflowContext & context) {
+    const std::string id = workflow_string(step, "id");
+    if (workflow_has_field(step, "foreach")) {
+        throw std::runtime_error("batch_inputs cannot use foreach: " + id);
+    }
+    const bool has_audio_dir = workflow_has_field(step, "audio_dir");
+    const bool has_text_dir = workflow_has_field(step, "text_dir");
+    if ((has_audio_dir ? 1 : 0) + (has_text_dir ? 1 : 0) != 1) {
+        throw std::runtime_error("batch_inputs requires exactly one of audio_dir or text_dir: " + id);
+    }
+
+    std::vector<std::filesystem::path> paths;
+    std::vector<std::unordered_map<std::string, std::string>> items;
+    if (has_audio_dir) {
+        const auto dir = resolve_workflow_path(workflow_string(step, "audio_dir"), context);
+        if (!std::filesystem::is_directory(dir)) {
+            throw std::runtime_error("batch_inputs audio_dir must be an existing directory: " + dir.string());
+        }
+        for (const auto & entry : std::filesystem::directory_iterator(dir)) {
+            if (entry.is_regular_file() && is_wav_path(entry.path())) {
+                paths.push_back(entry.path());
+            }
+        }
+        std::sort(paths.begin(), paths.end());
+        if (paths.empty()) {
+            throw std::runtime_error("batch_inputs audio_dir contains no .wav files: " + dir.string());
+        }
+        items.reserve(paths.size());
+        for (const auto & path : paths) {
+            items.push_back({
+                {"id", safe_workflow_id(path.stem().string())},
+                {"audio_path", path.string()},
+            });
+        }
+    } else {
+        const auto dir = resolve_workflow_path(workflow_string(step, "text_dir"), context);
+        if (!std::filesystem::is_directory(dir)) {
+            throw std::runtime_error("batch_inputs text_dir must be an existing directory: " + dir.string());
+        }
+        for (const auto & entry : std::filesystem::directory_iterator(dir)) {
+            if (entry.is_regular_file() && is_text_batch_path(entry.path())) {
+                paths.push_back(entry.path());
+            }
+        }
+        std::sort(paths.begin(), paths.end());
+        if (paths.empty()) {
+            throw std::runtime_error("batch_inputs text_dir contains no .txt, .md, or .json files: " + dir.string());
+        }
+        items.reserve(paths.size());
+        for (const auto & path : paths) {
+            const auto text = read_batch_text_payload(path);
+            if (text.empty()) {
+                throw std::runtime_error("batch_inputs text file contains no non-whitespace text: " + path.string());
+            }
+            items.push_back({
+                {"id", safe_workflow_id(path.stem().string())},
+                {"text_path", path.string()},
+                {"text", text},
+            });
+        }
+    }
+
+    validate_unique_batch_ids(items, id);
+    context.values[id + ".count"] = std::to_string(items.size());
+    context.batches[id] = std::move(items);
+    std::cout << "workflow_step=" << id << "\n";
+    std::cout << "batch_items=" << context.values[id + ".count"] << "\n";
 }
 
 std::string path_arg(const std::filesystem::path & path) {
@@ -331,6 +511,8 @@ void record_result_paths(
     const std::string & id,
     const engine::runtime::TaskResult & result,
     const std::optional<std::filesystem::path> & audio_out,
+    const std::optional<std::filesystem::path> & text_out,
+    const std::optional<std::filesystem::path> & words_out,
     const std::filesystem::path & step_dir,
     WorkflowContext & context) {
     if (result.audio_output.has_value() && audio_out.has_value()) {
@@ -343,6 +525,42 @@ void record_result_paths(
     if (result.text_output.has_value()) {
         context.values[id + ".text"] = result.text_output->text;
     }
+    if (text_out.has_value()) {
+        context.values[id + ".text_path"] = text_out->string();
+    }
+    if (words_out.has_value()) {
+        context.values[id + ".words_path"] = words_out->string();
+    }
+}
+
+void write_text_result(
+    const engine::runtime::TaskResult & result,
+    const std::filesystem::path & path,
+    const std::string & id) {
+    if (!result.text_output.has_value()) {
+        throw std::runtime_error("workflow model step requested text_out but produced no text: " + id);
+    }
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    std::ofstream out(path);
+    out << result.text_output->text << "\n";
+    std::cout << "text_out=" << path.string() << "\n";
+}
+
+void write_words_result(
+    const engine::runtime::TaskResult & result,
+    const std::filesystem::path & path,
+    const std::string & id) {
+    if (result.word_timestamps.empty()) {
+        throw std::runtime_error("workflow model step requested words_out but produced no word timestamps: " + id);
+    }
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    std::ofstream out(path);
+    out << word_timestamps_to_json(result.word_timestamps) << "\n";
+    std::cout << "words_out=" << path.string() << "\n";
 }
 
 engine::core::BackendConfig parse_step_backend(
@@ -376,6 +594,7 @@ void run_model_step_impl(
 
     engine::runtime::ModelLoadRequest load_request;
     load_request.model_path = resolve_workflow_path(workflow_string(step, "model"), context);
+    load_request.model_spec_override = options.model_spec_override;
     if (const auto family = workflow_optional_string(step, "family")) {
         load_request.family_hint = *family;
     }
@@ -408,6 +627,17 @@ void run_model_step_impl(
 
     const auto expanded_request = expanded_json(*request_value, context);
     auto request = minitts::cli::build_request_from_json(expanded_request, context.workflow_dir);
+    const auto text_out_value = workflow_optional_string(step, "text_out");
+    const auto words_out_value = workflow_optional_string(step, "words_out");
+    std::optional<std::filesystem::path> text_out;
+    std::optional<std::filesystem::path> words_out;
+    if (text_out_value.has_value()) {
+        text_out = resolve_workflow_path(*text_out_value, context);
+    }
+    if (words_out_value.has_value()) {
+        words_out = resolve_workflow_path(*words_out_value, context);
+        request.options["return_timestamps"] = "true";
+    }
     session->prepare(engine::runtime::build_preparation_request(request));
     const auto result = offline->run(request);
 
@@ -422,9 +652,71 @@ void run_model_step_impl(
         audio_out = step_dir / (id + ".wav");
     }
     emit_task_result(result, audio_out, step_dir, step_dir, std::nullopt, std::nullopt, std::nullopt);
-    record_result_paths(id, result, audio_out, step_dir, context);
+    if (text_out.has_value()) {
+        write_text_result(result, *text_out, id);
+    }
+    if (words_out.has_value()) {
+        write_words_result(result, *words_out, id);
+    }
+    record_result_paths(id, result, audio_out, text_out, words_out, step_dir, context);
 
     std::cout << "workflow_step=" << id << "\n";
+}
+
+std::vector<engine::runtime::WordTimestamp> read_word_timestamps_json(const std::filesystem::path & path) {
+    const auto root = engine::io::json::parse_file(path);
+    if (!root.is_array()) {
+        throw std::runtime_error("word timestamp input must be a JSON array: " + path.string());
+    }
+    std::vector<engine::runtime::WordTimestamp> words;
+    for (const auto & item : root.as_array()) {
+        engine::runtime::WordTimestamp word;
+        word.span.start_sample = engine::io::json::require_i64(item, "start_sample");
+        word.span.end_sample = engine::io::json::require_i64(item, "end_sample");
+        word.word = engine::io::json::require_string(item, "word");
+        const auto * confidence = item.find("confidence");
+        if (confidence != nullptr && !confidence->is_null()) {
+            word.confidence = confidence->as_f32();
+        }
+        words.push_back(std::move(word));
+    }
+    return words;
+}
+
+void run_format_subtitles_step(
+    const engine::io::json::Value & step,
+    WorkflowContext & context) {
+    const std::string id = workflow_string(step, "id");
+    const std::string format = workflow_string(step, "format");
+    if (format != "srt") {
+        throw std::runtime_error("format_subtitles currently supports only format=srt: " + id);
+    }
+    const auto words_path = resolve_workflow_path(workflow_string(step, "words"), context);
+    const auto output = resolve_workflow_path(workflow_string(step, "output"), context);
+    const auto sample_rate_value = workflow_optional_number(step, "sample_rate");
+    if (!sample_rate_value.has_value()) {
+        throw std::runtime_error("format_subtitles requires sample_rate: " + id);
+    }
+    const int sample_rate = static_cast<int>(*sample_rate_value);
+    engine::text::SubtitleFormatOptions format_options;
+    format_options.sample_rate = sample_rate;
+    format_options.max_chars_per_line =
+        static_cast<int>(workflow_optional_number(step, "max_chars_per_line").value_or(42.0));
+    format_options.max_lines =
+        static_cast<int>(workflow_optional_number(step, "max_lines").value_or(2.0));
+    format_options.max_block_seconds = workflow_optional_number(step, "max_block_seconds").value_or(6.0);
+    format_options.max_gap_seconds = workflow_optional_number(step, "max_gap_seconds").value_or(1.0);
+
+    const auto words = read_word_timestamps_json(words_path);
+    const auto srt = engine::text::format_srt(words, format_options);
+    if (!output.parent_path().empty()) {
+        std::filesystem::create_directories(output.parent_path());
+    }
+    std::ofstream out(output);
+    out << srt;
+    context.values[id + ".srt_path"] = output.string();
+    std::cout << "workflow_step=" << id << "\n";
+    std::cout << "srt_out=" << output.string() << "\n";
 }
 
 void run_chunked_model_step(
@@ -438,8 +730,14 @@ void run_chunked_model_step(
         throw std::runtime_error("chunked_model step requires request object: " + id);
     }
     const std::string audio_key = workflow_string_or(step, "audio_key", "audio");
-    const auto input_audio_path = resolve_workflow_path(workflow_string(*request_value, audio_key), context);
-    const auto input_wav = engine::audio::read_wav_f32(input_audio_path);
+    engine::audio::WavData input_wav;
+    if (workflow_has_field(*request_value, "audio_data")) {
+        auto input_audio_data = workflow_buffer(*request_value, "audio_data");
+        input_wav = engine::audio::read_wav_f32(input_audio_data);
+    } else {
+        const auto input_audio_path = resolve_workflow_path(workflow_string(*request_value, audio_key), context);
+        input_wav = engine::audio::read_wav_f32(input_audio_path);
+    }
     if (input_wav.channels <= 0 || input_wav.sample_rate <= 0 || input_wav.samples.empty()) {
         throw std::runtime_error("chunked_model input audio is invalid: " + id);
     }
@@ -477,6 +775,7 @@ void run_chunked_model_step(
 
     engine::runtime::ModelLoadRequest load_request;
     load_request.model_path = resolve_workflow_path(workflow_string(step, "model"), context);
+    load_request.model_spec_override = options.model_spec_override;
     if (const auto family = workflow_optional_string(step, "family")) {
         load_request.family_hint = *family;
     }
@@ -653,6 +952,216 @@ void run_mix_audio_step(
     std::cout << "audio_path=" << output.string() << "\n";
 }
 
+std::string parse_foreach_source(const engine::io::json::Value & step) {
+    std::string value = workflow_string(step, "foreach");
+    if (value.size() >= 3 && value.front() == '$' && value[1] == '{' && value.back() == '}') {
+        value = value.substr(2, value.size() - 3);
+    }
+    const std::string suffix = ".items";
+    if (value.size() <= suffix.size() ||
+        value.compare(value.size() - suffix.size(), suffix.size(), suffix) != 0) {
+        throw std::runtime_error("workflow foreach must reference ${step_id.items}: " + value);
+    }
+    return value.substr(0, value.size() - suffix.size());
+}
+
+void run_model_step_foreach(
+    const engine::runtime::ModelRegistry & registry,
+    const engine::io::json::Value & step,
+    const WorkflowRunOptions & options,
+    WorkflowContext & context) {
+    const std::string id = workflow_string(step, "id");
+    const std::string source_id = parse_foreach_source(step);
+    if (source_id == id) {
+        throw std::runtime_error("workflow foreach cannot reference the current step: " + id);
+    }
+    const auto source_it = context.batches.find(source_id);
+    if (source_it == context.batches.end()) {
+        throw std::runtime_error("workflow foreach source is not a batch: " + source_id);
+    }
+    const auto source_items = source_it->second;
+    const auto * request_value = step.find("request");
+    if (request_value == nullptr || request_value->is_null()) {
+        throw std::runtime_error("model step requires request object: " + id);
+    }
+
+    engine::runtime::ModelLoadRequest load_request;
+    load_request.model_path = resolve_workflow_path(workflow_string(step, "model"), context);
+    load_request.model_spec_override = options.model_spec_override;
+    if (const auto family = workflow_optional_string(step, "family")) {
+        load_request.family_hint = *family;
+    }
+    if (const auto config = workflow_optional_string(step, "config")) {
+        load_request.config_id = *config;
+    }
+    if (const auto weight = workflow_optional_string(step, "weight")) {
+        load_request.weight_id = *weight;
+    }
+    load_request.options = merged_options(options.load_options, step.find("load_options"), context);
+
+    engine::runtime::SessionOptions session_options;
+    session_options.backend = parse_step_backend(step, options.backend);
+    session_options.options = merged_options(options.session_options, step.find("session_options"), context);
+
+    const engine::runtime::TaskSpec task_spec{
+        engine::runtime::parse_voice_task_kind(workflow_string(step, "task")),
+        engine::runtime::parse_run_mode(workflow_string_or(step, "mode", "offline")),
+    };
+    if (task_spec.mode != engine::runtime::RunMode::Offline) {
+        throw std::runtime_error("workflow model steps currently require offline mode: " + id);
+    }
+
+    auto model = registry.load(load_request);
+    auto session = model->create_task_session(task_spec, session_options);
+    auto * offline = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(session.get());
+    if (offline == nullptr) {
+        throw std::runtime_error("workflow model step does not support offline execution: " + id);
+    }
+
+    const auto base_values = context.values;
+    std::vector<std::unordered_map<std::string, std::string>> output_items;
+    output_items.reserve(source_items.size());
+    bool prepared = false;
+    for (const auto & item : source_items) {
+        context.values = base_values;
+        for (const auto & [key, value] : item) {
+            context.values["item." + key] = value;
+        }
+
+        const auto expanded_request = expanded_json(*request_value, context);
+        auto request = minitts::cli::build_request_from_json(expanded_request, context.workflow_dir);
+        const auto text_out_value = workflow_optional_string(step, "text_out");
+        const auto words_out_value = workflow_optional_string(step, "words_out");
+        std::optional<std::filesystem::path> text_out;
+        std::optional<std::filesystem::path> words_out;
+        if (text_out_value.has_value()) {
+            text_out = resolve_workflow_path(*text_out_value, context);
+        }
+        if (words_out_value.has_value()) {
+            words_out = resolve_workflow_path(*words_out_value, context);
+            request.options["return_timestamps"] = "true";
+        }
+        if (!prepared) {
+            session->prepare(engine::runtime::build_preparation_request(request));
+            prepared = true;
+        }
+        const auto result = offline->run(request);
+
+        std::filesystem::path step_dir = context.output_dir / id / item.at("id");
+        if (const auto out_dir = workflow_optional_string(step, "out_dir")) {
+            step_dir = resolve_workflow_path(*out_dir, context);
+        }
+        std::optional<std::filesystem::path> audio_out;
+        if (const auto audio = workflow_optional_string(step, "audio_out")) {
+            audio_out = resolve_workflow_path(*audio, context);
+        } else if (result.audio_output.has_value() || result.named_audio_outputs.size() == 1) {
+            audio_out = step_dir / (id + ".wav");
+        }
+        emit_task_result(result, audio_out, step_dir, step_dir, std::nullopt, std::nullopt, std::nullopt);
+        if (text_out.has_value()) {
+            write_text_result(result, *text_out, id);
+        }
+        if (words_out.has_value()) {
+            write_words_result(result, *words_out, id);
+        }
+        record_result_paths(id, result, audio_out, text_out, words_out, step_dir, context);
+
+        auto output_item = item;
+        const std::string prefix = id + ".";
+        for (const auto & [key, value] : context.values) {
+            if (key.rfind(prefix, 0) == 0) {
+                output_item[key.substr(prefix.size())] = value;
+            }
+        }
+        output_items.push_back(std::move(output_item));
+        std::cout << "workflow_step=" << id << "\n";
+    }
+
+    context.values = base_values;
+    context.values[id + ".count"] = std::to_string(output_items.size());
+    context.batches[id] = std::move(output_items);
+    std::cout << "workflow_step=" << id << "\n";
+    std::cout << "batch_items=" << context.values[id + ".count"] << "\n";
+}
+
+void run_workflow_step_once(
+    const engine::runtime::ModelRegistry & registry,
+    const engine::io::json::Value & step,
+    const WorkflowRunOptions & options,
+    WorkflowContext & context) {
+    const std::string type = workflow_string(step, "type");
+    if (type == "batch_inputs") {
+        run_batch_inputs_step(step, context);
+    } else if (type == "convert_audio") {
+        run_convert_audio_step(step, options, context);
+    } else if (type == "model") {
+        run_model_step_impl(registry, step, options, context);
+    } else if (type == "format_subtitles") {
+        run_format_subtitles_step(step, context);
+    } else if (type == "chunked_model") {
+        run_chunked_model_step(registry, step, options, context);
+    } else if (type == "mix_audio") {
+        run_mix_audio_step(step, context);
+    } else {
+        throw std::runtime_error("unsupported workflow step type: " + type);
+    }
+}
+
+void run_workflow_step(
+    const engine::runtime::ModelRegistry & registry,
+    const engine::io::json::Value & step,
+    const WorkflowRunOptions & options,
+    WorkflowContext & context) {
+    if (!workflow_has_field(step, "foreach")) {
+        run_workflow_step_once(registry, step, options, context);
+        return;
+    }
+
+    const std::string id = workflow_string(step, "id");
+    const std::string type = workflow_string(step, "type");
+    if (type == "batch_inputs") {
+        throw std::runtime_error("batch_inputs cannot use foreach: " + id);
+    }
+    if (type == "model") {
+        run_model_step_foreach(registry, step, options, context);
+        return;
+    }
+    const std::string source_id = parse_foreach_source(step);
+    if (source_id == id) {
+        throw std::runtime_error("workflow foreach cannot reference the current step: " + id);
+    }
+    const auto source_it = context.batches.find(source_id);
+    if (source_it == context.batches.end()) {
+        throw std::runtime_error("workflow foreach source is not a batch: " + source_id);
+    }
+
+    const auto base_values = context.values;
+    std::vector<std::unordered_map<std::string, std::string>> output_items;
+    output_items.reserve(source_it->second.size());
+    for (const auto & item : source_it->second) {
+        context.values = base_values;
+        for (const auto & [key, value] : item) {
+            context.values["item." + key] = value;
+        }
+        run_workflow_step_once(registry, step, options, context);
+
+        auto output_item = item;
+        const std::string prefix = id + ".";
+        for (const auto & [key, value] : context.values) {
+            if (key.rfind(prefix, 0) == 0) {
+                output_item[key.substr(prefix.size())] = value;
+            }
+        }
+        output_items.push_back(std::move(output_item));
+    }
+
+    context.values = base_values;
+    context.values[id + ".count"] = std::to_string(output_items.size());
+    context.batches[id] = std::move(output_items);
+    std::cout << "workflow_step=" << id << "\n";
+    std::cout << "batch_items=" << context.values[id + ".count"] << "\n";
+}
+
 void write_workflow_manifest(const WorkflowContext & context) {
     const auto path = context.output_dir / "workflow_manifest.json";
     std::filesystem::create_directories(context.output_dir);
@@ -693,22 +1202,12 @@ void run_json_workflow(
             : std::filesystem::absolute(options.workflow_path.parent_path()),
         std::filesystem::absolute(options.output_dir),
         {},
+        {},
     };
     load_workflow_inputs(root, options, context);
     std::filesystem::create_directories(context.output_dir);
     for (const auto & step : steps->as_array()) {
-        const std::string type = workflow_string(step, "type");
-        if (type == "convert_audio") {
-            run_convert_audio_step(step, options, context);
-        } else if (type == "model") {
-            run_model_step_impl(registry, step, options, context);
-        } else if (type == "chunked_model") {
-            run_chunked_model_step(registry, step, options, context);
-        } else if (type == "mix_audio") {
-            run_mix_audio_step(step, context);
-        } else {
-            throw std::runtime_error("unsupported workflow step type: " + type);
-        }
+        run_workflow_step(registry, step, options, context);
     }
     if (options.final_audio_out.has_value()) {
         const auto * final_key = root.find("final_audio");

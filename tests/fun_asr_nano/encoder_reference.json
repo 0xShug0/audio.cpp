@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "transformers_commit": "48e7f65fb274172e15aa88875d780c67c37606c7",
+  "model_revision": "854d88f94205cd17d2afdb24332130d86fbe654a",
+  "modeling_sha256": "70f8230fd5a75e8a119cea1c8dc919c3f51d8aa7c5d8f1c23c5402b856ebebfb",
+  "model_config_sha256": "c7c4a30316929631ac5fabc5fb3c0dd3278dcc9809670720c5920186285d004a",
+  "model_safetensors_sha256": "335ca3e74917f1156690400e2c344350112950165789cf78ce3d0a367affd821",
+  "weight_catalog_count": 1194,
+  "weight_catalog_sha256": "33322fb22cad98346dd0ad0c60a18c4c25a1c4a6c4abe4aec94452d289f44dbe",
+  "torch_version": "2.11.0+cu130",
+  "data_file": "encoder_reference.bin",
+  "data_format": "little-endian-float32",
+  "data_sha256": "782f206c4d9d8484c1e48f2ad8d06e67da077cc07547cb52da8cedc345285264",
+  "input": {
+    "shape": [
+      1,
+      3,
+      560
+    ],
+    "offset_f32": 0,
+    "count": 1680
+  },
+  "valid_frames": 3,
+  "checkpoints": {
+    "stem": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 1680,
+      "count": 1536
+    },
+    "main_layer_0": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 3216,
+      "count": 1536
+    },
+    "main_layer_24": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 4752,
+      "count": 1536
+    },
+    "main_layer_48": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 6288,
+      "count": 1536
+    },
+    "main_layer_norm": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 7824,
+      "count": 1536
+    },
+    "timestamp_layer_0": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 9360,
+      "count": 1536
+    },
+    "timestamp_layer_10": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 10896,
+      "count": 1536
+    },
+    "timestamp_layer_19": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 12432,
+      "count": 1536
+    },
+    "final": {
+      "shape": [
+        1,
+        3,
+        512
+      ],
+      "offset_f32": 13968,
+      "count": 1536
+    }
+  }
+}

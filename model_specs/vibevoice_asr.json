@@ -1,0 +1,114 @@
+{
+  "family": "vibevoice_asr",
+  "display_name": "VibeVoice ASR",
+  "description": "Microsoft long-form speech-to-text model that processes up to 60 minutes of audio in one pass and produces structured transcripts with speakers, timestamps, content, hotwords, and 50+ language support.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto",
+    "51 languages"
+  ],
+  "capabilities": {
+    "asr": [
+      "segments",
+      "speaker_turns",
+      "vad_chunking"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "vibevoice_asr_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "vibevoice_asr_q8_0",
+      "display_name": "VibeVoice ASR Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-ASR-GGUF",
+      "files": [
+        "VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf"
+      ],
+      "strip_prefix": "VibeVoice-ASR-GGUF"
+    },
+    {
+      "id": "vibevoice_asr_f16",
+      "display_name": "VibeVoice ASR F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "VibeVoice-ASR-GGUF",
+      "files": [
+        "VibeVoice-ASR-GGUF/vibevoice-asr-f16.gguf"
+      ],
+      "strip_prefix": "VibeVoice-ASR-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "model_weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors.index.json"
+      }
+    }
+  ]
+}

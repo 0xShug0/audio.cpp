@@ -75,6 +75,8 @@ void ggml_cuda_op_round(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
 void ggml_cuda_op_trunc(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
+void ggml_cuda_op_round_bf16(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+
 void ggml_cuda_op_reglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
 void ggml_cuda_op_geglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst);

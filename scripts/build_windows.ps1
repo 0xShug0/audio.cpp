@@ -4,13 +4,35 @@ param(
     [string]$Target = "audiocpp_cli",
     [int]$Jobs = 0,
     [switch]$ConfigureOnly,
+    [switch]$RunTests,
     [switch]$Clean,
     [string]$CudaArchitectures = "auto",
+    [ValidateSet("", "native", "avx2", "baseline")]
+    [string]$CpuArch = "",
+    [ValidateSet("ON", "OFF")]
+    [string]$NativeCpu = $null,
+    [ValidateSet("ON", "OFF")]
+    [string]$Llamafile = $null,
+    [switch]$DeploymentBuild,
+    [switch]$NativeModelManager,
+    [switch]$SystemOpenSsl,
+    [string]$BoringSslArchive = "",
+    [ValidateSet("full", "core", "custom")]
+    [string]$ModelSet = "full",
+    [string]$Models = "",
+    [string]$Version = "dev",
     [string]$VsInstall = ""
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"  # let native command stderr (e.g. cmake warnings) flow without aborting the script
+
+if (-not $NativeModelManager -and $SystemOpenSsl) {
+    throw "-SystemOpenSsl requires -NativeModelManager"
+}
+if (-not $NativeModelManager -and $BoringSslArchive -ne "") {
+    throw "-BoringSslArchive requires -NativeModelManager"
+}
 
 function Invoke-Checked {
     param(
@@ -147,7 +169,7 @@ function Find-VsCMake {
         return $cmake
     }
     $cmd = Get-Command "cmake.exe" -ErrorAction SilentlyContinue
-    return if ($cmd) { $cmd.Source } else { "" }
+    if ($cmd) { return $cmd.Source } else { return "" }
 }
 
 function Find-VsNinja {
@@ -157,7 +179,7 @@ function Find-VsNinja {
         return $ninja
     }
     $cmd = Get-Command "ninja.exe" -ErrorAction SilentlyContinue
-    return if ($cmd) { $cmd.Source } else { "" }
+    if ($cmd) { return $cmd.Source } else { return "" }
 }
 
 function Find-WindowsKitTool {
@@ -215,6 +237,38 @@ function Add-MsvcEnvironment {
 }
 
 function Resolve-CudaArchitectures {
+    function Get-ReleaseCudaArchitectures {
+        $nvcc = Join-Path $env:CUDA_PATH "bin\nvcc.exe"
+        $supported = @()
+        if (Test-Path -LiteralPath $nvcc) {
+            $supported = & $nvcc --list-gpu-arch 2>$null
+        }
+
+        $wanted = @(
+            @{ Compute = "compute_75"; Arch = "75-virtual" },
+            @{ Compute = "compute_80"; Arch = "80-virtual" },
+            @{ Compute = "compute_86"; Arch = "86-real" },
+            @{ Compute = "compute_89"; Arch = "89-real" },
+            @{ Compute = "compute_120"; Arch = "120a-real" },
+            @{ Compute = "compute_121"; Arch = "121a-real" }
+        )
+
+        $archs = @()
+        foreach ($item in $wanted) {
+            if ($supported -contains $item.Compute) {
+                $archs += $item.Arch
+            }
+        }
+        if ($archs.Count -eq 0) {
+            $archs = @("75-virtual", "80-virtual", "86-real")
+        }
+        return ($archs -join ";")
+    }
+
+    if ($CudaArchitectures -eq "default" -or $CudaArchitectures -eq "ggml-default") {
+        return Get-ReleaseCudaArchitectures
+    }
+
     if ($CudaArchitectures -ne "" -and $CudaArchitectures -ne "auto") {
         return $CudaArchitectures
     }
@@ -250,6 +304,57 @@ function Assert-OpenMpConfigured {
     }
 }
 
+function Get-CpuArchSettings {
+    param([AllowEmptyString()][string]$Name)
+
+    switch ($Name) {
+        "" {
+            return @{
+                Label = "preset default"
+                Native = $null
+                CMakeArgs = @()
+            }
+        }
+        "native" {
+            return @{
+                Label = "native"
+                Native = "ON"
+                CMakeArgs = @()
+            }
+        }
+        "avx2" {
+            return @{
+                Label = "AVX2"
+                Native = "OFF"
+                CMakeArgs = @(
+                    "-DGGML_AVX=ON",
+                    "-DGGML_AVX2=ON",
+                    "-DGGML_AVX512=OFF",
+                    "-DGGML_AVX512_VBMI=OFF",
+                    "-DGGML_AVX512_VNNI=OFF",
+                    "-DGGML_AVX512_BF16=OFF",
+                    "-DGGML_AVX_VNNI=OFF"
+                )
+            }
+        }
+        "baseline" {
+            return @{
+                Label = "baseline"
+                Native = "OFF"
+                CMakeArgs = @(
+                    "-DGGML_AVX=OFF",
+                    "-DGGML_AVX2=OFF",
+                    "-DGGML_AVX512=OFF",
+                    "-DGGML_AVX512_VBMI=OFF",
+                    "-DGGML_AVX512_VNNI=OFF",
+                    "-DGGML_AVX512_BF16=OFF",
+                    "-DGGML_AVX_VNNI=OFF"
+                )
+            }
+        }
+    }
+}
+
 function Get-PresetSettings {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -258,20 +363,50 @@ function Get-PresetSettings {
             return @{
                 BuildType = "Release"
                 BuildTests = "OFF"
-                Native = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "OFF"
                 EnableCudaGraphs = "OFF"
+                EnableVulkan = "OFF"
                 CFlagsDebug = ""
                 CxxFlagsDebug = ""
+            }
+        }
+        "windows-vulkan-release" {
+            return @{
+                BuildType = "Release"
+                BuildTests = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
+                EnableCuda = "OFF"
+                EnableCudaGraphs = "OFF"
+                EnableVulkan = "ON"
+                CFlagsDebug = ""
+                CxxFlagsDebug = ""
+            }
+        }
+        "windows-vulkan-debug" {
+            return @{
+                BuildType = "Debug"
+                BuildTests = "ON"
+                Native = "ON"
+                Llamafile = "ON"
+                EnableCuda = "OFF"
+                EnableCudaGraphs = "OFF"
+                EnableVulkan = "ON"
+                CFlagsDebug = "/O2 /Zi"
+                CxxFlagsDebug = "/O2 /Zi"
             }
         }
         "windows-cuda-debug" {
             return @{
                 BuildType = "Debug"
                 BuildTests = "ON"
-                Native = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
+                EnableVulkan = "OFF"
                 CFlagsDebug = "/O2 /Zi"
                 CxxFlagsDebug = "/O2 /Zi"
             }
@@ -280,9 +415,11 @@ function Get-PresetSettings {
             return @{
                 BuildType = "Release"
                 BuildTests = "OFF"
-                Native = "OFF"
+                Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
+                EnableVulkan = "OFF"
                 CFlagsDebug = ""
                 CxxFlagsDebug = ""
             }
@@ -292,20 +429,53 @@ function Get-PresetSettings {
                 BuildType = "Debug"
                 BuildTests = "ON"
                 Native = "ON"
+                Llamafile = "ON"
                 EnableCuda = "ON"
                 EnableCudaGraphs = "ON"
+                EnableVulkan = "OFF"
                 CFlagsDebug = "/O2 /Zi"
                 CxxFlagsDebug = "/O2 /Zi"
             }
         }
         default {
-            throw "Unsupported Windows preset '$Name'. Use windows-cpu-release, windows-cuda-release, windows-cuda-debug, or windows-cuda-native-debug."
+            throw "Unsupported Windows preset '$Name'. Use windows-cpu-release, windows-vulkan-release, windows-vulkan-debug, windows-cuda-release, windows-cuda-debug, or windows-cuda-native-debug."
         }
     }
 }
 
+function Find-VulkanRoot {
+    foreach ($root in @($env:VULKAN_SDK, $env:VK_SDK_PATH)) {
+        if ($root -and (Test-Path (Join-Path $root "bin\glslc.exe"))) {
+            return (Resolve-Path $root).Path
+        }
+    }
+    $sdk = Find-FirstFile @(
+        "C:\VulkanSDK\*\bin\glslc.exe",
+        "C:\Program Files\VulkanSDK\*\bin\glslc.exe",
+        "C:\Program Files (x86)\VulkanSDK\*\bin\glslc.exe"
+    )
+    if ($sdk -ne "") {
+        return (Resolve-Path (Join-Path (Split-Path $sdk -Parent) "..")).Path
+    }
+    return ""
+}
+
 $settings = Get-PresetSettings $Preset
+if ($RunTests) {
+    $settings.BuildTests = "ON"
+}
+$cpuArchSettings = Get-CpuArchSettings $CpuArch
+if ($null -ne $cpuArchSettings.Native) {
+    $settings.Native = $cpuArchSettings.Native
+}
+if (-not [string]::IsNullOrEmpty($NativeCpu)) {
+    $settings.Native = $NativeCpu
+}
+if (-not [string]::IsNullOrEmpty($Llamafile)) {
+    $settings.Llamafile = $Llamafile
+}
 $isCudaPreset = $settings.EnableCuda -eq "ON"
+$isVulkanPreset = $settings.EnableVulkan -eq "ON"
 
 if ($isCudaPreset) {
     $cudaRoot = Find-CudaRoot
@@ -317,6 +487,17 @@ if ($isCudaPreset) {
     $env:CUDAToolkit_ROOT = $cudaRoot
 } else {
     $cudaRoot = ""
+}
+
+if ($isVulkanPreset) {
+    $vulkanRoot = Find-VulkanRoot
+    if ($vulkanRoot -eq "") {
+        throw "Vulkan SDK was not found. Install it from https://vulkan.lunarg.com/ and ensure VULKAN_SDK is set with glslc.exe available."
+    }
+    Add-PathFront (Join-Path $vulkanRoot "Bin")
+    $env:VULKAN_SDK = $vulkanRoot
+} else {
+    $vulkanRoot = ""
 }
 
 $vsInstall = Find-VsInstall $VsInstall
@@ -342,6 +523,11 @@ if ($isCudaPreset) {
 } else {
     Write-Host "CUDA: disabled"
 }
+if ($isVulkanPreset) {
+    Write-Host "Vulkan SDK: $vulkanRoot"
+} else {
+    Write-Host "Vulkan: disabled"
+}
 Write-Host "Visual Studio Build Tools: $vsInstall"
 Write-Host "MSVC: $cl"
 Write-Host "CMake: $cmake"
@@ -350,6 +536,27 @@ Write-Host "Windows SDK: $(Split-Path $mt -Parent)"
 if ($arch -ne "") {
     Write-Host "CUDA architectures: $arch"
 }
+Write-Host "CPU architecture profile: $($cpuArchSettings.Label)"
+Write-Host "Native CPU optimization: $($settings.Native)"
+Write-Host "llamafile SGEMM: $($settings.Llamafile)"
+$deploymentBuildValue = if ($DeploymentBuild) { "ON" } else { "OFF" }
+$nativeModelManagerValue = if ($NativeModelManager) { "ON" } else { "OFF" }
+$systemOpenSslValue = if ($SystemOpenSsl) { "ON" } else { "OFF" }
+Write-Host "Deployment build: $deploymentBuildValue"
+Write-Host "Native model manager: $nativeModelManagerValue"
+if ($NativeModelManager) {
+    Write-Host "System OpenSSL: $systemOpenSslValue"
+    if ($BoringSslArchive -ne "") {
+        Write-Host "BoringSSL archive: $BoringSslArchive"
+    } else {
+        Write-Host "BoringSSL archive: <download at configure time>"
+    }
+}
+Write-Host "Model composite: $ModelSet"
+if ($Models -ne "") {
+    Write-Host "Selected models: $Models"
+}
+Write-Host "audio.cpp version: $Version"
 
 if ($Clean) {
     $buildDirForClean = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "build") $Preset
@@ -377,12 +584,25 @@ $configureArgs = @(
     "-DENGINE_ENABLE_CUDA=$($settings.EnableCuda)",
     "-DENGINE_ENABLE_OPENMP=ON",
     "-DENGINE_ENABLE_CUDA_GRAPHS=$($settings.EnableCudaGraphs)",
-    "-DENGINE_ENABLE_VULKAN=OFF",
+    "-DENGINE_ENABLE_VULKAN=$($settings.EnableVulkan)",
     "-DENGINE_ENABLE_METAL=OFF",
     "-DGGML_OPENMP=ON",
-    "-DGGML_NATIVE=$($settings.Native)",
-    "-DENGINE_BUILD_TESTS=$($settings.BuildTests)"
+    "-DENGINE_ENABLE_NATIVE_CPU=$($settings.Native)",
+    "-DENGINE_ENABLE_LLAMAFILE=$($settings.Llamafile)",
+    "-DENGINE_BUILD_TESTS=$($settings.BuildTests)",
+    "-DAUDIOCPP_DEPLOYMENT_BUILD=$deploymentBuildValue",
+    "-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=$nativeModelManagerValue",
+    "-DAUDIOCPP_USE_SYSTEM_OPENSSL=$systemOpenSslValue",
+    "-DAUDIOCPP_VERSION=$Version",
+    "-U", "AUDIOCPP_BORINGSSL_ARCHIVE",
+    "-DAUDIOCPP_MODEL_SET=$ModelSet",
+    "-DAUDIOCPP_MODELS=$Models"
 )
+$boringSslArchivePath = if ($BoringSslArchive -ne "") { Convert-ToCMakePath $BoringSslArchive } else { "" }
+if ($boringSslArchivePath -ne "") {
+    $configureArgs += "-DAUDIOCPP_BORINGSSL_ARCHIVE=$boringSslArchivePath"
+}
+$configureArgs += $cpuArchSettings.CMakeArgs
 if ($settings.CFlagsDebug -ne "") {
     $configureArgs += "-DCMAKE_C_FLAGS_DEBUG=$($settings.CFlagsDebug)"
 }
@@ -397,6 +617,8 @@ if ($isCudaPreset) {
 }
 if ($isCudaPreset -and $arch -ne "") {
     $configureArgs += "-DCMAKE_CUDA_ARCHITECTURES=$arch"
+} elseif ($isCudaPreset) {
+    $configureArgs += @("-U", "CMAKE_CUDA_ARCHITECTURES")
 }
 
 Invoke-Checked $cmake $configureArgs
@@ -414,3 +636,11 @@ if ($Target -ne "") {
 
 Write-Host "Build jobs: $effectiveJobs"
 Invoke-Checked $cmake $buildArgs
+
+if ($RunTests) {
+    # Unit tests live under ENGINE_BUILD_TESTS; flip ON above, build everything
+    # that the -Target build skipped, then run the registered ctest suite.
+    Invoke-Checked $cmake @("--build", $buildDir, "-j", $effectiveJobs.ToString())
+    $ctest = Join-Path (Split-Path $cmake -Parent) "ctest.exe"
+    Invoke-Checked $ctest @("--test-dir", $buildDir, "--output-on-failure", "-j", $effectiveJobs.ToString())
+}

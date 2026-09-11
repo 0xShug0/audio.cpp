@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "family": "controlfoley",
+  "display_name": "ControlFoley",
+  "description": "Multimodal Foley audio generation model.",
+  "category": "audio_tools",
+  "status": "experimental",
+  "tasks": [
+    "sfx"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "sfx": [
+      "prompt_generation"
+    ]
+  },
+  "ui": {
+    "recommended_package": "controlfoley_large_44k_q8_0",
+    "tags": [
+      "SFX",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/controlfoley.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "open_clip_vocab": "model:open_clip_vocab.json",
+        "open_clip_merges": "model:open_clip_merges.txt",
+        "open_clip_tokenizer_config": "model:open_clip_tokenizer_config.json"
+      },
+      "tensors": {
+        "flow": {
+          "source": "weights:",
+          "prefix": "flow"
+        },
+        "vae": {
+          "source": "weights:",
+          "prefix": "vae"
+        },
+        "bigvgan": {
+          "source": "weights:",
+          "prefix": "bigvgan"
+        },
+        "open_clip": {
+          "source": "weights:",
+          "prefix": "open_clip"
+        },
+        "cav_mae": {
+          "source": "weights:",
+          "prefix": "cav_mae"
+        },
+        "synchformer": {
+          "source": "weights:",
+          "prefix": "synchformer"
+        },
+        "clap": {
+          "source": "weights:",
+          "prefix": "clap"
+        },
+        "mert": {
+          "source": "weights:",
+          "prefix": "mert"
+        },
+        "musicgen_style": {
+          "source": "weights:",
+          "prefix": "musicgen_style"
+        }
+      }
+    }
+  ],
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "required": false,
+        "default": 8.0,
+        "min": 0.64,
+        "max": 60.0,
+        "description": "Target temporal budget."
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "required": false,
+        "default": 25,
+        "min": 1,
+        "max": 200,
+        "description": "Euler flow inference steps."
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "required": false,
+        "default": 4.5,
+        "min": 0.0,
+        "max": 20.0,
+        "description": "Classifier-free guidance strength."
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "Negative text prompt used for the unconditional guidance text branch."
+      },
+      {
+        "name": "video",
+        "type": "path",
+        "required": false,
+        "description": "Optional video path for video-conditioned Foley generation."
+      },
+      {
+        "name": "mask_away_clip",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Disable OpenCLIP video conditioning while keeping visual and sync conditioning."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "required": false,
+        "default": 42,
+        "min": 0,
+        "max": 2147483647,
+        "description": "Generation seed."
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native",
+        "description": "ControlFoley weight storage type."
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "controlfoley_large_44k_f32",
+      "display_name": "ControlFoley Large 44k F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "ControlFoley-GGUF",
+      "files": [
+        "ControlFoley-GGUF/controlfoley-large-44k-f32.gguf"
+      ],
+      "strip_prefix": "ControlFoley-GGUF"
+    },
+    {
+      "id": "controlfoley_large_44k_q8_0",
+      "display_name": "ControlFoley Large 44k Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ControlFoley-GGUF",
+      "files": [
+        "ControlFoley-GGUF/controlfoley-large-44k-q8_0.gguf"
+      ],
+      "strip_prefix": "ControlFoley-GGUF"
+    }
+  ],
+  "dependencies": []
+}

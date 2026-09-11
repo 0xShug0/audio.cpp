@@ -1,0 +1,83 @@
+{
+  "cases": [
+    {
+      "id": "neutts_builtin_emotions",
+      "family": "neutts",
+      "task": "tts",
+      "mode": "offline",
+      "warmup": {
+        "id": "warmup_short",
+        "text": "This short warmup keeps the NeuTTS two E session ready before measurement.",
+        "speaker": "emily",
+        "emotion": "neutral",
+        "seed": 9001,
+        "temperature": 1.0,
+        "top_k": 50
+      },
+      "requests": [
+        {
+          "id": "emily_happy_agent_intro",
+          "text": "The assistant greets the caller with warm energy, explains the next step clearly, and keeps the conversation moving without sounding rushed.",
+          "speaker": "emily",
+          "emotion": "happy",
+          "seed": 1234,
+          "temperature": 1.0,
+          "top_k": 50
+        },
+        {
+          "id": "paul_sad_status_update",
+          "text": "The field report is calm but disappointed, because the team arrived early, checked every sensor, and still found the network offline.",
+          "speaker": "paul",
+          "emotion": "sad",
+          "seed": 1235,
+          "temperature": 1.0,
+          "top_k": 50
+        },
+        {
+          "id": "sophie_surprised_product_note",
+          "text": "The prototype suddenly answered in a clearer voice than expected, and the whole room paused before anyone remembered to press record.",
+          "speaker": "sophie",
+          "emotion": "surprised",
+          "seed": 1236,
+          "temperature": 1.0,
+          "top_k": 50
+        },
+        {
+          "id": "steven_angry_incident_review",
+          "text": "The supervisor is frustrated because the same deployment warning was ignored twice, even after the checklist marked it as blocking.",
+          "speaker": "steven",
+          "emotion": "angry",
+          "seed": 1237,
+          "temperature": 1.0,
+          "top_k": 50
+        }
+      ]
+    },
+    {
+      "id": "neutts_greedy_builtin_voice",
+      "family": "neutts",
+      "task": "tts",
+      "mode": "offline",
+      "warmup": {
+        "id": "warmup_greedy_short",
+        "text": "This short warmup checks deterministic NeuTTS decoding before the measured request.",
+        "speaker": "emily",
+        "emotion": "neutral",
+        "seed": 9101,
+        "temperature": 1.0,
+        "top_k": 1
+      },
+      "requests": [
+        {
+          "id": "emily_greedy_customer_update",
+          "text": "The assistant calmly explains that the package has already left the warehouse, the tracking page will update soon, and no extra action is needed from the customer.",
+          "speaker": "emily",
+          "emotion": "neutral",
+          "seed": 2234,
+          "temperature": 1.0,
+          "top_k": 1
+        }
+      ]
+    }
+  ]
+}

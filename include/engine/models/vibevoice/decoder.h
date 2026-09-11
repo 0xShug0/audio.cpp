@@ -19,7 +19,7 @@ namespace engine::core {
 class BackendWeightStore;
 }
 
-namespace engine::models::common {
+namespace engine::core {
 class ConstantTensorCache;
 }
 
@@ -122,7 +122,8 @@ public:
     const VibeVoiceAssets & assets() const noexcept;
     const VibeVoiceDecoderWeights & weights() const noexcept;
     ggml_backend_t backend() const noexcept;
-    common::ConstantTensorCache & constants() const noexcept;
+    core::ConstantTensorCache & constants() const noexcept;
+    ggml_type cache_type() const noexcept;
     int threads() const noexcept;
 
     VibeVoiceTokenEmbeddings embed_tokens(const std::vector<int32_t> & input_ids) const;
@@ -139,6 +140,7 @@ public:
         const std::vector<std::vector<float>> & embeddings,
         const std::vector<VibeVoiceDecoderCachedState *> & states,
         int64_t cache_capacity) const;
+    void release_prompt_graphs() const;
 
 private:
     VibeVoiceDecoderCachedBatchStepGraph * find_cached_batch_graph(
@@ -147,11 +149,12 @@ private:
 
     std::shared_ptr<const VibeVoiceAssets> assets_;
     std::shared_ptr<const VibeVoiceDecoderWeights> weights_;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<VibeVoiceDecoderEmbeddingGraph> embedding_graph_;
     mutable std::unique_ptr<VibeVoiceDecoderPrefillGraph> prefill_graph_;
     mutable std::vector<std::unique_ptr<VibeVoiceDecoderCachedBatchStepGraph>> cached_batch_graphs_;
     ggml_backend_t backend_ = nullptr;
+    ggml_type cache_type_ = GGML_TYPE_F16;
     int threads_ = 1;
 };
 
@@ -168,7 +171,7 @@ VibeVoiceDecoderLayerOutputs build_vibevoice_decoder_layer(
     const core::TensorValue & positions,
     const VibeVoiceDecoderLayerWeights & weights,
     const VibeVoiceDecoderConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::optional<core::TensorValue> & prefix_key = std::nullopt,
     const std::optional<core::TensorValue> & prefix_value = std::nullopt,
     const std::optional<core::TensorValue> & attention_mask = std::nullopt);
@@ -179,7 +182,7 @@ VibeVoiceDecoderLayerOutputs build_vibevoice_decoder_layer_static_tail(
     const core::TensorValue & positions,
     const VibeVoiceDecoderLayerWeights & weights,
     const VibeVoiceDecoderConfig & config,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & cache_slot,

@@ -1,31 +1,15 @@
 #include "engine/models/ace_step/assets.h"
 
-#include "engine/framework/io/filesystem.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
 
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::ace_step {
 namespace json = engine::io::json;
 namespace {
-
-std::filesystem::path resolve_model_root(const std::filesystem::path & model_path) {
-    if (engine::io::is_existing_directory(model_path)) {
-        return std::filesystem::weakly_canonical(model_path);
-    }
-    if (engine::io::is_existing_file(model_path)) {
-        return std::filesystem::weakly_canonical(model_path.parent_path());
-    }
-    throw std::runtime_error("ACE-Step model path does not exist: " + model_path.string());
-}
-
-std::filesystem::path require_file(const std::filesystem::path & path, const char * role) {
-    if (!engine::io::is_existing_file(path)) {
-        throw std::runtime_error(std::string("ACE-Step missing ") + role + ": " + path.string());
-    }
-    return path;
-}
 
 void parse_qwen_common(
     const engine::io::json::Value & value,
@@ -117,8 +101,35 @@ AceStepDiffusionConfig parse_diffusion_config(const engine::io::json::Value & va
     config.use_sliding_window = json::optional_bool(value, "use_sliding_window", false);
     config.layer_types = json::optional_string_array(value, "layer_types");
     config.is_turbo = json::optional_bool(value, "is_turbo", config.is_turbo);
+    // `encoder_hidden_size` is what upstream's XL modeling class reads without a
+    // fallback, so a config that declares it is an XL-class package: the encoder
+    // stack is a different width from the DiT, and the timbre encoder is the
+    // variant that actually uses its CLS token.
+    config.has_separate_encoder = value.find("encoder_hidden_size") != nullptr;
+    config.timbre_special_token = config.has_separate_encoder;
     config.rms_norm_eps = json::optional_f32(value, "rms_norm_eps", config.rms_norm_eps);
     config.rope_theta = json::optional_f32(value, "rope_theta", config.rope_theta);
+    return config;
+}
+
+// Upstream builds the condition encoder, audio tokenizer and detokenizer from a
+// copy of the config with four values substituted (copy.deepcopy in
+// AceStepConditionGenerationModel.__init__). Doing the same here keeps every
+// encoder-side shape derived from one place instead of spreading `is this XL?`
+// across the weight loaders.
+AceStepDiffusionConfig derive_encoder_config(
+    const AceStepDiffusionConfig & diffusion,
+    const engine::io::json::Value & value) {
+    AceStepDiffusionConfig config = diffusion;
+    if (!diffusion.has_separate_encoder) {
+        return config;
+    }
+    config.hidden_size = json::require_i64(value, "encoder_hidden_size");
+    config.intermediate_size = json::optional_i64(value, "encoder_intermediate_size", diffusion.intermediate_size);
+    config.num_attention_heads =
+        json::optional_i64(value, "encoder_num_attention_heads", diffusion.num_attention_heads);
+    config.num_key_value_heads =
+        json::optional_i64(value, "encoder_num_key_value_heads", diffusion.num_key_value_heads);
     return config;
 }
 
@@ -134,82 +145,104 @@ AceStepVAEConfig parse_vae_config(const engine::io::json::Value & value) {
     return config;
 }
 
-}  // namespace
+// Directory inside the package -> prefix of the resource ids the model spec
+// registers for it. The XL variants are optional resources, so a package may
+// name a variant here that it does not ship; that is caught when the resources
+// are opened, with a message that says which directory is missing.
+constexpr std::pair<std::string_view, std::string_view> kDitVariants[] = {
+    {"acestep-v15-turbo", "dit_turbo_"},
+    {"acestep-v15-base", "dit_base_"},
+    {"acestep-v15-xl-turbo", "dit_xl_turbo_"},
+    {"acestep-v15-xl-sft", "dit_xl_sft_"},
+};
 
-AceStepAssetPaths resolve_ace_step_assets(const std::filesystem::path & model_path, const AceStepModelSelection & selection) {
-    AceStepAssetPaths paths;
-    paths.model_root = resolve_model_root(model_path);
-
-    paths.dit_model_root = paths.model_root / selection.dit_model_path;
-    paths.dit_config_path = require_file(paths.dit_model_root / "config.json", "DiT config");
-    paths.dit_weights_path = require_file(paths.dit_model_root / "model.safetensors", "DiT weights");
-    paths.dit_silence_latent_path =
-        require_file(paths.dit_model_root / "silence_latent.safetensors", "DiT silence latent");
-
-    paths.lm_model_root = paths.model_root / selection.lm_model_path;
-    paths.lm_config_path = require_file(paths.lm_model_root / "config.json", "planner LM config");
-    paths.lm_weights_path = require_file(paths.lm_model_root / "model.safetensors", "planner LM weights");
-    paths.lm_tokenizer_config_path =
-        require_file(paths.lm_model_root / "tokenizer_config.json", "planner LM tokenizer config");
-    paths.lm_tokenizer_vocab_path = require_file(paths.lm_model_root / "vocab.json", "planner LM vocab");
-    paths.lm_tokenizer_merges_path = require_file(paths.lm_model_root / "merges.txt", "planner LM merges");
-    paths.lm_tokenizer_json_path = require_file(paths.lm_model_root / "tokenizer.json", "planner LM tokenizer json");
-    paths.lm_chat_template_path = require_file(paths.lm_model_root / "chat_template.jinja", "planner LM chat template");
-
-    paths.text_encoder_root = paths.model_root / selection.text_encoder_path;
-    paths.text_encoder_config_path = require_file(paths.text_encoder_root / "config.json", "text encoder config");
-    paths.text_encoder_weights_path = require_file(paths.text_encoder_root / "model.safetensors", "text encoder weights");
-    paths.text_encoder_tokenizer_config_path =
-        require_file(paths.text_encoder_root / "tokenizer_config.json", "text encoder tokenizer config");
-    paths.text_encoder_tokenizer_vocab_path = require_file(paths.text_encoder_root / "vocab.json", "text encoder vocab");
-    paths.text_encoder_tokenizer_merges_path = require_file(paths.text_encoder_root / "merges.txt", "text encoder merges");
-    paths.text_encoder_tokenizer_json_path =
-        require_file(paths.text_encoder_root / "tokenizer.json", "text encoder tokenizer json");
-    paths.text_encoder_chat_template_path =
-        require_file(paths.text_encoder_root / "chat_template.jinja", "text encoder chat template");
-
-    paths.vae_model_root = paths.model_root / selection.vae_model_path;
-    paths.vae_config_path = require_file(paths.vae_model_root / "config.json", "VAE config");
-    paths.vae_weights_path =
-        require_file(paths.vae_model_root / "diffusion_pytorch_model.safetensors", "VAE weights");
-    return paths;
+std::string known_dit_variants() {
+    std::string names;
+    for (const auto & [directory, prefix] : kDitVariants) {
+        (void)prefix;
+        if (!names.empty()) {
+            names += ", ";
+        }
+        names += directory;
+    }
+    return names;
 }
+
+std::string dit_resource_id(const AceStepModelSelection & selection, std::string_view suffix) {
+    for (const auto & [directory, prefix] : kDitVariants) {
+        if (selection.dit_model_path == directory) {
+            return std::string(prefix) + std::string(suffix);
+        }
+    }
+    throw std::runtime_error(
+        "unknown ACE-Step DiT variant '" + selection.dit_model_path + "'; the package spec knows " +
+        known_dit_variants());
+}
+
+void validate_selection(const AceStepModelSelection & selection) {
+    (void)dit_resource_id(selection, "config");
+}
+
+AceStepConfig parse_config(const assets::ResourceBundle & resources, const AceStepModelSelection & selection) {
+    AceStepConfig config;
+    const auto diffusion_json = resources.parse_json(dit_resource_id(selection, "config"));
+    config.diffusion = parse_diffusion_config(diffusion_json);
+    config.encoder = derive_encoder_config(config.diffusion, diffusion_json);
+    config.planner = parse_planner_config(resources.parse_json("lm_config"));
+    config.text_encoder = parse_text_encoder_config(resources.parse_json("text_encoder_config"));
+    config.vae = parse_vae_config(resources.parse_json("vae_config"));
+    return config;
+}
+
+// The XL variants are registered as optional package resources so that a
+// package holding only turbo does not have to ship 20 GB it will never load.
+// The cost is that "not installed" surfaces here rather than at spec-load time,
+// where a bare "missing asset resource: dit_xl_turbo_config" would not say why.
+void require_installed_variant(const assets::ResourceBundle & resources, const AceStepModelSelection & selection) {
+    if (resources.has_file(dit_resource_id(selection, "config"))) {
+        return;
+    }
+    throw std::runtime_error(
+        "ACE-Step DiT variant '" + selection.dit_model_path + "' is not installed in this package: " +
+        (resources.model_root() / selection.dit_model_path).string() +
+        " is missing. Download that variant, or load one of the variants the package ships.");
+}
+
+void validate_config(const AceStepConfig & config) {
+    if (config.diffusion.model_type != "acestep") {
+        throw std::runtime_error("ACE-Step diffusion config must have model_type=acestep");
+    }
+    if (config.planner.lm_family != "qwen3") {
+        throw std::runtime_error("ACE-Step planner LM currently supports only qwen3");
+    }
+    if (config.text_encoder.encoder_family != "qwen3") {
+        throw std::runtime_error("ACE-Step text encoder currently supports only qwen3");
+    }
+    if (config.vae.sample_rate != config.diffusion.sample_rate) {
+        throw std::runtime_error("ACE-Step VAE sample rate must match diffusion sample rate");
+    }
+}
+
+}  // namespace
 
 std::shared_ptr<const AceStepAssets> load_ace_step_assets(
     const std::filesystem::path & model_path,
     const AceStepModelSelection & selection) {
     auto assets = std::make_shared<AceStepAssets>();
     assets->selection = selection;
-    assets->paths = resolve_ace_step_assets(model_path, selection);
-
-    const auto dit_root = engine::io::json::parse_file(assets->paths.dit_config_path);
-    const auto lm_root = engine::io::json::parse_file(assets->paths.lm_config_path);
-    const auto text_encoder_root = engine::io::json::parse_file(assets->paths.text_encoder_config_path);
-    const auto vae_root = engine::io::json::parse_file(assets->paths.vae_config_path);
-
-    assets->config.diffusion = parse_diffusion_config(dit_root);
-    assets->config.planner = parse_planner_config(lm_root);
-    assets->config.text_encoder = parse_text_encoder_config(text_encoder_root);
-    assets->config.vae = parse_vae_config(vae_root);
-
-    if (assets->config.diffusion.model_type != "acestep") {
-        throw std::runtime_error("ACE-Step diffusion config must have model_type=acestep");
-    }
-    if (assets->config.planner.lm_family != "qwen3") {
-        throw std::runtime_error("ACE-Step planner LM currently supports only qwen3");
-    }
-    if (assets->config.text_encoder.encoder_family != "qwen3") {
-        throw std::runtime_error("ACE-Step text encoder currently supports only qwen3");
-    }
-    if (assets->config.vae.sample_rate != assets->config.diffusion.sample_rate) {
-        throw std::runtime_error("ACE-Step VAE sample rate must match diffusion sample rate");
-    }
-
-    assets->dit_weights = engine::assets::open_tensor_source(assets->paths.dit_weights_path);
-    assets->dit_silence_latent = engine::assets::open_tensor_source(assets->paths.dit_silence_latent_path);
-    assets->lm_weights = engine::assets::open_tensor_source(assets->paths.lm_weights_path);
-    assets->text_encoder_weights = engine::assets::open_tensor_source(assets->paths.text_encoder_weights_path);
-    assets->vae_weights = engine::assets::open_tensor_source(assets->paths.vae_weights_path);
+    validate_selection(assets->selection);
+    assets->resources = engine::model_spec::load_resource_bundle(
+        model_path,
+        engine::model_spec::default_spec_path("ace_step"));
+    require_installed_variant(assets->resources, assets->selection);
+    assets->config = parse_config(assets->resources, assets->selection);
+    validate_config(assets->config);
+    assets->dit_weights = assets->resources.open_tensor_source(dit_resource_id(assets->selection, "weights"));
+    assets->dit_silence_latent =
+        assets->resources.open_tensor_source(dit_resource_id(assets->selection, "silence_latent"));
+    assets->lm_weights = assets->resources.open_tensor_source("lm_weights");
+    assets->text_encoder_weights = assets->resources.open_tensor_source("text_encoder_weights");
+    assets->vae_weights = assets->resources.open_tensor_source("vae_weights");
     return assets;
 }
 

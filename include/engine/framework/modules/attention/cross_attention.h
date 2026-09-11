@@ -3,7 +3,14 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/attention/types.h"
 
+#include <optional>
+
 namespace engine::modules {
+
+struct CrossAttentionKeyValue {
+    core::TensorValue key;
+    core::TensorValue value;
+};
 
 class CrossAttentionModule {
 public:
@@ -15,6 +22,29 @@ public:
     core::TensorValue build(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & query,
+        const core::TensorValue & memory,
+        const AttentionWeights & weights) const;
+
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & query,
+        const core::TensorValue & memory,
+        const AttentionWeights & weights,
+        const core::TensorValue & memory_mask,
+        const core::TensorValue * attention_prior = nullptr,
+        core::TensorValue * last_attention = nullptr) const;
+
+    core::TensorValue build_cached(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & query,
+        const CrossAttentionKeyValue & key_value,
+        const AttentionWeights & weights,
+        const core::TensorValue & memory_mask,
+        const core::TensorValue * attention_prior = nullptr,
+        core::TensorValue * last_attention = nullptr) const;
+
+    CrossAttentionKeyValue build_key_value(
+        core::ModuleBuildContext & ctx,
         const core::TensorValue & memory,
         const AttentionWeights & weights) const;
 

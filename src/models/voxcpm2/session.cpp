@@ -1,12 +1,14 @@
 #include "engine/models/voxcpm2/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
 #include <chrono>
 #include <initializer_list>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -20,6 +22,36 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr int64_t kDefaultTextChunkSize = 2048;
+
+enum class ChunkStrategy {
+  Continuation,
+  Stateless,
+};
+
+ChunkStrategy parse_chunk_strategy(
+    const std::unordered_map<std::string, std::string> &options) {
+  const auto value =
+      runtime::find_option(options, {"voxcpm2.chunk_strategy", "chunk_strategy"})
+          .value_or("continuation");
+  if (value == "continuation") {
+    return ChunkStrategy::Continuation;
+  }
+  if (value == "stateless") {
+    return ChunkStrategy::Stateless;
+  }
+  throw std::runtime_error(
+      "VoxCPM2 chunk_strategy must be continuation or stateless");
+}
+
+const char *chunk_strategy_name(ChunkStrategy strategy) {
+  switch (strategy) {
+  case ChunkStrategy::Continuation:
+    return "continuation";
+  case ChunkStrategy::Stateless:
+    return "stateless";
+  }
+  return "unknown";
+}
 
 std::shared_ptr<const VoxCPM2Assets>
 require_assets(std::shared_ptr<const VoxCPM2Assets> assets) {
@@ -61,6 +93,68 @@ bool optional_audio_equal(const std::optional<runtime::AudioBuffer> &lhs,
     return false;
   }
   return !lhs.has_value() || audio_buffer_equal(*lhs, *rhs);
+}
+
+std::optional<std::pair<std::string, std::string>>
+split_leading_voice_tag(const std::string &text) {
+  const std::string trimmed = engine::io::trim_ascii_whitespace(text);
+  if (trimmed.empty() || trimmed.front() != '(') {
+    return std::nullopt;
+  }
+  const size_t close = trimmed.find(')');
+  if (close == std::string::npos || close + 1 >= trimmed.size()) {
+    return std::nullopt;
+  }
+  const std::string tag =
+      engine::io::trim_ascii_whitespace(trimmed.substr(0, close + 1));
+  const std::string body =
+      engine::io::trim_ascii_whitespace(trimmed.substr(close + 1));
+  if (tag.empty() || body.empty()) {
+    return std::nullopt;
+  }
+  return std::make_pair(tag, body);
+}
+
+std::vector<runtime::TaskRequest>
+chunk_voxcpm2_request(const runtime::TaskRequest &request,
+                      int64_t text_chunk_size,
+                      engine::text::TextChunkMode text_chunk_mode) {
+  if (!request.text_input.has_value() ||
+      text_chunk_mode != engine::text::TextChunkMode::TagAware) {
+    return runtime::chunk_text_request(request, text_chunk_size,
+                                       text_chunk_mode);
+  }
+  const auto split = split_leading_voice_tag(request.text_input->text);
+  if (!split.has_value()) {
+    return runtime::chunk_text_request(request, text_chunk_size,
+                                       text_chunk_mode);
+  }
+  const auto body_chunks = engine::text::split_text_chunks(
+      split->second, text_chunk_size, text_chunk_mode);
+  if (body_chunks.empty()) {
+    return {request};
+  }
+  std::vector<runtime::TaskRequest> out;
+  out.reserve(body_chunks.size());
+  for (size_t i = 0; i < body_chunks.size(); ++i) {
+    runtime::TaskRequest item = request;
+    item.text_input->text =
+        i == 0 ? split->first + " " + body_chunks[i] : body_chunks[i];
+    out.push_back(std::move(item));
+  }
+  return out;
+}
+
+size_t prompt_cache_slots_from_options(
+    const std::unordered_map<std::string, std::string> &options) {
+  constexpr int64_t kDefaultPromptCacheSlots = 1;
+  const int64_t slots =
+      runtime::parse_i64_option(options, {"voxcpm2.prompt_cache_slots"})
+          .value_or(kDefaultPromptCacheSlots);
+  if (slots < 0) {
+    throw std::runtime_error("voxcpm2.prompt_cache_slots must be non-negative");
+  }
+  return static_cast<size_t>(slots);
 }
 
 void validate_weight_storage(engine::assets::TensorStorageType storage_type,
@@ -107,6 +201,8 @@ void validate_session_options(
         key == "voxcpm2.audiovae_encoder_sample_capacity" ||
         key == "voxcpm2.weight_type" ||
         key == "voxcpm2.audiovae_weight_type" ||
+        key == "voxcpm2.prompt_cache_slots" ||
+        key == "voxcpm2.mem_saver" ||
         key == "voxcpm2.denoise" || key == "voxcpm2.load_denoiser") {
       continue;
     }
@@ -127,11 +223,20 @@ int64_t product(const std::vector<int64_t> &values) {
 
 } // namespace
 
-VoxCPM2Session::VoxCPM2Session(runtime::TaskSpec task,
-                               runtime::SessionOptions options,
-                               std::shared_ptr<const VoxCPM2Assets> assets)
+bool VoxCPM2SessionBase::EncodedPromptCacheKeyEqual::operator()(
+    const EncodedPromptCacheKey &lhs,
+    const EncodedPromptCacheKey &rhs) const {
+  return lhs.prompt_text == rhs.prompt_text &&
+         optional_audio_equal(lhs.prompt_audio, rhs.prompt_audio) &&
+         optional_audio_equal(lhs.reference_audio, rhs.reference_audio);
+}
+
+VoxCPM2SessionBase::VoxCPM2SessionBase(runtime::TaskSpec task,
+                                       runtime::SessionOptions options,
+                                       std::shared_ptr<const VoxCPM2Assets> assets)
     : RuntimeSessionBase(options), task_(task),
-      assets_(require_assets(std::move(assets))) {
+      assets_(require_assets(std::move(assets))),
+      encoded_prompt_cache_(prompt_cache_slots_from_options(options.options)) {
   if (task_.mode != runtime::RunMode::Offline &&
       task_.mode != runtime::RunMode::Streaming) {
     throw std::runtime_error(
@@ -167,6 +272,7 @@ VoxCPM2Session::VoxCPM2Session(runtime::TaskSpec task,
   generator_config_.dit_graph_context_bytes = runtime::parse_size_mb_option(
       options.options, {"voxcpm2.dit_graph_context_mb"},
       generator_config_.dit_graph_context_bytes);
+  generator_config_.prompt_cache_slots = encoded_prompt_cache_.capacity();
   decoder_config_.weight_context_bytes = runtime::parse_size_mb_option(
       options.options, {"voxcpm2.audiovae_weight_context_mb"},
       decoder_config_.weight_context_bytes);
@@ -186,6 +292,11 @@ VoxCPM2Session::VoxCPM2Session(runtime::TaskSpec task,
                     generator_config_.weight_storage_type);
   parse_weight_type(options.options, "voxcpm2.audiovae_weight_type",
                     decoder_config_.weight_storage_type);
+  if (const auto mem_saver =
+          runtime::find_option(options.options, {"voxcpm2.mem_saver"})) {
+    generator_config_.mem_saver =
+        runtime::parse_bool_option(*mem_saver, "voxcpm2.mem_saver");
+  }
 
   generator_ = std::make_unique<VoxCPM2FeatureGeneratorRuntime>(
       assets_, execution_context(), generator_config_);
@@ -193,29 +304,44 @@ VoxCPM2Session::VoxCPM2Session(runtime::TaskSpec task,
       assets_, execution_context(), decoder_config_);
 }
 
-std::string VoxCPM2Session::family() const { return "voxcpm2"; }
+VoxCPM2SessionBase::~VoxCPM2SessionBase() = default;
 
-runtime::VoiceTaskKind VoxCPM2Session::task_kind() const { return task_.task; }
+std::string VoxCPM2SessionBase::family_impl() const { return "voxcpm2"; }
 
-runtime::RunMode VoxCPM2Session::run_mode() const { return task_.mode; }
+runtime::VoiceTaskKind VoxCPM2SessionBase::task_kind_impl() const { return task_.task; }
 
-void VoxCPM2Session::prepare(
+runtime::RunMode VoxCPM2SessionBase::run_mode_impl() const { return task_.mode; }
+
+void VoxCPM2SessionBase::prepare_impl(
     const runtime::SessionPreparationRequest &request) {
   (void)request;
   mark_prepared();
 }
 
-runtime::TaskResult VoxCPM2Session::run(const runtime::TaskRequest &request) {
+runtime::TaskResult VoxCPM2SessionBase::run_offline_request(const runtime::TaskRequest &request) {
   require_prepared("VoxCPM2 run");
   if (task_.mode != runtime::RunMode::Offline) {
     throw std::runtime_error("VoxCPM2 run requires an offline session");
   }
   validate_request(request);
+  auto release_runtime_memory = [this](VoxCPM2SessionBase *self) {
+    if (self != nullptr) {
+      self->release_request_runtime_memory();
+    }
+  };
+  std::unique_ptr<VoxCPM2SessionBase, decltype(release_runtime_memory)>
+      release_guard(generator_config_.mem_saver ? this : nullptr,
+                    release_runtime_memory);
 
   const auto wall_start = Clock::now();
   const int64_t text_chunk_size =
       engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
-  const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
+  const auto text_chunk_mode =
+      engine::text::parse_text_chunk_mode_override(request.options)
+          .value_or(engine::text::TextChunkMode::TagAware);
+  const auto chunk_requests =
+      chunk_voxcpm2_request(request, text_chunk_size, text_chunk_mode);
+  const auto chunk_strategy = parse_chunk_strategy(request.options);
   const auto generation_options = generation_options_from_request(request);
   const auto prompt_text =
       runtime::find_option(request.options, {"voxcpm2.prompt_text",
@@ -234,10 +360,12 @@ runtime::TaskResult VoxCPM2Session::run(const runtime::TaskRequest &request) {
   double generator_ms = 0.0;
   double decoder_ms = 0.0;
   runtime::AudioBuffer merged_audio;
+  std::optional<VoxCPM2EncodedPrompt> continuation_prompt;
+  const VoxCPM2EncodedPrompt *active_prompt = prompt;
   for (const auto & chunk_request : chunk_requests) {
     const auto generator_start = Clock::now();
     const auto generated = generator_->generate(
-        chunk_request.text_input->text, prompt, generation_options);
+        chunk_request.text_input->text, active_prompt, generation_options);
     generator_ms += engine::debug::elapsed_ms(generator_start, Clock::now());
 
     const auto decoder_start = Clock::now();
@@ -257,10 +385,31 @@ runtime::TaskResult VoxCPM2Session::run(const runtime::TaskRequest &request) {
     }
     decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     runtime::append_audio_buffer(merged_audio, audio);
+
+    if (chunk_strategy == ChunkStrategy::Continuation &&
+        chunk_requests.size() > 1 && generated.generated_patches > 0) {
+      VoxCPM2EncodedPrompt next_prompt;
+      if (prompt != nullptr) {
+        next_prompt.reference_features = prompt->reference_features;
+        next_prompt.reference_patches = prompt->reference_patches;
+      }
+      next_prompt.prompt_text = chunk_request.text_input->text;
+      next_prompt.prompt_features = generated.generated_features;
+      next_prompt.prompt_patches = generated.generated_patches;
+      continuation_prompt = std::move(next_prompt);
+      active_prompt = &*continuation_prompt;
+    }
   }
   result.audio_output = std::move(merged_audio);
 
   const auto wall_end = Clock::now();
+  debug::trace_log_scalar("voxcpm2.text_chunk_size", text_chunk_size);
+  debug::trace_log_scalar("voxcpm2.text_chunk_mode",
+                          engine::text::text_chunk_mode_name(text_chunk_mode));
+  debug::trace_log_scalar("voxcpm2.text_chunk_count",
+                          static_cast<int64_t>(chunk_requests.size()));
+  debug::trace_log_scalar("voxcpm2.chunk_strategy",
+                          std::string_view(chunk_strategy_name(chunk_strategy)));
   debug::timing_log_scalar("voxcpm2.generator_ms", generator_ms);
   debug::timing_log_scalar("voxcpm2.audiovae_decoder_ms", decoder_ms);
   debug::timing_log_scalar("session.wall_ms",
@@ -269,13 +418,23 @@ runtime::TaskResult VoxCPM2Session::run(const runtime::TaskRequest &request) {
 }
 
 runtime::TaskResult
-VoxCPM2Session::run_streaming(const runtime::TaskRequest &request) {
+VoxCPM2SessionBase::run_streaming_request(
+    const runtime::TaskRequest &request,
+    const runtime::StreamEventCallback &stream_event_sink) {
   require_prepared("VoxCPM2 run_streaming");
   if (task_.mode != runtime::RunMode::Streaming) {
     throw std::runtime_error(
         "VoxCPM2 run_streaming requires a streaming session");
   }
   validate_request(request);
+  auto release_runtime_memory = [this](VoxCPM2SessionBase *self) {
+    if (self != nullptr) {
+      self->release_request_runtime_memory();
+    }
+  };
+  std::unique_ptr<VoxCPM2SessionBase, decltype(release_runtime_memory)>
+      release_guard(generator_config_.mem_saver ? this : nullptr,
+                    release_runtime_memory);
 
   const auto wall_start = Clock::now();
   auto generation_options = generation_options_from_request(request);
@@ -292,22 +451,18 @@ VoxCPM2Session::run_streaming(const runtime::TaskRequest &request) {
       encoded_prompt_for_request(request.audio_input, prompt_text,
                                  reference_audio);
 
-  const auto generator_start = Clock::now();
-  const auto generated = generator_->generate_streaming(
-      request.text_input->text, prompt, generation_options);
-  const auto generator_end = Clock::now();
-
-  const auto decoder_start = Clock::now();
   runtime::TaskResult result;
   runtime::AudioBuffer merged;
   merged.sample_rate = assets_->config.audio_vae.output_sample_rate;
   merged.channels = 1;
-  result.named_audio_outputs.reserve(generated.chunks.size());
-  for (size_t index = 0; index < generated.chunks.size(); ++index) {
-    const auto &chunk = generated.chunks[index];
+  double decoder_ms = 0.0;
+  size_t emitted_chunks = 0;
+  auto emit_chunk = [&](const VoxCPM2StreamingChunk &chunk) {
+    const auto decoder_start = Clock::now();
     auto audio = decoder_->decode_features(chunk.decode_features,
                                            chunk.decode_patches);
-    if (index == 0) {
+    decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
+    if (emitted_chunks == 0) {
       merged.sample_rate = audio.sample_rate;
       merged.channels = audio.channels;
     } else if (audio.sample_rate != merged.sample_rate ||
@@ -318,62 +473,111 @@ VoxCPM2Session::run_streaming(const runtime::TaskRequest &request) {
     merged.samples.insert(merged.samples.end(), audio.samples.begin(),
                           audio.samples.end());
     runtime::NamedAudioBuffer named;
-    named.id = "chunk_" + std::to_string(index);
+    named.id = "chunk_" + std::to_string(emitted_chunks);
     named.audio = std::move(audio);
     named.meta.insert_or_assign(
         "generated_patches", std::to_string(chunk.generated_patches));
+    if (stream_event_sink) {
+      runtime::StreamEvent event;
+      event.named_audio_outputs.push_back(named);
+      stream_event_sink(event);
+    }
     result.named_audio_outputs.push_back(std::move(named));
-  }
+    ++emitted_chunks;
+  };
+
+  const auto generator_start = Clock::now();
+  (void)generator_->generate_streaming(request.text_input->text, prompt,
+                                       generation_options, emit_chunk);
+  const auto generator_end = Clock::now();
+  const double generator_with_callbacks_ms =
+      engine::debug::elapsed_ms(generator_start, generator_end);
+
   result.audio_output = std::move(merged);
-  const auto decoder_end = Clock::now();
 
   const auto wall_end = Clock::now();
   debug::timing_log_scalar(
       "voxcpm2.generator_ms",
-      engine::debug::elapsed_ms(generator_start, generator_end));
-  debug::timing_log_scalar(
-      "voxcpm2.audiovae_decoder_ms",
-      engine::debug::elapsed_ms(decoder_start, decoder_end));
+      std::max(0.0, generator_with_callbacks_ms - decoder_ms));
+  debug::timing_log_scalar("voxcpm2.generator_streaming_callbacks_ms",
+                           generator_with_callbacks_ms);
+  debug::timing_log_scalar("voxcpm2.audiovae_decoder_ms", decoder_ms);
   debug::timing_log_scalar("voxcpm2.streaming_chunks",
-                           static_cast<double>(generated.chunks.size()));
+                           static_cast<double>(emitted_chunks));
   debug::timing_log_scalar("session.wall_ms",
                            engine::debug::elapsed_ms(wall_start, wall_end));
   return result;
 }
 
-const VoxCPM2EncodedPrompt *VoxCPM2Session::encoded_prompt_for_request(
+void VoxCPM2SessionBase::release_request_runtime_memory() {
+  if (!generator_config_.mem_saver) {
+    return;
+  }
+  generator_->release_runtime_memory();
+  decoder_->release_runtime_memory();
+}
+
+const VoxCPM2EncodedPrompt *VoxCPM2SessionBase::encoded_prompt_for_request(
     const std::optional<runtime::AudioBuffer> &prompt_audio,
     const std::string &prompt_text,
     const std::optional<runtime::AudioBuffer> &reference_audio) {
   if (!prompt_audio.has_value() && !reference_audio.has_value()) {
     return nullptr;
   }
-  const bool cache_hit =
-      encoded_prompt_cache_.has_value() &&
-      encoded_prompt_cache_->prompt_text == prompt_text &&
-      optional_audio_equal(encoded_prompt_cache_->prompt_audio, prompt_audio) &&
-      optional_audio_equal(encoded_prompt_cache_->reference_audio,
-                           reference_audio);
-  debug::trace_log_scalar("voxcpm2.prompt_cache.hit", cache_hit);
-  if (cache_hit) {
+  EncodedPromptCacheKey key;
+  key.prompt_text = prompt_text;
+  key.prompt_audio = prompt_audio;
+  key.reference_audio = reference_audio;
+  if (auto *cached = encoded_prompt_cache_.find(key)) {
+    debug::trace_log_scalar("voxcpm2.prompt_cache.hit", 1);
+    debug::trace_log_scalar("voxcpm2.prompt_cache.slots",
+                            static_cast<int64_t>(
+                                encoded_prompt_cache_.capacity()));
+    debug::trace_log_scalar("voxcpm2.prompt_cache.entries",
+                            static_cast<int64_t>(encoded_prompt_cache_.size()));
+    debug::trace_log_scalar("voxcpm2.prompt_cache.evicted", 0);
     debug::timing_log_scalar("voxcpm2.prompt_encode_ms", 0.0);
-    return &encoded_prompt_cache_->encoded;
+    return &cached->encoded;
   }
 
   const auto encode_start = Clock::now();
   EncodedPromptCacheEntry entry;
-  entry.prompt_text = prompt_text;
-  entry.prompt_audio = prompt_audio;
-  entry.reference_audio = reference_audio;
   entry.encoded =
       decoder_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
-  encoded_prompt_cache_ = std::move(entry);
+  const double encode_ms = engine::debug::elapsed_ms(encode_start);
+  if (encoded_prompt_cache_.capacity() == 0) {
+    uncached_encoded_prompt_ = std::move(entry);
+    debug::trace_log_scalar("voxcpm2.prompt_cache.hit", 0);
+    debug::trace_log_scalar("voxcpm2.prompt_cache.slots", 0);
+    debug::trace_log_scalar("voxcpm2.prompt_cache.entries", 0);
+    debug::trace_log_scalar("voxcpm2.prompt_cache.evicted", 0);
+    debug::timing_log_scalar("voxcpm2.prompt_encode_ms", encode_ms);
+    return &uncached_encoded_prompt_->encoded;
+  }
+  const bool will_evict =
+      encoded_prompt_cache_.size() >= encoded_prompt_cache_.capacity();
+  encoded_prompt_cache_.put(std::move(key), std::move(entry));
+  EncodedPromptCacheKey lookup;
+  lookup.prompt_text = prompt_text;
+  lookup.prompt_audio = prompt_audio;
+  lookup.reference_audio = reference_audio;
+  auto *cached = encoded_prompt_cache_.find(lookup);
+  if (cached == nullptr) {
+    throw std::runtime_error("VoxCPM2 prompt cache insert failed");
+  }
+  debug::trace_log_scalar("voxcpm2.prompt_cache.hit", 0);
+  debug::trace_log_scalar("voxcpm2.prompt_cache.slots",
+                          static_cast<int64_t>(
+                              encoded_prompt_cache_.capacity()));
+  debug::trace_log_scalar("voxcpm2.prompt_cache.entries",
+                          static_cast<int64_t>(encoded_prompt_cache_.size()));
+  debug::trace_log_scalar("voxcpm2.prompt_cache.evicted", will_evict ? 1 : 0);
   debug::timing_log_scalar("voxcpm2.prompt_encode_ms",
-                           engine::debug::elapsed_ms(encode_start));
-  return &encoded_prompt_cache_->encoded;
+                           encode_ms);
+  return &cached->encoded;
 }
 
-VoxCPM2GenerationOptions VoxCPM2Session::generation_options_from_request(
+VoxCPM2GenerationOptions VoxCPM2SessionBase::generation_options_from_request(
     const runtime::TaskRequest &request) const {
   VoxCPM2GenerationOptions options;
   if (const auto value = runtime::parse_i64_option(
@@ -454,7 +658,7 @@ VoxCPM2GenerationOptions VoxCPM2Session::generation_options_from_request(
   return options;
 }
 
-void VoxCPM2Session::validate_request(
+void VoxCPM2SessionBase::validate_request(
     const runtime::TaskRequest &request) const {
   if (!request.text_input.has_value()) {
     throw std::runtime_error("VoxCPM2 requires text input");
@@ -483,6 +687,108 @@ void VoxCPM2Session::validate_request(
     throw std::runtime_error(
         "VoxCPM2 C++ session does not consume input artifacts");
   }
+}
+
+VoxCPM2OfflineSession::VoxCPM2OfflineSession(
+    runtime::TaskSpec task,
+    runtime::SessionOptions options,
+    std::shared_ptr<const VoxCPM2Assets> assets)
+    : VoxCPM2SessionBase(task, std::move(options), std::move(assets)) {}
+
+std::string VoxCPM2OfflineSession::family() const { return family_impl(); }
+
+runtime::VoiceTaskKind VoxCPM2OfflineSession::task_kind() const {
+  return task_kind_impl();
+}
+
+runtime::RunMode VoxCPM2OfflineSession::run_mode() const {
+  return run_mode_impl();
+}
+
+void VoxCPM2OfflineSession::prepare(
+    const runtime::SessionPreparationRequest &request) {
+  prepare_impl(request);
+}
+
+runtime::TaskResult
+VoxCPM2OfflineSession::run(const runtime::TaskRequest &request) {
+  return run_offline_request(request);
+}
+
+VoxCPM2StreamingSession::VoxCPM2StreamingSession(
+    runtime::TaskSpec task,
+    runtime::SessionOptions options,
+    std::shared_ptr<const VoxCPM2Assets> assets)
+    : VoxCPM2SessionBase(task, std::move(options), std::move(assets)) {}
+
+std::string VoxCPM2StreamingSession::family() const { return family_impl(); }
+
+runtime::VoiceTaskKind VoxCPM2StreamingSession::task_kind() const {
+  return task_kind_impl();
+}
+
+runtime::RunMode VoxCPM2StreamingSession::run_mode() const {
+  return run_mode_impl();
+}
+
+void VoxCPM2StreamingSession::prepare(
+    const runtime::SessionPreparationRequest &request) {
+  prepare_impl(request);
+}
+
+runtime::StreamingPolicy VoxCPM2StreamingSession::streaming_policy() const {
+  runtime::StreamingPolicy policy;
+  policy.input = runtime::StreamingInputKind::None;
+  policy.output = runtime::StreamingOutputKind::FinalResult;
+  return policy;
+}
+
+void VoxCPM2StreamingSession::start_stream(const runtime::TaskRequest &request) {
+  reset();
+  result_ = run_streaming_request(request, stream_event_sink_);
+  started_ = true;
+}
+
+void VoxCPM2StreamingSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
+  stream_event_sink_ = std::move(sink);
+}
+
+std::optional<runtime::StreamEvent> VoxCPM2StreamingSession::next_stream_event() {
+  if (!started_) {
+    throw std::runtime_error("VoxCPM2 streaming has not been started");
+  }
+  if (next_chunk_index_ >= result_.named_audio_outputs.size()) {
+    return std::nullopt;
+  }
+  const auto & named = result_.named_audio_outputs[next_chunk_index_++];
+  runtime::StreamEvent event;
+  event.named_audio_outputs.push_back(named);
+  return event;
+}
+
+runtime::TaskResult VoxCPM2StreamingSession::finish_stream() {
+  if (!started_) {
+    throw std::runtime_error("VoxCPM2 streaming has not been started");
+  }
+  started_ = false;
+  next_chunk_index_ = 0;
+  return std::move(result_);
+}
+
+void VoxCPM2StreamingSession::reset() {
+  result_ = runtime::TaskResult{};
+  next_chunk_index_ = 0;
+  started_ = false;
+}
+
+runtime::StreamEvent VoxCPM2StreamingSession::process_audio_chunk(
+    const runtime::AudioChunk &chunk) {
+  (void)chunk;
+  throw std::runtime_error("VoxCPM2 streaming does not consume audio chunks");
+}
+
+runtime::TaskResult VoxCPM2StreamingSession::finalize() {
+  return finish_stream();
 }
 
 } // namespace engine::models::voxcpm2

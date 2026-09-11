@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/module.h"
 #include "engine/models/miocodec/weights.h"
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <cstdint>
 #include <optional>
@@ -29,28 +29,28 @@ core::TensorValue mask_bct(
 std::vector<float> local_attention_mask(int64_t heads, int64_t frames, int64_t window_size, int64_t valid_frames);
 
 core::TensorValue make_i32_constant(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorShape & shape,
     const std::vector<int32_t> & values);
 
 core::TensorValue make_ones_i32(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorShape & shape);
 
 TimeMaskConstants make_full_time_mask(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t frames,
     int64_t channels_per_group);
 
 InterpolationConstants make_interpolation_constants(
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     int64_t content_frames,
     int64_t stft_frames,
     const MioCodecConvTranspose1dWeights & upsample);
 
 core::TensorValue transformer(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const MioCodecTransformerWeights & weights,
     const std::optional<core::TensorValue> & condition = std::nullopt,
@@ -59,7 +59,7 @@ core::TensorValue transformer(
 
 core::TensorValue fsq_quantized(
     core::ModuleBuildContext & ctx,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const MioCodecQuantizerWeights & weights);
 

@@ -13,7 +13,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -164,7 +164,7 @@ core::TensorValue conv1d(
     core::ModuleBuildContext & ctx,
     core::TensorValue x,
     const ConvWeights & conv,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     if (x.shape.dims[1] != conv.in_channels) {
         throw std::runtime_error("Qwen3 speaker conv channel mismatch");
     }
@@ -187,7 +187,7 @@ core::TensorValue tdnn(
     core::ModuleBuildContext & ctx,
     core::TensorValue x,
     const ConvWeights & conv,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     x = conv1d(ctx, x, conv, constants);
     return modules::ReluModule{}.build(ctx, x);
 }
@@ -196,7 +196,7 @@ core::TensorValue se_res2net(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const SERes2NetWeights & block,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto y = tdnn(ctx, input, block.tdnn1, constants);
     core::TensorValue merged;
     core::TensorValue previous;
@@ -229,7 +229,7 @@ core::TensorValue attentive_statistics_pool(
     const core::TensorValue & x,
     const ConvWeights & tdnn_conv,
     const ConvWeights & attention_conv,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto mean = modules::ReduceMeanModule({2}).build(ctx, x);
     auto mean_rep = modules::RepeatModule({x.shape}).build(ctx, mean);
     auto centered = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, mean_rep.tensor), x.shape, GGML_TYPE_F32);
@@ -281,23 +281,23 @@ std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType conv_weight_storage_type) {
-    auto source = engine::assets::open_tensor_source(assets.paths.model_weights_path);
+    const auto & source = *assets.model_weights;
     auto weights = std::make_shared<Qwen3SpeakerEncoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
         "qwen3_tts.speaker_encoder.weights",
         32ull * 1024ull * 1024ull);
-    weights->block0 = load_conv(*weights->store, *source, "blocks.0.conv", conv_weight_storage_type, 512, 128, 5, 1);
+    weights->block0 = load_conv(*weights->store, source, "blocks.0.conv", conv_weight_storage_type, 512, 128, 5, 1);
     for (int64_t block = 1; block <= 3; ++block) {
         SERes2NetWeights layer;
         const int64_t dilation = block + 1;
         const std::string prefix = "blocks." + std::to_string(block);
-        layer.tdnn1 = load_conv(*weights->store, *source, prefix + ".tdnn1.conv", conv_weight_storage_type, 512, 512, 1, 1);
+        layer.tdnn1 = load_conv(*weights->store, source, prefix + ".tdnn1.conv", conv_weight_storage_type, 512, 512, 1, 1);
         for (int64_t i = 0; i < 7; ++i) {
             layer.res2net.push_back(load_conv(
                 *weights->store,
-                *source,
+                source,
                 prefix + ".res2net_block.blocks." + std::to_string(i) + ".conv",
                 conv_weight_storage_type,
                 64,
@@ -305,17 +305,17 @@ std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
                 3,
                 dilation));
         }
-        layer.tdnn2 = load_conv(*weights->store, *source, prefix + ".tdnn2.conv", conv_weight_storage_type, 512, 512, 1, 1);
-        layer.se_conv1 = load_conv(*weights->store, *source, prefix + ".se_block.conv1", conv_weight_storage_type, 128, 512, 1, 1);
-        layer.se_conv2 = load_conv(*weights->store, *source, prefix + ".se_block.conv2", conv_weight_storage_type, 512, 128, 1, 1);
+        layer.tdnn2 = load_conv(*weights->store, source, prefix + ".tdnn2.conv", conv_weight_storage_type, 512, 512, 1, 1);
+        layer.se_conv1 = load_conv(*weights->store, source, prefix + ".se_block.conv1", conv_weight_storage_type, 128, 512, 1, 1);
+        layer.se_conv2 = load_conv(*weights->store, source, prefix + ".se_block.conv2", conv_weight_storage_type, 512, 128, 1, 1);
         layer.dilation = dilation;
         weights->blocks.push_back(std::move(layer));
     }
-    weights->mfa = load_conv(*weights->store, *source, "mfa.conv", conv_weight_storage_type, 1536, 1536, 1, 1);
-    weights->asp_tdnn = load_conv(*weights->store, *source, "asp.tdnn.conv", conv_weight_storage_type, 128, 4608, 1, 1);
-    weights->asp_conv = load_conv(*weights->store, *source, "asp.conv", conv_weight_storage_type, 1536, 128, 1, 1);
+    weights->mfa = load_conv(*weights->store, source, "mfa.conv", conv_weight_storage_type, 1536, 1536, 1, 1);
+    weights->asp_tdnn = load_conv(*weights->store, source, "asp.tdnn.conv", conv_weight_storage_type, 128, 4608, 1, 1);
+    weights->asp_conv = load_conv(*weights->store, source, "asp.conv", conv_weight_storage_type, 1536, 128, 1, 1);
     weights->embedding_dim = assets.config.speaker_encoder.embedding_dim;
-    weights->fc = load_conv(*weights->store, *source, "fc", conv_weight_storage_type, weights->embedding_dim, 3072, 1, 1);
+    weights->fc = load_conv(*weights->store, source, "fc", conv_weight_storage_type, weights->embedding_dim, 3072, 1, 1);
     weights->store->upload();
     return weights;
 }
@@ -428,7 +428,7 @@ private:
     std::shared_ptr<const Qwen3SpeakerEncoderWeights> weights_;
     int64_t frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
-    common::ConstantTensorCache constants_;
+    core::ConstantTensorCache constants_;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * output_ = nullptr;
     ggml_cgraph * graph_ = nullptr;

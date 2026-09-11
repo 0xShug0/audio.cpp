@@ -20,6 +20,7 @@ struct WorkflowRunOptions {
     std::unordered_map<std::string, std::string> load_options;
     std::unordered_map<std::string, std::string> session_options;
     std::unordered_map<std::string, std::string> workflow_inputs;
+    std::optional<std::filesystem::path> model_spec_override;
     std::string audio_converter = "ffmpeg";
 };
 

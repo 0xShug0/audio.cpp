@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "family": "confucius4_tts",
+  "display_name": "Confucius4-TTS",
+  "description": "Confucius4-TTS is a multilingual voice-cloning TTS model packaged for audio.cpp with offline and streaming generation. It uses reference speech, language-aware text normalization, T2S semantic generation, S2A flow matching, style encoding, semantic audio features, and BigVGAN vocoding.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "ja",
+    "ko",
+    "de",
+    "fr",
+    "es",
+    "id",
+    "it",
+    "th",
+    "pt",
+    "ru",
+    "ms",
+    "vi"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "capabilities": {
+    "clone": [
+      "speaker_reference",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Target synthesis language code used by the text frontend; default zh when no request transcript language or style language is provided.",
+        "required": false,
+        "default": "zh"
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "T2S sampling temperature; must be positive, default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "T2S nucleus sampling probability; must be in (0, 1], default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "T2S top-k sampling limit; must be positive, default 30.",
+        "required": false,
+        "min": 1,
+        "default": 30
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "T2S beam count; default 3. Set 1 for single-beam sampling.",
+        "required": false,
+        "min": 1,
+        "default": 3
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "T2S repetition penalty; must be positive, default 10.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 10.0
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum T2S semantic sequence length including prompt tokens; default 1520.",
+        "required": false,
+        "min": 1,
+        "default": 1520
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "S2A flow-matching step count; default 25.",
+        "required": false,
+        "min": 1,
+        "default": 25
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "S2A classifier-free guidance scale; default 0.7.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.7
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum text tokens per generated segment; default 80.",
+        "required": false,
+        "min": 1,
+        "default": 80
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode; default uses the standard word-budget chunker.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "cross_fade_duration_sec",
+        "type": "float",
+        "description": "Cross-fade duration between generated segments in seconds; default 0.3.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.3
+      },
+      {
+        "name": "edge_fade_duration_sec",
+        "type": "float",
+        "description": "Fade duration applied at segment edges in seconds; default 0.1.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.1
+      },
+      {
+        "name": "edge_pad_duration_sec",
+        "type": "float",
+        "description": "Silence padding applied at segment edges in seconds; default 0.1.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Seed for T2S sampling and S2A noise initialization; default 1234.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      }
+    ],
+    "session": [
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Reusable ggml graph arena size in MiB for Confucius stages; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; default 1, set 0 to disable caching.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged graphs after request phases; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "confucius4_tts_orig",
+      "display_name": "Confucius4-TTS Original-Dtype GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Confucius4-TTS-GGUF",
+      "files": [
+        "Confucius4-TTS-GGUF/confucius4-tts-orig.gguf"
+      ],
+      "strip_prefix": "Confucius4-TTS-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "confucius4_tts_orig",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:inference_config.yaml",
+        "tokenizer_model": "model:tokenizer.model",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "w2v_preprocessor_config": "model:w2v_preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan_config.json"
+      },
+      "tensors": {
+        "t2s": {
+          "source": "weights:",
+          "prefix": "t2s"
+        },
+        "s2a": {
+          "source": "weights:",
+          "prefix": "s2a"
+        },
+        "semantic_encoder": {
+          "source": "weights:",
+          "prefix": "semantic_encoder"
+        },
+        "semantic_encoder_shaw": {
+          "source": "weights:",
+          "prefix": "semantic_encoder_shaw"
+        },
+        "semantic_stats": {
+          "source": "weights:",
+          "prefix": "semantic_stats"
+        },
+        "style_encoder": {
+          "source": "weights:",
+          "prefix": "style_encoder"
+        },
+        "vocoder": {
+          "source": "weights:",
+          "prefix": "vocoder"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:inference_config.yaml",
+        "tokenizer_model": "model:tokenizer.model",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "w2v_preprocessor_config": "model:w2v_preprocessor_config.json",
+        "bigvgan_config": "model:bigvgan_config.json"
+      },
+      "tensors": {
+        "t2s": "model:t2s.safetensors",
+        "s2a": "model:s2a.safetensors",
+        "semantic_encoder": "model:semantic_encoder.safetensors",
+        "semantic_encoder_shaw": "model:semantic_encoder_shaw.safetensors",
+        "semantic_stats": "model:semantic_stats.safetensors",
+        "style_encoder": "model:style_encoder.safetensors",
+        "vocoder": "model:vocoder.safetensors"
+      }
+    }
+  ]
+}

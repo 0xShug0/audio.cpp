@@ -36,7 +36,7 @@ private:
     std::unique_ptr<StableAudioConditionerRuntime> conditioner_runtime_;
     std::unique_ptr<StableAudioRfDitRuntime> rf_dit_;
     std::unique_ptr<StableAudioSameRuntime> same_;
-    int64_t max_batch_ = 4;
+    int64_t max_batch_ = 1;
     bool mem_saver_ = false;
 };
 

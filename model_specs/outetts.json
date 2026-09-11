@@ -1,0 +1,300 @@
+{
+  "schema_version": 1,
+  "family": "outetts",
+  "display_name": "Llama-OuteTTS 1.0",
+  "description": "Llama-based open-weight TTS model for 23-language speech synthesis with one-shot voice cloning from short reference audio and automatic word-alignment support.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar",
+    "be",
+    "bn",
+    "de",
+    "en",
+    "es",
+    "fa",
+    "fr",
+    "hu",
+    "it",
+    "ja",
+    "ka",
+    "ko",
+    "lt",
+    "lv",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "sw",
+    "ta",
+    "uk",
+    "zh"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated audio tokens per chunk. When omitted, OuteTTS estimates a safe value from each chunk.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; default 0.4 for cloning, otherwise model config default.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling; default 40 for cloning, otherwise model config default.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling in (0, 1]; default 0.9 for cloning, otherwise model config default.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0
+      },
+      {
+        "name": "min_p",
+        "type": "float",
+        "description": "Minimum probability relative to the best token; default 0.05 for cloning, otherwise model config default.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Positive windowed repetition penalty; default 1.1.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.1
+      },
+      {
+        "name": "repetition_window",
+        "type": "int",
+        "description": "Recent-token penalty window; default 64.",
+        "required": false,
+        "min": 0,
+        "default": 64
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; cloning defaults to 4099 for native weights and 42 for quantized weights.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript matching the reference voice audio for voice cloning.",
+        "required": false
+      },
+      {
+        "name": "reference_language",
+        "type": "string",
+        "description": "Language code used to align the reference transcript; default en.",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum UTF-8 codepoints per long-form text chunk; default 256. Chunks are split further when required by max_tokens or context budget.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework long-form text chunking mode; default word_budget.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Language-model weight storage type. Quantized CUDA voice cloning is expanded to F32 in memory for generation correctness.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "llama_weight_context_mb",
+        "type": "int",
+        "description": "Language-model weight context size in MiB; default 4096.",
+        "required": false,
+        "min": 1,
+        "default": 4096
+      },
+      {
+        "name": "constant_context_mb",
+        "type": "int",
+        "description": "Language-model constant tensor context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "dac_weight_context_mb",
+        "type": "int",
+        "description": "DAC decoder weight context size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "dac_graph_arena_mb",
+        "type": "int",
+        "description": "DAC decoder graph arena size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "aligner_path",
+        "type": "path",
+        "description": "Optional Qwen3 Forced Aligner override. Cloning automatically uses the aligner embedded in a standalone OuteTTS GGUF when present.",
+        "required": false
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-profile cache slots; default 1, set 0 to disable.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release cached-step and aligner runtime state after use; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "dac_config": "model:dac/config.json"
+      },
+      "optional_files": {
+        "aligner_config": "model:aligner/config.json",
+        "aligner_generation_config": "model:aligner/generation_config.json",
+        "aligner_tokenizer_config": "model:aligner/tokenizer_config.json",
+        "aligner_preprocessor_config": "model:aligner/preprocessor_config.json",
+        "aligner_processor_config": "model:aligner/processor_config.json",
+        "aligner_chat_template": "model:aligner/chat_template.json",
+        "aligner_chat_template_jinja": "model:aligner/chat_template.jinja",
+        "aligner_vocab": "model:aligner/vocab.json",
+        "aligner_merges": "model:aligner/merges.txt",
+        "aligner_tokenizer_json": "model:aligner/tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "dac_weights": {
+          "source": "weights:",
+          "prefix": "dac_weights"
+        },
+        "aligner_weights": {
+          "source": "weights:",
+          "prefix": "aligner_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "dac": "../DAC.speech.v1.0"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "dac_config": "dac:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "dac_weights": "dac:model.safetensors"
+      }
+    }
+  ],
+  "packages": [
+    {
+      "id": "outetts_1_0_1b_q8_0",
+      "display_name": "Llama-OuteTTS 1.0 1B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Llama-OuteTTS-1.0-1B_Q8",
+      "files": [
+        "Text to audio (TTS)/Llama-OuteTTS-1.0-1B_Q8.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "outetts_1_0_1b_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/outetts.md",
+      "docs/reports/outetts_validation.md",
+      "docs/gguf.md"
+    ]
+  }
+}

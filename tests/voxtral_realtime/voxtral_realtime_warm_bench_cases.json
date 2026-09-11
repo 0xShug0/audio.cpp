@@ -1,0 +1,58 @@
+{
+  "warmup": {
+    "audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav"
+  },
+  "cases": {
+    "non_greedy_1min": {
+      "warmup": {
+        "audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav",
+        "do_sample": true,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "top_k": 50,
+        "seed": 1234
+      },
+      "requests": [
+        {
+          "id": "longform_non_greedy_1min",
+          "audio": "resources/longform.wav",
+          "start_sec": 0.0,
+          "end_sec": 60.0,
+          "do_sample": true,
+          "temperature": 0.7,
+          "top_p": 0.95,
+          "top_k": 50,
+          "seed": 1234
+        }
+      ]
+    }
+  },
+  "requests": [
+    {
+      "id": "male_voice_short",
+      "audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/male-voice.wav",
+      "expected_fragments": [
+        "Hey, Adam here",
+        "sounds human"
+      ]
+    },
+    {
+      "id": "female_voice_medium",
+      "audio": "reference/HiggsAudioV3TTS/sglang-omni/docs/_static/audio/female-voice.wav",
+      "expected_fragments": [
+        "By repeating what students say",
+        "teachers can demonstrate"
+      ]
+    },
+    {
+      "id": "nature_longer_slice",
+      "audio": "resources/sample.wav",
+      "start_sec": 0.0,
+      "end_sec": 11.5,
+      "expected_fragments": [
+        "Mother Nature",
+        "4.5 billion years"
+      ]
+    }
+  ]
+}

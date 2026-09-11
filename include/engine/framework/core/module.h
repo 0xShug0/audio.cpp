@@ -13,10 +13,17 @@ namespace engine::core {
 enum class BackendType {
     Cpu,
     Cuda,
+    Hip,
     Vulkan,
     Metal,
     BestAvailable,
 };
+
+// CUDA and HIP share ggml's ggml-cuda implementation for a small set of
+// explicitly verified operators. This is intentionally not a generic GPU test.
+constexpr bool uses_ggml_cuda_or_hip_backend(BackendType type) noexcept {
+    return type == BackendType::Cuda || type == BackendType::Hip;
+}
 
 constexpr size_t kMaxTensorRank = 4;
 

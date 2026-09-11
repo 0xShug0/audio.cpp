@@ -3,6 +3,7 @@
 #include "engine/framework/io/binary.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -18,7 +19,6 @@
 #include <ggml.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -61,41 +61,6 @@ core::TensorValue ensure_f32(core::ModuleBuildContext & ctx, const core::TensorV
     return core::wrap_tensor(ggml_cast(ctx.ggml, input.tensor, GGML_TYPE_F32), input.shape, GGML_TYPE_F32);
 }
 
-std::array<int, core::kMaxTensorRank> transpose_last_two_axes(size_t rank) {
-    std::array<int, core::kMaxTensorRank> axes = {0, 1, 2, 3};
-    if (rank < 2) {
-        throw std::runtime_error("transpose_last_two_axes requires rank >= 2");
-    }
-    std::swap(axes[rank - 2], axes[rank - 1]);
-    return axes;
-}
-
-core::TensorValue matmul_f32(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & lhs,
-    const core::TensorValue & rhs) {
-    core::validate_rank_between(lhs, 2, core::kMaxTensorRank, "lhs");
-    core::validate_rank_between(rhs, lhs.shape.rank, lhs.shape.rank, "rhs");
-    const size_t rank = lhs.shape.rank;
-    for (size_t i = 0; i + 2 < rank; ++i) {
-        if (lhs.shape.dims[i] != rhs.shape.dims[i]) {
-            throw std::runtime_error("MatMul batch dimensions must match");
-        }
-    }
-    if (lhs.shape.dims[rank - 1] != rhs.shape.dims[rank - 2]) {
-        throw std::runtime_error("MatMul inner dimensions must match");
-    }
-
-    auto rhs_transposed = modules::TransposeModule({transpose_last_two_axes(rank), rank}).build(ctx, rhs);
-    rhs_transposed = ensure_contiguous(ctx, rhs_transposed);
-
-    core::TensorShape output_shape = lhs.shape;
-    output_shape.dims[rank - 1] = rhs.shape.dims[rank - 1];
-    ggml_tensor * output = ggml_mul_mat(ctx.ggml, rhs_transposed.tensor, lhs.tensor);
-    ggml_mul_mat_set_prec(output, GGML_PREC_F32);
-    return core::wrap_tensor(output, output_shape, GGML_TYPE_F32);
-}
-
 core::TensorValue reshape_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -136,31 +101,11 @@ core::TensorValue attention_from_heads(
     const std::optional<core::TensorValue> & attention_mask,
     core::BackendType backend_type) {
     (void)backend_type;
-    auto scores = matmul_f32(
-        ctx,
-        q_heads,
-        modules::TransposeModule({transpose_last_two_axes(k_heads.shape.rank), k_heads.shape.rank}).build(ctx, k_heads));
-    core::TensorValue attn;
-    if (attention_mask.has_value()) {
-        scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = core::wrap_tensor(
-            ggml_add(ctx.ggml, scores.tensor, attention_mask->tensor),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = ensure_contiguous(ctx, scores);
-        attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    } else {
-        scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-            scores.shape,
-            GGML_TYPE_F32);
-        scores = ensure_contiguous(ctx, scores);
-        attn = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
-    }
-    return matmul_f32(ctx, attn, v_heads);
+    return modules::ScaledDotProductAttentionModule({
+        dim,
+        modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
 }
 
 core::TensorValue build_attention(
@@ -215,13 +160,16 @@ core::TensorValue build_attention(
     k_heads = ensure_contiguous(ctx, k_heads);
     v_heads = ensure_contiguous(ctx, v_heads);
     auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask, backend_type);
-    context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
     context = ensure_contiguous(ctx, context);
+    // The attention width is heads x head_dim, which only equals hidden_size when
+    // head_dim was derived from it. XL states head_dim outright (32 x 128 against
+    // a hidden size of 2560), so o_proj is the one rectangular projection here.
+    const int64_t attention_size = config.num_attention_heads * dim;
     context = core::reshape_tensor(
         ctx,
         context,
-        core::TensorShape::from_dims({hidden_states.shape.dims[0], hidden_states.shape.dims[1], config.hidden_size}));
-    return modules::LinearModule({config.hidden_size, config.hidden_size, false, GGML_PREC_F32})
+        core::TensorShape::from_dims({hidden_states.shape.dims[0], hidden_states.shape.dims[1], attention_size}));
+    return modules::LinearModule({attention_size, config.hidden_size, false, GGML_PREC_F32})
         .build(ctx, context, {weights.out_weight, std::nullopt});
 }
 
@@ -1033,7 +981,10 @@ public:
 
         Output run(const std::vector<float> & encoder_hidden_states) const {
             const auto & config = assets_->config.diffusion;
-            if (static_cast<int64_t>(encoder_hidden_states.size()) != encoder_tokens_ * config.hidden_size) {
+            // Still in the encoder's width here: the condition embedder inside the
+            // graph is what lifts it to the DiT's.
+            const int64_t encoder_hidden_size = assets_->config.encoder.hidden_size;
+            if (static_cast<int64_t>(encoder_hidden_states.size()) != encoder_tokens_ * encoder_hidden_size) {
                 throw std::runtime_error("ACE-Step diffusion cross-attention cache encoder hidden state shape mismatch");
             }
             core::write_tensor_f32(encoder_value_, encoder_hidden_states);
@@ -1068,12 +1019,14 @@ public:
             }
             core::ModuleBuildContext ctx{ctx_.get(), "ace_step.diffusion.cross_cache", backend_type_};
 
+            const int64_t encoder_hidden_size = assets_->config.encoder.hidden_size;
             encoder_value_ = core::make_tensor(
                 ctx,
                 GGML_TYPE_F32,
-                core::TensorShape::from_dims({1, encoder_tokens_, config.hidden_size}));
-            auto encoder_hidden_states = modules::LinearModule({config.hidden_size, config.hidden_size, true, GGML_PREC_F32})
-                                             .build(ctx, encoder_value_, weights_->condition_embedder);
+                core::TensorShape::from_dims({1, encoder_tokens_, encoder_hidden_size}));
+            auto encoder_hidden_states =
+                modules::LinearModule({encoder_hidden_size, config.hidden_size, true, GGML_PREC_F32})
+                    .build(ctx, encoder_value_, weights_->condition_embedder);
             key_outputs_.reserve(weights_->layers.size());
             value_outputs_.reserve(weights_->layers.size());
             for (const auto & layer : weights_->layers) {
@@ -1523,10 +1476,12 @@ public:
         const auto total_start = Clock::now();
         const auto & pre = conditioning.pre_dit;
         const auto & config = assets_->config.diffusion;
+        // Everything the condition encoder produced is still in its own width.
+        const int64_t encoder_hidden_size = assets_->config.encoder.hidden_size;
         if (pre.context_latents.frames <= 0 || pre.context_latents.channels != config.latent_channels * 2) {
             throw std::runtime_error("ACE-Step diffusion requires valid context latents");
         }
-        if (pre.encoder_hidden_states.tokens <= 0 || pre.encoder_hidden_states.hidden_size != config.hidden_size) {
+        if (pre.encoder_hidden_states.tokens <= 0 || pre.encoder_hidden_states.hidden_size != encoder_hidden_size) {
             throw std::runtime_error("ACE-Step diffusion requires valid encoder hidden states");
         }
         const int64_t encoder_token_capacity = std::max<int64_t>(
@@ -1568,7 +1523,7 @@ public:
             cfg_context_padded = duplicate_batch_values(context_padded, diffusion_batch_size);
         }
         const auto encoder_hidden_padded =
-            pad_encoder_hidden_values(pre.encoder_hidden_states, graph_->encoder_token_capacity(), config.hidden_size);
+            pad_encoder_hidden_values(pre.encoder_hidden_states, graph_->encoder_token_capacity(), encoder_hidden_size);
         const auto encoder_attention_mask_padded =
             pad_encoder_attention_mask(pre.encoder_hidden_states, graph_->encoder_token_capacity());
         engine::debug::timing_log_scalar("ace_step.diffusion.padding_ms", engine::debug::elapsed_ms(padding_start, Clock::now()));
@@ -1593,7 +1548,7 @@ public:
             const auto null_encoder_hidden_padded = null_encoder_hidden_values(
                 weights_->null_condition_emb_host,
                 graph_->encoder_token_capacity(),
-                config.hidden_size);
+                encoder_hidden_size);
             null_cross_attention_cache = cross_cache_graph_->run(null_encoder_hidden_padded);
             cross_attention_cache = combine_cross_attention_cache(cross_attention_cache, *null_cross_attention_cache);
         }
@@ -1619,7 +1574,7 @@ public:
             non_cover_encoder_hidden_padded = pad_encoder_hidden_values(
                 pre.encoder_hidden_states_non_cover,
                 graph_->encoder_token_capacity(),
-                config.hidden_size);
+                encoder_hidden_size);
             non_cover_encoder_attention_mask_padded = pad_encoder_attention_mask(
                 pre.encoder_hidden_states_non_cover,
                 graph_->encoder_token_capacity());

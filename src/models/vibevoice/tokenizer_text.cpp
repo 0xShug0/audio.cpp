@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <filesystem>
 #include <optional>
 #include <regex>
 #include <set>
@@ -25,15 +26,6 @@ std::shared_ptr<const VibeVoiceAssets> require_assets(std::shared_ptr<const Vibe
         throw std::runtime_error("VibeVoice text tokenizer requires assets");
     }
     return assets;
-}
-
-const std::filesystem::path & require_path(
-    const std::optional<std::filesystem::path> & path,
-    const char * label) {
-    if (!path.has_value()) {
-        throw std::runtime_error(std::string("VibeVoice missing local tokenizer ") + label);
-    }
-    return *path;
 }
 
 int32_t require_token_id(const engine::tokenizers::LlamaBpeTokenizer & tokenizer, const std::string & token) {
@@ -156,10 +148,12 @@ struct VibeVoiceTextTokenizer::Impl {
     explicit Impl(std::shared_ptr<const VibeVoiceAssets> input_assets)
         : assets(std::move(input_assets)),
           tokenizer(engine::tokenizers::LlamaBpeTokenizerSpec{
-              require_path(assets->paths.tokenizer_vocab_path, "vocab.json"),
-              require_path(assets->paths.tokenizer_merges_path, "merges.txt"),
-              require_path(assets->paths.tokenizer_config_path, "tokenizer_config.json"),
-              assets->paths.tokenizer_json_path,
+              assets->resources.require_file("tokenizer_vocab"),
+              assets->resources.require_file("tokenizer_merges"),
+              assets->resources.require_file("tokenizer_config"),
+              assets->resources.find_file("tokenizer_json") == nullptr
+                  ? std::nullopt
+                  : std::optional<std::filesystem::path>(*assets->resources.find_file("tokenizer_json")),
               engine::tokenizers::LlamaBpePreTokenizer::Qwen2,
           }),
           speech_start(require_token_id(tokenizer, "<|vision_start|>")),

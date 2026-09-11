@@ -3,6 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
+#include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
@@ -57,69 +58,6 @@ SortformerTransformerBlockWeights make_transformer_block_weights(
     out.feed_forward_fc1 = layer.fc1;
     out.feed_forward_fc2 = layer.fc2;
     return out;
-}
-
-core::TensorValue add_channel_bias_4d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & bias,
-    int64_t channels) {
-    const auto bias_view = core::reshape_tensor(
-        ctx,
-        bias,
-        core::TensorShape::from_dims({1, channels, 1, 1}));
-    const auto expanded = core::wrap_tensor(
-        ggml_repeat(ctx.ggml, bias_view.tensor, input.tensor),
-        input.shape,
-        GGML_TYPE_F32);
-    return core::wrap_tensor(ggml_add(ctx.ggml, input.tensor, expanded.tensor), input.shape, GGML_TYPE_F32);
-}
-
-core::TensorValue apply_explicit_time_mask_4d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & mask) {
-    const auto mask_f32 = core::wrap_tensor(ggml_cast(ctx.ggml, mask.tensor, GGML_TYPE_F32), mask.shape, GGML_TYPE_F32);
-    const auto mask_4d = core::reshape_tensor(
-        ctx,
-        mask_f32,
-        core::TensorShape::from_dims({input.shape.dims[0], 1, input.shape.dims[2], 1}));
-    const auto broadcast = core::wrap_tensor(ggml_repeat(ctx.ggml, mask_4d.tensor, input.tensor), input.shape, GGML_TYPE_F32);
-    return core::wrap_tensor(ggml_mul(ctx.ggml, input.tensor, broadcast.tensor), input.shape, GGML_TYPE_F32);
-}
-
-core::TensorValue build_depthwise_conv2d(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & weight,
-    const core::TensorValue * bias,
-    int64_t channels,
-    int kernel,
-    int stride,
-    int padding) {
-    const int64_t out_h = conv_output_dim(input.shape.dims[2], kernel, stride, padding);
-    const int64_t out_w = conv_output_dim(input.shape.dims[3], kernel, stride, padding);
-    core::TensorValue conv_weight = weight;
-    if (conv_weight.type == GGML_TYPE_BF16 || ggml_is_quantized(conv_weight.type)) {
-        conv_weight = core::wrap_tensor(ggml_cast(ctx.ggml, conv_weight.tensor, GGML_TYPE_F32), conv_weight.shape, GGML_TYPE_F32);
-    }
-    auto output = core::wrap_tensor(
-        ggml_conv_2d_dw_direct(
-            ctx.ggml,
-            conv_weight.tensor,
-            input.tensor,
-            stride,
-            stride,
-            padding,
-            padding,
-            1,
-            1),
-        core::TensorShape::from_dims({input.shape.dims[0], channels, out_h, out_w}),
-        GGML_TYPE_F32);
-    if (bias != nullptr) {
-        output = add_channel_bias_4d(ctx, output, *bias, channels);
-    }
-    return output;
 }
 
 std::vector<float> build_relative_positional_encoding(
@@ -290,16 +228,19 @@ void ensure_sortformer_inference_graph(
         true,
     }).build(ctx, next_graph->input, weights.subsampling.conv0);
     x = modules::ReluModule().build(ctx, x);
-    x = apply_explicit_time_mask_4d(ctx, x, next_graph->mask1);
-    x = build_depthwise_conv2d(
-        ctx,
-        x,
-        weights.subsampling.depthwise1_weight,
-        &weights.subsampling.depthwise1_bias,
+    x = modules::TimeMask4dModule().build(ctx, x, next_graph->mask1);
+    x = modules::DepthwiseConv2dModule({
         fc.subsampling_conv_channels,
-        static_cast<int>(kernel),
+        kernel,
+        kernel,
         static_cast<int>(stride),
-        static_cast<int>(padding));
+        static_cast<int>(stride),
+        static_cast<int>(padding),
+        static_cast<int>(padding),
+        1,
+        1,
+        true,
+    }).build(ctx, x, {weights.subsampling.depthwise1_weight, weights.subsampling.depthwise1_bias});
     x = modules::Conv2dModule({
         fc.subsampling_conv_channels,
         fc.subsampling_conv_channels,
@@ -314,16 +255,19 @@ void ensure_sortformer_inference_graph(
         true,
     }).build(ctx, x, weights.subsampling.pointwise1);
     x = modules::ReluModule().build(ctx, x);
-    x = apply_explicit_time_mask_4d(ctx, x, next_graph->mask2);
-    x = build_depthwise_conv2d(
-        ctx,
-        x,
-        weights.subsampling.depthwise2_weight,
-        &weights.subsampling.depthwise2_bias,
+    x = modules::TimeMask4dModule().build(ctx, x, next_graph->mask2);
+    x = modules::DepthwiseConv2dModule({
         fc.subsampling_conv_channels,
-        static_cast<int>(kernel),
+        kernel,
+        kernel,
         static_cast<int>(stride),
-        static_cast<int>(padding));
+        static_cast<int>(stride),
+        static_cast<int>(padding),
+        static_cast<int>(padding),
+        1,
+        1,
+        true,
+    }).build(ctx, x, {weights.subsampling.depthwise2_weight, weights.subsampling.depthwise2_bias});
     x = modules::Conv2dModule({
         fc.subsampling_conv_channels,
         fc.subsampling_conv_channels,

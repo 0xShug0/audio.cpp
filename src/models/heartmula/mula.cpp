@@ -11,7 +11,7 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/kv_cache.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -317,7 +317,7 @@ HeartMuLaTransformerLayerOutputs build_heartmula_transformer_layer_static_cache_
     const HeartMuLaTransformerLayerWeights & weights,
     const HeartMuLaTransformerConfig & config,
     const core::TensorValue & rope_factors,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & attention_mask) {
@@ -385,7 +385,7 @@ core::TensorValue build_heartmula_transformer_layer_set_rows_tail(
     const HeartMuLaTransformerLayerWeights & weights,
     const HeartMuLaTransformerConfig & config,
     const core::TensorValue & rope_factors,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & cache_slot,
@@ -544,7 +544,7 @@ HeartMuLaTransformerLayerOutputs build_heartmula_transformer_layer(
     const HeartMuLaTransformerLayerWeights & weights,
     const HeartMuLaTransformerConfig & config,
     const core::TensorValue & rope_factors,
-    common::ConstantTensorCache & constants,
+    core::ConstantTensorCache & constants,
     const std::optional<core::TensorValue> & prefix_key,
     const std::optional<core::TensorValue> & prefix_value,
     const std::optional<core::TensorValue> & attention_mask) {
@@ -1801,17 +1801,17 @@ HeartMuLaWeightsRuntime::HeartMuLaWeightsRuntime(
     weights_ = std::make_shared<HeartMuLaWeights>(
         load_heartmula_weights(*assets_, backend_, backend_type, weight_context_bytes, weight_storage_type));
     assets_->mula_weights->release_storage();
-    backbone_constants_ = std::make_unique<common::ConstantTensorCache>(
+    backbone_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "heartmula.mula.backbone.constants",
         constant_context_bytes);
-    decoder_constants_ = std::make_unique<common::ConstantTensorCache>(
+    decoder_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "heartmula.mula.decoder.constants",
         constant_context_bytes);
-    embedding_constants_ = std::make_unique<common::ConstantTensorCache>(
+    embedding_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "heartmula.mula.embedding.constants",
@@ -1854,15 +1854,15 @@ int HeartMuLaWeightsRuntime::device() const noexcept {
     return device_;
 }
 
-common::ConstantTensorCache & HeartMuLaWeightsRuntime::backbone_constants() const noexcept {
+core::ConstantTensorCache & HeartMuLaWeightsRuntime::backbone_constants() const noexcept {
     return *backbone_constants_;
 }
 
-common::ConstantTensorCache & HeartMuLaWeightsRuntime::decoder_constants() const noexcept {
+core::ConstantTensorCache & HeartMuLaWeightsRuntime::decoder_constants() const noexcept {
     return *decoder_constants_;
 }
 
-common::ConstantTensorCache & HeartMuLaWeightsRuntime::embedding_constants() const noexcept {
+core::ConstantTensorCache & HeartMuLaWeightsRuntime::embedding_constants() const noexcept {
     return *embedding_constants_;
 }
 

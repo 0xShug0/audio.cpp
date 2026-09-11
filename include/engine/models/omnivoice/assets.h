@@ -1,14 +1,13 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace engine::assets {
-class TensorSource;
-}
 
 namespace engine::models::omnivoice {
 
@@ -84,26 +83,13 @@ struct OmniVoiceConfig {
     std::vector<std::string> supported_languages = {"Auto"};
 };
 
-struct OmniVoiceAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path model_weights_path;
-    std::filesystem::path tokenizer_json_path;
-    std::filesystem::path tokenizer_config_path;
-    std::filesystem::path chat_template_path;
-    std::filesystem::path audio_tokenizer_config_path;
-    std::filesystem::path audio_tokenizer_weights_path;
-    std::filesystem::path audio_tokenizer_preprocessor_config_path;
-};
-
 struct OmniVoiceAssets {
-    OmniVoiceAssetPaths paths;
+    assets::ResourceBundle resources;
     OmniVoiceConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> audio_tokenizer_weights;
 };
 
-OmniVoiceAssetPaths resolve_omnivoice_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const OmniVoiceAssets> load_omnivoice_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::omnivoice

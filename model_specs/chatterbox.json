@@ -1,0 +1,168 @@
+{
+  "family": "chatterbox",
+  "display_name": "Chatterbox",
+  "description": "Open-source Chatterbox family for expressive TTS and voice conversion, with emotion exaggeration control, fast generation, zero-shot voice cloning, and an integrated multilingual TTS path.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone",
+    "vc"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "fi",
+    "fr",
+    "hi",
+    "it",
+    "ko",
+    "ms",
+    "nl",
+    "no",
+    "pl",
+    "pt",
+    "sv",
+    "sw",
+    "tr"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ],
+    "vc": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "chatterbox_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "VC",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "chatterbox_q8_0",
+      "display_name": "Chatterbox Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Chatterbox-GGUF",
+      "files": [
+        "Chatterbox-GGUF/chatterbox-q8_0.gguf"
+      ],
+      "strip_prefix": "Chatterbox-GGUF"
+    },
+    {
+      "id": "chatterbox_f16",
+      "display_name": "Chatterbox F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Chatterbox-GGUF",
+      "files": [
+        "Chatterbox-GGUF/chatterbox-f16.gguf"
+      ],
+      "strip_prefix": "Chatterbox-GGUF"
+    },
+    {
+      "id": "chatterbox_safetensors",
+      "display_name": "Chatterbox Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "chatterbox",
+      "files": [
+        "ve.safetensors",
+        "t3_cfg.safetensors",
+        "s3gen.safetensors",
+        "tokenizer.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "ResembleAI/chatterbox"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "english_tokenizer": "model:tokenizer.json",
+        "multilingual_tokenizer": "model:grapheme_mtl_merged_expanded_v1.json",
+        "cangjie_mapping": "model:Cangjie5_TC.json",
+        "builtin_conditionals": "model:conds.pt"
+      },
+      "tensors": {
+        "voice_encoder_weights": {
+          "source": "weights:",
+          "prefix": "voice_encoder"
+        },
+        "s3gen_weights": {
+          "source": "weights:",
+          "prefix": "s3gen"
+        },
+        "t3_english_weights": {
+          "source": "weights:",
+          "prefix": "t3_english"
+        },
+        "t3_multilingual_v2_weights": {
+          "source": "weights:",
+          "prefix": "t3_multilingual_v2"
+        },
+        "t3_multilingual_v3_weights": {
+          "source": "weights:",
+          "prefix": "t3_multilingual_v3"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "english_tokenizer": "model:tokenizer.json",
+        "multilingual_tokenizer": "model:grapheme_mtl_merged_expanded_v1.json",
+        "cangjie_mapping": "model:Cangjie5_TC.json",
+        "builtin_conditionals": "model:conds.pt"
+      },
+      "tensors": {
+        "voice_encoder_weights": "model:ve.safetensors",
+        "s3gen_weights": "model:s3gen.safetensors",
+        "t3_english_weights": "model:t3_cfg.safetensors",
+        "t3_multilingual_v2_weights": "model:t3_mtl23ls_v2.safetensors",
+        "t3_multilingual_v3_weights": "model:t3_mtl23ls_v3.safetensors"
+      }
+    }
+  ]
+}

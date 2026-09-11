@@ -734,6 +734,81 @@ AudioTensor MelFilterbank::compute_custom_sparse_from_magnitude(
     return result;
 }
 
+WhisperLogMelExtractor::WhisperLogMelExtractor(WhisperLogMelConfig config)
+    : config_(config),
+      filterbank_(MelFilterbank().build_sparse(
+          MelFilterbankConfig{
+              config_.sample_rate,
+              config_.n_fft,
+              config_.feature_size,
+              0.0F,
+              static_cast<float>(config_.sample_rate) / 2.0F,
+              true,
+          })) {}
+
+const WhisperLogMelConfig & WhisperLogMelExtractor::config() const noexcept {
+    return config_;
+}
+
+WhisperLogMelFeatures WhisperLogMelExtractor::compute(
+    const std::vector<float> & samples,
+    size_t threads) const {
+    if (config_.sample_rate <= 0 || config_.feature_size <= 0 || config_.hop_length <= 0 || config_.n_fft <= 0) {
+        throw std::runtime_error("Whisper log-mel config is invalid");
+    }
+    if (samples.empty()) {
+        throw std::runtime_error("Whisper log-mel input is empty");
+    }
+    const STFTConfig stft_config{
+        config_.n_fft,
+        config_.hop_length,
+        config_.n_fft,
+        true,
+        STFTPadMode::Reflect,
+        config_.stft_family,
+    };
+    const auto & window = get_cached_stft_window(stft_config);
+    auto magnitude = STFT().compute_magnitude(
+        samples,
+        window,
+        1,
+        static_cast<int64_t>(samples.size()),
+        stft_config,
+        threads);
+    if (magnitude.shape.size() != 3) {
+        throw std::runtime_error("Whisper log-mel STFT returned unexpected rank");
+    }
+    const int64_t freq_bins = magnitude.shape[1];
+    const int64_t stft_frames = magnitude.shape[2];
+    if (stft_frames <= 1) {
+        throw std::runtime_error("Whisper log-mel STFT produced too few frames");
+    }
+    WhisperLogMelFeatures out;
+    out.mel_bins = config_.feature_size;
+    out.frames = stft_frames - 1;
+    auto mel = MelFilterbank().compute_custom_sparse_from_magnitude(
+        magnitude.values,
+        1,
+        freq_bins,
+        stft_frames,
+        out.frames,
+        filterbank_);
+    if (mel.shape.size() != 3 || mel.shape[1] != out.mel_bins || mel.shape[2] != out.frames) {
+        throw std::runtime_error("Whisper log-mel frontend returned unexpected shape");
+    }
+    float max_log = -INFINITY;
+    for (float & value : mel.values) {
+        value = std::log10(std::max(value, 1.0e-10F));
+        max_log = std::max(max_log, value);
+    }
+    const float floor = max_log - 8.0F;
+    for (float & value : mel.values) {
+        value = (std::max(value, floor) + 4.0F) / 4.0F;
+    }
+    out.values = std::move(mel.values);
+    return out;
+}
+
 AudioTensor MelSpectrogram::compute(
     const std::vector<float> & waveform,
     int64_t batch,

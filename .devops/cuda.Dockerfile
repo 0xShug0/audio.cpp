@@ -1,0 +1,116 @@
+# audio.cpp — CUDA Dockerfile
+#
+# Usage:
+#   docker build -f .devops/cuda.Dockerfile -t local/audiocpp:full-cuda .
+
+# ── BUILD: Compile all release binaries with CUDA ─────────────────────────────
+ARG UBUNTU_VERSION=24.04
+ARG CUDA_VERSION=12.9.2
+ARG BUILD_DATE=N/A
+ARG APP_VERSION=N/A
+ARG APP_REVISION=N/A
+ARG GCC_VERSION=14
+
+ARG BASE_CUDA_DEV_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+ARG BASE_CUDA_RUN_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+
+FROM ${BASE_CUDA_DEV_CONTAINER} AS build
+
+ARG GCC_VERSION=14
+ARG AUDIOCPP_VERSION=dev
+# CUDA architectures to compile for.
+# - default = the portable default list from CMakeLists.txt
+# - for a custom arch set build with --build-arg CUDA_DOCKER_ARCH="89-real;...".
+ARG CUDA_DOCKER_ARCH=default
+
+# Install build toolchain
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc-${GCC_VERSION} g++-${GCC_VERSION} cmake ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV CC=gcc-${GCC_VERSION} CXX=g++-${GCC_VERSION} CUDAHOSTCXX=g++-${GCC_VERSION}
+
+WORKDIR /app
+COPY . .
+
+RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
+        ADDITIONAL_CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_DOCKER_ARCH}"; \
+    fi && \
+    cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DAUDIOCPP_MODEL_SET=full \
+        -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
+        -DENGINE_ENABLE_CUDA=ON \
+        -DENGINE_ENABLE_CUDA_GRAPHS=ON \
+        -DENGINE_ENABLE_VULKAN=OFF \
+        -DENGINE_ENABLE_OPENMP=ON \
+        -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
+        -DAUDIOCPP_VERSION="${AUDIOCPP_VERSION}" \
+        -DENGINE_BUILD_EXAMPLES=OFF \
+        -DENGINE_BUILD_TESTS=OFF \
+        -DENGINE_BUILD_WARMBENCH=OFF \
+        ${ADDITIONAL_CMAKE_ARGS} \
+        -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined && \
+    cmake --build build --parallel $(nproc) \
+        --target audiocpp_cli \
+        --target audiocpp_server \
+        --target audiocpp_model_manager \
+        --target model_perf
+
+# Collect shared libraries
+RUN mkdir -p /app/lib && \
+    find build -name "*.so*" -exec cp -P {} /app/lib \;
+
+# Collect binaries + multiplexer into /app/full
+RUN mkdir -p /app/full && \
+    cp build/bin/audiocpp_cli build/bin/audiocpp_server build/bin/audiocpp_model_manager \
+       build/bin/model_perf /app/full/ && \
+    cp .devops/entrypoint.sh /app/full/entrypoint.sh && \
+    chmod +x /app/full/entrypoint.sh
+
+# ── BASE: Shared runtime (NVIDIA CUDA + common libs) ──────────────────────────
+FROM ${BASE_CUDA_RUN_CONTAINER} AS base
+
+ARG BUILD_DATE=N/A
+ARG APP_VERSION=N/A
+ARG APP_REVISION=N/A
+ARG IMAGE_URL=N/A
+ARG IMAGE_SOURCE=N/A
+
+LABEL org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.revision=$APP_REVISION \
+      org.opencontainers.image.title="audio.cpp" \
+      org.opencontainers.image.description="An all-in-one, pure C++ inference engine for audio models, powered by ggml" \
+      org.opencontainers.image.url=$IMAGE_URL \
+      org.opencontainers.image.source=$IMAGE_SOURCE
+
+# Runtime deps: OpenMP threading, curl (healthcheck), ffmpeg (audio I/O),
+# python3 for the native WebUI's spec-backed model installer.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libgomp1 curl ffmpeg python3 ca-certificates && \
+    apt-get autoremove -y && \
+    apt-get clean -y && \
+    rm -rf /tmp/* /var/tmp/* && \
+    find /var/cache/apt/archives /var/lib/apt/lists -not -name lock -type f -delete && \
+    find /var/cache -type f -delete
+
+COPY --from=build /app/lib/ /app
+
+WORKDIR /app
+
+# ── FULL: All binaries + entrypoint.sh multiplexer ────────────────────────────
+FROM base AS full
+
+COPY --from=build /app/full /app
+COPY model_specs/ /app/model_specs/
+COPY tools/model_manager_v2.py /app/tools/model_manager_v2.py
+
+RUN mkdir -p /app/models && chown ubuntu:ubuntu /app/models
+
+USER ubuntu
+
+ENTRYPOINT ["/app/entrypoint.sh"]

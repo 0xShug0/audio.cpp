@@ -30,6 +30,8 @@ public:
     const std::filesystem::path & model_dir() const noexcept;
 
 private:
+    friend std::unique_ptr<class PocketTTSLoadedModel> load_pocket_tts_model(const runtime::ModelLoadRequest & request);
+
     PocketTTSModel(std::filesystem::path model_dir, std::shared_ptr<const PocketTTSAssets> manifest);
 
     std::filesystem::path model_dir_;

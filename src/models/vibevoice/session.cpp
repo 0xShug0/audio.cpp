@@ -2,12 +2,14 @@
 
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/models/vibevoice/lora.h"
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -16,6 +18,8 @@
 
 namespace engine::models::vibevoice {
 namespace {
+
+using Clock = std::chrono::steady_clock;
 
 constexpr size_t kMaxReferenceVoiceStates = 4;
 constexpr int64_t kCudaVoicePromptMaxSeconds = 30;
@@ -42,9 +46,10 @@ void validate_weight_storage(engine::assets::TensorStorageType storage_type, con
 const runtime::SessionOptions & require_supported_backend_options(const runtime::SessionOptions & options) {
     if (options.backend.type != engine::core::BackendType::Cpu &&
         options.backend.type != engine::core::BackendType::Cuda &&
+        options.backend.type != engine::core::BackendType::Hip &&
         options.backend.type != engine::core::BackendType::Vulkan &&
         options.backend.type != engine::core::BackendType::Metal) {
-        throw std::runtime_error("VibeVoice session supports only CPU, CUDA, Vulkan, and Metal backends");
+        throw std::runtime_error("VibeVoice session supports only CPU, CUDA, HIP, Vulkan, and Metal backends");
     }
     for (const auto & [key, value] : options.options) {
         if (key == "vibevoice.weight_type" ||
@@ -157,7 +162,7 @@ runtime::AudioBuffer cap_voice_sample_duration(
     runtime::AudioBuffer audio,
     core::BackendType backend_type,
     const std::string & path) {
-    const int64_t max_seconds = backend_type == core::BackendType::Cuda
+    const int64_t max_seconds = (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip)
         ? kCudaVoicePromptMaxSeconds
         : kDefaultVoicePromptMaxSeconds;
     const int64_t max_frames = static_cast<int64_t>(audio.sample_rate) * max_seconds;
@@ -268,6 +273,7 @@ void VibeVoiceSession::prepare(const runtime::SessionPreparationRequest & reques
 
 runtime::TaskResult VibeVoiceSession::run(const runtime::TaskRequest & request) {
     require_prepared("VibeVoice run");
+    const auto wall_start = Clock::now();
     auto vibevoice_request = make_request(request);
     auto result = generate_vibevoice(
         vibevoice_request,
@@ -280,6 +286,7 @@ runtime::TaskResult VibeVoiceSession::run(const runtime::TaskRequest & request) 
         negative_decoder_cache_);
     runtime::TaskResult out;
     out.audio_output = std::move(result.audio);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return out;
 }
 

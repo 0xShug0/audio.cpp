@@ -244,9 +244,10 @@ private:
         if (!ggml_is_quantized(type)) {
             return resolved_type;
         }
-        if (storage_type == assets::TensorStorageType::Native) {
-            return resolved_type;
-        }
+        // A GGUF may store a source matrix in quantized form even when a model
+        // reshapes it into a convolution kernel. Quantized GGML rows cannot end
+        // in a non-block-sized dimension (for example a 1-wide Conv1D kernel),
+        // so decode such native tensors to F32 for the reshaped backend weight.
         if (shape.rank < 2 || shape.last_dim() % ggml_blck_size(type) != 0) {
             return assets::TensorStorageType::F32;
         }

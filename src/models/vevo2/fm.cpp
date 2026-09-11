@@ -1,7 +1,5 @@
 #include "engine/models/vevo2/fm.h"
 
-#include "audio_cache.h"
-
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/audio/waveform_ops.h"
@@ -17,6 +15,7 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -26,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -75,34 +75,26 @@ struct GgmlContextDeleter {
     }
 };
 
-int64_t require_power_of_two_log2(int64_t value, const char * name) {
-    if (value <= 0 || (value & (value - 1)) != 0) {
-        throw std::runtime_error(std::string(name) + " must be a positive power of two");
+uint64_t hash_audio_buffer(const runtime::AudioBuffer & audio) {
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&hash](const void * data, size_t bytes) {
+        constexpr uint64_t kFnvPrime = 1099511628211ull;
+        const auto * ptr = static_cast<const unsigned char *>(data);
+        for (size_t index = 0; index < bytes; ++index) {
+            hash ^= static_cast<uint64_t>(ptr[index]);
+            hash *= kFnvPrime;
+        }
+    };
+    mix(&audio.sample_rate, sizeof(audio.sample_rate));
+    mix(&audio.channels, sizeof(audio.channels));
+    const size_t samples = audio.samples.size();
+    mix(&samples, sizeof(samples));
+    for (const float sample : audio.samples) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &sample, sizeof(bits));
+        mix(&bits, sizeof(bits));
     }
-    int64_t log2 = 0;
-    while (value > 1) {
-        value >>= 1;
-        ++log2;
-    }
-    return log2;
-}
-
-engine::core::TensorValue transpose_btc_to_bct(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & input) {
-    return engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
-}
-
-engine::core::TensorValue transpose_bct_to_btc(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & input) {
-    return engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
-}
-
-engine::core::TensorValue ensure_contiguous(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & value) {
-    return engine::core::ensure_backend_addressable_layout(ctx, value);
+    return hash;
 }
 
 engine::core::TensorValue conv_transpose1d_pytorch_padding_1(
@@ -133,31 +125,8 @@ engine::core::TensorValue reshape_heads(
     int64_t dim) {
     return engine::core::reshape_tensor(
         ctx,
-        ensure_contiguous(ctx, input),
+        engine::core::ensure_backend_addressable_layout(ctx, input),
         engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
-}
-
-engine::core::TensorValue attention_from_heads(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & q_heads,
-    const engine::core::TensorValue & k_heads,
-    const engine::core::TensorValue & v_heads,
-    int64_t dim) {
-    const engine::modules::MatMulModule matmul;
-    auto scores = matmul.build(
-        ctx,
-        q_heads,
-        engine::modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
-    scores = engine::core::wrap_tensor(
-        ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
-        scores.shape,
-        GGML_TYPE_F32);
-    scores = ensure_contiguous(ctx, scores);
-    auto attn = engine::core::wrap_tensor(
-        ggml_soft_max(ctx.ggml, scores.tensor),
-        scores.shape,
-        GGML_TYPE_F32);
-    return matmul.build(ctx, attn, v_heads);
 }
 
 engine::core::TensorValue adaptive_rms_norm(
@@ -178,14 +147,8 @@ engine::core::TensorValue adaptive_rms_norm(
         ctx,
         weight,
         engine::core::TensorShape::from_dims({1, 1, config.hidden_size}));
-    auto repeated = engine::core::wrap_tensor(
-        ggml_repeat(ctx.ggml, weight.tensor, normalized.tensor),
-        normalized.shape,
-        GGML_TYPE_F32);
-    return engine::core::wrap_tensor(
-        ggml_mul(ctx.ggml, normalized.tensor, repeated.tensor),
-        normalized.shape,
-        GGML_TYPE_F32);
+    auto repeated = engine::modules::RepeatModule({normalized.shape}).build(ctx, weight);
+    return engine::modules::MulModule{}.build(ctx, normalized, repeated);
 }
 
 engine::core::TensorValue mlp(
@@ -251,11 +214,14 @@ engine::core::TensorValue diff_llama_layer(
     auto q_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = attention_from_heads(ctx, q_heads, k_heads, v_heads, head_dim);
-    context = engine::modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+    auto context = engine::modules::ScaledDotProductAttentionModule({
+        head_dim,
+        engine::modules::ScaledDotProductAttentionLowering::Explicit,
+        GGML_PREC_F32,
+    }).build(ctx, q_heads, k_heads, v_heads);
     context = engine::core::reshape_tensor(
         ctx,
-        ensure_contiguous(ctx, context),
+        engine::core::ensure_backend_addressable_layout(ctx, context),
         engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.hidden_size}));
     hidden = engine::modules::LinearModule({
         config.hidden_size,
@@ -314,10 +280,12 @@ engine::core::TensorValue tensor_std_correction1(
         ggml_scale(ctx.ggml, sum.tensor, 1.0F / static_cast<float>(count)),
         sum.shape,
         GGML_TYPE_F32);
-    auto mean = engine::core::wrap_tensor(
-        ggml_repeat(ctx.ggml, mean_scalar.tensor, values.tensor),
-        values.shape,
-        GGML_TYPE_F32);
+    auto mean = engine::modules::RepeatModule({values.shape}).build(
+        ctx,
+        engine::core::reshape_tensor(
+            ctx,
+            mean_scalar,
+            engine::core::TensorShape::from_dims({1, 1, 1})));
     auto centered = engine::core::wrap_tensor(
         ggml_sub(ctx.ggml, values.tensor, mean.tensor),
         values.shape,
@@ -424,9 +392,9 @@ std::shared_ptr<const Vevo2FMWeights> load_fm_weights(
         matmul_storage_type,
         {config.cond_codebook_size, config.hidden_size});
 
-    const int64_t resampling_layers = require_power_of_two_log2(config.cond_scale_factor, "Vevo2 FM cond_scale_factor");
-    weights->resampling_layers.reserve(static_cast<size_t>(resampling_layers));
-    for (int64_t layer = 0; layer < resampling_layers; ++layer) {
+    int64_t cond_scale_factor = config.cond_scale_factor;
+    while (cond_scale_factor > 1 && cond_scale_factor % 2 == 0) {
+        const int64_t layer = static_cast<int64_t>(weights->resampling_layers.size());
         weights->resampling_layers.push_back(engine::modules::binding::conv_transpose1d_from_source(
             *weights->store,
             source,
@@ -436,6 +404,10 @@ std::shared_ptr<const Vevo2FMWeights> load_fm_weights(
             config.hidden_size,
             4,
             true));
+        cond_scale_factor /= 2;
+    }
+    if (cond_scale_factor != 1) {
+        throw std::runtime_error("Vevo2 FM cond_scale_factor must be a positive power of two");
     }
 
     weights->cond_mlp_0 = engine::modules::binding::linear_from_source(
@@ -661,7 +633,7 @@ engine::core::TensorValue build_diff_llama(
         weights.mel_out_mlp_2.bias.has_value(),
         GGML_PREC_F32,
     }).build(build_ctx, x, weights.mel_out_mlp_2);
-    return ensure_contiguous(build_ctx, x);
+    return engine::core::ensure_backend_addressable_layout(build_ctx, x);
 }
 
 }  // namespace
@@ -702,15 +674,15 @@ struct Vevo2FMGraph {
         auto cond = engine::modules::EmbeddingModule({config.cond_codebook_size, config.hidden_size})
                         .build(build_ctx, codes, this->weights->cond_emb);
         if (config.cond_scale_factor != 1) {
-            auto cond_bct = transpose_btc_to_bct(build_ctx, cond);
+            auto cond_bct = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(build_ctx, cond);
             for (const auto & resampler : this->weights->resampling_layers) {
                 cond_bct = conv_transpose1d_pytorch_padding_1(build_ctx, cond_bct, resampler, config.hidden_size);
                 cond_bct = engine::modules::GeluModule({engine::modules::GeluApproximation::ExactErf})
                                .build(build_ctx, cond_bct);
             }
-            cond = transpose_bct_to_btc(build_ctx, cond_bct);
+            cond = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(build_ctx, cond_bct);
         }
-        cond = ensure_contiguous(build_ctx, cond);
+        cond = engine::core::ensure_backend_addressable_layout(build_ctx, cond);
         cond_output = cond.tensor;
         cond_frames = cond.shape.dims[1];
         ggml_set_output(cond_output);
@@ -724,6 +696,7 @@ struct Vevo2FMGraph {
     }
 
     ~Vevo2FMGraph() {
+        engine::core::release_backend_graph_resources(backend, graph, true);
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
             gallocr = nullptr;
@@ -785,39 +758,45 @@ struct Vevo2FMStepGraph {
         if (config.hidden_size % config.num_heads != 0) {
             throw std::runtime_error("Vevo2 FM hidden_size must be divisible by num_heads");
         }
+        ggml_init_params input_params{ggml_tensor_overhead() * 64, nullptr, true};
+        input_ctx.reset(ggml_init(input_params));
+        if (input_ctx == nullptr) {
+            throw std::runtime_error("failed to initialize Vevo2 FM step input context");
+        }
         ggml_init_params params{graph_context_bytes, nullptr, true};
         ctx.reset(ggml_init(params));
         if (ctx == nullptr) {
             throw std::runtime_error("failed to initialize Vevo2 FM step graph context");
         }
 
+        engine::core::ModuleBuildContext input_build_ctx{input_ctx.get(), "vevo2.fm.step.input", backend_type};
         engine::core::ModuleBuildContext build_ctx{ctx.get(), "vevo2.fm.step", backend_type};
         prompt_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, prompt_frames, config.mel_dim})).tensor;
         xt_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, target_frames, config.mel_dim})).tensor;
         cond_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, cond_frames, config.hidden_size})).tensor;
         uncond_cond_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, target_frames, config.hidden_size})).tensor;
         timestep_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, config.hidden_size})).tensor;
         cond_position_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({cond_frames})).tensor;
         uncond_position_input = engine::core::make_tensor(
-            build_ctx,
+            input_build_ctx,
             GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({target_frames})).tensor;
         ggml_set_input(prompt_input);
@@ -879,10 +858,12 @@ struct Vevo2FMStepGraph {
             ggml_div(build_ctx.ggml, pos_std.tensor, cfg_std.tensor),
             pos_std.shape,
             GGML_TYPE_F32);
-        std_ratio = engine::core::wrap_tensor(
-            ggml_repeat(build_ctx.ggml, std_ratio.tensor, flow_cfg.tensor),
-            flow_cfg.shape,
-            GGML_TYPE_F32);
+        std_ratio = engine::modules::RepeatModule({flow_cfg.shape}).build(
+            build_ctx,
+            engine::core::reshape_tensor(
+                build_ctx,
+                std_ratio,
+                engine::core::TensorShape::from_dims({1, 1, 1})));
         auto rescaled = engine::modules::MulModule{}.build(build_ctx, flow_cfg, std_ratio);
         rescaled = engine::core::wrap_tensor(
             ggml_scale(build_ctx.ggml, rescaled.tensor, kRescaleCfg),
@@ -898,14 +879,17 @@ struct Vevo2FMStepGraph {
             flow.shape,
             GGML_TYPE_F32);
         auto xt_next = engine::modules::AddModule{}.build(build_ctx, xt, flow);
-        xt_next = ensure_contiguous(build_ctx, xt_next);
+        xt_next = engine::core::ensure_backend_addressable_layout(build_ctx, xt_next);
         output = xt_next.tensor;
         ggml_set_output(output);
 
         graph = ggml_new_graph_custom(ctx.get(), 524288, false);
         ggml_build_forward_expand(graph, output);
-        buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), backend);
-        if (buffer == nullptr) {
+        input_buffer = ggml_backend_alloc_ctx_tensors(input_ctx.get(), backend);
+        gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (input_buffer == nullptr || gallocr == nullptr ||
+            !ggml_gallocr_reserve(gallocr, graph) ||
+            !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 FM step graph");
         }
 
@@ -930,9 +914,14 @@ struct Vevo2FMStepGraph {
     }
 
     ~Vevo2FMStepGraph() {
-        if (buffer != nullptr) {
-            ggml_backend_buffer_free(buffer);
-            buffer = nullptr;
+        engine::core::release_backend_graph_resources(backend, graph, true);
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+            gallocr = nullptr;
+        }
+        if (input_buffer != nullptr) {
+            ggml_backend_buffer_free(input_buffer);
+            input_buffer = nullptr;
         }
     }
 
@@ -992,6 +981,7 @@ struct Vevo2FMStepGraph {
     int64_t cond_frames = 0;
     int64_t prompt_frames = 0;
     int64_t target_frames = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     ggml_tensor * prompt_input = nullptr;
     ggml_tensor * xt_input = nullptr;
@@ -1002,7 +992,8 @@ struct Vevo2FMStepGraph {
     ggml_tensor * uncond_position_input = nullptr;
     ggml_tensor * output = nullptr;
     ggml_cgraph * graph = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_backend_buffer_t input_buffer = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
 };
 
 Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
@@ -1012,10 +1003,10 @@ Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
     size_t graph_context_bytes,
     engine::assets::TensorStorageType matmul_weight_storage_type,
     engine::assets::TensorStorageType conv_weight_storage_type)
-    : config_(assets.fm_config),
+    : config_(assets.config.fm),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.fm_weights)),
+      weight_source_(assets.fm_weights),
       weights_(load_fm_weights(
           execution_context.backend(),
           execution_context.backend_type(),
@@ -1024,38 +1015,38 @@ Vevo2FlowMatchingRuntime::Vevo2FlowMatchingRuntime(
           weight_context_bytes,
           matmul_weight_storage_type,
           conv_weight_storage_type)),
-      name_("flow_matching_model"),
-      weights_path_(assets.paths.fm_weights),
-      config_path_(assets.paths.fm_config) {
+      timbre_mel_cache_(kMaxTimbreMelCacheEntries),
+      name_("flow_matching_model") {
     weight_source_->release_storage();
 }
 
 Vevo2FlowMatchingRuntime::~Vevo2FlowMatchingRuntime() = default;
 
 Vevo2MelSequence Vevo2FlowMatchingRuntime::cached_timbre_mel(const runtime::AudioBuffer & timbre_ref_audio) const {
-    const uint64_t key = audio_buffer_key(timbre_ref_audio);
-    for (const auto & entry : timbre_mel_cache_) {
-        if (entry.key == key &&
-            entry.sample_rate == timbre_ref_audio.sample_rate &&
-            entry.channels == timbre_ref_audio.channels &&
-            entry.samples == timbre_ref_audio.samples.size()) {
-            return entry.mel;
-        }
+    const TimbreMelCacheKey key{
+        hash_audio_buffer(timbre_ref_audio),
+        timbre_ref_audio.sample_rate,
+        timbre_ref_audio.channels,
+        timbre_ref_audio.samples.size(),
+    };
+    if (const auto * cached = timbre_mel_cache_.find(key)) {
+        engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.hit", 1);
+        engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.slots", static_cast<int64_t>(timbre_mel_cache_.capacity()));
+        engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.entries", static_cast<int64_t>(timbre_mel_cache_.size()));
+        engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.evicted", 0);
+        return cached->mel;
     }
     auto mel = extract_timbre_mel(
         timbre_ref_audio,
         config_.preprocess,
         static_cast<size_t>(execution_context_.config().threads));
-    if (timbre_mel_cache_.size() >= kMaxTimbreMelCacheEntries) {
-        timbre_mel_cache_.erase(timbre_mel_cache_.begin());
-    }
-    timbre_mel_cache_.push_back({
-        key,
-        timbre_ref_audio.sample_rate,
-        timbre_ref_audio.channels,
-        timbre_ref_audio.samples.size(),
-        mel,
-    });
+    const bool will_evict =
+        timbre_mel_cache_.capacity() > 0 && timbre_mel_cache_.size() >= timbre_mel_cache_.capacity();
+    timbre_mel_cache_.put(key, TimbreMelCacheValue{mel});
+    engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.hit", 0);
+    engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.slots", static_cast<int64_t>(timbre_mel_cache_.capacity()));
+    engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.entries", static_cast<int64_t>(timbre_mel_cache_.size()));
+    engine::debug::trace_log_scalar("vevo2.timbre_mel_cache.evicted", will_evict ? 1 : 0);
     return mel;
 }
 
@@ -1090,6 +1081,8 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     const auto cond_run_start = Clock::now();
     const auto diffusion_cond = graph_->run_conditioning(diffusion_tokens, config_);
     const double cond_run_ms = engine::debug::elapsed_ms(cond_run_start);
+    graph_.reset();
+    engine::core::trim_backend_pools(execution_context_.backend());
     const int64_t cond_frames = static_cast<int64_t>(diffusion_cond.size()) / config_.hidden_size;
     if (cond_frames * config_.hidden_size != static_cast<int64_t>(diffusion_cond.size())) {
         throw std::runtime_error("Vevo2 FM conditioning output shape mismatch");
@@ -1149,6 +1142,8 @@ Vevo2MelSequence Vevo2FlowMatchingRuntime::generate_mel(
     const auto read_start = Clock::now();
     out.values = step_graph_->read_output(config_);
     const double final_read_ms = engine::debug::elapsed_ms(read_start);
+    step_graph_.reset();
+    engine::core::trim_backend_pools(execution_context_.backend());
     engine::debug::timing_log_scalar("vevo2.fm.timbre_mel_ms", timbre_mel_ms);
     engine::debug::timing_log_scalar("vevo2.fm.cond.graph.build_ms", cond_graph_build_ms);
     engine::debug::timing_log_scalar("vevo2.fm.cond_run_ms", cond_run_ms);

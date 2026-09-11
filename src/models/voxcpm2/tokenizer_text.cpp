@@ -270,8 +270,8 @@ void build_cjk_split_map(VoxCPM2TextTokenizer::Impl & impl) {
 
 std::shared_ptr<const VoxCPM2TextTokenizer::Impl> load_impl(const VoxCPM2Assets & assets) {
     auto impl = std::make_shared<VoxCPM2TextTokenizer::Impl>();
-    load_tokenizer_json(assets.paths.tokenizer_json_path, *impl);
-    load_special_tokens(assets.paths.tokenizer_config_path, *impl);
+    load_tokenizer_json(assets.resources.require_file("tokenizer_json"), *impl);
+    load_special_tokens(assets.resources.require_file("tokenizer_config"), *impl);
     build_cjk_split_map(*impl);
     return impl;
 }

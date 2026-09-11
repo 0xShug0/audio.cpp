@@ -38,21 +38,7 @@ std::string prosody_token_text(const Vevo2TokenSequence & tokens) {
     return out.str();
 }
 
-}  // namespace
-
-Vevo2PromptParts Vevo2PromptBuilder::build(
-    const Vevo2Request & request,
-    const Vevo2TokenSequence & prosody_tokens,
-    const Vevo2TokenSequence & style_content_tokens) const {
-    Vevo2PromptParts parts;
-    parts.text_prompt = build_text_prompt(request);
-    parts.prosody_prompt = build_prosody_prompt(request, prosody_tokens);
-    parts.content_style_prompt = build_content_style_prompt(style_content_tokens);
-    parts.full_prompt = parts.text_prompt + parts.prosody_prompt + parts.content_style_prompt;
-    return parts;
-}
-
-std::string Vevo2PromptBuilder::build_text_prompt(const Vevo2Request & request) const {
+std::string build_text_prompt(const Vevo2Request & request) {
     const char * instruction = request.generation.use_prosody_code
         ? "User will provide you with a text. Please first generate a good prosodic instruction, then vocalize the text based on it."
         : "User will provide you with a text. Please vocalize it with natural expression.";
@@ -60,17 +46,31 @@ std::string Vevo2PromptBuilder::build_text_prompt(const Vevo2Request & request) 
     return format_chat_prompt(instruction, input_text, true);
 }
 
-std::string Vevo2PromptBuilder::build_prosody_prompt(
+std::string build_prosody_prompt(
     const Vevo2Request & request,
-    const Vevo2TokenSequence & prosody_tokens) const {
+    const Vevo2TokenSequence & prosody_tokens) {
     if (!request.generation.use_prosody_code) {
         return "";
     }
     return "<|prosody_start|>" + prosody_token_text(prosody_tokens) + "<|prosody_end|>";
 }
 
-std::string Vevo2PromptBuilder::build_content_style_prompt(const Vevo2TokenSequence & style_content_tokens) const {
+std::string build_content_style_prompt(const Vevo2TokenSequence & style_content_tokens) {
     return "<|content_style_start|>" + content_style_token_text(style_content_tokens);
+}
+
+}  // namespace
+
+Vevo2PromptParts build_vevo2_prompt_parts(
+    const Vevo2Request & request,
+    const Vevo2TokenSequence & prosody_tokens,
+    const Vevo2TokenSequence & style_content_tokens) {
+    Vevo2PromptParts parts;
+    parts.text_prompt = build_text_prompt(request);
+    parts.prosody_prompt = build_prosody_prompt(request, prosody_tokens);
+    parts.content_style_prompt = build_content_style_prompt(style_content_tokens);
+    parts.full_prompt = parts.text_prompt + parts.prosody_prompt + parts.content_style_prompt;
+    return parts;
 }
 
 }  // namespace engine::models::vevo2

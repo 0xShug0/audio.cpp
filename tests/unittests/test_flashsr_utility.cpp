@@ -77,12 +77,40 @@ void run_case(int case_index) {
     require_close(output.samples, expected, 2.0e-4f, 2.0e-5, "case " + std::to_string(case_index));
 }
 
+void run_block_boundary_cases() {
+    // Cover tiny padded inputs and partial/full 256-position blocks both
+    // before and after the 3x upsampling stages. Construct fresh DSP instances
+    // for each thread count because their constructors set the OpenMP policy.
+    for (const size_t n : {1u, 7u, 85u, 86u, 255u, 256u, 257u, 1025u}) {
+        std::vector<float> input(n);
+        for (size_t i = 0; i < n; ++i) {
+            input[i] = 0.1f * std::sin(static_cast<float>(i) * 0.17f);
+        }
+        engine::core::BackendConfig config;
+        config.threads = 1;
+        const auto serial = engine::audio::FlashSrModel::load_from_directory(
+            repo_path("assets/framework/audio_utilities/flashsr"), config);
+        const auto one = serial.super_resolve_mono_16k(input);
+        config.threads = 8;
+        const auto parallel = engine::audio::FlashSrModel::load_from_directory(
+            repo_path("assets/framework/audio_utilities/flashsr"), config);
+        const auto many = parallel.super_resolve_mono_16k(input);
+        require(one.samples.size() == n * 3, "FlashSR boundary output size");
+        require(one.samples == many.samples,
+                "FlashSR thread count changed boundary output at n=" + std::to_string(n));
+        for (const float sample : many.samples) {
+            require(std::isfinite(sample), "FlashSR non-finite boundary output");
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
     try {
         run_case(0);
         run_case(1);
+        run_block_boundary_cases();
         std::cout << "flashsr_utility_test passed\n";
     } catch (const std::exception & ex) {
         std::cerr << "flashsr_utility_test failed: " << ex.what() << "\n";

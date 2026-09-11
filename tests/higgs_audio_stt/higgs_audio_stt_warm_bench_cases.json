@@ -1,0 +1,21 @@
+{
+  "warmup": {
+    "audio": "resources/sample_16k.wav",
+    "prompt": "Transcribe the speech. Output only the spoken words in lowercase with no punctuation.",
+    "max_tokens": 256,
+    "enable_thinking": true
+  },
+  "requests": [
+    {
+      "id": "sample_nature",
+      "audio": "resources/sample_16k.wav",
+      "prompt": "Transcribe the speech. Output only the spoken words in lowercase with no punctuation.",
+      "max_tokens": 256,
+      "enable_thinking": true,
+      "expected_fragments": [
+        "Some call me Nature",
+        "Mother Nature"
+      ]
+    }
+  ]
+}

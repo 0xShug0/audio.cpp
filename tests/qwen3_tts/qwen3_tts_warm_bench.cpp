@@ -219,6 +219,7 @@ int main(int argc, char ** argv) {
         set_process_env("ENGINE_TRACE_ENABLED", "0");
         set_process_env("ENGINE_TIMING_ENABLED", "1");
         set_process_env("ENGINE_TIMING_FILE", timing_path.string());
+        engine::debug::configure_logging(engine::debug::LoggingConfig{true, timing_path.string()});
 
         const bool voice_design = task_name == "voice_design";
         const bool custom_voice = task_name == "custom_voice";

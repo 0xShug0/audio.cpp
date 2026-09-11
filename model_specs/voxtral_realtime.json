@@ -1,0 +1,137 @@
+{
+  "family": "voxtral_realtime",
+  "display_name": "Voxtral Mini 4B Realtime",
+  "description": "Mistral 13-language realtime ASR model with a natively streaming causal audio encoder, configurable low-latency transcription delay, and accuracy competitive with offline open-source systems.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en",
+    "zh",
+    "hi",
+    "es",
+    "ar",
+    "fr",
+    "pt",
+    "ru",
+    "de",
+    "ja",
+    "ko",
+    "it",
+    "nl"
+  ],
+  "capabilities": {
+    "asr": [
+      "partial_results"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "ui": {
+    "recommended_package": "voxtral_realtime_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "voxtral_realtime_q8_0",
+      "display_name": "Voxtral Mini 4B Realtime Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Voxtral-Mini-4B-Realtime-2602-GGUF",
+      "files": [
+        "Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q8_0.gguf"
+      ],
+      "strip_prefix": "Voxtral-Mini-4B-Realtime-2602-GGUF"
+    },
+    {
+      "id": "voxtral_realtime_q4_k",
+      "display_name": "Voxtral Mini 4B Realtime Q4_K GGUF",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "Voxtral-Mini-4B-Realtime-2602-GGUF",
+      "files": [
+        "Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-q4_k.gguf"
+      ],
+      "strip_prefix": "Voxtral-Mini-4B-Realtime-2602-GGUF"
+    },
+    {
+      "id": "voxtral_realtime_bf16",
+      "display_name": "Voxtral Mini 4B Realtime BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Voxtral-Mini-4B-Realtime-2602-GGUF",
+      "files": [
+        "Voxtral-Mini-4B-Realtime-2602-GGUF/voxtral-mini-4b-realtime-2602-bf16.gguf"
+      ],
+      "strip_prefix": "Voxtral-Mini-4B-Realtime-2602-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tekken": "model:tekken.json"
+      },
+      "optional_files": {
+        "params": "model:params.json",
+        "readme": "model:README.md"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tekken": "model:tekken.json"
+      },
+      "optional_files": {
+        "params": "model:params.json",
+        "readme": "model:README.md"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

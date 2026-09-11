@@ -95,6 +95,16 @@ const core::ModuleSchema kReflectPad1dSchema = {
     "Pads the last logical axis using reflected boundary values.",
 };
 
+const core::ModuleSchema kPad2dSchema = {
+    "Pad2d",
+    "tensor.layout",
+    kSingleInput,
+    1,
+    kSingleOutput,
+    1,
+    "Applies asymmetric zero padding to the last two logical axes of a 4-D tensor.",
+};
+
 const core::ModuleSchema kInterpolate1dSchema = {
     "Interpolate1d",
     "tensor.layout",
@@ -103,6 +113,16 @@ const core::ModuleSchema kInterpolate1dSchema = {
     kSingleOutput,
     1,
     "Interpolates the last logical axis of channel-first tensors to a fixed frame count.",
+};
+
+const core::ModuleSchema kNearestUpsample2dSchema = {
+    "NearestUpsample2d",
+    "tensor.layout",
+    kSingleInput,
+    1,
+    kSingleOutput,
+    1,
+    "Upsamples the last two logical axes of a 4-D tensor with nearest-neighbor interpolation.",
 };
 
 const core::ModuleSchema kMaskingSchema = {
@@ -427,6 +447,47 @@ const core::ModuleSchema & ReflectPad1dModule::static_schema() noexcept {
     return kReflectPad1dSchema;
 }
 
+Pad2dModule::Pad2dModule(Pad2dConfig config) : config_(config) {
+    if (config_.left < 0 || config_.right < 0 || config_.top < 0 || config_.bottom < 0) {
+        throw std::runtime_error("Pad2d padding must be non-negative");
+    }
+}
+
+const Pad2dConfig & Pad2dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & Pad2dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue Pad2dModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 4, 4, "input");
+    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+    auto output_shape = input.shape;
+    output_shape.dims[2] += config_.top + config_.bottom;
+    output_shape.dims[3] += config_.left + config_.right;
+    auto * raw = ggml_pad_ext(
+        ctx.ggml,
+        contiguous.tensor,
+        static_cast<int>(config_.left),
+        static_cast<int>(config_.right),
+        static_cast<int>(config_.top),
+        static_cast<int>(config_.bottom),
+        0,
+        0,
+        0,
+        0);
+    return core::wrap_tensor(raw, output_shape, input.type);
+}
+
+const core::ModuleSchema & Pad2dModule::static_schema() noexcept {
+    return kPad2dSchema;
+}
+
 Interpolate1dModule::Interpolate1dModule(Interpolate1dConfig config) : config_(config) {
     if (config_.output_frames <= 0) {
         throw std::runtime_error("Interpolate1dConfig.output_frames must be positive");
@@ -475,6 +536,44 @@ core::TensorValue Interpolate1dModule::build(core::ModuleBuildContext & ctx, con
 
 const core::ModuleSchema & Interpolate1dModule::static_schema() noexcept {
     return kInterpolate1dSchema;
+}
+
+NearestUpsample2dModule::NearestUpsample2dModule(NearestUpsample2dConfig config) : config_(config) {
+    if (config_.output_height <= 0 || config_.output_width <= 0) {
+        throw std::runtime_error("NearestUpsample2dConfig output dimensions must be positive");
+    }
+}
+
+const NearestUpsample2dConfig & NearestUpsample2dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & NearestUpsample2dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue NearestUpsample2dModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 4, 4, "input");
+    auto output_shape = input.shape;
+    output_shape.dims[2] = config_.output_height;
+    output_shape.dims[3] = config_.output_width;
+    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
+    auto * raw = ggml_interpolate(
+        ctx.ggml,
+        contiguous.tensor,
+        config_.output_width,
+        config_.output_height,
+        contiguous.tensor->ne[2],
+        contiguous.tensor->ne[3],
+        GGML_SCALE_MODE_NEAREST);
+    return core::wrap_tensor(raw, output_shape, GGML_TYPE_F32);
+}
+
+const core::ModuleSchema & NearestUpsample2dModule::static_schema() noexcept {
+    return kNearestUpsample2dSchema;
 }
 
 const core::ModuleSchema & MaskingModule::schema() const noexcept {

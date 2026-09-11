@@ -36,7 +36,7 @@ private:
     std::unique_ptr<FoundationConditionerRuntime> conditioner_runtime_;
     std::unique_ptr<FoundationRfDitRuntime> rf_dit_;
     std::unique_ptr<OobleckAutoencoderRuntime> oobleck_;
-    int64_t max_batch_ = 4;
+    int64_t max_batch_ = 1;
 };
 
 }  // namespace engine::models::stable_audio::foundation

@@ -22,6 +22,8 @@ public:
     size_t size() const noexcept;
     std::vector<std::string> families() const;
     bool supports_family(const std::string & family) const noexcept;
+    /** Path-free loader catalog for ``--list-loaders --json``. */
+    std::vector<LoaderAdvertisement> advertise_loaders() const;
     ModelInspection inspect(const ModelLoadRequest & request) const;
     ModelInspection inspect(const std::filesystem::path & model_path) const;
     std::unique_ptr<ILoadedVoiceModel> load(const ModelLoadRequest & request) const;

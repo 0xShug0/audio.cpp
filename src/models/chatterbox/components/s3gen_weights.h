@@ -261,6 +261,12 @@ struct S3FlowDecoderWeights {
     std::vector<UpBlockWeights> up_blocks;
     CausalBlockWeights final_block;
     Conv1dWeights final_proj;
+    // Meanflow-distilled decoders (Chatterbox Turbo) mix a second "r" (end-time) sinusoidal
+    // embedding into the time embedding via this diagonal-init, no-bias linear layer before
+    // feeding the UNet1D estimator; see decoder.py::get_intmeanflow_time_mixer upstream. Unset
+    // (weight_tensor.tensor == nullptr) for the base Chatterbox 10-step CFG decoder.
+    bool meanflow = false;
+    LinearWeights time_embed_mixer;
     const engine::core::ExecutionContext * execution_context = nullptr;
     std::shared_ptr<engine::core::BackendWeightStore> store;
 };

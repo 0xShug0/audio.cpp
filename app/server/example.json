@@ -1,9 +1,13 @@
 {
   "host": "127.0.0.1",
   "port": 8080,
+  "backend": "cuda",
   "device": 0,
   "threads": 1,
   "lazy_load": true,
+  "max_loaded_models": 0,
+  "idle_unload_ms": 0,
+  "min_free_memory_mb": 0,
   "models": [
     {
       "id": "pocket-tts",
@@ -16,6 +20,14 @@
       },
       "session_options": {
         "language": "english"
+      },
+      "default_voice_preset": {
+        "voice_id": "alba"
+      },
+      "voice_presets": {
+        "cosette": {
+          "voice_id": "cosette"
+        }
       }
     },
     {

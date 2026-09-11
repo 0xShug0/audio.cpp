@@ -10,29 +10,37 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--task` | `gen`, `tts`, `clon`, `vc`, `svc`, `s2s`, `asr`, `align`, `vad`, `diar`, `sep`, `vdes` | required | User task. |
-| `--family` | model family name | required | Selects the model implementation. |
+| `--task` | `gen`, `tts`, `clon`, `vc`, `svc`, `s2s`, `asr`, `align`, `vad`, `diar`, `sep`, `vdes`, `midi` | required | User task. |
+| `--family` | model family name | required | Selects the model implementation. Must match a registered loader (`audiocpp_cli --list-loaders`). |
 | `--model` | local model directory | required | Path to local model assets. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Inference backend. |
 | `--mode` | `offline`, `streaming` | `offline` | Run mode. Most models are offline. |
 | `--device` | integer | `0` | Backend device index. |
+| `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` to select one. |
 | `--threads` | integer | `4` | Backend/OpenMP worker threads. |
 | `--log` | flag | off | Print progress and timing logs to stdout. |
 | `--log-file` | path | not set | Stream progress and timing logs to a file. |
+| `--metrics` | flag | off | Print compact offline wall time, audio duration, RTF, realtime speed, sample rate, and channel metrics. |
 
 ## Common Inputs And Outputs
 
 | Option | Used by | Meaning |
 |---|---|---|
 | `--text` | generation, TTS, ASR context, alignment transcript | Input text. |
-| `--audio` | generation/editing, ASR, VAD, diarization, separation, conversion, alignment | Input WAV. |
+| `--audio` | generation/editing, ASR, VAD, diarization, separation, conversion, alignment | Input WAV, or `-` to stream raw PCM from stdin (requires `--mode streaming`). |
+| `--input-format` | streaming ASR with `--audio -` | Raw PCM sample format, `s16le` or `f32le`. Default `s16le`. |
+| `--input-rate` | streaming ASR with `--audio -` | Raw PCM sample rate in Hz. Default `16000`. |
+| `--input-channels` | streaming ASR with `--audio -` | Raw PCM channel count. Default `1`. |
 | `--voice-ref` | voice clone / voice design / some VC paths | Reference voice WAV. |
 | `--language` | language-aware models | Language code. |
-| `--out` | audio-producing models | Output WAV path. |
+| `--out` | single-primary-output models | Output file path, such as WAV for audio tasks or MIDI/JSON for MuScriptor. |
 | `--out-dir` | multi-output or batch models | Output directory. |
 | `--segments-out` | VAD | Speech segments JSON. |
+| `--vad-chunks-out` | offline VAD | VAD-based audio chunk windows JSON. |
 | `--turns-out` | diarization | Speaker turns JSON. |
 | `--words-out` | ASR/alignment | Word timestamps JSON. |
+| `--audio-chunk-seconds` | ASR | Split long audio before model inference, where supported. |
+| `--audio-chunk-mode` | ASR/alignment | `auto`, `fixed`, `vad`, or `none`, where supported. |
 
 ## Common Generation Options
 
@@ -50,20 +58,58 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 | `--do-sample` | `true`, `false` | Enable sampling instead of greedy decode. |
 | `--guidance-scale` | float | Classifier-free guidance scale. |
 | `--num-inference-steps` | integer | Diffusion/flow denoising steps. |
-| `--text-chunk-size` | integer chars | Split long TTS text into chunks. Non-TTS models do not use text chunking. |
+| `--text-chunk-size` | integer chars | Split long text where supported, including TTS text. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | Select text chunking mode where supported. |
 
 ## Batch Inputs
 
 | Option | Meaning |
 |---|---|
+| `--request-sequence <json>` | Run multiple JSON requests through one offline model session. |
 | `--batch-text-file <txt>` | One request per non-empty text line. |
 | `--batch-text-dir <dir>` | One request per `.txt`, `.md`, or `.json` file; each file is normalized into a single paragraph. |
 | `--batch-audio-dir <dir>` | One request per `.wav` file. |
-| `--batch-audio-role audio|voice_ref|source_audio|target_voice|prosody_ref|style_ref` | How to use each batch WAV. |
-| `--batch-merge-audio none|concat` | Keep outputs separate or concatenate generated audio. |
+| `--batch-audio-role audio\|voice_ref\|source_audio\|target_voice\|prosody_ref\|style_ref` | How to use each batch WAV. |
+| `--batch-merge-audio none\|concat` | Keep outputs separate or concatenate generated audio. |
 | `--batch-manifest-out <json>` | Write a batch output manifest. |
 
 `--batch-text-dir` reads `.txt` and `.md` files as plain text. For `.json`, use either a JSON string root or an object with a string `input` or `text` field.
+
+Use `--request-sequence` when you want to send multiple requests in one long-lived offline session:
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
+  --backend cuda \
+  --request-sequence requests.json \
+  --out-dir outputs \
+  --metrics
+```
+
+The JSON may be either an array or an object with a `requests` array. Each item is parsed like one CLI request. Use `id` as the request name; with `--out-dir`, primary audio is written as `<out-dir>/<id>.wav`. There is no per-request `out` field.
+
+```json
+{
+  "requests": [
+    {
+      "id": "speaker1_output",
+      "text": "First text",
+      "voice_ref": "voices/speaker1.wav",
+      "reference_text": "Reference transcript 1",
+      "seed": 1234
+    },
+    {
+      "id": "speaker2_output",
+      "text": "Second text",
+      "voice_ref": "voices/speaker2.wav",
+      "reference_text": "Reference transcript 2",
+      "seed": 1234
+    }
+  ]
+}
+```
+
+For each request id, `--metrics` prints `metrics[<id>].wall_ms`, `audio_duration_ms`, `rtf`, `x_realtime`, `sample_rate`, and `channels`.
 
 ## Model Docs
 
@@ -71,10 +117,7 @@ Omit these unless you need explicit control. If `--seed` is omitted, models that
 |---|---|
 | Speech, voice clone, long-form TTS | [tts.md](tts.md) |
 | Music and sound generation | [music_generation.md](music_generation.md) |
-| ACE-Step music generation/editing | [ace_step.md](ace_step.md) |
-| Stable Audio music/SFX generation | [stable_audio.md](stable_audio.md) |
-| VeVo2 speech/singing conversion routes | [vevo2.md](vevo2.md) |
-| Seed-VC voice conversion and SVC | [seed_vc.md](seed_vc.md) |
-| Qwen3 TTS, ASR, forced alignment | [qwen3.md](qwen3.md) |
-| ASR, VAD, diarization | [speech_analysis.md](speech_analysis.md) |
-| Voice conversion codec and source separation | [audio_tools.md](audio_tools.md) |
+| OmniVoice TTS, voice cloning, voice design, and streaming | [models/omnivoice.md](models/omnivoice.md) |
+| ASR models | [asr.md](asr.md) |
+| VAD and diarization | [speech_analysis.md](speech_analysis.md) |
+| Audio tools, voice conversion, codec, and source separation | [audio_tools.md](audio_tools.md) |

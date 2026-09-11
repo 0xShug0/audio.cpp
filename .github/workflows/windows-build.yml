@@ -5,11 +5,13 @@ on:
     branches:
       - ci/**
       - main
-      - release-0.1
+      - dev
+      - release-0.2
   pull_request:
     branches:
       - main
-      - release-0.1
+      - dev
+      - release-0.2
   workflow_dispatch:
 
 jobs:
@@ -21,16 +23,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check loader/spec sync
+        shell: pwsh
+        run: |
+          python tools/check_loader_catalog_sync.py --self-test
+          python tools/check_loader_catalog_sync.py
+
       - name: Build audiocpp_cli
         shell: pwsh
         run: |
           .\scripts\build_windows.ps1 `
             -Preset windows-cpu-release `
-            -Target audiocpp_cli
+            -Target audiocpp_cli `
+            -Version ci
 
       - name: Build audiocpp_server
         shell: pwsh
         run: |
           .\scripts\build_windows.ps1 `
             -Preset windows-cpu-release `
-            -Target audiocpp_server
+            -Target audiocpp_server `
+            -Version ci
+
+      - name: Build audiocpp_gguf
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1 `
+            -Preset windows-cpu-release `
+            -Target audiocpp_gguf `
+            -Version ci

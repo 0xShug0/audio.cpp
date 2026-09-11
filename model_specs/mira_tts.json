@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "family": "mira_tts",
+  "display_name": "MiraTTS",
+  "description": "MiraTTS is a community voice-cloning TTS model with a Qwen2 autoregressive speech-token generator, ECAPA/Perceiver speaker tokenizer, conditional acoustic processor, and DAC decoder.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "speaker_reference"
+    ],
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum autoregressive speech tokens; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; default 0.8.",
+        "required": false,
+        "min": 0.000001,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling cutoff; default 50.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling probability; default 0.95.",
+        "required": false,
+        "min": 0.000001,
+        "max": 1.0,
+        "default": 0.95
+      },
+      {
+        "name": "min_p",
+        "type": "float",
+        "description": "Minimum probability relative to the most likely token; default 0.05.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.05
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Autoregressive repetition penalty; default 1.2.",
+        "required": false,
+        "min": 1.0,
+        "default": 1.2
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum codepoints per progressively emitted streaming segment; default 160.",
+        "required": false,
+        "min": 1,
+        "default": 160
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode used by streaming synthesis.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted requests choose a random seed.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Encoded reference-voice cache slots; default 1. Set to 0 to disable reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": [
+      {
+        "name": "backbone_weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native",
+        "description": "Storage type for the Qwen2 language-model weights."
+      },
+      {
+        "name": "linear_weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native",
+        "description": "Storage type for non-convolutional speaker, processor, and decoder weights."
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "f32",
+        "description": "Storage type for speaker and processor convolution weights. The DAC transposed-convolution decoder remains F32 for CUDA compatibility."
+      }
+    ]
+  },
+  "packages": [],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": [
+      "docs/community_models/mira_tts.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "language_model": {
+          "source": "weights:",
+          "prefix": "language_model"
+        },
+        "speaker_encoder": {
+          "source": "weights:",
+          "prefix": "speaker_encoder"
+        },
+        "processor": {
+          "source": "weights:",
+          "prefix": "processor"
+        },
+        "decoder": {
+          "source": "weights:",
+          "prefix": "decoder"
+        },
+        "upsampler": {
+          "source": "weights:",
+          "prefix": "upsampler"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "language_model": "model:language_model.safetensors",
+        "speaker_encoder": "model:speaker_encoder.safetensors",
+        "processor": "model:processor.safetensors",
+        "decoder": "model:decoder.safetensors",
+        "upsampler": "model:upsampler.safetensors"
+      }
+    }
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "family": "bs_roformer",
+  "display_name": "BS-RoFormer",
+  "description": "Band-Split RoFormer music source-separation model that estimates vocals from explicit non-overlapping frequency bands and derives accompaniment from the input mixture.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "sep"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "sep": [
+      "stems"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "RoFormer weight storage type. Defaults to f32 when the backend requires a host graph plan, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "num_overlap",
+        "type": "int",
+        "description": "Number of overlapping inference windows; defaults to the package configuration. Lower values improve throughput but can reduce boundary quality.",
+        "required": false,
+        "min": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "bs_roformer_q8_0",
+      "display_name": "BS-RoFormer ep368 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "BS-RoFormer-ep368-GGUF",
+      "files": [
+        "BS-RoFormer-ep368-GGUF/bs-roformer-ep368-q8_0.gguf"
+      ],
+      "strip_prefix": "BS-RoFormer-ep368-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "bs_roformer_q8_0",
+    "tags": [
+      "Sep",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/audio_tools.md",
+      "docs/gguf.md",
+      "tests/bs_roformer/README.md"
+    ]
+  }
+}

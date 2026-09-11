@@ -735,7 +735,7 @@ FlatConv1dWeights load_flat_conv1d(
         {out_channels, in_channels, kernel_size},
         core::TensorShape::from_dims({out_channels, in_channels * kernel_size}));
     if (use_bias) {
-        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::Native, {out_channels});
+        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::F32, {out_channels});
     }
     return weights;
 }
@@ -759,7 +759,7 @@ FlatConv1dWeights load_conv1d(
         storage_type,
         {out_channels, in_channels, kernel_size});
     if (use_bias) {
-        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::Native, {out_channels});
+        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::F32, {out_channels});
     }
     return weights;
 }
@@ -784,7 +784,7 @@ FlatConvTranspose1dWeights load_flat_conv_transpose1d(
         {in_channels, out_channels, kernel_size},
         core::TensorShape::from_dims({in_channels, out_channels * kernel_size}));
     if (use_bias) {
-        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::Native, {out_channels});
+        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::F32, {out_channels});
     }
     return weights;
 }
@@ -814,7 +814,7 @@ modules::LinearWeights load_linear(
     modules::LinearWeights weights = {};
     weights.weight = store.load_tensor(source, prefix + ".weight", storage_type, {out_features, in_features});
     if (use_bias) {
-        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::Native, {out_features});
+        weights.bias = store.load_tensor(source, prefix + ".bias", assets_ns::TensorStorageType::F32, {out_features});
     }
     return weights;
 }
@@ -838,13 +838,13 @@ modules::AttentionWeights load_attention(
     assets_ns::TensorStorageType storage_type) {
     modules::AttentionWeights weights = {};
     weights.q_weight = store.load_tensor(source, prefix + ".q_proj.weight", storage_type, {hidden_size, hidden_size});
-    weights.q_bias = store.load_tensor(source, prefix + ".q_proj.bias", assets_ns::TensorStorageType::Native, {hidden_size});
+    weights.q_bias = store.load_tensor(source, prefix + ".q_proj.bias", assets_ns::TensorStorageType::F32, {hidden_size});
     weights.k_weight = store.load_tensor(source, prefix + ".k_proj.weight", storage_type, {hidden_size, hidden_size});
-    weights.k_bias = store.load_tensor(source, prefix + ".k_proj.bias", assets_ns::TensorStorageType::Native, {hidden_size});
+    weights.k_bias = store.load_tensor(source, prefix + ".k_proj.bias", assets_ns::TensorStorageType::F32, {hidden_size});
     weights.v_weight = store.load_tensor(source, prefix + ".v_proj.weight", storage_type, {hidden_size, hidden_size});
-    weights.v_bias = store.load_tensor(source, prefix + ".v_proj.bias", assets_ns::TensorStorageType::Native, {hidden_size});
+    weights.v_bias = store.load_tensor(source, prefix + ".v_proj.bias", assets_ns::TensorStorageType::F32, {hidden_size});
     weights.out_weight = store.load_tensor(source, prefix + ".out_proj.weight", storage_type, {hidden_size, hidden_size});
-    weights.out_bias = store.load_tensor(source, prefix + ".out_proj.bias", assets_ns::TensorStorageType::Native, {hidden_size});
+    weights.out_bias = store.load_tensor(source, prefix + ".out_proj.bias", assets_ns::TensorStorageType::F32, {hidden_size});
     return weights;
 }
 
@@ -959,9 +959,9 @@ modules::FeedForwardWeights load_feed_forward(
     assets_ns::TensorStorageType storage_type) {
     return {
         store.load_tensor(source, prefix + ".intermediate_dense.weight", storage_type, {intermediate_size, hidden_size}),
-        store.load_tensor(source, prefix + ".intermediate_dense.bias", assets_ns::TensorStorageType::Native, {intermediate_size}),
+        store.load_tensor(source, prefix + ".intermediate_dense.bias", assets_ns::TensorStorageType::F32, {intermediate_size}),
         store.load_tensor(source, prefix + ".output_dense.weight", storage_type, {hidden_size, intermediate_size}),
-        store.load_tensor(source, prefix + ".output_dense.bias", assets_ns::TensorStorageType::Native, {hidden_size}),
+        store.load_tensor(source, prefix + ".output_dense.bias", assets_ns::TensorStorageType::F32, {hidden_size}),
     };
 }
 
@@ -1027,7 +1027,7 @@ std::shared_ptr<const AudioTokenizerWeights> load_weights(
         "semantic_model.feature_projection.projection",
         semantic.hidden_size,
         semantic.conv_dim.back(),
-        storage_type,
+        assets_ns::TensorStorageType::F32,
         true);
 
     if (semantic.do_stable_layer_norm) {
@@ -1247,7 +1247,7 @@ std::shared_ptr<const AudioTokenizerWeights> load_weights(
         quantizer.score = {
             weights->store->make_from_f32(
                 core::TensorShape::from_dims({config.codebook_size, config.codebook_dim}),
-                storage_type,
+                assets_ns::TensorStorageType::F32,
                 score_weight),
             weights->store->make_from_f32(
                 core::TensorShape::from_dims({config.codebook_size}),
@@ -1257,7 +1257,7 @@ std::shared_ptr<const AudioTokenizerWeights> load_weights(
         quantizer.codebook = weights->store->load_tensor(
             source,
             prefix + ".codebook.embed",
-            storage_type,
+            assets_ns::TensorStorageType::F32,
             {config.codebook_size, config.codebook_dim});
         quantizer.project_out = load_linear(
             *weights->store,
@@ -1276,7 +1276,7 @@ std::shared_ptr<const AudioTokenizerWeights> load_weights(
         "fc2",
         acoustic.hidden_size,
         config.hidden_size,
-        storage_type,
+        assets_ns::TensorStorageType::F32,
         true);
 
     weights->acoustic_decoder.conv1 = load_flat_conv1d(
@@ -2158,29 +2158,26 @@ struct DecoderGraph {
                     static_cast<size_t>(frame_capacity_) * sizeof(int32_t));
             }
         }
-        if (last_frames_ != codes.frames) {
-            std::fill(decoder_frame_mask_host_.begin(), decoder_frame_mask_host_.end(), 0.0F);
-            std::fill_n(decoder_frame_mask_host_.begin(), static_cast<size_t>(codes.frames), 1.0F);
-            if (frame_capacity_ > 0) {
-                ggml_backend_tensor_set(
-                    decoder_frame_mask_.tensor,
-                    decoder_frame_mask_host_.data(),
-                    0,
-                    static_cast<size_t>(frame_capacity_) * sizeof(float));
-            }
-            int64_t current_length = codes.frames;
-            for (size_t i = 0; i < decoder_block_masks_.size(); ++i) {
-                current_length *= assets_->config.audio_tokenizer.acoustic_model.upsampling_ratios[i];
-                auto & block_mask = decoder_block_mask_host_[i];
-                std::fill(block_mask.begin(), block_mask.end(), 0.0F);
-                std::fill_n(block_mask.begin(), static_cast<size_t>(current_length), 1.0F);
-                ggml_backend_tensor_set(
-                    decoder_block_masks_[i].tensor,
-                    block_mask.data(),
-                    0,
-                    static_cast<size_t>(decoder_block_masks_[i].shape.dims[2]) * sizeof(float));
-            }
-            last_frames_ = codes.frames;
+        std::fill(decoder_frame_mask_host_.begin(), decoder_frame_mask_host_.end(), 0.0F);
+        std::fill_n(decoder_frame_mask_host_.begin(), static_cast<size_t>(codes.frames), 1.0F);
+        if (frame_capacity_ > 0) {
+            ggml_backend_tensor_set(
+                decoder_frame_mask_.tensor,
+                decoder_frame_mask_host_.data(),
+                0,
+                static_cast<size_t>(frame_capacity_) * sizeof(float));
+        }
+        int64_t current_length = codes.frames;
+        for (size_t i = 0; i < decoder_block_masks_.size(); ++i) {
+            current_length *= assets_->config.audio_tokenizer.acoustic_model.upsampling_ratios[i];
+            auto & block_mask = decoder_block_mask_host_[i];
+            std::fill(block_mask.begin(), block_mask.end(), 0.0F);
+            std::fill_n(block_mask.begin(), static_cast<size_t>(current_length), 1.0F);
+            ggml_backend_tensor_set(
+                decoder_block_masks_[i].tensor,
+                block_mask.data(),
+                0,
+                static_cast<size_t>(decoder_block_masks_[i].shape.dims[2]) * sizeof(float));
         }
         core::set_backend_threads(backend_, compute_threads_);
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
@@ -2216,7 +2213,6 @@ private:
         code_inputs_.clear();
         decoder_block_masks_.clear();
         ctx_.reset();
-        last_frames_ = -1;
     }
 
     std::shared_ptr<const OmniVoiceAssets> assets_;
@@ -2236,7 +2232,6 @@ private:
     std::vector<std::vector<int32_t>> code_input_host_;
     std::vector<float> decoder_frame_mask_host_;
     std::vector<std::vector<float>> decoder_block_mask_host_;
-    int64_t last_frames_ = -1;
     ggml_tensor * output_ = nullptr;
 };
 
@@ -2366,6 +2361,11 @@ runtime::AudioBuffer OmniVoiceAudioTokenizerRuntime::decode_audio_tokens(
     impl_->last_stats.decoder_frame_capacity = impl_->decoder_graph->frame_capacity();
     impl_->last_stats.decoder_codebook_capacity = impl_->decoder_graph->codebook_capacity();
     return impl_->decoder_graph->run(audio_tokens);
+}
+
+void OmniVoiceAudioTokenizerRuntime::release_runtime_graphs() {
+    impl_->encoder_graph.reset();
+    impl_->decoder_graph.reset();
 }
 
 }  // namespace engine::models::omnivoice

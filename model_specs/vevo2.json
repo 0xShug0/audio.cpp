@@ -1,0 +1,209 @@
+{
+  "family": "vevo2",
+  "display_name": "Vevo2",
+  "description": "Unified controllable framework for English and Chinese speech and singing voice generation, voice conversion, and editing, with tokenizers that disentangle content, prosody, melody, style, and timbre.",
+  "category": "voice_conversion",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "music",
+    "vc",
+    "edit",
+    "svc",
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics"
+    ],
+    "vc": [
+      "speaker_reference"
+    ],
+    "svc": [
+      "speaker_reference",
+      "singing"
+    ],
+    "s2s": [
+      "speaker_reference"
+    ],
+    "edit": [
+      "prompt_editing"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "vevo2_q8_0",
+    "tags": [
+      "TTS",
+      "Music",
+      "VC",
+      "Edit",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/vevo2.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "vevo2_q8_0",
+      "display_name": "Vevo2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Vevo2-GGUF",
+      "files": [
+        "Vevo2-GGUF/vevo2-q8_0.gguf"
+      ],
+      "strip_prefix": "Vevo2-GGUF"
+    },
+    {
+      "id": "vevo2_f16",
+      "display_name": "Vevo2 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Vevo2-GGUF",
+      "files": [
+        "Vevo2-GGUF/vevo2-f16.gguf"
+      ],
+      "strip_prefix": "Vevo2-GGUF"
+    },
+    {
+      "id": "vevo2_orig",
+      "display_name": "Vevo2 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Vevo2-GGUF",
+      "files": [
+        "Vevo2-GGUF/vevo2-orig.gguf"
+      ],
+      "strip_prefix": "Vevo2-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "ar_config": "model:contentstyle_modeling/posttrained/config.json",
+        "ar_amphion_config": "model:contentstyle_modeling/posttrained/amphion_config.json",
+        "ar_generation_config": "model:contentstyle_modeling/posttrained/generation_config.json",
+        "ar_tokenizer_config": "model:contentstyle_modeling/posttrained/tokenizer_config.json",
+        "ar_tokenizer_json": "model:contentstyle_modeling/posttrained/tokenizer.json",
+        "ar_vocab": "model:contentstyle_modeling/posttrained/vocab.json",
+        "ar_merges": "model:contentstyle_modeling/posttrained/merges.txt",
+        "ar_added_tokens": "model:contentstyle_modeling/posttrained/added_tokens.json",
+        "ar_special_tokens": "model:contentstyle_modeling/posttrained/special_tokens_map.json",
+        "fm_config": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa/config.json",
+        "fm_text_config": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa_text/config.json",
+        "vocoder_config": "model:vocoder/config.json",
+        "whisper_config": "model:whisper-medium/config.json"
+      },
+      "tensors": {
+        "content_style_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "content_style_tokenizer_weights"
+        },
+        "prosody_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "prosody_tokenizer_weights"
+        },
+        "ar_weights": {
+          "source": "weights:",
+          "prefix": "ar_weights"
+        },
+        "fm_weights": {
+          "source": "weights:",
+          "prefix": "fm_weights"
+        },
+        "fm_whisper_stats": {
+          "source": "weights:",
+          "prefix": "fm_whisper_stats"
+        },
+        "fm_text_weights": {
+          "source": "weights:",
+          "prefix": "fm_text_weights"
+        },
+        "fm_text_whisper_stats": {
+          "source": "weights:",
+          "prefix": "fm_text_whisper_stats"
+        },
+        "vocoder_weights_0": {
+          "source": "weights:",
+          "prefix": "vocoder_weights_0"
+        },
+        "vocoder_weights_1": {
+          "source": "weights:",
+          "prefix": "vocoder_weights_1"
+        },
+        "vocoder_weights_2": {
+          "source": "weights:",
+          "prefix": "vocoder_weights_2"
+        },
+        "whisper_weights": {
+          "source": "weights:",
+          "prefix": "whisper_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "whisper": "../whisper-medium"
+      },
+      "files": {
+        "ar_config": "model:contentstyle_modeling/posttrained/config.json",
+        "ar_amphion_config": "model:contentstyle_modeling/posttrained/amphion_config.json",
+        "ar_generation_config": "model:contentstyle_modeling/posttrained/generation_config.json",
+        "ar_tokenizer_config": "model:contentstyle_modeling/posttrained/tokenizer_config.json",
+        "ar_tokenizer_json": "model:contentstyle_modeling/posttrained/tokenizer.json",
+        "ar_vocab": "model:contentstyle_modeling/posttrained/vocab.json",
+        "ar_merges": "model:contentstyle_modeling/posttrained/merges.txt",
+        "ar_added_tokens": "model:contentstyle_modeling/posttrained/added_tokens.json",
+        "ar_special_tokens": "model:contentstyle_modeling/posttrained/special_tokens_map.json",
+        "fm_config": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa/config.json",
+        "fm_text_config": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa_text/config.json",
+        "vocoder_config": "model:vocoder/config.json",
+        "whisper_config": "whisper:config.json"
+      },
+      "tensors": {
+        "content_style_tokenizer_weights": "model:tokenizer/contentstyle_fvq16384_12.5hz/model.safetensors",
+        "prosody_tokenizer_weights": "model:tokenizer/prosody_fvq512_6.25hz/model.safetensors",
+        "ar_weights": "model:contentstyle_modeling/posttrained/model.safetensors",
+        "fm_weights": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa/model.safetensors",
+        "fm_whisper_stats": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa/whisper_stats.safetensors",
+        "fm_text_weights": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa_text/model.safetensors",
+        "fm_text_whisper_stats": "model:acoustic_modeling/fm_emilia101k_singnet7k_repa_text/whisper_stats.safetensors",
+        "vocoder_weights_0": "model:vocoder/model.safetensors",
+        "vocoder_weights_1": "model:vocoder/model_1.safetensors",
+        "vocoder_weights_2": "model:vocoder/model_2.safetensors",
+        "whisper_weights": "whisper:model.safetensors"
+      }
+    }
+  ]
+}

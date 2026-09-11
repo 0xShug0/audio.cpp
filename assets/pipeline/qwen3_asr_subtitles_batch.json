@@ -1,0 +1,56 @@
+{
+  "id": "qwen3_asr_subtitles_batch",
+  "description": "Generate transcript, word timestamp, and SRT files for each WAV file in a directory using Qwen3 ASR with model-side audio chunking.",
+  "inputs": {
+    "source_audio_dir": "",
+    "language": "en",
+    "qwen3_asr_model": "",
+    "qwen3_forced_aligner_model": ""
+  },
+  "steps": [
+    {
+      "id": "inputs",
+      "type": "batch_inputs",
+      "audio_dir": "${source_audio_dir}"
+    },
+    {
+      "id": "prepare_source",
+      "type": "convert_audio",
+      "foreach": "${inputs.items}",
+      "input": "${item.audio_path}",
+      "output": "${out_dir}/source/${item.id}_16k.wav",
+      "sample_rate": 16000,
+      "channels": 1
+    },
+    {
+      "id": "transcribe",
+      "type": "model",
+      "foreach": "${prepare_source.items}",
+      "family": "qwen3_asr",
+      "model": "${qwen3_asr_model}",
+      "task": "asr",
+      "mode": "offline",
+      "text_out": "${out_dir}/transcripts/${item.id}.txt",
+      "words_out": "${out_dir}/words/${item.id}.json",
+      "session_options": {
+        "qwen3_asr.forced_aligner_model_path": "${qwen3_forced_aligner_model}"
+      },
+      "request": {
+        "id": "transcribe",
+        "audio": "${item.audio_path}",
+        "language": "${language}",
+        "text": "Transcribe the speech exactly.",
+        "audio_chunk_mode": "auto"
+      }
+    },
+    {
+      "id": "format_srt",
+      "type": "format_subtitles",
+      "foreach": "${transcribe.items}",
+      "format": "srt",
+      "words": "${item.words_path}",
+      "output": "${out_dir}/srt/${item.id}.srt",
+      "sample_rate": 16000
+    }
+  ]
+}

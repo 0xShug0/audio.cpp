@@ -1,0 +1,57 @@
+[
+  {
+    "id": "control_room_update",
+    "text": "The control room confirmed the overnight checks and the field team can restart the survey.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 512,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 1234
+  },
+  {
+    "id": "lab_briefing",
+    "text": "The lab briefing is ready. Please confirm the calibration notes before the afternoon check-in.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 512,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 2234
+  },
+  {
+    "id": "dispatch_note",
+    "text": "Dispatch logged the revised route. The north access road is clear and the receiver test can begin after lunch.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 512,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 3234
+  },
+  {
+    "id": "short_status",
+    "text": "All systems are ready for the next test.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 512,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 4234
+  },
+  {
+    "id": "weather_report",
+    "text": "Light rain is expected this evening, but tomorrow morning should remain calm and clear.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 512,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 5234
+  }
+]

@@ -1,0 +1,157 @@
+{
+  "cases": [
+    {
+      "id": "personaplex_packaged_voice_assistant",
+      "coverage": "PersonaPlex streaming lifecycle with packaged NATF2 voice prompt, assistant system prompt, live user-audio encode, AR response generation, and Mimi decode.",
+      "family": "personaplex",
+      "model": "models/PersonaPlex-GGUF",
+      "task": "s2s",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "assistant_basic",
+          "audio": "reference/PersonaPlex/assets/test/input_assistant.wav",
+          "text": "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.",
+          "seed": 42424242,
+          "options": {
+            "voice_id": "NATF2",
+            "temperature": 0.8,
+            "text_temperature": 0.7,
+            "top_k": 250,
+            "text_top_k": 25,
+            "do_sample": true
+          }
+        }
+      ],
+      "chunk_size": 19200
+    },
+    {
+      "id": "personaplex_raw_voice_prompt_wav",
+      "coverage": "PersonaPlex raw reference WAV voice-prompt encoding path instead of precomputed .pt prompt embeddings.",
+      "family": "personaplex",
+      "model": "models/PersonaPlex-GGUF",
+      "task": "s2s",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "raw_voice_prompt_wav",
+          "audio": "reference/PersonaPlex/assets/test/input_service.wav",
+          "voice_ref": "assets/resources/a.wav",
+          "text": "You are a calm support specialist. Answer briefly and keep the caller reassured while giving the next practical step.",
+          "seed": 42424245,
+          "options": {
+            "temperature": 0.8,
+            "text_temperature": 0.7,
+            "top_k": 250,
+            "text_top_k": 25,
+            "do_sample": true
+          }
+        }
+      ],
+      "chunk_size": 19200
+    },
+    {
+      "id": "personaplex_warmed_all_paths_perf",
+      "coverage": "PersonaPlex offline one-session warm request followed by all representative paths for warmed component timing.",
+      "family": "personaplex",
+      "model": "models/PersonaPlex-GGUF",
+      "task": "s2s",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_short",
+          "audio": "assets/resources/a.wav",
+          "text": "You are a calm assistant. Answer briefly and naturally.",
+          "seed": 42424240,
+          "options": {
+            "voice_id": "NATF2",
+            "temperature": 0.8,
+            "text_temperature": 0.7,
+            "top_k": 250,
+            "text_top_k": 25,
+            "do_sample": true
+          }
+        },
+        {
+          "id": "assistant_basic",
+          "audio": "reference/PersonaPlex/assets/test/input_assistant.wav",
+          "text": "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.",
+          "seed": 42424242,
+          "options": {
+            "voice_id": "NATF2",
+            "temperature": 0.8,
+            "text_temperature": 0.7,
+            "top_k": 250,
+            "text_top_k": 25,
+            "do_sample": true
+          }
+        },
+        {
+          "id": "service_role_prompt",
+          "audio": "reference/PersonaPlex/assets/test/input_service.wav",
+          "text": "You work for SwiftPlex Appliances which is a appliance repair company and your name is Farhod Toshmatov. Information: The dishwasher model is out of stock for replacement parts; we can use an alternative part with a 3-day delay. Labor cost remains $60 per hour.",
+          "seed": 42424243,
+          "options": {
+            "voice_id": "NATM1",
+            "temperature": 0.8,
+            "text_temperature": 0.7,
+            "top_k": 250,
+            "text_top_k": 25,
+            "do_sample": true
+          }
+        },
+        {
+          "id": "assistant_interruption_overlap",
+          "audio": "reference/PersonaPlex/assets/test/input_assistant.wav",
+          "text": "You are a concise assistant. Continue listening while responding, and recover naturally if the user talks over you.",
+          "seed": 42424244,
+          "options": {
+            "voice_id": "NATM1",
+            "temperature": 0.8,
+            "text_temperature": 0.7,
+            "top_k": 250,
+            "text_top_k": 25,
+            "do_sample": true
+          }
+        },
+        {
+          "id": "raw_voice_prompt_wav",
+          "audio": "reference/PersonaPlex/assets/test/input_service.wav",
+          "voice_ref": "assets/resources/a.wav",
+          "text": "You are a calm support specialist. Answer briefly and keep the caller reassured while giving the next practical step.",
+          "seed": 42424245,
+          "options": {
+            "temperature": 0.8,
+            "text_temperature": 0.7,
+            "top_k": 250,
+            "text_top_k": 25,
+            "do_sample": true
+          }
+        },
+        {
+          "id": "service_greedy_decode",
+          "audio": "reference/PersonaPlex/assets/test/input_service.wav",
+          "text": "You work for SwiftPlex Appliances which is a appliance repair company and your name is Farhod Toshmatov. Information: The dishwasher model is out of stock for replacement parts; we can use an alternative part with a 3-day delay. Labor cost remains $60 per hour.",
+          "seed": 42424246,
+          "options": {
+            "voice_id": "NATM1",
+            "temperature": 0.0,
+            "text_temperature": 0.0,
+            "top_k": 1,
+            "text_top_k": 1,
+            "do_sample": false
+          }
+        }
+      ]
+    }
+  ]
+}

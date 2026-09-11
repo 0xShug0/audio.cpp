@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -44,6 +45,14 @@ bool is_ascii_space(std::string_view token) noexcept {
     return token.size() == 1 && std::isspace(static_cast<unsigned char>(token.front())) != 0;
 }
 
+bool is_ascii_line_break(std::string_view token) noexcept {
+    return token == "\n" || token == "\r";
+}
+
+bool is_horizontal_ascii_space(std::string_view token) noexcept {
+    return token == " " || token == "\t" || token == "\f" || token == "\v";
+}
+
 bool is_sentence_break(std::string_view token) {
     return token == "." || token == "!" || token == "?" ||
            token == u8"。" || token == u8"！" || token == u8"？";
@@ -52,6 +61,17 @@ bool is_sentence_break(std::string_view token) {
 bool is_clause_break(std::string_view token) {
     return token == "," || token == ";" || token == ":" ||
            token == u8"，" || token == u8"、" || token == u8"；" || token == u8"：";
+}
+
+bool is_cjk_punctuation_delimiter(std::string_view token) noexcept {
+    // Full-width CJK sentence/clause punctuation (。！？，、；：) separates words
+    // even without ASCII spaces — CJK text has no inter-word spaces, so without
+    // this a whole paragraph parses as one word and Default-mode chunking can
+    // never split it at the codepoint budget (only TagAware/Japanese could).
+    // ASCII punctuation stays attached to its word so space-delimited Latin
+    // text is unaffected.
+    const auto leading = static_cast<unsigned char>(token.front());
+    return leading >= 0x80 && (is_sentence_break(token) || is_clause_break(token));
 }
 
 bool is_tag_open(std::string_view token) {
@@ -103,9 +123,25 @@ std::vector<WordRange> split_word_ranges(const std::vector<Utf8Span> & spans) {
         if (span_pos >= spans.size()) {
             break;
         }
+        // A CJK punctuation token forms a word of its own (attached to nothing),
+        // so a subsequent run never absorbs it and boundaries can land on it.
+        if (is_cjk_punctuation_delimiter(spans[span_pos].text)) {
+            words.push_back({
+                span_pos,
+                span_pos + 1,
+                spans[span_pos].start,
+                spans[span_pos].end,
+                is_sentence_break(spans[span_pos].text),
+                is_clause_break(spans[span_pos].text),
+            });
+            span_pos += 1;
+            continue;
+        }
         const size_t word_start = span_pos;
         size_t word_end = span_pos + 1;
-        while (word_end < spans.size() && !is_ascii_space(spans[word_end].text)) {
+        while (word_end < spans.size() &&
+               !is_ascii_space(spans[word_end].text) &&
+               !is_cjk_punctuation_delimiter(spans[word_end].text)) {
             ++word_end;
         }
         const auto last = spans[word_end - 1].text;
@@ -385,7 +421,138 @@ std::vector<std::string> split_text_chunks_tag_aware(
     return chunks;
 }
 
+std::vector<std::string> split_text_chunks_japanese(
+    std::string_view text,
+    int64_t codepoint_budget) {
+    if (codepoint_budget <= 0) {
+        throw std::runtime_error("text chunk budget must be positive");
+    }
+    const std::string trimmed = engine::io::trim_ascii_whitespace(std::string(text));
+    if (trimmed.empty()) {
+        return {};
+    }
+    const auto spans = split_utf8_spans(trimmed, "Japanese text chunk");
+    if (static_cast<int64_t>(spans.size()) <= codepoint_budget) {
+        return {trimmed};
+    }
+
+    std::vector<std::string> chunks;
+    size_t start = 0;
+    while (start < spans.size()) {
+        while (start < spans.size() && is_ascii_space(spans[start].text)) {
+            ++start;
+        }
+        if (start >= spans.size()) {
+            break;
+        }
+
+        const size_t hard_end = std::min(
+            spans.size(),
+            start + static_cast<size_t>(codepoint_budget));
+        size_t end = hard_end;
+        if (hard_end < spans.size()) {
+            for (size_t i = hard_end; i > start + 1; --i) {
+                if (is_sentence_break(spans[i - 1].text)) {
+                    end = i;
+                    break;
+                }
+            }
+            if (end == hard_end) {
+                for (size_t i = hard_end; i > start + 1; --i) {
+                    if (is_clause_break(spans[i - 1].text)) {
+                        end = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        auto chunk = engine::io::trim_ascii_whitespace(
+            trimmed.substr(spans[start].start, spans[end - 1].end - spans[start].start));
+        if (!chunk.empty()) {
+            chunks.push_back(std::move(chunk));
+        }
+        start = end;
+    }
+    return chunks;
+}
+
+void append_endline_chunk(
+    const std::string & chunk,
+    int64_t codepoint_budget,
+    std::vector<std::string> & chunks) {
+    if (chunk.empty()) {
+        return;
+    }
+    if (static_cast<int64_t>(utf8_codepoint_count(chunk, "endline text chunk")) <= codepoint_budget) {
+        chunks.push_back(chunk);
+        return;
+    }
+    auto pieces = split_text_chunks_japanese(chunk, codepoint_budget);
+    chunks.insert(
+        chunks.end(),
+        std::make_move_iterator(pieces.begin()),
+        std::make_move_iterator(pieces.end()));
+}
+
+std::vector<std::string> split_text_chunks_endline(
+    std::string_view text,
+    int64_t codepoint_budget) {
+    if (codepoint_budget <= 0) {
+        throw std::runtime_error("text chunk budget must be positive");
+    }
+    const std::string trimmed = engine::io::trim_ascii_whitespace(std::string(text));
+    if (trimmed.empty()) {
+        return {};
+    }
+    const auto spans = split_utf8_spans(trimmed, "endline text chunk");
+
+    std::vector<std::string> chunks;
+    size_t chunk_start = 0;
+    for (size_t i = 0; i < spans.size(); ++i) {
+        if (!is_sentence_break(spans[i].text)) {
+            continue;
+        }
+
+        size_t next = i + 1;
+        while (next < spans.size() && is_horizontal_ascii_space(spans[next].text)) {
+            ++next;
+        }
+        const bool followed_by_line_end =
+            next >= spans.size() || is_ascii_line_break(spans[next].text);
+        if (!followed_by_line_end) {
+            continue;
+        }
+
+        auto chunk = engine::io::trim_ascii_whitespace(
+            trimmed.substr(spans[chunk_start].start, spans[i].end - spans[chunk_start].start));
+        append_endline_chunk(chunk, codepoint_budget, chunks);
+        chunk_start = i + 1;
+    }
+
+    if (chunk_start < spans.size()) {
+        auto tail = engine::io::trim_ascii_whitespace(
+            trimmed.substr(spans[chunk_start].start, spans.back().end - spans[chunk_start].start));
+        append_endline_chunk(tail, codepoint_budget, chunks);
+    }
+    return chunks;
+}
+
 }  // namespace
+
+std::string_view text_chunk_mode_name(TextChunkMode mode) {
+    switch (mode) {
+    case TextChunkMode::Default:
+        return "default";
+    case TextChunkMode::TagAware:
+        return "tag_aware";
+    case TextChunkMode::Japanese:
+        return "japanese";
+    case TextChunkMode::Endline:
+        return "endline";
+    }
+    return "unknown";
+}
 
 std::vector<std::string> split_text_chunks(
     std::string_view text,
@@ -399,6 +566,12 @@ std::vector<std::string> split_text_chunks(
     TextChunkMode mode) {
     if (mode == TextChunkMode::TagAware) {
         return split_text_chunks_tag_aware(text, codepoint_budget);
+    }
+    if (mode == TextChunkMode::Japanese) {
+        return split_text_chunks_japanese(text, codepoint_budget);
+    }
+    if (mode == TextChunkMode::Endline) {
+        return split_text_chunks_endline(text, codepoint_budget);
     }
     return split_text_chunks_default(text, codepoint_budget);
 }
@@ -414,6 +587,30 @@ std::optional<int64_t> parse_text_chunk_size_override(
         throw std::runtime_error(std::string(match->key) + " must be positive");
     }
     return value;
+}
+
+std::optional<TextChunkMode> parse_text_chunk_mode_override(
+    const std::unordered_map<std::string, std::string> & options) {
+    const auto match = runtime::find_option_match(options, {"text_chunk_mode", "chunk_mode"});
+    if (!match.has_value()) {
+        return std::nullopt;
+    }
+    const std::string & value = match->value;
+    if (value == "default" || value == "word_budget") {
+        return TextChunkMode::Default;
+    }
+    if (value == "tag_aware" || value == "tag-aware" || value == "tagaware") {
+        return TextChunkMode::TagAware;
+    }
+    if (value == "japanese" || value == "ja") {
+        return TextChunkMode::Japanese;
+    }
+    if (value == "endline") {
+        return TextChunkMode::Endline;
+    }
+    throw std::runtime_error(
+        std::string(match->key) +
+        " must be one of default (or alias: word_budget), tag_aware, japanese, endline");
 }
 
 }  // namespace engine::text

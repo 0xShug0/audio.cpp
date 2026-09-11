@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "family": "fun_asr_nano",
+  "display_name": "Fun-ASR-Nano",
+  "description": "Offline multilingual speech recognition with the FunAudioLLM Fun-ASR-Nano-2512 model.",
+  "category": "asr",
+  "status": "wip",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto",
+    "zh",
+    "en",
+    "ja"
+  ],
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Recognition language, or auto to let the model infer it.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "enable_itn",
+        "type": "bool",
+        "description": "Enable inverse text normalization in the transcription prompt.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum number of generated transcript tokens.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode: auto, fixed, or none.",
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_seconds",
+        "type": "float",
+        "description": "Fixed chunk duration in seconds.",
+        "required": false,
+        "min": 0.001,
+        "default": 30
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared model weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "server",
+      "cuda",
+      "metal",
+      "cpu"
+    ]
+  },
+  "packages": [
+    {
+      "id": "fun_asr_nano_2512_q8_0",
+      "display_name": "Fun-ASR-Nano-2512 Q8_0 GGUF",
+      "description": "Standalone audio.cpp GGUF built from the pinned official checkpoint; governed by the FunASR Model Open Source License Agreement v1.1.",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Fun-ASR-Nano-2512-GGUF",
+      "files": [
+        "fun-asr-nano-2512-q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "FunAudioLLM/Fun-ASR-Nano-2512-GGUF",
+        "revision": "ce72677f84900f0dc57f498ace253bfb3c9155b6",
+        "gated": false
+      }
+    },
+    {
+      "id": "fun_asr_nano_2512_f16",
+      "display_name": "Fun-ASR-Nano-2512 F16 GGUF",
+      "description": "Standalone audio.cpp GGUF built from the pinned official checkpoint; governed by the FunASR Model Open Source License Agreement v1.1.",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Fun-ASR-Nano-2512-GGUF",
+      "files": [
+        "fun-asr-nano-2512-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "FunAudioLLM/Fun-ASR-Nano-2512-GGUF",
+        "revision": "ce72677f84900f0dc57f498ace253bfb3c9155b6",
+        "gated": false
+      }
+    },
+    {
+      "id": "fun_asr_nano_2512_safetensors",
+      "display_name": "Fun-ASR-Nano-2512 HF Safetensors",
+      "description": "Official checkpoint governed by the FunASR Model Open Source License Agreement v1.1.",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Fun-ASR-Nano-2512-hf",
+      "files": [
+        "chat_template.jinja",
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "processor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "FunAudioLLM/Fun-ASR-Nano-2512-hf",
+        "revision": "854d88f94205cd17d2afdb24332130d86fbe654a",
+        "gated": false
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "fun_asr_nano_2512_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ],
+    "summary": "Offline Fun-ASR-Nano transcription from official safetensors or audio.cpp GGUF."
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "optional_files": {
+        "chat_template_jinja": "model:chat_template.jinja",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "optional_files": {
+        "chat_template_jinja": "model:chat_template.jinja",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

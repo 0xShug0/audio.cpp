@@ -1,0 +1,105 @@
+{
+ "family": "moss_voicegen",
+ "display_name": "MOSS-VoiceGenerator",
+ "description": "MOSS voice design model: creates a speaker from a written instruction instead of a reference recording, then speaks the supplied text in that voice.",
+ "category": "community",
+ "status": "community",
+ "tasks": [
+  "vdes"
+ ],
+ "modes": [
+  "offline"
+ ],
+ "languages": [
+  "en",
+  "zh"
+ ],
+ "capabilities": {
+  "vdes": [
+   "style_condition"
+  ]
+ },
+ "runtime": {
+  "tags": [
+   "gguf"
+  ]
+ },
+ "ui": {
+  "recommended_package": "moss_voicegen_bf16_codec_f16_decode",
+  "tags": [
+   "Voice Design",
+   "GGUF"
+  ],
+  "docs": [
+   "docs/community_models/moss_voicegen.md",
+   "docs/tts.md",
+   "docs/gguf.md"
+  ]
+ },
+ "package_defaults": {
+  "download": {
+   "kind": "huggingface_snapshot",
+   "repo": "audio-cpp/audio.cpp-gguf",
+   "revision": "main",
+   "gated": false
+  }
+ },
+ "packages": [
+  {
+   "id": "moss_voicegen_bf16_codec_f16_decode",
+   "display_name": "MOSS-VoiceGenerator BF16 GGUF",
+   "default": true,
+   "format": "gguf",
+   "precision": "bf16",
+   "target_directory": "MOSS-VoiceGenerator-GGUF",
+   "files": [
+    "MOSS-VoiceGenerator-GGUF/moss_voicegen_bf16_codec_f16_decode.gguf"
+   ],
+   "strip_prefix": "MOSS-VoiceGenerator-GGUF"
+  }
+ ],
+ "sources": [
+  {
+   "format": "gguf",
+   "roots": {
+    "model": ".",
+    "weights": "$gguf"
+   },
+   "files": {
+    "config": "model:config.json",
+    "tokenizer_json": "model:tokenizer.json",
+    "tokenizer_config": "model:tokenizer_config.json",
+    "tokenizer_merges": "model:merges.txt",
+    "audio_tokenizer_config": "model:audio_tokenizer/config.json"
+   },
+   "tensors": {
+    "model_weights": {
+     "source": "weights:",
+     "prefix": "model_weights"
+    },
+    "audio_tokenizer_weights": {
+     "source": "weights:",
+     "prefix": "audio_tokenizer_weights"
+    }
+   }
+  },
+  {
+   "format": "safetensors",
+   "roots": {
+    "model": ".",
+    "audio_tokenizer": "audio_tokenizer"
+   },
+   "files": {
+    "config": "model:config.json",
+    "tokenizer_json": "model:tokenizer.json",
+    "tokenizer_config": "model:tokenizer_config.json",
+    "tokenizer_merges": "model:merges.txt",
+    "audio_tokenizer_config": "audio_tokenizer:config.json"
+   },
+   "tensors": {
+    "model_weights": "model:model.safetensors",
+    "audio_tokenizer_weights": "audio_tokenizer:model.safetensors.index.json"
+   }
+  }
+ ]
+}

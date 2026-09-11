@@ -533,8 +533,7 @@
             "inference_cfg_rate": 0.7,
             "f0_condition": true,
             "auto_f0_adjust": true,
-            "semi_tone_shift": 0,
-            "fp16": false
+            "semi_tone_shift": 0
           },
           "seed": 1234,
           "num_inference_steps": 30
@@ -559,8 +558,7 @@
           "route": "v1_whisper_bigvgan_vc",
           "options": {
             "length_adjust": 1.0,
-            "inference_cfg_rate": 0.7,
-            "fp16": false
+            "inference_cfg_rate": 0.7
           },
           "seed": 1234,
           "num_inference_steps": 30
@@ -585,8 +583,7 @@
           "route": "v1_xlsr_hift_vc",
           "options": {
             "length_adjust": 1.0,
-            "inference_cfg_rate": 0.7,
-            "fp16": false
+            "inference_cfg_rate": 0.7
           },
           "seed": 1234,
           "num_inference_steps": 30
@@ -904,9 +901,9 @@
       ]
     },
     {
-      "id": "moss_tts_voice_clone_long",
-      "coverage": "MOSS TTS voice clone, text/audio token generation, codec decode",
-      "family": "moss_tts",
+      "id": "moss_tts_nano_voice_clone_long",
+      "coverage": "MOSS-TTS-Nano voice clone, text/audio token generation, MOSS-Audio-Tokenizer-Nano decode",
+      "family": "moss_tts_nano",
       "model": "models/MOSS-TTS-Nano-100M",
       "task": "tts",
       "mode": "offline",
@@ -952,7 +949,7 @@
       "task": "asr",
       "mode": "offline",
       "session_options": {
-        "decoder_algorithm": "greedy_duration_loop"
+        "parakeet_tdt.offline_mode": "long_form"
       },
       "outputs": [
         "text"
@@ -972,7 +969,9 @@
       "task": "asr",
       "mode": "streaming",
       "session_options": {
-        "decoder_algorithm": "greedy_duration_loop"
+        "parakeet_tdt.audio_chunk_duration_sec": "2",
+        "parakeet_tdt.left_context_sec": "10",
+        "parakeet_tdt.right_context_sec": "2"
       },
       "outputs": [
         "text"

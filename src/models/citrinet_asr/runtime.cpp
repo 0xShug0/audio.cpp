@@ -374,12 +374,13 @@ class CitrinetRuntime::Graph {
         };
         auto input = core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, weights_->config.n_mels, frames_}));
         input_ = input.tensor;
+        ggml_set_input(input_);
         output_ = build_citrinet_graph(build_ctx, input, *backend_weights_).tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 16384, false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-        if (buffer_ == nullptr) {
+        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("failed to allocate graph");
         }
         if (engine::core::uses_host_graph_plan(backend_)) {
@@ -399,8 +400,8 @@ class CitrinetRuntime::Graph {
         if (plan_ != nullptr) {
             engine::core::free_backend_graph_plan(backend_, plan_);
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
+        if (gallocr_ != nullptr) {
+            ggml_gallocr_free(gallocr_);
         }
     }
 
@@ -466,7 +467,7 @@ class CitrinetRuntime::Graph {
     ggml_cgraph * graph_ = nullptr;
     ggml_backend_t backend_ = nullptr;
     int compute_threads_ = 1;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_graph_plan_t plan_ = nullptr;
     double plan_create_ms_ = 0.0;
     std::vector<float> channels_first_;
@@ -494,7 +495,6 @@ std::vector<float> to_time_major_features(const engine::audio::AudioTensor & fea
 
 FeaturePack compute_citrinet_features(const std::vector<float> & waveform, const CitrinetWeights & weights);
 std::vector<int32_t> greedy_ctc_ids(const CitrinetInferenceResult & result, int32_t blank_id);
-std::string decode_wordpieces(const std::vector<std::string> & vocab, const std::vector<int32_t> & ids);
 
 FeaturePack extract_feature_pack_from_audio(
     const runtime::AudioBuffer & audio,
@@ -513,7 +513,7 @@ CitrinetTranscriptionResult make_transcription_result(
     CitrinetInferenceResult inference) {
     auto ids = greedy_ctc_ids(inference, static_cast<int32_t>(weights.config.blank_id));
     CitrinetTranscriptionResult result;
-    result.text = decode_wordpieces(weights.vocab, ids);
+    result.text = tokenizers::decode_sentencepiece(weights.tokenizer_pieces, ids);
     result.token_ids = std::move(ids);
     result.inference = std::move(inference);
     return result;
@@ -633,37 +633,6 @@ std::vector<int32_t> greedy_ctc_ids(const CitrinetInferenceResult & result, int3
         ids.push_back(best);
     }
     return ids;
-}
-
-bool is_join_punctuation(const std::string & piece) {
-    return piece == "." || piece == "," || piece == "!" || piece == "?" || piece == ":" || piece == ";" ||
-           piece == "'" || piece == "\"" || piece == ")" || piece == "]" || piece == "}" || piece == "-" ||
-           piece == "/" || piece == "\\";
-}
-
-std::string decode_wordpieces(const std::vector<std::string> & vocab, const std::vector<int32_t> & ids) {
-    std::string text;
-    for (int32_t id : ids) {
-        if (id < 0 || id >= static_cast<int32_t>(vocab.size())) {
-            throw std::runtime_error("token id out of vocab range");
-        }
-        const std::string & piece = vocab[static_cast<size_t>(id)];
-        if (piece.rfind("##", 0) == 0) {
-            text += piece.substr(2);
-            continue;
-        }
-        if (text.empty()) {
-            text += piece;
-            continue;
-        }
-        if (!text.empty() && (text.back() == '\'' || text.back() == '-' || is_join_punctuation(piece))) {
-            text += piece;
-            continue;
-        }
-        text += ' ';
-        text += piece;
-    }
-    return text;
 }
 
 }  // namespace

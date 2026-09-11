@@ -1,0 +1,39 @@
+{
+  "warmup": {
+    "audio": "resources/sample.wav",
+    "language": "eng",
+    "transcript": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. Twenty-two thousand five hundred times longer than you."
+  },
+  "requests": [
+    {
+      "audio": "resources/sample.wav",
+      "start_sec": 10.6,
+      "end_sec": 14.05,
+      "language": "eng",
+      "transcript": "Twenty-two thousand five hundred times longer than you.",
+      "expected_words": ["Twenty-two", "thousand", "five", "hundred", "times", "longer"]
+    },
+    {
+      "audio": "resources/sample.wav",
+      "start_sec": 6.0,
+      "end_sec": 9.95,
+      "language": "eng",
+      "transcript": "I've been here for over 4.5 billion years.",
+      "expected_words": ["I've", "been", "here", "for", "over", "billion", "years"]
+    },
+    {
+      "audio": "resources/sample.wav",
+      "start_sec": 10.6,
+      "end_sec": 14.05,
+      "language": "nld",
+      "transcript": "Vijfentwintig duizend keer langer dan jou.",
+      "expected_words": ["Vijfentwintig", "duizend", "keer", "langer", "dan", "jou"]
+    },
+    {
+      "audio": "resources/sample.wav",
+      "language": "eng",
+      "transcript": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. Twenty-two thousand five hundred times longer than you.",
+      "expected_words": ["Some", "call", "nature", "Mother", "Nature", "billion", "years", "Twentytwo", "thousand"]
+    }
+  ]
+}

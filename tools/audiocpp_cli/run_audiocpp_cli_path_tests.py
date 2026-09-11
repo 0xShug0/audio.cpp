@@ -248,7 +248,7 @@ def maybe_absolute_path(value: Any) -> Any:
     path = Path(value)
     if path.is_absolute():
         return value
-    if value.startswith(("resources/", "models/", "build/", "reference/")):
+    if value.startswith(("assets/", "resources/", "models/", "build/", "reference/")):
         return str(REPO_ROOT / path)
     return value
 
@@ -271,6 +271,24 @@ def materialize_request_paths(request: dict[str, Any]) -> dict[str, Any]:
         if repeat <= 0:
             raise RuntimeError("text_repeat must be positive")
         out["text"] = "\n".join(text.strip() for _ in range(repeat))
+    if "text_repeat" in out and isinstance(out["text_repeat"], dict):
+        if "text" in out:
+            raise RuntimeError("request cannot contain both text and text_repeat")
+        spec = out.pop("text_repeat")
+        text = str(spec["text"])
+        chars = int(spec["chars"])
+        if not text or chars <= 0:
+            raise RuntimeError("text_repeat requires non-empty text and positive chars")
+        out["text"] = (text * ((chars // len(text)) + 1))[:chars]
+    if "emotion_repeat" in out:
+        if "emotion" in out:
+            raise RuntimeError("request cannot contain both emotion and emotion_repeat")
+        spec = out.pop("emotion_repeat")
+        text = str(spec["text"])
+        chars = int(spec["chars"])
+        if not text or chars <= 0:
+            raise RuntimeError("emotion_repeat requires non-empty text and positive chars")
+        out["emotion"] = (text * ((chars // len(text)) + 1))[:chars]
     for key in ("audio", "voice_ref", "source_audio", "target_voice", "prosody_ref", "style_ref"):
         if key in out:
             out[key] = maybe_absolute_path(out[key])
@@ -278,6 +296,8 @@ def materialize_request_paths(request: dict[str, Any]) -> dict[str, Any]:
         options = dict(out["options"])
         for key, value in options.items():
             if key.endswith("_path") or key.endswith("_file") or key.endswith(".path") or key.endswith(".file"):
+                options[key] = maybe_absolute_path(value)
+            elif key in {"video", "controlfoley.video"}:
                 options[key] = maybe_absolute_path(value)
             elif key in {"voice_samples", "vibevoice.voice_samples"}:
                 options[key] = maybe_absolute_path_list(value)
@@ -294,6 +314,32 @@ def write_sequence_file(case: dict[str, Any], case_dir: Path) -> Path:
     return sequence_path
 
 
+def extract_text_outputs(case: dict[str, Any], stdout: str) -> list[dict[str, str]]:
+    request_ids = [str(request.get("id", f"request_{index}")) for index, request in enumerate(case.get("requests", []))]
+    outputs: list[dict[str, str]] = []
+    request_id = ""
+    for line in stdout.splitlines():
+        if line.startswith("request_id="):
+            request_id = line[len("request_id=") :]
+            continue
+        if not line.startswith("text_output="):
+            continue
+        fallback_id = request_ids[len(outputs)] if len(outputs) < len(request_ids) else f"text_output_{len(outputs)}"
+        outputs.append({
+            "id": request_id if request_id else fallback_id,
+            "text": line[len("text_output=") :],
+        })
+        request_id = ""
+    return outputs
+
+
+def write_text_outputs(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
+    outputs = extract_text_outputs(case, stdout)
+    with (case_dir / "text_outputs.json").open("w", encoding="utf-8") as handle:
+        json.dump({"outputs": outputs}, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+
 def resolve_model_path(models_root: Path, value: str) -> Path:
     path = Path(value)
     if path.is_absolute():
@@ -305,7 +351,16 @@ def resolve_model_path(models_root: Path, value: str) -> Path:
     return models_root / path
 
 
+def resolve_model_override(value: Path | None) -> Path | None:
+    if value is None:
+        return None
+    if value.is_absolute():
+        return value
+    return REPO_ROOT / value
+
+
 def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path) -> list[str]:
+    model_path = resolve_model_override(args.model_path) or resolve_model_path(args.models_root, case["model"])
     command = [
         str(args.audiocpp_cli_bin),
         "--task",
@@ -313,7 +368,7 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
         "--family",
         case["family"],
         "--model",
-        str(resolve_model_path(args.models_root, case["model"])),
+        str(model_path),
         "--backend",
         case.get("backend", args.backend),
         "--mode",
@@ -325,6 +380,8 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
     ]
     append_key_values(command, "--load-option", case.get("load_options", {}))
     append_key_values(command, "--session-option", case.get("session_options", {}))
+    for override in getattr(args, "session_option", []) or []:
+        command.extend(["--session-option", override])
     if args.log:
         command.append("--log")
 
@@ -366,16 +423,24 @@ def verify_case(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
         raise RuntimeError(f"{case['id']} did not produce a non-empty wav")
     if "named_audio" in outputs and len([path for path in wavs if path.stat().st_size > 44]) < 1:
         raise RuntimeError(f"{case['id']} did not produce named wav outputs")
-    if "text" in outputs and "text_output=" not in stdout:
-        raise RuntimeError(f"{case['id']} did not print text_output")
+    if "text" in outputs:
+        text_outputs = extract_text_outputs(case, stdout)
+        if not text_outputs:
+            raise RuntimeError(f"{case['id']} did not print text_output")
+        text_output_path = case_dir / "text_outputs.json"
+        if not text_output_path.exists() or text_output_path.stat().st_size <= 2:
+            raise RuntimeError(f"{case['id']} did not write text_outputs.json")
     if "artifact" in outputs and "artifact=" not in stdout:
         raise RuntimeError(f"{case['id']} did not print an artifact")
     if "artifact" in outputs and "artifact_out[" not in stdout:
         raise RuntimeError(f"{case['id']} did not write an artifact json")
     if "artifact" in outputs:
-        artifacts = list((case_dir / "outputs").rglob("*.json"))
-        if not artifacts or not any(path.stat().st_size > 2 for path in artifacts):
-            raise RuntimeError(f"{case['id']} did not produce artifact json")
+        artifacts = [
+            path for path in (case_dir / "outputs").rglob("*")
+            if path.is_file() and path.name not in {"stdout.log", "stderr.log"}
+        ]
+        if not artifacts or not any(path.stat().st_size > 0 for path in artifacts):
+            raise RuntimeError(f"{case['id']} did not produce a non-empty artifact file")
     for kind, filename in (("segments", "segments"), ("turns", "turns"), ("words", "words")):
         if kind not in outputs:
             continue
@@ -428,6 +493,8 @@ def run_case(args: argparse.Namespace, case: dict[str, Any], out_root: Path) -> 
     stdout = stdout_path.read_text(encoding="utf-8")
     if returncode != 0:
         raise RuntimeError(f"{case['id']} failed with exit code {returncode}; see {case_dir}")
+    if "text" in set(case.get("outputs", [])):
+        write_text_outputs(case, case_dir, stdout)
     verify_case(case, case_dir, stdout)
     result = {
         "id": case["id"],
@@ -445,6 +512,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--audiocpp-cli-bin", type=Path, default=DEFAULT_AUDIOCPP_CLI_BIN)
     parser.add_argument("--models-root", type=Path, default=DEFAULT_MODELS_ROOT)
+    parser.add_argument("--model-path", type=Path, help="Override the model path for every selected case")
     parser.add_argument("--backend", default="cuda", choices=["cpu", "cuda", "vulkan", "metal", "best"])
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)
@@ -452,6 +520,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resource-sample-ms", type=int, default=DEFAULT_RESOURCE_SAMPLE_MS)
     parser.add_argument("--out-root", type=Path)
     parser.add_argument("--only", action="append", default=[], help="Case id or comma-separated case ids")
+    parser.add_argument(
+        "--session-option",
+        action="append",
+        default=[],
+        help="Extra key=value session option appended to every case (e.g. moss_tts_local.weight_type=f32)",
+    )
     parser.add_argument("--family", help="Run only cases for one family")
     parser.add_argument("--log", action="store_true")
     parser.add_argument("--list", action="store_true")

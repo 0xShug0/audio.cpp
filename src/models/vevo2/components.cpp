@@ -68,27 +68,19 @@ struct GgmlContextDeleter {
     }
 };
 
-int64_t require_power_of_two_log2(int64_t value, const char * name) {
-    if (value <= 0 || (value & (value - 1)) != 0) {
-        throw std::runtime_error(std::string(name) + " must be a positive power of two");
-    }
-    int64_t log2 = 0;
-    while (value > 1) {
-        value >>= 1;
-        ++log2;
-    }
-    return log2;
-}
-
 int64_t conv1d_output_frames(int64_t frames, int64_t kernel, int64_t stride, int64_t padding, int64_t dilation = 1) {
     return (frames + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1;
 }
 
 int64_t coco_output_frames(int64_t input_frames, int64_t downsample_rate) {
     int64_t frames = input_frames;
-    const int64_t layers = require_power_of_two_log2(downsample_rate, "Vevo2 Coco downsample_rate");
-    for (int64_t layer = 0; layer < layers; ++layer) {
+    int64_t remaining = downsample_rate;
+    while (remaining > 1 && remaining % 2 == 0) {
         frames = conv1d_output_frames(frames, 3, 2, 1);
+        remaining /= 2;
+    }
+    if (remaining != 1) {
+        throw std::runtime_error("Vevo2 Coco downsample_rate must be a positive power of two");
     }
     if (frames <= 0) {
         throw std::runtime_error("Vevo2 Coco tokenizer produced non-positive output frame count");
@@ -530,19 +522,6 @@ int64_t vevo2_frame_count_24k(const runtime::AudioBuffer & audio) {
         24000).size()) / 480;
 }
 
-engine::core::TensorValue ensure_contiguous(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & value) {
-    return engine::core::ensure_backend_addressable_layout(ctx, value);
-}
-
-engine::core::TensorValue repeat_like(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & value,
-    const engine::core::TensorValue & like) {
-    return engine::core::wrap_tensor(ggml_repeat(ctx.ggml, value.tensor, like.tensor), like.shape, GGML_TYPE_F32);
-}
-
 engine::core::TensorValue scale_last_dim(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input,
@@ -551,20 +530,8 @@ engine::core::TensorValue scale_last_dim(
         ctx,
         scale,
         engine::core::TensorShape::from_dims({1, 1, scale.shape.dims[0]}));
-    const auto repeated = repeat_like(ctx, view, input);
-    return engine::core::wrap_tensor(ggml_mul(ctx.ggml, input.tensor, repeated.tensor), input.shape, GGML_TYPE_F32);
-}
-
-engine::core::TensorValue transpose_btc_to_bct(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & input) {
-    return engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
-}
-
-engine::core::TensorValue transpose_bct_to_btc(
-    engine::core::ModuleBuildContext & ctx,
-    const engine::core::TensorValue & input) {
-    return engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
+    const auto repeated = engine::modules::RepeatModule({input.shape}).build(ctx, view);
+    return engine::modules::MulModule{}.build(ctx, input, repeated);
 }
 
 std::vector<float> effective_weight_norm_conv1d(
@@ -624,12 +591,11 @@ std::vector<float> l2_normalized_rows(
 }
 
 std::pair<std::vector<float>, std::vector<float>> load_whisper_stats(
-    const std::filesystem::path & path,
+    const engine::assets::TensorSource & source,
     int64_t whisper_dim) {
-    const auto source = engine::assets::open_tensor_source(path);
-    auto mean = source->require_f32("mean", {whisper_dim});
-    auto std = source->require_f32("std", {whisper_dim});
-    source->release_storage();
+    auto mean = source.require_f32("mean", {whisper_dim});
+    auto std = source.require_f32("std", {whisper_dim});
+    source.release_storage();
     return {std::move(mean), std::move(std)};
 }
 
@@ -785,9 +751,9 @@ std::shared_ptr<const Vevo2CocoTokenizerWeights> load_coco_tokenizer_weights(
         config.hidden_size,
         config.chromagram_dim,
         true);
-    const int64_t downsample_layers = require_power_of_two_log2(config.downsample_rate, "Vevo2 Coco downsample_rate");
-    weights->downsample_layers.reserve(static_cast<size_t>(downsample_layers));
-    for (int64_t layer = 0; layer < downsample_layers; ++layer) {
+    int64_t downsample_rate = config.downsample_rate;
+    while (downsample_rate > 1 && downsample_rate % 2 == 0) {
+        const int64_t layer = static_cast<int64_t>(weights->downsample_layers.size());
         weights->downsample_layers.push_back(engine::modules::binding::conv1d_from_source(
             *weights->store,
             source,
@@ -797,6 +763,10 @@ std::shared_ptr<const Vevo2CocoTokenizerWeights> load_coco_tokenizer_weights(
             config.hidden_size,
             3,
             true));
+        downsample_rate /= 2;
+    }
+    if (downsample_rate != 1) {
+        throw std::runtime_error("Vevo2 Coco downsample_rate must be a positive power of two");
     }
     weights->encoder = load_coco_vocos_encoder_weights(
         *weights->store,
@@ -822,7 +792,7 @@ engine::core::TensorValue build_coco_convnext_block(
         1,
         weights.dwconv.bias.has_value(),
     }).build(ctx, input_bct, weights.dwconv);
-    hidden = transpose_bct_to_btc(ctx, hidden);
+    hidden = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
     hidden = engine::modules::LayerNormModule({config.vocos_dim, 1.0e-6F, true, true})
                  .build(ctx, hidden, weights.norm);
     hidden = engine::modules::LinearModule({
@@ -839,7 +809,7 @@ engine::core::TensorValue build_coco_convnext_block(
         GGML_PREC_F32,
     }).build(ctx, hidden, weights.pwconv2);
     hidden = scale_last_dim(ctx, hidden, weights.gamma);
-    hidden = transpose_btc_to_bct(ctx, hidden);
+    hidden = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
     return engine::modules::AddModule{}.build(ctx, input_bct, hidden);
 }
 
@@ -857,14 +827,14 @@ engine::core::TensorValue build_coco_vocos_encoder(
         1,
         weights.encoder.embed.bias.has_value(),
     }).build(ctx, input_bct, weights.encoder.embed);
-    hidden = transpose_bct_to_btc(ctx, hidden);
+    hidden = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
     hidden = engine::modules::LayerNormModule({config.vocos_dim, 1.0e-6F, true, true})
                  .build(ctx, hidden, weights.encoder.norm);
-    hidden = transpose_btc_to_bct(ctx, hidden);
+    hidden = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
     for (const auto & block : weights.encoder.convnext) {
         hidden = build_coco_convnext_block(ctx, hidden, block, config);
     }
-    hidden = transpose_bct_to_btc(ctx, hidden);
+    hidden = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
     hidden = engine::modules::LayerNormModule({config.vocos_dim, 1.0e-6F, true, true})
                  .build(ctx, hidden, weights.encoder.final_norm);
     return engine::modules::LinearModule({
@@ -878,17 +848,14 @@ engine::core::TensorValue build_coco_vocos_encoder(
 engine::core::TensorValue build_l2_normalized_rows(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input) {
-    auto contiguous = ensure_contiguous(ctx, input);
-    auto squared = engine::core::wrap_tensor(
-        ggml_mul(ctx.ggml, contiguous.tensor, contiguous.tensor),
-        contiguous.shape,
-        GGML_TYPE_F32);
+    auto contiguous = engine::core::ensure_backend_addressable_layout(ctx, input);
+    auto squared = engine::modules::MulModule{}.build(ctx, contiguous, contiguous);
     auto summed = engine::modules::ReduceSumModule({1}).build(ctx, squared);
     auto norm = engine::core::wrap_tensor(
         ggml_sqrt(ctx.ggml, ggml_scale_bias(ctx.ggml, summed.tensor, 1.0F, 1.0e-20F)),
         summed.shape,
         GGML_TYPE_F32);
-    auto repeated_norm = repeat_like(ctx, norm, contiguous);
+    auto repeated_norm = engine::modules::RepeatModule({contiguous.shape}).build(ctx, norm);
     return engine::core::wrap_tensor(
         ggml_div(ctx.ggml, contiguous.tensor, repeated_norm.tensor),
         contiguous.shape,
@@ -900,7 +867,7 @@ engine::core::TensorValue build_coco_quantizer_ids(
     const engine::core::TensorValue & encoder_output_btd,
     const Vevo2CocoTokenizerWeights & weights,
     const Vevo2CocoTokenizerConfig & config) {
-    auto hidden_bdt = transpose_btc_to_bct(ctx, encoder_output_btd);
+    auto hidden_bdt = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, encoder_output_btd);
     auto projected_bdt = engine::modules::Conv1dModule({
         config.hidden_size,
         config.codebook_dim,
@@ -910,10 +877,10 @@ engine::core::TensorValue build_coco_quantizer_ids(
         1,
         weights.quantizer.in_project.bias.has_value(),
     }).build(ctx, hidden_bdt, weights.quantizer.in_project);
-    auto projected_btd = transpose_bct_to_btc(ctx, projected_bdt);
+    auto projected_btd = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, projected_bdt);
     auto flat = engine::core::reshape_tensor(
         ctx,
-        ensure_contiguous(ctx, projected_btd),
+        engine::core::ensure_backend_addressable_layout(ctx, projected_btd),
         engine::core::TensorShape::from_dims({projected_btd.shape.dims[1], config.codebook_dim}));
     auto normalized = build_l2_normalized_rows(ctx, flat);
     auto logits = engine::modules::LinearModule({
@@ -923,7 +890,7 @@ engine::core::TensorValue build_coco_quantizer_ids(
         GGML_PREC_F32,
     }).build(ctx, normalized, {weights.quantizer.codebook, std::nullopt});
     auto ids = engine::core::wrap_tensor(
-        ggml_argmax(ctx.ggml, ensure_contiguous(ctx, logits).tensor),
+        ggml_argmax(ctx.ggml, engine::core::ensure_backend_addressable_layout(ctx, logits).tensor),
         engine::core::TensorShape::from_dims({projected_btd.shape.dims[1]}),
         GGML_TYPE_I32);
     return engine::core::reshape_tensor(
@@ -999,7 +966,7 @@ struct Vevo2CocoTokenizerGraph {
             hidden = engine::modules::AddModule{}.build(build_ctx, hidden, whisper_hidden);
         }
 
-        hidden = transpose_btc_to_bct(build_ctx, hidden);
+        hidden = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(build_ctx, hidden);
         for (const auto & downsample : weights.downsample_layers) {
             hidden = engine::modules::Conv1dModule({
                 config.hidden_size,
@@ -1089,10 +1056,10 @@ Vevo2ProsodyTokenizerRuntime::Vevo2ProsodyTokenizerRuntime(
     size_t graph_context_bytes,
     engine::assets::TensorStorageType matmul_weight_storage_type,
     engine::assets::TensorStorageType conv_weight_storage_type)
-    : config_(assets.prosody_tokenizer_config),
+    : config_(assets.config.prosody_tokenizer),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.prosody_tokenizer_weights)),
+      weight_source_(assets.prosody_tokenizer_weights),
       weights_(load_coco_tokenizer_weights(
           config_,
           "prosody_tokenizer",
@@ -1102,8 +1069,7 @@ Vevo2ProsodyTokenizerRuntime::Vevo2ProsodyTokenizerRuntime(
           matmul_weight_storage_type,
           conv_weight_storage_type,
           *weight_source_)),
-      name_("prosody_tokenizer"),
-      weights_path_(assets.paths.prosody_tokenizer_weights) {
+      name_("prosody_tokenizer") {
     weight_source_->release_storage();
 }
 
@@ -1189,10 +1155,10 @@ Vevo2ContentStyleTokenizerRuntime::Vevo2ContentStyleTokenizerRuntime(
     size_t graph_context_bytes,
     engine::assets::TensorStorageType matmul_weight_storage_type,
     engine::assets::TensorStorageType conv_weight_storage_type)
-    : config_(assets.content_style_tokenizer_config),
+    : config_(assets.config.content_style_tokenizer),
       execution_context_(execution_context),
       graph_context_bytes_(graph_context_bytes),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.content_style_tokenizer_weights)),
+      weight_source_(assets.content_style_tokenizer_weights),
       weights_(load_coco_tokenizer_weights(
           config_,
           "content_style_tokenizer",
@@ -1202,10 +1168,9 @@ Vevo2ContentStyleTokenizerRuntime::Vevo2ContentStyleTokenizerRuntime(
           matmul_weight_storage_type,
           conv_weight_storage_type,
           *weight_source_)),
-      name_("content_style_tokenizer"),
-      weights_path_(assets.paths.content_style_tokenizer_weights) {
+      name_("content_style_tokenizer") {
     if (config_.use_normed_whisper) {
-        auto stats = load_whisper_stats(assets.paths.fm_whisper_stats, config_.whisper_dim);
+        auto stats = load_whisper_stats(*assets.fm_whisper_stats, config_.whisper_dim);
         whisper_mean_ = std::move(stats.first);
         whisper_std_ = std::move(stats.second);
     }

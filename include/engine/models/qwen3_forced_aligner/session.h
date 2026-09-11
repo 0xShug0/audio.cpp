@@ -30,6 +30,8 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult run_single(const runtime::TaskRequest & request);
+
     runtime::TaskSpec task_;
     std::shared_ptr<const engine::models::qwen3_asr::Qwen3ASRAssets> assets_;
     size_t audio_encoder_graph_arena_bytes_ = 128ull * 1024ull * 1024ull;
@@ -43,6 +45,7 @@ private:
     engine::models::qwen3_asr::Qwen3ASRAudioEncoderRuntime audio_encoder_;
     engine::models::qwen3_asr::Qwen3ASRThinkerRuntime thinker_;
     Qwen3ForcedAlignProcessor processor_;
+    int64_t run_index_ = 0;
 };
 
 }  // namespace engine::models::qwen3_forced_aligner

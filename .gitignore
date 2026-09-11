@@ -1,6 +1,7 @@
 /build*/
 /cmake-build*/
 ._*
+.idea/
 .vs/
 .vscode/
 compile_commands.json
@@ -12,15 +13,37 @@ compile_commands.json
 *.exe
 __pycache__/
 *.pyc
+/venv/
+/.venv/
 /tests/assets/**/*.safetensors
+/tests/omnivoice/outputs/
 /unittests/
 /models/
+/granite5asr/
 /reference/
 /resources/
 /patches/
 /target_proj/
+/tools_local/
 /nocommit/
 /perf/
+/logs/
+/ideas/
+/windows_prebuild/
 /*.wav
 /flutter/
 /.cache/
+
+# --- portable bundle: distributed manually, never committed ---
+/audiocpp-portable/
+
+# --- Native WebUI build artifacts ---
+/webui/native/node_modules/
+/webui/native/.svelte-kit/
+/webui/native/dist/*
+!/webui/native/dist/index.html
+
+audio-vtest-*
+
+# local-only: 0.1B Falcon-H1 detailed port plan (keep local, not upstream)
+docs/FALCON_H1_0.1B_PORT_PLAN.md

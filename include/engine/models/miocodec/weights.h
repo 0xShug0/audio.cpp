@@ -150,7 +150,7 @@ struct MioCodecWeights {
 };
 
 std::shared_ptr<const MioCodecWeights> load_miocodec_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
     const MioCodecConfig & config,

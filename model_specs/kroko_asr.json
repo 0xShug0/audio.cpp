@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "family": "kroko_asr",
+  "display_name": "Kroko Community ASR",
+  "description": "Native Zipformer2 RNN-T transcription for the public free Kroko Community single-language packages, with offline and stateful streaming inference, greedy and modified beam decoding, hotwords, endpoint segments, partial results, and word timestamps.",
+  "category": "asr",
+  "status": "community",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "de",
+    "en",
+    "es",
+    "fr",
+    "it",
+    "he",
+    "nl",
+    "pt",
+    "sv",
+    "tr"
+  ],
+  "capabilities": {
+    "asr": [
+      "word_timestamps",
+      "partial_results",
+      "segments"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language code matching the selected single-language Kroko package; default auto uses the package language.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "decoding_method",
+        "type": "enum",
+        "description": "RNN-T decoding method; greedy search remains the parity-tested default.",
+        "values": [
+          "greedy_search",
+          "modified_beam_search"
+        ],
+        "required": false,
+        "default": "greedy_search"
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Maximum active hypotheses retained by modified beam search.",
+        "required": false,
+        "min": 1,
+        "max": 64,
+        "default": 4
+      },
+      {
+        "name": "blank_penalty",
+        "type": "float",
+        "description": "Non-negative score subtracted from the RNN-T blank logit.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.0
+      },
+      {
+        "name": "hotwords",
+        "type": "string",
+        "description": "Slash- or newline-separated natural-text phrases; requires modified beam search.",
+        "required": false
+      },
+      {
+        "name": "hotwords_score",
+        "type": "float",
+        "description": "Non-negative per-token context boost for hotword phrases.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.5
+      },
+      {
+        "name": "enable_endpoint",
+        "type": "bool",
+        "description": "Enable automatic endpoint speech segments.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "rule1_min_trailing_silence_sec",
+        "type": "float",
+        "description": "Endpoint timeout in seconds even when no speech token was decoded.",
+        "required": false,
+        "min": 0.0,
+        "default": 2.4
+      },
+      {
+        "name": "rule2_min_trailing_silence_sec",
+        "type": "float",
+        "description": "Endpoint silence in seconds after a speech token was decoded.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.2
+      },
+      {
+        "name": "rule3_min_utterance_length_sec",
+        "type": "float",
+        "description": "Maximum utterance duration in seconds before an endpoint.",
+        "required": false,
+        "min": 0.0,
+        "default": 20.0
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokens": "model:tokens.txt"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokens": "model:tokens.txt"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "kroko_asr_community_q8_0",
+      "display_name": "Kroko Community ASR Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Kroko-ASR-GGUF",
+      "files": [
+        "Kroko-ASR-GGUF/kroko-en-community-64-l-q8_0.gguf"
+      ],
+      "strip_prefix": "Kroko-ASR-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "kroko_asr_community_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/community_models/kroko_asr.md",
+      "docs/gguf.md"
+    ]
+  }
+}

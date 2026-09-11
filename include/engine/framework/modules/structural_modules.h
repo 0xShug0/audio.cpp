@@ -133,6 +133,26 @@ private:
     ReflectPad1dConfig config_;
 };
 
+struct Pad2dConfig {
+    int64_t left = 0;
+    int64_t right = 0;
+    int64_t top = 0;
+    int64_t bottom = 0;
+};
+
+class Pad2dModule {
+public:
+    explicit Pad2dModule(Pad2dConfig config);
+
+    const Pad2dConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    Pad2dConfig config_;
+};
+
 enum class Interpolate1dMode {
     Nearest,
     Linear,
@@ -154,6 +174,24 @@ public:
 
 private:
     Interpolate1dConfig config_;
+};
+
+struct NearestUpsample2dConfig {
+    int64_t output_height = 0;
+    int64_t output_width = 0;
+};
+
+class NearestUpsample2dModule {
+public:
+    explicit NearestUpsample2dModule(NearestUpsample2dConfig config);
+
+    const NearestUpsample2dConfig & config() const noexcept;
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    NearestUpsample2dConfig config_;
 };
 
 class MaskingModule {

@@ -1,11 +1,11 @@
 #pragma once
 
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/models/vevo2/assets.h"
 #include "engine/models/vevo2/types.h"
 
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -42,11 +42,23 @@ public:
         const Vevo2GenerationOptions & generation) const;
 
 private:
-    struct TimbreMelCacheEntry {
-        uint64_t key = 0;
+    struct TimbreMelCacheKey {
+        uint64_t hash = 0;
         int sample_rate = 0;
         int channels = 0;
         size_t samples = 0;
+    };
+
+    struct TimbreMelCacheKeyEqual {
+        bool operator()(const TimbreMelCacheKey & lhs, const TimbreMelCacheKey & rhs) const noexcept {
+            return lhs.hash == rhs.hash &&
+                lhs.sample_rate == rhs.sample_rate &&
+                lhs.channels == rhs.channels &&
+                lhs.samples == rhs.samples;
+        }
+    };
+
+    struct TimbreMelCacheValue {
         Vevo2MelSequence mel;
     };
 
@@ -59,10 +71,8 @@ private:
     std::shared_ptr<const Vevo2FMWeights> weights_;
     mutable std::unique_ptr<Vevo2FMGraph> graph_;
     mutable std::unique_ptr<Vevo2FMStepGraph> step_graph_;
-    mutable std::vector<TimbreMelCacheEntry> timbre_mel_cache_;
+    mutable runtime::CacheSlots<TimbreMelCacheKey, TimbreMelCacheValue, TimbreMelCacheKeyEqual> timbre_mel_cache_;
     std::string name_;
-    std::filesystem::path weights_path_;
-    std::filesystem::path config_path_;
 };
 
 }  // namespace engine::models::vevo2

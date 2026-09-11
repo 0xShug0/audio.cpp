@@ -259,20 +259,38 @@ bool parse_bool_scalar(const std::string & value, const std::string & key) {
     throw std::runtime_error("yaml boolean key has invalid value: " + key);
 }
 
-int require_int(const FlattenedDocument & document, const std::string & key) {
+std::string require_string(const FlattenedDocument & document, const std::string & key) {
     const auto it = document.scalars.find(key);
     if (it == document.scalars.end()) {
         throw std::runtime_error("Missing yaml scalar key: " + key);
     }
-    return std::stoi(it->second);
+    return it->second;
+}
+
+std::string optional_string(const FlattenedDocument & document, const std::string & key, std::string default_value) {
+    const auto it = document.scalars.find(key);
+    return it == document.scalars.end() ? std::move(default_value) : it->second;
+}
+
+int require_int(const FlattenedDocument & document, const std::string & key) {
+    return std::stoi(require_string(document, key));
+}
+
+int64_t require_i64(const FlattenedDocument & document, const std::string & key) {
+    return std::stoll(require_string(document, key));
 }
 
 float require_float(const FlattenedDocument & document, const std::string & key) {
+    return std::stof(require_string(document, key));
+}
+
+bool require_bool(const FlattenedDocument & document, const std::string & key) {
+    return parse_bool_scalar(require_string(document, key), key);
+}
+
+bool optional_bool(const FlattenedDocument & document, const std::string & key, bool default_value) {
     const auto it = document.scalars.find(key);
-    if (it == document.scalars.end()) {
-        throw std::runtime_error("Missing yaml scalar key: " + key);
-    }
-    return std::stof(it->second);
+    return it == document.scalars.end() ? default_value : parse_bool_scalar(it->second, key);
 }
 
 std::optional<int> optional_int(const FlattenedDocument & document, const std::string & key) {
@@ -281,6 +299,55 @@ std::optional<int> optional_int(const FlattenedDocument & document, const std::s
         return std::nullopt;
     }
     return std::stoi(it->second);
+}
+
+std::optional<float> optional_float(const FlattenedDocument & document, const std::string & key) {
+    const auto it = document.scalars.find(key);
+    if (it == document.scalars.end()) {
+        return std::nullopt;
+    }
+    return std::stof(it->second);
+}
+
+float optional_f32(const FlattenedDocument & document, const std::string & key, float default_value) {
+    const auto value = optional_float(document, key);
+    return value.value_or(default_value);
+}
+
+std::optional<float> optional_nullable_f32(const FlattenedDocument & document, const std::string & key) {
+    const auto it = document.scalars.find(key);
+    if (it == document.scalars.end() || it->second == "None" || it->second == "null") {
+        return std::nullopt;
+    }
+    return std::stof(it->second);
+}
+
+std::vector<std::string> require_list_strings(const FlattenedDocument & document, const std::string & key) {
+    const auto it = document.lists.find(key);
+    if (it == document.lists.end() || it->second.empty()) {
+        throw std::runtime_error("Missing yaml list key: " + key);
+    }
+    return it->second;
+}
+
+std::vector<int> require_list_int(const FlattenedDocument & document, const std::string & key) {
+    const auto values = require_list_strings(document, key);
+    std::vector<int> out;
+    out.reserve(values.size());
+    for (const auto & value : values) {
+        out.push_back(std::stoi(value));
+    }
+    return out;
+}
+
+std::vector<int64_t> require_list_i64(const FlattenedDocument & document, const std::string & key) {
+    const auto values = require_list_strings(document, key);
+    std::vector<int64_t> out;
+    out.reserve(values.size());
+    for (const auto & value : values) {
+        out.push_back(std::stoll(value));
+    }
+    return out;
 }
 
 }  // namespace engine::io::yaml

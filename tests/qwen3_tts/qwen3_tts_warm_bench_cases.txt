@@ -1,5 +1,9 @@
+[default]
 The first request is intentionally short, so the session can show whether tiny text reuses the existing talker and decoder graphs cleanly.
 The second request is longer and contains numbers like 12, 48, and 2026 so ASR parity can catch dropped words, reordered phrases, and digit handling issues in a multi-request run.
 After a longer request, this shorter sentence checks that graph capacity reuse does not turn into a memory staircase or stale-buffer behavior.
 This request changes rhythm and punctuation: yes, it has commas, pauses, and a final question, because rebuild and reuse bugs often hide in only one sentence shape.
 For a heavier case, the speaker describes a careful benchmark session where warmup comes first, then a longer generation, then a compact request that should remain stable.
+
+[one_request]
+Hi there, how are you doing?

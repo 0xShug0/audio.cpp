@@ -1,7 +1,9 @@
 #pragma once
 
 #include "engine/models/seed_vc/assets.h"
-#include "engine/models/seed_vc/weight_bundle.h"
+
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
 
 #include <cstdint>
 #include <memory>
@@ -43,7 +45,9 @@ class SeedVcV1CfmEstimator {
 public:
     SeedVcV1CfmEstimator() = default;
     SeedVcV1CfmEstimator(
-        std::shared_ptr<const SeedVcWeightBundle> weights,
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type,
         SeedVcV1DitConfig config,
         SeedVcV1WavenetConfig wavenet_config,
         int64_t style_dim);
@@ -60,7 +64,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcWeightBundle> weights_;
     SeedVcV1DitConfig config_;
     SeedVcV1WavenetConfig wavenet_config_;
     int64_t style_dim_ = 0;

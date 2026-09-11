@@ -5,11 +5,13 @@ on:
     branches:
       - ci/**
       - main
-      - release-0.1
+      - dev
+      - release-0.2
   pull_request:
     branches:
       - main
-      - release-0.1
+      - dev
+      - release-0.2
   workflow_dispatch:
 
 jobs:
@@ -35,6 +37,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check loader/spec sync
+        run: |
+          python3 tools/check_loader_catalog_sync.py --self-test
+          python3 tools/check_loader_catalog_sync.py
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -44,9 +51,15 @@ jobs:
         run: |
           cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DAUDIOCPP_VERSION=ci \
             -DENGINE_ENABLE_CUDA=OFF \
             -DENGINE_ENABLE_VULKAN=${{ matrix.enable_vulkan }}
 
       - name: Build
         run: |
-          cmake --build "$BUILD_DIR" --parallel "$(nproc)" --target audiocpp_cli audiocpp_server
+          cmake --build "$BUILD_DIR" --parallel "$(nproc)" --target audiocpp_cli audiocpp_server audiocpp_gguf
+
+      - name: Build and run unit tests
+        run: |
+          cmake --build "$BUILD_DIR" --parallel "$(nproc)"
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel 4

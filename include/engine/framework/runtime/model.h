@@ -9,6 +9,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace engine::model_spec {
+enum class ResourceKind;
+}
+
 namespace engine::runtime {
 
 struct NamedAsset {
@@ -41,6 +45,10 @@ struct CliOptionInfo {
     std::string name;
     std::string value_name;
     std::string description;
+    bool required = false;
+    std::optional<std::string> default_value = std::nullopt;
+    std::optional<std::string> min_value = std::nullopt;
+    std::optional<std::string> max_value = std::nullopt;
 };
 
 struct ModelCliInterface {
@@ -60,6 +68,7 @@ struct ModelInspection {
 
 struct ModelLoadRequest {
     std::filesystem::path model_path;
+    std::optional<std::filesystem::path> model_spec_override = std::nullopt;
     std::optional<std::string> family_hint = std::nullopt;
     std::optional<std::string> config_id = std::nullopt;
     std::optional<std::string> weight_id = std::nullopt;
@@ -69,6 +78,11 @@ struct ModelLoadRequest {
 std::vector<NamedAsset> discover_named_assets(
     const std::filesystem::path & root,
     const std::vector<std::string> & relative_candidates);
+
+std::vector<NamedAsset> discover_named_assets_from_package_spec(
+    const std::filesystem::path & model_path,
+    const std::filesystem::path & spec_path,
+    engine::model_spec::ResourceKind kind);
 
 const NamedAsset * find_named_asset(
     const std::vector<NamedAsset> & assets,
@@ -95,14 +109,35 @@ public:
         const SessionOptions & options) const = 0;
 };
 
+struct LoaderAdvertisement {
+    std::string family;
+    CapabilitySet capabilities;
+    std::string instructions_policy;
+    std::vector<std::string> api_endpoints;
+};
+
+/** Map advertised capabilities to the HTTP surfaces they normally use. */
+std::vector<std::string> default_api_endpoints_for_capabilities(const CapabilitySet & capabilities);
+
 class IVoiceModelLoader {
 public:
     virtual ~IVoiceModelLoader() = default;
 
     virtual std::string family() const = 0;
+    /** Alternate family names accepted for family hints (e.g. "habibi" for "f5_tts"). */
+    virtual std::vector<std::string> family_aliases() const { return {}; }
     virtual bool can_load(const ModelLoadRequest & request) const = 0;
     virtual ModelInspection inspect(const ModelLoadRequest & request) const = 0;
     virtual std::unique_ptr<ILoadedVoiceModel> load(const ModelLoadRequest & request) const = 0;
+
+    /**
+     * Path-free loader catalog for ``--list-loaders --json``.
+     * Override ``advertised_capabilities`` (and policy when non-default) on each loader.
+     */
+    virtual CapabilitySet advertised_capabilities() const;
+    virtual std::string advertised_instructions_policy() const;
+    virtual std::vector<std::string> advertised_api_endpoints() const;
+    LoaderAdvertisement advertise() const;
 };
 
 }  // namespace engine::runtime

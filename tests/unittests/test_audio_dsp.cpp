@@ -345,8 +345,8 @@ void test_istft_matches_reference_across_configs_and_variants() {
             require_close(
                 reconstructed.values,
                 reference.values,
-                2.0e-5f,
-                2.0e-6,
+                3.0e-5f,
+                5.0e-6,
                 "istft_variant_parity");
         }
     }

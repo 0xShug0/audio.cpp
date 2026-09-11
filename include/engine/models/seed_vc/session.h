@@ -1,7 +1,8 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/seed_vc/assets.h"
 
 #include <memory>
@@ -10,7 +11,9 @@
 
 namespace engine::models::seed_vc {
 
-struct SeedVcComponentSources;
+std::shared_ptr<runtime::IVoiceModelLoader> make_seed_vc_loader();
+
+struct SeedVcRouteRuntime;
 
 class SeedVcSession final
     : public runtime::RuntimeSessionBase
@@ -19,7 +22,8 @@ public:
     SeedVcSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const SeedVcAssets> assets);
+        std::shared_ptr<const SeedVcAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;
@@ -30,10 +34,9 @@ public:
 private:
     runtime::TaskSpec task_;
     std::shared_ptr<const SeedVcAssets> assets_;
-    std::shared_ptr<SeedVcComponentSources> sources_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    std::shared_ptr<SeedVcRouteRuntime> route_runtime_;
     std::optional<engine::assets::TensorStorageType> weight_storage_type_;
 };
-
-std::unique_ptr<runtime::ILoadedVoiceModel> load_seed_vc_model(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::seed_vc

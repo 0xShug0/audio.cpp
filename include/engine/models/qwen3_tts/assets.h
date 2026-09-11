@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/framework/core/backend.h"
+#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/models/qwen3_tts/types.h"
 
 #include <cstdint>
@@ -80,24 +81,13 @@ struct Qwen3TTSConfig {
     bool has_speaker_encoder = false;
 };
 
-struct Qwen3TTSAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path generation_config_path;
-    std::filesystem::path model_weights_path;
-    std::filesystem::path tokenizer_config_path;
-    std::filesystem::path tokenizer_vocab_path;
-    std::filesystem::path tokenizer_merges_path;
-    std::filesystem::path speech_tokenizer_config_path;
-    std::filesystem::path speech_tokenizer_weights_path;
-};
-
 struct Qwen3TTSAssets {
-    Qwen3TTSAssetPaths paths;
+    assets::ResourceBundle resources;
     Qwen3TTSConfig config;
+    std::shared_ptr<const assets::TensorSource> model_weights;
+    std::shared_ptr<const assets::TensorSource> speech_tokenizer_weights;
 };
 
-Qwen3TTSAssetPaths resolve_qwen3_tts_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const Qwen3TTSAssets> load_qwen3_tts_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::qwen3_tts

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>audio.cpp Offline Converter</title>
+  <link rel="stylesheet" href="speaker.css">
+</head>
+<body class="wide">
+  <main>
+    <h1>audio.cpp Offline Converter</h1>
+
+    <label>
+      Server
+      <input id="serverUrl" value="http://127.0.0.1:8082">
+    </label>
+
+    <div class="server-row">
+      <span>Backend</span>
+      <strong id="backendStatus">checking</strong>
+    </div>
+
+    <div class="row">
+      <label>
+        Model id
+        <input id="modelId" value="supertonic-offline">
+      </label>
+      <label>
+        Voice
+        <select id="voice">
+          <option>M1</option>
+          <option>M2</option>
+          <option>M3</option>
+          <option>M4</option>
+          <option>M5</option>
+          <option>F1</option>
+          <option>F2</option>
+          <option>F3</option>
+          <option>F4</option>
+          <option>F5</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label>
+        Chunk chars
+        <input id="chunkChars" type="number" min="120" max="3000" step="20" value="1200">
+      </label>
+      <label>
+        Steps
+        <input id="steps" type="number" min="1" max="64" step="1" value="8">
+      </label>
+    </div>
+
+    <label>
+      Text file
+      <input id="textFile" type="file" accept=".txt,.md,.html,.htm,text/plain,text/markdown,text/html">
+    </label>
+
+    <textarea id="textInput" rows="9" placeholder="Upload a text file or paste text here"></textarea>
+    <div class="text-stats" id="textStats">0 words · 0 chars</div>
+    <label class="check-row">
+      <input id="normalizeLatin" type="checkbox" checked>
+      Normalize Latin ebook text
+    </label>
+
+    <div class="buttons offline-buttons">
+      <button id="start">Start convert</button>
+      <button id="stop">Stop</button>
+      <button id="download" disabled>Download part</button>
+    </div>
+
+    <section class="metrics offline-metrics" aria-label="Offline conversion metrics">
+      <div>
+        <span>Progress</span>
+        <strong id="metricProgress">-</strong>
+      </div>
+      <div>
+        <span>Elapsed</span>
+        <strong id="metricElapsed">-</strong>
+      </div>
+      <div>
+        <span>ETA</span>
+        <strong id="metricEta">-</strong>
+      </div>
+      <div>
+        <span>RTF</span>
+        <strong id="metricRtf">-</strong>
+      </div>
+      <div>
+        <span>Audio</span>
+        <strong id="metricAudio">-</strong>
+      </div>
+      <div>
+        <span>Wall</span>
+        <strong id="metricWall">-</strong>
+      </div>
+    </section>
+
+    <div class="bar" aria-label="Progress bar"><span id="progressBar"></span></div>
+    <div class="downloads" id="downloads"></div>
+    <div id="status">Ready.</div>
+  </main>
+
+  <script src="offline.js"></script>
+</body>
+</html>

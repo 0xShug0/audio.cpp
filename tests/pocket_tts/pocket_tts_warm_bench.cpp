@@ -412,7 +412,7 @@ int main(int argc, char ** argv) {
         const std::string voice_id = arg_value(argc, argv, "--voice-id", "");
         const std::string warmup_text = arg_value(argc, argv, "--warmup-text", kDefaultWarmupText);
         const std::string voice_embedding_path = arg_value(argc, argv, "--voice-embedding-path", "");
-        const std::string clone_audio_path = arg_value(argc, argv, "--clone-audio", "");
+        const std::filesystem::path clone_audio_path = arg_value(argc, argv, "--clone-audio", "");
         const int max_steps = int_arg(argc, argv, "--max-steps", 0);
         const int frames_after_eos = int_arg(argc, argv, "--frames-after-eos", -1);
         const float temperature = float_arg(argc, argv, "--temperature", 0.7f);
@@ -467,7 +467,7 @@ int main(int argc, char ** argv) {
         std::optional<int> noise_steps = std::nullopt;
         std::optional<std::string> noise_hash = std::nullopt;
         if (mode == "parity") {
-            noise_latent_dim = manifest.model_config.latent_dim;
+            noise_latent_dim = manifest->model_config.latent_dim;
             if (!std::filesystem::exists(*noise_path)) {
                 throw std::runtime_error("Pocket TTS noise file does not exist: " + noise_path->string());
             }

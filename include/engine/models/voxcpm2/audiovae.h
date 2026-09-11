@@ -25,7 +25,7 @@ struct VoxCPM2AudioVAEDecoderConfig {
   int64_t latent_frame_capacity = 0;
   int64_t encoder_sample_capacity = 240000;
   engine::assets::TensorStorageType weight_storage_type =
-      engine::assets::TensorStorageType::F32;
+      engine::assets::TensorStorageType::Native;
 };
 
 class VoxCPM2AudioVAEDecoderRuntime final {
@@ -42,6 +42,7 @@ public:
       const std::optional<runtime::AudioBuffer> &prompt_audio,
       const std::string &prompt_text,
       const std::optional<runtime::AudioBuffer> &reference_audio);
+  void release_runtime_memory();
 
 private:
   class Impl;

@@ -1,0 +1,61 @@
+# IndexTTS TN parity corpus.
+# Format: route<TAB>input<TAB>expected
+#   route    = which C++ normalizer the v2.5 frontend would call: zh | en
+#   input    = raw user text (no tabs/newlines)
+#   expected = golden output of the official TextNormalizer pipeline
+#              (clean_pattern char map -> TextNormalizer.normalize), filled by
+#              tools/tn_golden (runs the official Python front-end)
+# Lines starting with # are comments. Keep entries free of tabs and newlines.
+zh	我试了试wan22的还能正常跑，H3就占超大显存。	我试了试wan2二的还能正常跑,H三就占超大显存.
+zh	我的DS4手柄没电了。	我的DS四手柄没电了.
+zh	这个视频是H264编码的。	这个视频是H两百六十四编码的.
+zh	R2D2是星球大战里的机器人。	R二D二是星球大战里的机器人.
+zh	GPT-5-nano发布了。	GPT-五-nano发布了.
+zh	今天是2024年10月1日。	今天是二零二四年十月一日.
+zh	圆周率约等于3.14。	圆周率约等于三点一四.
+zh	增长了12.5%。	增长了百分之十二点五.
+zh	三分之一就是1/3。	三分之一就是三分之一.
+zh	电话是135-4567-8900。	电话是一三五四五六七八九零零.
+zh	会议定在3:00。	会议定在三,零零.	KNOWN:zh 整点读三点，比官方三,零零更自然，维持 C++ 行为
+zh	重庆的重读chong2。	重庆的重读chong2.
+zh	克里斯托弗·诺兰拍了奥本海默。	克里斯托弗-诺兰拍了奥本海默.
+zh	约瑟夫·高登-莱维特出演了盗梦空间。	约瑟夫-高登-莱维特出演了盗梦空间.
+zh	价格$50。	价格五十美元.
+zh	气温零下5度。	气温零下五度.
+zh	公元前221年秦统一六国。	公元前两百二十一年秦统一六国.
+zh	他考了100分。	他考了一百分.
+zh	我有2个苹果和3个橙子。	我有两个苹果和三个橙子.
+zh	第1名是张三。	第一名是张三.
+zh	苹果股价涨了2个百分点。	苹果股价涨了两个百分点.
+zh	wan2.2模型发布了。	wan2.二模型发布了.
+zh	用F5-TTS合成语音。	用F五-TTS合成语音.
+zh	这句话里有English单词。	这句话里有English单词.
+zh	iPhone15 Pro Max很好用。	iPhone十五 Pro Max很好用.
+zh	版本v2.5更新了很多内容。	版本v2.五更新了很多内容.
+zh	它的RTF是0.12。	它的RTF是零点一二.
+zh	内存有32GB。	内存有三十二GB.
+zh	速度是100km/h。	速度是每小时一百公里.
+zh	2001太空漫游是经典科幻片。	两千零一太空漫游是经典科幻片.
+zh	他把"测试"两个字读错了。	他把'测试'两个字读错了.
+zh	今天是星期二，天气不错！	今天是星期二,天气不错!
+zh	那个字读ju2，不读qu2。	那个字读JV2,不读QV2.
+en	I'll start pushing to Github soon. My first run is something akin to antirez' DS4.	I'll start pushing to Github soon. My first run is something akin to antirez' DS four.
+en	The H264 codec is everywhere.	The H two hundred sixty four codec is everywhere.
+en	R2D2 and C3PO are droids.	R two D two and C three PO are droids.
+en	GPT-5 is better than GPT-4.	GPT-five is better than GPT-four.
+en	Call me at 135-4567-8900.	Call me at one three five, four five six seven, eight nine zero zero.
+en	The meeting is at 3:00.	The meeting is at three,oh zero.
+en	It costs $50.	It costs fifty dollars.
+en	We saw a 12.5% increase.	We saw a twelve point five percent increase.
+en	Pi is roughly 3.14.	Pi is roughly three point one four.
+en	He was born on 2024/10/01.	He was born on the first of october twenty twenty four.
+en	It's still evolving very very quickly.	It is still evolving very very quickly.
+en	Version 2.5 is out.	Version two point five is out.
+en	I have 2 apples and 3 oranges.	I have two apples and three oranges.
+en	The temperature is -5 degrees.	The temperature is negative five degrees.
+en	She won 1st place in the race.	She won first place in the race.
+en	wan2.2 can generate videos.	wan2.二 can generate videos.	KNOWN:路由差异：官方对纯ASCII但含拼音模式的文本路由到zh前端
+en	My email is test@example.com.	My email is test at exampl e dot com dot 	KNOWN:email 保持原样直通，官方展开读法本身有缺陷
+en	Visit https://example.com for more information.	Visit https comma slash slash example dot com for more information.
+en	chong2 is the right reading.	chong2 is the right reading.	KNOWN:路由差异：官方对纯ASCII但含拼音模式的文本路由到zh前端
+en	The RTF is 0.12 on this GPU.	The RTF is zero point one two on this GPU.

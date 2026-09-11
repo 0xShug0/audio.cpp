@@ -1,0 +1,125 @@
+{
+  "family": "vibevoice",
+  "display_name": "VibeVoice",
+  "description": "Microsoft long-form multi-speaker TTS model for expressive conversational audio such as podcasts, supporting up to 90 minutes of speech with as many as four speakers.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "capabilities": {
+    "tts": [
+      "multi_speaker",
+      "long_form"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "vibevoice_1_5b_q8_0",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "vibevoice_1_5b_q8_0",
+      "display_name": "VibeVoice 1.5B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-1.5B-GGUF",
+      "files": [
+        "VibeVoice-1.5B-GGUF/vibevoice-1.5b-q8_0.gguf"
+      ],
+      "strip_prefix": "VibeVoice-1.5B-GGUF"
+    },
+    {
+      "id": "vibevoice_1_5b_bf16",
+      "display_name": "VibeVoice 1.5B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VibeVoice-1.5B-GGUF",
+      "files": [
+        "VibeVoice-1.5B-GGUF/vibevoice-1.5b-bf16.gguf"
+      ],
+      "strip_prefix": "VibeVoice-1.5B-GGUF"
+    },
+    {
+      "id": "vibevoice_7b_q8_0",
+      "display_name": "VibeVoice 7B Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-7B-GGUF",
+      "files": [
+        "vibevoice-7b-q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/VibeVoice-7B-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "tensors": {
+        "model_weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors.index.json"
+      }
+    }
+  ]
+}

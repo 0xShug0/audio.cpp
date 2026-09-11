@@ -16,12 +16,14 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace engine::models::omnivoice {
 
 class OmniVoiceSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::IStreamingVoiceTaskSession {
 public:
     OmniVoiceSession(
         runtime::TaskSpec task,
@@ -33,6 +35,14 @@ public:
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
+    runtime::StreamingPolicy streaming_policy() const override;
+    void start_stream(const runtime::TaskRequest & request) override;
+    std::optional<runtime::StreamEvent> next_stream_event() override;
+    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
+    runtime::TaskResult finish_stream() override;
+    void reset() override;
+    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
+    runtime::TaskResult finalize() override;
 
 private:
     struct SessionDefaults {
@@ -62,6 +72,9 @@ private:
         const runtime::AudioBuffer & audio,
         bool preprocess_prompt,
         bool reference_text_provided);
+    std::vector<std::string> plan_text_chunks(const OmniVoiceRequest & request, const OmniVoicePrompt & prompt) const;
+    void initialize_streaming_request(const runtime::TaskRequest & request);
+    runtime::AudioBuffer synthesize_stream_chunk(size_t chunk_index);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const OmniVoiceAssets> assets_;
@@ -72,6 +85,8 @@ private:
     size_t generator_weight_context_bytes_ = 256ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType audio_tokenizer_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType generator_weight_storage_type_ = engine::assets::TensorStorageType::Native;
+    bool mem_saver_ = false;
+    OmniVoiceGeneratorPerfMode generator_perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
     OmniVoiceTextTokenizer tokenizer_;
     OmniVoiceAudioTokenizerRuntime audio_tokenizer_;
     OmniVoicePromptBuilder prompt_builder_;
@@ -79,6 +94,15 @@ private:
     OmniVoicePostprocessor postprocessor_;
     SessionDefaults session_defaults_;
     std::optional<ReferencePromptCacheEntry> reference_prompt_cache_;
+    std::optional<OmniVoiceRequest> stream_request_;
+    std::vector<std::string> stream_text_chunks_;
+    std::optional<OmniVoiceAudioTokens> stream_first_chunk_reference_;
+    std::string stream_first_chunk_text_;
+    runtime::AudioBuffer stream_merged_audio_;
+    size_t stream_chunk_index_ = 0;
+    int64_t stream_chunk_codebooks_ = 0;
+    bool stream_started_ = false;
+    bool stream_has_reference_audio_ = false;
 };
 
 }  // namespace engine::models::omnivoice

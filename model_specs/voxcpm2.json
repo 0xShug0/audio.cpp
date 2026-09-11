@@ -1,0 +1,179 @@
+{
+  "family": "voxcpm2",
+  "display_name": "VoxCPM2",
+  "description": "OpenBMB tokenizer-free TTS model supporting 30 languages and 9 Chinese dialects, with 48 kHz output, natural-language voice design, controllable short-reference voice cloning, and expressive style guidance.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone",
+    "design"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "ar",
+    "my",
+    "zh",
+    "zh dialects",
+    "da",
+    "nl",
+    "en",
+    "fi",
+    "fr",
+    "de",
+    "el",
+    "he",
+    "hi",
+    "id",
+    "it",
+    "ja",
+    "km",
+    "ko",
+    "lo",
+    "ms",
+    "no",
+    "pl",
+    "pt",
+    "ru",
+    "es",
+    "sw",
+    "sv",
+    "tl",
+    "th",
+    "tr",
+    "vi"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ],
+    "design": [
+      "voice_design"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "ui": {
+    "recommended_package": "voxcpm2_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "Design",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "voxcpm2_q8_0",
+      "display_name": "VoxCPM2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-q8_0.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_bf16",
+      "display_name": "VoxCPM2 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-bf16.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_orig",
+      "display_name": "VoxCPM2 Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "VoxCPM2-GGUF",
+      "files": [
+        "VoxCPM2-GGUF/voxcpm2-orig.gguf"
+      ],
+      "strip_prefix": "VoxCPM2-GGUF"
+    },
+    {
+      "id": "voxcpm2_safetensors",
+      "display_name": "VoxCPM2 Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "VoxCPM2",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "OpenBMB/VoxCPM2"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "audiovae_weights": {
+          "source": "weights:",
+          "prefix": "audiovae_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "audiovae_weights": "model:audiovae.safetensors"
+      }
+    }
+  ]
+}

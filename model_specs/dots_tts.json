@@ -1,0 +1,430 @@
+{
+  "schema_version": 1,
+  "family": "dots_tts",
+  "display_name": "DotTTS",
+  "description": "DotTTS is a multilingual zero-shot TTS, voice-cloning, and speech-editing model family packaged for audio.cpp with SOAR and MeanFlow generation, prompt-audio plus prompt-text prefill, speaker-reference conditioning, language tags, multiple synthesis templates, long-form text chunking, and true streaming audio output.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "multilingual"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "speaker_reference",
+      "style_control",
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference",
+      "style_control",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript for the prompt audio. When set with reference audio, DotTTS uses prompt prefill for higher quality voice cloning.",
+        "required": false
+      },
+      {
+        "name": "reference_duration_sec",
+        "type": "float",
+        "description": "Optional prompt-audio trim duration before reference conditioning and prompt prefill.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "template_name",
+        "type": "enum",
+        "description": "DotTTS synthesis template. tts is normal text-to-speech; instruction_tts adds instruction conditioning; text_to_audio uses a sound-description template; tts_interleave uses the streaming interleave schedule; edit uses the DotTTS Edit source-audio editing schedule.",
+        "values": [
+          "tts",
+          "instruction_tts",
+          "text_to_audio",
+          "tts_interleave",
+          "edit"
+        ],
+        "required": false,
+        "default": "tts"
+      },
+      {
+        "name": "source_audio",
+        "type": "audio_path",
+        "description": "Source WAV path for DotTTS Edit. Required when template_name=edit unless audio_input is supplied by the caller.",
+        "required": false
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Structured DotTTS Edit instruction. If omitted with template_name=edit, the request text is used as the instruction.",
+        "required": false
+      },
+      {
+        "name": "instruct",
+        "type": "string",
+        "description": "Alias for instruction for CLI compatibility.",
+        "required": false
+      },
+      {
+        "name": "source_text",
+        "type": "string",
+        "description": "Optional source transcript override for DotTTS Edit. If omitted, it is rendered from instruction tags.",
+        "required": false
+      },
+      {
+        "name": "target_text",
+        "type": "string",
+        "description": "Optional target transcript override for DotTTS Edit. If omitted, it is rendered from instruction tags.",
+        "required": false
+      },
+      {
+        "name": "use_xvector",
+        "type": "enum",
+        "description": "DotTTS Edit speaker conditioning mode. auto follows the upstream tag-based behavior; on/off force or disable source-audio speaker conditioning.",
+        "values": [
+          "auto",
+          "on",
+          "off"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Optional target language tag. none disables language tagging; otherwise pass a language code such as en or zh.",
+        "required": false,
+        "default": "none"
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "SOAR flow-matching inference step count; default 10.",
+        "required": false,
+        "min": 1,
+        "default": 10
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale used by SOAR flow matching. Default 1.2.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.2
+      },
+      {
+        "name": "speaker_scale",
+        "type": "float",
+        "description": "Multiplier applied to the prompt speaker embedding; default 1.5.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.5
+      },
+      {
+        "name": "sampler_mode",
+        "type": "enum",
+        "description": "SOAR ODE solver method for flow matching. Fixed-step euler is the default and parity baseline.",
+        "values": [
+          "euler",
+          "midpoint",
+          "rk4"
+        ],
+        "required": false,
+        "default": "euler"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated audio patch count per generated segment; default 500.",
+        "required": false,
+        "min": 1,
+        "default": 500
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum text codepoints per generated segment for long-form requests; default 320.",
+        "required": false,
+        "min": 1,
+        "default": 320
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode; default tag_aware preserves leading style/control tags across long-form chunks.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "tag_aware"
+      },
+      {
+        "name": "vocoder_merge_steps",
+        "type": "int",
+        "description": "Streaming vocoder latent patch merge size after the initial unmerged patches; default 4, matching the Python optimized streaming runtime default.",
+        "required": false,
+        "min": 1,
+        "default": 4
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Seed for prompt latent sampling and flow noise initialization; default 42.",
+        "required": false,
+        "min": 0,
+        "default": 42
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared matmul weight storage type for DotTTS components; default native. Component-specific weight options override this value.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "speaker_encoder_weight_type",
+        "type": "enum",
+        "description": "Speaker encoder matmul weight storage type; defaults to weight_type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "description": "AudioVAE vocoder matmul and recurrent weight storage type; defaults to weight_type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "patch_encoder_weight_type",
+        "type": "enum",
+        "description": "Patch encoder transformer matmul weight storage type; defaults to weight_type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "llm_weight_type",
+        "type": "enum",
+        "description": "Autoregressive language model matmul weight storage type; defaults to weight_type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "flow_weight_type",
+        "type": "enum",
+        "description": "SOAR or MeanFlow DiT flow-matching matmul weight storage type; defaults to weight_type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "codec_conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; set 0 to disable reuse.",
+        "required": false,
+        "min": 0,
+        "default": 4
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Load DotTTS components by request phase and release their weights/graphs after last use while keeping reference cache slots alive.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "dots_tts_soar_q8_0",
+      "display_name": "DotTTS SOAR Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "DotTTS-SOAR-GGUF",
+      "files": [
+        "DotTTS-SOAR-GGUF/dots-tts-soar-q8_0.gguf"
+      ],
+      "strip_prefix": "DotTTS-SOAR-GGUF"
+    },
+    {
+      "id": "dots_tts_soar_bf16",
+      "display_name": "DotTTS SOAR BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "DotTTS-SOAR-GGUF",
+      "files": [
+        "DotTTS-SOAR-GGUF/dots-tts-soar-bf16.gguf"
+      ],
+      "strip_prefix": "DotTTS-SOAR-GGUF"
+    },
+    {
+      "id": "dots_tts_mf_q8_0",
+      "display_name": "DotTTS MeanFlow Q8_0 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "DotTTS-MF-GGUF",
+      "files": [
+        "DotTTS-MF-GGUF/dots-tts-mf-q8_0.gguf"
+      ],
+      "strip_prefix": "DotTTS-MF-GGUF"
+    },
+    {
+      "id": "dots_tts_mf_bf16",
+      "display_name": "DotTTS MeanFlow BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "DotTTS-MF-GGUF",
+      "files": [
+        "DotTTS-MF-GGUF/dots-tts-mf-bf16.gguf"
+      ],
+      "strip_prefix": "DotTTS-MF-GGUF"
+    },
+    {
+      "id": "dots_tts_edit_q8_0",
+      "display_name": "DotTTS Edit Q8_0 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "DotTTS-Edit-GGUF",
+      "files": [
+        "DotTTS-Edit-GGUF/dots-tts-edit-q8_0.gguf"
+      ],
+      "strip_prefix": "DotTTS-Edit-GGUF"
+    },
+    {
+      "id": "dots_tts_edit_bf16",
+      "display_name": "DotTTS Edit BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "DotTTS-Edit-GGUF",
+      "files": [
+        "DotTTS-Edit-GGUF/dots-tts-edit-bf16.gguf"
+      ],
+      "strip_prefix": "DotTTS-Edit-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "dots_tts_soar_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "Stream",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "llm_config": "model:llm_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "added_tokens": "model:added_tokens.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "core_weights": {
+          "source": "weights:",
+          "prefix": "core"
+        },
+        "vocoder_weights": {
+          "source": "weights:",
+          "prefix": "vocoder"
+        },
+        "speaker_encoder_weights": {
+          "source": "weights:",
+          "prefix": "speaker_encoder"
+        },
+        "latent_stats": {
+          "source": "weights:",
+          "prefix": "latent_stats"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "llm_config": "model:llm_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "added_tokens": "model:added_tokens.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "core_weights": {
+          "source": "model:model.safetensors"
+        },
+        "vocoder_weights": {
+          "source": "model:vocoder.safetensors"
+        },
+        "speaker_encoder_weights": {
+          "source": "model:speaker_encoder.safetensors"
+        },
+        "latent_stats": {
+          "source": "model:latent_stats.safetensors"
+        }
+      }
+    }
+  ]
+}

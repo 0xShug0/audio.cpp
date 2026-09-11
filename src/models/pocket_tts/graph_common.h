@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/framework/core/backend.h"
-#include "engine/models/pocket_tts/assets.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/conditioning_modules.h"
@@ -9,7 +8,7 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
-#include "engine/framework/modules/structural_modules.h"
+#include "engine/models/pocket_tts/backend_weights.h"
 
 #include <optional>
 #include <stdexcept>
@@ -62,15 +61,6 @@ inline modules::TransformerEncoderBlockWeights make_transformer_block_weights(
     };
 }
 
-inline core::TensorValue last_frame(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    return modules::SliceModule({1, input.shape.dims[1] - 1, 1}).build(ctx, input);
-}
-
-inline core::TensorValue squeeze_single_frame_to_matrix(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    core::validate_shape(input, core::TensorShape::from_dims({input.shape.dims[0], 1, input.shape.dims[2]}), "input");
-    return core::reshape_tensor(ctx, input, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[2]}));
-}
-
 template <typename BuildFn, typename InitFn, typename ReadFn>
 auto run_graph_with_backend(
     const char * label,
@@ -90,17 +80,26 @@ auto run_graph_with_backend(
     auto output = build_fn(ctx);
     ggml_cgraph * graph = ggml_new_graph_custom(ggml_ctx, 32768, false);
     ggml_build_forward_expand(graph, output.tensor);
-    ggml_backend_buffer_t params_buffer = ggml_backend_alloc_ctx_tensors(ggml_ctx, backend);
+    ggml_gallocr_t gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    if (gallocr == nullptr ||
+        !ggml_gallocr_reserve(gallocr, graph) ||
+        !ggml_gallocr_alloc_graph(gallocr, graph)) {
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+        }
+        ggml_free(ggml_ctx);
+        throw std::runtime_error(std::string(label) + " graph allocation failed");
+    }
     init_fn();
     core::set_backend_threads(backend, threads);
     const ggml_status status = engine::core::compute_backend_graph(backend, graph);
     if (status != GGML_STATUS_SUCCESS) {
-        ggml_backend_buffer_free(params_buffer);
+        ggml_gallocr_free(gallocr);
         ggml_free(ggml_ctx);
         throw std::runtime_error(std::string(label) + " compute failed: " + ggml_status_to_string(status));
     }
     auto result = read_fn(ggml_ctx);
-    ggml_backend_buffer_free(params_buffer);
+    ggml_gallocr_free(gallocr);
     ggml_free(ggml_ctx);
     return result;
 }

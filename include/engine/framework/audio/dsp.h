@@ -81,6 +81,20 @@ struct SparseMelFilterbank {
     std::vector<int64_t> ends;
 };
 
+struct WhisperLogMelConfig {
+    int64_t sample_rate = 16000;
+    int64_t n_fft = 400;
+    int64_t hop_length = 160;
+    int64_t feature_size = 80;
+    STFTFamily stft_family = STFTFamily::Default;
+};
+
+struct WhisperLogMelFeatures {
+    std::vector<float> values;
+    int64_t mel_bins = 0;
+    int64_t frames = 0;
+};
+
 class MelFilterbank {
 public:
     AudioTensor build(const MelFilterbankConfig & config) const;
@@ -108,6 +122,20 @@ public:
         int64_t stft_frames,
         int64_t output_frames,
         const SparseMelFilterbank & filterbank) const;
+};
+
+class WhisperLogMelExtractor {
+public:
+    explicit WhisperLogMelExtractor(WhisperLogMelConfig config);
+
+    const WhisperLogMelConfig & config() const noexcept;
+    WhisperLogMelFeatures compute(
+        const std::vector<float> & samples,
+        size_t threads = 0) const;
+
+private:
+    WhisperLogMelConfig config_;
+    SparseMelFilterbank filterbank_;
 };
 
 class MelSpectrogram {

@@ -1,6 +1,7 @@
 #include "engine/models/ace_step/pre_dit.h"
 
-#include "audio_preprocess.h"
+#include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/models/ace_step/prompt_builder.h"
 
@@ -113,6 +114,53 @@ bool is_silent_audio(const runtime::AudioBuffer & audio) {
         sum += std::abs(static_cast<double>(sample));
     }
     return sum <= 1.0e-6;
+}
+
+runtime::AudioBuffer normalize_audio_to_stereo_48k(const runtime::AudioBuffer & audio) {
+    if (audio.sample_rate <= 0) {
+        throw std::runtime_error("ACE-Step source audio sample rate must be positive");
+    }
+    if (audio.channels <= 0) {
+        throw std::runtime_error("ACE-Step source audio channel count must be positive");
+    }
+    if (audio.samples.empty()) {
+        throw std::runtime_error("ACE-Step source audio is empty");
+    }
+    if (audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
+        throw std::runtime_error("ACE-Step source audio has invalid channel layout");
+    }
+
+    std::vector<float> left;
+    std::vector<float> right;
+    if (audio.channels == 1) {
+        left = audio.samples;
+        right = audio.samples;
+    } else {
+        left = engine::audio::extract_interleaved_channel(audio.samples, audio.channels, 0);
+        right = engine::audio::extract_interleaved_channel(audio.samples, audio.channels, 1);
+    }
+    if (audio.sample_rate != kAceStepAudioSampleRate) {
+        left = engine::audio::resample_mono_torchaudio_sinc_hann(left, audio.sample_rate, kAceStepAudioSampleRate);
+        right = engine::audio::resample_mono_torchaudio_sinc_hann(right, audio.sample_rate, kAceStepAudioSampleRate);
+    }
+
+    std::vector<float> planar;
+    planar.reserve(left.size() + right.size());
+    for (float value : left) {
+        planar.push_back(std::clamp(value, -1.0F, 1.0F));
+    }
+    for (float value : right) {
+        planar.push_back(std::clamp(value, -1.0F, 1.0F));
+    }
+
+    runtime::AudioBuffer out;
+    out.sample_rate = kAceStepAudioSampleRate;
+    out.channels = kAceStepAudioChannels;
+    out.samples = engine::audio::interleave_planar_channels(
+        planar,
+        kAceStepAudioChannels,
+        static_cast<int64_t>(left.size()));
+    return out;
 }
 
 int64_t latent_frames_for_audio(const runtime::AudioBuffer & audio) {
@@ -395,7 +443,7 @@ AceStepPreDitInputs AceStepPreDitRuntime::prepare(
     const auto source_audio_start = Clock::now();
     std::optional<runtime::AudioBuffer> source_audio;
     if (ace_step_route_uses_request_source_audio(route, request, plan)) {
-        source_audio = ace_step_normalize_audio_to_stereo_48k(*request.source_audio);
+        source_audio = normalize_audio_to_stereo_48k(*request.source_audio);
     } else if (!ace_step_route_has_required_source_audio_input(route, request, plan)) {
         throw std::runtime_error("ACE-Step task requires source audio");
     }

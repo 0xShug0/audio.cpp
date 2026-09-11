@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/models/seed_vc/weight_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
 
 #include <cstdint>
 #include <memory>
@@ -20,7 +21,9 @@ class SeedVcDiscreteLengthRegulator {
 public:
     SeedVcDiscreteLengthRegulator() = default;
     SeedVcDiscreteLengthRegulator(
-        std::shared_ptr<const SeedVcWeightBundle> weights,
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type,
         std::string prefix);
     ~SeedVcDiscreteLengthRegulator();
 
@@ -40,7 +43,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcWeightBundle> weights_;
     std::string prefix_;
     int64_t codebook_size_ = 0;
     int64_t channels_ = 0;
@@ -51,7 +53,9 @@ class SeedVcCfmLengthRegulator {
 public:
     SeedVcCfmLengthRegulator() = default;
     SeedVcCfmLengthRegulator(
-        std::shared_ptr<const SeedVcWeightBundle> weights,
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type,
         std::string prefix);
     ~SeedVcCfmLengthRegulator();
 
@@ -72,7 +76,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcWeightBundle> weights_;
     std::string prefix_;
     int64_t codebook_size_ = 0;
     int64_t channels_ = 0;
@@ -93,7 +96,9 @@ class SeedVcV1LengthRegulator {
 public:
     SeedVcV1LengthRegulator() = default;
     SeedVcV1LengthRegulator(
-        std::shared_ptr<const SeedVcWeightBundle> weights,
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type,
         std::string prefix);
     ~SeedVcV1LengthRegulator();
 
@@ -111,7 +116,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcWeightBundle> weights_;
     std::string prefix_;
     int64_t channels_ = 0;
     int64_t input_channels_ = 0;

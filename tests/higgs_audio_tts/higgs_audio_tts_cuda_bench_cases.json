@@ -1,0 +1,35 @@
+[
+  {
+    "id": "clone_prefix_first",
+    "text": "Hello. This is the first retained prefix test.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 256,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 1234
+  },
+  {
+    "id": "clone_prefix_second",
+    "text": "The second request should reuse the cloned voice prefix.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 256,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 2234
+  },
+  {
+    "id": "clone_prefix_third",
+    "text": "A third short sentence checks stable repeated generation.",
+    "reference_audio": "../SAMPLES/EN_2.wav",
+    "reference_text": "If you actually care about security.",
+    "max_tokens": 256,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 50,
+    "seed": 3234
+  }
+]

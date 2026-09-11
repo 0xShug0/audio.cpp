@@ -214,18 +214,22 @@ private:
     FiLMConfig config_;
 };
 
+enum class AdaptiveLayerNormMode {
+    Affine,
+    RmsAffine,
+    Scale,
+};
+
 struct AdaptiveLayerNormConfig {
     int64_t hidden_size = 0;
-    int64_t conditioning_dim = 0;
     float eps = 1e-5f;
-    bool use_bias = true;
+    AdaptiveLayerNormMode mode = AdaptiveLayerNormMode::RmsAffine;
+    int64_t shift_index = -1;
+    int64_t scale_index = 0;
 };
 
 struct AdaptiveLayerNormWeights {
-    core::TensorValue scale_weight;
-    std::optional<core::TensorValue> scale_bias;
-    core::TensorValue shift_weight;
-    std::optional<core::TensorValue> shift_bias;
+    core::TensorValue table;
 };
 
 class AdaptiveLayerNormModule {

@@ -1,0 +1,84 @@
+{
+  "family": "citrinet_asr",
+  "display_name": "Citrinet ASR",
+  "description": "NVIDIA CitriNet-family end-to-end English ASR model using a convolutional CTC architecture optimized for transcribing speech segments to text.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {},
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "citrinet_asr_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "citrinet_asr_q8_0",
+      "display_name": "Citrinet ASR Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Citrinet-ASR-GGUF",
+      "files": [
+        "Citrinet-ASR-GGUF/citrinet-asr-q8_0.gguf"
+      ],
+      "strip_prefix": "Citrinet-ASR-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:citrinet_256_config.json",
+        "tokenizer": "model:citrinet_256_tokenizer.model"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:citrinet_256_config.json",
+        "tokenizer": "model:citrinet_256_tokenizer.model"
+      },
+      "tensors": {
+        "weights": "model:citrinet_256.safetensors"
+      }
+    }
+  ]
+}

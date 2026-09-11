@@ -1,6 +1,6 @@
 #include "engine/models/ace_step/detokenizer.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/modules/attention/qwen_decoder.h"
+#include "engine/framework/modules/transformers/qwen_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -123,7 +123,7 @@ public:
 
         AceStepLatents decode_audio_codes(const int32_t * audio_code_ids, int64_t code_count, std::vector<float> & expanded) const {
             const auto total_start = Clock::now();
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             if (code_count <= 0) {
                 return {};
             }
@@ -186,7 +186,7 @@ public:
 
     private:
         void build() {
-            const auto & config = assets_->config.diffusion;
+            const auto & config = assets_->config.encoder;
             ggml_init_params params{96ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
@@ -252,23 +252,23 @@ public:
                 core::TensorShape::from_dims({code_capacity_, config.pool_window_size, config.hidden_size})})
                                                .build(build_ctx, special_tokens);
             x = modules::AddModule{}.build(build_ctx, x, repeated_special_tokens);
+            modules::QwenDecoderLayerConfig layer_config;
+            layer_config.hidden_size = config.hidden_size;
+            layer_config.num_attention_heads = config.num_attention_heads;
+            layer_config.num_key_value_heads = config.num_key_value_heads;
+            layer_config.head_dim = config.head_dim;
+            layer_config.intermediate_size = config.intermediate_size;
+            layer_config.rms_norm_eps = config.rms_norm_eps;
+            layer_config.rope_theta = config.rope_theta;
+            layer_config.attention_precision = GGML_PREC_F32;
+            layer_config.projection_precision = GGML_PREC_F32;
+            const modules::QwenDecoderLayerModule layer_module(layer_config);
             for (int64_t i = 0; i < config.num_attention_pooler_hidden_layers; ++i) {
                 const auto & layer = weights_->layers.layers[static_cast<size_t>(i)];
                 const auto & mask =
                     (config.layer_types[static_cast<size_t>(i)] == "sliding_attention")
                     ? sliding_attention_mask
                     : full_attention_mask;
-                const modules::QwenDecoderLayerModule layer_module({
-                    config.hidden_size,
-                    config.num_attention_heads,
-                    config.num_key_value_heads,
-                    config.head_dim,
-                    config.intermediate_size,
-                    config.rms_norm_eps,
-                    config.rope_theta,
-                    GGML_PREC_F32,
-                    GGML_PREC_F32,
-                });
                 x = layer_module.build(build_ctx, x, positions, layer, std::nullopt, std::nullopt, mask).output;
             }
             x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false}).build(
@@ -350,7 +350,7 @@ public:
           assets_(std::move(assets)),
           weights_(dit_weights_runtime->detokenizer_weights()),
           quantizer_(ace_step_build_fsq_quantizer_table(
-              assets_->config.diffusion,
+              assets_->config.encoder,
               "ACE-Step native detokenizer")) {
         if (backend_ == nullptr) {
             throw std::runtime_error("ACE-Step detokenizer backend initialization failed");
@@ -378,7 +378,7 @@ public:
         engine::debug::timing_log_scalar(
             "ace_step.detokenizer.graph.ensure_ms",
             engine::debug::elapsed_ms(ensure_start, Clock::now()));
-        const auto & config = assets_->config.diffusion;
+        const auto & config = assets_->config.encoder;
         AceStepLatents out;
         out.frames = code_count * config.pool_window_size;
         out.channels = config.latent_channels;

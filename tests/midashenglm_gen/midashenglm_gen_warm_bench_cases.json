@@ -1,0 +1,55 @@
+{
+  "default": {
+    "warmup": {
+      "text": "<|caption|> A short clean bell chime in a quiet room. <|asr|> <|unknown|> <|speech|> <|unknown|> <|music|> <|unknown|> <|sfx|> single bright bell chime <|env|> quiet room",
+      "duration_sec": 1.0,
+      "guidance_scale": 2.0,
+      "seed": 1000
+    },
+    "requests": [
+      {
+        "id": "speech_music_sfx_cfg",
+        "mode": "single",
+        "text": "<|caption|> A calm narrator speaks over soft rain, distant piano, and a quiet room tone. <|asr|> The lights are still on, and the rain is getting softer now. Please stay near the window and listen carefully. <|speech|> calm warm male narrator, close microphone, gentle emotion, clear words <|music|> sparse quiet piano chords with slow reverb tail <|sfx|> soft rain against a window, occasional distant thunder <|env|> small quiet room at night",
+        "duration_sec": 10.0,
+        "guidance_scale": 2.0,
+        "stop_threshold": 0.5,
+        "min_stop_step": 5,
+        "seed": 20260817
+      },
+      {
+        "id": "music_sfx_no_speech_cfg",
+        "mode": "single",
+        "text": "<|caption|> A compact game menu loop with bright synth chords, small coin pickup sounds, and gentle crowd ambience. <|asr|> <|unknown|> <|speech|> <|unknown|> <|music|> bright looping synth melody, soft bass pulse, light percussion, arcade menu energy <|sfx|> coin pickup blips, small button clicks, short sparkle effects <|env|> lively indoor arcade space",
+        "duration_sec": 8.8,
+        "guidance_scale": 2.0,
+        "stop_threshold": 0.5,
+        "min_stop_step": 5,
+        "seed": 20260818
+      },
+      {
+        "id": "speech_no_cfg",
+        "mode": "single",
+        "text": "<|caption|> A studio voice reads a short emergency notice with no background music. <|asr|> Attention please. The north entrance is closed for maintenance. Please use the west entrance until further notice. <|speech|> neutral female announcement voice, steady pace, clear articulation <|music|> <|unknown|> <|sfx|> <|unknown|> <|env|> dry studio booth",
+        "duration_sec": 7.2,
+        "guidance_scale": 1.0,
+        "stop_threshold": 0.5,
+        "min_stop_step": 5,
+        "seed": 20260819
+      },
+      {
+        "id": "batch_mixed_shapes_cfg",
+        "mode": "batch",
+        "texts": [
+          "<|caption|> A bright upbeat instrumental loop with hand claps and a small guitar riff. <|asr|> <|unknown|> <|speech|> <|unknown|> <|music|> upbeat acoustic guitar, hand claps, light percussion, short melodic hook <|sfx|> <|unknown|> <|env|> clean studio recording",
+          "<|caption|> Footsteps cross a hallway, a door opens, and a short voice whispers before a low mechanical hum starts. <|asr|> I think we found the old archive. Keep your flashlight on and stay close. <|speech|> quiet female whisper, tense but clear <|music|> <|unknown|> <|sfx|> footsteps, door creak, low machine hum <|env|> narrow hallway with light echo"
+        ],
+        "duration_sec": 8.0,
+        "guidance_scale": 2.0,
+        "stop_threshold": 0.5,
+        "min_stop_step": 5,
+        "seed": 20260820
+      }
+    ]
+  }
+}

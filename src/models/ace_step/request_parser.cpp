@@ -126,6 +126,10 @@ AceStepRequest ace_step_parse_request(const runtime::TaskRequest &request) {
     if (const auto lyrics = runtime::find_option(request.options, {"lyrics"}); lyrics.has_value()) {
         out.lyrics = *lyrics;
     }
+    if (const auto rewrite_caption = runtime::find_option(request.options, {"rewrite_caption"});
+        rewrite_caption.has_value()) {
+        out.rewrite_caption = runtime::parse_bool_option(*rewrite_caption, "rewrite_caption");
+    }
     if (const auto negative = runtime::find_option(request.options, {"negative_prompt"}); negative.has_value()) {
         out.negative_prompt = *negative;
     }

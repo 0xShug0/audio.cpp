@@ -82,9 +82,9 @@
       "warmup_request_id": "short"
     },
     {
-      "id": "moss_tts",
-      "family": "moss_tts",
-      "case_id": "moss_tts_voice_clone_long",
+      "id": "moss_tts_nano",
+      "family": "moss_tts_nano",
+      "case_id": "moss_tts_nano_voice_clone_long",
       "request_id": "long"
     },
     {

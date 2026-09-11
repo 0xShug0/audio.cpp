@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/heartmula/assets.h"
 #include "engine/models/heartmula/codec.h"
@@ -20,7 +22,8 @@ public:
     HeartMuLaSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const HeartMuLaAssets> assets);
+        std::shared_ptr<const HeartMuLaAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;
@@ -33,14 +36,15 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const HeartMuLaAssets> assets_;
-    size_t mula_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t mula_constant_context_bytes_ = 256ull * 1024ull * 1024ull;
-    size_t mula_backbone_prefill_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
-    size_t mula_backbone_step_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
-    size_t mula_decoder_prefill_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t mula_decoder_step_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t mula_frame_embedding_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t codec_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    size_t generator_weight_context_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t generator_constant_context_bytes_ = 256ull * 1024ull * 1024ull;
+    size_t generator_backbone_prefill_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
+    size_t generator_backbone_step_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
+    size_t generator_decoder_prefill_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
+    size_t generator_decoder_step_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
+    size_t generator_frame_embedding_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
+    size_t codec_weight_context_bytes_ = 32ull * 1024ull * 1024ull;
     size_t codec_flow_estimator_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
     size_t codec_conditioning_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t codec_scalar_decoder_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
@@ -51,5 +55,7 @@ private:
     HeartMuLaWeightsRuntime mula_;
     HeartCodecWeightsRuntime codec_;
 };
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_heartmula_loader();
 
 }  // namespace engine::models::heartmula

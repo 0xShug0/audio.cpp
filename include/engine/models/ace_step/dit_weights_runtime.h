@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/attention/qwen_decoder.h"
+#include "engine/framework/modules/transformers/qwen_decoder.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/models/ace_step/assets.h"
@@ -59,6 +59,8 @@ struct AceStepConditionEncoderWeights {
     core::TensorValue timbre_embed_bias;
     std::vector<AceStepConditionEncoderLayerWeights> timbre_layers;
     core::TensorValue timbre_norm;
+    // Empty unless the variant prepends a CLS token to the timbre sequence.
+    std::vector<float> timbre_special_token_host;
 };
 
 struct AceStepTimeEmbeddingWeights {

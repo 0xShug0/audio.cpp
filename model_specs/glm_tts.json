@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "family": "glm_tts",
+  "display_name": "GLM-TTS",
+  "description": "Community Chinese-English zero-shot speech synthesis and voice cloning with native Llama, Whisper-VQ, Flow/DiT, CAMPPlus, and HiFT execution.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript matching the reference voice audio; required by GLM-TTS zero-shot synthesis.",
+        "required": true
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated speech tokens; otherwise the official 2x-to-20x text-token bounds are used.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Speech-token temperature; official default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Speech-token top-k; official default 25.",
+        "required": false,
+        "min": 0,
+        "default": 25
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Speech-token nucleus threshold; official default 0.8.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.8
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Speech-token, Flow-noise, and HiFT seed.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Flow Euler steps; defaults to model config, usually official default 10.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "flow_guidance_scale",
+        "type": "float",
+        "description": "Flow classifier-free guidance rate; defaults to model config, usually official default 0.7.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "flow_noise_path",
+        "type": "path",
+        "description": "Optional raw float32 initial Flow noise for parity tests.",
+        "required": false
+      },
+      {
+        "name": "hift_source_random_path",
+        "type": "path",
+        "description": "Optional raw float32 HiFT phase-uniform and Gaussian values for parity tests.",
+        "required": false
+      },
+      {
+        "name": "hift_prior_noise_count",
+        "type": "int",
+        "description": "Torch RNG value offset used before HiFT source generation; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Requested component weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release reference-only encoders after caching the voice while keeping the generation path warm; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "aggressive_mem_saver",
+        "type": "bool",
+        "description": "Also release Llama, Flow, and HiFT after every stage. Minimizes VRAM but reloads the generation path on every request; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Prepared reference-audio cache slots; default 1. Use 0 to disable.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "llama_weight_context_mb",
+        "type": "int",
+        "description": "Llama weight metadata context in MiB; default 8192.",
+        "required": false,
+        "min": 1,
+        "default": 8192
+      },
+      {
+        "name": "constant_context_mb",
+        "type": "int",
+        "description": "Llama constant tensor context in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "llama_config": "model:llm/config.json",
+        "llama_generation_config": "model:llm/generation_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json",
+        "speech_tokenizer_preprocessor": "model:speech_tokenizer/preprocessor_config.json",
+        "tokenizer_config": "model:vq32k-phoneme-tokenizer/tokenizer_config.json",
+        "tokenizer_vocab": "model:vq32k-phoneme-tokenizer/tokenizer_vocab.json",
+        "tokenizer_merges": "model:vq32k-phoneme-tokenizer/tokenizer_merges.txt",
+        "flow_config": "model:flow/config.yaml",
+        "audio_cpp_config": "model:audio_cpp_config.json"
+      },
+      "tensors": {
+        "llama_weights": {
+          "source": "weights:",
+          "prefix": "llama_weights"
+        },
+        "speech_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "speech_tokenizer_weights"
+        },
+        "flow_weights": {
+          "source": "weights:",
+          "prefix": "flow_weights"
+        },
+        "hift_weights": {
+          "source": "weights:",
+          "prefix": "hift_weights"
+        },
+        "campplus_weights": {
+          "source": "weights:",
+          "prefix": "campplus_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "llama_config": "model:llm/config.json",
+        "llama_generation_config": "model:llm/generation_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json",
+        "speech_tokenizer_preprocessor": "model:speech_tokenizer/preprocessor_config.json",
+        "tokenizer_config": "model:vq32k-phoneme-tokenizer/tokenizer_config.json",
+        "tokenizer_vocab": "model:vq32k-phoneme-tokenizer/tokenizer_vocab.json",
+        "tokenizer_merges": "model:vq32k-phoneme-tokenizer/tokenizer_merges.txt",
+        "flow_config": "model:flow/config.yaml",
+        "audio_cpp_config": "model:audio_cpp_config.json"
+      },
+      "tensors": {
+        "llama_weights": "model:llm/model.safetensors.index.json",
+        "speech_tokenizer_weights": "model:speech_tokenizer/model.safetensors",
+        "flow_weights": "model:flow/model.safetensors",
+        "hift_weights": "model:hift/model.safetensors",
+        "campplus_weights": "model:frontend/campplus.safetensors"
+      }
+    }
+  ],
+  "packages": [
+    {
+      "id": "glm_tts_q8_0",
+      "display_name": "GLM-TTS mixed Q8_0/F16 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "GLM-TTS-Q8",
+      "files": [
+        "Text to audio (TTS)/GLM-TTS_Q8.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mirek190/audio.cpp"
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "glm_tts_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/glm_tts.md",
+      "docs/reports/glm_tts_validation.md",
+      "docs/gguf.md"
+    ]
+  }
+}

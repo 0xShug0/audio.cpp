@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "family": "higgs_audio_stt",
+  "display_name": "Higgs Audio v3 STT",
+  "description": "Boson AI English speech-to-text model combining a Whisper Large v3 speech encoder with a Qwen decoder for robust ASR.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {},
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Transcript language code metadata; English is used when omitted.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated transcript tokens; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "enable_thinking",
+        "type": "bool",
+        "description": "Enable the model thinking prompt; default true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode; default auto uses fixed chunks.",
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Fixed audio chunk duration in seconds; must be positive when set; default 4.",
+        "required": false,
+        "min": 0.0,
+        "default": 4.0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared text decoder weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "audio_encoder_weight_type",
+        "type": "enum",
+        "description": "Audio encoder convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "text_decoder_weight_type",
+        "type": "enum",
+        "description": "Text decoder matmul weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "audio_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Audio encoder graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "text_decoder_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder prefill graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 0,
+        "default": 512
+      },
+      {
+        "name": "text_decoder_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder cached-step graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 0,
+        "default": 256
+      },
+      {
+        "name": "text_decoder_weight_context_mb",
+        "type": "int",
+        "description": "Text decoder weight context arena size in MiB; default 4096.",
+        "required": false,
+        "min": 0,
+        "default": 4096
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "ui": {
+    "recommended_package": "higgs_audio_stt_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "higgs_audio_stt_q8_0",
+      "display_name": "Higgs Audio v3 STT Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Higgs-Audio-v3-STT-GGUF",
+      "files": [
+        "Higgs-Audio-v3-STT-GGUF/higgs-audio-v3-stt-q8_0.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-STT-GGUF"
+    },
+    {
+      "id": "higgs_audio_stt_f16",
+      "display_name": "Higgs Audio v3 STT F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Higgs-Audio-v3-STT-GGUF",
+      "files": [
+        "Higgs-Audio-v3-STT-GGUF/higgs-audio-v3-stt-f16.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-STT-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "whisper": "../whisper-large-v3"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "preprocessor_config": "whisper:preprocessor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors.index.json"
+      }
+    }
+  ]
+}

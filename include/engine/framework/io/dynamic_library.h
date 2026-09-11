@@ -1,6 +1,7 @@
 #pragma once
 
 #include <initializer_list>
+#include <string>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -34,6 +35,14 @@ inline DynamicLibraryHandle open_dynamic_library(std::initializer_list<const cha
         }
     }
     return nullptr;
+}
+
+inline DynamicLibraryHandle open_dynamic_library(const std::string & name) {
+#ifdef _WIN32
+    return LoadLibraryA(name.c_str());
+#else
+    return dlopen(name.c_str(), RTLD_LAZY | RTLD_LOCAL);
+#endif
 }
 
 inline void close_dynamic_library(DynamicLibraryHandle handle) {

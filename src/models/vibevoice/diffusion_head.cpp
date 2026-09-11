@@ -8,7 +8,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include "../common/constant_tensor_cache.h"
+#include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -187,7 +187,7 @@ core::TensorValue build_head_layer(
     const VibeVoiceDiffusionHeadLayerWeights & weights,
     const VibeVoiceDiffusionHeadConfig & config,
     const core::TensorValue & ones,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     auto modulation = modules::LinearModule(
                           binding::linear_config(config.hidden_size, 3 * config.hidden_size, false))
                           .build(ctx, modules::SiluModule{}.build(ctx, c), weights.ada_ln);
@@ -431,7 +431,7 @@ VibeVoiceDiffusionHeadWeightsRuntime::VibeVoiceDiffusionHeadWeightsRuntime(
     engine::debug::timing_log_scalar(
         "vibevoice.runtime.diffusion_head_weights_load_ms",
         engine::debug::elapsed_ms(weights_started));
-    constants_ = std::make_unique<common::ConstantTensorCache>(
+    constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,
         threads_,
         "vibevoice.diffusion_head.constants",
@@ -463,7 +463,7 @@ core::BackendType VibeVoiceDiffusionHeadWeightsRuntime::backend_type() const noe
     return backend_type_;
 }
 
-common::ConstantTensorCache & VibeVoiceDiffusionHeadWeightsRuntime::constants() const noexcept {
+core::ConstantTensorCache & VibeVoiceDiffusionHeadWeightsRuntime::constants() const noexcept {
     return *constants_;
 }
 
@@ -499,7 +499,7 @@ core::TensorValue build_vibevoice_diffusion_head(
     const core::TensorValue & condition,
     const VibeVoiceDiffusionHeadWeights & weights,
     const VibeVoiceDiffusionHeadConfig & config,
-    common::ConstantTensorCache & constants) {
+    core::ConstantTensorCache & constants) {
     validate_config(config);
     core::validate_shape(noisy_images, core::TensorShape::from_dims({noisy_images.shape.dims[0], config.latent_size}), "noisy_images");
     core::validate_shape(condition, core::TensorShape::from_dims({noisy_images.shape.dims[0], config.hidden_size}), "condition");

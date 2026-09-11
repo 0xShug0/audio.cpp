@@ -12,10 +12,10 @@ namespace {
 
 std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> load_tokenizer(const Vevo2Assets & assets) {
     engine::tokenizers::LlamaBpeTokenizerSpec spec;
-    spec.vocab_path = assets.paths.ar_vocab;
-    spec.merges_path = assets.paths.ar_merges;
-    spec.tokenizer_config_path = assets.paths.ar_tokenizer_config;
-    spec.tokenizer_json_path = assets.paths.ar_tokenizer_json;
+    spec.vocab_path = assets.resources.require_file("ar_vocab");
+    spec.merges_path = assets.resources.require_file("ar_merges");
+    spec.tokenizer_config_path = assets.resources.require_file("ar_tokenizer_config");
+    spec.tokenizer_json_path = assets.resources.require_file("ar_tokenizer_json");
     spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
     return engine::tokenizers::load_llama_bpe_tokenizer(spec);
 }
@@ -41,10 +41,10 @@ Vevo2ARTokenizer::Vevo2ARTokenizer(std::shared_ptr<const Vevo2Assets> assets)
     tokenizer_ = load_tokenizer(*assets_);
     eos_token_id_ = require_token_id(*tokenizer_, "<|im_end|>", "eos");
     pad_token_id_ = require_token_id(*tokenizer_, "<|endoftext|>", "pad");
-    if (eos_token_id_ != assets_->ar_config.eos_token_id) {
+    if (eos_token_id_ != assets_->config.ar.eos_token_id) {
         throw std::runtime_error("Vevo2 AR tokenizer eos token id does not match model config");
     }
-    if (pad_token_id_ != assets_->ar_config.pad_token_id) {
+    if (pad_token_id_ != assets_->config.ar.pad_token_id) {
         throw std::runtime_error("Vevo2 AR tokenizer pad token id does not match generation config");
     }
 }

@@ -1,20 +1,14 @@
 #include "engine/models/vevo2/session.h"
 
-#include "audio_cache.h"
-
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/waveform_ops.h"
 #include "engine/framework/audio/wav_reader.h"
-#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/core/module.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/weight_binding.h"
-#include "engine/framework/modules/whisper_embedding.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
@@ -22,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -32,16 +27,10 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
-struct GgmlContextDeleter {
-    void operator()(ggml_context * ctx) const noexcept {
-        if (ctx != nullptr) {
-            ggml_free(ctx);
-        }
-    }
-};
-
 constexpr size_t kMaxAudioCacheEntries = 8;
 constexpr int64_t kDefaultTextChunkSize = 128;
+constexpr float kDefaultAudioChunkOverlapSec = 1.0F;
+constexpr float kPi = 3.141592653589793238462643383279502884F;
 
 std::shared_ptr<const Vevo2Assets> require_assets(std::shared_ptr<const Vevo2Assets> assets) {
     if (assets == nullptr) {
@@ -220,6 +209,115 @@ int64_t frame_count_24k(const runtime::AudioBuffer & audio) {
         audio.sample_rate,
         audio.channels,
         24000).size()) / 480;
+}
+
+uint32_t vevo2_chunk_seed(uint32_t seed, int64_t chunk_index) {
+    uint32_t value = seed + 0x9e3779b9u * static_cast<uint32_t>(chunk_index + 1);
+    value ^= value >> 16;
+    value *= 0x85ebca6bu;
+    value ^= value >> 13;
+    value *= 0xc2b2ae35u;
+    value ^= value >> 16;
+    return value;
+}
+
+std::vector<runtime::TimeSpan> plan_source_audio_chunks(
+    const runtime::AudioBuffer & audio,
+    float chunk_duration_sec,
+    float overlap_sec) {
+    if (audio.sample_rate <= 0 || audio.channels <= 0) {
+        throw std::runtime_error("Vevo2 audio chunking requires valid source audio");
+    }
+    if (chunk_duration_sec <= 0.0F) {
+        return {{0, static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels))}};
+    }
+    if (overlap_sec < 0.0F) {
+        throw std::runtime_error("Vevo2 cross_fade_duration_sec must be non-negative");
+    }
+    const int64_t frames = static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
+    const int64_t chunk_frames = static_cast<int64_t>(
+        std::llround(static_cast<double>(chunk_duration_sec) * static_cast<double>(audio.sample_rate)));
+    const int64_t overlap_frames = static_cast<int64_t>(
+        std::llround(static_cast<double>(overlap_sec) * static_cast<double>(audio.sample_rate)));
+    if (chunk_frames <= 0) {
+        throw std::runtime_error("Vevo2 audio_chunk_duration_sec must be positive");
+    }
+    if (overlap_frames >= chunk_frames) {
+        throw std::runtime_error("Vevo2 cross_fade_duration_sec must be smaller than audio_chunk_duration_sec");
+    }
+    if (frames <= chunk_frames) {
+        return {{0, frames}};
+    }
+
+    std::vector<runtime::TimeSpan> chunks;
+    const int64_t hop_frames = chunk_frames - overlap_frames;
+    for (int64_t start = 0; start < frames;) {
+        const int64_t end = std::min<int64_t>(frames, start + chunk_frames);
+        chunks.push_back({start, end});
+        if (end == frames) {
+            break;
+        }
+        start += hop_frames;
+    }
+    return chunks;
+}
+
+void append_cross_faded_audio(
+    runtime::AudioBuffer & merged,
+    const runtime::AudioBuffer & chunk,
+    int64_t fade_frames) {
+    if (fade_frames <= 0 || merged.samples.empty()) {
+        runtime::append_audio_buffer(merged, chunk);
+        return;
+    }
+    if (merged.sample_rate != chunk.sample_rate || merged.channels != chunk.channels || chunk.channels <= 0) {
+        throw std::runtime_error("Vevo2 audio chunk merge requires matching audio formats");
+    }
+    const int64_t channels = chunk.channels;
+    const int64_t merged_frames = static_cast<int64_t>(merged.samples.size()) / channels;
+    const int64_t chunk_frames = static_cast<int64_t>(chunk.samples.size()) / channels;
+    const int64_t effective = std::min<int64_t>(fade_frames, std::min(merged_frames, chunk_frames));
+    if (effective <= 1) {
+        runtime::append_audio_buffer(merged, chunk);
+        return;
+    }
+    const int64_t merged_tail = merged_frames - effective;
+    for (int64_t frame = 0; frame < effective; ++frame) {
+        const float alpha = static_cast<float>(frame) / static_cast<float>(effective - 1);
+        const float fade_out = std::cos(alpha * kPi * 0.5F);
+        const float fade_in = std::sin(alpha * kPi * 0.5F);
+        for (int64_t channel = 0; channel < channels; ++channel) {
+            const size_t dst = static_cast<size_t>((merged_tail + frame) * channels + channel);
+            const size_t src = static_cast<size_t>(frame * channels + channel);
+            merged.samples[dst] = merged.samples[dst] * fade_out + chunk.samples[src] * fade_in;
+        }
+    }
+    merged.samples.insert(
+        merged.samples.end(),
+        chunk.samples.begin() + static_cast<std::ptrdiff_t>(effective * channels),
+        chunk.samples.end());
+}
+
+uint64_t hash_audio_buffer(const runtime::AudioBuffer & audio) {
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&hash](const void * data, size_t bytes) {
+        constexpr uint64_t kFnvPrime = 1099511628211ull;
+        const auto * ptr = static_cast<const unsigned char *>(data);
+        for (size_t index = 0; index < bytes; ++index) {
+            hash ^= static_cast<uint64_t>(ptr[index]);
+            hash *= kFnvPrime;
+        }
+    };
+    mix(&audio.sample_rate, sizeof(audio.sample_rate));
+    mix(&audio.channels, sizeof(audio.channels));
+    const size_t samples = audio.samples.size();
+    mix(&samples, sizeof(samples));
+    for (const float sample : audio.samples) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &sample, sizeof(bits));
+        mix(&bits, sizeof(bits));
+    }
+    return hash;
 }
 
 double median_voiced_frequency_hz_16k(const runtime::AudioBuffer & audio) {
@@ -404,92 +502,6 @@ engine::assets::TensorStorageType resolve_conv_weight_type(
     return storage_type;
 }
 
-engine::modules::WhisperEmbeddingWeights load_whisper_weights(
-    const engine::modules::WhisperEmbeddingConfig & config,
-    engine::core::BackendWeightStore & store,
-    const engine::assets::TensorSource & source,
-    engine::assets::TensorStorageType matmul_storage_type,
-    engine::assets::TensorStorageType conv_storage_type) {
-    engine::modules::WhisperEmbeddingWeights weights;
-    weights.conv1 = {
-        store.load_tensor(
-            source,
-            "encoder.conv1.weight",
-            conv_storage_type,
-            {config.n_audio_state, config.n_mels, 3}),
-        store.load_f32_tensor(source, "encoder.conv1.bias", {config.n_audio_state}),
-    };
-    weights.conv2 = {
-        store.load_tensor(
-            source,
-            "encoder.conv2.weight",
-            conv_storage_type,
-            {config.n_audio_state, config.n_audio_state, 3}),
-        store.load_f32_tensor(source, "encoder.conv2.bias", {config.n_audio_state}),
-    };
-    weights.positional_embedding = store.load_f32_tensor(
-        source,
-        "encoder.positional_embedding",
-        {config.n_audio_ctx, config.n_audio_state});
-    weights.layers.reserve(static_cast<size_t>(config.n_audio_layer));
-    for (int64_t layer = 0; layer < config.n_audio_layer; ++layer) {
-        const std::string prefix = "encoder.blocks." + std::to_string(layer);
-        engine::modules::WhisperEncoderLayerWeights layer_weights;
-        layer_weights.attention_norm = engine::modules::binding::norm_from_source(store, source, prefix + ".attn_ln", config.n_audio_state);
-        layer_weights.attention.query = engine::modules::binding::linear_from_source(
-            store,
-            source,
-            prefix + ".attn.query",
-            matmul_storage_type,
-            config.n_audio_state,
-            config.n_audio_state,
-            true);
-        layer_weights.attention.key = engine::modules::binding::linear_from_source(
-            store,
-            source,
-            prefix + ".attn.key",
-            matmul_storage_type,
-            config.n_audio_state,
-            config.n_audio_state,
-            false);
-        layer_weights.attention.value = engine::modules::binding::linear_from_source(
-            store,
-            source,
-            prefix + ".attn.value",
-            matmul_storage_type,
-            config.n_audio_state,
-            config.n_audio_state,
-            true);
-        layer_weights.attention.out = engine::modules::binding::linear_from_source(
-            store,
-            source,
-            prefix + ".attn.out",
-            matmul_storage_type,
-            config.n_audio_state,
-            config.n_audio_state,
-            true);
-        layer_weights.mlp_norm = engine::modules::binding::norm_from_source(store, source, prefix + ".mlp_ln", config.n_audio_state);
-        layer_weights.mlp.fc1_weight = store.load_tensor(
-            source,
-            prefix + ".mlp.0.weight",
-            matmul_storage_type,
-            {config.n_audio_state * 4, config.n_audio_state});
-        layer_weights.mlp.fc1_bias = store.load_f32_tensor(
-            source,
-            prefix + ".mlp.0.bias",
-            {config.n_audio_state * 4});
-        layer_weights.mlp.fc2_weight = store.load_tensor(
-            source,
-            prefix + ".mlp.2.weight",
-            matmul_storage_type,
-            {config.n_audio_state, config.n_audio_state * 4});
-        layer_weights.mlp.fc2_bias = store.load_f32_tensor(source, prefix + ".mlp.2.bias", {config.n_audio_state});
-        weights.layers.push_back(std::move(layer_weights));
-    }
-    weights.final_norm = engine::modules::binding::norm_from_source(store, source, "encoder.ln_post", config.n_audio_state);
-    return weights;
-}
-
 std::vector<float> compute_openai_whisper_log_mel(const std::vector<float> & waveform16k, size_t threads) {
     constexpr int64_t kSampleRate = 16000;
     constexpr int64_t kNfft = 400;
@@ -546,128 +558,12 @@ std::vector<float> compute_openai_whisper_log_mel(const std::vector<float> & wav
     return log_mel;
 }
 
-}  // namespace
-
-struct Vevo2WhisperEmbeddingRuntime::Graph {
-    Graph(
-        ggml_backend_t backend,
-        engine::core::BackendType backend_type,
-        size_t graph_context_bytes,
-        const engine::modules::WhisperEmbeddingConfig & config,
-        const engine::modules::WhisperEmbeddingWeights & weights)
-        : backend(backend),
-          config(config) {
-        ggml_init_params params{graph_context_bytes, nullptr, true};
-        ctx.reset(ggml_init(params));
-        if (ctx == nullptr) {
-            throw std::runtime_error("failed to initialize Vevo2 Whisper embedding graph context");
-        }
-        engine::core::ModuleBuildContext build_ctx{ctx.get(), "vevo2.whisper_embedding", backend_type};
-        const auto input = engine::core::make_tensor(
-            build_ctx,
-            GGML_TYPE_F32,
-            engine::core::TensorShape::from_dims({1, config.n_mels, config.n_audio_ctx * 2}));
-        input_tensor = input.tensor;
-        const auto output = engine::modules::WhisperEmbeddingModule(config).build(build_ctx, input, weights);
-        output_tensor = output.tensor;
-        ggml_set_output(output_tensor);
-        graph = ggml_new_graph_custom(ctx.get(), 65536, false);
-        ggml_build_forward_expand(graph, output_tensor);
-        gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-        if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
-            throw std::runtime_error("failed to allocate Vevo2 Whisper embedding graph");
-        }
-    }
-
-    ~Graph() {
-        if (gallocr != nullptr) {
-            ggml_gallocr_free(gallocr);
-            gallocr = nullptr;
-        }
-    }
-
-    ggml_backend_t backend = nullptr;
-    engine::modules::WhisperEmbeddingConfig config;
-    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
-    ggml_tensor * input_tensor = nullptr;
-    ggml_tensor * output_tensor = nullptr;
-    ggml_cgraph * graph = nullptr;
-    ggml_gallocr_t gallocr = nullptr;
-};
-
-Vevo2WhisperEmbeddingRuntime::Vevo2WhisperEmbeddingRuntime(
-    const Vevo2Assets & assets,
-    engine::core::ExecutionContext & execution_context,
-    size_t weight_context_bytes,
-    size_t graph_context_bytes,
-    engine::assets::TensorStorageType matmul_weight_storage_type,
-    engine::assets::TensorStorageType conv_weight_storage_type)
-    : execution_context_(execution_context),
-      backend_type_(execution_context.backend_type()),
-      graph_context_bytes_(graph_context_bytes),
-      config_(assets.whisper_config),
-      weight_source_(engine::assets::open_tensor_source(assets.paths.whisper_weights)),
-      weight_store_(std::make_shared<engine::core::BackendWeightStore>(
-          execution_context.backend(),
-          execution_context.backend_type(),
-          "vevo2.whisper_embedding.weights",
-          weight_context_bytes)),
-      weights_(load_whisper_weights(
-          config_,
-          *weight_store_,
-          *weight_source_,
-          matmul_weight_storage_type,
-          conv_weight_storage_type)) {
-    weight_store_->upload();
-    weight_source_->release_storage();
-}
-
-Vevo2WhisperEmbeddingRuntime::~Vevo2WhisperEmbeddingRuntime() = default;
-
-void Vevo2WhisperEmbeddingRuntime::ensure_graph() {
-    if (graph_ != nullptr) {
-        return;
-    }
-    const auto build_start = Clock::now();
-    graph_ = std::make_unique<Graph>(
-        execution_context_.backend(),
-        backend_type_,
-        graph_context_bytes_,
-        config_,
-        weights_);
-    engine::debug::timing_log_scalar("vevo2.whisper.graph.build_ms", engine::debug::elapsed_ms(build_start));
-}
-
-std::vector<float> Vevo2WhisperEmbeddingRuntime::encode_log_mel(const std::vector<float> & log_mel) {
-    const size_t input_size = static_cast<size_t>(config_.n_mels * config_.n_audio_ctx * 2);
-    if (log_mel.size() != input_size) {
-        throw std::runtime_error("Vevo2 Whisper embedding input shape mismatch");
-    }
-    ensure_graph();
-    const auto upload_start = Clock::now();
-    ggml_backend_tensor_set(graph_->input_tensor, log_mel.data(), 0, log_mel.size() * sizeof(float));
-    const double upload_ms = engine::debug::elapsed_ms(upload_start);
-    const auto compute_start = Clock::now();
-    const ggml_status status = engine::core::compute_backend_graph(execution_context_.backend(), graph_->graph);
-    ggml_backend_synchronize(execution_context_.backend());
-    const double compute_ms = engine::debug::elapsed_ms(compute_start);
-    if (status != GGML_STATUS_SUCCESS) {
-        throw std::runtime_error("Vevo2 Whisper embedding graph compute failed");
-    }
-    std::vector<float> output(static_cast<size_t>(config_.n_audio_ctx * config_.n_audio_state));
-    const auto readback_start = Clock::now();
-    ggml_backend_tensor_get(graph_->output_tensor, output.data(), 0, output.size() * sizeof(float));
-    const double readback_ms = engine::debug::elapsed_ms(readback_start);
-    engine::debug::timing_log_scalar("vevo2.whisper.input_upload_ms", upload_ms);
-    engine::debug::timing_log_scalar("vevo2.whisper.graph.compute_ms", compute_ms);
-    engine::debug::timing_log_scalar("vevo2.whisper.output_readback_ms", readback_ms);
-    return output;
-}
-
-std::vector<float> Vevo2WhisperEmbeddingRuntime::extract_features(
+std::vector<float> extract_whisper_features(
+    const engine::modules::WhisperFrontendComponent & whisper_frontend,
     const runtime::AudioBuffer & audio,
     int64_t target_frames,
     size_t threads) {
+    const auto & config = whisper_frontend.config();
     if (target_frames <= 0) {
         throw std::runtime_error("Vevo2 Whisper extraction requires positive target frames");
     }
@@ -691,28 +587,28 @@ std::vector<float> Vevo2WhisperEmbeddingRuntime::extract_features(
     const auto log_mel = compute_openai_whisper_log_mel(waveform16k, threads);
     const double log_mel_ms = engine::debug::elapsed_ms(log_mel_start);
     const auto encode_start = Clock::now();
-    const auto embedded = encode_log_mel(log_mel);
+    const auto embedded = whisper_frontend.encode_log_mel(log_mel);
     const double encode_ms = engine::debug::elapsed_ms(encode_start);
     const auto postprocess_start = Clock::now();
-    const int64_t source_frames = config_.n_audio_ctx;
-    if (static_cast<int64_t>(embedded.size()) != source_frames * config_.n_audio_state) {
+    const int64_t source_frames = config.n_audio_ctx;
+    if (static_cast<int64_t>(embedded.size()) != source_frames * config.n_audio_state) {
         throw std::runtime_error("Vevo2 Whisper embedding output shape mismatch");
     }
-    std::vector<float> out(static_cast<size_t>(target_frames * config_.n_audio_state), 0.0F);
+    std::vector<float> out(static_cast<size_t>(target_frames * config.n_audio_state), 0.0F);
     const int64_t copied_frames = std::min<int64_t>(target_frames, source_frames);
     for (int64_t frame = 0; frame < copied_frames; ++frame) {
         std::copy_n(
-            embedded.data() + static_cast<size_t>(frame * config_.n_audio_state),
-            static_cast<size_t>(config_.n_audio_state),
-            out.data() + static_cast<size_t>(frame * config_.n_audio_state));
+            embedded.data() + static_cast<size_t>(frame * config.n_audio_state),
+            static_cast<size_t>(config.n_audio_state),
+            out.data() + static_cast<size_t>(frame * config.n_audio_state));
     }
     if (target_frames > source_frames) {
-        const float * last_frame = embedded.data() + static_cast<size_t>((source_frames - 1) * config_.n_audio_state);
+        const float * last_frame = embedded.data() + static_cast<size_t>((source_frames - 1) * config.n_audio_state);
         for (int64_t frame = source_frames; frame < target_frames; ++frame) {
             std::copy_n(
                 last_frame,
-                static_cast<size_t>(config_.n_audio_state),
-                out.data() + static_cast<size_t>(frame * config_.n_audio_state));
+                static_cast<size_t>(config.n_audio_state),
+                out.data() + static_cast<size_t>(frame * config.n_audio_state));
         }
     }
     engine::debug::timing_log_scalar("vevo2.whisper.resample_pad_ms", resample_pad_ms);
@@ -722,6 +618,8 @@ std::vector<float> Vevo2WhisperEmbeddingRuntime::extract_features(
     engine::debug::trace_log_scalar("vevo2.whisper.target_frames", target_frames);
     return out;
 }
+
+}  // namespace
 
 Vevo2Session::Vevo2Session(
     runtime::TaskSpec task,
@@ -760,13 +658,19 @@ Vevo2Session::Vevo2Session(
           resolve_matmul_weight_type(options, "vevo2.vocoder_weight_type", engine::assets::TensorStorageType::Native)),
       vocoder_conv_weight_storage_type_(
           resolve_conv_weight_type(options, "vevo2.vocoder_conv_weight_type", engine::assets::TensorStorageType::Native)),
-      whisper_embedding_(
-          *assets_,
-          reference_execution_context_,
-          whisper_weight_context_bytes_,
-          whisper_graph_context_bytes_,
-          whisper_matmul_weight_storage_type_,
-          whisper_conv_weight_storage_type_),
+      whisper_frontend_([&] {
+          engine::modules::WhisperFrontendComponentConfig component_config;
+          component_config.name = "vevo2.whisper";
+          component_config.weight_context_bytes = whisper_weight_context_bytes_;
+          component_config.graph_context_bytes = whisper_graph_context_bytes_;
+          component_config.matmul_weight_storage_type = whisper_matmul_weight_storage_type_;
+          component_config.conv_weight_storage_type = whisper_conv_weight_storage_type_;
+          return engine::modules::WhisperFrontendComponent::load_openai_layout(
+              assets_->whisper_weights,
+              options.backend,
+              assets_->config.whisper,
+              std::move(component_config));
+      }()),
       prosody_tokenizer_(
           *assets_,
           reference_execution_context_,
@@ -801,7 +705,9 @@ Vevo2Session::Vevo2Session(
           vocoder_weight_context_bytes_,
           vocoder_graph_context_bytes_,
           vocoder_matmul_weight_storage_type_,
-          vocoder_conv_weight_storage_type_) {
+          vocoder_conv_weight_storage_type_),
+      whisper_feature_cache_(kMaxAudioCacheEntries),
+      content_style_token_cache_(kMaxAudioCacheEntries) {
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceConversion &&
         task_.task != runtime::VoiceTaskKind::SpeechToSpeech &&
@@ -835,32 +741,29 @@ std::vector<float> Vevo2Session::cached_whisper_features(
     const runtime::AudioBuffer & audio,
     int64_t target_frames,
     size_t threads) {
-    const uint64_t key = audio_buffer_key(audio);
-    for (const auto & entry : whisper_feature_cache_) {
-        if (matches_audio_cache_key(
-                entry.key,
-                key,
-                entry.sample_rate,
-                entry.channels,
-            entry.samples,
-            audio) &&
-            entry.target_frames == target_frames) {
-            return entry.features;
-        }
-    }
-
-    auto features = whisper_embedding_.extract_features(audio, target_frames, threads);
-    if (whisper_feature_cache_.size() >= kMaxAudioCacheEntries) {
-        whisper_feature_cache_.erase(whisper_feature_cache_.begin());
-    }
-    whisper_feature_cache_.push_back({
-        key,
+    const AudioCacheKey key{
+        hash_audio_buffer(audio),
         audio.sample_rate,
         audio.channels,
-        target_frames,
         audio.samples.size(),
-        features,
-    });
+        target_frames,
+    };
+    if (const auto * cached = whisper_feature_cache_.find(key)) {
+        engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.hit", 1);
+        engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.slots", static_cast<int64_t>(whisper_feature_cache_.capacity()));
+        engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.entries", static_cast<int64_t>(whisper_feature_cache_.size()));
+        engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.evicted", 0);
+        return cached->features;
+    }
+
+    auto features = extract_whisper_features(whisper_frontend_, audio, target_frames, threads);
+    const bool will_evict =
+        whisper_feature_cache_.capacity() > 0 && whisper_feature_cache_.size() >= whisper_feature_cache_.capacity();
+    whisper_feature_cache_.put(key, AudioFeatureCacheValue{features});
+    engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.hit", 0);
+    engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.slots", static_cast<int64_t>(whisper_feature_cache_.capacity()));
+    engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.entries", static_cast<int64_t>(whisper_feature_cache_.size()));
+    engine::debug::trace_log_scalar("vevo2.whisper_feature_cache.evicted", will_evict ? 1 : 0);
     return features;
 }
 
@@ -868,32 +771,29 @@ Vevo2TokenSequence Vevo2Session::cached_content_style_tokens(
     const runtime::AudioBuffer & audio,
     const std::vector<float> & whisper_features,
     int64_t feature_frames) {
-    const uint64_t key = audio_buffer_key(audio);
-    for (const auto & entry : content_style_token_cache_) {
-        if (matches_audio_cache_key(
-                entry.key,
-                key,
-                entry.sample_rate,
-                entry.channels,
-            entry.samples,
-            audio) &&
-            entry.feature_frames == feature_frames) {
-            return entry.tokens;
-        }
+    const AudioCacheKey key{
+        hash_audio_buffer(audio),
+        audio.sample_rate,
+        audio.channels,
+        audio.samples.size(),
+        feature_frames,
+    };
+    if (const auto * cached = content_style_token_cache_.find(key)) {
+        engine::debug::trace_log_scalar("vevo2.content_style_token_cache.hit", 1);
+        engine::debug::trace_log_scalar("vevo2.content_style_token_cache.slots", static_cast<int64_t>(content_style_token_cache_.capacity()));
+        engine::debug::trace_log_scalar("vevo2.content_style_token_cache.entries", static_cast<int64_t>(content_style_token_cache_.size()));
+        engine::debug::trace_log_scalar("vevo2.content_style_token_cache.evicted", 0);
+        return cached->tokens;
     }
 
     auto tokens = content_style_tokenizer_.encode_timbre_reference(audio, whisper_features, feature_frames);
-    if (content_style_token_cache_.size() >= kMaxAudioCacheEntries) {
-        content_style_token_cache_.erase(content_style_token_cache_.begin());
-    }
-    content_style_token_cache_.push_back({
-        key,
-        audio.sample_rate,
-        audio.channels,
-        feature_frames,
-        audio.samples.size(),
-        tokens,
-    });
+    const bool will_evict =
+        content_style_token_cache_.capacity() > 0 && content_style_token_cache_.size() >= content_style_token_cache_.capacity();
+    content_style_token_cache_.put(key, AudioTokenCacheValue{tokens});
+    engine::debug::trace_log_scalar("vevo2.content_style_token_cache.hit", 0);
+    engine::debug::trace_log_scalar("vevo2.content_style_token_cache.slots", static_cast<int64_t>(content_style_token_cache_.capacity()));
+    engine::debug::trace_log_scalar("vevo2.content_style_token_cache.entries", static_cast<int64_t>(content_style_token_cache_.size()));
+    engine::debug::trace_log_scalar("vevo2.content_style_token_cache.evicted", will_evict ? 1 : 0);
     return tokens;
 }
 
@@ -912,6 +812,15 @@ runtime::TaskResult Vevo2Session::run(const runtime::TaskRequest & request) {
     double fm_ms = 0.0;
     double vocoder_ms = 0.0;
     const auto text_chunk_size_override = engine::text::parse_text_chunk_size_override(request.options);
+    const auto audio_chunk_duration_override = engine::audio::parse_audio_chunk_seconds_override(request.options);
+    const auto audio_chunk_mode = engine::audio::parse_audio_chunk_mode(request.options);
+    const bool audio_chunking_enabled =
+        audio_chunk_mode != engine::audio::AudioChunkMode::None &&
+        audio_chunk_duration_override.has_value() &&
+        *audio_chunk_duration_override > 0.0F;
+    const float audio_chunk_duration_sec = audio_chunk_duration_override.value_or(0.0F);
+    const float audio_chunk_overlap_sec = runtime::parse_float_option(request.options, {"cross_fade_duration_sec"})
+        .value_or(kDefaultAudioChunkOverlapSec);
     auto vevo2_request = make_request(request);
     std::vector<Vevo2Request> chunk_requests;
     if (vevo2_request.path == Vevo2InferencePath::TextProsodyToTargetVoice) {
@@ -936,7 +845,25 @@ runtime::TaskResult Vevo2Session::run(const runtime::TaskRequest & request) {
             }
         }
     } else {
-        chunk_requests.push_back(std::move(vevo2_request));
+        const auto spans = audio_chunking_enabled
+            ? plan_source_audio_chunks(*vevo2_request.refs.source_audio, audio_chunk_duration_sec, audio_chunk_overlap_sec)
+            : std::vector<runtime::TimeSpan>{{0, static_cast<int64_t>(
+                vevo2_request.refs.source_audio->samples.size() /
+                static_cast<size_t>(vevo2_request.refs.source_audio->channels))}};
+        engine::debug::trace_log_scalar("vevo2.audio_chunk_duration_sec", audio_chunk_duration_sec);
+        engine::debug::trace_log_scalar("vevo2.audio_chunk_overlap_sec", audio_chunking_enabled ? audio_chunk_overlap_sec : 0.0F);
+        engine::debug::trace_log_scalar("vevo2.audio_chunk_count", static_cast<int64_t>(spans.size()));
+        chunk_requests.reserve(spans.size());
+        auto source_audio = std::move(*vevo2_request.refs.source_audio);
+        vevo2_request.refs.source_audio.reset();
+        for (size_t index = 0; index < spans.size(); ++index) {
+            Vevo2Request chunk_request = vevo2_request;
+            chunk_request.refs.source_audio = engine::audio::slice_audio_buffer(source_audio, spans[index]);
+            if (spans.size() > 1) {
+                chunk_request.generation.seed = vevo2_chunk_seed(vevo2_request.generation.seed, static_cast<int64_t>(index));
+            }
+            chunk_requests.push_back(std::move(chunk_request));
+        }
     }
 
     runtime::TaskResult result;
@@ -995,7 +922,7 @@ runtime::TaskResult Vevo2Session::run(const runtime::TaskRequest & request) {
             }
             style_tokenizer_ms += engine::debug::elapsed_ms(style_tokenizer_start);
             const auto prompt_start = Clock::now();
-            prompt = prompt_builder_.build(chunk_request, prosody_tokens, style_content_tokens);
+            prompt = build_vevo2_prompt_parts(chunk_request, prosody_tokens, style_content_tokens);
             prompt_build_ms += engine::debug::elapsed_ms(prompt_start);
             const auto ar_start = Clock::now();
             generated_tokens = autoregressive_model_.generate_content_style(prompt, chunk_request.generation);
@@ -1051,6 +978,10 @@ runtime::TaskResult Vevo2Session::run(const runtime::TaskRequest & request) {
         if (!have_audio_output) {
             merged_audio = chunk_audio;
             have_audio_output = true;
+        } else if (audio_chunking_enabled && chunk_request.path == Vevo2InferencePath::SourceAudioToTargetVoice) {
+            const int64_t fade_frames = static_cast<int64_t>(
+                std::llround(static_cast<double>(audio_chunk_overlap_sec) * static_cast<double>(chunk_audio.sample_rate)));
+            append_cross_faded_audio(merged_audio, chunk_audio, fade_frames);
         } else {
             runtime::append_audio_buffer(merged_audio, chunk_audio);
         }
@@ -1085,10 +1016,10 @@ Vevo2Request Vevo2Session::make_request(const runtime::TaskRequest & request) co
     out.path = parsed.path;
     out.route = parsed.route;
     out.refs.target_text = request.text_input.has_value() ? request.text_input->text : std::string{};
-    out.generation.top_k = static_cast<int>(assets_->ar_config.generation_top_k);
-    out.generation.top_p = assets_->ar_config.generation_top_p;
-    out.generation.temperature = assets_->ar_config.generation_temperature;
-    out.generation.repetition_penalty = assets_->ar_config.generation_repetition_penalty;
+    out.generation.top_k = static_cast<int>(assets_->config.ar.generation_top_k);
+    out.generation.top_p = assets_->config.ar.generation_top_p;
+    out.generation.temperature = assets_->config.ar.generation_temperature;
+    out.generation.repetition_penalty = assets_->config.ar.generation_repetition_penalty;
     out.generation.use_prosody_code = route_defaults_to_prosody(out.route);
     out.generation.use_pitch_shift = route_defaults_to_pitch_shift(out.route);
     if (const auto target_text = runtime::find_option(request.options, {"target_text"})) {

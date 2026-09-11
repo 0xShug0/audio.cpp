@@ -513,7 +513,7 @@ StableAudioRfDitWeights load_stable_audio_rf_dit_weights(
         backend_type,
         "stable_audio.rf_dit.weights",
         weight_context_bytes != 0 ? weight_context_bytes :
-            (config.is_medium() ? kRfWeightContextBytesMedium : kRfWeightContextBytesSmall));
+            (config.medium_architecture ? kRfWeightContextBytesMedium : kRfWeightContextBytesSmall));
     weights.to_cond_embed_0 = load_linear(*weights.store, source, "model.model.to_cond_embed.0", weight_storage_type, config.embed_dim, config.cond_token_dim, false);
     weights.to_cond_embed_2 = load_linear(*weights.store, source, "model.model.to_cond_embed.2", weight_storage_type, config.embed_dim, config.embed_dim, false);
     weights.to_global_embed_0 = load_linear(*weights.store, source, "model.model.to_global_embed.0", weight_storage_type, config.embed_dim, config.global_cond_dim, false);

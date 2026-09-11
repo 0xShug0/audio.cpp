@@ -2,7 +2,7 @@
 
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/wavlm_encoder.h"
+#include "engine/framework/modules/speech_encoders/wavlm_encoder.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/miocodec/assets.h"
 #include "engine/models/miocodec/components.h"

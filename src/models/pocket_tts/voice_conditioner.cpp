@@ -4,6 +4,8 @@
 #include "engine/framework/audio/waveform_ops.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/models/pocket_tts/backend_weights.h"
+#include "engine/models/pocket_tts/voice_state_assets.h"
 #include "graph_common.h"
 
 #include <cmath>

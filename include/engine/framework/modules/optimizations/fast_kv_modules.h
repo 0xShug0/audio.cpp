@@ -4,8 +4,19 @@
 
 namespace engine::modules {
 
+enum class FastKVSetRowsMode {
+    Exact,
+    BackendViewOptimized,
+};
+
+struct FastKVSetRowsConfig {
+    FastKVSetRowsMode mode = FastKVSetRowsMode::Exact;
+};
+
 class FastKVSetRowsModule {
 public:
+    explicit FastKVSetRowsModule(FastKVSetRowsConfig config = {});
+
     const core::ModuleSchema & schema() const noexcept;
 
     core::TensorValue build(
@@ -15,6 +26,9 @@ public:
         const core::TensorValue & row_index) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    FastKVSetRowsConfig config_;
 };
 
 }  // namespace engine::modules

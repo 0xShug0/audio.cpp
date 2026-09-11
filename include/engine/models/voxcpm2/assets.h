@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 
 #include <cstdint>
@@ -86,24 +87,13 @@ struct VoxCPM2Config {
     std::string dtype = "bfloat16";
 };
 
-struct VoxCPM2AssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path model_weights_path;
-    std::filesystem::path audiovae_weights_path;
-    std::filesystem::path tokenizer_config_path;
-    std::filesystem::path tokenizer_json_path;
-    std::filesystem::path special_tokens_map_path;
-};
-
 struct VoxCPM2Assets {
-    VoxCPM2AssetPaths paths;
+    assets::ResourceBundle resources;
     VoxCPM2Config config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> audiovae_weights;
 };
 
-VoxCPM2AssetPaths resolve_voxcpm2_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const VoxCPM2Assets> load_voxcpm2_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::voxcpm2

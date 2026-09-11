@@ -1,0 +1,232 @@
+{
+  "family": "qwen3_asr",
+  "display_name": "Qwen3-ASR",
+  "description": "Qwen ASR model family for language identification and speech recognition across 30 languages, 22 Chinese dialects, and multiple English accents, with robustness for noisy, long-form, and singing audio.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "yue",
+    "ar",
+    "de",
+    "fr",
+    "es",
+    "pt",
+    "id",
+    "it",
+    "ko",
+    "ru",
+    "th",
+    "vi",
+    "ja",
+    "tr",
+    "hi",
+    "ms",
+    "nl",
+    "sv",
+    "da",
+    "fi",
+    "pl",
+    "cs",
+    "fil",
+    "fa",
+    "el",
+    "hu",
+    "mk",
+    "ro",
+    "zh dialects"
+  ],
+  "capabilities": {
+    "asr": [
+      "word_timestamps",
+      "vad_chunking",
+      "partial_results"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "clamp_timestamps_to_audio",
+        "type": "bool",
+        "description": "Opt-in guard for word timestamp output: keep repaired forced-aligner word spans inside the local audio chunk. Defaults to false to preserve existing timestamp repair behavior.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "qwen3_asr.preserve_punctuation",
+        "type": "bool",
+        "description": "Opt-in text output mode for timestamped chunked ASR: preserve ASR punctuation in text_output instead of rebuilding text from aligned words.",
+        "required": false,
+        "default": false
+      }
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "ui": {
+    "recommended_package": "qwen3_asr_1_7b_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/qwen3.md",
+      "docs/asr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "qwen3_asr_1_7b_q8_0",
+      "display_name": "Qwen3-ASR 1.7B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-ASR-1.7B-GGUF",
+      "files": [
+        "Qwen3-ASR-1.7B-GGUF/qwen3-asr-1.7b-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-1.7B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_1_7b_f16",
+      "display_name": "Qwen3-ASR 1.7B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Qwen3-ASR-1.7B-GGUF",
+      "files": [
+        "Qwen3-ASR-1.7B-GGUF/qwen3-asr-1.7b-f16.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-1.7B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_0_6b_q8_0",
+      "display_name": "Qwen3-ASR 0.6B Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-ASR-0.6B-GGUF",
+      "files": [
+        "Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-0.6B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_0_6b_f16",
+      "display_name": "Qwen3-ASR 0.6B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Qwen3-ASR-0.6B-GGUF",
+      "files": [
+        "Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-f16.gguf"
+      ],
+      "strip_prefix": "Qwen3-ASR-0.6B-GGUF"
+    },
+    {
+      "id": "qwen3_asr_1_7b_safetensors",
+      "display_name": "Qwen3-ASR 1.7B HF Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-ASR-1.7B-hf",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "processor_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-ASR-1.7B-hf"
+      }
+    },
+    {
+      "id": "qwen3_asr_0_6b_safetensors",
+      "display_name": "Qwen3-ASR 0.6B Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-ASR-0.6B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-ASR-0.6B"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "chat_template": "model:chat_template.json",
+        "chat_template_jinja": "model:chat_template.jinja",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "chat_template": "model:chat_template.json",
+        "chat_template_jinja": "model:chat_template.jinja",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

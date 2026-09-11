@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/modules/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
 #include "engine/models/seed_vc/astral_quantizer.h"
 
 #include <cstdint>

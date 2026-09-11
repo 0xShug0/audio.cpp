@@ -37,6 +37,10 @@ struct Qwen3TalkerCodes {
     Qwen3SpeechCodes decoder_input_codes;
 };
 
+void validate_qwen3_talker_voice_clone_prefill(
+    const Qwen3TalkerPrefill & prefill,
+    int64_t hidden_size);
+
 class Qwen3TalkerWeightsRuntime;
 class Qwen3TalkerStepRuntime;
 
@@ -50,6 +54,7 @@ public:
         const Qwen3TalkerPrefill & prefill,
         const Qwen3TTSGenerationOptions & options,
         float repetition_penalty = 1.05F);
+    int64_t release_cached_step_graph();
 
 private:
     std::unique_ptr<Impl> impl_;
@@ -64,11 +69,13 @@ public:
     std::shared_ptr<const Qwen3TalkerWeightsRuntime> create_weights_runtime(
         std::shared_ptr<const Qwen3TTSAssets> assets,
         core::BackendType backend_type,
+        int device,
         int threads,
         size_t graph_arena_bytes,
         size_t talker_constant_context_bytes,
         size_t code_predictor_constant_context_bytes,
-        engine::assets::TensorStorageType weight_storage_type) const;
+        engine::assets::TensorStorageType weight_storage_type,
+        Qwen3TTSPerfMode perf_mode) const;
 
     std::shared_ptr<Qwen3TalkerStepRuntime> create_step_runtime(
         std::shared_ptr<const Qwen3TalkerWeightsRuntime> weights,

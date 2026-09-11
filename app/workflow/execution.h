@@ -19,6 +19,7 @@ struct AppRequest {
 struct AppRequestResult {
     std::string id;
     engine::runtime::TaskResult result;
+    double wall_ms = 0.0;
 };
 
 struct AudioChapter {
@@ -35,6 +36,8 @@ struct AppBatchResult {
     std::vector<AppRequestResult> results;
     std::optional<engine::runtime::AudioBuffer> merged_audio;
     std::vector<AudioChapter> chapters;
+    double prepare_ms = 0.0;
+    double session_wall_ms = 0.0;
 };
 
 enum class AudioMergeMode {

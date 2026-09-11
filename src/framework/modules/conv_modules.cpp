@@ -1,6 +1,9 @@
 #include "engine/framework/modules/conv_modules.h"
 #include "tensor_layout_utils.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
 #include <stdexcept>
@@ -18,6 +21,16 @@ const core::ModulePortSpec kConvInputs[] = {
 
 const core::ModulePortSpec kSingleOutput[] = {
     {"output", core::PortKind::Activation, false},
+};
+
+const core::ModulePortSpec kCausalResBlockInputs[] = {
+    {"input", core::PortKind::Activation, false},
+    {"conv1.weight", core::PortKind::Parameter, false},
+    {"conv1.bias", core::PortKind::Parameter, false},
+    {"conv2.weight", core::PortKind::Parameter, false},
+    {"conv2.bias", core::PortKind::Parameter, false},
+    {"shortcut.weight", core::PortKind::Parameter, true},
+    {"shortcut.bias", core::PortKind::Parameter, true},
 };
 
 const core::ModuleSchema kConv1dSchema = {
@@ -38,6 +51,66 @@ const core::ModuleSchema kConv2dSchema = {
     kSingleOutput,
     1,
     "Applies a 2D convolution to channel-first inputs [batch, channels, height, width].",
+};
+
+const core::ModuleSchema kConv3dSchema = {
+    "Conv3d",
+    "nn.conv",
+    kConvInputs,
+    3,
+    kSingleOutput,
+    1,
+    "Applies a 3D convolution to ggml-flattened channel-first inputs [batch * channels, depth, height, width].",
+};
+
+const core::ModuleSchema kCausalConv2dSchema = {
+    "CausalConv2d",
+    "nn.conv",
+    kConvInputs,
+    3,
+    kSingleOutput,
+    1,
+    "Applies explicit asymmetric 2D padding followed by Conv2d.",
+};
+
+const core::ModuleSchema kSameWidthCausalConv2dSchema = {
+    "SameWidthCausalConv2d",
+    "nn.conv",
+    kConvInputs,
+    3,
+    kSingleOutput,
+    1,
+    "Applies causal-height and same-width 2D padding followed by Conv2d.",
+};
+
+const core::ModuleSchema kPixelNormCausalConv2dResBlockSchema = {
+    "PixelNormCausalConv2dResBlock",
+    "nn.conv",
+    kCausalResBlockInputs,
+    7,
+    kSingleOutput,
+    1,
+    "Applies a PixelNorm/Silu causal Conv2d residual block.",
+};
+
+const core::ModuleSchema kCausalConv2dUpsampleSchema = {
+    "CausalConv2dUpsample",
+    "nn.conv",
+    kConvInputs,
+    3,
+    kSingleOutput,
+    1,
+    "Applies nearest 2D upsampling followed by causal Conv2d and temporal crop.",
+};
+
+const core::ModuleSchema kDepthwiseConv2dSchema = {
+    "DepthwiseConv2d",
+    "nn.conv",
+    kConvInputs,
+    3,
+    kSingleOutput,
+    1,
+    "Applies a depthwise 2D convolution to channel-first inputs [batch, channels, height, width].",
 };
 
 const core::ModuleSchema kConvTranspose1dSchema = {
@@ -102,11 +175,30 @@ core::TensorValue conv_transpose1d_weight(
         ggml_type_name(contiguous.type));
 }
 
+core::TensorValue depthwise_conv2d_weight(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & weight) {
+    const auto contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weight);
+    if (contiguous.type == GGML_TYPE_F32) {
+        return contiguous;
+    }
+    if (contiguous.type == GGML_TYPE_F16 || contiguous.type == GGML_TYPE_BF16 || ggml_is_quantized(contiguous.type)) {
+        return core::wrap_tensor(ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F32), contiguous.shape, GGML_TYPE_F32);
+    }
+    throw std::runtime_error(
+        std::string("DepthwiseConv2dModule does not support weight type with the current ggml depthwise conv path: ") +
+        ggml_type_name(contiguous.type));
+}
+
 int64_t conv1d_output_frames(const Conv1dConfig & config, int64_t input_frames) {
     return (input_frames + 2 * config.padding - config.dilation * (config.kernel_size - 1) - 1) / config.stride + 1;
 }
 
 int64_t conv2d_output_dim(int64_t input, int kernel, int stride, int padding, int dilation) {
+    return (input + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1;
+}
+
+int64_t conv3d_output_dim(int64_t input, int kernel, int stride, int padding, int dilation) {
     return (input + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1;
 }
 
@@ -130,6 +222,81 @@ core::TensorValue add_bias_if_needed(
     return core::wrap_tensor(ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
 }
 
+core::TensorValue add_4d_channel_bias_if_needed(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & output,
+    int64_t channels,
+    const std::optional<core::TensorValue> & bias) {
+    if (!bias.has_value()) {
+        return output;
+    }
+    core::validate_shape(*bias, core::TensorShape::from_dims({channels}), "bias");
+    const auto output_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, output);
+    const auto bias_view = core::reshape_tensor(ctx, *bias, core::TensorShape::from_dims({1, channels, 1, 1}));
+    const auto bias_expanded =
+        core::wrap_tensor(ggml_repeat(ctx.ggml, bias_view.tensor, output_contiguous.tensor), output.shape, GGML_TYPE_F32);
+    return core::wrap_tensor(ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
+}
+
+core::TensorValue build_conv_transpose1d_cuda_col2im_path(
+    core::ModuleBuildContext & ctx,
+    const ConvTranspose1dConfig & config,
+    const core::TensorValue & input,
+    const ConvTranspose1dWeights & weights,
+    const core::TensorShape & output_shape) {
+    if (!is_conv_transpose1d_col2im_fast_path_eligible(ctx, config)) {
+        throw std::runtime_error("ConvTranspose1dModule CUDA col2im path was requested for an ineligible config");
+    }
+    const auto input_contiguous = core::ensure_backend_addressable_layout(ctx, input);
+    auto weight_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, weights.weight);
+    if (weight_contiguous.type != GGML_TYPE_F32) {
+        weight_contiguous = core::wrap_tensor(ggml_cast(ctx.ggml, weight_contiguous.tensor, GGML_TYPE_F32), weight_contiguous.shape, GGML_TYPE_F32);
+    }
+    auto * weight_perm = ggml_reshape_2d(
+        ctx.ggml,
+        ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight_contiguous.tensor, 1, 2, 0, 3)),
+        config.in_channels,
+        config.kernel_size * config.out_channels);
+    ggml_tensor * bias_matrix = nullptr;
+    if (config.use_bias) {
+        if (!weights.bias.has_value()) {
+            throw std::runtime_error("ConvTranspose1dModule col2im fast path requires bias when use_bias is true");
+        }
+        core::validate_shape(*weights.bias, core::TensorShape::from_dims({config.out_channels}), "bias");
+        bias_matrix = ggml_reshape_2d(ctx.ggml, weights.bias->tensor, 1, config.out_channels);
+    }
+    core::TensorValue output;
+    for (int64_t batch_index = 0; batch_index < input.shape.dims[0]; ++batch_index) {
+        auto * batch_input = ggml_view_2d(
+            ctx.ggml,
+            input_contiguous.tensor,
+            input_contiguous.tensor->ne[0],
+            input_contiguous.tensor->ne[1],
+            input_contiguous.tensor->nb[1],
+            static_cast<size_t>(batch_index) * input_contiguous.tensor->nb[2]);
+        auto * transposed_input = ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, batch_input));
+        auto * columns = ggml_mul_mat(ctx.ggml, weight_perm, transposed_input);
+        auto * batch_output = ggml_col2im_1d(
+            ctx.ggml,
+            columns,
+            config.stride,
+            static_cast<int>(config.out_channels),
+            config.padding);
+        if (bias_matrix != nullptr) {
+            batch_output = ggml_add(ctx.ggml, batch_output, bias_matrix);
+        }
+        auto batch_value = core::wrap_tensor(
+            ggml_reshape_3d(ctx.ggml, batch_output, batch_output->ne[0], batch_output->ne[1], 1),
+            core::TensorShape::from_dims({1, config.out_channels, batch_output->ne[0]}),
+            GGML_TYPE_F32);
+        if (batch_value.shape.dims[2] != output_shape.dims[2]) {
+            throw std::runtime_error("ConvTranspose1dModule col2im fast path produced unexpected frame count");
+        }
+        output = output.valid() ? ConcatModule({0}).build(ctx, output, batch_value) : batch_value;
+    }
+    return output;
+}
+
 core::TensorValue view_batch_matrix(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -147,6 +314,15 @@ core::TensorValue view_batch_matrix(
 }
 
 }  // namespace
+
+bool is_conv_transpose1d_col2im_fast_path_eligible(
+    const core::ModuleBuildContext & ctx,
+    const ConvTranspose1dConfig & config) noexcept {
+    return (core::uses_ggml_cuda_or_hip_backend(ctx.backend_type) ||
+            ctx.backend_type == core::BackendType::Metal ||
+            ctx.backend_type == core::BackendType::Vulkan) &&
+           config.dilation == 1;
+}
 
 Conv1dModule::Conv1dModule(Conv1dConfig config) : config_(config) {
     if (config_.in_channels <= 0 || config_.out_channels <= 0 || config_.kernel_size <= 0) {
@@ -312,6 +488,349 @@ const core::ModuleSchema & Conv2dModule::static_schema() noexcept {
     return kConv2dSchema;
 }
 
+Conv3dModule::Conv3dModule(Conv3dConfig config) : config_(config) {
+    if (config_.in_channels <= 0 || config_.out_channels <= 0 || config_.kernel_depth <= 0 || config_.kernel_height <= 0 ||
+        config_.kernel_width <= 0) {
+        throw std::runtime_error("Conv3dConfig dimensions must be positive");
+    }
+    if (config_.stride_depth <= 0 || config_.stride_height <= 0 || config_.stride_width <= 0 ||
+        config_.dilation_depth <= 0 || config_.dilation_height <= 0 || config_.dilation_width <= 0) {
+        throw std::runtime_error("Conv3d stride and dilation must be positive");
+    }
+}
+
+const Conv3dConfig & Conv3dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & Conv3dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue Conv3dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const Conv3dWeights & weights) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 4, 4, "input");
+    if (input.shape.dims[0] % config_.in_channels != 0) {
+        throw std::runtime_error("Conv3dModule input first dimension must be batch * in_channels");
+    }
+    const int64_t batch = input.shape.dims[0] / config_.in_channels;
+    core::validate_shape(
+        weights.weight,
+        core::TensorShape::from_dims(
+            {config_.out_channels * config_.in_channels, config_.kernel_depth, config_.kernel_height, config_.kernel_width}),
+        "weight");
+
+    const auto output_shape = core::TensorShape::from_dims({
+        batch * config_.out_channels,
+        conv3d_output_dim(
+            input.shape.dims[1],
+            static_cast<int>(config_.kernel_depth),
+            config_.stride_depth,
+            config_.padding_depth,
+            config_.dilation_depth),
+        conv3d_output_dim(
+            input.shape.dims[2],
+            static_cast<int>(config_.kernel_height),
+            config_.stride_height,
+            config_.padding_height,
+            config_.dilation_height),
+        conv3d_output_dim(
+            input.shape.dims[3],
+            static_cast<int>(config_.kernel_width),
+            config_.stride_width,
+            config_.padding_width,
+            config_.dilation_width),
+    });
+    const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
+    const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "Conv3dModule");
+    auto output = core::wrap_tensor(
+        ggml_conv_3d(
+            ctx.ggml,
+            weight_contiguous.tensor,
+            input_contiguous.tensor,
+            config_.in_channels,
+            config_.stride_width,
+            config_.stride_height,
+            config_.stride_depth,
+            config_.padding_width,
+            config_.padding_height,
+            config_.padding_depth,
+            config_.dilation_width,
+            config_.dilation_height,
+            config_.dilation_depth),
+        output_shape,
+        GGML_TYPE_F32);
+    if (config_.use_bias) {
+        if (!weights.bias.has_value()) {
+            throw std::runtime_error("bias is required when Conv3dConfig.use_bias is true");
+        }
+        core::validate_shape(*weights.bias, core::TensorShape::from_dims({config_.out_channels}), "bias");
+        const auto output_contiguous = tensor_layout::ensure_contiguous_layout_if_needed(ctx, output);
+        const auto bias_view =
+            core::reshape_tensor(ctx, *weights.bias, core::TensorShape::from_dims({config_.out_channels, 1, 1, 1}));
+        const auto bias_expanded =
+            core::wrap_tensor(ggml_repeat(ctx.ggml, bias_view.tensor, output_contiguous.tensor), output.shape, GGML_TYPE_F32);
+        output = core::wrap_tensor(ggml_add(ctx.ggml, output_contiguous.tensor, bias_expanded.tensor), output.shape, GGML_TYPE_F32);
+    }
+    return output;
+}
+
+const core::ModuleSchema & Conv3dModule::static_schema() noexcept {
+    return kConv3dSchema;
+}
+
+CausalConv2dModule::CausalConv2dModule(CausalConv2dConfig config) : config_(config) {
+    if (config_.pad_left < 0 || config_.pad_right < 0 || config_.pad_top < 0 || config_.pad_bottom < 0) {
+        throw std::runtime_error("CausalConv2d padding must be non-negative");
+    }
+    if (config_.conv.padding_height != 0 || config_.conv.padding_width != 0) {
+        throw std::runtime_error("CausalConv2d uses explicit Pad2d padding; Conv2dConfig padding must be zero");
+    }
+}
+
+const CausalConv2dConfig & CausalConv2dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & CausalConv2dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue CausalConv2dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const Conv2dWeights & weights) const {
+    auto padded = Pad2dModule({
+        config_.pad_left,
+        config_.pad_right,
+        config_.pad_top,
+        config_.pad_bottom,
+    }).build(ctx, input);
+    return Conv2dModule(config_.conv).build(ctx, padded, weights);
+}
+
+const core::ModuleSchema & CausalConv2dModule::static_schema() noexcept {
+    return kCausalConv2dSchema;
+}
+
+SameWidthCausalConv2dModule::SameWidthCausalConv2dModule(SameWidthCausalConv2dConfig config) : config_(config) {
+    if (config_.in_channels <= 0 || config_.out_channels <= 0 || config_.kernel_size <= 0) {
+        throw std::runtime_error("SameWidthCausalConv2dConfig dimensions must be positive");
+    }
+    if (config_.kernel_size % 2 == 0) {
+        throw std::runtime_error("SameWidthCausalConv2dConfig.kernel_size must be odd");
+    }
+}
+
+const SameWidthCausalConv2dConfig & SameWidthCausalConv2dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & SameWidthCausalConv2dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue SameWidthCausalConv2dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const Conv2dWeights & weights) const {
+    const int64_t pad_h = config_.kernel_size - 1;
+    const int64_t pad_w = config_.kernel_size - 1;
+    return CausalConv2dModule({
+        {
+            config_.in_channels,
+            config_.out_channels,
+            config_.kernel_size,
+            config_.kernel_size,
+            1,
+            1,
+            0,
+            0,
+            1,
+            1,
+            config_.use_bias,
+        },
+        pad_w / 2,
+        pad_w - pad_w / 2,
+        pad_h,
+        0,
+    }).build(ctx, input, weights);
+}
+
+const core::ModuleSchema & SameWidthCausalConv2dModule::static_schema() noexcept {
+    return kSameWidthCausalConv2dSchema;
+}
+
+PixelNormCausalConv2dResBlockModule::PixelNormCausalConv2dResBlockModule(
+    PixelNormCausalConv2dResBlockConfig config) : config_(config) {
+    if (config_.in_channels <= 0 || config_.out_channels <= 0 || config_.kernel_size <= 0) {
+        throw std::runtime_error("PixelNormCausalConv2dResBlockConfig dimensions must be positive");
+    }
+    if (config_.kernel_size % 2 == 0) {
+        throw std::runtime_error("PixelNormCausalConv2dResBlockConfig.kernel_size must be odd");
+    }
+    if (config_.pixel_norm_eps <= 0.0F) {
+        throw std::runtime_error("PixelNormCausalConv2dResBlockConfig.pixel_norm_eps must be positive");
+    }
+}
+
+const PixelNormCausalConv2dResBlockConfig & PixelNormCausalConv2dResBlockModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & PixelNormCausalConv2dResBlockModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue PixelNormCausalConv2dResBlockModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const PixelNormCausalConv2dResBlockWeights & weights) const {
+    auto h = PixelNormModule({config_.pixel_norm_axis, config_.pixel_norm_eps}).build(ctx, input);
+    h = SiluModule{}.build(ctx, h);
+    h = SameWidthCausalConv2dModule({config_.in_channels, config_.out_channels, config_.kernel_size, true})
+            .build(ctx, h, weights.conv1);
+    h = PixelNormModule({config_.pixel_norm_axis, config_.pixel_norm_eps}).build(ctx, h);
+    h = SiluModule{}.build(ctx, h);
+    h = SameWidthCausalConv2dModule({config_.out_channels, config_.out_channels, config_.kernel_size, true})
+            .build(ctx, h, weights.conv2);
+    auto residual = core::ensure_backend_addressable_layout(ctx, input);
+    if (weights.shortcut.has_value()) {
+        residual = SameWidthCausalConv2dModule({config_.in_channels, config_.out_channels, 1, true})
+                       .build(ctx, residual, *weights.shortcut);
+    }
+    return AddModule{}.build(ctx, residual, h);
+}
+
+const core::ModuleSchema & PixelNormCausalConv2dResBlockModule::static_schema() noexcept {
+    return kPixelNormCausalConv2dResBlockSchema;
+}
+
+CausalConv2dUpsampleModule::CausalConv2dUpsampleModule(CausalConv2dUpsampleConfig config) : config_(config) {
+    if (config_.channels <= 0 || config_.kernel_size <= 0 || config_.scale_height <= 0 || config_.scale_width <= 0) {
+        throw std::runtime_error("CausalConv2dUpsampleConfig dimensions must be positive");
+    }
+    if (config_.kernel_size % 2 == 0) {
+        throw std::runtime_error("CausalConv2dUpsampleConfig.kernel_size must be odd");
+    }
+    if (config_.crop_top < 0 || config_.crop_bottom < 0) {
+        throw std::runtime_error("CausalConv2dUpsampleConfig crop must be non-negative");
+    }
+}
+
+const CausalConv2dUpsampleConfig & CausalConv2dUpsampleModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & CausalConv2dUpsampleModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue CausalConv2dUpsampleModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const Conv2dWeights & weights) const {
+    auto x = NearestUpsample2dModule({
+        input.shape.dims[2] * config_.scale_height,
+        input.shape.dims[3] * config_.scale_width,
+    }).build(ctx, input);
+    x = SameWidthCausalConv2dModule({config_.channels, config_.channels, config_.kernel_size, true}).build(ctx, x, weights);
+    const int64_t height = x.shape.dims[2] - config_.crop_top - config_.crop_bottom;
+    if (height <= 0) {
+        throw std::runtime_error("CausalConv2dUpsample crop removes all rows");
+    }
+    return core::ensure_backend_addressable_layout(
+        ctx,
+        SliceModule({2, config_.crop_top, height}).build(ctx, x));
+}
+
+const core::ModuleSchema & CausalConv2dUpsampleModule::static_schema() noexcept {
+    return kCausalConv2dUpsampleSchema;
+}
+
+DepthwiseConv2dModule::DepthwiseConv2dModule(DepthwiseConv2dConfig config) : config_(config) {
+    if (config_.channels <= 0 || config_.kernel_height <= 0 || config_.kernel_width <= 0) {
+        throw std::runtime_error("DepthwiseConv2dConfig dimensions must be positive");
+    }
+    if (config_.stride_height <= 0 || config_.stride_width <= 0 || config_.dilation_height <= 0 || config_.dilation_width <= 0) {
+        throw std::runtime_error("DepthwiseConv2d stride and dilation must be positive");
+    }
+}
+
+const DepthwiseConv2dConfig & DepthwiseConv2dModule::config() const noexcept {
+    return config_;
+}
+
+const core::ModuleSchema & DepthwiseConv2dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue DepthwiseConv2dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const Conv2dWeights & weights) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 4, 4, "input");
+    core::validate_shape(
+        input,
+        core::TensorShape::from_dims({input.shape.dims[0], config_.channels, input.shape.dims[2], input.shape.dims[3]}),
+        "input");
+    core::validate_shape(
+        weights.weight,
+        core::TensorShape::from_dims({config_.channels, 1, config_.kernel_height, config_.kernel_width}),
+        "weight");
+
+    const auto output_shape = core::TensorShape::from_dims({
+        input.shape.dims[0],
+        config_.channels,
+        conv2d_output_dim(
+            input.shape.dims[2],
+            static_cast<int>(config_.kernel_height),
+            config_.stride_height,
+            config_.padding_height,
+            config_.dilation_height),
+        conv2d_output_dim(
+            input.shape.dims[3],
+            static_cast<int>(config_.kernel_width),
+            config_.stride_width,
+            config_.padding_width,
+            config_.dilation_width),
+    });
+    const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
+    const auto weight_contiguous = depthwise_conv2d_weight(ctx, weights.weight);
+    auto output = core::wrap_tensor(
+        ggml_conv_2d_dw_direct(
+            ctx.ggml,
+            weight_contiguous.tensor,
+            input_contiguous.tensor,
+            config_.stride_width,
+            config_.stride_height,
+            config_.padding_width,
+            config_.padding_height,
+            config_.dilation_width,
+            config_.dilation_height),
+        output_shape,
+        GGML_TYPE_F32);
+    if (config_.use_bias) {
+        if (!weights.bias.has_value()) {
+            throw std::runtime_error("bias is required when DepthwiseConv2dConfig.use_bias is true");
+        }
+        output = add_4d_channel_bias_if_needed(ctx, output, config_.channels, weights.bias);
+    }
+    return output;
+}
+
+const core::ModuleSchema & DepthwiseConv2dModule::static_schema() noexcept {
+    return kDepthwiseConv2dSchema;
+}
+
 ConvTranspose1dModule::ConvTranspose1dModule(ConvTranspose1dConfig config) : config_(config) {
     if (config_.in_channels <= 0 || config_.out_channels <= 0 || config_.kernel_size <= 0) {
         throw std::runtime_error("ConvTranspose1dConfig dimensions must be positive");
@@ -347,6 +866,9 @@ core::TensorValue ConvTranspose1dModule::build(
         "weight");
     const auto output_shape = core::TensorShape::from_dims(
         {input.shape.dims[0], config_.out_channels, conv_transpose1d_output_frames(config_, input.shape.dims[2])});
+    if (is_conv_transpose1d_col2im_fast_path_eligible(ctx, config_)) {
+        return build_conv_transpose1d_cuda_col2im_path(ctx, config_, input, weights, output_shape);
+    }
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = conv_transpose1d_weight(ctx, weights.weight);
     core::TensorValue output;

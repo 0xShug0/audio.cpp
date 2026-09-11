@@ -14,6 +14,13 @@
 namespace minitts::app {
 namespace {
 
+struct MetricsAudioView {
+    int sample_rate = 0;
+    int channels = 0;
+    size_t samples = 0;
+    const char * source = "";
+};
+
 std::string quote_json(const std::string & value) {
     std::string out = "\"";
     for (char ch : value) {
@@ -35,8 +42,11 @@ std::string speech_segments_to_json(const std::vector<engine::runtime::SpeechSeg
         }
         out << "{\"start_sample\":" << segments[i].span.start_sample
             << ",\"end_sample\":" << segments[i].span.end_sample
-            << ",\"confidence\":" << segments[i].confidence
-            << "}";
+            << ",\"confidence\":" << segments[i].confidence;
+        if (!segments[i].text.empty()) {
+            out << ",\"text\":" << quote_json(segments[i].text);
+        }
+        out << "}";
     }
     out << "]";
     return out.str();
@@ -52,25 +62,11 @@ std::string speaker_turns_to_json(const std::vector<engine::runtime::SpeakerTurn
         out << "{\"start_sample\":" << turns[i].span.start_sample
             << ",\"end_sample\":" << turns[i].span.end_sample
             << ",\"speaker_id\":" << quote_json(turns[i].speaker_id)
-            << ",\"confidence\":" << turns[i].confidence
-            << "}";
-    }
-    out << "]";
-    return out.str();
-}
-
-std::string word_timestamps_to_json(const std::vector<engine::runtime::WordTimestamp> & words) {
-    std::ostringstream out;
-    out << "[";
-    for (size_t i = 0; i < words.size(); ++i) {
-        if (i != 0) {
-            out << ",";
+            << ",\"confidence\":" << turns[i].confidence;
+        if (!turns[i].text.empty()) {
+            out << ",\"text\":" << quote_json(turns[i].text);
         }
-        out << "{\"start_sample\":" << words[i].span.start_sample
-            << ",\"end_sample\":" << words[i].span.end_sample
-            << ",\"word\":" << quote_json(words[i].word)
-            << ",\"confidence\":" << words[i].confidence
-            << "}";
+        out << "}";
     }
     out << "]";
     return out.str();
@@ -86,6 +82,8 @@ const char * artifact_kind_name(engine::runtime::ArtifactKind kind) {
         return "prompt_embedding";
     case engine::runtime::ArtifactKind::AcousticTokens:
         return "acoustic_tokens";
+    case engine::runtime::ArtifactKind::Midi:
+        return "midi";
     case engine::runtime::ArtifactKind::TranscriptAlignment:
         return "transcript_alignment";
     case engine::runtime::ArtifactKind::DiarizationState:
@@ -135,6 +133,31 @@ std::string artifact_to_json(const engine::runtime::VoiceArtifact & artifact) {
     return out.str();
 }
 
+double audio_duration_ms(const MetricsAudioView & audio) {
+    if (audio.sample_rate <= 0 || audio.channels <= 0) {
+        return 0.0;
+    }
+    return 1000.0 * static_cast<double>(audio.samples) /
+        static_cast<double>(audio.sample_rate * audio.channels);
+}
+
+std::optional<MetricsAudioView> select_metrics_audio(
+    const engine::runtime::TaskResult & result,
+    const std::optional<AudioMetricsInfo> & input_audio) {
+    if (result.audio_output.has_value()) {
+        const auto & audio = *result.audio_output;
+        return MetricsAudioView{audio.sample_rate, audio.channels, audio.samples.size(), "output"};
+    }
+    if (result.named_audio_outputs.size() == 1) {
+        const auto & audio = result.named_audio_outputs.front().audio;
+        return MetricsAudioView{audio.sample_rate, audio.channels, audio.samples.size(), "output"};
+    }
+    if (input_audio.has_value()) {
+        return MetricsAudioView{input_audio->sample_rate, input_audio->channels, input_audio->samples, "input"};
+    }
+    return std::nullopt;
+}
+
 std::optional<std::filesystem::path> suffixed_json_path(
     const std::optional<std::filesystem::path> & base,
     const std::string & request_id) {
@@ -153,6 +176,38 @@ void write_wav_output(
     const auto tmp = path.parent_path() / (path.filename().string() + ".tmp");
     std::filesystem::remove(tmp);
     engine::audio::WavPcm16Sink().write(tmp, audio);
+    if (std::filesystem::exists(path)) {
+        std::filesystem::remove(path);
+    }
+    std::filesystem::rename(tmp, path);
+}
+
+std::string artifact_extension(const engine::runtime::VoiceArtifact & artifact) {
+    if (artifact.kind == engine::runtime::ArtifactKind::Midi) {
+        return ".mid";
+    }
+    return ".json";
+}
+
+void write_artifact_output(
+    const std::filesystem::path & path,
+    const engine::runtime::VoiceArtifact & artifact) {
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path());
+    }
+    const auto tmp = path.parent_path() / (path.filename().string() + ".tmp");
+    std::filesystem::remove(tmp);
+    std::ofstream output(tmp, std::ios::binary);
+    if (!output) {
+        throw std::runtime_error("failed to open artifact output: " + tmp.string());
+    }
+    output.write(
+        reinterpret_cast<const char *>(artifact.payload.data()),
+        static_cast<std::streamsize>(artifact.payload.size()));
+    if (!output) {
+        throw std::runtime_error("failed to write artifact output: " + tmp.string());
+    }
+    output.close();
     if (std::filesystem::exists(path)) {
         std::filesystem::remove(path);
     }
@@ -191,6 +246,23 @@ std::string batch_manifest_to_json(const AppBatchResult & batch) {
 
 }  // namespace
 
+std::string word_timestamps_to_json(const std::vector<engine::runtime::WordTimestamp> & words) {
+    std::ostringstream out;
+    out << "[";
+    for (size_t i = 0; i < words.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        out << "{\"start_sample\":" << words[i].span.start_sample
+            << ",\"end_sample\":" << words[i].span.end_sample
+            << ",\"word\":" << quote_json(words[i].word)
+            << ",\"confidence\":" << words[i].confidence
+            << "}";
+    }
+    out << "]";
+    return out.str();
+}
+
 std::string safe_output_name(const std::string & value) {
     std::string out;
     out.reserve(value.size());
@@ -199,6 +271,30 @@ std::string safe_output_name(const std::string & value) {
         out.push_back(std::isalnum(uch) != 0 || ch == '-' || ch == '_' ? ch : '_');
     }
     return out.empty() ? "request" : out;
+}
+
+void emit_task_metrics(
+    const engine::runtime::TaskResult & result,
+    const std::optional<AudioMetricsInfo> & input_audio,
+    double wall_ms,
+    const std::string & prefix) {
+    std::cout << prefix << ".wall_ms=" << wall_ms << "\n";
+    const auto audio = select_metrics_audio(result, input_audio);
+    if (!audio.has_value()) {
+        return;
+    }
+    const double duration_ms = audio_duration_ms(*audio);
+    std::cout << prefix << ".audio_duration_ms=" << duration_ms << "\n";
+    if (duration_ms > 0.0) {
+        const double rtf = wall_ms / duration_ms;
+        std::cout << prefix << ".rtf=" << rtf << "\n";
+        if (rtf > 0.0) {
+            std::cout << prefix << ".x_realtime=" << (1.0 / rtf) << "\n";
+        }
+    }
+    std::cout << prefix << ".audio_duration_source=" << audio->source << "\n";
+    std::cout << prefix << ".sample_rate=" << audio->sample_rate << "\n";
+    std::cout << prefix << ".channels=" << audio->channels << "\n";
 }
 
 void emit_task_result(
@@ -227,6 +323,9 @@ void emit_task_result(
             audio.samples,
         });
         std::cout << "audio_out=" << audio_out->string() << "\n";
+    } else if (result.artifact_output.has_value() && audio_out.has_value()) {
+        write_artifact_output(*audio_out, *result.artifact_output);
+        std::cout << "artifact_out=" << audio_out->string() << "\n";
     }
 
     if (!result.named_audio_outputs.empty()) {
@@ -295,6 +394,18 @@ void emit_task_result(
     if (result.text_output.has_value()) {
         std::cout << "text_output=" << result.text_output->text << "\n";
     }
+    if (result.artifact_output.has_value()) {
+        const auto & artifact = *result.artifact_output;
+        std::cout << "artifact=" << artifact.id
+                  << " kind=" << artifact_kind_name(artifact.kind)
+                  << " bytes=" << artifact.payload.size() << "\n";
+        if (artifact_out_dir.has_value()) {
+            std::filesystem::create_directories(*artifact_out_dir);
+            const auto path = *artifact_out_dir / (safe_output_name(artifact.id) + artifact_extension(artifact));
+            write_artifact_output(path, artifact);
+            std::cout << "artifact_out[" << artifact.id << "]=" << path.string() << "\n";
+        }
+    }
     if (!result.output_artifacts.empty()) {
         std::cout << "artifacts=" << result.output_artifacts.size() << "\n";
         for (const auto & artifact : result.output_artifacts) {
@@ -303,8 +414,12 @@ void emit_task_result(
                       << " bytes=" << artifact.payload.size() << "\n";
             if (artifact_out_dir.has_value()) {
                 std::filesystem::create_directories(*artifact_out_dir);
-                const auto path = *artifact_out_dir / (safe_output_name(artifact.id) + ".json");
-                std::ofstream(path) << artifact_to_json(artifact) << "\n";
+                const auto path = *artifact_out_dir / (safe_output_name(artifact.id) + artifact_extension(artifact));
+                if (artifact.kind == engine::runtime::ArtifactKind::Midi) {
+                    write_artifact_output(path, artifact);
+                } else {
+                    std::ofstream(path) << artifact_to_json(artifact) << "\n";
+                }
                 std::cout << "artifact_out[" << artifact.id << "]=" << path.string() << "\n";
             }
         }
@@ -318,6 +433,9 @@ void emit_batch_result(
     for (size_t i = 0; i < batch.results.size(); ++i) {
         emit_batch_item_result(i, batch.results[i], policy);
     }
+
+    std::cout << "[TIMING] session.prepare_ms " << batch.prepare_ms << "\n";
+    std::cout << "[TIMING] session.wall_ms " << batch.session_wall_ms << "\n";
 }
 
 void emit_batch_summary(
@@ -351,6 +469,7 @@ void emit_batch_item_result(
     const std::string request_id = safe_output_name(item.id);
     std::cout << "request_index=" << index << "\n";
     std::cout << "request_id=" << request_id << "\n";
+    std::cout << "[TIMING] request." << request_id << ".wall_ms " << item.wall_ms << "\n";
 
     std::optional<std::filesystem::path> audio_out;
     std::optional<std::filesystem::path> named_out_dir;
@@ -361,6 +480,9 @@ void emit_batch_item_result(
         }
         if (!item.result.named_audio_outputs.empty()) {
             named_out_dir = *policy.output_dir / request_id;
+        }
+        if (item.result.artifact_output.has_value()) {
+            audio_out = *policy.output_dir / (request_id + artifact_extension(*item.result.artifact_output));
         }
         if (!item.result.output_artifacts.empty()) {
             artifact_out_dir = *policy.output_dir / request_id;

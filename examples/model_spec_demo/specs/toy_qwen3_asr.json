@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "family": "toy_qwen3_asr",
+  "display_name": "Toy Qwen3 ASR",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto",
+    "en",
+    "zh"
+  ],
+  "capabilities": {
+    "asr": [
+      "word_timestamps"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "server",
+      "cuda",
+      "vulkan",
+      "cpu"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "enum",
+        "values": [
+          "auto",
+          "en",
+          "zh"
+        ],
+        "required": false,
+        "default": "auto",
+        "description": "Recognition language."
+      },
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Return token timestamps when supported."
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto",
+        "description": "Audio chunking mode."
+      }
+    ],
+    "session": [
+      {
+        "name": "lookahead",
+        "type": "int",
+        "required": false,
+        "default": 3,
+        "description": "Toy decoder lookahead. Public key: toy_qwen3_asr.lookahead."
+      },
+      {
+        "name": "forced_aligner",
+        "type": "path",
+        "required": false,
+        "description": "Optional forced aligner model path. Public key: toy_qwen3_asr.forced_aligner."
+      },
+      {
+        "name": "vad",
+        "type": "path",
+        "required": false,
+        "description": "Optional Silero VAD path. Public key: toy_qwen3_asr.vad."
+      }
+    ],
+    "load": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0"
+        ],
+        "required": false,
+        "default": "native",
+        "description": "Toy weight storage type. Public key: toy_qwen3_asr.weight_type."
+      }
+    ]
+  },
+  "packages": [
+    {
+      "id": "toy_qwen3_asr_local",
+      "display_name": "Toy Qwen3 ASR Local Snapshot",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Toy-Qwen3-ASR",
+      "download": {
+        "kind": "local_snapshot",
+        "path": "../toy_package"
+      },
+      "description": "Local toy package used by the model spec demo.",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "model.safetensors"
+      ],
+      "default": true
+    },
+    {
+      "id": "toy_qwen3_asr_hf_snapshot",
+      "display_name": "Toy Qwen3 ASR HF Snapshot",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Toy-Qwen3-ASR-HF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/toy-qwen3-asr",
+        "revision": "main",
+        "exclude": [
+          "*.md",
+          "*.png"
+        ],
+        "gated": false
+      },
+      "description": "Fake direct Hugging Face snapshot package.",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "model.safetensors"
+      ]
+    },
+    {
+      "id": "toy_qwen3_asr_gguf_q8",
+      "display_name": "Toy Qwen3 ASR GGUF Q8",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Toy-Qwen3-ASR-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      },
+      "description": "Fake standalone GGUF package with an embedded spec.",
+      "files": [
+        "Toy-Qwen3-ASR-GGUF/toy-qwen3-asr-q8_0.gguf"
+      ],
+      "strip_prefix": "Toy-Qwen3-ASR-GGUF"
+    },
+    {
+      "id": "toy_qwen3_asr_convert_q8",
+      "display_name": "Toy Qwen3 ASR Convert to GGUF Q8",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Toy-Qwen3-ASR-GGUF-Q8",
+      "download": {
+        "kind": "converter",
+        "converter": "audiocpp_gguf",
+        "description": "Download the safetensors package first, then convert it to q8_0 GGUF."
+      },
+      "description": "Fake generated package for converter-driven installs.",
+      "files": [
+        "toy-qwen3-asr-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "toy_qwen3_asr_manual",
+      "display_name": "Toy Qwen3 ASR Manual Package",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Toy-Qwen3-ASR-Manual",
+      "download": {
+        "kind": "unsupported",
+        "reason": "Manual license approval is required before download."
+      },
+      "description": "Fake package that a downloader should list but not install automatically.",
+      "files": [
+        "config.json",
+        "model.safetensors"
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "kind": "model",
+      "family": "qwen3_forced_aligner",
+      "scope": "session",
+      "option": "forced_aligner",
+      "required": false,
+      "required_when": [
+        {
+          "scope": "request",
+          "option_key": "return_timestamps",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "kind": "bundled_model",
+      "family": "silero_vad",
+      "path": "assets/framework/models/silero_vad",
+      "scope": "session",
+      "option": "vad",
+      "required": false,
+      "required_when": [
+        {
+          "scope": "request",
+          "option_key": "audio_chunk_mode",
+          "equals": "vad"
+        }
+      ]
+    }
+  ],
+  "ui": {
+    "recommended_package": "toy_qwen3_asr_local",
+    "min_vram_gb": 1,
+    "tags": [
+      "ASR"
+    ],
+    "docs": [
+      "examples/model_spec_demo/README.md"
+    ],
+    "summary": "Toy ASR package used to prove the model-spec subsystem shape."
+  },
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

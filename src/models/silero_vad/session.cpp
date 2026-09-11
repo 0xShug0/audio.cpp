@@ -80,12 +80,26 @@ public:
         return "silero_vad";
     }
 
+    runtime::CapabilitySet advertised_capabilities() const override {
+        runtime::CapabilitySet out;
+        out.supported_tasks = {
+            {runtime::VoiceTaskKind::Vad, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+        };
+        out.supports_timestamps = true;
+        return out;
+    }
+
     bool can_load(const runtime::ModelLoadRequest & request) const override {
         if (request.family_hint.has_value() && *request.family_hint != family()) {
             return false;
         }
         try {
-            (void) resolve_silero_assets(request.model_path);
+            const auto assets = resolve_silero_assets(request.model_path);
+            if (!request.family_hint.has_value() &&
+                engine::io::is_existing_file(request.model_path) &&
+                assets.checkpoint_path.filename() != "silero_vad_16k.safetensors") {
+                return false;
+            }
             return true;
         } catch (...) {
             return false;

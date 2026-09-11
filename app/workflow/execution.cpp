@@ -1,5 +1,6 @@
 #include "execution.h"
 
+#include <chrono>
 #include <stdexcept>
 
 namespace minitts::app {
@@ -53,18 +54,31 @@ AppBatchResult run_offline_batch(
     if (batch.requests.empty()) {
         throw std::runtime_error("offline batch requires at least one request");
     }
+    using Clock = std::chrono::steady_clock;
+    const auto to_ms = [](Clock::duration d) {
+        return std::chrono::duration<double, std::milli>(d).count();
+    };
+    const auto session_start = Clock::now();
+
+    const auto prepare_start = Clock::now();
     session.prepare(engine::runtime::build_preparation_request(batch.requests.front().request));
     AppBatchResult out;
+    out.prepare_ms = to_ms(Clock::now() - prepare_start);
     out.results.reserve(batch.requests.size());
     for (const auto & item : batch.requests) {
+        const auto run_start = Clock::now();
+        auto result = offline.run(item.request);
+        const double wall_ms = to_ms(Clock::now() - run_start);
         out.results.push_back(AppRequestResult{
             item.id,
-            offline.run(item.request),
+            std::move(result),
+            wall_ms,
         });
         if (on_result) {
             on_result(out.results.size() - 1, out.results.back());
         }
     }
+    out.session_wall_ms = to_ms(Clock::now() - session_start);
     if (audio_merge_mode == AudioMergeMode::Concat) {
         out.merged_audio = concat_audio_outputs(out.results, out.chapters);
     }

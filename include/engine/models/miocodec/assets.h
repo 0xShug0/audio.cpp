@@ -1,5 +1,8 @@
 #pragma once
 
+#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -51,19 +54,13 @@ struct MioCodecConfig {
     std::vector<int> wave_upsampler_kernel_sizes;
 };
 
-struct MioCodecAssetPaths {
-    std::filesystem::path model_root;
-    std::filesystem::path config_path;
-    std::filesystem::path model_weights_path;
-    std::filesystem::path wavlm_weights_path;
-};
-
 struct MioCodecAssets {
-    MioCodecAssetPaths paths;
+    assets::ResourceBundle resources;
     MioCodecConfig config;
+    std::shared_ptr<const assets::TensorSource> model_weights;
+    std::shared_ptr<const assets::TensorSource> wavlm_weights;
 };
 
-MioCodecAssetPaths resolve_miocodec_assets(const std::filesystem::path & model_path);
 std::shared_ptr<const MioCodecAssets> load_miocodec_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::miocodec

@@ -1,0 +1,63 @@
+# Memory Saver
+
+`mem_saver` session options reduce graph workspace VRAM or post-request resident VRAM by using tighter graph allocators or releasing staged graph and cache state. They are intended for deployments that prefer lower memory over maximum graph/cache reuse between later requests.
+
+Use this page to collect memory-saver validation results across models. Add new rows with the same columns so results stay comparable.
+
+## Validation Protocol
+
+Use server validation with one measurement running at a time.
+
+For each model:
+
+1. Run the default/native configuration in a fresh `audiocpp_server`.
+2. Run the matching `<family>.mem_saver=true` configuration in a fresh `audiocpp_server`.
+3. Wait for `/health`, sample VRAM during exactly one `/v1/tasks/run`, then stop the server before the next case.
+4. Record peak VRAM, final resident VRAM, server wall time, generated audio length, and RTF.
+5. Use the same request, native/default weights, backend, seed, duration, and sampling settings for the default and `mem_saver` pair.
+6. Use a request that actually stresses the model memory path. For longform music models, the existing checks used 120 second targets and long lyrics/text.
+7. On a stress request, `mem_saver` should usually lower peak or final resident VRAM. If neither drops, check the release logs and confirm the request exercised the graph/cache state that `mem_saver` is supposed to affect.
+
+## Results
+
+Native/default weights were used for all rows.
+
+- ACE-Step base used a corrected long-lyrics request: 4146 lyric characters, 120 second target audio.
+- HeartMuLa used a corrected long-lyrics request: 12278 text characters, 120 second target audio.
+- Stable Audio rows use existing 120 second server measurements.
+- OmniVoice used default generation parameters, native/default weights, no explicit text chunk size, and no seed for the memory-stat pair.
+- Chatterbox used one fixed-seed voice-clone request with native/default weights and no explicit max token cap.
+- Qwen3 TTS Base used a five-request voice-clone server sequence: two small requests, one 6026-character long request with `max_tokens=4096`, then two small requests. Peak VRAM was sampled during each request; resident VRAM is the post-response value after the long request.
+- VoxCPM2 used the OpenAI-compatible offline speech endpoint with a 2048-character voice-design request, `seed=1234`, `max_tokens=512`, `num_inference_steps=10`, and `guidance_scale=2.0`. The default and `mem_saver` WAV outputs were byte-identical.
+- IndexTTS2 used a five-request server sequence with the same seeds and references for default and `mem_saver`: normal text, longer text, longer emotion-text request with a different reference, shorter text, then longer text.
+- Irodori TTS 500M used a five-request server sequence with the same seeds and options for default and `mem_saver`: reference text, longer reference text, longer no-reference emoji/style text, shorter reference text, then longer reference text.
+- OuteTTS 1.0 1B Q8 used a five-request long-lived-session sequence on an RTX 3090: repeated fixed-seed TTS, four-chunk long-form TTS, then repeated fixed-seed cloning with the same reference. CUDA timing is the mean of three fresh processes per mode, alternated to reduce ordering bias; memory saver was 0.35-0.53% slower per request and 0.44% slower over the mean sequence total. This is close to run-to-run variance and is not evidence of a speed benefit. The default and `mem_saver` WAV outputs were byte-identical. VRAM is total-device usage with no other CUDA workload; resident VRAM was sampled during a five-second post-sequence hold. Per-request timing and RTF are recorded in `docs/reports/outetts_validation.md`.
+
+| Model | Mode | Peak VRAM | Resident VRAM | Server wall | Audio | RTF |
+|---|---|---:|---:|---:|---:|---:|
+| ACE-Step base | default | 20098 MiB | 19540 MiB | 30402.5 ms | 120s | 0.253354 |
+| ACE-Step base | mem_saver | 20098 MiB | 10332 MiB | 27470.2 ms | 120s | 0.228918 |
+| HeartMuLa | default | 25600 MiB | 25600 MiB | 47248.6 ms | 120.08s | 0.393476 |
+| HeartMuLa | mem_saver | 25600 MiB | 21762 MiB | 47349.2 ms | 120.08s | 0.394313 |
+| Stable Audio 3 small music | default | 3658 MiB | 3652 MiB | 1485.97 ms | 120s | 0.0123831 |
+| Stable Audio 3 small music | mem_saver | 3070 MiB | 2868 MiB | 1445.73 ms | 120s | 0.0120478 |
+| Stable Audio 3 small SFX | default | 3652 MiB | 3652 MiB | 1407.58 ms | 120s | 0.0117298 |
+| Stable Audio 3 small SFX | mem_saver | 2980 MiB | 2868 MiB | 1415.61 ms | 120s | 0.0117968 |
+| Stable Audio 3 medium | default | 10440 MiB | 10440 MiB | 3847.98 ms | 120s | 0.0320665 |
+| Stable Audio 3 medium | mem_saver | 10324 MiB | 9468 MiB | 3830.24 ms | 120s | 0.0319186 |
+| OmniVoice | default | 11396 MiB | 11396 MiB | 947.392 ms | 4.32s | 0.219304 |
+| OmniVoice | mem_saver | 10526 MiB | 3662 MiB | 968.823 ms | 4.32s | 0.224264 |
+| Chatterbox | default | 13408 MiB | 13408 MiB | 4264.11 ms | 6.76s | 0.630786 |
+| Chatterbox | mem_saver | 12272 MiB | 5074 MiB | 4832.43 ms | 6.76s | 0.714856 |
+| Qwen3 TTS Base voice clone | default | 7518 MiB | 7518 MiB | 122013.55 ms | 327.6s | 0.372447 |
+| Qwen3 TTS Base voice clone | mem_saver | 7520 MiB | 5684 MiB | 121919.91 ms | 327.6s | 0.372161 |
+| VoxCPM2 offline voice design | default | 13080 MiB | 13039 MiB | 15325.7 ms | 93.12s | 0.16458 |
+| VoxCPM2 offline voice design | mem_saver | 12456 MiB | 5966 MiB | 14924 ms | 93.12s | 0.160266 |
+| IndexTTS2 | default | 12272 MiB | 12072 MiB | 35215.67 ms | 104.889s | 0.335743 |
+| IndexTTS2 | mem_saver | 11445 MiB | 8947 MiB | 35740.72 ms | 104.436s | 0.342226 |
+| Irodori TTS 500M | default | 14112 MiB | 13588 MiB | 3289.85 ms | 95.4s | 0.0344848 |
+| Irodori TTS 500M | mem_saver | 11222 MiB | 3570 MiB | 3276.203 ms | 95.4s | 0.0343418 |
+| Irodori TTS 500M 6000-char | default | 18693 MiB | 13367 MiB | 27185.7 ms | 777.92s | 0.0349466 |
+| Irodori TTS 500M 6000-char | mem_saver | 11588 MiB | 3609 MiB | 27828 ms | 777.92s | 0.0357724 |
+| OuteTTS 1.0 1B Q8 | default | 17653 MiB | 294 MiB | 29911.38 ms | 11.237s | 2.662 |
+| OuteTTS 1.0 1B Q8 | mem_saver | 5780 MiB | 294 MiB | 30043.25 ms | 11.237s | 2.674 |

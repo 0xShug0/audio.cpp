@@ -15,9 +15,9 @@ namespace {
 std::shared_ptr<const Qwen3TextTokenizer::Impl> load_impl(const Qwen3TTSAssets & assets) {
     auto impl = std::make_shared<Qwen3TextTokenizer::Impl>();
     engine::tokenizers::LlamaBpeTokenizerSpec spec;
-    spec.vocab_path = assets.paths.tokenizer_vocab_path;
-    spec.merges_path = assets.paths.tokenizer_merges_path;
-    spec.tokenizer_config_path = assets.paths.tokenizer_config_path;
+    spec.vocab_path = assets.resources.require_file("vocab");
+    spec.merges_path = assets.resources.require_file("merges");
+    spec.tokenizer_config_path = assets.resources.require_file("tokenizer_config");
     spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
     impl->tokenizer = engine::tokenizers::load_llama_bpe_tokenizer(spec);
     return impl;

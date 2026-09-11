@@ -1,0 +1,218 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+body {
+  width: 340px;
+  margin: 0;
+  padding: 14px;
+}
+
+body.wide {
+  width: min(720px, calc(100vw - 28px));
+}
+
+main {
+  display: grid;
+  gap: 0;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  color: color-mix(in srgb, CanvasText 82%, Canvas);
+}
+
+input,
+select,
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 24%, Canvas);
+  border-radius: 6px;
+  background: Canvas;
+  color: CanvasText;
+  font: inherit;
+}
+
+input {
+  height: 32px;
+}
+
+select {
+  height: 32px;
+}
+
+textarea {
+  margin-top: 8px;
+  resize: vertical;
+}
+
+.text-stats {
+  margin-top: 6px;
+  color: color-mix(in srgb, CanvasText 68%, Canvas);
+  font-size: 12px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0 8px;
+  color: color-mix(in srgb, CanvasText 72%, Canvas);
+}
+
+.server-row strong {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+  border-radius: 999px;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr 72px;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button {
+  height: 34px;
+  border: 1px solid color-mix(in srgb, CanvasText 28%, Canvas);
+  border-radius: 6px;
+  background: ButtonFace;
+  color: ButtonText;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.wide-button {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.offline-buttons {
+  grid-template-columns: 1fr 96px 130px;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.offline-metrics {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.bar {
+  height: 10px;
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+  border-radius: 999px;
+}
+
+.bar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: color-mix(in srgb, CanvasText 72%, Canvas);
+  transition: width 160ms ease;
+}
+
+audio {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.downloads,
+.download-part {
+  display: grid;
+}
+
+.downloads {
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.download-part {
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+  border-radius: 6px;
+}
+
+.download-part strong {
+  font-size: 12px;
+}
+
+.downloads a {
+  color: LinkText;
+  overflow-wrap: anywhere;
+}
+
+.metrics div {
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+  border-radius: 6px;
+}
+
+.metrics span,
+.metrics strong {
+  display: block;
+}
+
+.metrics span {
+  color: color-mix(in srgb, CanvasText 66%, Canvas);
+  font-size: 11px;
+}
+
+.metrics strong {
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+#status {
+  min-height: 18px;
+  margin-top: 10px;
+  color: color-mix(in srgb, CanvasText 72%, Canvas);
+  word-break: break-word;
+}

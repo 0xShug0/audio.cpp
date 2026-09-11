@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -10,6 +11,11 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #endif
 
 namespace engine::io {
@@ -117,6 +123,12 @@ void BinaryBlob::reset() noexcept {
         mapped_ = nullptr;
         size_ = 0;
     }
+#elif defined(_WIN32)
+    if (mapped_ != nullptr) {
+        UnmapViewOfFile(mapped_);
+        mapped_ = nullptr;
+        size_ = 0;
+    }
 #else
     mapped_ = nullptr;
     size_ = 0;
@@ -143,6 +155,45 @@ BinaryBlob read_binary_blob(const std::filesystem::path & path) {
             }
         } else {
             close(fd);
+        }
+    }
+#elif defined(_WIN32)
+    const HANDLE file = CreateFileW(
+        path.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER file_size {};
+        if (GetFileSizeEx(file, &file_size) != 0 &&
+            file_size.QuadPart >= 0 &&
+            static_cast<unsigned long long>(file_size.QuadPart) <=
+                static_cast<unsigned long long>(
+                    std::numeric_limits<size_t>::max())) {
+            const size_t size = static_cast<size_t>(file_size.QuadPart);
+            if (size == 0) {
+                CloseHandle(file);
+                return BinaryBlob();
+            }
+            const HANDLE mapping = CreateFileMappingW(
+                file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+            if (mapping != nullptr) {
+                const void * mapped = MapViewOfFile(
+                    mapping, FILE_MAP_READ, 0, 0, 0);
+                CloseHandle(mapping);
+                CloseHandle(file);
+                if (mapped != nullptr) {
+                    return BinaryBlob(
+                        static_cast<const std::byte *>(mapped), size);
+                }
+            } else {
+                CloseHandle(file);
+            }
+        } else {
+            CloseHandle(file);
         }
     }
 #endif

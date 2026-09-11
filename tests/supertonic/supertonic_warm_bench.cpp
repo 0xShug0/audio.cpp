@@ -49,9 +49,11 @@ engine::runtime::TaskRequest make_request(const engine::io::json::Value & object
     voice.speaker = std::move(speaker);
     request.voice = std::move(voice);
     set_optional_option(request, object, "voice", "supertonic.voice");
-    set_optional_option(request, object, "total_steps", "supertonic.total_steps");
-    set_optional_option(request, object, "speed", "supertonic.speed");
-    set_optional_option(request, object, "seed", "supertonic.seed");
+    set_optional_option(request, object, "total_steps", "num_inference_steps");
+    set_optional_option(request, object, "num_inference_steps", "num_inference_steps");
+    set_optional_option(request, object, "speed", "speaking_rate");
+    set_optional_option(request, object, "speaking_rate", "speaking_rate");
+    set_optional_option(request, object, "seed", "seed");
     return request;
 }
 

@@ -1,0 +1,149 @@
+{
+  "family": "moss_tts_local",
+  "display_name": "MOSS-TTS-Local",
+  "description": "Flagship MOSS-TTS model for high-fidelity 31-language and code-switched speech, zero-shot voice cloning, long-form generation, and fine-grained Pinyin, phoneme, and duration control.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "fa",
+    "fi",
+    "fr",
+    "he",
+    "hi",
+    "hu",
+    "it",
+    "ja",
+    "ko",
+    "mk",
+    "ms",
+    "nl",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sv",
+    "sw",
+    "th",
+    "tl",
+    "tr",
+    "vi",
+    "yue",
+    "zh"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "moss_tts_local_v1_5_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/moss_tts.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moss_tts_local_v1_5_q8_0",
+      "display_name": "MOSS-TTS-Local v1.5 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTS-Local-v1.5-GGUF",
+      "files": [
+        "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Local-v1.5-GGUF"
+    },
+    {
+      "id": "moss_tts_local_v1_5_bf16",
+      "display_name": "MOSS-TTS-Local v1.5 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-TTS-Local-v1.5-GGUF",
+      "files": [
+        "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-bf16.gguf"
+      ],
+      "strip_prefix": "MOSS-TTS-Local-v1.5-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "audio_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "audio_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "audio_tokenizer": "audio_tokenizer"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "audio_tokenizer:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "audio_tokenizer_weights": "audio_tokenizer:model.safetensors.index.json"
+      }
+    }
+  ]
+}

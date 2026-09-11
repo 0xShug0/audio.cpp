@@ -1,4 +1,4 @@
-#include "engine/framework/modules/wavlm_encoder.h"
+#include "engine/framework/modules/speech_encoders/wavlm_encoder.h"
 
 #include <cstdint>
 #include <filesystem>

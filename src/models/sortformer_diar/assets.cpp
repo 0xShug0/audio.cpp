@@ -1,5 +1,6 @@
 #include "engine/models/sortformer_diar/assets.h"
 
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -169,26 +170,18 @@ SortformerTransformerLayerWeights load_transformer_layer(
 }  // namespace
 
 std::shared_ptr<const SortformerAssets> load_sortformer_assets(const std::filesystem::path & model_root) {
-    assets::ResourceBundle resources(model_root);
-    resources.add_model_files({
-        {"config", "config.json"},
-        {"processor", "processor_config.json"},
-        {"weights", "model.safetensors"},
-    });
-
     auto assets = std::make_shared<SortformerAssets>();
-    assets->paths.model_root = resources.model_root();
-    assets->paths.config_path = resources.require_file("config");
-    assets->paths.processor_config_path = resources.require_file("processor");
-    assets->paths.model_weights_path = resources.require_file("weights");
-    assets->model_config = load_sortformer_model_config(assets->paths.config_path);
-    assets->feature_config = load_sortformer_feature_config(assets->paths.processor_config_path);
-    assets->model_weights = resources.open_tensor_source("weights");
+    assets->resources = engine::model_spec::load_resource_bundle(
+        model_root,
+        engine::model_spec::default_spec_path("sortformer_diar"));
+    assets->model_config = parse_sortformer_model_config(assets->resources);
+    assets->feature_config = parse_sortformer_feature_config(assets->resources);
+    assets->model_weights = assets->resources.open_tensor_source("weights");
     return assets;
 }
 
-SortformerModelConfig load_sortformer_model_config(const std::filesystem::path & path) {
-    const auto root = engine::io::json::parse_file(path);
+SortformerModelConfig parse_sortformer_model_config(const assets::ResourceBundle & resources) {
+    const auto root = resources.parse_json("config");
     SortformerModelConfig config;
     config.model_type = root.require("model_type").as_string();
     config.variant = root.find("architectures") != nullptr && !root.require("architectures").as_array().empty()
@@ -234,8 +227,8 @@ SortformerModelConfig load_sortformer_model_config(const std::filesystem::path &
     return config;
 }
 
-SortformerFeatureExtractorConfig load_sortformer_feature_config(const std::filesystem::path & path) {
-    const auto root = engine::io::json::parse_file(path);
+SortformerFeatureExtractorConfig parse_sortformer_feature_config(const assets::ResourceBundle & resources) {
+    const auto root = resources.parse_json("processor");
     const auto & feature = root.require("feature_extractor");
     SortformerFeatureExtractorConfig config;
     config.sample_rate = feature.require("sampling_rate").as_i64();

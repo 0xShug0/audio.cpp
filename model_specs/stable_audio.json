@@ -1,0 +1,235 @@
+{
+  "family": "stable_audio",
+  "display_name": "Stable Audio 3",
+  "description": "Stability AI generative audio model family for text-to-music, sound effects, audio-to-audio editing, inpainting, continuation, variable-length generation, and LoRA personalization.",
+  "category": "audio_generation",
+  "status": "supported",
+  "tasks": [
+    "music",
+    "sfx",
+    "edit"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics"
+    ],
+    "sfx": [
+      "prompt_generation"
+    ],
+    "edit": [
+      "prompt_editing"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "stable_audio_3_medium_q8_0",
+    "tags": [
+      "Music",
+      "SFX",
+      "Edit",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/stable_audio.md",
+      "docs/music_generation.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "stable_audio_3_medium_q8_0",
+      "display_name": "Stable Audio 3 Medium Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Stable-Audio-3-Medium-GGUF",
+      "files": [
+        "Stable-Audio-3-Medium-GGUF/stable-audio-3-medium-q8_0.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Medium-GGUF"
+    },
+    {
+      "id": "stable_audio_3_medium_f16",
+      "display_name": "Stable Audio 3 Medium F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Stable-Audio-3-Medium-GGUF",
+      "files": [
+        "Stable-Audio-3-Medium-GGUF/stable-audio-3-medium-f16.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Medium-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_music_q8_0",
+      "display_name": "Stable Audio 3 Small Music Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Stable-Audio-3-Small-Music-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-q8_0.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-Music-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_music_f16",
+      "display_name": "Stable Audio 3 Small Music F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Stable-Audio-3-Small-Music-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-f16.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-Music-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_sfx_q8_0",
+      "display_name": "Stable Audio 3 Small SFX Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Stable-Audio-3-Small-SFX-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-SFX-GGUF/stable-audio-3-small-sfx-q8_0.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-SFX-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_sfx_f16",
+      "display_name": "Stable Audio 3 Small SFX F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Stable-Audio-3-Small-SFX-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-SFX-GGUF/stable-audio-3-small-sfx-f16.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-SFX-GGUF"
+    },
+    {
+      "id": "stable_audio_3_medium_safetensors",
+      "display_name": "Stable Audio 3 Medium Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "stable-audio-3-medium",
+      "files": [
+        "model_config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "stabilityai/stable-audio-3-medium",
+        "gated": true
+      }
+    },
+    {
+      "id": "stable_audio_3_small_music_safetensors",
+      "display_name": "Stable Audio 3 Small Music Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "stable-audio-3-small-music",
+      "files": [
+        "model_config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "stabilityai/stable-audio-3-small-music",
+        "gated": true
+      }
+    },
+    {
+      "id": "stable_audio_3_small_sfx_safetensors",
+      "display_name": "Stable Audio 3 Small SFX Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "stable-audio-3-small-sfx",
+      "files": [
+        "model_config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "stabilityai/stable-audio-3-small-sfx",
+        "gated": true
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "model:t5gemma-b-b-ul2/config.json",
+        "t5_tokenizer_json": "model:t5gemma-b-b-ul2/tokenizer.json",
+        "t5_tokenizer_model": "model:t5gemma-b-b-ul2/tokenizer.model",
+        "t5_tokenizer_config": "model:t5gemma-b-b-ul2/tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "t5_weights": {
+          "source": "weights:",
+          "prefix": "t5_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "t5gemma-b-b-ul2"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:tokenizer.model",
+        "t5_tokenizer_config": "t5:tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "../t5-base"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:spiece.model",
+        "t5_tokenizer_config": "t5:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:Foundation_1.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1239 @@
+{
+ "corpus": "google/fleurs test split, 5 clips per language",
+ "clips": 120,
+ "languages": [
+  "bg",
+  "cs",
+  "da",
+  "de",
+  "el",
+  "en",
+  "es",
+  "et",
+  "fi",
+  "fr",
+  "hr",
+  "hu",
+  "it",
+  "lt",
+  "lv",
+  "nl",
+  "pl",
+  "pt",
+  "ro",
+  "ru",
+  "sk",
+  "sl",
+  "sv",
+  "uk"
+ ],
+ "audio_minutes": 21.8,
+ "weight_types": [
+  "native",
+  "f16",
+  "bf16",
+  "q8_0"
+ ],
+ "transcripts": [
+  {
+   "lang": "bg",
+   "file": "bg_00.wav",
+   "secs": 13.86,
+   "reference": "съобщава се че е бил на около 20 години. в изявление бийбър заяви че докато не съм присъствал нито пряко замесен в този трагичен инцидент мислите и молитвите ми са със семейството на жертвата.",
+   "native": "Съобщава се, че е бил на около двадесет години. В изявление би бързави, че докато не съм присъстването пряко замесен в този трагичен инцидент, Мислите и молитвите ми са със семейството на жертвата.",
+   "f16": "Съобщава се, че е бил на около двадесет години. В изявление би бързави, че докато не съм присъстването пряко замесен в този трагичен инцидент, Мислите и молитвите ми са със семейството на жертвата.",
+   "bf16": "Съобщава се, че е бил на около двадесет години. В изявление би бързави, че докато не съм присъстването пряко замесен в този трагичен инцидент, Мислите и молитвите ми са със семейството на жертвата.",
+   "q8_0": "Съобщава се, че е бил на около двадесет години. В изявление би бързави, че докато не съм присъстването пряко замесен в този трагичен инцидент, Мислите и молитвите ми са със семейството на жертвата."
+  },
+  {
+   "lang": "bg",
+   "file": "bg_01.wav",
+   "secs": 8.94,
+   "reference": "сплавите са смес от два или повече метала. не забравяйте че има много елементи в периодичната таблица",
+   "native": "Сплавете с мес от два или повече метала. Не забравяйте, че има много елементи в периодичната таблица.",
+   "f16": "Сплавете с мес от два или повече метала. Не забравяйте, че има много елементи в периодичната таблица.",
+   "bf16": "Сплавете с мес от два или повече метала. Не забравяйте, че има много елементи в периодичната таблица.",
+   "q8_0": "Сплавете с мес от два или повече метала. Не забравяйте, че има много елементи в периодичната таблица."
+  },
+  {
+   "lang": "bg",
+   "file": "bg_02.wav",
+   "secs": 8.34,
+   "reference": "круизите до санкт петербург включват и време в града. пътниците в круиза са освободени от изискването за виза вижте условията",
+   "native": "Круизите до Санкт Петърбът включват и време в града. Пътниците в круиза са освободени от изискването на завиза, бищесловията.",
+   "f16": "Круизите до Санкт Петърбът включват и време в града. Пътниците в круиза са освободени от изискването на завиза, бищесловията.",
+   "bf16": "Круизите до Санкт Петърбът включват и време в града. Пътниците в круиза са освободени от изискването на завиза, бищесловията.",
+   "q8_0": "Круизите до Санкт Петърбът включват и време в града. Пътниците в круиза са освободени от изискването на завиза, бищесловията."
+  },
+  {
+   "lang": "bg",
+   "file": "bg_03.wav",
+   "secs": 14.28,
+   "reference": "тъй като светлинното замърсяване дори и в неговия апогей не беше такъв проблем какъвто е днес те обикновено се намират в градовете или в кампусите и са по-лесно достъпни от тези построени в днешно време",
+   "native": "Тъй като светлиното замърсяване дори в неговият апогей не беше такъв проблем, какъвто е днес, те обикновено се намират в градовете или в кампусите и са по-лесно достъпни от тези построени в днешно време.",
+   "f16": "Тъй като светлиното замърсяване дори в неговият апогей не беше такъв проблем, какъвто е днес, те обикновено се намират в градовете или в кампусите и са по-лесно достъпни от тези построени в днешно време.",
+   "bf16": "Тъй като светлиното замърсяване дори в неговият апогей не беше такъв проблем, какъвто е днес, те обикновено се намират в градовете или в кампусите и са по-лесно достъпни от тези построени в днешно време.",
+   "q8_0": "Тъй като светлиното замърсяване дори в неговият апогей не беше такъв проблем, какъвто е днес, те обикновено се намират в градовете или в кампусите и са по-лесно достъпни от тези построени в днешно време."
+  },
+  {
+   "lang": "bg",
+   "file": "bg_04.wav",
+   "secs": 19.2,
+   "reference": "тъй като перата на динозаврите нямат добре развита дръжка наречена рахис но притежават други характеристики на перата — разклонения и кукички - изследователите заключават че рахисът вероятно е по-късно еволюционно развитие в сравнение с другите характеристики",
+   "native": "Тъй като перата на динозаврите нямат добре развита дръжка, наречена Рахис, но притежават други характеристики на перата разклонения и кукички, изследователите заключват, че рахисът вероятно е по-късно еволюционно развитие в сравнение с другите характеристики.",
+   "f16": "Тъй като перата на динозаврите нямат добре развита дръжка, наречена Рахис, но притежават други характеристики на перата разклонения и кукички, изследователите заключват, че рахисът вероятно е по-късно еволюционно развитие в сравнение с другите характеристики.",
+   "bf16": "Тъй като перата на динозаврите нямат добре развита дръжка, наречена Рахис, но притежават други характеристики на перата разклонения и кукички, изследователите заключват, че рахисът вероятно е по-късно еволюционно развитие в сравнение с другите характеристики.",
+   "q8_0": "Тъй като перата на динозаврите нямат добре развита дръжка, наречена Рахис, но притежават други характеристики на перата разклонения и кукички, изследователите заключват, че рахисът вероятно е по-късно еволюционно развитие в сравнение с другите характеристики."
+  },
+  {
+   "lang": "hr",
+   "file": "hr_00.wav",
+   "secs": 8.04,
+   "reference": "tijekom noći izrađeno je između 150 i 200 kopija koje su sada poznate pod nazivom dunlap broadsides",
+   "native": "Tijekom noći izrađeno je između 150 i 200 kopija koje su sada poznate pod nazivom Danlej broadside.",
+   "f16": "Tijekom noći izrađeno je između 150 i 200 kopija koje su sada poznate pod nazivom Danlej broadside.",
+   "bf16": "Tijekom noći izrađeno je između 150 i 200 kopija koje su sada poznate pod nazivom Danlej broadside.",
+   "q8_0": "Tijekom noći izrađeno je između 150 i 200 kopija koje su sada poznate pod nazivom Danlej broadside."
+  },
+  {
+   "lang": "hr",
+   "file": "hr_01.wav",
+   "secs": 11.94,
+   "reference": "iako se pokazalo da jedno eksperimentalno cjepivo može smanjiti smrtnost od ebole dosad nijedan lijek nije dokazano prikladan za liječenje postojeće infekcije",
+   "native": "Iako se pokazalo da jedno eksperimentalno cjepivo može smanjiti smrtnost od ebole, dosad nijedan lijek nije dokazano prikladan za liječenje postojeće infekcije.",
+   "f16": "Iako se pokazalo da jedno eksperimentalno cjepivo može smanjiti smrtnost od ebole, dosad nijedan lijek nije dokazano prikladan za liječenje postojeće infekcije.",
+   "bf16": "Iako se pokazalo da jedno eksperimentalno cjepivo može smanjiti smrtnost od ebole, dosad nijedan lijek nije dokazano prikladan za liječenje postojeće infekcije.",
+   "q8_0": "Iako se pokazalo da jedno eksperimentalno cjepivo može smanjiti smrtnost od ebole, dosad nijedan lijek nije dokazano prikladan za liječenje postojeće infekcije."
+  },
+  {
+   "lang": "hr",
+   "file": "hr_02.wav",
+   "secs": 10.14,
+   "reference": "arhipelag se nalazi 120 km sjeverno od poluotoka najveći je otok king george na kojem je smješteno naselje villa las estrellas",
+   "native": "Arhipelag se nalazi 120 km sjeverno od poluotoka, najveći je otok King George za kojem je smješteno naselje Vila Laseras.",
+   "f16": "Arhipelag se nalazi 120 km sjeverno od poluotoka, najveći je otok King George za kojem je smješteno naselje Vila Laseras.",
+   "bf16": "Arhipelag se nalazi 120 km sjeverno od poluotoka, najveći je otok King George za kojem je smješteno naselje Vila Laseras.",
+   "q8_0": "Arhipelag se nalazi 120 km sjeverno od poluotoka, najveći je otok King George za kojem je smješteno naselje Vila Laseras."
+  },
+  {
+   "lang": "hr",
+   "file": "hr_03.wav",
+   "secs": 12.0,
+   "reference": "institut za pravdu i demokraciju na haitiju referirao se na nezavisna istraživanja koja upućuju na to da su pripadnici mirovnih snaga un-a iz nepala nesvjesno prenijeli bolest na haiti",
+   "native": "Institut za pravdu i demokraciju na Haiti referirao se na nezavisne istraživanja koja upućuje na to da su pripadnici Mirovnih snaga UNA iz Nepala nesjesno prenijeli bolest na Haiti.",
+   "f16": "Institut za pravdu i demokraciju na Haiti referirao se na nezavisne istraživanja koja upućuje na to da su pripadnici Mirovnih snaga UNA iz Nepala nesjesno prenijeli bolest na Haiti.",
+   "bf16": "Institut za pravdu i demokraciju na Haiti referirao se na nezavisne istraživanja koja upućuje na to da su pripadnici Mirovnih snaga UNA iz Nepala nesjesno prenijeli bolest na Haiti.",
+   "q8_0": "Institut za pravdu i demokraciju na Haiti referirao se na nezavisne istraživanja koja upućuje na to da su pripadnici Mirovnih snaga UNA iz Nepala nesjesno prenijeli bolest na Haiti."
+  },
+  {
+   "lang": "hr",
+   "file": "hr_04.wav",
+   "secs": 6.9,
+   "reference": "fotografi su kasnije zauzeli mjesto starije žene koja je morala na toalet mendoza je upucan",
+   "native": "Fotografi su kasnije zauzeli mjesto starije žene koja je morala na toaleti, medozaj je upucan.",
+   "f16": "Fotografi su kasnije zauzeli mjesto starije žene koja je morala na toaleti, medozaj je upucan.",
+   "bf16": "Fotografi su kasnije zauzeli mjesto starije žene koja je morala na toaleti, medozaj je upucan.",
+   "q8_0": "Fotografi su kasnije zauzeli mjesto starije žene koja je morala na toaleti, medozaj je upucan."
+  },
+  {
+   "lang": "cs",
+   "file": "cs_00.wav",
+   "secs": 13.32,
+   "reference": "sundarbans je největším pásem pobřežních mangrovů na světě který se od pobřeží táhne 80 km 50 mil do vnitrozemí bangladéše a indie",
+   "native": "Sundarbans je největším pásem pobřežích mangrovů na světě, který se od pobřeží táhne 80 km/50 mil do vnitrozemí Bangléše a Indie.",
+   "f16": "Sundarbans je největším pásem pobřežích mangrovů na světě, který se od pobřeží táhne 80 km/50 mil do vnitrozemí Bangléše a Indie.",
+   "bf16": "Sundarbans je největším pásem pobřežích mangrovů na světě, který se od pobřeží táhne 80 km/50 mil do vnitrozemí Bangléše a Indie.",
+   "q8_0": "Sundarbans je největším pásem pobřežích mangrovů na světě, který se od pobřeží táhne 80 km 50 mil do vnitrozemí Bangléše a Indie."
+  },
+  {
+   "lang": "cs",
+   "file": "cs_01.wav",
+   "secs": 16.74,
+   "reference": "nevíme to jistě ale mohli mít rozeklaný jazyk jejich strava zahrnovala želvy velké ryby jiné mosasaury a možná mohli být i kanibalové",
+   "native": "Nevíme to jistě, ale mohly mít rozeklený jazyk. Jejich strava zahrnová želovy, velké ryby, jiné masasaury a možná mohly být i kanibalové.",
+   "f16": "Nevíme to jistě, ale mohly mít rozeklený jazyk. Jejich strava zahrnová želovy, velké ryby, jiné masasaury a možná mohly být i kanibalové.",
+   "bf16": "Nevíme to jistě, ale mohly mít rozeklený jazyk. Jejich strava zahrnová želovy, velké ryby, jiné masasaury a možná mohly být i kanibalové.",
+   "q8_0": "Nevíme to jistě, ale mohly mít rozeklený jazyk. Jejich strava zahrnová želovy, velké ryby, jiné masasaury a možná mohly být i kanibalové."
+  },
+  {
+   "lang": "cs",
+   "file": "cs_02.wav",
+   "secs": 7.32,
+   "reference": "kůra je silná přibližně 70 km na přivrácené straně a okolo 100 km na odvrácené straně",
+   "native": "Kůra je silná přibližně 70 km na převrácené straně a okolo 100 km na odvrácené straně.",
+   "f16": "Kůra je silná přibližně 70 km na převrácené straně a okolo 100 km na odvrácené straně.",
+   "bf16": "Kůra je silná přibližně 70 km na převrácené straně a okolo 100 km na odvrácené straně.",
+   "q8_0": "Kůra je silná přibližně 70 km na převrácené straně a okolo 100 km na odvrácené straně."
+  },
+  {
+   "lang": "cs",
+   "file": "cs_03.wav",
+   "secs": 9.36,
+   "reference": "internet kombinuje prvky masové a mezilidské komunikace",
+   "native": "Internet kombinuje prvky masové a mezelidské komunikace.",
+   "f16": "Internet kombinuje prvky masové a mezelidské komunikace.",
+   "bf16": "Internet kombinuje prvky masové a mezelidské komunikace.",
+   "q8_0": "Internet kombinuje prvky masové a mezelidské komunikace."
+  },
+  {
+   "lang": "cs",
+   "file": "cs_04.wav",
+   "secs": 12.78,
+   "reference": "vědci doufají že pochopí jak se utvářely planety především toho jak se utvářela země od doby kdy se před dávnou dobou srazily se zemí komety",
+   "native": "Vědci doufají, že pochopí, jak se utvářily planety především toho, jak se utvářela Země od doby, kdy se před dávnou dobou srazily se Zemí komety.",
+   "f16": "Vědci doufají, že pochopí, jak se utvářily planety především toho, jak se utvářela Země od doby, kdy se před dávnou dobou srazily se Zemí komety.",
+   "bf16": "Vědci doufají, že pochopí, jak se utvářily planety především toho, jak se utvářela Země od doby, kdy se před dávnou dobou srazily se Zemí komety.",
+   "q8_0": "Vědci doufají, že pochopí, jak se utvářily planety především toho, jak se utvářela Země od doby, kdy se před dávnou dobou srazily se Zemí komety."
+  },
+  {
+   "lang": "da",
+   "file": "da_00.wav",
+   "secs": 5.1,
+   "reference": "dette er en vigtig måde at skelne mellem nogle verber og objektiver",
+   "native": "Dette er en vigtig måde at skille mellem nogle verbere og objektiver.",
+   "f16": "Dette er en vigtig måde at skille mellem nogle verbere og objektiver.",
+   "bf16": "Dette er en vigtig måde at skille mellem nogle verbere og objektiver.",
+   "q8_0": "Dette er en vigtig måde at skille mellem nogle verbere og objektiver."
+  },
+  {
+   "lang": "da",
+   "file": "da_01.wav",
+   "secs": 18.24,
+   "reference": "fordi dinosaurfjerene ikke har et veludviklet skaft kaldet et fjerskaft men har andre kendetegn fra fjer stråler og bistråler udledte forskerne at fjerskaft sandsynligvis var en senere evolutionær udvikling end disse andre karakteristika",
+   "native": "Fordi dinosaurifjerne ikke har et veludviklet skraft, kaldes et fjerskaft, men har andre kendtegn for fjerder stråler og blistråler, udløte forskerne, at fjernskaft sandsynligvis var en senere evolutionær udvikling end disse andre karakteristika.",
+   "f16": "Fordi dinosaurifjerne ikke har et veludviklet skraft, kaldes et fjerskaft, men har andre kendtegn for fjerder stråler og blistråler, udløte forskerne, at fjernskaft sandsynligvis var en senere evolutionær udvikling end disse andre karakteristika.",
+   "bf16": "Fordi dinosaurifjerne ikke har et veludviklet skraft, kaldes et fjerskaft, men har andre kendtegn for fjerder stråler og blistråler, udløte forskerne, at fjernskaft sandsynligvis var en senere evolutionær udvikling end disse andre karakteristika.",
+   "q8_0": "Fordi dinosaurifjerne ikke har et veludviklet skraft, kaldes et fjerskaft, men har andre kendtegn for fjerder stråler og blistråler, udløte forskerne, at fjernskaft sandsynligvis var en senere evolutionær udvikling end disse andre karakteristiker."
+  },
+  {
+   "lang": "da",
+   "file": "da_02.wav",
+   "secs": 6.84,
+   "reference": "nordmarianernes beredskabskontor meddelte at der ikke var rapporteret om skader i nationen",
+   "native": "Nordmarinanernes beredelskabskontor meddelte, at der ikke var rapporteret om skader inationen.",
+   "f16": "Nordmarinanernes beredelskabskontor meddelte, at der ikke var rapporteret om skader inationen.",
+   "bf16": "Nordmarinanernes beredelskabskontor meddelte, at der ikke var rapporteret om skader inationen.",
+   "q8_0": "Nordmarinanernes beredelskabskontor meddelte, at der ikke var rapporteret om skader inationen."
+  },
+  {
+   "lang": "da",
+   "file": "da_03.wav",
+   "secs": 11.34,
+   "reference": "finland er et fantastisk rejsemål for sejlere de tusind søers land har også tusindvis af øer i søerne samt i øhavene langs kysten",
+   "native": "Finland er et fantastisk rejsemål for sejlere, de er tusindøres land og også tusindvis af øer i søerne samt de øhavne, langs kysten.",
+   "f16": "Finland er et fantastisk rejsemål for sejlere, de er tusindøres land og også tusindvis af øer i søerne samt de øhavne, langs kysten.",
+   "bf16": "Finland er et fantastisk rejsemål for sejlere, de er tusindøres land og også tusindvis af øer i søerne samt de øhavne, langs kysten.",
+   "q8_0": "Finland er et fantastisk rejsemål for sejlere, de er tusindøres land og også tusindvis af øer i søerne samt de øhavne, langs kysten."
+  },
+  {
+   "lang": "da",
+   "file": "da_04.wav",
+   "secs": 9.12,
+   "reference": "californiens guvernør arnold schwarzenegger underskrev et lovforslag der forbyder salg eller udlejning af voldelige computerspil til mindreårige",
+   "native": "Kalifornis guvernør Arnold Schwarzenegger underskrev et lovforslag, der forbyder selv eller udlanding af voldelig computerspil til mindre.",
+   "f16": "Kalifornis guvernør Arnold Schwarzenegger underskrev et lovforslag, der forbyder selv eller udlanding af voldelig computerspil til mindre.",
+   "bf16": "Kalifornis guvernør Arnold Schwarzenegger underskrev et lovforslag, der forbyder selv eller udlanding af voldelig computerspil til mindre.",
+   "q8_0": "Kalifornis guvernør Arnold Schwarzenegger underskrev et lovforslag, der forbyder selv eller udlanding af voldelig computerspil til mindre."
+  },
+  {
+   "lang": "nl",
+   "file": "nl_00.wav",
+   "secs": 6.48,
+   "reference": "volgens angel 2006 kunnen organisaties beter presteren met een aanpak op basis van het continuümmodel",
+   "native": "Volgens Angel 2006 kunnen organisaties beter presteren met een aanpak op basis van het continuummodel.",
+   "f16": "Volgens Angel 2006 kunnen organisaties beter presteren met een aanpak op basis van het continuummodel.",
+   "bf16": "Volgens Angel 2006 kunnen organisaties beter presteren met een aanpak op basis van het continuummodel.",
+   "q8_0": "Volgens Angel 2006 kunnen organisaties beter presteren met een aanpak op basis van het continuummodel."
+  },
+  {
+   "lang": "nl",
+   "file": "nl_01.wav",
+   "secs": 4.38,
+   "reference": "varkens dragen de ziekte bij zich en dragen het via muggen over op mensen",
+   "native": "Vakers dragen de ziekte bij zich en dragen het via muggen over op mensen.",
+   "f16": "Vakers dragen de ziekte bij zich en dragen het via muggen over op mensen.",
+   "bf16": "Vakers dragen de ziekte bij zich en dragen het via muggen over op mensen.",
+   "q8_0": "Vakers dragen de ziekte bij zich en dragen het via muggen over op mensen."
+  },
+  {
+   "lang": "nl",
+   "file": "nl_02.wav",
+   "secs": 9.66,
+   "reference": "bij een verkeersstroom wordt gekeken naar de bewegingen van individuele bestuurders en voertuigen tussen twee punten en de interacties die plaatsvinden tussen de individuen",
+   "native": "Bij een verkeersstroom wordt gekeken naar de bewegingen van individuele bestuurders en voertuigen tussen twee punten en de interacties die plaatsvinden tussen de individuen.",
+   "f16": "Bij een verkeersstroom wordt gekeken naar de bewegingen van individuele bestuurders en voertuigen tussen twee punten en de interacties die plaatsvinden tussen de individuen.",
+   "bf16": "Bij een verkeersstroom wordt gekeken naar de bewegingen van individuele bestuurders en voertuigen tussen twee punten en de interacties die plaatsvinden tussen de individuen.",
+   "q8_0": "Bij een verkeersstroom wordt gekeken naar de bewegingen van individuele bestuurders en voertuigen tussen twee punten en de interacties die plaatsvinden tussen de individuen."
+  },
+  {
+   "lang": "nl",
+   "file": "nl_03.wav",
+   "secs": 10.26,
+   "reference": "vanaf boekjaar 2005 financierde het congres het initiatief tegen obsceniteit en verklaarde dat de fbi tien agenten moet inzetten op volwassenenpornografie",
+   "native": "Vanaf boekjaar 2005 financierde het Congres het initiatief tegen obsceniteit en verklaarde dat de FBI 10 agenten moet inzetten op volwassenenpornografie.",
+   "f16": "Vanaf boekjaar 2005 financierde het Congres het initiatief tegen obsceniteit en verklaarde dat de FBI 10 agenten moet inzetten op volwassenenpornografie.",
+   "bf16": "Vanaf boekjaar 2005 financierde het Congres het initiatief tegen obsceniteit en verklaarde dat de FBI 10 agenten moet inzetten op volwassenenpornografie.",
+   "q8_0": "Vanaf boekjaar 2005 financierde het Congres het initiatief tegen obsceniteit en verklaarde dat de FBI 10 agenten moet inzetten op volwassenenpornografie."
+  },
+  {
+   "lang": "nl",
+   "file": "nl_04.wav",
+   "secs": 8.16,
+   "reference": "des te minder stress des te positiever de aanwezige levenskracht ieder mens is in staat tevredenheid en totale rust te bereiken",
+   "native": "Des te minder stress, des te positiever de aanwezige levenskracht. Ieder mens is in staat tevredenheid en totale rust te bereiken.",
+   "f16": "Des te minder stress, des te positiever de aanwezige levenskracht. Ieder mens is in staat tevredenheid en totale rust te bereiken.",
+   "bf16": "Des te minder stress, des te positiever de aanwezige levenskracht. Ieder mens is in staat tevredenheid en totale rust te bereiken.",
+   "q8_0": "Des te minder stress, des te positiever de aanwezige levenskracht. Ieder mens is in staat tevredenheid en totale rust te bereiken."
+  },
+  {
+   "lang": "en",
+   "file": "en_00.wav",
+   "secs": 10.56,
+   "reference": "however due to the slow communication channels styles in the west could lag behind by 25 to 30 year",
+   "native": "However, due to the slow communication channels, styles in the west could lag behind by 25-30 years.",
+   "f16": "However, due to the slow communication channels, styles in the west could lag behind by 25-30 years.",
+   "bf16": "However, due to the slow communication channels, styles in the west could lag behind by 25-30 years.",
+   "q8_0": "However, due to the slow communication channels, styles in the west could lag behind by 25-30 years."
+  },
+  {
+   "lang": "en",
+   "file": "en_01.wav",
+   "secs": 8.76,
+   "reference": "all nouns alongside the word sie for you always begin with a capital letter even in the middle of a sentence",
+   "native": "All nouns alongside the word say for you always begin with a capital letter even in the middle of a sentence.",
+   "f16": "All nouns alongside the word say for you always begin with a capital letter even in the middle of a sentence.",
+   "bf16": "All nouns alongside the word say for you always begin with a capital letter even in the middle of a sentence.",
+   "q8_0": "All nouns alongside the word say for you always begin with a capital letter even in the middle of a sentence."
+  },
+  {
+   "lang": "en",
+   "file": "en_02.wav",
+   "secs": 11.46,
+   "reference": "to the north and within easy reach is the romantic and fascinating town of sintra and which was made famous to foreigners after a glowing account of its splendours recorded by lord byron",
+   "native": "To the north and within easy reach is the romantic and fascinating town of Sintra, and which was made famous to foreigners after a glowing account of its splendors recorded by Lord Byron.",
+   "f16": "To the north and within easy reach is the romantic and fascinating town of Sintra, and which was made famous to foreigners after a glowing account of its splendors recorded by Lord Byron.",
+   "bf16": "To the north and within easy reach is the romantic and fascinating town of Sintra, and which was made famous to foreigners after a glowing account of its splendors recorded by Lord Byron.",
+   "q8_0": "To the north and within easy reach is the romantic and fascinating town of Sintra, and which was made famous to foreigners after a glowing account of its splendors recorded by Lord Byron."
+  },
+  {
+   "lang": "en",
+   "file": "en_03.wav",
+   "secs": 5.76,
+   "reference": "the cabbage juice changes color depending on how acidic or basic alkaline the chemical is",
+   "native": "The cabbage juice changes color depending on how acidic, basic alkaline the chemical is.",
+   "f16": "The cabbage juice changes color depending on how acidic, basic alkaline the chemical is.",
+   "bf16": "The cabbage juice changes color depending on how acidic, basic alkaline the chemical is.",
+   "q8_0": "The cabbage juice changes color depending on how acidic, basic alkaline the chemical is."
+  },
+  {
+   "lang": "en",
+   "file": "en_04.wav",
+   "secs": 4.32,
+   "reference": "many people don't think about them as dinosaurs because they have feathers and can fly",
+   "native": "Many people don't think about them as dinosaurs because they have feathers and can fly.",
+   "f16": "Many people don't think about them as dinosaurs because they have feathers and can fly.",
+   "bf16": "Many people don't think about them as dinosaurs because they have feathers and can fly.",
+   "q8_0": "Many people don't think about them as dinosaurs because they have feathers and can fly."
+  },
+  {
+   "lang": "et",
+   "file": "et_00.wav",
+   "secs": 14.1,
+   "reference": "plitvice järvede rahvuspark on kaetud tihedate metsadega põhiliselt pöökide kuuskede ja nulgedega ning seal kasvab mägi ja vahemeretaimestike segu",
+   "native": "Pritviche järvede rahvuspark on kaetud tihedate metsadega, põhiliselt köökide kuuskede ja nulgedega, ning seal kasvab mägi ja Vahem mere taimestike segu.",
+   "f16": "Pritviche järvede rahvuspark on kaetud tihedate metsadega, põhiliselt köökide kuuskede ja nulgedega, ning seal kasvab mägi ja Vahem mere taimestike segu.",
+   "bf16": "Pritviche järvede rahvuspark on kaetud tihedate metsadega, põhiliselt köökide kuuskede ja nulgedega, ning seal kasvab mägi ja Vahem mere taimestike segu.",
+   "q8_0": "Pritviche järvede rahvuspark on kaetud tihedate metsadega, põhiliselt köökide kuuskede ja nulgedega, ning seal kasvab mägi ja Vahem mere taimestike segu."
+  },
+  {
+   "lang": "et",
+   "file": "et_01.wav",
+   "secs": 11.94,
+   "reference": "spektri teises otsas on inimene kes muutub tundmatuseni tundes et ta peab muutma kõike mida meeskond on seni teinud ja tegema selle enda omaks",
+   "native": "Spektri teises otsas on inimene, kes muutub tundmatuseni, tundes, et ta peab muutma kõike, mida meeskond on seni teinud ja tegema selle enda omaks.",
+   "f16": "Spektri teises otsas on inimene, kes muutub tundmatuseni, tundes, et ta peab muutma kõike, mida meeskond on seni teinud ja tegema selle enda omaks.",
+   "bf16": "Spektri teises otsas on inimene, kes muutub tundmatuseni, tundes, et ta peab muutma kõike, mida meeskond on seni teinud ja tegema selle enda omaks.",
+   "q8_0": "Spektri teises otsas on inimene, kes muutub tundmatuseni, tundes, et ta peab muutma kõike, mida meeskond on seni teinud ja tegema selle enda omaks."
+  },
+  {
+   "lang": "et",
+   "file": "et_02.wav",
+   "secs": 19.32,
+   "reference": "dr malar balasubramanian 29 leiti ohios blue ashist äärelinnast mis on umbes 15 miili cincinnatist põhjapool tee kõrval maas lamamas t-särgi ja aluspesu väel ilmselt tugevalt ravimite mõju all",
+   "native": "Dr. Malar balas Subramani 29 leiti Ohio Blue Ashist äärelinnast, mis on umbes 15 miili sindnätist põhja pool, tee kõrval maas lamaamas, tee särgi ja aluspesu väär ilmselt tugevat travimite mõjual.",
+   "f16": "Dr. Malar balas Subramani 29 leiti Ohio Blue Ashist äärelinnast, mis on umbes 15 miili sindnätist põhja pool, tee kõrval maas lamaamas, tee särgi ja aluspesu väär ilmselt tugevat travimite mõjual.",
+   "bf16": "Dr. Malar balas Subramani 29 leiti Ohio Blue Ashist äärelinnast, mis on umbes 15 miili sindnätist põhja pool, tee kõrval maas lamaamas, tee särgi ja aluspesu väär ilmselt tugevat travimite mõjual.",
+   "q8_0": "Dr. Malar balas Subramanian 29 leiti Ohšist äärelinnast, mis on umbes 15 miili sind siin nädist põhja pool, tee kõrval maas lamaamas, tee särgi ja aluspesu väel, ilmselt tugevat travimite mõjual."
+  },
+  {
+   "lang": "et",
+   "file": "et_03.wav",
+   "secs": 9.24,
+   "reference": "kaugemal põhja pool asuvad suured alad on päris hõredasti asustatud ja kohati peaaegu asustamata metsik loodus",
+   "native": "Kaugemal põhjapool asuvad suured alad on päris hõredasti asustatud ja kohati peaaegu asustamata metsik loodus.",
+   "f16": "Kaugemal põhjapool asuvad suured alad on päris hõredasti asustatud ja kohati peaaegu asustamata metsik loodus.",
+   "bf16": "Kaugemal põhjapool asuvad suured alad on päris hõredasti asustatud ja kohati peaaegu asustamata metsik loodus.",
+   "q8_0": "Kaugemal põhjapool asuvad suured alad on päris hõredasti asustatud ja kohati peaaegu asustamata metsik loodus."
+  },
+  {
+   "lang": "et",
+   "file": "et_04.wav",
+   "secs": 11.22,
+   "reference": "liitlased tungisid 15 augustil 1940 lõuna-prantsusmaale seda aktsiooni hakati nimetama operatsiooniks dragoon",
+   "native": "Liitlased tungisid 15. augustil 1940. Lõuna Prantsusmaale. Seda aktsiooni hakati nimetama operatsiooniks Dragoon.",
+   "f16": "Liitlased tungisid 15. augustil 1940. Lõuna Prantsusmaale. Seda aktsiooni hakati nimetama operatsiooniks Dragoon.",
+   "bf16": "Liitlased tungisid 15. augustil 1940. Lõuna Prantsusmaale. Seda aktsiooni hakati nimetama operatsiooniks Dragoon.",
+   "q8_0": "Liitlased tungisid 15. augustil 1940. Lõuna Prantsusmaale. Seda aktsiooni hakati nimetama operatsiooniks Dragoon."
+  },
+  {
+   "lang": "fi",
+   "file": "fi_00.wav",
+   "secs": 18.6,
+   "reference": "yhdysvaltojen ilmailuviranomainen väittää että nextgen on järjestelmä jonka ansiosta lentokoneet voivat lentää lyhyempiä reittejä säästää vuosittain miljoonia gallonia polttoainetta ja vähentää hiilidioksidipäästöjä",
+   "native": "Yhdysvaltojen ilmailuviranomainen väittää, että Next Gen on järjestelmä, jonka ansiosta lentokoneet voivat lentää lyhyempiä reittejä, säästää vuosittain miljoonia gallonia polttoainetta ja vähentää hiilidioksidipäästöjä.",
+   "f16": "Yhdysvaltojen ilmailuviranomainen väittää, että Next Gen on järjestelmä, jonka ansiosta lentokoneet voivat lentää lyhyempiä reittejä, säästää vuosittain miljoonia gallonia polttoainetta ja vähentää hiilidioksidipäästöjä.",
+   "bf16": "Yhdysvaltojen ilmailuviranomainen väittää, että Next Gen on järjestelmä, jonka ansiosta lentokoneet voivat lentää lyhyempiä reittejä, säästää vuosittain miljoonia gallonia polttoainetta ja vähentää hiilidioksidipäästöjä.",
+   "q8_0": "Yhdysvaltojen ilmailuviranomainen väittää, että Next Gen on järjestelmä, jonka ansiosta lentokoneet voivat lentää lyhyempiä reittejä, säästää vuosittain miljoonia gallonia polttoainetta ja vähentää hiilidioksidipäästöjä."
+  },
+  {
+   "lang": "fi",
+   "file": "fi_01.wav",
+   "secs": 15.24,
+   "reference": "sundarban on julistettu unescon maailmanperintökohteeksi metsän intian puolella sijaitsevaa osaa kutsutaan sundarbanin kansallispuistoksi",
+   "native": "Sundarban on julistettu Unescon maailmanperintökohteeksi. Metsän Intian puolella sijaitsevaa osaa kutsutaan Sundarbanin kansallispuistoksi.",
+   "f16": "Sundarban on julistettu Unescon maailmanperintökohteeksi. Metsän Intian puolella sijaitsevaa osaa kutsutaan Sundarbanin kansallispuistoksi.",
+   "bf16": "Sundarban on julistettu Unescon maailmanperintökohteeksi. Metsän Intian puolella sijaitsevaa osaa kutsutaan Sundarbanin kansallispuistoksi.",
+   "q8_0": "Sundarban on julistettu Unescon maailmanperintökohteeksi. Metsän Intian puolella sijaitsevaa osaa kutsutaan Sundarbanin kansallispuistoksi."
+  },
+  {
+   "lang": "fi",
+   "file": "fi_02.wav",
+   "secs": 7.02,
+   "reference": "rolando mendoza ampui matkailijoita päin m16-kiväärillä",
+   "native": "Roland Doosa ampui matkailijoita päin M16 kivärillä.",
+   "f16": "Roland Doosa ampui matkailijoita päin M16 kivärillä.",
+   "bf16": "Roland Doosa ampui matkailijoita päin M16 kivärillä.",
+   "q8_0": "Roland Doosa ampui matkailijoita päin M16 kivärillä."
+  },
+  {
+   "lang": "fi",
+   "file": "fi_03.wav",
+   "secs": 11.82,
+   "reference": "hongkongin saari antaa hongkongin alueelle nimensä ja se on monien matkailijoiden pääkohteena",
+   "native": "Hongkongin saari antaa Hongkongin alueelle nimensä, ja se on monien matkailijoiden pääkohteena.",
+   "f16": "Hongkongin saari antaa Hongkongin alueelle nimensä, ja se on monien matkailijoiden pääkohteena.",
+   "bf16": "Hongkongin saari antaa Hongkongin alueelle nimensä, ja se on monien matkailijoiden pääkohteena.",
+   "q8_0": "Hongkongin saari antaa Hongkongin alueelle nimensä, ja se on monien matkailijoiden pääkohteena."
+  },
+  {
+   "lang": "fi",
+   "file": "fi_04.wav",
+   "secs": 14.7,
+   "reference": "koska valosaaste ei ollut niiden kunnian päivinä samanlainen ongelma kuin nykyään ne sijaitsevat yleensä kaupungeissa tai kampuksilla ja niihin on helpompi päästä kuin nykyaikana rakennettuihin",
+   "native": "Koska valosaaste ei ollut niiden kunnian päivinä samanlainen ongelma kuin nykyään, ne sijaitsevat yleensä kaupungeissa tai kampuksilla, ja niihin on helpompi päästä kuin nykyaikana rakennettuihin.",
+   "f16": "Koska valosaaste ei ollut niiden kunnian päivinä samanlainen ongelma kuin nykyään, ne sijaitsevat yleensä kaupungeissa tai kampuksilla, ja niihin on helpompi päästä kuin nykyaikana rakennettuihin.",
+   "bf16": "Koska valosaaste ei ollut niiden kunnian päivinä samanlainen ongelma kuin nykyään, ne sijaitsevat yleensä kaupungeissa tai kampuksilla, ja niihin on helpompi päästä kuin nykyaikana rakennettuihin.",
+   "q8_0": "Koska valosaaste ei ollut niiden kunnian päivinä samanlainen ongelma kuin nykyään, ne sijaitsevat yleensä kaupungeissa tai kampuksilla, ja niihin on helpompi päästä kuin nykyaikana rakennettuihin."
+  },
+  {
+   "lang": "fr",
+   "file": "fr_00.wav",
+   "secs": 10.2,
+   "reference": "l'accident a eu lieu en terrain montagneux et il semblerait que cela ait été causé par un incendie malveillant",
+   "native": "L'accident a eu lieu en terrain montagneux, et il semblerait que cela ait été causé par un incendie malveillant.",
+   "f16": "L'accident a eu lieu en terrain montagneux, et il semblerait que cela ait été causé par un incendie malveillant.",
+   "bf16": "L'accident a eu lieu en terrain montagneux, et il semblerait que cela ait été causé par un incendie malveillant.",
+   "q8_0": "L'accident a eu lieu en terrain montagneux, et il semblerait que cela ait été causé par un incendie malveillant."
+  },
+  {
+   "lang": "fr",
+   "file": "fr_01.wav",
+   "secs": 8.28,
+   "reference": "il a ajouté qu’« on ne devrait cependant pas leur demander d’assumer des obligations qui dépassent leur stade de développement leur responsabilité et leurs capacités. »",
+   "native": "Il a ajouté qu'on ne devrait cependant pas leur demander d'assumer des obligations qui dépassent leur stade de développement, leurs responsabilités et leurs capacités.",
+   "f16": "Il a ajouté qu'on ne devrait cependant pas leur demander d'assumer des obligations qui dépassent leur stade de développement, leurs responsabilités et leurs capacités.",
+   "bf16": "Il a ajouté qu'on ne devrait cependant pas leur demander d'assumer des obligations qui dépassent leur stade de développement, leurs responsabilités et leurs capacités.",
+   "q8_0": "Il a ajouté qu'on ne devrait cependant pas leur demander d'assumer des obligations qui dépassent leur stade de développement, leurs responsabilités et leurs capacités."
+  },
+  {
+   "lang": "fr",
+   "file": "fr_02.wav",
+   "secs": 10.2,
+   "reference": "le rugissement du tigre ne ressemble pas au rugissement ample du lion mais plutôt à une phrase dont les mots seraient des cris et des grondements",
+   "native": "Le rugissement du tigre ne ressemble pas au rugissement ample du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements.",
+   "f16": "Le rugissement du tigre ne ressemble pas au rugissement ample du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements.",
+   "bf16": "Le rugissement du tigre ne ressemble pas au rugissement ample du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements.",
+   "q8_0": "Le rugissement du tigre ne ressemble pas au rugissement ample du lion, mais plutôt à une phrase dont les mots seraient des cris et des grondements."
+  },
+  {
+   "lang": "fr",
+   "file": "fr_03.wav",
+   "secs": 8.34,
+   "reference": "le même mois un autre avion de ligne a fait une sortie de piste à mashhad et a heurté un mur tuant ainsi dix-sept personnes",
+   "native": "Le même mois, un autre avion de ligne a fait une sortie de piste à Machad et heurté un mur, tuant ainsi dix-sept personnes.",
+   "f16": "Le même mois, un autre avion de ligne a fait une sortie de piste à Machad et heurté un mur, tuant ainsi dix-sept personnes.",
+   "bf16": "Le même mois, un autre avion de ligne a fait une sortie de piste à Machad et heurté un mur, tuant ainsi dix-sept personnes.",
+   "q8_0": "Le même mois, un autre avion de ligne a fait une sortie de piste à Machad et heurté un mur, tuant ainsi dix-sept personnes."
+  },
+  {
+   "lang": "fr",
+   "file": "fr_04.wav",
+   "secs": 7.2,
+   "reference": "giancarlo fisichella a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage",
+   "native": "Giancarlo Ficella a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage.",
+   "f16": "Giancarlo Ficella a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage.",
+   "bf16": "Giancarlo Ficella a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage.",
+   "q8_0": "Giancarlo Ficella a perdu le contrôle de sa voiture et a terminé la course peu après le démarrage."
+  },
+  {
+   "lang": "de",
+   "file": "de_00.wav",
+   "secs": 17.94,
+   "reference": "für die besten aussichten auf hongkong sollten sie die insel verlassen und zum gegenüberliegenden ufer von kowloon fahren",
+   "native": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowlon fahren.",
+   "f16": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowlon fahren.",
+   "bf16": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowlon fahren.",
+   "q8_0": "Für die besten Aussichten auf Hongkong sollten Sie die Insel verlassen und zum gegenüberliegenden Ufer von Kowlon fahren."
+  },
+  {
+   "lang": "de",
+   "file": "de_01.wav",
+   "secs": 11.16,
+   "reference": "er griff auch alles an was ins wasser kam selbst ein großer dinosaurier wie der t rex war ihm nicht gewachsen",
+   "native": "Er griff auch alles an, was ins Wasser kam: Selbst ein großer Dinosaurier wie der T Rex war ihm nicht gewachsen.",
+   "f16": "Er griff auch alles an, was ins Wasser kam: Selbst ein großer Dinosaurier wie der T Rex war ihm nicht gewachsen.",
+   "bf16": "Er griff auch alles an, was ins Wasser kam: Selbst ein großer Dinosaurier wie der T Rex war ihm nicht gewachsen.",
+   "q8_0": "Er griff auch alles an, was ins Wasser kam: Selbst ein großer Dinosaurier wie der T-Rex war ihm nicht gewachsen."
+  },
+  {
+   "lang": "de",
+   "file": "de_02.wav",
+   "secs": 12.42,
+   "reference": "wenn sie den film das vermächtnis der tempelritter gesehen haben denken sie vielleicht dass auf die rückseite der unabhängigkeitserklärung eine schatzkarte gezeichnet wurde",
+   "native": "Wenn Sie den Film Das Vermächtnis der Tempelritter gesehen haben, denken Sie vielleicht, dass auf der Rückseite der Unabhängigkeitserklärung eine Schatzkarte gezeichnet wurde.x",
+   "f16": "Wenn Sie den Film Das Vermächtnis der Tempelritter gesehen haben, denken Sie vielleicht, dass auf der Rückseite der Unabhängigkeitserklärung eine Schatzkarte gezeichnet wurde.x",
+   "bf16": "Wenn Sie den Film Das Vermächtnis der Tempelritter gesehen haben, denken Sie vielleicht, dass auf der Rückseite der Unabhängigkeitserklärung eine Schatzkarte gezeichnet wurde.x",
+   "q8_0": "Wenn Sie den Film Das Vermächtnis der Tempelritter gesehen haben, denken Sie vielleicht, dass auf der Rückseite der Unabhängigkeitserklärung eine Schatzkarte gezeichnet wurde.x"
+  },
+  {
+   "lang": "de",
+   "file": "de_03.wav",
+   "secs": 10.68,
+   "reference": "es leben noch viele männer und frauen die ihre zeit hier überlebt haben und viele weitere mit angehörigen die dort ermordet wurden oder sich zu tode arbeiteten juden und nichtjuden gleichermaßen",
+   "native": "Es leben noch viele Männer und Frauen, die ihre Zeit hier überlebt haben und viele weitere mit Angehörigen, die dort ermordet wurden oder sich zu Tode arbeiteten, Juden und Nichtjuden gleichermaßen.",
+   "f16": "Es leben noch viele Männer und Frauen, die ihre Zeit hier überlebt haben und viele weitere mit Angehörigen, die dort ermordet wurden oder sich zu Tode arbeiteten, Juden und Nichtjuden gleichermaßen.",
+   "bf16": "Es leben noch viele Männer und Frauen, die ihre Zeit hier überlebt haben und viele weitere mit Angehörigen, die dort ermordet wurden oder sich zu Tode arbeiteten, Juden und Nichtjuden gleichermaßen.",
+   "q8_0": "Es leben noch viele Männer und Frauen, die ihre Zeit hier überlebt haben und viele weitere mit Angehörigen, die dort ermordet wurden oder sich zu Tode arbeiteten, Juden und Nichtjuden gleichermaßen."
+  },
+  {
+   "lang": "de",
+   "file": "de_04.wav",
+   "secs": 9.9,
+   "reference": "die höhle befindet sich auf der spitze eines der berge nördlich von mekka und ist vom rest der welt völlig isoliert",
+   "native": "Die Höhle befindet sich auf der Spitze eines der Berge nördlich von Mekka und ist vom Rest der Welt völlig isoliert.",
+   "f16": "Die Höhle befindet sich auf der Spitze eines der Berge nördlich von Mekka und ist vom Rest der Welt völlig isoliert.",
+   "bf16": "Die Höhle befindet sich auf der Spitze eines der Berge nördlich von Mekka und ist vom Rest der Welt völlig isoliert.",
+   "q8_0": "Die Höhle befindet sich auf der Spitze eines der Berge nördlich von Mekka und ist vom Rest der Welt völlig isoliert."
+  },
+  {
+   "lang": "el",
+   "file": "el_00.wav",
+   "secs": 11.04,
+   "reference": "η δέκατη καταιγίδα της εποχής των ατλαντικών τυφώνων που απέκτησε όνομα η υποτροπική καταιγίδα τζέρι σχηματίσθηκε σήμερα στον ατλαντικό ωκεανό",
+   "native": "Η δέκα καταιγίδα τη εποχή των Ατλαντικών τυφώνων που απέκτησε όνομα, η υποτροπική καταιγίδα Τζέρι σχηματίστηκε σήμερα στον Ατλαντικό ωκεανό.",
+   "f16": "Η δέκα καταιγίδα τη εποχή των Ατλαντικών τυφώνων που απέκτησε όνομα, η υποτροπική καταιγίδα Τζέρι σχηματίστηκε σήμερα στον Ατλαντικό ωκεανό.",
+   "bf16": "Η δέκα καταιγίδα τη εποχή των Ατλαντικών τυφώνων που απέκτησε όνομα, η υποτροπική καταιγίδα Τζέρι σχηματίστηκε σήμερα στον Ατλαντικό ωκεανό.",
+   "q8_0": "Η δέκα καταιγίδα τη εποχή των Ατλαντικών τυφώνων που απέκτησε όνομα, η υποτροπική καταιγίδα Τζέρι σχηματίστηκε σήμερα στον Ατλαντικό ωκεανό."
+  },
+  {
+   "lang": "el",
+   "file": "el_01.wav",
+   "secs": 12.78,
+   "reference": "πιο παραδοσιακές εκκλησίες συχνά πραγματοποιούν την ακολουθία της ανάστασης το βράδυ του σαββάτου μέσα στο σαββατοκύριακο του πάσχα με το εκκλησίασμα να ξεσπά σε εορτασμούς ακριβώς τα μεσάνυχτα υμνώντας την ανάσταση του χριστού",
+   "native": "Πιο παραδοσιακέ εκκλησίε συχνά πραγματοποιούν την ακολουθή τη ανάσταση το βράδυ του Σαβάτου μέσα στο Σαβατοκύριακο του Πάσχα, με το εκκλησία με να ξεσπάσει εορτασμού ακριβώ στα μεσάνυχτα ήμνοντα την ανάσταση του Χριστού.",
+   "f16": "Πιο παραδοσιακέ εκκλησίε συχνά πραγματοποιούν την ακολουθή τη ανάσταση το βράδυ του Σαβάτου μέσα στο Σαβατοκύριακο του Πάσχα, με το εκκλησία με να ξεσπάσει εορτασμού ακριβώ τα μεσάνυχτα ήμνοντα την ανάσταση του Χριστού.",
+   "bf16": "Πιο παραδοσιακέ εκκλησίε συχνά πραγματοποιούν την ακολουθή τη ανάσταση το βράδυ του Σαβάτου μέσα στο Σαβατοκύριακο του Πάσχα, με το εκκλησία με να ξεσπάσει εορτασμού ακριβώ στα μεσάνυχτα ήμνοντα την ανάσταση του Χριστού.",
+   "q8_0": "Πιο παραδοσιακέ εκκλησίε συχνά πραγματοποιούν την ακολουθή τη ανάσταση το βράδυ του Σαβάτου μέσα στο Σαβατοκύριακο του Πάσχα, με το εκκλησία με να ξεσπάσει εορτασμού ακριβώ τα μεσάνυχτα ήμνοντα την ανάσταση του Χριστού."
+  },
+  {
+   "lang": "el",
+   "file": "el_02.wav",
+   "secs": 7.44,
+   "reference": "κάποια άτομα έχουν μη σταθερούς πυρήνες και αυτό τα οδηγεί στη διάσπαση αν τους ασκηθεί μικρή ή ακόμα και καθόλου πίεση",
+   "native": "Κάποια άτομα έχουν μην σταθερού πυρήνε και αυτό το οδηγεί στη διάσταση αν του σα σκεφτεί μικρή ακόμη και καθόλου πίεση.",
+   "f16": "Κάποια άτομα έχουν μην σταθερού πυρήνε και αυτό το οδηγεί στη διάσταση αν του σα σκεφτεί μικρή ακόμη και καθόλου πίεση.",
+   "bf16": "Κάποια άτομα έχουν μην σταθερού πυρήνε και αυτό το οδηγεί στη διάσταση αν του σα σκεφτεί μικρή ακόμη και καθόλου πίεση.",
+   "q8_0": "Κάποια άτομα έχουν μην σταθερού πυρήνε και αυτό το οδηγεί στη διάσταση αν του σα σκεφτεί μικρή ακόμη και καθόλου πίεση."
+  },
+  {
+   "lang": "el",
+   "file": "el_03.wav",
+   "secs": 8.16,
+   "reference": "παρ' όλα αυτά λαμβάνετε συμβουλές από τις αρχές υπακούτε σε όλες τις σημάνσεις και δίνετε μεγάλη προσοχή στις προειδοποιήσεις ασφαλείας",
+   "native": "Παρ' όλα αυτά, λαμβάνεται συμβουλέ από τι αρχέ, υπακούτε σε όλε τι εμάσει και δίνεται μεγάλη προσοχή τη προειδοποίηση ασφαλεία.",
+   "f16": "Παρ' όλα αυτά, λαμβάνεται συμβουλέ από τι αρχέ, υπακούτε σε όλε τι εμάσει και δίνεται μεγάλη προσοχή τη προειδοποίηση ασφαλεία.",
+   "bf16": "Παρ' όλα αυτά, λαμβάνεται συμβουλέ από τι αρχέ, υπακούτε σε όλε τι εμάσει και δίνεται μεγάλη προσοχή τη προειδοποίηση ασφαλεία.",
+   "q8_0": "Παρ' όλα αυτά, λαμβάνεται συμβουλέ από τι αρχέ, υπακούτε σε όλε τι εμάσει και δίνεται μεγάλη προσοχή τη προειδοποίηση ασφαλεία."
+  },
+  {
+   "lang": "el",
+   "file": "el_04.wav",
+   "secs": 12.48,
+   "reference": "διοικούταν από την κυβέρνηση του βισύ αυτή αποτελούνταν από γάλλους που είχαν συνάψει ειρήνη με τους γερμανούς το 1940 και συνεργάζονταν με τους εισβολείς αντί να μάχονται εναντίον τους",
+   "native": "Δηοικούνταν από την κυβέρνηση του Βυσή. Αυτοί αποτελούνταν από γάλου που είχαν συνάψει η Ειρηνούλα του Γερμανού του 1940 και συνεργάζονταν με του συμβολή αντί να μάχονται εναντίον του.",
+   "f16": "Δηοικούνταν από την κυβέρνηση του Βυσή. Αυτοί αποτελούνταν από γάλου που είχαν συνάψει η Ειρηνούλα του Γερμανού του 1940 και συνεργάζονταν με του συμβολή αντί να μάχονται εναντίον του.",
+   "bf16": "Δηοικούνταν από την κυβέρνηση του Βυσή. Αυτοί αποτελούνταν από γάλου που είχαν συνάψει η Ειρηνούλα του Γερμανού του 1940 και συνεργάζονταν με του συμβολή αντί να μάχονται εναντίον του.",
+   "q8_0": "Δηοικούνταν από την κυβέρνηση του Βυσή. Αυτοί αποτελούνταν από γάλου που είχαν συνάψει η Ειρηνούλα του Γερμανού του 1940 και συνεργάζονταν με του συμβολή αντί να μάχονται εναντίον του."
+  },
+  {
+   "lang": "hu",
+   "file": "hu_00.wav",
+   "secs": 12.06,
+   "reference": "hongkong nevét a hongkong szigetről kapta és ez a hely sok turista számára a figyelem középpontjában áll",
+   "native": "Hongkong nevét a Hongkong-szigetről kapta és ez a helys turista számára a figyelem középpontjában áll.",
+   "f16": "Hongkong nevét a Hongkong-szigetről kapta és ez a helys turista számára a figyelem középpontjában áll.",
+   "bf16": "Hongkong nevét a Hongkong-szigetről kapta és ez a helys turista számára a figyelem középpontjában áll.",
+   "q8_0": "Hongkong nevét a Hongkong-szigetről kapta és ez a hely sok turista számára a figyelem középpontjában áll."
+  },
+  {
+   "lang": "hu",
+   "file": "hu_01.wav",
+   "secs": 12.12,
+   "reference": "néhányan úgy vélték igaza volt de sokan hitték az ellenkezőjét; hogy a naprendszer a föld körül forog beleértve a napot sőt a többi csillagot is",
+   "native": "Néhányan úgy vélték, igaza volt, de sokkal hitték az ellenkezőjét, hogy a Naprendszer a Földre forog, beleértve a napot, sőt, a többi csillagot is.",
+   "f16": "Néhányan úgy vélték, igaza volt, de sokkal hitték az ellenkezőjét, hogy a Naprendszer a Földre forog, beleértve a napot, sőt, a többi csillagot is.",
+   "bf16": "Néhányan úgy vélték, igaza volt, de sokkal hitték az ellenkezőjét, hogy a Naprendszer a Földre forog, beleértve a napot, sőt, a többi csillagot is.",
+   "q8_0": "Néhányan úgy vélték, igaza volt, de sokkal hitték az ellenkezőjét, hogy a Naprendszer a Földre forog, beleértve a napot, sőt, a többi csillagot is."
+  },
+  {
+   "lang": "hu",
+   "file": "hu_02.wav",
+   "secs": 10.14,
+   "reference": "huszadik századi kutatás kimutatta hogy a genetikai változatosságnak két variációja van rejtett és kifejezett",
+   "native": "A 20. századik kutatás kimutatta, hogy a genetikai változatosság két variációja van, rejtett és kifejezett.",
+   "f16": "A 20. századik kutatás kimutatta, hogy a genetikai változatosság két variációja van, rejtett és kifejezett.",
+   "bf16": "A 20. századik kutatás kimutatta, hogy a genetikai változatosság két variációja van, rejtett és kifejezett.",
+   "q8_0": "A 20. századik kutatás kimutatta, hogy a genetikai változatosság két variációja van, rejtett és kifejezett."
+  },
+  {
+   "lang": "hu",
+   "file": "hu_03.wav",
+   "secs": 17.52,
+   "reference": "a spektrum másik oldalán valaki egy felismerhetetlen személlyé alakul aki úgy érzi hogy minden a csoport által létrehozott dolgot meg kell változtatnia és a sajátjává kell tennie",
+   "native": "A spektrum másik oldalán valaki egy felismerhetetlen személy alakul, aki úgy érzi, hogy minden a csoport által létrehozott dolgot meg kell változtatnia, és a saját jává kell tennie.",
+   "f16": "A spektrum másik oldalán valaki egy felismerhetetlen személy alakul, aki úgy érzi, hogy minden a csoport által létrehozott dolgot meg kell változtatnia, és a saját jává kell tennie.",
+   "bf16": "A spektrum másik oldalán valaki egy felismerhetetlen személy alakul, aki úgy érzi, hogy minden a csoport által létrehozott dolgot meg kell változtatnia, és a saját jává kell tennie.",
+   "q8_0": "A spektrum másik oldalán valaki egy felismerhetetlen személy alakul, aki úgy érzi, hogy minden a csoport által létrehozott dolgot meg kell változtatnia, és a saját jává kell tennie."
+  },
+  {
+   "lang": "hu",
+   "file": "hu_04.wav",
+   "secs": 12.0,
+   "reference": "az emberek manapság már a számítógép képernyőjére írnak üzenetet és sosem kerülnek egy hegyező közelébe",
+   "native": "Az emberek manapság már a számítógép képernyőire írnak üzenetet, és sosem kerülnek egy hegyező közelébe.",
+   "f16": "Az emberek manapság már a számítógép képernyőire írnak üzenetet, és sosem kerülnek egy hegyező közelébe.",
+   "bf16": "Az emberek manapság már a számítógép képernyőire írnak üzenetet, és sosem kerülnek egy hegyező közelébe.",
+   "q8_0": "Az emberek manapság már a számítógép képernyőire írnak üzenetet, és sosem kerülnek egy hegyező közelébe."
+  },
+  {
+   "lang": "it",
+   "file": "it_00.wav",
+   "secs": 11.52,
+   "reference": "il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale",
+   "native": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale.",
+   "f16": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale.",
+   "bf16": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale.",
+   "q8_0": "Il blog è uno strumento che si prefigge di incoraggiare la collaborazione e sviluppare l'apprendimento degli studenti ben oltre la giornata scolastica normale."
+  },
+  {
+   "lang": "it",
+   "file": "it_01.wav",
+   "secs": 16.08,
+   "reference": "sotto il ponte lo spazio in verticale libero è di 15 metri la costruzione è terminata nell'agosto del 2011 ma l'apertura al traffico è avvenuta solo nel marzo 2017",
+   "native": "Sotto il ponte, lo spazio in verticale libero è di 15 metri, la costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017.",
+   "f16": "Sotto il ponte, lo spazio in verticale libero è di 15 metri, la costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017.",
+   "bf16": "Sotto il ponte, lo spazio in verticale libero è di 15 metri, la costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017.",
+   "q8_0": "Sotto il ponte, lo spazio in verticale libero è di 15 metri, la costruzione è terminata nell'agosto del 2011, ma l'apertura al traffico è avvenuta solo nel marzo 2017."
+  },
+  {
+   "lang": "it",
+   "file": "it_02.wav",
+   "secs": 11.4,
+   "reference": "se avete visto il film il mistero dei templari potreste pensare che sul retro della dichiarazione d'indipendenza sia disegnata una mappa del tesoro",
+   "native": "Se avete visto il film Il mistero dei Templari, potreste pensare che sul retro della dichiarazione d'indipendenza sia disegnata una mappa del tesoro.",
+   "f16": "Se avete visto il film Il mistero dei Templari, potreste pensare che sul retro della dichiarazione d'indipendenza sia disegnata una mappa del tesoro.",
+   "bf16": "Se avete visto il film Il mistero dei Templari, potreste pensare che sul retro della dichiarazione d'indipendenza sia disegnata una mappa del tesoro.",
+   "q8_0": "Se avete visto il film Il mistero dei Templari, potreste pensare che sul retro della dichiarazione d'indipendenza sia disegnata una mappa del tesoro."
+  },
+  {
+   "lang": "it",
+   "file": "it_03.wav",
+   "secs": 11.28,
+   "reference": "con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni dato che gli atomi di idrogeno sono formati da un protone e da un elettrone",
+   "native": "Con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni, dato che gli atomi di idrogeno sono formati da un protone e da un elettrone.",
+   "f16": "Con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni, dato che gli atomi di idrogeno sono formati da un protone e da un elettrone.",
+   "bf16": "Con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni, dato che gli atomi di idrogeno sono formati da un protone e da un elettrone.",
+   "q8_0": "Con ioni idrogeno si intendono dei protoni cui sono stati strappati via gli elettroni, dato che gli atomi di idrogeno sono formati da un protone e da un elettrone."
+  },
+  {
+   "lang": "it",
+   "file": "it_04.wav",
+   "secs": 7.08,
+   "reference": "l'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico",
+   "native": "L'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico.",
+   "f16": "L'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico.",
+   "bf16": "L'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico.",
+   "q8_0": "L'incidente è avvenuto in alta montagna e si ritiene sia stato causato da fuoco nemico."
+  },
+  {
+   "lang": "lv",
+   "file": "lv_00.wav",
+   "secs": 12.12,
+   "reference": "2002. gadā gomu iznīcināja lava no njiragongo vulkāna kas apraka vairumu pilsētas ielu jo īpaši tās centrā",
+   "native": "2000. gadā Gomu iznīcināja lavavu no ira Gongo vulkāna, kas apraka vairum pilsētas ielu, jo īpaši tās centrā.",
+   "f16": "2000. gadā Gomu iznīcināja lavavu no ira Gongo vulkāna, kas apraka vairum pilsētas ielu, jo īpaši tās centrā.",
+   "bf16": "2000. gadā Gomu iznīcināja lavavu no ira Gongo vulkāna, kas apraka vairum pilsētas ielu, jo īpaši tās centrā.",
+   "q8_0": "2000. gadā Gomu iznīcināja lavavu no ira Gongo vulkāna, kas apraka vairum pilsētas ielu, jo īpaši tās centrā."
+  },
+  {
+   "lang": "lv",
+   "file": "lv_01.wav",
+   "secs": 12.0,
+   "reference": "filozofs aristotelis izteica teoriju ka viss sastāv no viena vai vairāku noteiktu elementu sajaukuma šie elementi bija zeme ūdens gaiss un uguns",
+   "native": "Filozofs Aristoteles izteica teoriju, ka viss sastāv no viena vai vairāk noteiku elementu sajaukumu. Šie elementi bija zemes, ūdens, gaiss un nogums.",
+   "f16": "Filozofs Aristoteles izteica teoriju, ka viss sastāv no viena vai vairāk noteiku elementu sajaukumu. Šie elementi bija zemes, ūdens, gaiss un nogums.",
+   "bf16": "Filozofs Aristoteles izteica teoriju, ka viss sastāv no viena vai vairāk noteiku elementu sajaukumu. Šie elementi bija zemes, ūdens, gaiss un nogums.",
+   "q8_0": "Filozofs Aristoteles izteica teoriju, ka viss sastāv no viena vai vairāk noteiku elementu sajaukumu. Šie elementi bija zemes, ūdens, gaiss un nogums."
+  },
+  {
+   "lang": "lv",
+   "file": "lv_02.wav",
+   "secs": 10.26,
+   "reference": "ievelkošās straumes ir atpakaļejoša plūsma viļņiem plūstot prom no pludmales bieži vien pie rifa vai kā līdzīga",
+   "native": "Ivelkošās traumas ir atpakaļoša plūsma, viņiem plūsta tom no pludmalas, bieži vien pie rifa vai kā līdzī.",
+   "f16": "Ivelkošās traumas ir atpakaļoša plūsma, viņiem plūsta tom no pludmalas, bieži vien pie rifa vai kā līdzī.",
+   "bf16": "Ivelkošās traumas ir atpakaļoša plūsma, viņiem plūsta tom no pludmalas, bieži vien pie rifa vai kā līdzī.",
+   "q8_0": "Ivelkošās traumas ir atpakaļoša plūsma, viņiem plūsta tom no pludmalas, bieži vien pie rifa vai kā līdzība."
+  },
+  {
+   "lang": "lv",
+   "file": "lv_03.wav",
+   "secs": 16.92,
+   "reference": "lauvu bari uzvedas līdzīgi kā vilku vai suņu bari — šo abu dzīvnieku uzvedība ir pārsteidzoši līdzīga lauvu bet ne citu lielo kaķu uzvedībai — un ir tikpat nāvējoši saviem upuriem",
+   "native": "Lauvu bari uzvedas līdzīgā vilku vai suņu bāri. Šo apdzīvnieku uzvedība ir pārsteidzoši līdzīgu lavu, bet ne citilo kāju uzvedībai un ir tikpat nāvējoši saviem upuriem.",
+   "f16": "Lauvu bari uzvedas līdzīgā vilku vai suņu bāri. Šo apdzīvnieku uzvedība ir pārsteidzoši līdzīgu lavu, bet ne citilo kāju uzvedībai un ir tikpat nāvējoši saviem upuriem.",
+   "bf16": "Lauvu bari uzvedas līdzīgā vilku vai suņu bāri. Šo apdzīvnieku uzvedība ir pārsteidzoši līdzīgu lavu, bet ne citilo kāju uzvedībai un ir tikpat nāvējoši saviem upuriem.",
+   "q8_0": "Lauvu bari uzvedas līdzīgā vilku vai suņu bāri. Šo apdzīvnieku uzvedība ir pārsteidzoši līdzīgu lavu, bet ne citilo kāju uzvedībai un ir tikpat nāvējoši saviem upuriem."
+  },
+  {
+   "lang": "lv",
+   "file": "lv_04.wav",
+   "secs": 9.42,
+   "reference": "raugieties lai audums nekļūst pārāk karsts kā rezultātā tas var sarauties vai galējās situācijās pat sasvilt",
+   "native": "Raugieties, lai aums nekļūst pārāk karsts, kā rezultātā tas varauties vai galējās situācijās pat sasvilkt.",
+   "f16": "Raugieties, lai aums nekļūst pārāk karsts, kā rezultātā tas varauties vai galējās situācijās pat sasvilkt.",
+   "bf16": "Raugieties, lai aums nekļūst pārāk karsts, kā rezultātā tas varauties vai galējās situācijās pat sasvilkt.",
+   "q8_0": "Raugieties, lai aums nekļūst pārāk karsts, kā rezultātā tas varauties vai galējās situācijās pat sasvilkt."
+  },
+  {
+   "lang": "lt",
+   "file": "lt_00.wav",
+   "secs": 5.76,
+   "reference": "ant piramidžių rodomos scenos o skirtingos piramidės apšviečiamos",
+   "native": "Ant piramidžių rodomos scenos skirtingos piramidės apšviečiamos.",
+   "f16": "Ant piramidžių rodomos scenos skirtingos piramidės apšviečiamos.",
+   "bf16": "Ant piramidžių rodomos scenos skirtingos piramidės apšviečiamos.",
+   "q8_0": "Ant piramidžių rodomos scenos skirtingos piramidės apšviečiamos."
+  },
+  {
+   "lang": "lt",
+   "file": "lt_01.wav",
+   "secs": 8.64,
+   "reference": "todėl organizacija dirba kartu kad įveiktų kliūtį ir sukurtų naują procesą patenkinantį kliento poreikį",
+   "native": "Todėl organizacija dirba kartu, kad įveiktų kliūti ir sukurti naują procesą patenkinanti kliento poreikį.",
+   "f16": "Todėl organizacija dirba kartu, kad įveiktų kliūti ir sukurti naują procesą patenkinanti kliento poreikį.",
+   "bf16": "Todėl organizacija dirba kartu, kad įveiktų kliūti ir sukurti naują procesą patenkinanti kliento poreikį.",
+   "q8_0": "Todėl organizacija dirba kartu, kad įveiktų kliūti ir sukurti naują procesą patenkinanti kliento poreikį."
+  },
+  {
+   "lang": "lt",
+   "file": "lt_02.wav",
+   "secs": 8.52,
+   "reference": "maroko sultonas atstatė miestą kaip daru l-badya o kasablankos pavadinimą jam suteikė ispanijos pirkliai įkūrę čia prekybos bazes",
+   "native": "Marok sultonas atstatė miestą kaip daru įbadiją, o Kasablankos pavadinimą jam suteikė Ispanijos pirkliai įkūrė čia prekybos bazes.",
+   "f16": "Marok sultonas atstatė miestą kaip daru įbadiją, o Kasablankos pavadinimą jam suteikė Ispanijos pirkliai įkūrė čia prekybos bazes.",
+   "bf16": "Marok sultonas atstatė miestą kaip daru įbadiją, o Kasablankos pavadinimą jam suteikė Ispanijos pirkliai įkūrė čia prekybos bazes.",
+   "q8_0": "Marok sultonas atstatė miestą kaip daru įbadiją, o Kasablankos pavadinimą jam suteikė Ispanijos pirkliai įkūrė čia prekybos bazes."
+  },
+  {
+   "lang": "lt",
+   "file": "lt_03.wav",
+   "secs": 13.14,
+   "reference": "dauguma mažesnių salų yra nepriklausomos tautos arba yra susijusios su prancūzija ir yra garsios prabangiais paplūdimiuose įkurtais kurortais",
+   "native": "Dauguma mažesnių salų yra nepriklausomos tautos arba yra susijusi su Prancūzija ir yra garsios prabangiais paplūdimiuose įkurtais kurortais.",
+   "f16": "Dauguma mažesnių salų yra nepriklausomos tautos arba yra susijusi su Prancūzija ir yra garsios prabangiais paplūdimiuose įkurtais kurortais.",
+   "bf16": "Dauguma mažesnių salų yra nepriklausomos tautos arba yra susijusi su Prancūzija ir yra garsios prabangiais paplūdimiuose įkurtais kurortais.",
+   "q8_0": "Dauguma mažesnių salų yra nepriklausomos tautos arba yra susijusi su Prancūzija ir yra garsios prabangiais paplūdimiuose įkurtais kurortais."
+  },
+  {
+   "lang": "lt",
+   "file": "lt_04.wav",
+   "secs": 10.74,
+   "reference": "liūtų būriai veikia panašiai kaip vilkų arba šunų labai į liūtus bet ne į kitas kates panašūs gyvūnai gaujos ir taip pat yra negailestingi savo grobiui",
+   "native": "Liūtų būriai veikia panašiai kaip vaikų arba šumų labai į liūtus, bet ne į kitas kates panašūs gyvūnai. Gaujos ir taip pat yra negaistingi savo grobių.",
+   "f16": "Liūtų būriai veikia panašiai kaip vaikų arba šumų labai į liūtus, bet ne į kitas kates panašūs gyvūnai. Gaujos ir taip pat yra negaistingi savo grobių.",
+   "bf16": "Liūtų būriai veikia panašiai kaip vaikų arba šumų labai į liūtus, bet ne į kitas kates panašūs gyvūnai. Gaujos ir taip pat yra negaistingi savo grobių.",
+   "q8_0": "Liūtų būriai veikia panašiai kaip vaikų arba šumų labai į liūtus, bet ne į kitas kates panašūs gyvūnai. Gaujos ir taip pat yra negaistingi savo grobių."
+  },
+  {
+   "lang": "pl",
+   "file": "pl_00.wav",
+   "secs": 12.12,
+   "reference": "podróżni zwiedzający państwa obłożone szczególnie wysokimi podatkami mogą czasem zaoszczędzić sporo pieniędzy szczególnie na takich towarach jak alkohol i tytoń",
+   "native": "Podróżni zwiedzający państwa obłożone szczególnie wysokkimi podatkami mogą czasem zaoszczędzić sporo pieniędzy, szczególnie na takich towarach jak alkohol i tytoń.",
+   "f16": "Podróżni zwiedzający państwa obłożone szczególnie wysokkimi podatkami mogą czasem zaoszczędzić sporo pieniędzy, szczególnie na takich towarach jak alkohol i tytoń.",
+   "bf16": "Podróżni zwiedzający państwa obłożone szczególnie wysokimi podatkami mogą czasem zaoszczędzić sporo pieniędzy, szczególnie na takich towarach jak alkohol i tytoń.",
+   "q8_0": "Podróżni zwiedzający państwa obłożone szczególnie wysokkimi podatkami mogą czasem zaoszczędzić sporo pieniędzy, szczególnie na takich towarach jak alkohol i tytoń."
+  },
+  {
+   "lang": "pl",
+   "file": "pl_01.wav",
+   "secs": 7.68,
+   "reference": "większość mniejszych wysp to narody niezależne lub sprzymierzone z francją i słynące jako luksusowe nadmorskie miejscowości wypoczynkowe",
+   "native": "Większość mniejszych wysp to narody niezależne lub zmierzone z Francją i słynące jako luksusowe nadborskie miejscowości wypoczynkowe.",
+   "f16": "Większość mniejszych wysp to narody niezależne lub zmierzone z Francją i słynące jako luksusowe nadborskie miejscowości wypoczynkowe.",
+   "bf16": "Większość mniejszych wysp to narody niezależne lub zmierzone z Francją i słynące jako luksusowe nadborskie miejscowości wypoczynkowe.",
+   "q8_0": "Większość mniejszych wysp to narody niezależne lub zmierzone z Francją i słynące jako luksusowe nadborskie miejscowości wypoczynkowe."
+  },
+  {
+   "lang": "pl",
+   "file": "pl_02.wav",
+   "secs": 6.6,
+   "reference": "zgodnie z oświadczeniem biura gubernatora wśród rannych było dziewiętnastu policjantów",
+   "native": "Zgodnie z oświadczeniem biura gubernatora wśród ranych było 19 policjantów.",
+   "f16": "Zgodnie z oświadczeniem biura gubernatora wśród ranych było 19 policjantów.",
+   "bf16": "Zgodnie z oświadczeniem biura gubernatora wśród ranych było 19 policjantów.",
+   "q8_0": "Zgodnie z oświadczeniem biura gubernatora wśród ranych było 19 policjantów."
+  },
+  {
+   "lang": "pl",
+   "file": "pl_03.wav",
+   "secs": 7.68,
+   "reference": "dzieci umieszcza się w pieczy zastępczej z rozmaitych przyczyn jak zaniedbanie wykorzystywanie a nawet wymuszenia",
+   "native": "Dzieci umieszcza się w pieczy zastępczej i zrozumitych przyczyn, jak zaniedbanie, wykorzystywanie, a nawet wymuszenie.",
+   "f16": "Dzieci umieszcza się w pieczy zastępczej i zrozumitych przyczyn, jak zaniedbanie, wykorzystywanie, a nawet wymuszenie.",
+   "bf16": "Dzieci umieszcza się w pieczy zastępczej i zrozumitych przyczyn, jak zaniedbanie, wykorzystywanie, a nawet wymuszenie.",
+   "q8_0": "Dzieci umieszcza się w pieczy zastępczej i zrozumitych przyczyn, jak zaniedbanie, wykorzystywanie, a nawet wymuszenie."
+  },
+  {
+   "lang": "pl",
+   "file": "pl_04.wav",
+   "secs": 7.26,
+   "reference": "jak twierdzi japońska agencja nuklearna w elektrowni wykryto radioaktywny cez oraz jod",
+   "native": "Jak twierdzi japońska agencja nuklearna w elektrowni wykrytał radioaktywny cz oraz jod.",
+   "f16": "Jak twierdzi japońska agencja nuklearna w elektrowni wykrytał radioaktywny cz oraz jod.",
+   "bf16": "Jak twierdzi japońska agencja nuklearna w elektrowni wykrytał radioaktywny cz oraz jod.",
+   "q8_0": "Jak twierdzi japońska agencja nuklearna w elektrowni wykrytał radioaktywny cz oraz jod."
+  },
+  {
+   "lang": "pt",
+   "file": "pt_00.wav",
+   "secs": 17.76,
+   "reference": "segundo informações ele estava na casa dos 20 anos em uma declaração bieber disse que embora eu não estivesse presente nem diretamente envolvido neste trágico incidente meus pensamentos e orações estão com a família da vítima",
+   "native": "Segundo informações, ele estava na casa dos 20 anos. Em uma declaração, Biber disse que, embora eu não estivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima.",
+   "f16": "Segundo informações, ele estava na casa dos 20 anos. Em uma declaração, Biber disse que, embora eu não estivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima.",
+   "bf16": "Segundo informações, ele estava na casa dos 20 anos. Em uma declaração, Biber disse que, embora eu não estivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima.",
+   "q8_0": "Segundo informações, ele estava na casa dos 20 anos. Em uma declaração, Biber disse que, embora eu não estivesse presente nem diretamente envolvido neste trágico incidente, meus pensamentos e orações estão com a família da vítima."
+  },
+  {
+   "lang": "pt",
+   "file": "pt_01.wav",
+   "secs": 13.62,
+   "reference": "construída pelos egípcios no século 3 a.c. a grande pirâmide é uma das muitas grandes estruturas de pirâmide construídas para honrar faraós mortos",
+   "native": "Construída pelos egípcios no século II a.C., a Grande Pirâmide é uma das muitas grandes estruturas da pirâmide construídas para honrar faraós mortos.",
+   "f16": "Construída pelos egípcios no século II a.C., a Grande Pirâmide é uma das muitas grandes estruturas da pirâmide construídas para honrar faraós mortos.",
+   "bf16": "Construída pelos egípcios no século II a.C., a Grande Pirâmide é uma das muitas grandes estruturas da pirâmide construídas para honrar faraós mortos.",
+   "q8_0": "Construída pelos egípcios no século II a.C., a Grande Pirâmide é uma das muitas grandes estruturas da pirâmide construídas para honrar faraós mortos."
+  },
+  {
+   "lang": "pt",
+   "file": "pt_02.wav",
+   "secs": 8.4,
+   "reference": "giancarlo fisichella perdeu o controle do carro e acabou a corrida logo após a largada",
+   "native": "Giancarlo Zegella perdeu o controle do carro e acabou a corrida logo após a largada.",
+   "f16": "Giancarlo Zegella perdeu o controle do carro e acabou a corrida logo após a largada.",
+   "bf16": "Giancarlo Zegella perdeu o controle do carro e acabou a corrida logo após a largada.",
+   "q8_0": "Giancarlo Zegella perdeu o controle do carro e acabou a corrida logo após a largada."
+  },
+  {
+   "lang": "pt",
+   "file": "pt_03.wav",
+   "secs": 10.68,
+   "reference": "o romantismo tinha um grande elemento de determinismo cultural extraído de escritores como goethe fichte e schlegel",
+   "native": "O romantismo tinha um grande elemento de determinismo cultural, extraído de escritores como Goblet, Frich e Schalader.",
+   "f16": "O romantismo tinha um grande elemento de determinismo cultural, extraído de escritores como Goblet, Frich e Schalader.",
+   "bf16": "O romantismo tinha um grande elemento de determinismo cultural, extraído de escritores como Goblet, Frich e Schalader.",
+   "q8_0": "O romantismo tinha um grande elemento de determinismo cultural, extraído de escritores como Goblet, Fricht e Scháwell."
+  },
+  {
+   "lang": "pt",
+   "file": "pt_04.wav",
+   "secs": 12.72,
+   "reference": "o scaffolding não é um método de aprendizado mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado como usar um novo computador ou começar um novo projeto",
+   "native": "O scaffolding não é um método de aprendizado, mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado, como usar um computador ou começar um novo projeto.",
+   "f16": "O scaffolding não é um método de aprendizado, mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado, como usar um computador ou começar um novo projeto.",
+   "bf16": "O scaffolding não é um método de aprendizado, mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado, como usar um computador ou começar um novo projeto.",
+   "q8_0": "O scaffolding não é um método de aprendizado, mas sim uma ajuda para alunos que estão passando por uma nova experiência de aprendizado, como usar um computador ou começar um novo projeto."
+  },
+  {
+   "lang": "ro",
+   "file": "ro_00.wav",
+   "secs": 6.3,
+   "reference": "înainte de sosirea trupelor haiti nu mai avusese din anii 1800 probleme legate de boală",
+   "native": "Înainte de sosirea trupelor, Hitler mai avusese din anii 800 probleme legate de boală.",
+   "f16": "Înainte de sosirea trupelor, Hitler mai avusese din anii 800 probleme legate de boală.",
+   "bf16": "Înainte de sosirea trupelor, Hitler mai avusese din anii 800 probleme legate de boală.",
+   "q8_0": "Înainte de sosirea trupelor, Hitler mai avusese din anii 800 probleme legate de boală."
+  },
+  {
+   "lang": "ro",
+   "file": "ro_01.wav",
+   "secs": 13.56,
+   "reference": "pe tot parcursul anilor 1960 brzezinski a lucrat pentru john f kennedy în calitate de consilier al acestuia iar apoi pentru administrația lyndon b johnson",
+   "native": "Pe tot parcursul anilor 1960, Besinski a lucrat pentru John F. Kennedy în calitate de consilier al acesteuia, iar apoi pentru administrația Lyndon B. Johnson.",
+   "f16": "Pe tot parcursul anilor 1960, Besinski a lucrat pentru John F. Kennedy în calitate de consilier al acesteuia, iar apoi pentru administrația Lyndon B. Johnson.",
+   "bf16": "Pe tot parcursul anilor 1960, Besinski a lucrat pentru John F. Kennedy în calitate de consilier al acesteuia, iar apoi pentru administrația Lyndon B. Johnson.",
+   "q8_0": "Pe tot parcursul anilor 1960, Besinski a lucrat pentru John F. Kennedy în calitate de consilier al acesteuia, iar apoi pentru administrația Lyndon B. Johnson."
+  },
+  {
+   "lang": "ro",
+   "file": "ro_02.wav",
+   "secs": 16.74,
+   "reference": "compoziția acestor cristale se potrivește cu a celor întâlnite în urina animalelor de companie afectate atunci când sunt comparate printr-o spectroscopie în infraroșu spectroscopie în ir",
+   "native": "Compoziția acestor cristale se potrivește cu acelor întâlnite în urina animalelor de companie afectate atunci când sunt comparate printr-o spectroscopie în infraroșu, spectroscopie în IR.",
+   "f16": "Compoziția acestor cristale se potrivește cu acelor întâlnite în urina animalelor de companie afectate atunci când sunt comparate printr-o spectroscopie în infraroșu, spectroscopie în IR.",
+   "bf16": "Compoziția acestor cristale se potrivește cu acelor întâlnite în urina animalelor de companie afectate atunci când sunt comparate printr-o spectroscopie în infraroșu, spectroscopie în IR.",
+   "q8_0": "Compoziția acestor cristale se potrivește cu acelor întâlnite în urina animalelor de companie afectate atunci când sunt comparate printr-o spectroscopie în infraroșu, spectroscopie în IR."
+  },
+  {
+   "lang": "ro",
+   "file": "ro_03.wav",
+   "secs": 7.02,
+   "reference": "fenomenele climatice severe regionale și sezoniere includ viscole furtuni de zăpadă furtuni de gheață și furtuni de praf",
+   "native": "Fenomenele climatice severe regionale și sezoniere includ viscole, furtuni de zăpadă, furtuni de gheață și furtuni de praf.",
+   "f16": "Fenomenele climatice severe regionale și sezoniere includ viscole, furtuni de zăpadă, furtuni de gheață și furtuni de praf.",
+   "bf16": "Fenomenele climatice severe regionale și sezoniere includ viscole, furtuni de zăpadă, furtuni de gheață și furtuni de praf.",
+   "q8_0": "Fenomenele climatice severe regionale și sezoniere includ viscole, furtuni de zăpadă, furtuni de gheață și furtuni de praf."
+  },
+  {
+   "lang": "ro",
+   "file": "ro_04.wav",
+   "secs": 10.86,
+   "reference": "celelalte nominalizări includ cel mai bun film regizor imagine design de costume montaj de film coloană sonoră design de producție regie de sunet mixaj sonor și scenariu original",
+   "native": "Celă de numaliză intru cel mai bun film, regizori imagini, design de costume, montaj de film, coloană sonor, design de producție, regie de suneri, mixașa noștri și scenariu original.",
+   "f16": "Celă de numaliză intru cel mai bun film, regizori imagini, design de costume, montaj de film, coloană sonor, design de producție, regie de suneri, mixașa noștri și scenariu original.",
+   "bf16": "Celă de numaliză intru cel mai bun film, regizori imagini, design de costume, montaj de film, coloană sonor, design de producție, regie de suneri, mixașa noștri și scenariu original.",
+   "q8_0": "Celă de numaliză intru cel mai bun film, regizori imagini, design de costume, montaj de film, coloană sonor, design de producție, regie de suneri, mixașa noștri și scenariu original."
+  },
+  {
+   "lang": "sk",
+   "file": "sk_00.wav",
+   "secs": 9.84,
+   "reference": "madagaskar je zďaleka tým najväčším a je sám o sebe kontinentom keď ide o divokú prírodu",
+   "native": "Madagaskar je vzdaľeka tým najväčším a je sám o sebe kontinentom, keď ide o divokú prírodu.",
+   "f16": "Madagaskar je vzdaľeka tým najväčším a je sám o sebe kontinentom, keď ide o divokú prírodu.",
+   "bf16": "Madagaskar je vzdaľeka tým najväčším a je sám o sebe kontinentom, keď ide o divokú prírodu.",
+   "q8_0": "Madagaskar je vzdaľeka tým najväčším a je sám o sebe kontinentom, keď ide o divokú prírodu."
+  },
+  {
+   "lang": "sk",
+   "file": "sk_01.wav",
+   "secs": 16.74,
+   "reference": "jedna z najbežnejších metód ktorá sa používa na ilustráciu dôležitosti socializácie čerpá z niekoľkých nešťastných prípadov detí ktoré boli zanedbávané nešťastné alebo úmyselne týrané a pri dospievaní neboli socializované dospelými",
+   "native": "Jedna z najbežnejších metód, ktorá sa používa na ilustráciu dôležitosti socializácie, čerpá z niekoľkých nešťastných prípadov detí, ktoré boli zanedbávané, nešťastné alebo úmyselne týrané a pri dospievaní neboli socializované dospelými.",
+   "f16": "Jedna z najbežnejších metód, ktorá sa používa na ilustráciu dôležitosti socializácie, čerpá z niekoľkých nešťastných prípadov detí, ktoré boli zanedbávané, nešťastné alebo úmyselne týrané a pri dospievaní neboli socializované dospelými.",
+   "bf16": "Jedna z najbežnejších metód, ktorá sa používa na ilustráciu dôležitosti socializácie, čerpá z niekoľkých nešťastných prípadov detí, ktoré boli zanedbávané, nešťastné alebo úmyselne týrané a pri dospievaní neboli socializované dospelými.",
+   "q8_0": "Jedna z najbežnejších metód, ktorá sa používa na ilustráciu dôležitosti socializácie, čerpá z niekoľkých nešťastných prípadov detí, ktoré boli zanedbávané, nešťastné alebo úmyselne týrané a pri dospievaní neboli socializované dospelými."
+  },
+  {
+   "lang": "sk",
+   "file": "sk_02.wav",
+   "secs": 12.3,
+   "reference": "prerušenie spánku je proces ktorý spočíva v zámernom prebudení sa počas zvyčajnej doby spánku a následnom zaspaní krátko nato 10–60 minút",
+   "native": "Prerušenie spánku je proces, ktorý spočíva v zámernom prebudení sa počas zvyčajnej doby spánku a následnom zaspaní krátko na to 10 až 60 minút.",
+   "f16": "Prerušenie spánku je proces, ktorý spočíva v zámernom prebudení sa počas zvyčajnej doby spánku a následnom zaspaní krátko na to 10 až 60 minút.",
+   "bf16": "Prerušenie spánku je proces, ktorý spočíva v zámernom prebudení sa počas zvyčajnej doby spánku a následnom zaspaní krátko na to 10 až 60 minút.",
+   "q8_0": "Prerušenie spánku je proces, ktorý spočíva v zámernom prebudení sa počas zvyčajnej doby spánku a následnom zaspaní krátko na to 10 až 60 minút."
+  },
+  {
+   "lang": "sk",
+   "file": "sk_03.wav",
+   "secs": 11.28,
+   "reference": "tieto teórie sa zameriavajú na to čo v ľuďoch motivuje túžbu robiť určité veci a čo v ich prostredí ich núti určité veci robiť alebo nerobiť",
+   "native": "Teórie sa zameriavajú na to, čo v ľudach motivuje túžbu robiť určité veci a čo v nich sprostrední ich útí určité veci robiť alebo nerobiť.",
+   "f16": "Teórie sa zameriavajú na to, čo v ľudach motivuje túžbu robiť určité veci a čo v nich sprostrední ich útí určité veci robiť alebo nerobiť.",
+   "bf16": "Teórie sa zameriavajú na to, čo v ľudach motivuje túžbu robiť určité veci a čo v nich sprostrední ich útí určité veci robiť alebo nerobiť.",
+   "q8_0": "Teórie sa zameriavajú na to, čo v ľudach motivuje túžbu robiť určité veci a čo v nich sprostrední ich útí určité veci robiť alebo nerobiť."
+  },
+  {
+   "lang": "sk",
+   "file": "sk_04.wav",
+   "secs": 14.28,
+   "reference": "nie je to však iba o experimentácii a experiment je test ktorý sa používa na elimináciu jednej alebo viacerých možných hypotéz kladenie otázok a postrehy pri pozorovaní tiež dokážu pomôcť nasmerovať vedecký výskum",
+   "native": "Nie je to však iba o experimentácii, a experiment je test, ktorý sa používa na elimináciu jednej alebo viacerých možných hypotéz. Kladenie otázok a postrehy pri pozorovaní tiež dokážu pomôcť nasmerovať vedecký výskum.",
+   "f16": "Nie je to však iba o experimentácii, a experiment je test, ktorý sa používa na elimináciu jednej alebo viacerých možných hypotéz. Kladenie otázok a postrehy pri pozorovaní tiež dokážu pomôcť nasmerovať vedecký výskum.",
+   "bf16": "Nie je to však iba o experimentácii, a experiment je test, ktorý sa používa na elimináciu jednej alebo viacerých možných hypotéz. Kladenie otázok a postrehy pri pozorovaní tiež dokážu pomôcť nasmerovať vedecký výskum.",
+   "q8_0": "Nie je to však iba o experimentácii, a experiment je test, ktorý sa používa na elimináciu jednej alebo viacerých možných hypotéz. Kladenie otázok a postrehy pri pozorovaní tiež dokážu pomôcť nasmerovať vedecký výskum."
+  },
+  {
+   "lang": "sl",
+   "file": "sl_00.wav",
+   "secs": 7.5,
+   "reference": "napadel je tudi vsa bitja ki so stopila v vodo niti ogromni dinozavri kot so tiranozavri mu niso bili kos",
+   "native": "Napadejo tudi obsabitja, ki so stopile v vodo. Niti ogromni dinozauri, kot so tiranozauri mu niso bili kos.",
+   "f16": "Napadejo tudi obsabitja, ki so stopile v vodo. Niti ogromni dinozauri, kot so tiranozauri mu niso bili kos.",
+   "bf16": "Napadejo tudi obsabitja, ki so stopile v vodo. Niti ogromni dinozauri, kot so tiranozauri mu niso bili kos.",
+   "q8_0": "Napadejo tudi obsabitja, ki so stopile v vodo. Niti ogromni dinozauri, kot so tiranozauri mu niso bili kos."
+  },
+  {
+   "lang": "sl",
+   "file": "sl_01.wav",
+   "secs": 8.76,
+   "reference": "starodavne kulture in plemena so jih začela gojiti za enostaven dostop do mleka dlake mesa ter kože",
+   "native": "Starodavne kulture in plemena so jih začele gojiti, za ennostavan dostop do mleka, dlake, mesa ter kože.",
+   "f16": "Starodavne kulture in plemena so jih začele gojiti, za ennostavan dostop do mleka, dlake, mesa ter kože.",
+   "bf16": "Starodavne kulture in plemena so jih začele gojiti, za ennostavan dostop do mleka, dlake, mesa ter kože.",
+   "q8_0": "Starodavne kulture in plemena so jih začele gojiti, za ennostavan dostop do mleka, dlake, mesa ter kože."
+  },
+  {
+   "lang": "sl",
+   "file": "sl_02.wav",
+   "secs": 5.82,
+   "reference": "kari je jed na osnovi zelišč in začimb v kombinaciji z mesom ali zelenjavo",
+   "native": "Karih je jedno osnovnih zališč in začim v kombinaciji z mesom ali zelenjavo.",
+   "f16": "Karih je jedno osnovnih zališč in začim v kombinaciji z mesom ali zelenjavo.",
+   "bf16": "Karih je jedno osnovnih zališč in začim v kombinaciji z mesom ali zelenjavo.",
+   "q8_0": "Karih je jedno osnovnih zališč in začim v kombinaciji z mesom ali zelenjavo."
+  },
+  {
+   "lang": "sl",
+   "file": "sl_03.wav",
+   "secs": 6.12,
+   "reference": "bolezen prenašajo prašiči nato pa jo komarji prenesejo na ljudi",
+   "native": "Bolezen prenašajo prašiči, nato pa komari prenesej na ljudi.",
+   "f16": "Bolezen prenašajo prašiči, nato pa komari prenesej na ljudi.",
+   "bf16": "Bolezen prenašajo prašiči, nato pa komari prenesej na ljudi.",
+   "q8_0": "Bolezen prenašajo prašiči, nato pa komari prenesej na ljudi."
+  },
+  {
+   "lang": "sl",
+   "file": "sl_04.wav",
+   "secs": 11.34,
+   "reference": "pravilniki o odpovedi so različni vendar večina pravilnikov o odpovedi zaradi koronavirusa iz konca marca ne velja za julij 2020 ko naj bi se odvijale olimpijske igre",
+   "native": "Pravilniki odpovedi so različni, vendar večina pravilnikov odpoved zaradi korona virusa iz konca marca najvelja za juli 2020, ko naj bi se odvijale Olimpijske igre.",
+   "f16": "Pravilniki odpovedi so različni, vendar večina pravilnikov odpoved zaradi korona virusa iz konca marca najvelja za juli 2020, ko naj bi se odvijale Olimpijske igre.",
+   "bf16": "Pravilniki odpovedi so različni, vendar večina pravilnikov odpoved zaradi korona virusa iz konca marca najvelja za juli 2020, ko naj bi se odvijale Olimpijske igre.",
+   "q8_0": "Pravilniki odpovedi so različni, vendar večina pravilnikov odpoved zaradi korona virusa iz konca marca ne velja za juli 2020, ko naj bi se odvijale Olimpijske igre."
+  },
+  {
+   "lang": "es",
+   "file": "es_00.wav",
+   "secs": 12.84,
+   "reference": "se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo de clima extremo en el área que visitan dado que ello puede afectar sus planes de viaje",
+   "native": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello pueda afectar sus planes de viaje.",
+   "f16": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello pueda afectar sus planes de viaje.",
+   "bf16": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello pueda afectar sus planes de viaje.",
+   "q8_0": "Se recomienda enfáticamente a los viajeros que se informen sobre cualquier riesgo del clima extremo en el área que visitan, dado que ello pueda afectar sus planes de viaje."
+  },
+  {
+   "lang": "es",
+   "file": "es_01.wav",
+   "secs": 9.72,
+   "reference": "fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de san pedro",
+   "native": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro.",
+   "f16": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro.",
+   "bf16": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro.",
+   "q8_0": "Fue tanta la cantidad de gente que se concentró que no todos pudieron acceder al funeral en la plaza de San Pedro."
+  },
+  {
+   "lang": "es",
+   "file": "es_02.wav",
+   "secs": 8.58,
+   "reference": "esto parece tener sentido ya que en la tierra no se percibe su movimiento ¿cierto?",
+   "native": "Esto parece tener sentido, ya que en la Tierra no se percibe su movimiento, ¿cierto?",
+   "f16": "Esto parece tener sentido, ya que en la Tierra no se percibe su movimiento, ¿cierto?",
+   "bf16": "Esto parece tener sentido, ya que en la Tierra no se percibe su movimiento, ¿cierto?",
+   "q8_0": "Esto parece tener sentido, ya que en la Tierra no se percibe su movimiento, ¿cierto?"
+  },
+  {
+   "lang": "es",
+   "file": "es_03.wav",
+   "secs": 10.62,
+   "reference": "carpanedo participó en dos carreras individuales del campeonato aparte de la competencia del miércoles",
+   "native": "Carpaneo participó en dos carreras individuales del campeonato, aparte de la competencia del miércoles.",
+   "f16": "Carpaneo participó en dos carreras individuales del campeonato, aparte de la competencia del miércoles.",
+   "bf16": "Carpaneo participó en dos carreras individuales del campeonato, aparte de la competencia del miércoles.",
+   "q8_0": "Carpaneo participó en dos carreras individuales del campeonato, aparte de la competencia del miércoles."
+  },
+  {
+   "lang": "es",
+   "file": "es_04.wav",
+   "secs": 9.78,
+   "reference": "hoy en día las personas escriben mensajes en las pantallas de sus computadoras no tienen la necesidad de siquiera aproximarse a un sacapuntas",
+   "native": "Hoy en día, las personas escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera aproximarse en sacapuntas.",
+   "f16": "Hoy en día, las personas escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera aproximarse en sacapuntas.",
+   "bf16": "Hoy en día, las personas escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera aproximarse en sacapuntas.",
+   "q8_0": "Hoy en día, las personas escriben mensajes en las pantallas de sus computadoras, no tienen la necesidad de siquiera aproximarse en sacapuntas."
+  },
+  {
+   "lang": "sv",
+   "file": "sv_00.wav",
+   "secs": 5.76,
+   "reference": "månens yta utgörs av stenar och stoft månens yttre lager kallas skorpan",
+   "native": "Måns yte utgörs av stenar och stoft, måns ytterre lager kallas skorpan.",
+   "f16": "Måns yte utgörs av stenar och stoft, måns ytterre lager kallas skorpan.",
+   "bf16": "Måns yte utgörs av stenar och stoft, måns ytterre lager kallas skorpan.",
+   "q8_0": "Måns yte utgörs av stenar och stoft, måns ytterre lager kallas skorpan."
+  },
+  {
+   "lang": "sv",
+   "file": "sv_01.wav",
+   "secs": 12.78,
+   "reference": "många tyska bakverk har också mandlar hasselnötter och andra nötter populära kakor passar ofta särskilt bra med en kopp starkt kaffe",
+   "native": "Många tyska bakverk har också mandlar, hasselnötter och andra nötter. Populära kakor passar ofta särskilt bra med en kopp starkt kaffe.",
+   "f16": "Många tyska bakverk har också mandlar, hasselnötter och andra nötter. Populära kakor passar ofta särskilt bra med en kopp starkt kaffe.",
+   "bf16": "Många tyska bakverk har också mandlar, hasselnötter och andra nötter. Populära kakor passar ofta särskilt bra med en kopp starkt kaffe.",
+   "q8_0": "Många tyska bakverk har också mandlar, hasselnötter och andra nötter. Populära kakor passar ofta särskilt bra med en kopp starkt kaffe."
+  },
+  {
+   "lang": "sv",
+   "file": "sv_02.wav",
+   "secs": 8.28,
+   "reference": "enligt guvernörsstaben var nitton av de skadade poliser",
+   "native": "Enligt guvernörstabeln var 19 av de skadade poliser.",
+   "f16": "Enligt guvernörstabeln var 19 av de skadade poliser.",
+   "bf16": "Enligt guvernörstabeln var 19 av de skadade poliser.",
+   "q8_0": "Enligt guvernörstabeln var 19 av de skadade poliser."
+  },
+  {
+   "lang": "sv",
+   "file": "sv_03.wav",
+   "secs": 18.9,
+   "reference": "bussar avgår från den distriktsgemensamma busstationen över floden hela dagen men de flesta särskilt de som är på väg mot öster och jakar/bumthang går mellan 6.30 och 7.30",
+   "native": "Bossar avgår från den distrikts gemensamma bostationen överfloden hela dagen, men de flesta särskilt de som är på väg mot öster och ja går mellan halv sju och halv åtta.",
+   "f16": "Bossar avgår från den distrikts gemensamma bostationen överfloden hela dagen, men de flesta särskilt de som är på väg mot öster och ja går mellan halv sju och halv åtta.",
+   "bf16": "Bossar avgår från den distrikts gemensamma bostationen överfloden hela dagen, men de flesta särskilt de som är på väg mot öster och ja går mellan halv sju och halv åtta.",
+   "q8_0": "Bossar avgår från den distrikts gemensamma bostationen överfloden hela dagen, men de flesta särskilt de som är på väg mot öster och ja går mellan halv sju och halv åtta."
+  },
+  {
+   "lang": "sv",
+   "file": "sv_04.wav",
+   "secs": 16.44,
+   "reference": "australiens mitchell gourley slutade som elva i herrarnas stående super-g den tjeckiska konkurrenten oldrich jelinek slutade som nummer sexton i herrarnas super-g",
+   "native": "Australiens Michael slutades som 11 i herarnas stående super G, den tchiska konkurrenten Aldriinek slutades som nummer 16 i herarnas superG.",
+   "f16": "Australiens Michael slutades som 11 i herarnas stående super G, den tchiska konkurrenten Aldriinek slutades som nummer 16 i herarnas superG.",
+   "bf16": "Australiens Michael slutades som 11 i herarnas stående super G, den tchiska konkurrenten Aldriinek slutades som nummer 16 i herarnas superG.",
+   "q8_0": "Australiens Michael slutades som 11 i herarnas stående super G, den tchyska konkurrenten Aldriinek slutades som nummer 16 i herarnas superG."
+  },
+  {
+   "lang": "ru",
+   "file": "ru_00.wav",
+   "secs": 16.92,
+   "reference": "в древнем китае использовали уникальный способ обозначения периодов времени каждый этап китая или каждая семья находившаяся у власти были особой династией",
+   "native": "В Древнем Китае использовали уникальный способ обозначения периодов времени, каждый этап Китая или каждая семья, находившаяся у власти, были особой династией.",
+   "f16": "В Древнем Китае использовали уникальный способ обозначения периодов времени, каждый этап Китая или каждая семья, находившаяся у власти, были особой династией.",
+   "bf16": "В Древнем Китае использовали уникальный способ обозначения периодов времени, каждый этап Китая или каждая семья, находившаяся у власти, были особой династией.",
+   "q8_0": "В Древнем Китае использовали уникальный способ обозначения периодов времени, каждый этап Китая или каждая семья, находившаяся у власти, были особой династией."
+  },
+  {
+   "lang": "ru",
+   "file": "ru_01.wav",
+   "secs": 11.52,
+   "reference": "мадагаскар намного больше других и является самобытным континентом в том что касается дикой природы",
+   "native": "Мадагаскар намного больше других и является самобытным континентом в том, что касается дикой природы.",
+   "f16": "Мадагаскар намного больше других и является самобытным континентом в том, что касается дикой природы.",
+   "bf16": "Мадагаскар намного больше других и является самобытным континентом в том, что касается дикой природы.",
+   "q8_0": "Мадагаскар намного больше других и является самобытным континентом в том, что касается дикой природы."
+  },
+  {
+   "lang": "ru",
+   "file": "ru_02.wav",
+   "secs": 8.64,
+   "reference": "во всех научных вопросах включая психологию были приняты взгляды аристотеля",
+   "native": "Во всех научных вопросах, включая психологию, были приняты взгляды Аристотеля.",
+   "f16": "Во всех научных вопросах, включая психологию, были приняты взгляды Аристотеля.",
+   "bf16": "Во всех научных вопросах, включая психологию, были приняты взгляды Аристотеля.",
+   "q8_0": "Во всех научных вопросах, включая психологию, были приняты взгляды Аристотеля."
+  },
+  {
+   "lang": "ru",
+   "file": "ru_03.wav",
+   "secs": 7.92,
+   "reference": "в различных местах рима были установлены большие телевизионные экраны с помощью которых люди могли наблюдать за церемонией",
+   "native": "В различных местах Рима были установлены большие телевизионные экраны, с помощью которых люди могли наблюдать за церемонией.",
+   "f16": "В различных местах Рима были установлены большие телевизионные экраны, с помощью которых люди могли наблюдать за церемонией.",
+   "bf16": "В различных местах Рима были установлены большие телевизионные экраны, с помощью которых люди могли наблюдать за церемонией.",
+   "q8_0": "В различных местах Рима были установлены большие телевизионные экраны, с помощью которых люди могли наблюдать за церемонией."
+  },
+  {
+   "lang": "ru",
+   "file": "ru_04.wav",
+   "secs": 19.44,
+   "reference": "причиной дебатов стали разногласия относительно затрат на оказание материальной поддержки и восстановление зданий после урагана катрина который некоторые фискальные консерваторы в шутку назвали новоорлеанской сделкой буша",
+   "native": "Причиной дебатов стали разногласия относительно затрат на оказание материальной поддержки и восстановление зданий после урагана Катрина, который некоторые фискальные консерваторы в шутку назвали новоорлеанской сделкой буша.",
+   "f16": "Причиной дебатов стали разногласия относительно затрат на оказание материальной поддержки и восстановление зданий после урагана Катрина, который некоторые фискальные консерваторы в шутку назвали новоорлеанской сделкой буша.",
+   "bf16": "Причиной дебатов стали разногласия относительно затрат на оказание материальной поддержки и восстановление зданий после урагана Катрина, который некоторые фискальные консерваторы в шутку назвали новоорлеанской сделкой буша.",
+   "q8_0": "Причиной дебатов стали разногласия относительно затрат на оказание материальной поддержки и восстановление зданий после урагана Катрина, который некоторые фискальные консерваторы в шутку назвали новоорлеанской сделкой буша."
+  },
+  {
+   "lang": "uk",
+   "file": "uk_00.wav",
+   "secs": 7.38,
+   "reference": "жінки усім подорожнім жінкам радять казати що вони заміжні незалежно від справжнього сімейного стану",
+   "native": "Жінки усім подорожнім жінкам радять казати, що вони заміжні, незалежно від справжнього сімейного стану.",
+   "f16": "Жінки усім подорожнім жінкам радять казати, що вони заміжні, незалежно від справжнього сімейного стану.",
+   "bf16": "Жінки усім подорожнім жінкам радять казати, що вони заміжні, незалежно від справжнього сімейного стану.",
+   "q8_0": "Жінки усім подорожнім жінкам радять казати, що вони заміжні, незалежно від справжнього сімейного стану."
+  },
+  {
+   "lang": "uk",
+   "file": "uk_01.wav",
+   "secs": 7.08,
+   "reference": "такі батьки можуть вирішити створити для своєї дитини план всиновлення",
+   "native": "Такі батьки можуть вирішити створити для своєї дитини план всиновлення.",
+   "f16": "Такі батьки можуть вирішити створити для своєї дитини план всиновлення.",
+   "bf16": "Такі батьки можуть вирішити створити для своєї дитини план всиновлення.",
+   "q8_0": "Такі батьки можуть вирішити створити для своєї дитини план всиновлення."
+  },
+  {
+   "lang": "uk",
+   "file": "uk_02.wav",
+   "secs": 9.48,
+   "reference": "місячна кора становить приблизно 70 км у товщину на ближній стороні та 100 км у товщину на дальній стороні",
+   "native": "Місячна кора становить приблизно 70 км/довщину на ближній стороні та 100 км у товщину на дальній стороні.",
+   "f16": "Місячна кора становить приблизно 70 км/довщину на ближній стороні та 100 км у товщину на дальній стороні.",
+   "bf16": "Місячна кора становить приблизно 70 км/довщину на ближній стороні та 100 км у товщину на дальній стороні.",
+   "q8_0": "Місячна кора становить приблизно 70 км/довщину на ближній стороні та 100 км у товщину на дальній стороні."
+  },
+  {
+   "lang": "uk",
+   "file": "uk_03.wav",
+   "secs": 9.12,
+   "reference": "рослини продукують кисень яким дихає людина і поглинають вуглекислий газ який людина виводить з організму тобто видихає",
+   "native": "Рослини продукують кисень, яким дихає людина, і поглинають вуглекислий газ, який людина виводить з організму, тобто видихає.",
+   "f16": "Рослини продукують кисень, яким дихає людина, і поглинають вуглекислий газ, який людина виводить з організму, тобто видихає.",
+   "bf16": "Рослини продукують кисень, яким дихає людина, і поглинають вуглекислий газ, який людина виводить з організму, тобто видихає.",
+   "q8_0": "Рослини продукують кисень, яким дихає людина, і поглинають вуглекислий газ, який людина виводить з організму, тобто видихає."
+  },
+  {
+   "lang": "uk",
+   "file": "uk_04.wav",
+   "secs": 9.6,
+   "reference": "такі елементи як кальцій і калій вважаються металами звичайно також є такі метали як срібло та золото",
+   "native": "Такі елементи, як кальцій і калій, вважаються металами. Звичайно, також є такі метали, як срібло та золото.",
+   "f16": "Такі елементи, як кальцій і калій, вважаються металами. Звичайно, також є такі метали, як срібло та золото.",
+   "bf16": "Такі елементи, як кальцій і калій, вважаються металами. Звичайно, також є такі метали, як срібло та золото.",
+   "q8_0": "Такі елементи, як кальцій і калій, вважаються металами. Звичайно, також є такі метали, як срібло та золото."
+  }
+ ]
+}

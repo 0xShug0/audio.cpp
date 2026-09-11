@@ -1,7 +1,6 @@
 #include "engine/models/chatterbox/t3_component.h"
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/io/safetensors.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -81,12 +80,10 @@ std::vector<float> llama3_rope_factors_for_t3(int64_t head_dim) {
 }  // namespace
 
 std::shared_ptr<const T3InferenceWeights> load_t3_inference_weights(
-    const std::filesystem::path & checkpoint_path,
+    const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType graph_weight_storage_type,
     bool load_reference_f32_graph_weights) {
-    const auto index = engine::io::load_safetensors_index(checkpoint_path);
-    const auto source = engine::assets::open_tensor_source(checkpoint_path);
     auto weights = std::make_shared<T3InferenceWeights>();
     weights->execution_context = &execution_context;
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
@@ -94,127 +91,127 @@ std::shared_ptr<const T3InferenceWeights> load_t3_inference_weights(
         execution_context.backend_type(),
         "chatterbox.t3.weights",
         4096ull * 1024ull * 1024ull);
-    const auto & text_emb_info = index.tensors.at("text_emb.weight");
-    const auto & speech_emb_info = index.tensors.at("speech_emb.weight");
-    const auto & text_pos_info = index.tensors.at("text_pos_emb.emb.weight");
-    const auto & speech_pos_info = index.tensors.at("speech_pos_emb.emb.weight");
+    const auto text_emb_info = source.require_metadata("text_emb.weight");
+    const auto speech_emb_info = source.require_metadata("speech_emb.weight");
+    const auto text_pos_info = source.require_metadata("text_pos_emb.emb.weight");
+    const auto speech_pos_info = source.require_metadata("speech_pos_emb.emb.weight");
     weights->hidden_size = text_emb_info.shape.at(1);
-    weights->speaker_embed_size = index.tensors.at("cond_enc.spkr_enc.weight").shape.at(1);
+    weights->speaker_embed_size = source.require_metadata("cond_enc.spkr_enc.weight").shape.at(1);
     weights->num_heads = 16;
     weights->perceiver_num_heads = 4;
-    weights->perceiver_query_tokens = index.tensors.at("cond_enc.perceiver.pre_attention_query").shape.at(1);
-    weights->mlp_intermediate_size = index.tensors.at("tfmr.layers.0.mlp.gate_proj.weight").shape.at(0);
+    weights->perceiver_query_tokens = source.require_metadata("cond_enc.perceiver.pre_attention_query").shape.at(1);
+    weights->mlp_intermediate_size = source.require_metadata("tfmr.layers.0.mlp.gate_proj.weight").shape.at(0);
     weights->text_vocab = text_emb_info.shape.at(0);
     weights->speech_vocab = speech_emb_info.shape.at(0);
     weights->text_position_vocab = text_pos_info.shape.at(0);
     weights->speech_position_vocab = speech_pos_info.shape.at(0);
-    weights->spkr_enc_weight = require_t3_tensor_data(*source, "cond_enc.spkr_enc.weight", graph_weight_storage_type, {1024, 256});
-    weights->spkr_enc_bias = source->require_tensor("cond_enc.spkr_enc.bias", engine::assets::TensorStorageType::F32, {1024});
+    weights->spkr_enc_weight = require_t3_tensor_data(source, "cond_enc.spkr_enc.weight", graph_weight_storage_type, {1024, 256});
+    weights->spkr_enc_bias = source.require_tensor("cond_enc.spkr_enc.bias", engine::assets::TensorStorageType::F32, {1024});
     weights->emotion_adv_weight =
-        require_t3_tensor_data(*source, "cond_enc.emotion_adv_fc.weight", graph_weight_storage_type, {1024, 1});
+        require_t3_tensor_data(source, "cond_enc.emotion_adv_fc.weight", graph_weight_storage_type, {1024, 1});
     weights->perceiver_pre_attention_query = require_t3_tensor_data(
-        *source,
+        source,
         "cond_enc.perceiver.pre_attention_query",
         graph_weight_storage_type,
         {1, 32, 1024});
-    weights->perceiver_norm_weight = source->require_tensor(
+    weights->perceiver_norm_weight = source.require_tensor(
         "cond_enc.perceiver.attn.norm.weight",
         engine::assets::TensorStorageType::F32,
         {1024});
-    weights->perceiver_norm_bias = source->require_tensor(
+    weights->perceiver_norm_bias = source.require_tensor(
         "cond_enc.perceiver.attn.norm.bias",
         engine::assets::TensorStorageType::F32,
         {1024});
     weights->perceiver_to_q_weight =
-        require_t3_tensor_data(*source, "cond_enc.perceiver.attn.to_q.weight", graph_weight_storage_type, {1024, 1024});
-    weights->perceiver_to_q_bias = source->require_tensor("cond_enc.perceiver.attn.to_q.bias", engine::assets::TensorStorageType::F32, {1024});
+        require_t3_tensor_data(source, "cond_enc.perceiver.attn.to_q.weight", graph_weight_storage_type, {1024, 1024});
+    weights->perceiver_to_q_bias = source.require_tensor("cond_enc.perceiver.attn.to_q.bias", engine::assets::TensorStorageType::F32, {1024});
     weights->perceiver_to_k_weight =
-        require_t3_tensor_data(*source, "cond_enc.perceiver.attn.to_k.weight", graph_weight_storage_type, {1024, 1024});
-    weights->perceiver_to_k_bias = source->require_tensor("cond_enc.perceiver.attn.to_k.bias", engine::assets::TensorStorageType::F32, {1024});
+        require_t3_tensor_data(source, "cond_enc.perceiver.attn.to_k.weight", graph_weight_storage_type, {1024, 1024});
+    weights->perceiver_to_k_bias = source.require_tensor("cond_enc.perceiver.attn.to_k.bias", engine::assets::TensorStorageType::F32, {1024});
     weights->perceiver_to_v_weight =
-        require_t3_tensor_data(*source, "cond_enc.perceiver.attn.to_v.weight", graph_weight_storage_type, {1024, 1024});
-    weights->perceiver_to_v_bias = source->require_tensor("cond_enc.perceiver.attn.to_v.bias", engine::assets::TensorStorageType::F32, {1024});
+        require_t3_tensor_data(source, "cond_enc.perceiver.attn.to_v.weight", graph_weight_storage_type, {1024, 1024});
+    weights->perceiver_to_v_bias = source.require_tensor("cond_enc.perceiver.attn.to_v.bias", engine::assets::TensorStorageType::F32, {1024});
     weights->perceiver_proj_out_weight =
-        require_t3_tensor_data(*source, "cond_enc.perceiver.attn.proj_out.weight", graph_weight_storage_type, {1024, 1024});
-    weights->perceiver_proj_out_bias = source->require_tensor("cond_enc.perceiver.attn.proj_out.bias", engine::assets::TensorStorageType::F32, {1024});
-    weights->text_embedding_weight = require_t3_tensor_data(*source, "text_emb.weight", graph_weight_storage_type, text_emb_info.shape);
-    weights->speech_embedding_weight = require_t3_tensor_data(*source, "speech_emb.weight", graph_weight_storage_type, speech_emb_info.shape);
+        require_t3_tensor_data(source, "cond_enc.perceiver.attn.proj_out.weight", graph_weight_storage_type, {1024, 1024});
+    weights->perceiver_proj_out_bias = source.require_tensor("cond_enc.perceiver.attn.proj_out.bias", engine::assets::TensorStorageType::F32, {1024});
+    weights->text_embedding_weight = require_t3_tensor_data(source, "text_emb.weight", graph_weight_storage_type, text_emb_info.shape);
+    weights->speech_embedding_weight = require_t3_tensor_data(source, "speech_emb.weight", graph_weight_storage_type, speech_emb_info.shape);
     weights->text_position_weight =
-        require_t3_tensor_data(*source, "text_pos_emb.emb.weight", graph_weight_storage_type, text_pos_info.shape);
+        require_t3_tensor_data(source, "text_pos_emb.emb.weight", graph_weight_storage_type, text_pos_info.shape);
     weights->speech_position_weight =
-        require_t3_tensor_data(*source, "speech_pos_emb.emb.weight", graph_weight_storage_type, speech_pos_info.shape);
-    weights->tfmr_norm_weight = source->require_f32("tfmr.norm.weight", {1024});
-    weights->tfmr_norm_tensor = weights->store->load_f32_tensor(*source, "tfmr.norm.weight", {1024});
+        require_t3_tensor_data(source, "speech_pos_emb.emb.weight", graph_weight_storage_type, speech_pos_info.shape);
+    weights->tfmr_norm_weight = source.require_f32("tfmr.norm.weight", {1024});
+    weights->tfmr_norm_tensor = weights->store->load_f32_tensor(source, "tfmr.norm.weight", {1024});
     weights->rope_factors_tensor = weights->store->make_f32(
         engine::core::TensorShape::from_dims({weights->hidden_size / weights->num_heads / 2}),
         llama3_rope_factors_for_t3(weights->hidden_size / weights->num_heads));
     weights->text_head_weight = load_t3_graph_weight(
         *weights->store,
-        *source,
+        source,
         "text_head.weight",
         graph_weight_storage_type,
-        index.tensors.at("text_head.weight").shape,
+        source.require_metadata("text_head.weight").shape,
         load_reference_f32_graph_weights);
     weights->speech_head_weight = load_t3_graph_weight(
         *weights->store,
-        *source,
+        source,
         "speech_head.weight",
         graph_weight_storage_type,
-        index.tensors.at("speech_head.weight").shape,
+        source.require_metadata("speech_head.weight").shape,
         load_reference_f32_graph_weights);
     weights->layers.resize(30);
     for (int layer = 0; layer < 30; ++layer) {
         const std::string prefix = "tfmr.layers." + std::to_string(layer);
         auto & out = weights->layers[static_cast<size_t>(layer)];
-        out.input_layernorm_weight = source->require_f32(prefix + ".input_layernorm.weight", {1024});
-        out.input_layernorm_tensor = weights->store->load_f32_tensor(*source, prefix + ".input_layernorm.weight", {1024});
+        out.input_layernorm_weight = source.require_f32(prefix + ".input_layernorm.weight", {1024});
+        out.input_layernorm_tensor = weights->store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {1024});
         out.q_proj_weight = load_t3_graph_weight(
             *weights->store,
-            *source,
+            source,
             prefix + ".self_attn.q_proj.weight",
             graph_weight_storage_type,
             {1024, 1024},
             load_reference_f32_graph_weights);
         out.k_proj_weight = load_t3_graph_weight(
             *weights->store,
-            *source,
+            source,
             prefix + ".self_attn.k_proj.weight",
             graph_weight_storage_type,
             {1024, 1024},
             load_reference_f32_graph_weights);
         out.v_proj_weight = load_t3_graph_weight(
             *weights->store,
-            *source,
+            source,
             prefix + ".self_attn.v_proj.weight",
             graph_weight_storage_type,
             {1024, 1024},
             load_reference_f32_graph_weights);
         out.o_proj_weight = load_t3_graph_weight(
             *weights->store,
-            *source,
+            source,
             prefix + ".self_attn.o_proj.weight",
             graph_weight_storage_type,
             {1024, 1024},
             load_reference_f32_graph_weights);
-        out.post_attention_layernorm_weight = source->require_f32(prefix + ".post_attention_layernorm.weight", {1024});
-        out.post_attention_layernorm_tensor = weights->store->load_f32_tensor(*source, prefix + ".post_attention_layernorm.weight", {1024});
+        out.post_attention_layernorm_weight = source.require_f32(prefix + ".post_attention_layernorm.weight", {1024});
+        out.post_attention_layernorm_tensor = weights->store->load_f32_tensor(source, prefix + ".post_attention_layernorm.weight", {1024});
         out.gate_proj_weight = load_t3_graph_weight(
             *weights->store,
-            *source,
+            source,
             prefix + ".mlp.gate_proj.weight",
             graph_weight_storage_type,
             {4096, 1024},
             load_reference_f32_graph_weights);
         out.up_proj_weight = load_t3_graph_weight(
             *weights->store,
-            *source,
+            source,
             prefix + ".mlp.up_proj.weight",
             graph_weight_storage_type,
             {4096, 1024},
             load_reference_f32_graph_weights);
         out.down_proj_weight = load_t3_graph_weight(
             *weights->store,
-            *source,
+            source,
             prefix + ".mlp.down_proj.weight",
             graph_weight_storage_type,
             {1024, 4096},

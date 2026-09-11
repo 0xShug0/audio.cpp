@@ -28,9 +28,26 @@ and Portuguese use the native eSpeak library. Japanese uses native MeCab with
 embedded UniDic data. Chinese uses native dictionary/DAG/HMM processing.
 Python is used only for conversion and upstream comparison, never inference.
 
-On Windows, place `espeak-ng.dll` and `libmecab.dll` beside the executable, or set
-`AUDIOCPP_ESPEAK_LIBRARY` / `AUDIOCPP_MECAB_LIBRARY` to absolute library paths.
-On other platforms these variables can select installed native libraries.
+Kokoro uses the shared `engine::audio::EspeakPhonemizer` introduced in PR #502.
+Its caret-tied IPA mode, punctuation restoration, language selection, and
+Kokoro phoneme mapping remain in the model frontend. The shared runtime
+serializes eSpeak calls with SanoTTS and Inflect v2 and reselects the voice on
+each call.
+
+Build CLI and server with `AUDIOCPP_STATIC_ESPEAK=ON` to statically link eSpeak.
+Both automatically locate `espeak-ng-data.bin` beside their executable and use
+the shared extraction cache. This mode does not require an eSpeak shared library.
+See [shared eSpeak documentation](../../docs/espeak_phonemizer.md) for build,
+data packaging, and licensing details.
+
+With the default dynamic build, place `espeak-ng.dll` beside the executable on
+Windows or install the platform library. `AUDIOCPP_ESPEAK_LIBRARY` selects an
+explicit library and retains the existing model-local eSpeak data default.
+`AUDIOCPP_ESPEAK_DATA` overrides the data location with a directory or a
+`.bin`/`.gguf` data package in either build mode.
+
+Japanese still requires `libmecab.dll` on Windows or an installed MeCab library.
+`AUDIOCPP_MECAB_LIBRARY` selects its absolute path.
 Embedded data is extracted to a temporary directory for the loaded model's
 lifetime and removed when its assets are released.
 
@@ -67,6 +84,11 @@ WAV hashes were identical. This is a runtime configuration improvement; it
 does not change the model file or establish an optimal setting for other CPUs.
 
 ## Validation
+
+`compare_shared_espeak.py` compares the pre-migration Kokoro probe against both
+shared dynamic and static eSpeak modes. All 12 multilingual pronunciation cases
+match exactly in both modes on Windows, including punctuation and number cases.
+The script exits with failure on any mismatch or frontend error.
 
 `compare_multilingual_g2p.py` compares `kokoro_g2p_probe` against installed Misaki.
 `validate_multilingual_packages.py` synthesizes each of the nine language variants

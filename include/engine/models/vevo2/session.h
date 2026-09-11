@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/vevo2/ar.h"
 #include "engine/models/vevo2/assets.h"
@@ -7,58 +8,23 @@
 #include "engine/models/vevo2/fm.h"
 #include "engine/models/vevo2/prompt_builder.h"
 #include "engine/models/vevo2/vocoder.h"
+#include "engine/framework/modules/speech_encoders/whisper_frontend.h"
 
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace engine::assets {
-class TensorSource;
 enum class TensorStorageType;
 }
 
 namespace engine::core {
-enum class BackendType;
-class BackendWeightStore;
 class ExecutionContext;
 }
 
 namespace engine::models::vevo2 {
-
-class Vevo2WhisperEmbeddingRuntime final {
-public:
-    Vevo2WhisperEmbeddingRuntime(
-        const Vevo2Assets & assets,
-        engine::core::ExecutionContext & execution_context,
-        size_t weight_context_bytes,
-        size_t graph_context_bytes,
-        engine::assets::TensorStorageType matmul_weight_storage_type,
-        engine::assets::TensorStorageType conv_weight_storage_type);
-    ~Vevo2WhisperEmbeddingRuntime();
-
-    Vevo2WhisperEmbeddingRuntime(const Vevo2WhisperEmbeddingRuntime &) = delete;
-    Vevo2WhisperEmbeddingRuntime & operator=(const Vevo2WhisperEmbeddingRuntime &) = delete;
-
-    std::vector<float> encode_log_mel(const std::vector<float> & log_mel);
-    std::vector<float> extract_features(const runtime::AudioBuffer & audio, int64_t target_frames, size_t threads = 0);
-
-private:
-    struct Graph;
-
-    void ensure_graph();
-
-    engine::core::ExecutionContext & execution_context_;
-    engine::core::BackendType backend_type_;
-    size_t graph_context_bytes_ = 0;
-    engine::modules::WhisperEmbeddingConfig config_;
-    std::shared_ptr<const engine::assets::TensorSource> weight_source_;
-    std::shared_ptr<engine::core::BackendWeightStore> weight_store_;
-    engine::modules::WhisperEmbeddingWeights weights_;
-    std::unique_ptr<Graph> graph_;
-};
 
 class Vevo2Session final
     : public runtime::RuntimeSessionBase
@@ -76,21 +42,29 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
-    struct AudioFeatureCacheEntry {
-        uint64_t key = 0;
+    struct AudioCacheKey {
+        uint64_t hash = 0;
         int sample_rate = 0;
         int channels = 0;
-        int64_t target_frames = 0;
         size_t samples = 0;
+        int64_t frames = 0;
+    };
+
+    struct AudioCacheKeyEqual {
+        bool operator()(const AudioCacheKey & lhs, const AudioCacheKey & rhs) const noexcept {
+            return lhs.hash == rhs.hash &&
+                lhs.sample_rate == rhs.sample_rate &&
+                lhs.channels == rhs.channels &&
+                lhs.samples == rhs.samples &&
+                lhs.frames == rhs.frames;
+        }
+    };
+
+    struct AudioFeatureCacheValue {
         std::vector<float> features;
     };
 
-    struct AudioTokenCacheEntry {
-        uint64_t key = 0;
-        int sample_rate = 0;
-        int channels = 0;
-        int64_t feature_frames = 0;
-        size_t samples = 0;
+    struct AudioTokenCacheValue {
         Vevo2TokenSequence tokens;
     };
 
@@ -127,17 +101,14 @@ private:
     size_t vocoder_graph_context_bytes_ = 768ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType vocoder_matmul_weight_storage_type_;
     engine::assets::TensorStorageType vocoder_conv_weight_storage_type_;
-    Vevo2WhisperEmbeddingRuntime whisper_embedding_;
+    engine::modules::WhisperFrontendComponent whisper_frontend_;
     Vevo2ProsodyTokenizerRuntime prosody_tokenizer_;
     Vevo2ContentStyleTokenizerRuntime content_style_tokenizer_;
     Vevo2AutoregressiveRuntime autoregressive_model_;
     Vevo2FlowMatchingRuntime flow_matching_model_;
     Vevo2VocoderRuntime vocoder_;
-    Vevo2PromptBuilder prompt_builder_;
-    std::vector<AudioFeatureCacheEntry> whisper_feature_cache_;
-    std::vector<AudioTokenCacheEntry> content_style_token_cache_;
+    runtime::CacheSlots<AudioCacheKey, AudioFeatureCacheValue, AudioCacheKeyEqual> whisper_feature_cache_;
+    runtime::CacheSlots<AudioCacheKey, AudioTokenCacheValue, AudioCacheKeyEqual> content_style_token_cache_;
 };
-
-std::unique_ptr<runtime::ILoadedVoiceModel> load_vevo2_model(const runtime::ModelLoadRequest & request);
 
 }  // namespace engine::models::vevo2

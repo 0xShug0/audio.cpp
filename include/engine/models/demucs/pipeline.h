@@ -18,7 +18,7 @@ struct HTDemucsChunkTiming {
 class HTDemucsPipeline {
 public:
     HTDemucsPipeline(
-        std::shared_ptr<const DemucsSubmodelAssets> assets,
+        std::shared_ptr<const HTDemucsSubmodelAssets> assets,
         core::ExecutionContext & execution_context,
         assets::TensorStorageType weight_storage_type);
     ~HTDemucsPipeline();
@@ -30,7 +30,7 @@ public:
 private:
     class Impl;
 
-    std::shared_ptr<const DemucsSubmodelAssets> assets_;
+    std::shared_ptr<const HTDemucsSubmodelAssets> assets_;
     std::unique_ptr<Impl> impl_;
 };
 

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/models/seed_vc/weight_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
 
 #include <cstdint>
 #include <memory>
@@ -11,7 +12,10 @@ namespace engine::models::seed_vc {
 class SeedVcRmvpeF0Extractor {
 public:
     SeedVcRmvpeF0Extractor() = default;
-    explicit SeedVcRmvpeF0Extractor(std::shared_ptr<const SeedVcWeightBundle> weights);
+    SeedVcRmvpeF0Extractor(
+        std::shared_ptr<const engine::assets::TensorSource> source,
+        engine::core::BackendConfig backend,
+        engine::assets::TensorStorageType storage_type);
     ~SeedVcRmvpeF0Extractor();
 
     SeedVcRmvpeF0Extractor(SeedVcRmvpeF0Extractor &&) noexcept;
@@ -27,7 +31,6 @@ public:
 private:
     struct State;
 
-    std::shared_ptr<const SeedVcWeightBundle> weights_;
     std::shared_ptr<State> state_;
 };
 

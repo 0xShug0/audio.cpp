@@ -1,0 +1,105 @@
+{
+  "family": "higgs_audio_tts",
+  "display_name": "Higgs Audio v3 TTS",
+  "description": "Boson AI conversational TTS model for expressive speech across 100+ languages, zero-shot voice cloning, and inline control over emotion, style, prosody, pauses, and sound effects.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "100+ languages"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "higgs_audio_tts_4b_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "higgs_audio_tts_4b_q8_0",
+      "display_name": "Higgs Audio v3 TTS 4B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Higgs-Audio-v3-TTS-4B-GGUF",
+      "files": [
+        "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-TTS-4B-GGUF"
+    },
+    {
+      "id": "higgs_audio_tts_4b_bf16",
+      "display_name": "Higgs Audio v3 TTS 4B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Higgs-Audio-v3-TTS-4B-GGUF",
+      "files": [
+        "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-bf16.gguf"
+      ],
+      "strip_prefix": "Higgs-Audio-v3-TTS-4B-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors.index.json"
+      }
+    }
+  ]
+}

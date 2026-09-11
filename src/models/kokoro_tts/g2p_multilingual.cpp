@@ -1,4 +1,5 @@
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
+#include "engine/framework/audio/espeak_phonemizer.h"
 #include "engine/framework/io/json.h"
 #include <algorithm>
 #include <array>
@@ -82,33 +83,26 @@ public:
 };
 
 std::string espeak_text(const std::string & text, const std::string & language, const std::filesystem::path & root) {
-    // eSpeak's selected voice and dictionary state are process-global.
-    static std::mutex mutex;
-    const std::lock_guard<std::mutex> lock(mutex);
-    static Library lib("AUDIOCPP_ESPEAK_LIBRARY", "espeak-ng.dll", "libespeak-ng.so.1");
-    auto initialize = lib.symbol<int (*)(int, int, const char *, int)>("espeak_Initialize");
-    auto terminate = lib.symbol<int (*)()>("espeak_Terminate");
-    auto voice = lib.symbol<int (*)(const char *)>("espeak_SetVoiceByName");
-    auto phonemes = lib.symbol<const char * (*)(const void **, int, int)>("espeak_TextToPhonemes");
-    if (initialize(2, 0, root.u8string().c_str(), 0) < 0) throw std::runtime_error("Cannot initialize Kokoro eSpeak data");
-    struct End { int (*fn)(); ~End() { fn(); } } end{terminate};
-    if (voice((language == "fr-fr" ? "fr" : language).c_str()) != 0)
-        throw std::runtime_error("Missing eSpeak language: " + language);
+    const auto * library_override = std::getenv("AUDIOCPP_ESPEAK_LIBRARY");
+    const auto * data_override = std::getenv("AUDIOCPP_ESPEAK_DATA");
+    const auto library = library_override && *library_override
+        ? std::filesystem::u8path(library_override) : std::filesystem::path{};
+    std::filesystem::path data;
+    if (data_override && *data_override) data = std::filesystem::u8path(data_override);
+#ifdef AUDIOCPP_STATIC_ESPEAK
+    else if (!library.empty()) data = root / "espeak-ng-data";
+#else
+    else data = root / "espeak-ng-data";
+#endif
+    engine::audio::EspeakPhonemizer phonemizer(library, data, {language == "fr-fr" ? "fr" : language});
     // Preserve punctuation ourselves: TextToPhonemes consumes clause punctuation.
     const U punctuation = U";:,.!?¡¿—…\"«»“”()";
     std::string out, chunk;
     auto flush = [&] {
         if (chunk.empty()) return;
-        const void * cursor = chunk.c_str();
-        while (cursor) {
-            const void * previous = cursor;
-            const auto * ps = phonemes(&cursor, 1, 2 | (1 << 7) | ('^' << 8));
-            if (ps) {
-                if (!out.empty() && out.back() != ' ' && out != u8"¿" && out != u8"¡") out += ' ';
-                out += ps;
-            }
-            if (cursor == previous) throw std::runtime_error("eSpeak made no progress");
-        }
+        const auto ps = phonemizer.phonemize(chunk, 2 | (1 << 7) | ('^' << 8));
+        if (!out.empty() && out.back() != ' ' && out != u8"¿" && out != u8"¡") out += ' ';
+        out += ps;
         chunk.clear();
     };
     for (char32_t c : decode(text)) {

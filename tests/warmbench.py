@@ -19,6 +19,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ACE_STEP_BASELINE_CPP_AUDIO = REPO_ROOT / "build/logs/warmbench/ace_step_20s_baseline/ace_step_offline_cuda/cpp_audio/audio_0.wav"
+VOXCPM2_MAX_LEN_CAP = 521
 PYTHON_EXE = sys.executable
 WHISPER_CONDA_ENV = "qwen3-tts"
 WHISPER_MODEL = "tiny.en"
@@ -96,8 +97,20 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "clone_audio": "resources/sample.wav",
         "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
         "case_catalog": "tests/qwen3_tts/qwen3_tts_warm_bench_cases.txt",
+        "case_overrides": {
+            "one_request": {
+                "model": "models/Qwen3-TTS-12Hz-1.7B-Base",
+                "clone_audio": "assets/resources/c.wav",
+                "reference_text": "Oh hi, I'm Nanashi Mumei from Hololive English Council. I'm that forgetful owl who only remembers the things that really matter.",
+                "source_issue": "https://github.com/0xShug0/audio.cpp/issues/67",
+            },
+        },
         "max_new_tokens": 512,
         "min_text_length": 70,
+        "run_asr_check": False,
+        "wav_cosine_min": 0.95,
+        "log_mel_cosine_min": 0.95,
+        "length_ratio_min": 0.98,
     },
     "qwen3_tts_voice_design": {
         "kind": "tts",
@@ -203,32 +216,59 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "case_catalog": "tests/demucs/demucs_warm_bench_cases.json",
         "default_case_name": "default",
     },
-    "moss_tts": {
+    "moss_tts_nano": {
         "kind": "tts",
         "modes": ["offline"],
-        "cpp_bin": "build/debug/bin/moss_tts_warm_bench",
-        "python_script": "tests/moss_tts/moss_tts_python_warm_bench.py",
+        "cpp_bin": "build/debug/bin/moss_tts_nano_warm_bench",
+        "python_script": "tests/moss_tts_nano/moss_tts_nano_python_warm_bench.py",
         "model": "models/MOSS-TTS-Nano-100M",
         "audio_tokenizer_model": "models/MOSS-Audio-Tokenizer-Nano",
         "clone_audio": "resources/sample.wav",
-        "case_catalog": "tests/moss_tts/moss_tts_warm_bench_cases.txt",
+        "case_catalog": "tests/moss_tts_nano/moss_tts_nano_warm_bench_cases.json",
+        "default_case_name": "default",
         "max_new_frames": 300,
         "active_codebooks": 16,
-        "do_sample": "false",
+        "do_sample": "true",
         "text_temperature": 1.5,
         "text_top_p": 1.0,
         "text_top_k": 50,
-        "audio_temperature": 1.7,
-        "audio_top_p": 0.8,
-        "audio_top_k": 25,
-        "audio_repetition_penalty": 1.0,
+        "temperature": 1.7,
+        "top_p": 0.8,
+        "top_k": 25,
+        "repetition_penalty": 1.0,
         "use_kv_cache": "true",
         "voice_clone_max_text_tokens": 50,
         "voice_clone_max_memory_per_sample_gb": 1.0,
         "tts_max_batch_size": 0,
         "codec_max_batch_size": 0,
+        "run_asr_check": False,
         "log_mel_cosine_min": 0.80,
         "length_ratio_min": 0.90,
+        "whisper_word_timestamps": False,
+    },
+    "moss_tts_local": {
+        "kind": "tts",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/moss_tts_local_warm_bench",
+        "python_script": "tests/moss_tts_local/moss_tts_local_python_warm_bench.py",
+        "model": "models/MOSS-TTS-Local-Transformer-v1.5",
+        "clone_audio": "resources/a.wav",
+        "case_catalog": "tests/moss_tts_local/moss_tts_local_warm_bench_cases.json",
+        "default_case_name": "long_lived_session",
+        "max_new_frames": 4096,
+        "do_sample": "true",
+        "audio_temperature": 1.7,
+        "audio_top_p": 0.8,
+        "audio_top_k": 25,
+        "audio_repetition_penalty": 1.0,
+        "dtype": "fp32",
+        "cpp_session_options": ["moss_tts_local.weight_type=f32"],
+        "use_kv_cache": "true",
+        "default_requests_per_session": 4,
+        "asr_compact_lcs_min": 0.95,
+        "run_asr_check": False,
+        "log_mel_cosine_min": 0.80,
+        "length_ratio_min": 0.80,
         "whisper_word_timestamps": False,
     },
     "qwen3_asr": {
@@ -242,6 +282,80 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "strict_text": True,
         "check_language": True,
     },
+    "higgs_audio_stt": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/higgs_audio_stt_warm_bench",
+        "python_script": "tests/higgs_audio_stt/higgs_audio_stt_python_warm_bench.py",
+        "model": "models/higgs-audio-v3-stt",
+        "case_catalog": "tests/higgs_audio_stt/higgs_audio_stt_warm_bench_cases.json",
+        "default_requests_per_session": 1,
+    },
+    "hviske_asr": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/hviske_asr_warm_bench",
+        "python_script": "tests/hviske_asr/hviske_asr_python_warm_bench.py",
+        "model": "models/hviske-v5.3",
+        "case_catalog": "tests/hviske_asr/hviske_asr_warm_bench_cases.json",
+        "default_requests_per_session": 1,
+    },
+    "nemotron_asr": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/nemotron_asr_warm_bench",
+        "python_script": "tests/nemotron_asr/nemotron_asr_python_warm_bench.py",
+        "model": "models/nemotron-3.5-asr-streaming-0.6b",
+        "case_catalog": "tests/nemotron_asr/nemotron_asr_warm_bench_cases.json",
+        "default_requests_per_session": 1,
+    },
+    "muscriptor": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/muscriptor_warm_bench",
+        "python_script": "tests/muscriptor/muscriptor_python_warm_bench.py",
+        "model": "models/muscriptor-small",
+        "python_model": "models/muscriptor-small/model.safetensors",
+        "case_catalog": "tests/muscriptor/muscriptor_warm_bench_cases.json",
+        "default_case_name": "known_wav_multi_request",
+        "default_requests_per_session": 4,
+    },
+    "neutts": {
+        "kind": "neutts",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/neutts_warm_bench",
+        "python_script": "tests/neutts/neutts_2e_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "/media/leo/Share/models/audio.cpp-gguf/NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
+        "python_model": "models/NeuTTS-2E",
+        "case_catalog": "tests/neutts/neutts_2e_warm_bench_cases.json",
+        "default_case_name": "neutts_builtin_emotions",
+        "default_requests_per_session": 4,
+        "default_warmup": 1,
+        "wav_cosine_min": 0.90,
+        "log_mel_cosine_min": 0.90,
+        "length_ratio_min": 0.90,
+    },
+    "vibevoice_asr": {
+        "kind": "asr",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/vibevoice_asr_warm_bench",
+        "python_script": "tests/vibevoice_asr/vibevoice_asr_python_warm_bench.py",
+        "model": "models/VibeVoice-ASR",
+        "case_catalog": "tests/vibevoice_asr/vibevoice_asr_warm_bench_cases.json",
+        "default_case_name": "default",
+        "default_requests_per_session": 1,
+    },
+    "voxtral_realtime": {
+        "kind": "asr",
+        "modes": ["offline", "streaming"],
+        "cpp_bin": "build/debug/bin/voxtral_realtime_warm_bench",
+        "python_script": "tests/voxtral_realtime/voxtral_realtime_python_warm_bench.py",
+        "model": "models/Voxtral-Mini-4B-Realtime-2602",
+        "case_catalog": "tests/voxtral_realtime/voxtral_realtime_warm_bench_cases.json",
+        "default_requests_per_session": 3,
+        "strict_text": True,
+    },
     "qwen3_forced_aligner": {
         "kind": "alignment",
         "modes": ["offline"],
@@ -250,6 +364,15 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "model": "models/Qwen3-ForcedAligner-0.6B",
         "case_catalog": "tests/qwen3_forced_aligner/qwen3_forced_aligner_warm_bench_cases.json",
         "strict_alignment": True,
+    },
+    "mms_forced_aligner": {
+        "kind": "alignment",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/mms_forced_aligner_warm_bench",
+        "python_script": "tests/mms_forced_aligner/mms_forced_aligner_python_warm_bench.py",
+        "model": "models/mms-300m-1130-forced-aligner",
+        "case_catalog": "tests/mms_forced_aligner/mms_forced_aligner_warm_bench_cases.json",
+        "strict_alignment": False,
     },
     "ace_step": {
         "kind": "ace_step",
@@ -314,6 +437,20 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "wav_cosine_min": 0.95,
         "log_mel_cosine_min": 0.95,
     },
+    "supertonic": {
+        "kind": "supertonic",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/supertonic_warm_bench",
+        "python_script": "tests/supertonic/supertonic_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/supertonic-3",
+        "case_catalog": "tests/supertonic/supertonic_warm_bench_cases.json",
+        "default_case_name": "multi_path_voice_lang_steps_speed_chunking",
+        "default_requests_per_session": 6,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.90,
+        "log_mel_cosine_min": 0.90,
+    },
     "vibevoice": {
         "kind": "vibevoice",
         "modes": ["offline"],
@@ -328,6 +465,21 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "wav_cosine_min": 0.90,
         "log_mel_cosine_min": 0.90,
         "length_ratio_is_diagnostic": True,
+    },
+    "irodori_tts": {
+        "kind": "irodori_tts",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/irodori_tts_warm_bench",
+        "python_script": "tests/irodori_tts/irodori_tts_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/Irodori-TTS-500M-v3",
+        "case_catalog": "tests/irodori_tts/irodori_tts_warm_bench_cases.json",
+        "default_case_name": "short_emoji",
+        "default_requests_per_session": 1,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.98,
+        "cpp_session_options": ["irodori_tts.weight_type=f32", "irodori_tts.codec_weight_type=f32"],
     },
     "heartmula": {
         "kind": "heartmula",
@@ -344,21 +496,89 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "log_mel_cosine_min": 0.90,
         "cpp_session_options": ["heartmula.weight_type=f32"],
     },
-    "higgs_tts": {
-        "kind": "higgs_tts",
+    "controlfoley": {
+        "kind": "controlfoley",
         "modes": ["offline"],
-        "cpp_bin": "build/debug/bin/higgs_tts_warm_bench",
-        "python_script": "tests/higgs_tts/higgs_tts_python_warm_bench.py",
+        "cpp_bin": "build/debug/bin/controlfoley_warm_bench",
+        "python_script": "tests/controlfoley/controlfoley_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "/media/leo/Share/models/audio.cpp-gguf/ControlFoley-GGUF/controlfoley-large-44k-f32.gguf",
+        "python_model": "models/ControlFoley",
+        "case_catalog": "tests/controlfoley/controlfoley_warm_bench_cases.json",
+        "default_case_name": "official_examples",
+        "default_requests_per_session": 5,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.80,
+        "log_mel_cosine_min": 0.90,
+        "similarity_vote_required": 1,
+    },
+    "confucius4_tts": {
+        "kind": "confucius4_tts",
+        "display_name": "Confucius4-TTS",
+        "modes": ["offline", "streaming"],
+        "cpp_bin": "build/debug/bin/confucius4_tts_warm_bench",
+        "python_script": "tests/confucius4_tts/confucius4_tts_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/Confucius4-TTS/audio_cpp/manifest.json",
+        "python_model": "models/Confucius4-TTS",
+        "case_catalog": "tests/confucius4_tts/confucius4_tts_warm_bench_cases.json",
+        "default_case_name": "multi_request_logic_paths",
+        "default_requests_per_session": 3,
+        "default_warmup": 0,
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.98,
+        "length_ratio_min": 0.98,
+    },
+    "higgs_audio_tts": {
+        "kind": "higgs_audio_tts",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/higgs_audio_tts_warm_bench",
+        "python_script": "tests/higgs_audio_tts/higgs_audio_tts_python_warm_bench.py",
         "python_conda_env": "qwen3-tts",
         "model": "models/higgs-audio-v3-tts-4b",
-        "case_catalog": "tests/higgs_tts/higgs_tts_warm_bench_cases.json",
+        "case_catalog": "tests/higgs_audio_tts/higgs_audio_tts_warm_bench_cases.json",
         "default_case_name": "default",
         "default_requests_per_session": 1,
         "default_warmup": 0,
         "wav_cosine_min": 0.90,
         "log_mel_cosine_min": 0.90,
         "length_ratio_min": 0.98,
-        "cpp_session_options": ["higgs_tts.codec_weight_type=f32"],
+        "cpp_session_options": ["higgs_audio_tts.codec_weight_type=f32"],
+    },
+    "index_tts2": {
+        "kind": "index_tts2",
+        "display_name": "IndexTTS2",
+        "modes": ["offline"],
+        "cpp_bin": "build/debug/bin/index_tts2_warm_bench",
+        "python_script": "tests/index_tts2/index_tts2_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "models/IndexTTS-2",
+        "case_catalog": "tests/index_tts2/index_tts2_warm_bench_cases.json",
+        "default_case_name": "voice_clone",
+        "default_requests_per_session": 1,
+        "default_warmup": 0,
+        "cpp_session_options": ["index_tts2.weight_type=f32", "index_tts2.conv_weight_type=f32"],
+        "wav_cosine_min": 0.98,
+        "log_mel_cosine_min": 0.98,
+        "similarity_vote_required": 1,
+    },
+    "personaplex": {
+        "kind": "personaplex",
+        "display_name": "PersonaPlex",
+        "modes": ["offline", "streaming"],
+        "cpp_bin": "build/debug/bin/audiocpp_cli",
+        "python_script": "tests/personaplex/personaplex_python_warm_bench.py",
+        "python_conda_env": "qwen3-tts",
+        "model": "/media/leo/Share/models/audio.cpp-gguf/PersonaPlex-GGUF/personaplex-7b-v1-q4_k.gguf",
+        "python_model": "models/PersonaPlex",
+        "case_catalog": "tests/personaplex/personaplex_warm_bench_cases.json",
+        "default_case_name": "all_paths",
+        "default_streaming_case_name": "streaming_service_quality",
+        "default_requests_per_session": 5,
+        "default_warmup": 1,
+        "wav_cosine_min": 0.0,
+        "log_mel_cosine_min": 0.90,
+        "length_ratio_min": 0.98,
     },
     "parakeet": {
         "kind": "asr",
@@ -450,6 +670,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-text", default="", help="TTS warmup text passed to both Python and C++ warm benches.")
     parser.add_argument("--clone-audio", default="", help="Reference audio used for voice clone parity.")
     parser.add_argument("--model", default="", help="Override the model path for the selected family.")
+    parser.add_argument("--python-model", default="", help="Override the Python reference model path for the selected family.")
     parser.add_argument(
         "--voice-design-instruct",
         action="append",
@@ -652,6 +873,69 @@ def resolve_tts_texts(
     if args.case_names and args.texts:
         raise RuntimeError("--case-name and --text are mutually exclusive for TTS benchmarks")
 
+    if family == "moss_tts_local" and not args.texts:
+        if len(args.case_names) > 1:
+            raise RuntimeError("MOSS-TTS-Local warmbench accepts at most one --case-name")
+        case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", "long_lived_session"))
+        catalog_path = REPO_ROOT / str(config["case_catalog"])
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        case = catalog.get(case_name)
+        if not isinstance(case, dict):
+            available = ", ".join(sorted(catalog))
+            raise RuntimeError(f"unknown MOSS-TTS-Local case name {case_name!r}; available: {available}")
+        requests = case.get("requests")
+        if not isinstance(requests, list) or not requests:
+            raise RuntimeError(f"MOSS-TTS-Local case {case_name!r} has no requests")
+        if len(requests) < args.requests_per_session:
+            raise RuntimeError(
+                f"MOSS-TTS-Local case {case_name!r} needs at least {args.requests_per_session} requests, only has {len(requests)}"
+            )
+        selected = [dict(request) for request in requests[: args.requests_per_session]]
+        if getattr(args, "seed_was_explicit", False):
+            for request in selected:
+                request["seed"] = args.seed
+        texts = [str(request.get("text", "")) for request in selected]
+        if any(not text for text in texts):
+            raise RuntimeError(f"MOSS-TTS-Local case {case_name!r} contains an empty text")
+        warmup_text = args.warmup_text or str(case.get("warmup_text", ""))
+        return texts, {
+            "texts": texts,
+            "warmup_text": warmup_text,
+            "case_names": [case_name],
+            "requests": selected,
+        }
+
+    if family == "moss_tts_nano" and not args.texts:
+        if len(args.case_names) > 1:
+            raise RuntimeError("MOSS-TTS-Nano warmbench accepts at most one --case-name")
+        case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", "default"))
+        catalog_path = REPO_ROOT / str(config["case_catalog"])
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        case = catalog.get(case_name)
+        if not isinstance(case, dict):
+            available = ", ".join(sorted(catalog))
+            raise RuntimeError(f"unknown MOSS-TTS-Nano case name {case_name!r}; available: {available}")
+        texts = case.get("texts")
+        if not isinstance(texts, list) or not texts:
+            raise RuntimeError(f"MOSS-TTS-Nano case {case_name!r} has no texts")
+        if len(texts) < args.requests_per_session:
+            raise RuntimeError(
+                f"MOSS-TTS-Nano case {case_name!r} needs at least {args.requests_per_session} texts, only has {len(texts)}"
+            )
+        selected = [str(text) for text in texts[: args.requests_per_session]]
+        if any(not text for text in selected):
+            raise RuntimeError(f"MOSS-TTS-Nano case {case_name!r} contains an empty text")
+        request_manifest: dict[str, Any] = {
+            "texts": selected,
+            "case_names": [case_name],
+        }
+        if "warmup_text" in case and not args.warmup_text:
+            request_manifest["warmup_text"] = str(case["warmup_text"])
+        options = case.get("options")
+        if isinstance(options, dict):
+            request_manifest["options"] = dict(options)
+        return selected, request_manifest
+
     case_catalog_path = REPO_ROOT / config["case_catalog"]
     used_case_names: list[str] = []
     if args.case_names:
@@ -747,6 +1031,76 @@ def resolve_vevo2_case(config: dict[str, Any], args: argparse.Namespace) -> tupl
     return selected, {"case_name": case_name, "requests": selected}
 
 
+def resolve_neutts_case(config: dict[str, Any], args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    if len(args.case_names) > 1:
+        raise RuntimeError("NeuTTS warmbench accepts at most one --case-name")
+    if args.texts:
+        raise RuntimeError("NeuTTS warmbench uses JSON case requests; --text is not supported")
+    case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", ""))
+    catalog_path = REPO_ROOT / str(config["case_catalog"])
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    cases = catalog.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise RuntimeError(f"NeuTTS case catalog has no cases: {catalog_path}")
+    case = next((item for item in cases if item.get("id") == case_name), None)
+    if not isinstance(case, dict):
+        available = ", ".join(sorted(str(item.get("id", "")) for item in cases if isinstance(item, dict)))
+        raise RuntimeError(f"unknown NeuTTS case name {case_name!r}; available: {available}")
+    warmup = case.get("warmup")
+    requests = case.get("requests")
+    if not isinstance(warmup, dict):
+        raise RuntimeError(f"NeuTTS case {case_name!r} is missing warmup request")
+    if not isinstance(requests, list) or not requests:
+        raise RuntimeError(f"NeuTTS case {case_name!r} has no requests")
+    if len(requests) < args.requests_per_session:
+        raise RuntimeError(
+            f"NeuTTS case {case_name!r} needs at least {args.requests_per_session} requests, only has {len(requests)}"
+        )
+    selected = [dict(request) for request in requests[: args.requests_per_session]]
+    if getattr(args, "seed_was_explicit", False):
+        for request in selected:
+            request["seed"] = args.seed
+    return dict(warmup), selected, {"case_name": case_name, "warmup": warmup, "requests": selected}
+
+
+def resolve_personaplex_case(
+    config: dict[str, Any],
+    args: argparse.Namespace,
+    mode: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if len(args.case_names) > 1:
+        raise RuntimeError("PersonaPlex warmbench accepts at most one --case-name")
+    if args.texts:
+        raise RuntimeError("PersonaPlex warmbench uses JSON case requests; --text is not supported")
+    if args.case_names:
+        case_name = args.case_names[0]
+    elif mode == "streaming":
+        case_name = str(config.get("default_streaming_case_name", config.get("default_case_name", "session_core_paths")))
+    else:
+        case_name = str(config.get("default_case_name", "session_core_paths"))
+    catalog_path = REPO_ROOT / str(config["case_catalog"])
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    case = catalog.get(case_name)
+    if not isinstance(case, dict):
+        available = ", ".join(sorted(catalog))
+        raise RuntimeError(f"unknown PersonaPlex case name {case_name!r}; available: {available}")
+    requests = case.get("requests")
+    if not isinstance(requests, list) or not requests:
+        raise RuntimeError(f"PersonaPlex case {case_name!r} has no requests")
+    request_count = args.requests_per_session
+    if not args.requests_per_session_was_explicit and bool(case.get("use_all_requests_by_default", False)):
+        request_count = len(requests)
+    if len(requests) < request_count:
+        raise RuntimeError(
+            f"PersonaPlex case {case_name!r} needs at least {request_count} requests, only has {len(requests)}"
+        )
+    selected = [dict(request) for request in requests[:request_count]]
+    if getattr(args, "seed_was_explicit", False):
+        for request in selected:
+            request["seed"] = args.seed
+    return selected, {"case_name": case_name, "requests": selected}
+
+
 def resolve_miocodec_case(config: dict[str, Any], args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     if len(args.case_names) > 1:
         raise RuntimeError("MioCodec warmbench accepts at most one --case-name")
@@ -795,11 +1149,19 @@ def resolve_voxcpm2_case(config: dict[str, Any], args: argparse.Namespace) -> tu
         raise RuntimeError(
             f"VoxCPM2 case {case_name!r} needs at least {args.requests_per_session} requests, only has {len(requests)}"
         )
-    selected = [dict(request) for request in requests[: args.requests_per_session]]
+    capped_warmup = dict(warmup)
+    if "max_len" in capped_warmup:
+        capped_warmup["max_len"] = min(int(capped_warmup["max_len"]), VOXCPM2_MAX_LEN_CAP)
+    selected = []
+    for request in requests[: args.requests_per_session]:
+        capped_request = dict(request)
+        if "max_len" in capped_request:
+            capped_request["max_len"] = min(int(capped_request["max_len"]), VOXCPM2_MAX_LEN_CAP)
+        selected.append(capped_request)
     if getattr(args, "seed_was_explicit", False):
         for request in selected:
             request["seed"] = args.seed
-    return dict(warmup), selected, {"case_name": case_name, "warmup": warmup, "requests": selected}
+    return capped_warmup, selected, {"case_name": case_name, "warmup": capped_warmup, "requests": selected}
 
 
 def omnivoice_instruct_values(
@@ -899,6 +1261,57 @@ def parse_summary_lines(text: str) -> dict[str, Any]:
         "metrics": metrics,
         "request_metrics": average_metrics,
     }
+
+
+def wav_summary(path: Path) -> dict[str, Any]:
+    with wave.open(str(path), "rb") as wav_file:
+        sample_rate = wav_file.getframerate()
+        channels = wav_file.getnchannels()
+        frames = wav_file.getnframes()
+    return {
+        "sample_rate": sample_rate,
+        "channels": channels,
+        "frames": frames,
+        "samples": frames * channels,
+    }
+
+
+def parse_personaplex_cli_summary(stdout: str, manifest_path: Path, backend: str) -> dict[str, Any]:
+    wall_ms_by_id: dict[str, float] = {}
+    for line in stdout.splitlines():
+        if not line.startswith("[TIMING] request.") or ".wall_ms " not in line:
+            continue
+        name_part, value_part = line.split(".wall_ms ", 1)
+        request_id = name_part[len("[TIMING] request."):]
+        wall_ms_by_id[request_id] = float(value_part)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    steps: list[dict[str, Any]] = []
+    for item in manifest.get("requests", []):
+        request_id = str(item.get("id", ""))
+        audio_path = manifest_path.parent / "cpp_audio" / f"{request_id}.wav"
+        summary = wav_summary(audio_path) if audio_path.exists() else {}
+        duration_ms = 0.0
+        if summary:
+            duration_ms = 1000.0 * float(summary["frames"]) / float(summary["sample_rate"])
+        wall_ms = wall_ms_by_id.get(request_id, 0.0)
+        metrics = {"wall_ms": wall_ms}
+        if duration_ms > 0.0:
+            rtf = wall_ms / duration_ms
+            metrics.update({
+                "audio_duration_ms": duration_ms,
+                "rtf": rtf,
+                "x_realtime": 1.0 / rtf if rtf > 0.0 else 0.0,
+            })
+        steps.append({
+            "id": request_id,
+            "stems": [{
+                "name": "audio",
+                "audio": str(audio_path),
+                "summary": summary,
+            }],
+            "metrics": metrics,
+        })
+    return {"family": "personaplex", "backend": backend, "sequence_steps": steps}
 
 
 def normalize_text(text: str) -> str:
@@ -1151,6 +1564,57 @@ def load_qwen3_forced_aligner_cases(path: Path, count: int) -> tuple[dict[str, A
         raise RuntimeError(f"need {count} Qwen3 forced aligner requests, only found {len(requests)}")
     warmup = payload.get("warmup") or requests[0]
     return warmup, requests[:count]
+
+
+def load_catalog_asr_cases(
+    path: Path,
+    count: int,
+    family_label: str,
+    case_name: str = "",
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"invalid {family_label} case catalog: {path}")
+    selected_case_name = case_name
+    case_payload: dict[str, Any]
+    if selected_case_name:
+        cases = payload.get("cases")
+        if isinstance(cases, dict) and selected_case_name in cases:
+            selected = cases[selected_case_name]
+        else:
+            selected = payload.get(selected_case_name)
+        if not isinstance(selected, dict):
+            available = []
+            if isinstance(cases, dict):
+                available.extend(str(key) for key in cases.keys())
+            available.extend(str(key) for key, value in payload.items() if isinstance(value, dict) and key != "cases")
+            raise RuntimeError(
+                f"unknown {family_label} case name {selected_case_name!r} in {path}; available: {', '.join(sorted(set(available)))}"
+            )
+        case_payload = selected
+    elif isinstance(payload.get("requests"), list):
+        case_payload = payload
+    else:
+        available = [str(key) for key, value in payload.items() if isinstance(value, dict)]
+        raise RuntimeError(f"{family_label} case catalog requires --case-name; available: {', '.join(sorted(available))}")
+    requests = case_payload.get("requests", [])
+    if not isinstance(requests, list) or not requests:
+        raise RuntimeError(f"{family_label} case {selected_case_name or '<default>'!r} has no requests")
+    if len(requests) < count:
+        raise RuntimeError(f"need {count} {family_label} requests, only found {len(requests)}")
+    warmup = (
+        case_payload.get("warmup")
+        or case_payload.get("offline_warmup")
+        or case_payload.get("streaming_warmup")
+        or requests[0]
+    )
+    if not isinstance(warmup, dict):
+        raise RuntimeError(f"{family_label} case {selected_case_name or '<default>'!r} has invalid warmup")
+    return dict(warmup), [dict(item) for item in requests[:count]], {
+        "case_name": selected_case_name,
+        "warmup": warmup,
+        "requests": requests[:count],
+    }
 
 
 def load_separation_cases(path: Path, case_name: str, count: int, family_label: str) -> tuple[Path, list[Path]]:
@@ -1452,6 +1916,103 @@ def compare_moss_tts(
     }
 
 
+def compare_qwen3_tts_audio(
+    cpp_summary: dict[str, Any],
+    py_summary: dict[str, Any],
+    cpp_audio_path: Path,
+    py_audio_path: Path,
+    waveform_cosine_min: float,
+    log_mel_cosine_min: float,
+    length_ratio_min: float,
+) -> dict[str, Any]:
+    import librosa
+    import numpy as np
+    import soundfile as sf
+
+    mismatches: list[str] = []
+    if cpp_summary.get("sample_rate") != py_summary.get("sample_rate"):
+        mismatches.append("sample_rate")
+    if cpp_summary.get("channels") != py_summary.get("channels"):
+        mismatches.append("channels")
+
+    cpp_audio, cpp_sr = sf.read(str(cpp_audio_path), always_2d=True)
+    py_audio, py_sr = sf.read(str(py_audio_path), always_2d=True)
+    if int(cpp_sr) != int(py_sr):
+        mismatches.append("sample_rate")
+
+    cpp_audio = np.asarray(cpp_audio, dtype=np.float32)
+    py_audio = np.asarray(py_audio, dtype=np.float32)
+    cpp_flat = cpp_audio.reshape(-1).astype(np.float64, copy=False)
+    py_flat = py_audio.reshape(-1).astype(np.float64, copy=False)
+    common_samples = min(cpp_flat.size, py_flat.size)
+    if common_samples <= 0:
+        return {
+            "ok": False,
+            "reason": "mismatch:empty_audio",
+            "mismatches": ["empty_audio"],
+            "metrics": {
+                "wav_cosine_min": waveform_cosine_min,
+                "log_mel_cosine_min": log_mel_cosine_min,
+                "length_ratio_min": length_ratio_min,
+            },
+        }
+
+    length_ratio = common_samples / float(max(cpp_flat.size, py_flat.size))
+    if cpp_flat.size != py_flat.size:
+        mismatches.append("samples")
+    if length_ratio < length_ratio_min:
+        mismatches.append("length_ratio")
+
+    cpp_common = cpp_flat[:common_samples]
+    py_common = py_flat[:common_samples]
+    diff = cpp_common - py_common
+    waveform_denom = float(np.linalg.norm(cpp_common) * np.linalg.norm(py_common))
+    waveform_cosine = 1.0 if waveform_denom == 0.0 else float(np.dot(cpp_common, py_common) / waveform_denom)
+    if waveform_cosine < waveform_cosine_min:
+        mismatches.append("cosine")
+
+    cpp_mono = cpp_audio.mean(axis=1)[:common_samples].astype(np.float32, copy=False)
+    py_mono = py_audio.mean(axis=1)[:common_samples].astype(np.float32, copy=False)
+    mel_kwargs = {"sr": int(cpp_sr), "n_fft": 1024, "hop_length": 256, "n_mels": 80, "power": 2.0}
+    cpp_log_mel = np.log(np.maximum(librosa.feature.melspectrogram(y=cpp_mono, **mel_kwargs), 1.0e-10))
+    py_log_mel = np.log(np.maximum(librosa.feature.melspectrogram(y=py_mono, **mel_kwargs), 1.0e-10))
+    common_mel_frames = min(cpp_log_mel.shape[1], py_log_mel.shape[1])
+    if common_mel_frames > 0:
+        cpp_mel_flat = cpp_log_mel[:, :common_mel_frames].reshape(-1).astype(np.float64, copy=False)
+        py_mel_flat = py_log_mel[:, :common_mel_frames].reshape(-1).astype(np.float64, copy=False)
+        log_mel_denom = float(np.linalg.norm(cpp_mel_flat) * np.linalg.norm(py_mel_flat))
+        log_mel_cosine = 1.0 if log_mel_denom == 0.0 else float(np.dot(cpp_mel_flat, py_mel_flat) / log_mel_denom)
+    else:
+        log_mel_cosine = 0.0
+    if log_mel_cosine < log_mel_cosine_min:
+        mismatches.append("log_mel_cosine")
+
+    metrics = {
+        "cpp_samples": int(cpp_flat.size),
+        "python_samples": int(py_flat.size),
+        "common_samples": int(common_samples),
+        "length_ratio": length_ratio,
+        "length_ratio_min": length_ratio_min,
+        "cosine": waveform_cosine,
+        "wav_cosine_min": waveform_cosine_min,
+        "mae": float(np.mean(np.abs(diff), dtype=np.float64)),
+        "rmse": float(np.sqrt(np.mean(np.square(diff), dtype=np.float64))),
+        "max_abs": float(np.max(np.abs(diff))),
+        "cpp_mel_frames": int(cpp_log_mel.shape[1]),
+        "python_mel_frames": int(py_log_mel.shape[1]),
+        "common_mel_frames": int(common_mel_frames),
+        "log_mel_cosine": log_mel_cosine,
+        "log_mel_cosine_min": log_mel_cosine_min,
+        "sample_rate": int(cpp_sr),
+    }
+    return {
+        "ok": not mismatches,
+        "reason": "ok" if not mismatches else f"mismatch:{mismatches[0]}",
+        "mismatches": mismatches,
+        "metrics": metrics,
+    }
+
+
 def summarize_tts_asr(whisper_output: dict[str, Any]) -> str:
     return f"text={json.dumps(whisper_output.get('text', ''), ensure_ascii=False)} words={len(whisper_output.get('words', []))} json={whisper_output.get('json_path', '')}"
 
@@ -1518,6 +2079,7 @@ def compare_qwen3_forced_aligner_step(
     cpp_step: dict[str, Any],
     py_step: dict[str, Any],
     expected_words: list[str],
+    sample_tolerance: int = 1,
 ) -> dict[str, Any]:
     mismatches: list[str] = []
     cpp_words = cpp_step.get("word_timestamps", [])
@@ -1529,10 +2091,10 @@ def compare_qwen3_forced_aligner_step(
             if normalize_alignment_word(str(cpp_word.get("word", ""))) != normalize_alignment_word(str(py_word.get("word", ""))):
                 mismatches.append(f"word[{index}]")
                 break
-            if abs(int(cpp_word.get("start_sample", 0)) - int(py_word.get("start_sample", 0))) > 1:
+            if abs(int(cpp_word.get("start_sample", 0)) - int(py_word.get("start_sample", 0))) > sample_tolerance:
                 mismatches.append(f"start_sample[{index}]")
                 break
-            if abs(int(cpp_word.get("end_sample", 0)) - int(py_word.get("end_sample", 0))) > 1:
+            if abs(int(cpp_word.get("end_sample", 0)) - int(py_word.get("end_sample", 0))) > sample_tolerance:
                 mismatches.append(f"end_sample[{index}]")
                 break
     normalized_cpp_words = {normalize_alignment_word(str(item.get("word", ""))) for item in cpp_words}
@@ -2002,6 +2564,8 @@ def build_tts_commands(
             "--timing-file",
             str(timing_cpp),
         ] + common_warmup_args + common_text_args
+        for option in config.get("cpp_session_options", []):
+            cpp_command.extend(["--session-option", option])
         for option in args.cpp_session_option:
             cpp_command.extend(["--session-option", option])
         return python_command, cpp_command
@@ -2328,18 +2892,122 @@ def build_tts_commands(
             cpp_command.extend(["--session-option", option])
         return python_command, cpp_command
 
-    if family == "moss_tts":
+    if family == "moss_tts_local":
+        clone_audio = args.clone_audio or config["clone_audio"]
+        max_new_frames = int(config.get("max_new_frames", 256))
+        do_sample = str(config.get("do_sample", "true"))
+        audio_temperature = float(config.get("audio_temperature", 1.0))
+        audio_top_p = float(config.get("audio_top_p", 0.95))
+        audio_top_k = int(config.get("audio_top_k", 50))
+        audio_repetition_penalty = float(config.get("audio_repetition_penalty", 1.0))
+        dtype = str(config.get("dtype", "bf16"))
+        use_kv_cache = str(config.get("use_kv_cache", "true"))
+        request_file_args: list[str] = []
+        request_file = config.get("moss_tts_local_request_file")
+        if request_file:
+            request_file_args = ["--request-file", str(request_file)]
+        python_command = [
+            PYTHON_EXE,
+            str(REPO_ROOT / config["python_script"]),
+            "--model",
+            model_path,
+            "--clone-audio",
+            clone_audio,
+            "--backend",
+            backend,
+            "--device",
+            str(args.device),
+            "--threads",
+            str(args.threads),
+            "--warmup",
+            str(args.warmup),
+            "--iterations",
+            str(args.iterations),
+            "--max-new-frames",
+            str(max_new_frames),
+            "--seed",
+            str(args.seed),
+            "--do-sample",
+            do_sample,
+            "--audio-temperature",
+            str(audio_temperature),
+            "--audio-top-p",
+            str(audio_top_p),
+            "--audio-top-k",
+            str(audio_top_k),
+            "--audio-repetition-penalty",
+            str(audio_repetition_penalty),
+            "--dtype",
+            dtype,
+            "--use-kv-cache",
+            use_kv_cache,
+            "--audio-out",
+            str(audio_py),
+            "--audio-out-dir",
+            str(audio_py_dir),
+            "--timing-file",
+            str(timing_py),
+        ] + common_warmup_args + request_file_args + ([] if request_file_args else common_text_args)
+        cpp_command = [
+            str(REPO_ROOT / config["cpp_bin"]),
+            "--model",
+            model_path,
+            "--clone-audio",
+            clone_audio,
+            "--backend",
+            backend,
+            "--device",
+            str(args.device),
+            "--threads",
+            str(args.threads),
+            "--warmup",
+            str(args.warmup),
+            "--iterations",
+            str(args.iterations),
+            "--max-new-frames",
+            str(max_new_frames),
+            "--seed",
+            str(args.seed),
+            "--do-sample",
+            do_sample,
+            "--audio-temperature",
+            str(audio_temperature),
+            "--audio-top-p",
+            str(audio_top_p),
+            "--audio-top-k",
+            str(audio_top_k),
+            "--audio-repetition-penalty",
+            str(audio_repetition_penalty),
+            "--audio-out",
+            str(audio_cpp),
+            "--audio-out-dir",
+            str(audio_cpp_dir),
+            "--timing-file",
+            str(timing_cpp),
+            "--log-file",
+            str(scenario_dir / "cpp.framework.log"),
+        ] + common_warmup_args + request_file_args + ([] if request_file_args else common_text_args)
+        for option in config.get("cpp_session_options", []):
+            cpp_command.extend(["--session-option", option])
+        for option in args.cpp_session_option:
+            cpp_command.extend(["--session-option", option])
+        return python_command, cpp_command
+
+    if family == "moss_tts_nano":
+        audio_tokenizer_model = Path(model_path) / "audio_tokenizer"
+        if not audio_tokenizer_model.exists():
+            audio_tokenizer_model = resolve_repo_path(str(config["audio_tokenizer_model"])) or Path(config["audio_tokenizer_model"])
         clone_audio = args.clone_audio or config["clone_audio"]
         max_new_frames = int(config.get("max_new_frames", 300))
         active_codebooks = int(config.get("active_codebooks", 16))
-        do_sample = str(config.get("do_sample", "false"))
+        do_sample = str(config.get("do_sample", "true"))
         text_temperature = float(config.get("text_temperature", 1.5))
         text_top_p = float(config.get("text_top_p", 1.0))
         text_top_k = int(config.get("text_top_k", 50))
-        audio_temperature = float(config.get("audio_temperature", 1.7))
-        audio_top_p = float(config.get("audio_top_p", 0.8))
-        audio_top_k = int(config.get("audio_top_k", 25))
-        audio_repetition_penalty = float(config.get("audio_repetition_penalty", 1.0))
+        audio_temperature = float(config.get("temperature", 1.7))
+        audio_top_p = float(config.get("top_p", 0.8))
+        audio_top_k = int(config.get("top_k", 25))
+        audio_repetition_penalty = float(config.get("repetition_penalty", 1.0))
         use_kv_cache = str(config.get("use_kv_cache", "true"))
         voice_clone_max_text_tokens = int(config.get("voice_clone_max_text_tokens", 50))
         voice_clone_max_memory_per_sample_gb = float(config.get("voice_clone_max_memory_per_sample_gb", 1.0))
@@ -2351,7 +3019,7 @@ def build_tts_commands(
             "--model",
             model_path,
             "--audio-tokenizer-model",
-            str(config["audio_tokenizer_model"]),
+            str(audio_tokenizer_model),
             "--clone-audio",
             clone_audio,
             "--backend",
@@ -2384,6 +3052,8 @@ def build_tts_commands(
             str(audio_top_k),
             "--audio-repetition-penalty",
             str(audio_repetition_penalty),
+            "--seed",
+            str(args.seed),
             "--use-kv-cache",
             use_kv_cache,
             "--voice-clone-max-text-tokens",
@@ -2432,10 +3102,11 @@ def build_tts_commands(
             "text_temperature": str(text_temperature),
             "text_top_p": str(text_top_p),
             "text_top_k": str(text_top_k),
-            "audio_temperature": str(audio_temperature),
-            "audio_top_p": str(audio_top_p),
-            "audio_top_k": str(audio_top_k),
-            "audio_repetition_penalty": str(audio_repetition_penalty),
+            "temperature": str(audio_temperature),
+            "top_p": str(audio_top_p),
+            "top_k": str(audio_top_k),
+            "repetition_penalty": str(audio_repetition_penalty),
+            "seed": str(args.seed),
         }
         for key, value in cpp_request_options.items():
             cpp_command.extend(["--request-option", f"{key}={value}"])
@@ -2673,6 +3344,10 @@ def build_vevo2_commands(
     return python_command, cpp_command
 
 
+# Per-family default transcript language for the shared alignment path
+# (qwen3_forced_aligner + mms_forced_aligner).
+FORCED_ALIGNER_LANGUAGES = {"qwen3_forced_aligner": "English", "mms_forced_aligner": "eng"}
+
 def build_audio_commands(
     family: str,
     config: dict[str, Any],
@@ -2738,11 +3413,12 @@ def build_audio_commands(
             cpp_command.extend(["--session-option", option])
         return python_command, cpp_command
 
-    if family == "qwen3_forced_aligner":
-        request_languages = getattr(args, "qwen3_forced_aligner_request_languages", [])
-        request_transcripts = getattr(args, "qwen3_forced_aligner_request_transcripts", [])
-        warmup_language = getattr(args, "qwen3_forced_aligner_warmup_language", "English")
-        warmup_transcript = getattr(args, "qwen3_forced_aligner_warmup_transcript", "")
+    if family in ("qwen3_forced_aligner", "mms_forced_aligner"):
+        default_language = FORCED_ALIGNER_LANGUAGES[family]
+        request_languages = getattr(args, f"{family}_request_languages", [])
+        request_transcripts = getattr(args, f"{family}_request_transcripts", [])
+        warmup_language = getattr(args, f"{family}_warmup_language", default_language)
+        warmup_transcript = getattr(args, f"{family}_warmup_transcript", "")
         common = [
             "--model",
             args.model or config["model"],
@@ -2763,7 +3439,7 @@ def build_audio_commands(
             "--iterations",
             str(args.iterations),
             "--language",
-            "English",
+            default_language,
             "--warmup-language",
             warmup_language,
             "--warmup-transcript",
@@ -3010,6 +3686,346 @@ def build_audio_commands(
     return python_command, cpp_command
 
 
+def catalog_case_audio(case: dict[str, Any], scenario_dir: Path, role: str, index: int) -> Path:
+    source = REPO_ROOT / str(case["audio"])
+    if "start_sec" not in case and "end_sec" not in case:
+        return source
+    return materialize_qwen3_asr_audio(case, scenario_dir / "catalog_audio", index, role)
+
+
+def csv_values(cases: list[dict[str, Any]], key: str, default: Any = "") -> str:
+    return ",".join(str(case.get(key, default)) for case in cases)
+
+
+def json_string_values(cases: list[dict[str, Any]], key: str, default: str = "") -> str:
+    return json.dumps([str(case.get(key, default)) for case in cases], separators=(",", ":"))
+
+
+def csv_bools(cases: list[dict[str, Any]], key: str, default: bool) -> str:
+    return ",".join("true" if bool(case.get(key, default)) else "false" for case in cases)
+
+
+def catalog_asr_model_path(config: dict[str, Any], args: argparse.Namespace) -> str:
+    return args.model or str(config["model"])
+
+
+def rounded_json_events(text: str) -> list[dict[str, Any]]:
+    events = json.loads(text)
+    if not isinstance(events, list):
+        raise RuntimeError("MuScriptor text_output is not a JSON event list")
+    rounded = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise RuntimeError("MuScriptor event is not an object")
+        rounded.append({
+            key: (round(value, 6) if isinstance(value, float) else value)
+            for key, value in event.items()
+        })
+    return rounded
+
+
+MUSCRIPTOR_TIME_TOLERANCE_SEC = 0.05
+
+
+def compare_muscriptor_step(cpp_step: dict[str, Any], py_step: dict[str, Any]) -> dict[str, Any]:
+    mismatches: list[str] = []
+    metrics: dict[str, Any] = {}
+    try:
+        cpp_events = rounded_json_events(str(cpp_step.get("text_output", "")))
+        py_events = rounded_json_events(str(py_step.get("text_output", "")))
+    except (json.JSONDecodeError, RuntimeError) as exc:
+        return {
+            "ok": False,
+            "reason": "mismatch:invalid_json",
+            "mismatches": ["invalid_json"],
+            "metrics": {"error": str(exc)},
+        }
+    metrics["cpp_events"] = len(cpp_events)
+    metrics["python_events"] = len(py_events)
+    max_time_abs_diff = 0.0
+    first_mismatch: tuple[int, dict[str, Any], dict[str, Any]] | None = None
+    if len(cpp_events) == len(py_events):
+        for index, (cpp_event, py_event) in enumerate(zip(cpp_events, py_events)):
+            if cpp_event == py_event:
+                continue
+            same_event = True
+            for key in set(cpp_event) | set(py_event):
+                if key in {"start_time", "end_time"}:
+                    continue
+                if cpp_event.get(key) != py_event.get(key):
+                    same_event = False
+                    break
+            for key in {"start_time", "end_time"}:
+                if key not in cpp_event and key not in py_event:
+                    continue
+                if key not in cpp_event or key not in py_event:
+                    same_event = False
+                    break
+                diff = abs(float(cpp_event[key]) - float(py_event[key]))
+                max_time_abs_diff = max(max_time_abs_diff, diff)
+                if diff > MUSCRIPTOR_TIME_TOLERANCE_SEC + 1e-7:
+                    same_event = False
+                    break
+            if not same_event:
+                first_mismatch = (index, cpp_event, py_event)
+                break
+    if max_time_abs_diff > 0.0:
+        metrics["max_time_abs_diff"] = max_time_abs_diff
+    if len(cpp_events) != len(py_events) or first_mismatch is not None:
+        mismatches.append("events")
+        if first_mismatch is not None:
+            metrics["first_mismatch_index"] = first_mismatch[0]
+            metrics["cpp_first_mismatch"] = first_mismatch[1]
+            metrics["python_first_mismatch"] = first_mismatch[2]
+        if len(cpp_events) != len(py_events):
+            metrics["event_count_mismatch"] = True
+    return {
+        "ok": not mismatches,
+        "reason": "ok" if not mismatches else f"mismatch:{mismatches[0]}",
+        "mismatches": mismatches,
+        "metrics": metrics,
+    }
+
+
+def build_catalog_asr_commands(
+    family: str,
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    warmup_case: dict[str, Any],
+    request_cases: list[dict[str, Any]],
+) -> tuple[list[str], list[str], dict[str, Any]]:
+    warmup_audio = catalog_case_audio(warmup_case, scenario_dir, "warmup", 0)
+    audio_requests = [
+        catalog_case_audio(case, scenario_dir, "request", index)
+        for index, case in enumerate(request_cases)
+    ]
+    model_path = catalog_asr_model_path(config, args)
+    python_model_path = args.python_model or str(config.get("python_model", model_path))
+    common = [
+        "--model",
+        model_path,
+        "--audio",
+        str(audio_requests[0]),
+        "--warmup-audio",
+        str(warmup_audio),
+        "--audio-sequence",
+        ",".join(str(path) for path in audio_requests),
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(args.warmup),
+        "--iterations",
+        str(args.iterations),
+    ]
+    python_extra: list[str] = []
+    model_parent = Path(model_path).parent
+    if family == "higgs_audio_stt":
+        common.extend([
+            "--prompt",
+            str(warmup_case.get("prompt", "")),
+            "--prompt-sequence",
+            csv_values(request_cases, "prompt", warmup_case.get("prompt", "")),
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 1024)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 1024)),
+            "--enable-thinking",
+            "true" if bool(warmup_case.get("enable_thinking", True)) else "false",
+            "--enable-thinking-sequence",
+            csv_bools(request_cases, "enable_thinking", bool(warmup_case.get("enable_thinking", True))),
+        ])
+        python_extra.extend(["--whisper-processor", str(model_parent / "whisper-large-v3")])
+    elif family == "hviske_asr":
+        common.extend([
+            "--language",
+            str(request_cases[0].get("language", warmup_case.get("language", "da"))),
+            "--warmup-language",
+            str(warmup_case.get("language", request_cases[0].get("language", "da"))),
+            "--language-sequence",
+            csv_values(request_cases, "language", "da"),
+            "--punctuation",
+            "true" if bool(warmup_case.get("punctuation", True)) else "false",
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 256)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 256)),
+            "--num-beams",
+            str(warmup_case.get("num_beams", 1)),
+            "--num-beams-sequence",
+            csv_values(request_cases, "num_beams", warmup_case.get("num_beams", 1)),
+            "--length-penalty",
+            str(warmup_case.get("length_penalty", 1.0)),
+            "--length-penalty-sequence",
+            csv_values(request_cases, "length_penalty", warmup_case.get("length_penalty", 1.0)),
+            "--do-sample",
+            "true" if bool(warmup_case.get("do_sample", False)) else "false",
+            "--do-sample-sequence",
+            csv_bools(request_cases, "do_sample", bool(warmup_case.get("do_sample", False))),
+            "--temperature",
+            str(warmup_case.get("temperature", 1.0)),
+            "--temperature-sequence",
+            csv_values(request_cases, "temperature", warmup_case.get("temperature", 1.0)),
+            "--top-k",
+            str(warmup_case.get("top_k", 50)),
+            "--top-k-sequence",
+            csv_values(request_cases, "top_k", warmup_case.get("top_k", 50)),
+            "--top-p",
+            str(warmup_case.get("top_p", 1.0)),
+            "--top-p-sequence",
+            csv_values(request_cases, "top_p", warmup_case.get("top_p", 1.0)),
+            "--seed",
+            str(warmup_case.get("seed", args.seed)),
+            "--seed-sequence",
+            csv_values(request_cases, "seed", args.seed),
+        ])
+    elif family == "nemotron_asr":
+        common.extend([
+            "--language",
+            str(request_cases[0].get("language", warmup_case.get("language", "en-US"))),
+            "--warmup-language",
+            str(warmup_case.get("language", request_cases[0].get("language", "en-US"))),
+            "--language-sequence",
+            csv_values(request_cases, "language", "en-US"),
+            "--lookahead-tokens",
+            str(warmup_case.get("lookahead_tokens", 3)),
+            "--lookahead-tokens-sequence",
+            csv_values(request_cases, "lookahead_tokens", warmup_case.get("lookahead_tokens", 3)),
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 256)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 256)),
+            "--streaming",
+            "true" if bool(warmup_case.get("streaming", False)) else "false",
+            "--streaming-sequence",
+            csv_bools(request_cases, "streaming", bool(warmup_case.get("streaming", False))),
+            "--keep-language-tags",
+            "true" if bool(warmup_case.get("keep_language_tags", False)) else "false",
+            "--keep-language-tags-sequence",
+            csv_bools(request_cases, "keep_language_tags", bool(warmup_case.get("keep_language_tags", False))),
+        ])
+    elif family == "muscriptor":
+        common.extend([
+            "--instruments",
+            str(warmup_case.get("instruments", "")),
+            "--instruments-sequence",
+            json_string_values(request_cases, "instruments", str(warmup_case.get("instruments", ""))),
+            "--use-sampling",
+            "true" if bool(warmup_case.get("use_sampling", False)) else "false",
+            "--use-sampling-sequence",
+            csv_bools(request_cases, "use_sampling", bool(warmup_case.get("use_sampling", False))),
+            "--temperature",
+            str(warmup_case.get("temperature", 1.0)),
+            "--temperature-sequence",
+            csv_values(request_cases, "temperature", warmup_case.get("temperature", 1.0)),
+            "--cfg-coef",
+            str(warmup_case.get("cfg_coef", 1.0)),
+            "--cfg-coef-sequence",
+            csv_values(request_cases, "cfg_coef", warmup_case.get("cfg_coef", 1.0)),
+            "--batch-size",
+            str(warmup_case.get("batch_size", 0)),
+            "--batch-size-sequence",
+            csv_values(request_cases, "batch_size", warmup_case.get("batch_size", 0)),
+            "--beam-size",
+            str(warmup_case.get("beam_size", 1)),
+            "--beam-size-sequence",
+            csv_values(request_cases, "beam_size", warmup_case.get("beam_size", 1)),
+            "--prelude-forcing",
+            "true" if bool(warmup_case.get("prelude_forcing", True)) else "false",
+            "--prelude-forcing-sequence",
+            csv_bools(request_cases, "prelude_forcing", bool(warmup_case.get("prelude_forcing", True))),
+            "--seed",
+            str(warmup_case.get("seed", args.seed)),
+            "--seed-sequence",
+            csv_values(request_cases, "seed", args.seed),
+        ])
+    elif family == "voxtral_realtime":
+        common.extend([
+            "--streaming",
+            "true" if bool(warmup_case.get("streaming", False)) else "false",
+            "--do-sample",
+            "true" if bool(warmup_case.get("do_sample", False)) else "false",
+            "--do-sample-sequence",
+            csv_bools(request_cases, "do_sample", bool(warmup_case.get("do_sample", False))),
+            "--temperature",
+            str(warmup_case.get("temperature", 1.0)),
+            "--temperature-sequence",
+            csv_values(request_cases, "temperature", warmup_case.get("temperature", 1.0)),
+            "--top-p",
+            str(warmup_case.get("top_p", 1.0)),
+            "--top-p-sequence",
+            csv_values(request_cases, "top_p", warmup_case.get("top_p", 1.0)),
+            "--top-k",
+            str(warmup_case.get("top_k", 50)),
+            "--top-k-sequence",
+            csv_values(request_cases, "top_k", warmup_case.get("top_k", 50)),
+            "--seed",
+            str(warmup_case.get("seed", args.seed)),
+            "--seed-sequence",
+            csv_values(request_cases, "seed", args.seed),
+        ])
+    elif family == "vibevoice_asr":
+        common.extend([
+            "--context",
+            str(warmup_case.get("context", "")),
+            "--context-sequence",
+            csv_values(request_cases, "context", warmup_case.get("context", "")),
+            "--max-tokens",
+            str(warmup_case.get("max_tokens", 32768)),
+            "--max-tokens-sequence",
+            csv_values(request_cases, "max_tokens", warmup_case.get("max_tokens", 32768)),
+            "--temperature",
+            str(warmup_case.get("temperature", 0.0)),
+            "--temperature-sequence",
+            csv_values(request_cases, "temperature", warmup_case.get("temperature", 0.0)),
+            "--top-p",
+            str(warmup_case.get("top_p", 1.0)),
+            "--top-p-sequence",
+            csv_values(request_cases, "top_p", warmup_case.get("top_p", 1.0)),
+            "--top-k",
+            str(warmup_case.get("top_k", 50)),
+            "--top-k-sequence",
+            csv_values(request_cases, "top_k", warmup_case.get("top_k", 50)),
+            "--num-beams",
+            str(warmup_case.get("num_beams", 1)),
+            "--num-beams-sequence",
+            csv_values(request_cases, "num_beams", warmup_case.get("num_beams", 1)),
+            "--seed",
+            str(warmup_case.get("seed", args.seed)),
+            "--seed-sequence",
+            csv_values(request_cases, "seed", args.seed),
+        ])
+        python_extra.extend(["--tokenizer", model_path])
+    else:
+        raise RuntimeError(f"catalog ASR warmbench is not wired for family {family}")
+
+    python_command = [
+        PYTHON_EXE,
+        str(REPO_ROOT / config["python_script"]),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+    ] + python_extra + ["--model", python_model_path] + common[2:]
+    cpp_command = [
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+    ] + common
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    request_manifest = {
+        "warmup_audio": str(warmup_audio),
+        "audio_sequence": [str(path) for path in audio_requests],
+        "warmup": warmup_case,
+        "requests": request_cases,
+    }
+    return python_command, cpp_command, request_manifest
+
+
 def build_miocodec_commands(
     config: dict[str, Any],
     backend: str,
@@ -3224,6 +4240,236 @@ def build_vibevoice_commands(
     return python_command, cpp_command
 
 
+def build_irodori_tts_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("Irodori-TTS warmbench is CUDA-only")
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+        "--model-precision",
+        "fp32",
+        "--codec-precision",
+        "fp32",
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_supertonic_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_index_tts2_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(args.warmup),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--audio-out-dir",
+        str(scenario_dir / "python_audio"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(args.warmup),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
 def build_heartmula_commands(
     config: dict[str, Any],
     backend: str,
@@ -3301,7 +4547,558 @@ def build_heartmula_commands(
     return python_command, cpp_command
 
 
-def build_higgs_tts_commands(
+def build_controlfoley_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("ControlFoley warmbench is CUDA-only")
+    cpp_requests: list[dict[str, Any]] = []
+    for request in requests:
+        cpp_request = dict(request)
+        cpp_video = cpp_request.pop("cpp_video", None)
+        if cpp_video:
+            cpp_request["video"] = cpp_video
+        cpp_requests.append(cpp_request)
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    cpp_request_sequence_json = json.dumps(cpp_requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        cpp_request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_neutts_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    warmup_request: dict[str, Any],
+    requests: list[dict[str, Any]],
+    case_name: str,
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("NeuTTS warmbench is CUDA-only")
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    warmup_request_json = json.dumps(warmup_request, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    selected_cases_path = scenario_dir / "neutts_selected_cases.json"
+    selected_cases_path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "id": case_name,
+                        "family": "neutts",
+                        "task": "tts",
+                        "mode": "offline",
+                        "warmup": warmup_request,
+                        "requests": requests,
+                    }
+                ]
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--backbone",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        "cuda",
+        "--codec-device",
+        "cuda",
+        "--cases",
+        str(selected_cases_path),
+        "--only",
+        case_name,
+        "--out-root",
+        str(scenario_dir / "python_audio"),
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--warmup-request-json",
+        warmup_request_json,
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_confucius4_tts_commands(
+    config: dict[str, Any],
+    backend: str,
+    mode: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("Confucius4-TTS warmbench is CUDA-only")
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_model_root = Path(python_model_path)
+    model_parent = python_model_root.parent if python_model_root.is_absolute() else Path()
+    w2v_bert_path = config.get("w2v_bert_model", "models/facebook-w2v-bert-2.0")
+    bigvgan_path = config.get("bigvgan_model", "models/bigvgan_v2_22khz_80band_256x")
+    campplus_path = config.get("campplus_model", "models/funasr-campplus/campplus_cn_common.bin")
+    if python_model_root.is_absolute():
+        sibling_w2v = model_parent / "facebook-w2v-bert-2.0"
+        sibling_bigvgan = model_parent / "bigvgan_v2_22khz_80band_256x"
+        sibling_campplus = model_parent / "funasr-campplus" / "campplus_cn_common.bin"
+        if sibling_w2v.exists():
+            w2v_bert_path = str(sibling_w2v)
+        if sibling_bigvgan.exists():
+            bigvgan_path = str(sibling_bigvgan)
+        if sibling_campplus.exists():
+            campplus_path = str(sibling_campplus)
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--w2v-bert",
+        str(w2v_bert_path),
+        "--bigvgan",
+        str(bigvgan_path),
+        "--campplus",
+        str(campplus_path),
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "env",
+        "NVIDIA_TF32_OVERRIDE=0",
+        "GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F=1",
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+        "--run-mode",
+        mode,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_dramabox_commands(
+    config: dict[str, Any],
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    request_sequence_json = json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
+    model_path = args.model or config["model"]
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    gemma_model_path = config.get("gemma_model", "models/gemma-3-12b-it-bnb-4bit")
+    model_root = Path(python_model_path)
+    if model_root.is_absolute():
+        sibling_gemma = model_root.parent / "gemma-3-12b-it-bnb-4bit"
+        if sibling_gemma.exists():
+            gemma_model_path = str(sibling_gemma)
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--gemma-root",
+        str(gemma_model_path),
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "python_audio"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--model",
+        model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "cpp.timing.log"),
+        "--output-dir",
+        str(scenario_dir / "cpp_audio"),
+        "--request-sequence-json",
+        request_sequence_json,
+    ]
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def personaplex_python_request(request: dict[str, Any]) -> dict[str, Any]:
+    out = {
+        "id": request.get("id", ""),
+        "input_wav": request.get("input_wav", request.get("audio", "")),
+        "text_prompt": request.get("text_prompt", request.get("text", "")),
+        "voice_prompt": request.get("voice_prompt", ""),
+        "seed": request.get("seed", 42424242),
+        "temp_audio": request.get("temp_audio", request.get("temperature", 0.8)),
+        "temp_text": request.get("temp_text", request.get("text_temperature", 0.7)),
+        "topk_audio": request.get("topk_audio", request.get("top_k", 250)),
+        "topk_text": request.get("topk_text", request.get("text_top_k", 25)),
+        "greedy": bool(request.get("greedy", False)),
+    }
+    options = request.get("options", {})
+    if isinstance(options, dict):
+        if "temperature" in options:
+            out["temp_audio"] = options["temperature"]
+        if "text_temperature" in options:
+            out["temp_text"] = options["text_temperature"]
+        if "top_k" in options:
+            out["topk_audio"] = options["top_k"]
+        if "text_top_k" in options:
+            out["topk_text"] = options["text_top_k"]
+        if "do_sample" in options:
+            out["greedy"] = not bool(options["do_sample"])
+        if "voice_id" in options and not out["voice_prompt"]:
+            out["voice_prompt"] = str(options["voice_id"]) + ".pt"
+    if not out["voice_prompt"]:
+        voice_ref = request.get("voice_ref", "")
+        if not voice_ref:
+            raise RuntimeError(f"PersonaPlex request {out['id']!r} has neither voice_prompt nor voice_ref")
+        out["voice_prompt"] = voice_ref
+    return out
+
+
+def personaplex_cpp_request(request: dict[str, Any]) -> dict[str, Any]:
+    options = dict(request.get("options", {})) if isinstance(request.get("options", {}), dict) else {}
+    if "temp_audio" in request:
+        options["temperature"] = str(request["temp_audio"])
+    elif "temperature" in request:
+        options["temperature"] = str(request["temperature"])
+    if "temp_text" in request:
+        options["text_temperature"] = str(request["temp_text"])
+    elif "text_temperature" in request:
+        options["text_temperature"] = str(request["text_temperature"])
+    if "topk_audio" in request:
+        options["top_k"] = str(request["topk_audio"])
+    elif "top_k" in request:
+        options["top_k"] = str(request["top_k"])
+    if "topk_text" in request:
+        options["text_top_k"] = str(request["topk_text"])
+    elif "text_top_k" in request:
+        options["text_top_k"] = str(request["text_top_k"])
+    if "greedy" in request:
+        options["do_sample"] = "false" if bool(request["greedy"]) else "true"
+    elif "do_sample" in request:
+        options["do_sample"] = "true" if bool(request["do_sample"]) else "false"
+    out: dict[str, Any] = {
+        "id": request.get("id", ""),
+        "audio": str(resolve_repo_path(str(request.get("input_wav", request.get("audio", ""))))),
+        "text": request.get("text_prompt", request.get("text", "")),
+        "seed": request.get("seed", 42424242),
+        "options": options,
+    }
+    voice_ref = request.get("voice_ref")
+    if voice_ref:
+        out["voice_ref"] = str(resolve_repo_path(str(voice_ref)))
+    else:
+        voice_prompt = str(request.get("voice_prompt", ""))
+        if voice_prompt.endswith(".wav"):
+            out["voice_ref"] = str(resolve_repo_path(voice_prompt))
+        elif voice_prompt.endswith(".pt"):
+            voice_prompt = voice_prompt[:-3]
+            out["voice_id"] = voice_prompt
+        elif voice_prompt:
+            out["voice_id"] = voice_prompt
+        elif "voice_id" in out["options"]:
+            out["voice_id"] = str(out["options"].pop("voice_id"))
+    return out
+
+
+def build_personaplex_commands(
+    config: dict[str, Any],
+    mode: str,
+    backend: str,
+    args: argparse.Namespace,
+    scenario_dir: Path,
+    requests: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    if backend != "cuda":
+        raise RuntimeError("PersonaPlex warmbench is CUDA-only")
+    python_requests = [personaplex_python_request(request) for request in requests]
+    cpp_requests = [personaplex_cpp_request(request) for request in requests]
+    python_request_sequence_json = json.dumps(python_requests, ensure_ascii=False, separators=(",", ":"))
+    cpp_request_path = scenario_dir / "cpp_requests.json"
+    cpp_request_path.write_text(json.dumps({"requests": cpp_requests}, indent=2, ensure_ascii=False), encoding="utf-8")
+    (scenario_dir / "cpp.batch_manifest.json").write_text(
+        json.dumps({"requests": cpp_requests}, indent=2, ensure_ascii=False),
+        encoding="utf-8")
+    if mode == "streaming" and len(cpp_requests) != 1:
+        raise RuntimeError("PersonaPlex streaming warmbench accepts exactly one request")
+    model_path = args.model or config["model"]
+    python_model_path = args.python_model or config.get("python_model", model_path)
+    python_env = str(config.get("python_conda_env", "qwen3-tts"))
+    python_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        "python",
+        str(REPO_ROOT / config["python_script"]),
+        "--model",
+        python_model_path,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+        "--warmup",
+        str(effective_warmup(config, args)),
+        "--iterations",
+        str(args.iterations),
+        "--timing-file",
+        str(scenario_dir / "python.timing.log"),
+        "--audio-out-dir",
+        str(scenario_dir / "python_audio"),
+        "--text-out-dir",
+        str(scenario_dir / "python_text"),
+        "--summary-file",
+        str(scenario_dir / "python.summary.json"),
+        "--request-sequence-json",
+        python_request_sequence_json,
+    ]
+    cpp_command = [
+        "conda",
+        "run",
+        "--no-capture-output",
+        "-n",
+        python_env,
+        str(REPO_ROOT / config["cpp_bin"]),
+        "--task",
+        "s2s",
+        "--family",
+        "personaplex",
+        "--model",
+        model_path,
+        "--mode",
+        mode,
+        "--backend",
+        backend,
+        "--device",
+        str(args.device),
+        "--threads",
+        str(args.threads),
+    ]
+    if mode == "streaming":
+        request = cpp_requests[0]
+        request_id = str(request.get("id", "request1"))
+        cpp_command.extend([
+            "--audio",
+            str(request["audio"]),
+            "--text",
+            str(request.get("text", "")),
+            "--seed",
+            str(request.get("seed", 42424242)),
+            "--out",
+            str(scenario_dir / "cpp_audio" / f"{request_id}.wav"),
+        ])
+        if request.get("voice_ref"):
+            cpp_command.extend(["--voice-ref", str(request["voice_ref"])])
+        elif request.get("voice_id"):
+            cpp_command.extend(["--voice-id", str(request["voice_id"])])
+        for key, value in sorted(dict(request.get("options", {})).items()):
+            cpp_command.extend(["--request-option", f"{key}={value}"])
+    else:
+        cpp_command.extend([
+            "--request-sequence",
+            str(cpp_request_path),
+            "--out-dir",
+            str(scenario_dir / "cpp_audio"),
+            "--batch-manifest-out",
+            str(scenario_dir / "cpp.batch_manifest.json"),
+            "--metrics",
+        ])
+    for option in config.get("cpp_session_options", []):
+        cpp_command.extend(["--session-option", option])
+    for option in args.cpp_session_option:
+        cpp_command.extend(["--session-option", option])
+    return python_command, cpp_command
+
+
+def build_higgs_audio_tts_commands(
     config: dict[str, Any],
     backend: str,
     args: argparse.Namespace,
@@ -3456,7 +5253,7 @@ def validate_sequence_result(summary: dict[str, Any], request_count: int, kind: 
             and len(step.get("stems", [])) > 0
             and isinstance(step.get("metrics", {}), dict)
             for step in steps)
-    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "vibevoice", "heartmula", "higgs_tts"}:
+    elif kind in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "controlfoley", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
         payload_valid = all(
             isinstance(step.get("stems", []), list)
             and len(step.get("stems", [])) > 0
@@ -3592,10 +5389,56 @@ def run_scenario(
         heartmula_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(heartmula_requests)
         python_command, cpp_command = build_heartmula_commands(scenario_config, backend, args, scenario_dir, heartmula_requests)
-    elif scenario_config["kind"] == "higgs_tts":
+    elif scenario_config["kind"] == "controlfoley":
+        controlfoley_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(controlfoley_requests)
+        python_command, cpp_command = build_controlfoley_commands(scenario_config, backend, args, scenario_dir, controlfoley_requests)
+    elif scenario_config["kind"] == "neutts":
+        neutts_warmup, neutts_requests, request_manifest = resolve_neutts_case(config, args)
+        args.requests_per_session = len(neutts_requests)
+        python_command, cpp_command = build_neutts_commands(
+            scenario_config,
+            backend,
+            args,
+            scenario_dir,
+            neutts_warmup,
+            neutts_requests,
+            str(request_manifest["case_name"]),
+        )
+    elif scenario_config["kind"] == "confucius4_tts":
+        confucius_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(confucius_requests)
+        python_command, cpp_command = build_confucius4_tts_commands(scenario_config, backend, mode, args, scenario_dir, confucius_requests)
+    elif scenario_config["kind"] == "supertonic":
+        supertonic_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(supertonic_requests)
+        python_command, cpp_command = build_supertonic_commands(scenario_config, backend, args, scenario_dir, supertonic_requests)
+    elif scenario_config["kind"] == "irodori_tts":
+        irodori_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(irodori_requests)
+        python_command, cpp_command = build_irodori_tts_commands(scenario_config, backend, args, scenario_dir, irodori_requests)
+    elif scenario_config["kind"] == "higgs_audio_tts":
         higgs_requests, request_manifest = resolve_vevo2_case(config, args)
         args.requests_per_session = len(higgs_requests)
-        python_command, cpp_command = build_higgs_tts_commands(scenario_config, backend, args, scenario_dir, higgs_requests)
+        python_command, cpp_command = build_higgs_audio_tts_commands(scenario_config, backend, args, scenario_dir, higgs_requests)
+    elif scenario_config["kind"] == "index_tts2":
+        index_tts2_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(index_tts2_requests)
+        python_command, cpp_command = build_index_tts2_commands(scenario_config, backend, args, scenario_dir, index_tts2_requests)
+    elif scenario_config["kind"] == "dramabox":
+        dramabox_requests, request_manifest = resolve_vevo2_case(config, args)
+        args.requests_per_session = len(dramabox_requests)
+        python_command, cpp_command = build_dramabox_commands(scenario_config, backend, args, scenario_dir, dramabox_requests)
+    elif scenario_config["kind"] == "personaplex":
+        personaplex_requests, request_manifest = resolve_personaplex_case(config, args, mode)
+        args.requests_per_session = len(personaplex_requests)
+        python_command, cpp_command = build_personaplex_commands(
+            scenario_config,
+            mode,
+            backend,
+            args,
+            scenario_dir,
+            personaplex_requests)
     elif scenario_config["kind"] in {"vevo2", "seed_vc"}:
         vevo2_requests, request_manifest = resolve_vevo2_case(config, args)
         python_command, cpp_command = build_vevo2_commands(scenario_config, backend, args, scenario_dir, vevo2_requests)
@@ -3604,8 +5447,20 @@ def run_scenario(
             texts, request_manifest, scenario_config = resolve_omnivoice_case(config, args)
         else:
             texts, request_manifest = resolve_tts_texts(family, config, args, mode)
+        if family == "qwen3_tts":
+            for case_name in request_manifest.get("case_names", []):
+                case_override = scenario_config.get("case_overrides", {}).get(case_name)
+                if not case_override:
+                    continue
+                for key in ("model", "clone_audio", "reference_text"):
+                    scenario_config[key] = case_override[key]
+                    request_manifest[key] = case_override[key]
+                if "source_issue" in case_override:
+                    request_manifest["source_issue"] = case_override["source_issue"]
         if family == "chatterbox" and not args.warmup_text and request_manifest.get("warmup_text"):
             scenario_config["warmup_text"] = request_manifest["warmup_text"]
+        if family == "moss_tts_nano" and isinstance(request_manifest.get("options"), dict):
+            scenario_config.update(request_manifest["options"])
         if family in {"qwen3_tts_voice_design", "qwen3_tts_custom_voice"}:
             default_instruct = scenario_config.get("voice_design_instruct", scenario_config.get("custom_voice_instruct", ""))
             request_manifest["warmup_instruct"] = args.warmup_voice_design_instruct or default_instruct
@@ -3626,6 +5481,13 @@ def run_scenario(
                 if args.request_speakers
                 else [speaker] * len(texts)
             )
+        if family == "moss_tts_local" and "requests" in request_manifest:
+            request_file = scenario_dir / "moss_tts_local_requests.json"
+            request_file.write_text(
+                json.dumps({"requests": request_manifest["requests"]}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            scenario_config["moss_tts_local_request_file"] = str(request_file)
         python_command, cpp_command = build_tts_commands(family, scenario_config, backend, args, scenario_dir, texts)
     else:
         if family in {"mel_band_roformer", "htdemucs"}:
@@ -3665,27 +5527,48 @@ def run_scenario(
                 "contexts": args.qwen3_asr_request_contexts,
                 "expected_fragments": [item.get("expected_fragments", []) for item in request_cases],
             }
-        elif family == "qwen3_forced_aligner":
+        elif family in ("qwen3_forced_aligner", "mms_forced_aligner"):
+            default_language = FORCED_ALIGNER_LANGUAGES[family]
             warmup_case, request_cases = load_qwen3_forced_aligner_cases(REPO_ROOT / config["case_catalog"], args.requests_per_session)
-            qwen_audio_dir = scenario_dir / "qwen3_forced_aligner_audio"
-            warmup_audio = materialize_qwen3_asr_audio(warmup_case, qwen_audio_dir, 0, "warmup")
+            audio_dir = scenario_dir / f"{family}_audio"
+            warmup_audio = materialize_qwen3_asr_audio(warmup_case, audio_dir, 0, "warmup")
             audio_requests = [
-                materialize_qwen3_asr_audio(item, qwen_audio_dir, index, "request")
+                materialize_qwen3_asr_audio(item, audio_dir, index, "request")
                 for index, item in enumerate(request_cases)
             ]
-            args.qwen3_forced_aligner_warmup_language = str(warmup_case.get("language", "English"))
-            args.qwen3_forced_aligner_warmup_transcript = str(warmup_case.get("transcript", ""))
-            args.qwen3_forced_aligner_request_languages = [str(item.get("language", "English")) for item in request_cases]
-            args.qwen3_forced_aligner_request_transcripts = [str(item.get("transcript", "")) for item in request_cases]
+            setattr(args, f"{family}_warmup_language", str(warmup_case.get("language", default_language)))
+            setattr(args, f"{family}_warmup_transcript", str(warmup_case.get("transcript", "")))
+            setattr(args, f"{family}_request_languages", [str(item.get("language", default_language)) for item in request_cases])
+            setattr(args, f"{family}_request_transcripts", [str(item.get("transcript", "")) for item in request_cases])
             request_manifest = {
                 "warmup_audio": str(warmup_audio),
-                "warmup_language": args.qwen3_forced_aligner_warmup_language,
-                "warmup_transcript": args.qwen3_forced_aligner_warmup_transcript,
+                "warmup_language": getattr(args, f"{family}_warmup_language"),
+                "warmup_transcript": getattr(args, f"{family}_warmup_transcript"),
                 "audio_sequence": [str(path) for path in audio_requests],
-                "languages": args.qwen3_forced_aligner_request_languages,
-                "transcripts": args.qwen3_forced_aligner_request_transcripts,
+                "languages": getattr(args, f"{family}_request_languages"),
+                "transcripts": getattr(args, f"{family}_request_transcripts"),
                 "expected_words": [item.get("expected_words", []) for item in request_cases],
             }
+        elif family in {"higgs_audio_stt", "hviske_asr", "nemotron_asr", "muscriptor", "vibevoice_asr", "voxtral_realtime"}:
+            if len(args.case_names) > 1:
+                raise RuntimeError(f"{family} warmbench accepts at most one --case-name")
+            case_name = args.case_names[0] if args.case_names else str(config.get("default_case_name", ""))
+            warmup_case, request_cases, catalog_manifest = load_catalog_asr_cases(
+                REPO_ROOT / str(config["case_catalog"]),
+                args.requests_per_session,
+                family,
+                case_name,
+            )
+            python_command, cpp_command, request_manifest = build_catalog_asr_commands(
+                family,
+                scenario_config,
+                backend,
+                args,
+                scenario_dir,
+                warmup_case,
+                request_cases,
+            )
+            request_manifest.update(catalog_manifest)
         elif family == "miocodec":
             warmup_request, request_cases, request_manifest = resolve_miocodec_case(config, args)
             python_command, cpp_command = build_miocodec_commands(
@@ -3720,7 +5603,7 @@ def run_scenario(
                 "warmup_audio": str(warmup_audio),
                 "audio_sequence": [str(path) for path in audio_requests],
             }
-        if family not in {"miocodec", "voxcpm2"}:
+        if family not in {"miocodec", "voxcpm2", "higgs_audio_stt", "hviske_asr", "nemotron_asr", "muscriptor", "vibevoice_asr", "voxtral_realtime"}:
             python_command, cpp_command = build_audio_commands(family, scenario_config, backend, mode, args, scenario_dir, warmup_audio, audio_requests)
     (scenario_dir / "request_manifest.json").write_text(json.dumps(request_manifest, indent=2), encoding="utf-8")
 
@@ -3754,6 +5637,12 @@ def run_scenario(
         f"peak_rss_kb={cpp_memory['peak_rss_kb']} peak_vms_kb={cpp_memory['peak_vms_kb']}",
     )
     cpp_parsed = parse_summary_lines(cpp_stdout)
+    if scenario_config["kind"] == "personaplex" and not cpp_parsed.get("summary"):
+        cpp_parsed["summary"] = parse_personaplex_cli_summary(
+            cpp_stdout,
+            scenario_dir / "cpp.batch_manifest.json",
+            backend,
+        )
     cpp_result_payload = sanitized_result_payload(scenario_config["kind"], cpp_parsed)
     cpp_summary = cpp_parsed.get("summary") or {}
     cpp_summary_path = scenario_dir / "cpp.result.json"
@@ -3768,6 +5657,7 @@ def run_scenario(
         waveform_compare_fn = compare_kokoro if family == "kokoro" else compare_pocket
         python_whisper_results: list[dict[str, Any]] = []
         cpp_whisper_results: list[dict[str, Any]] = []
+        run_asr_check = bool(scenario_config.get("run_asr_check", True))
         for request_index in range(args.requests_per_session):
             python_output = python_valid["per_request_outputs"][request_index]
             cpp_output = cpp_valid["per_request_outputs"][request_index]
@@ -3783,32 +5673,59 @@ def run_scenario(
                 if python_audio_path is None or cpp_audio_path is None:
                     parity = missing_parity(request_index, request_manifest["texts"][request_index], "missing_audio_path")
                 else:
-                    python_whisper = run_whisper(
-                        python_audio_path,
-                        scenario_dir / "whisper" / f"python_request_{request_index:02d}",
-                        args.threads,
-                        scenario_config.get("whisper_model", WHISPER_MODEL),
-                        scenario_config.get("whisper_language"),
-                        bool(scenario_config.get("whisper_word_timestamps", True)),
-                    )
-                    cpp_whisper = run_whisper(
-                        cpp_audio_path,
-                        scenario_dir / "whisper" / f"cpp_request_{request_index:02d}",
-                        args.threads,
-                        scenario_config.get("whisper_model", WHISPER_MODEL),
-                        scenario_config.get("whisper_language"),
-                        bool(scenario_config.get("whisper_word_timestamps", True)),
-                    )
-                    python_whisper_results.append(python_whisper)
-                    cpp_whisper_results.append(cpp_whisper)
-                    append_log(master_log, f"PYTHON ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(python_whisper)}")
-                    append_log(master_log, f"CPP ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(cpp_whisper)}")
-                    asr_parity = compare_whisper_outputs(
-                        cpp_whisper,
-                        python_whisper,
-                        float(scenario_config.get("asr_compact_lcs_min", 0.0)),
-                    )
-                    if family == "moss_tts":
+                    if run_asr_check:
+                        python_whisper = run_whisper(
+                            python_audio_path,
+                            scenario_dir / "whisper" / f"python_request_{request_index:02d}",
+                            args.threads,
+                            scenario_config.get("whisper_model", WHISPER_MODEL),
+                            scenario_config.get("whisper_language"),
+                            bool(scenario_config.get("whisper_word_timestamps", True)),
+                        )
+                        cpp_whisper = run_whisper(
+                            cpp_audio_path,
+                            scenario_dir / "whisper" / f"cpp_request_{request_index:02d}",
+                            args.threads,
+                            scenario_config.get("whisper_model", WHISPER_MODEL),
+                            scenario_config.get("whisper_language"),
+                            bool(scenario_config.get("whisper_word_timestamps", True)),
+                        )
+                        python_whisper_results.append(python_whisper)
+                        cpp_whisper_results.append(cpp_whisper)
+                        append_log(master_log, f"PYTHON ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(python_whisper)}")
+                        append_log(master_log, f"CPP ASR family={family} mode={mode} backend={backend} request={request_index} {summarize_tts_asr(cpp_whisper)}")
+                        asr_parity = compare_whisper_outputs(
+                            cpp_whisper,
+                            python_whisper,
+                            float(scenario_config.get("asr_compact_lcs_min", 0.0)),
+                        )
+                    else:
+                        asr_parity = {
+                            "ok": True,
+                            "reason": "skipped",
+                            "mismatches": [],
+                            "text_distance": 0,
+                            "compact_text_distance": 0,
+                            "compact_lcs": 1.0,
+                            "compact_lcs_min": float(scenario_config.get("asr_compact_lcs_min", 0.0)),
+                            "timing_mismatches": [],
+                        }
+                        append_log(master_log, f"ASR SKIPPED family={family} mode={mode} backend={backend} request={request_index}")
+                    if family == "qwen3_tts":
+                        waveform_parity = compare_qwen3_tts_audio(
+                            cpp_parsed["summaries"][request_index],
+                            python_parsed["summaries"][request_index],
+                            cpp_audio_path,
+                            python_audio_path,
+                            float(scenario_config.get("wav_cosine_min", 0.95)),
+                            float(scenario_config.get("log_mel_cosine_min", 0.95)),
+                            float(scenario_config.get("length_ratio_min", 0.98)),
+                        )
+                        parity_ok = asr_parity["ok"] and waveform_parity["ok"]
+                        parity_reason = "ok" if parity_ok else (
+                            asr_parity["reason"] if not asr_parity["ok"] else waveform_parity["reason"]
+                        )
+                    elif family in {"moss_tts_nano", "moss_tts_local"}:
                         waveform_parity = compare_moss_tts(
                             cpp_parsed["summaries"][request_index],
                             python_parsed["summaries"][request_index],
@@ -3817,6 +5734,12 @@ def run_scenario(
                             float(scenario_config.get("log_mel_cosine_min", 0.80)),
                             float(scenario_config.get("length_ratio_min", 0.98)),
                         )
+                        if (
+                            family == "moss_tts_local"
+                            and asr_parity["mismatches"] == ["empty_text"]
+                            and waveform_parity["ok"]
+                        ):
+                            asr_parity = {**asr_parity, "ok": True, "reason": "ok", "mismatches": []}
                         parity_ok = asr_parity["ok"] and waveform_parity["ok"]
                         parity_reason = "ok" if parity_ok else (
                             asr_parity["reason"] if not asr_parity["ok"] else waveform_parity["reason"]
@@ -3840,6 +5763,11 @@ def run_scenario(
                     master_log,
                     f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']} asr_reason={parity['asr']['reason']} waveform_reason={parity['waveform']['reason']}",
                 )
+            elif "waveform" in parity:
+                append_log(
+                    master_log,
+                    f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']} metrics={json.dumps(parity['waveform'].get('metrics', {}), sort_keys=True)}",
+                )
             else:
                 append_log(master_log, f"PARITY family={family} mode={mode} backend={backend} request={request_index} ok={int(parity['ok'])} reason={parity['reason']}")
         python_result_payload["whisper"] = python_whisper_results
@@ -3861,7 +5789,7 @@ def run_scenario(
             cpp_step_path = cpp_step_paths[request_index] if request_index < len(cpp_step_paths) else ""
             append_log(master_log, f"PYTHON OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={python_step_path} valid={int(file_is_nonempty(python_step_path))}")
             append_log(master_log, f"CPP OUTPUT family={family} mode={mode} backend={backend} request={request_index} path={cpp_step_path} valid={int(file_is_nonempty(cpp_step_path))}")
-    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "vibevoice", "heartmula", "higgs_tts"}:
+    elif scenario_config["kind"] in {"vevo2", "seed_vc", "miocodec", "voxcpm2", "supertonic", "vibevoice", "irodori_tts", "heartmula", "controlfoley", "neutts", "confucius4_tts", "higgs_audio_tts", "index_tts2", "dramabox", "personaplex"}:
         python_valid = validate_sequence_result(python_summary, args.requests_per_session, scenario_config["kind"])
         cpp_valid = validate_sequence_result(cpp_summary, args.requests_per_session, scenario_config["kind"])
         python_step_paths = write_sequence_step_artifacts(python_summary.get("sequence_steps", []), scenario_dir / "python_json", "python")
@@ -3910,7 +5838,12 @@ def run_scenario(
             elif request_index >= len(cpp_summary.get("sequence_steps", [])):
                 parity = missing_parity(request_index, request_manifest["audio_sequence"][request_index], "missing_cpp_step")
             else:
-                if family == "qwen3_asr":
+                if family == "muscriptor":
+                    parity = compare_muscriptor_step(
+                        cpp_summary["sequence_steps"][request_index],
+                        python_summary["sequence_steps"][request_index],
+                    )
+                elif family in {"qwen3_asr", "voxtral_realtime"}:
                     expected_fragments = request_manifest.get("expected_fragments", [])
                     parity = compare_qwen3_asr_step(
                         cpp_summary["sequence_steps"][request_index],
@@ -3952,6 +5885,7 @@ def run_scenario(
                         cpp_summary["sequence_steps"][request_index],
                         python_summary["sequence_steps"][request_index],
                         expected_words[request_index] if request_index < len(expected_words) else [],
+                        1 if config.get("strict_alignment", True) else 320,
                     )
                 else:
                     parity = compare_sortformer_step(cpp_summary["sequence_steps"][request_index], python_summary["sequence_steps"][request_index])

@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "family": "magpie_tts",
+  "display_name": "MagpieTTS Multilingual 357M",
+  "description": "NVIDIA MagpieTTS is a multilingual neural text-to-speech model that generates NanoCodec audio tokens from text using baked speaker context embeddings, a decoder-only transformer, and an autoregressive local transformer before decoding the tokens to waveform audio.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ar-AE",
+    "ar-MSA",
+    "ar-SA",
+    "de",
+    "en",
+    "es",
+    "fr",
+    "hi",
+    "it",
+    "ko",
+    "pt-BR",
+    "vi",
+    "zh"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Target synthesis language code used by the Magpie text frontend; default en.",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "description": "Packaged MagpieTTS voice name; default Aria.",
+        "values": [
+          "Aria",
+          "Jason",
+          "John",
+          "Leo",
+          "Sofia"
+        ],
+        "required": false,
+        "default": "Aria"
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Autoregressive audio-token sampling temperature; default 0.6 from the v2607 model config.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.6
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Autoregressive audio-token top-k sampling limit; default 80.",
+        "required": false,
+        "min": 1,
+        "default": 80
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale for Magpie decoder logits; default 2.5.",
+        "required": false,
+        "min": 0.0,
+        "default": 2.5
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum Magpie decoder frames per text segment; default 500 from the v2607 model config.",
+        "required": false,
+        "min": 1,
+        "default": 500
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 300.",
+        "required": false,
+        "min": 1,
+        "default": 300
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Seed for audio-token sampling; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Reusable ggml graph arena size in MiB for Magpie stages; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 2048.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type; default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "magpie_tts_orig",
+      "display_name": "MagpieTTS Multilingual 357M Original-Dtype GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "MagpieTTS-Multilingual-357M-GGUF",
+      "files": [
+        "MagpieTTS-Multilingual-357M-GGUF/magpie-tts-multilingual-357m-orig.gguf"
+      ],
+      "strip_prefix": "MagpieTTS-Multilingual-357M-GGUF"
+    },
+    {
+      "id": "magpie_tts_q8_0",
+      "display_name": "MagpieTTS Multilingual 357M Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MagpieTTS-Multilingual-357M-GGUF",
+      "files": [
+        "MagpieTTS-Multilingual-357M-GGUF/magpie-tts-multilingual-357m-q8_0.gguf"
+      ],
+      "strip_prefix": "MagpieTTS-Multilingual-357M-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "magpie_tts_q8_0",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/magpie_tts.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "codec_config": "model:codec_config.json",
+        "speakers": "model:speakers.json"
+      },
+      "optional_files": {
+        "ipa_dict": "model:ipa_dict.txt",
+        "cmu_dict": "model:cmu_dict.txt",
+        "german_dict": "model:german.dict",
+        "german_heteronyms": "model:german.heteronym",
+        "spanish_dict": "model:spanish.dict",
+        "portuguese_dict": "model:portuguese.dict",
+        "hindi_dict": "model:hindi.dict",
+        "heteronyms": "model:heteronyms",
+        "mandarin_chars": "model:mandarin_data/pinyin_chars.tsv",
+        "mandarin_phrases": "model:mandarin_data/pinyin_phrases.tsv",
+        "mandarin_jieba_dict": "model:mandarin_data/jieba.dict.utf8",
+        "mandarin_hmm": "model:mandarin_data/hmm_model.utf8"
+      },
+      "tensors": {
+        "model": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "codec": {
+          "source": "weights:",
+          "prefix": "codec"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "codec": "../nemo_nano_codec_22khz_1_89kbps_safetensors"
+      },
+      "files": {
+        "config": "model:config.json",
+        "codec_config": "codec:config.json",
+        "speakers": "model:41913ebaa70342058574da74293b7630_magpie_tts_multilingual_357m.nemo.speakers.json"
+      },
+      "optional_files": {
+        "ipa_dict": "model:74b3e832fe914a569fcd42b51d06b2f1_ipa_dict_nv23.05.txt",
+        "cmu_dict": "model:dc7d60d6b15a4651b21c9ca2932b62c6_ipa_cmudict-0.7b_nv23.01.txt",
+        "german_dict": "model:cf01ab5c48c84f3282ef7888263361e5_de_nv230119.dict",
+        "german_heteronyms": "model:c5e4ec2af5a14ce294f4b9edcc936535_de_nv230119.heteronym",
+        "spanish_dict": "model:7dbc31751f224f2486090d59dc95b9f7_es_ES_nv230301.dict",
+        "portuguese_dict": "model:05adc40366e149b69319acd4b28a4919_pt_br_prondict-v1.0.dict",
+        "hindi_dict": "model:339da71c54b046f98cbcf38ef6d4ff67_hindi_phoneme_merged_phoneme_dict.dict",
+        "heteronyms": "model:61d57a4ccb064d1e8e3d9f871c571932_heteronyms-052722"
+      },
+      "tensors": {
+        "model": "model:model.safetensors",
+        "codec": "codec:model.safetensors"
+      }
+    }
+  ]
+}

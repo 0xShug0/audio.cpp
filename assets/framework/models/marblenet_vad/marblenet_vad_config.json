@@ -1,0 +1,74 @@
+{
+  "jasper": [
+    {
+      "dilation": 1,
+      "filters": 128,
+      "kernel": 11,
+      "repeat": 1,
+      "residual": false,
+      "separable": true,
+      "stride": 2
+    },
+    {
+      "dilation": 1,
+      "filters": 64,
+      "kernel": 13,
+      "repeat": 2,
+      "residual": true,
+      "separable": true,
+      "stride": 1
+    },
+    {
+      "dilation": 1,
+      "filters": 64,
+      "kernel": 15,
+      "repeat": 2,
+      "residual": true,
+      "separable": true,
+      "stride": 1
+    },
+    {
+      "dilation": 1,
+      "filters": 64,
+      "kernel": 17,
+      "repeat": 2,
+      "residual": true,
+      "separable": true,
+      "stride": 1
+    },
+    {
+      "dilation": 2,
+      "filters": 128,
+      "kernel": 29,
+      "repeat": 1,
+      "residual": false,
+      "separable": true,
+      "stride": 1
+    },
+    {
+      "dilation": 1,
+      "filters": 128,
+      "kernel": 1,
+      "repeat": 1,
+      "residual": false,
+      "separable": false,
+      "stride": 1
+    }
+  ],
+  "label_count": 2,
+  "labels": [
+    "0",
+    "1"
+  ],
+  "labels_file": "marblenet_vad_labels.txt",
+  "n_fft": 512,
+  "n_mels": 80,
+  "normalize": "None",
+  "num_classes": 2,
+  "pad_to": 2,
+  "sample_rate": 16000,
+  "target": "src.multi_classification_models.EncDecMultiClassificationModel",
+  "window": "hann",
+  "window_size": 0.025,
+  "window_stride": 0.01
+}

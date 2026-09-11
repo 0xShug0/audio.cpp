@@ -6,6 +6,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace engine::modules {
@@ -179,7 +180,7 @@ const core::ModuleSchema kAdaptiveLayerNormSchema = {
     2,
     kSingleOutput,
     1,
-    "Applies layer norm followed by conditioning-derived scale and shift.",
+    "Applies table-backed adaptive affine or RMS-normalized affine modulation.",
 };
 
 const core::ModuleSchema kPriorEncoderBlockSchema = {
@@ -474,7 +475,12 @@ const core::ModuleSchema & FiLMModule::static_schema() noexcept {
 
 AdaptiveLayerNormModule::AdaptiveLayerNormModule(AdaptiveLayerNormConfig config) : config_(config) {
     require_positive(config_.hidden_size, "AdaptiveLayerNormConfig.hidden_size");
-    require_positive(config_.conditioning_dim, "AdaptiveLayerNormConfig.conditioning_dim");
+    if (config_.scale_index < 0) {
+        throw std::runtime_error("AdaptiveLayerNormConfig.scale_index must be non-negative");
+    }
+    if (config_.mode != AdaptiveLayerNormMode::Scale && config_.shift_index < 0) {
+        throw std::runtime_error("AdaptiveLayerNormConfig.shift_index must be non-negative unless mode is Scale");
+    }
 }
 
 const AdaptiveLayerNormConfig & AdaptiveLayerNormModule::config() const noexcept {
@@ -488,22 +494,57 @@ const core::ModuleSchema & AdaptiveLayerNormModule::schema() const noexcept {
 core::TensorValue AdaptiveLayerNormModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const core::TensorValue & conditioning,
+    const core::TensorValue & modulation,
     const AdaptiveLayerNormWeights & weights) const {
-    core::validate_shape(
-        conditioning,
-        core::TensorShape::from_dims({input.shape.dims[0], config_.conditioning_dim}),
-        "conditioning");
     core::validate_last_dim(input, config_.hidden_size, "input");
+    if (modulation.shape.rank != input.shape.rank) {
+        throw std::runtime_error("AdaptiveLayerNorm modulation rank must match input rank");
+    }
+    for (size_t dim = 0; dim + 1 < input.shape.rank; ++dim) {
+        if (modulation.shape.dims[dim] != input.shape.dims[dim] && modulation.shape.dims[dim] != 1) {
+            throw std::runtime_error("AdaptiveLayerNorm modulation shape must match or broadcast to input except the last dimension");
+        }
+    }
+    if (weights.table.shape.rank != 2 || weights.table.shape.dims[1] != config_.hidden_size) {
+        throw std::runtime_error("AdaptiveLayerNorm table shape mismatch");
+    }
+    const int64_t max_index = std::max(config_.shift_index, config_.scale_index);
+    if (weights.table.shape.dims[0] <= max_index ||
+        modulation.shape.dims[modulation.shape.rank - 1] < (max_index + 1) * config_.hidden_size) {
+        throw std::runtime_error("AdaptiveLayerNorm modulation/table index out of range");
+    }
 
-    const LayerNormModule norm({config_.hidden_size, config_.eps, false, false});
-    auto normed = norm.build(ctx, input, {});
-    const LinearModule scale({config_.conditioning_dim, config_.hidden_size, config_.use_bias});
-    const LinearModule shift({config_.conditioning_dim, config_.hidden_size, config_.use_bias});
-    auto scale_vec = scale.build(ctx, conditioning, LinearWeights{weights.scale_weight, weights.scale_bias});
-    auto shift_vec = shift.build(ctx, conditioning, LinearWeights{weights.shift_weight, weights.shift_bias});
-    auto scaled = mul(ctx, normed, expand_conditioning_like(ctx, scale_vec, input));
-    return add_tensors(ctx, scaled, expand_conditioning_like(ctx, shift_vec, input));
+    auto scale = SliceModule({static_cast<int>(modulation.shape.rank - 1), config_.scale_index * config_.hidden_size, config_.hidden_size})
+        .build(ctx, modulation);
+    auto scale_table = SliceModule({0, config_.scale_index, 1}).build(ctx, weights.table);
+    core::TensorShape table_shape = {};
+    table_shape.rank = modulation.shape.rank;
+    for (size_t dim = 0; dim + 1 < table_shape.rank; ++dim) {
+        table_shape.dims[dim] = 1;
+    }
+    table_shape.dims[table_shape.rank - 1] = config_.hidden_size;
+    scale_table = core::reshape_tensor(ctx, scale_table, table_shape);
+    scale = add_tensors(ctx, scale, scale_table);
+
+    if (config_.mode == AdaptiveLayerNormMode::Scale) {
+        return mul(ctx, input, scale);
+    }
+
+    auto shift = SliceModule({static_cast<int>(modulation.shape.rank - 1), config_.shift_index * config_.hidden_size, config_.hidden_size})
+        .build(ctx, modulation);
+    auto shift_table = SliceModule({0, config_.shift_index, 1}).build(ctx, weights.table);
+    shift_table = core::reshape_tensor(ctx, shift_table, table_shape);
+    shift = add_tensors(ctx, shift, shift_table);
+
+    const auto normalized = config_.mode == AdaptiveLayerNormMode::RmsAffine
+        ? RMSNormModule({config_.hidden_size, config_.eps, false, false}).build(ctx, input, {})
+        : input;
+    auto one_plus_scale = core::wrap_tensor(
+        ggml_scale_bias(ctx.ggml, scale.tensor, 1.0F, 1.0F),
+        scale.shape,
+        GGML_TYPE_F32);
+    auto scaled = mul(ctx, normalized, one_plus_scale);
+    return add_tensors(ctx, scaled, shift);
 }
 
 const core::ModuleSchema & AdaptiveLayerNormModule::static_schema() noexcept {

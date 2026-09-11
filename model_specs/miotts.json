@@ -1,0 +1,125 @@
+{
+  "family": "miotts",
+  "display_name": "MioTTS",
+  "description": "Lightweight LLM-based English and Japanese TTS family built on MioCodec, supporting low-latency speech generation and zero-shot voice cloning from short reference audio.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "ja"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "miotts_1_7b_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "miotts_1_7b_q8_0",
+      "display_name": "MioTTS 1.7B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    },
+    {
+      "id": "miotts_1_7b_bf16",
+      "display_name": "MioTTS 1.7B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-bf16.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    },
+    {
+      "id": "miotts_1_7b_orig",
+      "display_name": "MioTTS 1.7B Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "MioTTS-1.7B-GGUF",
+      "files": [
+        "MioTTS-1.7B-GGUF/miotts-1.7b-orig.gguf"
+      ],
+      "strip_prefix": "MioTTS-1.7B-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

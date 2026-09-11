@@ -4,7 +4,6 @@
 #include "engine/models/vevo2/types.h"
 
 #include <cstddef>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -43,8 +42,6 @@ private:
     std::shared_ptr<const Vevo2VocoderWeights> weights_;
     mutable std::unique_ptr<Vevo2VocoderGraph> graph_;
     std::string name_;
-    std::filesystem::path weights_path_;
-    std::filesystem::path config_path_;
 };
 
 }  // namespace engine::models::vevo2

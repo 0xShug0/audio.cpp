@@ -2,7 +2,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/io/json.h"
-#include "engine/framework/modules/whisper_embedding.h"
+#include "engine/framework/modules/speech_encoders/whisper_embedding.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>

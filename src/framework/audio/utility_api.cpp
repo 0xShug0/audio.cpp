@@ -3,6 +3,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/deepfilternet2.h"
 #include "engine/framework/audio/flashsr.h"
+#include "engine/framework/audio/gtcrn.h"
 #include "engine/framework/audio/rnnoise.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/audio/wav_writer.h"
@@ -75,6 +76,24 @@ std::vector<float> read_mono_resampled(const std::filesystem::path & path, int s
         " (valid: " + std::string(valid_models) + ")");
 }
 
+std::filesystem::path gtcrn_checkpoint_for(const AudioUtilityPaths & paths, std::string_view model) {
+    const auto dir = require_model_dir(paths, "gtcrn");
+    if (model == "gtcrn" || model == "gtcrn_streaming") {
+        return dir / "gtcrn_streaming.safetensors";
+    }
+    if (model == "gtcrn_dns3") {
+        return dir / "gtcrn_dns3.safetensors";
+    }
+    if (model == "gtcrn_vctk") {
+        return dir / "gtcrn_vctk.safetensors";
+    }
+    throw_unsupported_model("denoise", model, "deepfilternet2, gtcrn, gtcrn_dns3, gtcrn_vctk, gtcrn_streaming, rnnoise, zipenhancer");
+}
+
+bool is_gtcrn_model(std::string_view model) {
+    return model == "gtcrn" || model == "gtcrn_dns3" || model == "gtcrn_vctk" || model == "gtcrn_streaming";
+}
+
 }  // namespace
 
 void denoise_file(
@@ -108,7 +127,15 @@ void denoise_file(
         write_pcm16_wav(output_wav, output.sample_rate, 1, output.samples);
         return;
     }
-    throw_unsupported_model("denoise", model, "deepfilternet2, rnnoise, zipenhancer");
+    if (is_gtcrn_model(model)) {
+        const auto denoiser = GTCRNModel::load_from_safetensors(gtcrn_checkpoint_for(paths, model), paths.backend);
+        const auto input = read_mono_resampled(input_wav, 16000);
+        const auto output = denoiser.denoise_mono_16k(input);
+        create_output_parent(output_wav);
+        write_pcm16_wav(output_wav, output.sample_rate, 1, output.samples);
+        return;
+    }
+    throw_unsupported_model("denoise", model, "deepfilternet2, gtcrn, gtcrn_dns3, gtcrn_vctk, gtcrn_streaming, rnnoise, zipenhancer");
 }
 
 AudioUtilityBatchResult denoise_directory(
@@ -116,8 +143,8 @@ AudioUtilityBatchResult denoise_directory(
     const std::filesystem::path & output_dir,
     std::string_view model,
     const AudioUtilityPaths & paths) {
-    if (model != "deepfilternet2" && model != "rnnoise" && model != "zipenhancer") {
-        throw_unsupported_model("denoise", model, "deepfilternet2, rnnoise, zipenhancer");
+    if (model != "deepfilternet2" && model != "rnnoise" && model != "zipenhancer" && !is_gtcrn_model(model)) {
+        throw_unsupported_model("denoise", model, "deepfilternet2, gtcrn, gtcrn_dns3, gtcrn_vctk, gtcrn_streaming, rnnoise, zipenhancer");
     }
     AudioUtilityBatchResult result;
     if (model == "deepfilternet2") {
@@ -135,6 +162,17 @@ AudioUtilityBatchResult denoise_directory(
         const auto denoiser = ZipEnhancerModel::load_from_directory(require_model_dir(paths, "zipenhancer"), paths.backend);
         for (const auto & input_file : sorted_wav_files(input_dir)) {
             const auto output_file = output_path_for(input_file, output_dir, "_zipenhancer");
+            const auto input = read_mono_resampled(input_file, 16000);
+            const auto output = denoiser.denoise_mono_16k(input);
+            write_pcm16_wav(output_file, output.sample_rate, 1, output.samples);
+            result.outputs.push_back(output_file);
+        }
+        return result;
+    }
+    if (is_gtcrn_model(model)) {
+        const auto denoiser = GTCRNModel::load_from_safetensors(gtcrn_checkpoint_for(paths, model), paths.backend);
+        for (const auto & input_file : sorted_wav_files(input_dir)) {
+            const auto output_file = output_path_for(input_file, output_dir, "_" + std::string(model));
             const auto input = read_mono_resampled(input_file, 16000);
             const auto output = denoiser.denoise_mono_16k(input);
             write_pcm16_wav(output_file, output.sample_rate, 1, output.samples);

@@ -6,14 +6,15 @@
 #include "engine/models/qwen3_tts/assets.h"
 #include "engine/models/qwen3_tts/types.h"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 
-namespace engine::models {
-
-namespace common {
+namespace engine::core {
 class ConstantTensorCache;
 }
+
+namespace engine::models {
 
 namespace qwen3_tts {
 
@@ -28,7 +29,8 @@ public:
         size_t graph_arena_bytes,
         size_t constant_context_bytes,
         engine::assets::TensorStorageType linear_weight_storage_type,
-        engine::assets::TensorStorageType conv_weight_storage_type);
+        engine::assets::TensorStorageType conv_weight_storage_type,
+        Qwen3TTSPerfMode perf_mode);
     ~Qwen3SpeechTokenizerDecoderRuntime();
 
     runtime::AudioBuffer decode(const Qwen3SpeechCodes & codec_codes) const;
@@ -41,8 +43,12 @@ private:
     core::ExecutionContext * execution_context_ = nullptr;
     std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> weights_;
     size_t graph_arena_bytes_ = 0;
-    std::unique_ptr<common::ConstantTensorCache> constants_;
+    Qwen3TTSPerfMode perf_mode_ = Qwen3TTSPerfMode::Standard;
+    std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> graph_;
+    // Always present to keep this public class layout identical when the private
+    // Strix Halo compile definition differs between translation units.
+    mutable std::array<std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph>, 2> optimized_graphs_;
 };
 
 }  // namespace qwen3_tts

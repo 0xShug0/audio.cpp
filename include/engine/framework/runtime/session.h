@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -32,6 +33,7 @@ enum class VoiceTaskKind {
     VoiceDesign,
     SpeakerRecognition,
     Svc,
+    Midi,
 };
 
 enum class RunMode {
@@ -89,12 +91,14 @@ struct TimeSpan {
 struct SpeechSegment {
     TimeSpan span;
     float confidence = 0.0f;
+    std::string text;
 };
 
 struct SpeakerTurn {
     TimeSpan span;
     std::string speaker_id;
     float confidence = 0.0f;
+    std::string text;
 };
 
 struct WordTimestamp {
@@ -127,6 +131,7 @@ enum class ArtifactKind {
     StyleEmbedding,
     PromptEmbedding,
     AcousticTokens,
+    Midi,
     TranscriptAlignment,
     DiarizationState,
     VadState,
@@ -139,6 +144,18 @@ struct VoiceArtifact {
     std::vector<std::byte> payload;
     std::unordered_map<std::string, std::string> meta;
 };
+
+std::vector<std::byte> bytes_from_string(std::string_view value);
+VoiceArtifact make_voice_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::vector<std::byte> payload,
+    std::unordered_map<std::string, std::string> meta = {});
+VoiceArtifact make_text_artifact(
+    ArtifactKind kind,
+    std::string id,
+    std::string_view payload,
+    std::unordered_map<std::string, std::string> meta = {});
 
 struct TaskRequest {
     std::optional<Transcript> text_input = std::nullopt;
@@ -181,6 +198,7 @@ struct TaskResult {
     std::vector<SpeechSegment> speech_segments;
     std::vector<SpeakerTurn> speaker_turns;
     std::vector<WordTimestamp> word_timestamps;
+    std::optional<VoiceArtifact> artifact_output = std::nullopt;
     std::vector<VoiceArtifact> output_artifacts;
 };
 
@@ -194,6 +212,25 @@ struct StreamEvent {
     std::vector<VoiceArtifact> output_artifacts;
     bool is_final = false;
 };
+
+enum class StreamingInputKind {
+    None,
+    AudioChunks,
+};
+
+enum class StreamingOutputKind {
+    FinalResult,
+    PullEvents,
+};
+
+struct StreamingPolicy {
+    StreamingInputKind input = StreamingInputKind::None;
+    StreamingOutputKind output = StreamingOutputKind::FinalResult;
+    int64_t preferred_audio_chunk_samples = 0;
+    double preferred_audio_chunk_seconds = 0.0;
+};
+
+using StreamEventCallback = std::function<void(const StreamEvent &)>;
 
 class IVoiceTaskSession {
 public:
@@ -216,6 +253,26 @@ class IStreamingVoiceTaskSession : public virtual IVoiceTaskSession {
 public:
     ~IStreamingVoiceTaskSession() override = default;
 
+    virtual StreamingPolicy streaming_policy() const {
+        StreamingPolicy policy;
+        policy.input = StreamingInputKind::AudioChunks;
+        policy.output = StreamingOutputKind::FinalResult;
+        policy.preferred_audio_chunk_samples = 512;
+        return policy;
+    }
+    virtual void start_stream(const TaskRequest & request) {
+        (void)request;
+        reset();
+    }
+    virtual std::optional<StreamEvent> next_stream_event() {
+        return std::nullopt;
+    }
+    virtual void set_stream_event_sink(StreamEventCallback sink) {
+        (void)sink;
+    }
+    virtual TaskResult finish_stream() {
+        return finalize();
+    }
     virtual void reset() = 0;
     virtual StreamEvent process_audio_chunk(const AudioChunk & chunk) = 0;
     virtual TaskResult finalize() = 0;

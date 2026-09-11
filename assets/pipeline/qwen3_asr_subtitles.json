@@ -1,0 +1,48 @@
+{
+  "id": "qwen3_asr_subtitles",
+  "description": "Generate transcript, word timestamps, and SRT subtitles from speech using Qwen3 ASR with model-side audio chunking.",
+  "inputs": {
+    "source_audio": "${workflow_dir}/../asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+    "language": "en",
+    "qwen3_asr_model": "",
+    "qwen3_forced_aligner_model": ""
+  },
+  "steps": [
+    {
+      "id": "prepare_source",
+      "type": "convert_audio",
+      "input": "${source_audio}",
+      "output": "${out_dir}/source/source_16k.wav",
+      "sample_rate": 16000,
+      "channels": 1
+    },
+    {
+      "id": "transcribe",
+      "type": "model",
+      "family": "qwen3_asr",
+      "model": "${qwen3_asr_model}",
+      "task": "asr",
+      "mode": "offline",
+      "text_out": "${out_dir}/transcript.txt",
+      "words_out": "${out_dir}/words.json",
+      "session_options": {
+        "qwen3_asr.forced_aligner_model_path": "${qwen3_forced_aligner_model}"
+      },
+      "request": {
+        "id": "transcribe",
+        "audio": "${prepare_source.audio_path}",
+        "language": "${language}",
+        "text": "Transcribe the speech exactly.",
+        "audio_chunk_mode": "auto"
+      }
+    },
+    {
+      "id": "format_srt",
+      "type": "format_subtitles",
+      "format": "srt",
+      "words": "${transcribe.words_path}",
+      "output": "${out_dir}/subtitles.srt",
+      "sample_rate": 16000
+    }
+  ]
+}

@@ -258,7 +258,9 @@ std::string shape_to_json(const std::vector<int64_t> & shape) {
 SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("failed to open safetensors file: " + path.string());
+        throw std::runtime_error(
+            "failed to open safetensors file: " + path.string() +
+            "; the file may be missing, malformed, or placed in the wrong location");
     }
 
     uint64_t header_len = 0;
@@ -288,7 +290,14 @@ SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
         const auto tensor_name = parse_string(header, pos);
         expect_char(header, pos, ':');
         if (tensor_name == "__metadata__") {
-            index.metadata = parse_string_map(header, pos);
+            skip_ws(header, pos);
+            if (pos < header.size() && header[pos] == '{') {
+                index.metadata = parse_string_map(header, pos);
+            } else {
+                // Some valid safetensors writers, including MLX, emit a null
+                // __metadata__ value instead of omitting the key.
+                skip_json_value(header, pos);
+            }
             skip_ws(header, pos);
             if (pos < header.size() && header[pos] == ',') {
                 ++pos;
@@ -315,6 +324,22 @@ SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
                 const auto offsets = parse_int_array(header, pos);
                 if (offsets.size() != 2) {
                     throw std::runtime_error("safetensors data_offsets must contain 2 entries");
+                }
+                // Validate here, at the single point every consumer routes through.
+                //
+                // These come straight from the file header. A negative value cast to
+                // size_t becomes ~SIZE_MAX, and data_end < data_begin makes the
+                // (data_end - data_begin) that callers compute underflow to the same.
+                // Either then wraps the caller's `offset + size > blob.size()` bounds
+                // check back under the limit, producing an enormous in-bounds-looking
+                // span over out-of-bounds memory.
+                if (offsets[0] < 0 || offsets[1] < 0) {
+                    throw std::runtime_error(
+                        "safetensors data_offsets must be non-negative: " + tensor_name);
+                }
+                if (offsets[1] < offsets[0]) {
+                    throw std::runtime_error(
+                        "safetensors data_offsets must be ordered begin <= end: " + tensor_name);
                 }
                 info.data_begin = static_cast<size_t>(offsets[0]);
                 info.data_end = static_cast<size_t>(offsets[1]);

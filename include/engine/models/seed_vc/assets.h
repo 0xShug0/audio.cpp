@@ -1,50 +1,15 @@
 #pragma once
 
-#include "engine/framework/runtime/model.h"
+#include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/assets/tensor_source.h"
 
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::seed_vc {
-
-struct SeedVcAssetPaths {
-    std::filesystem::path model_root;
-
-    std::filesystem::path v2_ar_weights;
-    std::filesystem::path v2_cfm_weights;
-    std::filesystem::path v1_svc_weights;
-    std::filesystem::path v1_whisper_bigvgan_weights;
-    std::filesystem::path v1_xlsr_hift_weights;
-    std::filesystem::path astral_bsq32_weights;
-    std::filesystem::path astral_bsq2048_weights;
-    std::filesystem::path campplus_weights;
-    std::filesystem::path rmvpe_weights;
-    std::filesystem::path hift_weights;
-    std::filesystem::path bigvgan_22k_weights;
-    std::filesystem::path bigvgan_44k_weights;
-
-    std::filesystem::path manifest;
-    std::filesystem::path v1_svc_json;
-    std::filesystem::path v1_whisper_bigvgan_json;
-    std::filesystem::path v1_xlsr_hift_json;
-    std::filesystem::path hift_json;
-    std::filesystem::path bigvgan_22k_config;
-    std::filesystem::path bigvgan_44k_config;
-    std::filesystem::path v2_wrapper_json;
-    std::filesystem::path astral_bsq32_json;
-    std::filesystem::path astral_bsq2048_json;
-    std::filesystem::path whisper_small_root;
-    std::filesystem::path hubert_large_root;
-    std::filesystem::path wav2vec2_xlsr_root;
-    std::filesystem::path whisper_small_config;
-    std::filesystem::path whisper_small_weights;
-    std::filesystem::path hubert_large_config;
-    std::filesystem::path hubert_large_weights;
-    std::filesystem::path wav2vec2_xlsr_config;
-    std::filesystem::path wav2vec2_xlsr_weights;
-};
 
 struct SeedVcMelConfig {
     int64_t sample_rate = 0;
@@ -197,17 +162,29 @@ struct SeedVcConfig {
 };
 
 struct SeedVcAssets {
-    SeedVcAssetPaths paths;
+    assets::ResourceBundle resources;
     SeedVcConfig config;
-    runtime::ModelMetadata metadata;
-    runtime::CapabilitySet capabilities;
-    std::vector<runtime::NamedAsset> discovered_configs;
-    std::vector<runtime::NamedAsset> discovered_weights;
+    std::shared_ptr<const assets::TensorSource> v2_ar_weights;
+    std::shared_ptr<const assets::TensorSource> v2_cfm_weights;
+    std::shared_ptr<const assets::TensorSource> v1_svc_weights;
+    std::shared_ptr<const assets::TensorSource> v1_whisper_bigvgan_weights;
+    std::shared_ptr<const assets::TensorSource> v1_xlsr_hift_weights;
+    std::shared_ptr<const assets::TensorSource> astral_bsq32_weights;
+    std::shared_ptr<const assets::TensorSource> astral_bsq2048_weights;
+    std::shared_ptr<const assets::TensorSource> campplus_weights;
+    std::shared_ptr<const assets::TensorSource> rmvpe_weights;
+    std::shared_ptr<const assets::TensorSource> hift_weights;
+    std::shared_ptr<const assets::TensorSource> bigvgan_22k_weights;
+    std::shared_ptr<const assets::TensorSource> bigvgan_44k_weights;
+    std::shared_ptr<const assets::TensorSource> whisper_small_weights;
+    std::shared_ptr<const assets::TensorSource> hubert_large_weights;
+    std::shared_ptr<const assets::TensorSource> wav2vec2_xlsr_weights;
 };
 
-std::filesystem::path resolve_seed_vc_model_root(const std::filesystem::path & model_path);
-SeedVcAssetPaths resolve_seed_vc_asset_paths(const std::filesystem::path & model_path);
 std::shared_ptr<const SeedVcAssets> load_seed_vc_assets(const std::filesystem::path & model_path);
-runtime::ModelInspection inspect_seed_vc_model(const std::filesystem::path & model_path);
+assets::TensorStorageType seed_vc_component_storage_type(
+    const assets::TensorSource & source,
+    std::string_view tensor_name,
+    assets::TensorStorageType requested_type);
 
 }  // namespace engine::models::seed_vc

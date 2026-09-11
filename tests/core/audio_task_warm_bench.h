@@ -134,6 +134,20 @@ inline io::json::Value speech_segments_json(const std::vector<runtime::SpeechSeg
     return io::json::Value::make_array(std::move(out));
 }
 
+inline io::json::Value speaker_turns_json(const std::vector<runtime::SpeakerTurn> & turns) {
+    io::json::Value::Array out;
+    out.reserve(turns.size());
+    for (const auto & turn : turns) {
+        out.push_back(io::json::Value::make_object({
+            {"start_sample", number(static_cast<double>(turn.span.start_sample))},
+            {"end_sample", number(static_cast<double>(turn.span.end_sample))},
+            {"speaker_id", string(turn.speaker_id)},
+            {"confidence", number(turn.confidence)},
+        }));
+    }
+    return io::json::Value::make_array(std::move(out));
+}
+
 inline io::json::Value result_step_json(
     const AudioTaskBenchConfig & config,
     const runtime::TaskResult & result,

@@ -1,0 +1,161 @@
+{
+  "session_core_paths": {
+    "use_all_requests_by_default": true,
+    "description": "PersonaPlex Python reference coverage for packaged voice prompts, assistant/service prompts, streaming user-audio encode, AR response generation, and Mimi decode.",
+    "requests": [
+      {
+        "id": "assistant_basic",
+        "input_wav": "reference/PersonaPlex/assets/test/input_assistant.wav",
+        "text_prompt": "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.",
+        "voice_prompt": "NATF2.pt",
+        "seed": 42424242,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      },
+      {
+        "id": "service_role_prompt",
+        "input_wav": "reference/PersonaPlex/assets/test/input_service.wav",
+        "text_prompt": "You work for SwiftPlex Appliances which is a appliance repair company and your name is Farhod Toshmatov. Information: The dishwasher model is out of stock for replacement parts; we can use an alternative part with a 3-day delay. Labor cost remains $60 per hour.",
+        "voice_prompt": "NATM1.pt",
+        "seed": 42424243,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      },
+      {
+        "id": "assistant_interruption_overlap",
+        "input_wav": "reference/PersonaPlex/assets/test/input_assistant.wav",
+        "text_prompt": "You are a concise assistant. Continue listening while responding, and recover naturally if the user talks over you.",
+        "voice_prompt": "NATM1.pt",
+        "seed": 42424244,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      }
+    ]
+  },
+  "raw_voice_prompt_wav": {
+    "description": "Covers raw reference WAV voice-prompt encoding instead of loading precomputed .pt prompt embeddings. Run with --voice-prompt-dir assets/resources.",
+    "requests": [
+      {
+        "id": "raw_voice_prompt_wav",
+        "input_wav": "reference/PersonaPlex/assets/test/input_service.wav",
+        "text_prompt": "You are a calm support specialist. Answer briefly and keep the caller reassured while giving the next practical step.",
+        "voice_prompt": "a.wav",
+        "seed": 42424245,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      }
+    ]
+  },
+  "decode_options": {
+    "description": "Covers deterministic greedy decode option separately from sampled decode.",
+    "requests": [
+      {
+        "id": "service_greedy_decode",
+        "input_wav": "reference/PersonaPlex/assets/test/input_service.wav",
+        "text_prompt": "You work for SwiftPlex Appliances which is a appliance repair company and your name is Farhod Toshmatov. Information: The dishwasher model is out of stock for replacement parts; we can use an alternative part with a 3-day delay. Labor cost remains $60 per hour.",
+        "voice_prompt": "NATM1.pt",
+        "seed": 42424246,
+        "temp_audio": 0.0,
+        "temp_text": 0.0,
+        "topk_audio": 1,
+        "topk_text": 1,
+        "greedy": true
+      }
+    ]
+  },
+  "streaming_service_quality": {
+    "use_all_requests_by_default": true,
+    "description": "Single PersonaPlex streaming request for voice-quality regression checks. This exercises C++ streaming session state and decode_streaming with a realistic service prompt.",
+    "requests": [
+      {
+        "id": "streaming_service_quality",
+        "input_wav": "reference/PersonaPlex/assets/test/input_service.wav",
+        "text_prompt": "You work for SwiftPlex Appliances which is a appliance repair company and your name is Farhod Toshmatov. Information: The dishwasher model is out of stock for replacement parts; we can use an alternative part with a 3-day delay. Labor cost remains $60 per hour.",
+        "voice_prompt": "NATM1.pt",
+        "seed": 42424243,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      }
+    ]
+  },
+  "all_paths": {
+    "description": "PersonaPlex full warmbench coverage in one long-lived session: packaged assistant, packaged service, overlap prompt, raw WAV voice prompt, and greedy decode.",
+    "requests": [
+      {
+        "id": "assistant_basic",
+        "input_wav": "reference/PersonaPlex/assets/test/input_assistant.wav",
+        "text_prompt": "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.",
+        "voice_prompt": "NATF2.pt",
+        "seed": 42424242,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      },
+      {
+        "id": "service_role_prompt",
+        "input_wav": "reference/PersonaPlex/assets/test/input_service.wav",
+        "text_prompt": "You work for SwiftPlex Appliances which is a appliance repair company and your name is Farhod Toshmatov. Information: The dishwasher model is out of stock for replacement parts; we can use an alternative part with a 3-day delay. Labor cost remains $60 per hour.",
+        "voice_prompt": "NATM1.pt",
+        "seed": 42424243,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      },
+      {
+        "id": "assistant_interruption_overlap",
+        "input_wav": "reference/PersonaPlex/assets/test/input_assistant.wav",
+        "text_prompt": "You are a concise assistant. Continue listening while responding, and recover naturally if the user talks over you.",
+        "voice_prompt": "NATM1.pt",
+        "seed": 42424244,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      },
+      {
+        "id": "raw_voice_prompt_wav",
+        "input_wav": "reference/PersonaPlex/assets/test/input_service.wav",
+        "text_prompt": "You are a calm support specialist. Answer briefly and keep the caller reassured while giving the next practical step.",
+        "voice_prompt": "assets/resources/a.wav",
+        "seed": 42424245,
+        "temp_audio": 0.8,
+        "temp_text": 0.7,
+        "topk_audio": 250,
+        "topk_text": 25,
+        "greedy": false
+      },
+      {
+        "id": "service_greedy_decode",
+        "input_wav": "reference/PersonaPlex/assets/test/input_service.wav",
+        "text_prompt": "You work for SwiftPlex Appliances which is a appliance repair company and your name is Farhod Toshmatov. Information: The dishwasher model is out of stock for replacement parts; we can use an alternative part with a 3-day delay. Labor cost remains $60 per hour.",
+        "voice_prompt": "NATM1.pt",
+        "seed": 42424246,
+        "temp_audio": 0.0,
+        "temp_text": 0.0,
+        "topk_audio": 1,
+        "topk_text": 1,
+        "greedy": true
+      }
+    ]
+  }
+}

@@ -1,34 +1,13 @@
 #include "engine/framework/runtime/registry.h"
 
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/filesystem.h"
-#include "engine/models/kokoro_tts/loader.h"
-// Development registry entries from Share/AudioCPP that are not present in this release tree yet:
-// #include "engine/models/higgs_tts/loader.h"
-// #include "engine/models/moss_tts/loader.h"
-// #include "engine/models/parakeet_tdt/loader.h"
-#include "engine/models/ace_step/loader.h"
-#include "engine/models/chatterbox/loader.h"
-#include "engine/models/citrinet_asr/session.h"
-#include "engine/models/demucs/session.h"
-#include "engine/models/heartmula/loader.h"
 #include "engine/models/marblenet_vad/session.h"
-#include "engine/models/miocodec/loader.h"
-#include "engine/models/miotts/loader.h"
-#include "engine/models/omnivoice/loader.h"
-#include "engine/models/pocket_tts/loader.h"
-#include "engine/models/qwen3_asr/loader.h"
-#include "engine/models/qwen3_forced_aligner/loader.h"
-#include "engine/models/qwen3_tts/loader.h"
-#include "engine/models/roformer/session.h"
 #include "engine/models/silero_vad/session.h"
-#include "engine/models/seed_vc/loader.h"
-#include "engine/models/sortformer_diar/loader.h"
-#include "engine/models/stable_audio/loader.h"
-#include "engine/models/vevo2/loader.h"
-#include "engine/models/vibevoice/loader.h"
-#include "engine/models/voxcpm2/loader.h"
+
+#include "model_registry_includes.inc"
 
 #include <algorithm>
 #include <cctype>
@@ -107,11 +86,31 @@ bool ModelRegistry::supports_family(const std::string & family) const noexcept {
         if (loader->family() == family) {
             return true;
         }
+        const auto aliases = loader->family_aliases();
+        if (std::find(aliases.begin(), aliases.end(), family) != aliases.end()) {
+            return true;
+        }
     }
     return false;
 }
 
+std::vector<LoaderAdvertisement> ModelRegistry::advertise_loaders() const {
+    std::vector<LoaderAdvertisement> out;
+    out.reserve(loaders_.size());
+    for (const auto & loader : loaders_) {
+        if (loader == nullptr) {
+            continue;
+        }
+        out.push_back(loader->advertise());
+    }
+    std::sort(out.begin(), out.end(), [](const LoaderAdvertisement & a, const LoaderAdvertisement & b) {
+        return a.family < b.family;
+    });
+    return out;
+}
+
 ModelInspection ModelRegistry::inspect(const ModelLoadRequest & request) const {
+    engine::model_spec::ScopedSpecOverride spec_override(request.model_spec_override, request.model_path);
     validate_request(request);
     const auto * loader = find_loader(request);
     if (loader == nullptr) {
@@ -127,6 +126,7 @@ ModelInspection ModelRegistry::inspect(const std::filesystem::path & model_path)
 }
 
 std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const ModelLoadRequest & request) const {
+    engine::model_spec::ScopedSpecOverride spec_override(request.model_spec_override, request.model_path);
     validate_request(request);
     const auto * loader = find_loader(request);
     if (loader == nullptr) {
@@ -155,11 +155,23 @@ void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
     if (request.family_hint.has_value() && !supports_family(*request.family_hint)) {
         throw std::runtime_error("unsupported model family hint: " + *request.family_hint);
     }
+    if (request.model_spec_override.has_value() &&
+        !engine::io::is_existing_file(*request.model_spec_override) &&
+        !engine::io::is_existing_directory(*request.model_spec_override)) {
+        throw std::runtime_error("model spec override path does not exist: " + request.model_spec_override->string());
+    }
 }
 
 const IVoiceModelLoader * ModelRegistry::find_loader(const ModelLoadRequest & request) const {
     for (const auto & loader : loaders_) {
-        if (request.family_hint.has_value() && loader->family() != *request.family_hint) {
+        if (request.family_hint.has_value()) {
+            if (loader->family() == *request.family_hint) {
+                return loader.get();
+            }
+            const auto aliases = loader->family_aliases();
+            if (std::find(aliases.begin(), aliases.end(), *request.family_hint) != aliases.end()) {
+                return loader.get();
+            }
             continue;
         }
         if (loader->can_load(request)) {
@@ -205,32 +217,9 @@ ModelRegistry make_registry_from_config(
 
 ModelRegistry make_default_registry(const std::optional<std::filesystem::path> & config_path) {
     const std::vector<std::shared_ptr<IVoiceModelLoader>> available_loaders = {
-        engine::models::kokoro_tts::make_kokoro_tts_loader(),
-        // Development registry entries from Share/AudioCPP that are not present in this release tree yet:
-        // engine::models::moss_tts::make_moss_tts_loader(),
-        // engine::models::higgs_tts::make_higgs_tts_loader(),
-        // engine::models::parakeet_tdt::make_parakeet_tdt_loader(),
-        engine::models::ace_step::make_ace_step_loader(),
-        engine::models::demucs::make_htdemucs_loader(),
-        engine::models::roformer::make_mel_loader(),
-        engine::models::omnivoice::make_omnivoice_loader(),
-        engine::models::miocodec::make_miocodec_loader(),
-        engine::models::miotts::make_miotts_loader(),
-        engine::models::voxcpm2::make_voxcpm2_loader(),
-        engine::models::vibevoice::make_vibevoice_loader(),
-        engine::models::heartmula::make_heartmula_loader(),
-        engine::models::pocket_tts::make_pocket_tts_loader(),
-        engine::models::qwen3_forced_aligner::make_qwen3_forced_aligner_loader(),
-        engine::models::qwen3_asr::make_qwen3_asr_loader(),
-        engine::models::qwen3_tts::make_qwen3_tts_loader(),
-        engine::models::sortformer_diar::make_sortformer_diar_loader(),
-        engine::models::stable_audio::make_stable_audio_loader(),
         engine::models::silero_vad::make_silero_vad_loader(),
-        engine::models::citrinet_asr::make_citrinet_asr_loader(),
         engine::models::marblenet_vad::make_marblenet_vad_loader(),
-        engine::models::vevo2::make_vevo2_loader(),
-        engine::models::seed_vc::make_seed_vc_loader(),
-        engine::models::chatterbox::make_chatterbox_loader(),
+#include "model_registry_loaders.inc"
     };
     if (!config_path.has_value()) {
         ModelRegistry registry;

@@ -4,7 +4,10 @@
 
 #include "engine/framework/audio/wav_reader.h"
 
+#include <cmath>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -35,8 +38,30 @@ void set_option_from_json_field(
 
 }  // namespace
 
+bool is_stdin_audio_source(std::string_view audio_arg) {
+    return audio_arg == "-";
+}
+
 engine::runtime::AudioBuffer read_audio_buffer(const std::filesystem::path & path) {
     const auto wav = engine::audio::read_wav_f32(path);
+    return engine::runtime::AudioBuffer{
+        wav.sample_rate,
+        wav.channels,
+        wav.samples,
+    };
+}
+
+engine::runtime::AudioBuffer read_audio_buffer(std::istream & input) {
+    const auto wav = engine::audio::read_wav_f32(input);
+    return engine::runtime::AudioBuffer{
+        wav.sample_rate,
+        wav.channels,
+        wav.samples,
+    };
+}
+
+engine::runtime::AudioBuffer read_audio_buffer(std::string_view input) {
+    const auto wav = engine::audio::read_wav_f32(input);
     return engine::runtime::AudioBuffer{
         wav.sample_rate,
         wav.channels,
@@ -52,7 +77,14 @@ std::string json_option_string(const engine::io::json::Value & value) {
         return value.as_bool() ? "true" : "false";
     }
     if (value.is_number()) {
-        return engine::io::json::stringify_number(value.as_number());
+        const double number = value.as_number();
+        constexpr double kMaxExactJsonInteger = 9007199254740992.0;  // 2^53
+        if (std::isfinite(number) && std::trunc(number) == number && std::fabs(number) < kMaxExactJsonInteger) {
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(0) << number;
+            return out.str();
+        }
+        return engine::io::json::stringify_number(number);
     }
     return engine::io::json::stringify(value);
 }
@@ -150,6 +182,9 @@ engine::runtime::TaskRequest build_request_from_json(
     }
 
     request.options = json_options_map(value.find("options"));
+    if (!language.empty()) {
+        set_option(request.options, "language", language);
+    }
     if (const auto route = json_optional_string(value, "task_route")) {
         set_option(request.options, "route", *route);
     }
@@ -206,9 +241,14 @@ engine::runtime::TaskRequest build_request_from_json(
     set_option_from_json_field(request.options, value, "top_p", "top_p");
     set_option_from_json_field(request.options, value, "repetition_penalty", "repetition_penalty");
     set_option_from_json_field(request.options, value, "do_sample", "do_sample");
+    set_option_from_json_field(request.options, value, "num_beams", "num_beams");
     set_option_from_json_field(request.options, value, "guidance_scale", "guidance_scale");
     set_option_from_json_field(request.options, value, "num_inference_steps", "num_inference_steps");
     set_option_from_json_field(request.options, value, "text_chunk_size", "text_chunk_size");
+    set_option_from_json_field(request.options, value, "text_chunk_mode", "text_chunk_mode");
+    set_option_from_json_field(request.options, value, "audio_chunk_seconds", "audio_chunk_seconds");
+    set_option_from_json_field(request.options, value, "audio_chunk_mode", "audio_chunk_mode");
+    set_option_from_json_field(request.options, value, "return_timestamps", "return_timestamps");
     set_option_from_json_field(request.options, value, "use_prosody_code", "use_prosody_code");
     set_option_from_json_field(request.options, value, "predict_target_prosody", "predict_target_prosody");
     set_option_from_json_field(request.options, value, "use_pitch_shift", "use_pitch_shift");
@@ -232,8 +272,18 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
     if (const auto text = find_arg(argc, argv, "--text")) {
         request.text_input = engine::runtime::Transcript{*text, language};
     }
+    // Read outside the branch below: only a live stdin source uses them, but an option the CLI
+    // never looks up cannot be told apart from a misspelling.
+    const int input_rate = parse_int_arg(argc, argv, "--input-rate", 16000);
+    const int input_channels = parse_int_arg(argc, argv, "--input-channels", 1);
     if (const auto audio_path = find_arg(argc, argv, "--audio")) {
-        request.audio_input = read_audio_buffer(std::filesystem::path(*audio_path));
+        if (is_stdin_audio_source(*audio_path)) {
+            // Live PCM arrives chunk by chunk, so only the format contract is known up front.
+            // The samples stay empty; the streaming driver pulls them from stdin instead.
+            request.audio_input = engine::runtime::AudioBuffer{input_rate, input_channels, {}};
+        } else {
+            request.audio_input = read_audio_buffer(std::filesystem::path(*audio_path));
+        }
     }
     engine::runtime::VoiceCondition voice;
     bool has_voice = false;
@@ -283,6 +333,9 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
         request.voice = std::move(voice);
     }
     request.options = collect_key_value_args(argc, argv, "--request-option");
+    if (!language.empty()) {
+        set_option(request.options, "language", language);
+    }
     if (const auto route = find_arg(argc, argv, "--task-route")) {
         set_option(request.options, "route", *route);
     }
@@ -316,9 +369,13 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
     set_option_from_arg(argc, argv, "--top-p", "top_p", request.options);
     set_option_from_arg(argc, argv, "--repetition-penalty", "repetition_penalty", request.options);
     set_option_from_arg(argc, argv, "--do-sample", "do_sample", request.options);
+    set_option_from_arg(argc, argv, "--num-beams", "num_beams", request.options);
     set_option_from_arg(argc, argv, "--guidance-scale", "guidance_scale", request.options);
     set_option_from_arg(argc, argv, "--num-inference-steps", "num_inference_steps", request.options);
     set_option_from_arg(argc, argv, "--text-chunk-size", "text_chunk_size", request.options);
+    set_option_from_arg(argc, argv, "--text-chunk-mode", "text_chunk_mode", request.options);
+    set_option_from_arg(argc, argv, "--audio-chunk-seconds", "audio_chunk_seconds", request.options);
+    set_option_from_arg(argc, argv, "--audio-chunk-mode", "audio_chunk_mode", request.options);
     set_option_from_arg(argc, argv, "--use-prosody-code", "use_prosody_code", request.options);
     set_option_from_arg(argc, argv, "--predict-target-prosody", "predict_target_prosody", request.options);
     set_option_from_arg(argc, argv, "--use-pitch-shift", "use_pitch_shift", request.options);

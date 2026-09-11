@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "family": "heartmula",
+  "display_name": "HeartMuLa",
+  "description": "Open-source music foundation model for generating complete songs from text, lyric prompts, and style tags, with controllable song structure and broad multilingual lyric conditioning.",
+  "category": "audio_generation",
+  "status": "supported",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "multilingual"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics",
+      "style_control"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "lyrics",
+        "type": "string",
+        "description": "Lyrics text.",
+        "required": false
+      },
+      {
+        "name": "tags",
+        "type": "string",
+        "description": "Comma-separated music tags.",
+        "required": false
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Maximum generated audio duration in seconds; must be positive when set; default 120.",
+        "required": false,
+        "min": 0.0,
+        "default": 120.0
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Audio-token sampling temperature; must be positive when set; default 1.0.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Audio-token top-k sampling limit; default 50.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "MuLa classifier-free guidance scale; must be positive when set; default 1.5.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.5
+      },
+      {
+        "name": "codec_duration_sec",
+        "type": "float",
+        "description": "Codec detokenization chunk duration in seconds; must be positive when set; default 29.76.",
+        "required": false,
+        "min": 0.0,
+        "default": 29.76
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Codec flow solver steps; default 10.",
+        "required": false,
+        "min": 1,
+        "default": 10
+      },
+      {
+        "name": "codec_guidance_scale",
+        "type": "float",
+        "description": "Codec classifier-free guidance scale; must be positive when set; default 1.25.",
+        "required": false,
+        "min": 0.0,
+        "default": 1.25
+      },
+      {
+        "name": "infinite_mode",
+        "type": "bool",
+        "description": "Generate long outputs by splitting lyrics into bounded HeartMuLa requests.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per text chunk in infinite mode; default 4096.",
+        "required": false,
+        "min": 1,
+        "default": 4096
+      },
+      {
+        "name": "infinite_chunk_audio_duration_ms",
+        "type": "int",
+        "description": "Maximum generated audio duration per infinite-mode chunk in milliseconds; default 240000.",
+        "required": false,
+        "min": 1,
+        "default": 240000
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed for reproducible output; default 1234.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "MuLa and codec weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "generator_weight_type",
+        "type": "enum",
+        "description": "MuLa music-token generator weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "description": "Codec weight storage type; defaults to weight_type when set, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "generator_weight_context_mb",
+        "type": "int",
+        "description": "MuLa music-token generator weight descriptor context size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "codec_weight_context_mb",
+        "type": "int",
+        "description": "Codec weight descriptor context size in MiB; default 32.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "generator_constant_context_mb",
+        "type": "int",
+        "description": "MuLa music-token generator reusable constant context size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "backbone_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "MuLa music-token generator backbone prefill graph arena size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "backbone_step_graph_arena_mb",
+        "type": "int",
+        "description": "MuLa music-token generator backbone cached-step graph arena size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "decoder_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "MuLa music-token generator decoder prefill graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "decoder_step_graph_arena_mb",
+        "type": "int",
+        "description": "MuLa music-token generator decoder cached-step graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "frame_embedding_graph_arena_mb",
+        "type": "int",
+        "description": "MuLa music-token generator frame-embedding graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "flow_estimator_graph_arena_mb",
+        "type": "int",
+        "description": "Codec flow-estimator graph arena size in MiB; default 2048.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "conditioning_graph_arena_mb",
+        "type": "int",
+        "description": "Codec conditioning graph arena size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "scalar_decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Codec scalar-decoder graph arena size in MiB; default 1536.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged runtime graphs after each request; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "heartmula_q8_0",
+    "tags": [
+      "Music",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/music_generation.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "heartmula_q8_0",
+      "display_name": "HeartMuLa Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "HeartMuLa-GGUF",
+      "files": [
+        "HeartMuLa-GGUF/heartmula-q8_0.gguf"
+      ],
+      "strip_prefix": "HeartMuLa-GGUF"
+    },
+    {
+      "id": "heartmula_f16",
+      "display_name": "HeartMuLa F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "HeartMuLa-GGUF",
+      "files": [
+        "HeartMuLa-GGUF/heartmula-f16.gguf"
+      ],
+      "strip_prefix": "HeartMuLa-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "tokenizer_json": "model:tokenizer.json",
+        "generation_config": "model:gen_config.json",
+        "mula_config": "model:HeartMuLa-oss-3B/config.json",
+        "codec_config": "model:HeartCodec-oss/config.json"
+      },
+      "tensors": {
+        "mula_weights": {
+          "source": "weights:",
+          "prefix": "mula_weights"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "tokenizer_json": "model:tokenizer.json",
+        "generation_config": "model:gen_config.json",
+        "mula_config": "model:HeartMuLa-oss-3B/config.json",
+        "codec_config": "model:HeartCodec-oss/config.json"
+      },
+      "tensors": {
+        "mula_weights": "model:HeartMuLa-oss-3B/model.safetensors.index.json",
+        "codec_weights": "model:HeartCodec-oss/model.safetensors.index.json"
+      }
+    }
+  ]
+}

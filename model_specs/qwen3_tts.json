@@ -1,0 +1,228 @@
+{
+  "family": "qwen3_tts",
+  "display_name": "Qwen3-TTS",
+  "description": "Qwen TTS family for controllable 10-language speech synthesis, including 3-second voice cloning, CustomVoice instruction control over preset timbres, and VoiceDesign from natural-language descriptions.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone",
+    "design"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "ja",
+    "ko",
+    "de",
+    "fr",
+    "ru",
+    "pt",
+    "es",
+    "it"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ],
+    "design": [
+      "voice_design"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "qwen3_tts_1_7b_base_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "Design",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/qwen3.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "qwen3_tts_1_7b_base_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_base_bf16",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_base_orig",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base Original-Dtype GGUF",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-orig.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_customvoice_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 1.7B CustomVoice Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_customvoice_bf16",
+      "display_name": "Qwen3 TTS 12Hz 1.7B CustomVoice BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_voicedesign_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 1.7B VoiceDesign Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_voicedesign_bf16",
+      "display_name": "Qwen3 TTS 12Hz 1.7B VoiceDesign BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF"
+    },
+    {
+      "id": "qwen3_tts_0_6b_base_q8_0",
+      "display_name": "Qwen3 TTS 12Hz 0.6B Base Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Qwen3-TTS-12Hz-0.6B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-0.6B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_0_6b_base_bf16",
+      "display_name": "Qwen3 TTS 12Hz 0.6B Base BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Qwen3-TTS-12Hz-0.6B-Base-GGUF",
+      "files": [
+        "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-bf16.gguf"
+      ],
+      "strip_prefix": "Qwen3-TTS-12Hz-0.6B-Base-GGUF"
+    },
+    {
+      "id": "qwen3_tts_1_7b_base_safetensors",
+      "display_name": "Qwen3 TTS 12Hz 1.7B Base Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Qwen3-TTS-12Hz-1.7B-Base",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "speech_tokenizer/config.json",
+        "speech_tokenizer/model.safetensors",
+        "tokenizer_config.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "speech_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "speech_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "speech_tokenizer_weights": "model:speech_tokenizer/model.safetensors"
+      }
+    }
+  ]
+}

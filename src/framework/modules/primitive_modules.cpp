@@ -22,6 +22,12 @@ const core::ModulePortSpec kResidualInputs[] = {
     {"residual", core::PortKind::Activation, false},
 };
 
+const core::ModulePortSpec kBypassInputs[] = {
+    {"original", core::PortKind::Activation, false},
+    {"transformed", core::PortKind::Activation, false},
+    {"channel_scale", core::PortKind::Parameter, false},
+};
+
 const core::ModulePortSpec kSingleOutput[] = {
     {"output", core::PortKind::Activation, false},
 };
@@ -56,6 +62,21 @@ const core::ModuleSchema kMulSchema = {
     "Elementwise multiplication for tensors with the same logical shape.",
 };
 
+const core::ModulePortSpec kTimeMask4dInputs[] = {
+    {"input", core::PortKind::Activation, false},
+    {"mask", core::PortKind::Activation, false},
+};
+
+const core::ModuleSchema kTimeMask4dSchema = {
+    "TimeMask4d",
+    "tensor.mask",
+    kTimeMask4dInputs,
+    2,
+    kSingleOutput,
+    1,
+    "Applies a [batch, time] keep mask to a [batch, channels, time, features] tensor.",
+};
+
 const core::ModuleSchema kResidualAddSchema = {
     "ResidualAdd",
     "nn.primitive",
@@ -64,6 +85,16 @@ const core::ModuleSchema kResidualAddSchema = {
     kSingleOutput,
     1,
     "Adds a residual tensor to the main input.",
+};
+
+const core::ModuleSchema kScaledBypassSchema = {
+    "ScaledBypass",
+    "nn.primitive",
+    kBypassInputs,
+    3,
+    kSingleOutput,
+    1,
+    "Applies scaled residual bypass: original + (transformed - original) * channel_scale.",
 };
 
 const core::ModuleSchema kReduceMeanSchema = {
@@ -88,6 +119,16 @@ const core::ModuleSchema kReduceSumSchema = {
 
 void validate_same_shape(const core::TensorValue & lhs, const core::TensorValue & rhs, const char * op_name) {
     core::validate_shape(rhs, lhs.shape, op_name);
+}
+
+core::TensorShape make_last_dim_broadcast_shape(const core::TensorShape & target) {
+    core::TensorShape shape = {};
+    shape.rank = target.rank;
+    for (size_t i = 0; i < shape.rank; ++i) {
+        shape.dims[i] = 1;
+    }
+    shape.dims[shape.rank - 1] = target.last_dim();
+    return shape;
 }
 
 core::TensorShape transpose_last_two(const core::TensorShape & shape) {
@@ -242,6 +283,35 @@ const core::ModuleSchema & MulModule::static_schema() noexcept {
     return kMulSchema;
 }
 
+const core::ModuleSchema & TimeMask4dModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue TimeMask4dModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & mask) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(input, 4, 4, "input");
+    core::validate_shape(
+        mask,
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[2]}),
+        "time_mask");
+    const auto mask_f32 = core::wrap_tensor(ggml_cast(ctx.ggml, mask.tensor, GGML_TYPE_F32), mask.shape, GGML_TYPE_F32);
+    const auto mask_4d = core::reshape_tensor(
+        ctx,
+        mask_f32,
+        core::TensorShape::from_dims({input.shape.dims[0], 1, input.shape.dims[2], 1}));
+    const auto broadcast = core::wrap_tensor(ggml_repeat(ctx.ggml, mask_4d.tensor, input.tensor), input.shape, GGML_TYPE_F32);
+    return core::wrap_tensor(ggml_mul(ctx.ggml, input.tensor, broadcast.tensor), input.shape, GGML_TYPE_F32);
+}
+
+const core::ModuleSchema & TimeMask4dModule::static_schema() noexcept {
+    return kTimeMask4dSchema;
+}
+
 const core::ModuleSchema & ResidualAddModule::schema() const noexcept {
     return static_schema();
 }
@@ -261,6 +331,35 @@ core::TensorValue ResidualAddModule::build(
 
 const core::ModuleSchema & ResidualAddModule::static_schema() noexcept {
     return kResidualAddSchema;
+}
+
+const core::ModuleSchema & ScaledBypassModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue ScaledBypassModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & original,
+    const core::TensorValue & transformed,
+    const core::TensorValue & channel_scale) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    core::validate_rank_between(original, 1, core::kMaxTensorRank, "original");
+    validate_same_shape(original, transformed, "ScaledBypass transformed");
+    core::validate_shape(channel_scale, core::TensorShape::from_dims({original.shape.last_dim()}), "channel_scale");
+
+    const auto original_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, original);
+    const auto transformed_contiguous = tensor_layout::ensure_contiguous_nontransposed_layout_if_needed(ctx, transformed);
+    const auto scale_view = core::reshape_tensor(ctx, channel_scale, make_last_dim_broadcast_shape(original.shape));
+    const auto repeated_scale = core::wrap_tensor(ggml_repeat(ctx.ggml, scale_view.tensor, original_contiguous.tensor), original.shape, GGML_TYPE_F32);
+    const auto delta = core::wrap_tensor(ggml_sub(ctx.ggml, transformed_contiguous.tensor, original_contiguous.tensor), original.shape, GGML_TYPE_F32);
+    const auto scaled_delta = core::wrap_tensor(ggml_mul(ctx.ggml, delta.tensor, repeated_scale.tensor), original.shape, GGML_TYPE_F32);
+    return core::wrap_tensor(ggml_add(ctx.ggml, original_contiguous.tensor, scaled_delta.tensor), original.shape, GGML_TYPE_F32);
+}
+
+const core::ModuleSchema & ScaledBypassModule::static_schema() noexcept {
+    return kScaledBypassSchema;
 }
 
 ReduceMeanModule::ReduceMeanModule(ReduceConfig config) : config_(config) {

@@ -547,6 +547,7 @@ runtime::TaskResult SileroRuntime::build_offline_result(
         result.speech_segments.push_back({
             {segment.start, segment.end},
             1.0f,
+            {},
         });
     }
     return result;
@@ -601,7 +602,7 @@ runtime::StreamEvent SileroRuntime::build_stream_event(
             runtime::VoiceActivityEvent::Kind::SpeechEnd,
             speech_end,
             probability,
-            runtime::SpeechSegment{{segment.start, segment.end}, probability},
+            runtime::SpeechSegment{{segment.start, segment.end}, probability, {}},
         });
     }
     return event;
@@ -649,6 +650,7 @@ runtime::TaskResult SileroRuntime::finalize_stream(const SileroVADConfig & confi
         result.speech_segments.push_back({
             {segment.start, segment.end},
             config.threshold,
+            {},
         });
     }
     const int64_t min_speech_samples = static_cast<int64_t>(kSampleRate) * config.min_speech_duration_ms / 1000;
@@ -656,6 +658,7 @@ runtime::TaskResult SileroRuntime::finalize_stream(const SileroVADConfig & confi
         result.speech_segments.push_back({
             {current_speech_start_, current_sample_},
             config.threshold,
+            {},
         });
     }
     engine::debug::timing_log_scalar("silero_vad.streaming.finalize_ms", engine::debug::elapsed_ms(total_start));

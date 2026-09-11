@@ -1,0 +1,34 @@
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 1,
+  "lazy_load": true,
+  "live_ingest": {
+    "idle_timeout_ms": 30000,
+    "total_timeout_ms": 600000,
+    "max_body_bytes": 536870912,
+    "max_chunk_bytes": 8388608,
+    "send_timeout_ms": 30000
+  },
+  "models": [
+    {
+      "id": "voxcpm2-stream",
+      "family": "voxcpm2",
+      "path": "/path/to/models/VoxCPM2",
+      "task": "tts",
+      "mode": "streaming"
+    },
+    {
+      "id": "nemotron-stream",
+      "family": "nemotron_asr",
+      "path": "/path/to/models/nemotron-3.5-asr-streaming-0.6b",
+      "task": "asr",
+      "mode": "streaming",
+      "live_ingest": {
+        "total_timeout_ms": 1800000
+      }
+    }
+  ]
+}

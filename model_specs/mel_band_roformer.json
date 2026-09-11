@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "family": "mel_band_roformer",
+  "display_name": "Mel-Band RoFormer",
+  "description": "Music source-separation model that uses mel-scaled overlapping frequency bands and RoFormer attention to estimate stems such as vocals, drums, and accompaniment.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "sep"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "sep": [
+      "stems"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "RoFormer weight storage type. Defaults to f32 when the backend requires a host graph plan, otherwise native.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "num_overlap",
+        "type": "int",
+        "description": "Number of overlapping inference windows; defaults to the package configuration. Lower values improve throughput but can reduce boundary quality.",
+        "required": false,
+        "min": 1
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "mel_band_roformer_q8_0",
+    "tags": [
+      "Sep",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/audio_tools.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "mel_band_roformer_q8_0",
+      "display_name": "Mel-Band RoFormer Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Mel-Band-RoFormer-GGUF",
+      "files": [
+        "Mel-Band-RoFormer-GGUF/mel-band-roformer-q8_0.gguf"
+      ],
+      "strip_prefix": "Mel-Band-RoFormer-GGUF"
+    },
+    {
+      "id": "mel_band_roformer_f16",
+      "display_name": "Mel-Band RoFormer F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Mel-Band-RoFormer-GGUF",
+      "files": [
+        "Mel-Band-RoFormer-GGUF/mel-band-roformer-f16.gguf"
+      ],
+      "strip_prefix": "Mel-Band-RoFormer-GGUF"
+    },
+    {
+      "id": "mel_band_roformer_safetensors",
+      "display_name": "Mel RoFormer Safetensors",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "mel-roformer-mlx",
+      "files": [
+        "config.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mlx-community/mel-roformer-mlx"
+      }
+    }
+  ],
+  "dependencies": [],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

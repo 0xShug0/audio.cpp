@@ -3,6 +3,8 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
+#include "engine/framework/modules/structural_modules.h"
+#include "engine/models/pocket_tts/backend_weights.h"
 #include "graph_common.h"
 
 #include <chrono>

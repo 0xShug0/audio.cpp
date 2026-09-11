@@ -2,7 +2,7 @@
 
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/wavlm_encoder.h"
+#include "engine/framework/modules/speech_encoders/wavlm_encoder.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/text/utf8.h"
@@ -91,10 +91,10 @@ std::filesystem::path default_asr_model_path(const std::filesystem::path & miott
 }
 
 std::filesystem::path resolve_codec_model_path(const runtime::SessionOptions & options, const MioTTSAssets & assets) {
-    if (const auto value = runtime::find_option(options.options, {"codec_model"})) {
+    if (const auto value = runtime::find_option(options.options, {"miotts.codec_model_path"})) {
         return std::filesystem::path(*value);
     }
-    return default_codec_model_path(assets.paths.model_root);
+    return default_codec_model_path(assets.resources.model_root());
 }
 
 std::filesystem::path resolve_best_of_n_asr_model_path(
@@ -102,10 +102,10 @@ std::filesystem::path resolve_best_of_n_asr_model_path(
     const MioTTSAssets & assets) {
     if (const auto value = runtime::find_option(
             options.options,
-            {"best_of_n_asr_model"})) {
+            {"miotts.best_of_n_asr_model_path"})) {
         return std::filesystem::path(*value);
     }
-    return default_asr_model_path(assets.paths.model_root);
+    return default_asr_model_path(assets.resources.model_root());
 }
 
 std::string normalized_best_of_n_language(std::string value) {
@@ -203,14 +203,14 @@ ResolvedBestOfN best_of_n_from_request(
     out.enabled = session_enabled;
     out.n = clamp_best_of_n(session_default, session_max);
     out.language = normalized_best_of_n_language(session_language);
-    if (const auto value = runtime::parse_int_option(request.options, {"best_of_n"})) {
+    if (const auto value = runtime::parse_int_option(request.options, {"miotts.best_of_n"})) {
         out.n = clamp_best_of_n(*value, session_max);
         out.enabled = out.n > 1;
     }
-    if (const auto value = runtime::find_option(request.options, {"best_of_n_enabled"})) {
-        out.enabled = runtime::parse_bool_option(*value, "best_of_n_enabled");
+    if (const auto value = runtime::find_option(request.options, {"miotts.best_of_n_enabled"})) {
+        out.enabled = runtime::parse_bool_option(*value, "miotts.best_of_n_enabled");
     }
-    if (const auto value = runtime::find_option(request.options, {"best_of_n_language"})) {
+    if (const auto value = runtime::find_option(request.options, {"miotts.best_of_n_language"})) {
         out.language = normalized_best_of_n_language(*value);
     }
     if (!out.enabled) {
@@ -577,12 +577,12 @@ MioTTSSession::MioTTSSession(
     validate_matmul_weight_storage(lm_weight_type, "miotts.weight_type");
     text_chunk_size_ = engine::text::parse_text_chunk_size_override(options.options)
         .value_or(kReferenceTextChunkCodepoints);
-    if (const auto value = runtime::find_option(options.options, {"best_of_n_enabled"})) {
-        best_of_n_enabled_ = runtime::parse_bool_option(*value, "best_of_n_enabled");
+    if (const auto value = runtime::find_option(options.options, {"miotts.best_of_n_enabled"})) {
+        best_of_n_enabled_ = runtime::parse_bool_option(*value, "miotts.best_of_n_enabled");
     }
-    best_of_n_default_ = runtime::parse_int_option(options.options, {"best_of_n_default"})
+    best_of_n_default_ = runtime::parse_int_option(options.options, {"miotts.best_of_n_default"})
         .value_or(1);
-    best_of_n_max_ = runtime::parse_int_option(options.options, {"best_of_n_max"})
+    best_of_n_max_ = runtime::parse_int_option(options.options, {"miotts.best_of_n_max"})
         .value_or(8);
     if (best_of_n_default_ <= 0) {
         throw std::runtime_error("MioTTS best_of_n_default must be positive");
@@ -594,7 +594,7 @@ MioTTSSession::MioTTSSession(
         best_of_n_default_ = best_of_n_max_;
     }
     best_of_n_language_ = normalized_best_of_n_language(
-        runtime::find_option(options.options, {"best_of_n_language"}).value_or("auto"));
+        runtime::find_option(options.options, {"miotts.best_of_n_language"}).value_or("auto"));
     best_of_n_asr_model_path_ = resolve_best_of_n_asr_model_path(options, *assets_);
     tokenizer_ = std::make_unique<MioTTSTokenizer>(assets_);
     language_model_ = std::make_unique<MioTTSCausalLMRuntime>(
@@ -610,15 +610,15 @@ MioTTSSession::MioTTSSession(
     engine::debug::trace_log_scalar("miotts.codec_model_path", codec_model_path.string());
     codec_assets_ = miocodec::load_miocodec_assets(codec_model_path);
     codec_weights_ = miocodec::load_miocodec_weights(
-        codec_assets_->paths.model_weights_path,
+        *codec_assets_->model_weights,
         execution_context(),
         runtime::parse_size_mb_option(options.options, {"miotts.codec_weight_context_mb"}, kDefaultCodecWeightContextBytes),
         codec_assets_->config);
     engine::modules::WavlmEncoderConfig wavlm_config;
     wavlm_config.output_hidden_layer = 9;
     wavlm_config.weight_storage_type = lm_weight_type;
-    auto wavlm = engine::modules::WavlmEncoderComponent::load_from_safetensors(
-        codec_assets_->paths.wavlm_weights_path,
+    auto wavlm = engine::modules::WavlmEncoderComponent::load_from_tensor_source(
+        *codec_assets_->wavlm_weights,
         options.backend,
         wavlm_config);
     const size_t constant_context_bytes = runtime::parse_size_mb_option(

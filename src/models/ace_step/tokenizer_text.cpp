@@ -48,10 +48,10 @@ AceStepTextTokenizer::AceStepTextTokenizer(
     }
     const bool use_planner = resources_ == ResourceSet::Planner;
     impl_ = load_impl(
-        use_planner ? assets_->paths.lm_tokenizer_vocab_path : assets_->paths.text_encoder_tokenizer_vocab_path,
-        use_planner ? assets_->paths.lm_tokenizer_merges_path : assets_->paths.text_encoder_tokenizer_merges_path,
-        use_planner ? assets_->paths.lm_tokenizer_config_path : assets_->paths.text_encoder_tokenizer_config_path,
-        use_planner ? assets_->paths.lm_tokenizer_json_path : assets_->paths.text_encoder_tokenizer_json_path);
+        assets_->resources.require_file(use_planner ? "lm_vocab" : "text_encoder_vocab"),
+        assets_->resources.require_file(use_planner ? "lm_merges" : "text_encoder_merges"),
+        assets_->resources.require_file(use_planner ? "lm_tokenizer_config" : "text_encoder_tokenizer_config"),
+        assets_->resources.require_file(use_planner ? "lm_tokenizer_json" : "text_encoder_tokenizer_json"));
 }
 
 int32_t AceStepTextTokenizer::pad_token_id() const noexcept {

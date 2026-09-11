@@ -1,0 +1,158 @@
+{
+  "voice_ref_scene": {
+    "requests": [
+      {
+        "prompt": "A woman speaks warmly, \"Hello, how are you today?\" She laughs softly, \"Hahaha, it is so good to see you again.\"",
+        "voice_ref": "reference/DramaBox/assets/voices/female_american.wav",
+        "seed": 42,
+        "cfg_scale": 2.5,
+        "stg_scale": 1.5,
+        "duration_multiplier": 1.1,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  },
+  "no_ref_plain": {
+    "requests": [
+      {
+        "prompt": "A tired detective speaks under his breath, \"The alley is quiet now.\" He pauses briefly. \"Too quiet.\"",
+        "no_ref": true,
+        "seed": 43,
+        "cfg_scale": 2.5,
+        "stg_scale": 1.5,
+        "duration_multiplier": 1.1,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  },
+  "cfg_only": {
+    "requests": [
+      {
+        "prompt": "A queen speaks with restrained fury, \"You mistake mercy for weakness.\" She exhales slowly. \"Do not make that mistake twice.\"",
+        "voice_ref": "models/Dramabox/samples/refs/01_queen_sighs_rage.wav",
+        "seed": 44,
+        "cfg_scale": 3.0,
+        "stg_scale": 0.0,
+        "duration_multiplier": 1.1,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  },
+  "cfg_explicit_negative": {
+    "requests": [
+      {
+        "prompt": "A queen speaks with restrained fury, \"You mistake mercy for weakness.\" She exhales slowly. \"Do not make that mistake twice.\"",
+        "negative_prompt": "high pitched squeal, metallic ringing, clipped distortion, harsh static, robotic monotone",
+        "voice_ref": "models/Dramabox/samples/refs/01_queen_sighs_rage.wav",
+        "seed": 48,
+        "cfg_scale": 3.0,
+        "stg_scale": 0.0,
+        "duration_multiplier": 1.1,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  },
+  "stg_only": {
+    "requests": [
+      {
+        "prompt": "A mischievous catgirl giggles, \"Hehehe, you really believed that?\" She snorts, then whispers, \"That is adorable.\"",
+        "voice_ref": "models/Dramabox/samples/refs/04_catgirl_giggles_snort.wav",
+        "seed": 45,
+        "cfg_scale": 1.0,
+        "stg_scale": 1.5,
+        "duration_multiplier": 1.1,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  },
+  "explicit_duration": {
+    "requests": [
+      {
+        "prompt": "A villain speaks with a slow sinister smile, \"Every door in this house has already locked behind you.\" He laughs darkly.",
+        "voice_ref": "models/Dramabox/samples/refs/09_villain_sinister_laugh.wav",
+        "seed": 46,
+        "cfg_scale": 2.5,
+        "stg_scale": 1.5,
+        "gen_duration": 8.0,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  },
+  "long_form_chunked": {
+    "requests": [
+      {
+        "prompt": "A weary queen speaks from the steps of a ruined hall, \"You asked why the bells stopped ringing, and I will answer plainly.\" She takes a shaky breath. \"They stopped because every hand that once pulled the ropes is gone.\" A long pause. \"My council wanted a speech about courage, but courage is not the same as denial.\" Her voice hardens, \"We will rebuild the walls, we will bury our dead, and we will remember who opened the gates.\" She sighs deeply. \"If you are afraid, stand with me anyway.\" She laughs once, bitter and small, \"Hahaha, I am afraid too.\" Another pause hangs in the air. \"At dawn, we march not because victory is certain, but because surrender would teach our children the wrong story.\" She lowers her voice, \"So sleep if you can. Sharpen what you must. And when the sun rises, answer the bells with your feet.\"",
+        "voice_ref": "models/Dramabox/samples/refs/01_queen_sighs_rage.wav",
+        "seed": 47,
+        "cfg_scale": 2.5,
+        "stg_scale": 1.5,
+        "duration_multiplier": 1.6,
+        "ref_duration": 10.0,
+        "max_chunk_duration": 18.0,
+        "target_chunk_duration": 14.0,
+        "crossfade_ms": 50.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  },
+  "multi_feature_session": {
+    "use_all_requests_by_default": true,
+    "requests": [
+      {
+        "prompt": "A woman speaks warmly, \"Hello, how are you today?\" She laughs softly, \"Hahaha, it is so good to see you again.\"",
+        "voice_ref": "reference/DramaBox/assets/voices/female_american.wav",
+        "seed": 52,
+        "cfg_scale": 2.5,
+        "stg_scale": 1.5,
+        "duration_multiplier": 1.1,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      },
+      {
+        "prompt": "A woman speaks warmly, \"The alley is quiet now.\" She pauses briefly. \"Too quiet.\"",
+        "voice_ref": "reference/DramaBox/assets/voices/female_american.wav",
+        "seed": 53,
+        "cfg_scale": 2.5,
+        "stg_scale": 1.5,
+        "duration_multiplier": 1.1,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      },
+      {
+        "prompt": "A woman speaks warmly, \"Every door in this house has already locked behind you, but do not worry.\" She laughs softly, \"Hahaha, we still have time to find another way out before sunrise.\"",
+        "voice_ref": "reference/DramaBox/assets/voices/female_american.wav",
+        "seed": 54,
+        "cfg_scale": 2.5,
+        "stg_scale": 1.5,
+        "duration_multiplier": 1.1,
+        "ref_duration": 10.0,
+        "rescale_scale": "auto",
+        "watermark": false,
+        "denoise_ref": false
+      }
+    ]
+  }
+}

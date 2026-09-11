@@ -13,7 +13,7 @@ public:
     ChatterboxLoadedModel(
         runtime::ModelMetadata metadata,
         runtime::CapabilitySet capabilities,
-        std::shared_ptr<const ChatterboxAssetPaths> assets);
+        std::shared_ptr<const ChatterboxAssets> assets);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -24,7 +24,7 @@ public:
 private:
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
-    std::shared_ptr<const ChatterboxAssetPaths> assets_;
+    std::shared_ptr<const ChatterboxAssets> assets_;
 };
 
 std::unique_ptr<ChatterboxLoadedModel> load_chatterbox_model(const std::filesystem::path & model_root);

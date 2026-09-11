@@ -637,6 +637,11 @@ public:
     return out;
   }
 
+  void release_runtime_memory() {
+    release_decoder_graph();
+    release_encoder_graph();
+  }
+
 private:
   struct EncodedFeatures {
     std::vector<float> features;
@@ -926,6 +931,10 @@ VoxCPM2EncodedPrompt VoxCPM2AudioVAEDecoderRuntime::encode_prompt_audio(
     const std::string &prompt_text,
     const std::optional<runtime::AudioBuffer> &reference_audio) {
   return impl_->encode_prompt_audio(prompt_audio, prompt_text, reference_audio);
+}
+
+void VoxCPM2AudioVAEDecoderRuntime::release_runtime_memory() {
+  impl_->release_runtime_memory();
 }
 
 } // namespace engine::models::voxcpm2
