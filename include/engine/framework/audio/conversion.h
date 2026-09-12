@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/wav_reader.h"
 
 #include <cstdint>
@@ -45,6 +46,14 @@ std::vector<float> convert_interleaved_audio_to_mono_linear_resampled(
     int sample_rate_hz,
     int channel_count,
     int target_sample_rate_hz);
+
+std::vector<float> convert_interleaved_audio_to_mono_torchaudio_sinc_hann_resampled(
+    const std::vector<float> & interleaved_samples,
+    int sample_rate_hz,
+    int channel_count,
+    int target_sample_rate_hz,
+    const TorchaudioSincHannResampleOptions & options = {},
+    MonoMixAccumulation accumulation = MonoMixAccumulation::Float32);
 
 std::vector<float> read_wav_f32_as_mono_linear_resampled(
     const std::filesystem::path & path,

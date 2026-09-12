@@ -523,7 +523,6 @@ add_library(engine_core OBJECT
     src/framework/codecs/neural_audio.cpp
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
-    src/framework/midi/sheetsage2_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
@@ -1420,6 +1419,18 @@ audiocpp_add_model(yue2
         engine::models::yue2::make_yue2_loader
 )
 
+audiocpp_add_model(sheetsage2
+    SOURCES
+        src/models/sheetsage/runtime.cpp
+        src/models/sheetsage/session.cpp
+    INCLUDES
+        engine/models/sheetsage/types.h
+        engine/models/sheetsage/runtime.h
+        engine/models/sheetsage/session.h
+    LOADERS
+        engine::models::sheetsage::make_sheetsage2_loader
+)
+
 audiocpp_add_model(supertonic
     SOURCES
         src/models/supertonic/assets.cpp
@@ -2156,6 +2167,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     add_executable(sheetsage2_decoder_parity_probe
+        src/models/sheetsage/runtime.cpp
         tests/yue2/sheetsage2_decoder_parity_probe.cpp
     )
     target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE engine_runtime ggml)
