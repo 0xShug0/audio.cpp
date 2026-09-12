@@ -77,6 +77,87 @@ static void concat_cuda(
     concat_cont<T, 2><<<num_blocks, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2);
 }
 
+template <typename T, int dim>
+static __global__ void __launch_bounds__(CUDA_CONCAT_BLOCK_SIZE) concat_cont_4d(
+        const T * x,
+        const T * y,
+        T *       dst,
+        int64_t   ne00,
+        int64_t   ne01,
+        int64_t   ne02,
+        int64_t   ne0,
+        int64_t   ne1,
+        int64_t   ne2,
+        int64_t   ne3) {
+    static_assert(dim >= 0 && dim <= 2, "dim must be in [0, 2]");
+
+    const int64_t n = ne0 * ne1 * ne2 * ne3;
+    for (int64_t i = (int64_t) blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (int64_t) blockDim.x * gridDim.x) {
+        if constexpr (dim == 0) {
+            const int64_t row = i / ne0;
+            const int64_t i0 = i - row * ne0;
+            if (i0 < ne00) {
+                dst[i] = x[row * ne00 + i0];
+            } else {
+                dst[i] = y[row * (ne0 - ne00) + (i0 - ne00)];
+            }
+        } else if constexpr (dim == 1) {
+            const int64_t dst_vol = ne0 * ne1 * ne2;
+            const int64_t src0_plane = ne0 * ne01;
+            const int64_t src1_plane = ne0 * (ne1 - ne01);
+            const int64_t src0_vol = src0_plane * ne2;
+            const int64_t src1_vol = src1_plane * ne2;
+            const int64_t i3 = i / dst_vol;
+            const int64_t within = i - i3 * dst_vol;
+            const int64_t i2 = within / (ne0 * ne1);
+            const int64_t i01 = within - i2 * ne0 * ne1;
+            if (i01 < src0_plane) {
+                dst[i] = x[i3 * src0_vol + i2 * src0_plane + i01];
+            } else {
+                dst[i] = y[i3 * src1_vol + i2 * src1_plane + (i01 - src0_plane)];
+            }
+        } else {
+            const int64_t dst_vol = ne0 * ne1 * ne2;
+            const int64_t src0_size = ne0 * ne1 * ne02;
+            const int64_t src1_size = dst_vol - src0_size;
+            const int64_t i3 = i / dst_vol;
+            const int64_t within = i - i3 * dst_vol;
+            if (within < src0_size) {
+                dst[i] = x[i3 * src0_size + within];
+            } else {
+                dst[i] = y[i3 * src1_size + (within - src0_size)];
+            }
+        }
+    }
+}
+
+template <typename T>
+static void concat_cuda_4d(
+        const T *  x,
+        const T *  y,
+        T *        dst,
+        int64_t    ne00,
+        int64_t    ne01,
+        int64_t    ne02,
+        int64_t    ne0,
+        int64_t    ne1,
+        int64_t    ne2,
+        int64_t    ne3,
+        int        dim,
+        cudaStream_t stream) {
+    const int64_t n = ne0 * ne1 * ne2 * ne3;
+    const int num_blocks = (n + CUDA_CONCAT_BLOCK_SIZE - 1) / CUDA_CONCAT_BLOCK_SIZE;
+    if (dim == 0) {
+        concat_cont_4d<T, 0><<<num_blocks, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2, ne3);
+        return;
+    }
+    if (dim == 1) {
+        concat_cont_4d<T, 1><<<num_blocks, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2, ne3);
+        return;
+    }
+    concat_cont_4d<T, 2><<<num_blocks, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2, ne3);
+}
+
 // non-contiguous kernel (slow)
 template <typename T, int dim>
 static __global__ void __launch_bounds__(CUDA_CONCAT_BLOCK_SIZE) concat_non_cont(
@@ -146,6 +227,14 @@ static void concat_cuda_typed(ggml_tensor * dst, cudaStream_t stream, int32_t di
         T *       dst_d  = (T *) dst->data;
 
         if (dim != 3) {
+            if (ggml_get_op_params_i32(dst, 1) == GGML_CONCAT_LOWERING_CUDA_CONTIGUOUS_4D) {
+                concat_cuda_4d(
+                        src0_d, src1_d, dst_d,
+                        src0->ne[0], src0->ne[1], src0->ne[2],
+                        dst->ne[0],  dst->ne[1],  dst->ne[2], dst->ne[3],
+                        dim, stream);
+                return;
+            }
             for (int i3 = 0; i3 < dst->ne[3]; i3++) {
                 concat_cuda(
                         src0_d + i3 * (src0->nb[3] / sizeof(T)),
