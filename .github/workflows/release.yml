@@ -151,6 +151,37 @@ jobs:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu
           path: build/bin/*
 
+  linux-cpu-portable:
+    name: Ubuntu x64 (CPU portable)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF \
+            -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
+            -DAUDIOCPP_VERSION=${{ needs.get-version.outputs.version }} \
+            ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Stage bundle
+        run: |
+          cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu-portable
+          path: build/bin/*
+
   linux-vulkan:
     name: Ubuntu x64 (Vulkan)
     needs: [check-release, get-version]
@@ -178,6 +209,37 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan
+          path: build/bin/*
+
+  linux-vulkan-portable:
+    name: Ubuntu x64 (Vulkan portable)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF \
+            -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
+            -DAUDIOCPP_VERSION=${{ needs.get-version.outputs.version }} \
+            ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Stage bundle
+        run: |
+          cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan-portable
           path: build/bin/*
 
   linux-cuda-colab:
@@ -518,7 +580,9 @@ jobs:
       - get-version
       - macos-metal
       - linux-cpu
+      - linux-cpu-portable
       - linux-vulkan
+      - linux-vulkan-portable
       - linux-cuda-colab
       - windows-cpu
       - windows-cpu-portable
