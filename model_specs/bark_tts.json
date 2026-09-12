@@ -32,7 +32,7 @@
     {
       "id": "bark_small_f16",
       "display_name": "Bark Small F16 GGUF",
-      "default": false,
+      "default": true,
       "format": "gguf",
       "precision": "f16",
       "target_directory": "Bark-Small-GGUF",
@@ -42,7 +42,7 @@
     {
       "id": "bark_small_q8_0",
       "display_name": "Bark Small Q8_0 GGUF",
-      "default": true,
+      "default": false,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Bark-Small-GGUF",
@@ -52,7 +52,7 @@
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "bark_small_q8_0",
+    "recommended_package": "bark_small_f16",
     "tags": ["TTS", "GGUF"],
     "docs": ["docs/models/bark_tts.md", "docs/tts.md", "docs/gguf.md"]
   },

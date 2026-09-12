@@ -35,20 +35,20 @@ std::vector<int32_t> semantic_tokens(BarkTransformer & model, const BarkTokenize
     const size_t history_start = preset.semantic.size() > 256 ? preset.semantic.size() - 256 : 0;
     history.assign(preset.semantic.begin() + static_cast<std::ptrdiff_t>(history_start), preset.semantic.end());
     history.resize(256, 10000);
-    // Bark's text model consumes one concatenated sequence:
-    // [256 text tokens][256 semantic-history tokens][SEMANTIC_INFER].
-    // These are sequence positions, not two embedding channels.  Passing
-    // them as separate channels sums embeddings at each position and
-    // produces invalid semantic audio.
+    // Bark's merge_context path sums the first 256 text embeddings with the
+    // 256 semantic-history embeddings, then appends SEMANTIC_INFER without a
+    // history embedding at that position.  Two channels reproduce that
+    // merged 257-position sequence; negative ids are masked by the runtime.
     text_ids.push_back(129599);
-    text_ids.insert(text_ids.end(), history.begin(), history.end());
+    history.push_back(-1);
     std::vector<int32_t> generated;
     for (int64_t step = 0; step < options.max_tokens && text_ids.size() < 1024; ++step) {
-        auto logits = model.causal_logits({text_ids});
+        auto logits = model.causal_logits({text_ids, history});
         const int32_t id = sample(std::move(logits), 0, 10001, options.top_k, options.temperature, rng);
         if (id == 10000) break;
         generated.push_back(id);
         text_ids.push_back(id);
+        history.push_back(-1);
     }
     if (generated.empty()) throw std::runtime_error("Bark semantic model generated no speech tokens");
     return generated;
@@ -77,14 +77,12 @@ std::vector<int32_t> coarse_tokens(BarkTransformer & model, const BarkSpeakerPre
     const int generated_length = static_cast<int>(std::round(std::floor(semantic.size() * ratio / 2.0) * 2.0));
     for (int total = 0; total < generated_length;) {
         const int semantic_index = sem_count + static_cast<int>(std::round(total / ratio));
-        // The coarse model must see semantic context ending at the current
-        // frame.  Including the remainder of all_semantic here shifts the
-        // conditioning window to the beginning of the utterance and yields
-        // unrelated/noisy audio.
-        const int end = std::min<int>(semantic_index, static_cast<int>(all_semantic.size()));
-        const int begin = std::max(0, end - max_sem_history);
-        std::vector<int32_t> input(all_semantic.begin() + begin, all_semantic.begin() + end);
-        if (input.size() > 256) input.erase(input.begin(), input.end() - 256);
+        const int begin = std::max(0, semantic_index - max_sem_history);
+        // This deliberately takes the suffix beginning at semantic_index's
+        // history boundary and then its first 256 values.  It matches Bark's
+        // reference x_semantic[:, max(0, semantic_idx-max_history):][:, :256].
+        std::vector<int32_t> input(all_semantic.begin() + begin, all_semantic.end());
+        if (input.size() > 256) input.resize(256);
         input.resize(256, 12048);
         input.push_back(12050);
         const size_t take = std::min<size_t>(630, coarse_history.size());

@@ -120,17 +120,15 @@ def main() -> None:
             "--output", str(output),
         ]
         if args.type == "q8_0":
-            # Bark is sensitive to quantizing its lookup tables and waveform
-            # decoder. Keep these in F16 and quantize only dense transformer
-            # matrices; this is also materially smaller than keeping them F32.
+            # Autoregressive errors compound across Bark's semantic and coarse
+            # stages. Keep both complete causal transformers, plus the waveform
+            # decoder and fine lookup/output tensors, in F16. Only the fine
+            # transformer's dense matrices are safe to quantize to Q8_0.
             for pattern in (
-                "codec_model.*", "semantic.input_embeds_layer.*", "semantic.position_embeds_layer.*",
-                "semantic.layernorm_final.*", "semantic.lm_head.*",
-                "coarse_acoustics.input_embeds_layer.*", "coarse_acoustics.position_embeds_layer.*",
-                "coarse_acoustics.layernorm_final.*", "coarse_acoustics.lm_head.*",
-                "fine_acoustics.input_embeds_layers.*",
-                "fine_acoustics.position_embeds_layer.*", "fine_acoustics.layernorm_final.*",
-                "fine_acoustics.lm_heads.*",
+                "bark/codec_model.*", "bark/semantic.*", "bark/coarse_acoustics.*",
+                "bark/fine_acoustics.input_embeds_layers.*",
+                "bark/fine_acoustics.position_embeds_layer.*", "bark/fine_acoustics.layernorm_final.*",
+                "bark/fine_acoustics.lm_heads.*",
             ):
                 command.extend(["--keep-type", pattern + "=f16"])
         if args.overwrite:

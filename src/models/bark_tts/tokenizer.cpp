@@ -66,7 +66,9 @@ std::vector<int32_t> BarkTokenizer::encode(const std::string & text) const {
     }
     if (!current.empty()) words.push_back(std::move(current));
 
-    std::vector<int32_t> ids{101};
+    // Bark calls BertTokenizer.encode(..., add_special_tokens=False).
+    // [CLS]/[SEP] are not part of the semantic text conditioning sequence.
+    std::vector<int32_t> ids;
     for (const auto & word : words) {
         const auto chars = characters(word);
         if (chars.size() > 100) { ids.push_back(unknown_); continue; }
@@ -87,7 +89,6 @@ std::vector<int32_t> BarkTokenizer::encode(const std::string & text) const {
         }
         ids.insert(ids.end(), pieces.begin(), pieces.end());
     }
-    ids.push_back(102);
     return ids;
 }
 
