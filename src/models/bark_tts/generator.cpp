@@ -77,9 +77,14 @@ std::vector<int32_t> coarse_tokens(BarkTransformer & model, const BarkSpeakerPre
     const int generated_length = static_cast<int>(std::round(std::floor(semantic.size() * ratio / 2.0) * 2.0));
     for (int total = 0; total < generated_length;) {
         const int semantic_index = sem_count + static_cast<int>(std::round(total / ratio));
-        const int begin = std::max(0, semantic_index - max_sem_history);
-        std::vector<int32_t> input(all_semantic.begin() + begin, all_semantic.end());
-        if (input.size() > 256) input.resize(256);
+        // The coarse model must see semantic context ending at the current
+        // frame.  Including the remainder of all_semantic here shifts the
+        // conditioning window to the beginning of the utterance and yields
+        // unrelated/noisy audio.
+        const int end = std::min<int>(semantic_index, static_cast<int>(all_semantic.size()));
+        const int begin = std::max(0, end - max_sem_history);
+        std::vector<int32_t> input(all_semantic.begin() + begin, all_semantic.begin() + end);
+        if (input.size() > 256) input.erase(input.begin(), input.end() - 256);
         input.resize(256, 12048);
         input.push_back(12050);
         const size_t take = std::min<size_t>(630, coarse_history.size());
