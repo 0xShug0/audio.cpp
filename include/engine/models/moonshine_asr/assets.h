@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace engine::models::moonshine_stt {
+namespace engine::models::moonshine_asr {
 
 struct MoonshineSlidingWindow {
     int64_t past = 16;
@@ -74,10 +74,10 @@ struct MoonshineAssets {
     std::vector<MoonshineToken> tokens;
 };
 
-std::shared_ptr<const MoonshineAssets> load_moonshine_stt_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const MoonshineAssets> load_moonshine_asr_assets(const std::filesystem::path & model_path);
 
 std::string decode_moonshine_tokens(
     const MoonshineAssets & assets,
     const std::vector<int32_t> & token_ids);
 
-}  // namespace engine::models::moonshine_stt
+}  // namespace engine::models::moonshine_asr

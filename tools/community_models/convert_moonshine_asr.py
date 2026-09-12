@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SPEC = REPO_ROOT / "model_specs" / "moonshine_stt.json"
+SPEC = REPO_ROOT / "model_specs" / "moonshine_asr.json"
 SCALAR_TENSORS = {"model.encoder.embedder.comp.log_k"}
 
 
@@ -54,7 +54,7 @@ def convert(converter: Path, checkpoint: Path, output: Path, quant_type: str, ov
         ckpt = candidates[-1]
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="moonshine-stt-convert-") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix="moonshine-asr-convert-") as tmp_dir:
         converted_input = Path(tmp_dir) / ckpt.name
         rank1_scalar_safetensors(ckpt, converted_input)
         command = [
@@ -64,7 +64,7 @@ def convert(converter: Path, checkpoint: Path, output: Path, quant_type: str, ov
             "--root",
             str(checkpoint),
             "--family",
-            "moonshine_stt",
+            "moonshine_asr",
             "--model-spec",
             str(SPEC),
             "--type",

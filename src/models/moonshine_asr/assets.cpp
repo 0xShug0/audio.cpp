@@ -1,4 +1,4 @@
-#include "engine/models/moonshine_stt/assets.h"
+#include "engine/models/moonshine_asr/assets.h"
 
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace engine::models::moonshine_stt {
+namespace engine::models::moonshine_asr {
 namespace json = engine::io::json;
 namespace {
 
@@ -33,7 +33,7 @@ MoonshineConfig parse_config(const assets::ResourceBundle & resources) {
     config.variant = json::optional_string(root, "_name_or_path", config.model_type);
     config.max_tokens_per_second = json::optional_f32(root, "max_tokens_per_second", config.max_tokens_per_second);
     if (config.model_type != "moonshine_streaming") {
-        throw std::runtime_error("Moonshine STT unsupported model_type: " + config.model_type);
+        throw std::runtime_error("Moonshine ASR unsupported model_type: " + config.model_type);
     }
 
     const auto & enc = root.require("encoder_config");
@@ -78,13 +78,13 @@ MoonshineConfig parse_config(const assets::ResourceBundle & resources) {
         static_cast<int64_t>(std::floor(static_cast<double>(config.decoder.head_dim) *
                                         static_cast<double>(config.decoder.partial_rotary_factor)));
     if (config.encoder.hidden_act != "gelu") {
-        throw std::runtime_error("Moonshine STT unsupported encoder hidden_act: " + config.encoder.hidden_act);
+        throw std::runtime_error("Moonshine ASR unsupported encoder hidden_act: " + config.encoder.hidden_act);
     }
     if (config.decoder.hidden_act != "silu") {
-        throw std::runtime_error("Moonshine STT unsupported decoder hidden_act: " + config.decoder.hidden_act);
+        throw std::runtime_error("Moonshine ASR unsupported decoder hidden_act: " + config.decoder.hidden_act);
     }
     if (config.encoder.sliding_windows.size() != static_cast<size_t>(config.encoder.layers)) {
-        throw std::runtime_error("Moonshine STT sliding window count must match encoder layers");
+        throw std::runtime_error("Moonshine ASR sliding window count must match encoder layers");
     }
     return config;
 }
@@ -152,14 +152,14 @@ std::string replace_metaspace(std::string text) {
 
 }  // namespace
 
-std::shared_ptr<const MoonshineAssets> load_moonshine_stt_assets(const std::filesystem::path & model_path) {
+std::shared_ptr<const MoonshineAssets> load_moonshine_asr_assets(const std::filesystem::path & model_path) {
     MoonshineAssets assets;
-    assets.resources = engine::model_spec::load_resource_bundle_for_family(model_path, "moonshine_stt");
+    assets.resources = engine::model_spec::load_resource_bundle_for_family(model_path, "moonshine_asr");
     assets.config = parse_config(assets.resources);
     assets.source = assets.resources.open_tensor_source("weights");
     assets.tokens = load_tokens(assets.resources.require_file("tokenizer_json"));
     if (assets.tokens.size() < static_cast<size_t>(assets.config.decoder.vocab_size)) {
-        throw std::runtime_error("Moonshine STT tokenizer vocab is smaller than model vocab");
+        throw std::runtime_error("Moonshine ASR tokenizer vocab is smaller than model vocab");
     }
     assets::require_tensor_shape(
         *assets.source,
@@ -198,4 +198,4 @@ std::string decode_moonshine_tokens(
     return text;
 }
 
-}  // namespace engine::models::moonshine_stt
+}  // namespace engine::models::moonshine_asr

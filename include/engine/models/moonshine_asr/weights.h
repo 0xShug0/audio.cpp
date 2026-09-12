@@ -6,13 +6,13 @@
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/models/moonshine_stt/assets.h"
+#include "engine/models/moonshine_asr/assets.h"
 
 #include <memory>
 #include <optional>
 #include <vector>
 
-namespace engine::models::moonshine_stt {
+namespace engine::models::moonshine_asr {
 
 struct MoonshineFrontendWeights {
     float log_k = 0.0F;
@@ -59,7 +59,7 @@ struct MoonshineWeights {
     MoonshineDecoderWeights decoder;
 };
 
-std::shared_ptr<const MoonshineWeights> load_moonshine_stt_weights(
+std::shared_ptr<const MoonshineWeights> load_moonshine_asr_weights(
     const MoonshineAssets & assets,
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
@@ -68,4 +68,4 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_stt_weights(
     engine::assets::TensorStorageType conv_storage_type,
     size_t weight_context_bytes);
 
-}  // namespace engine::models::moonshine_stt
+}  // namespace engine::models::moonshine_asr

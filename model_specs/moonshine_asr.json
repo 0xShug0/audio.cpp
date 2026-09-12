@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "family": "moonshine_stt",
-  "display_name": "Moonshine Streaming STT",
+  "family": "moonshine_asr",
+  "display_name": "Moonshine Streaming ASR",
   "description": "Moonshine tiny/small/medium streaming English speech recognition models.",
   "category": "asr",
   "status": "experimental",
