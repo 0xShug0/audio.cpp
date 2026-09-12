@@ -1236,6 +1236,23 @@ audiocpp_add_model(index_tts2
         engine::models::index_tts2::make_index_tts2_loader
 )
 
+audiocpp_add_model(xtts_v2
+    SOURCES
+        src/models/xtts_v2/assets.cpp
+        src/models/xtts_v2/audio_features.cpp
+        src/models/xtts_v2/conditioning.cpp
+        src/models/xtts_v2/decoder.cpp
+        src/models/xtts_v2/gpt.cpp
+        src/models/xtts_v2/request.cpp
+        src/models/xtts_v2/session.cpp
+        src/models/xtts_v2/speaker_encoder.cpp
+        src/models/xtts_v2/tokenizer.cpp
+    INCLUDES
+        engine/models/xtts_v2/session.h
+    LOADERS
+        engine::models::xtts_v2::make_xtts_v2_loader
+)
+
 audiocpp_add_model(nemotron_asr
     SOURCES
         src/models/nemotron_asr/assets.cpp

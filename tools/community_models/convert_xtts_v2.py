@@ -125,6 +125,15 @@ def converter_command(output_dir: Path, converter: Path, quant_type: str) -> lis
         "--type", quant_type,
         "--output", str(output_dir / f"xtts-v2-{quant_type}.gguf"),
     ]
+    # The Perceiver resampler repeatedly normalizes and attends over the reference
+    # latent.  Half precision here can overflow on otherwise ordinary recordings,
+    # poisoning the entire conditioning prefix with NaNs.  Preserve these small,
+    # numerically sensitive tensors in F32 for every reduced-precision package.
+    if quant_type != "f32":
+        command += [
+            "--keep-type", "gpt/conditioning_perceiver.*=f32",
+            "--keep-type", "gpt/mel_stats=f32",
+        ]
     # Convolutions have no quantized execution path. Keeping embeddings and the
     # small output head in F16 also avoids sampling regressions from Q8 logits.
     if quant_type.startswith("q"):

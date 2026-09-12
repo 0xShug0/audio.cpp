@@ -18,6 +18,7 @@
       {"name": "top_k", "type": "int", "description": "GPT top-k sampling cutoff.", "required": false, "min": 1, "default": 50},
       {"name": "top_p", "type": "float", "description": "GPT nucleus-sampling cutoff.", "required": false, "min": 0.01, "max": 1.0, "default": 0.85},
       {"name": "repetition_penalty", "type": "float", "description": "GPT repetition penalty.", "required": false, "min": 1.0, "default": 5.0},
+      {"name": "max_tokens", "type": "int", "description": "Maximum generated acoustic-token count.", "required": false, "min": 1, "max": 603, "default": 603},
       {"name": "speed", "type": "float", "description": "Output speaking-rate multiplier.", "required": false, "min": 0.05, "max": 4.0, "default": 1.0},
       {"name": "seed", "type": "int", "description": "Non-negative deterministic sampling seed.", "required": false, "min": 0}
     ],
@@ -30,7 +31,7 @@
     ]
   },
   "package_defaults": {
-    "download": {"kind": "huggingface_snapshot", "repo": "audio-cpp/audio.cpp-gguf", "revision": "refs/pr/REPLACE_WITH_HF_PR"}
+    "download": {"kind": "huggingface_snapshot", "repo": "audio-cpp/audio.cpp-gguf", "revision": "refs/pr/9"}
   },
   "packages": [
     {
