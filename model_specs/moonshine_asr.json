@@ -106,6 +106,7 @@
     ],
     "docs": [
       "docs/asr.md",
+      "docs/models/moonshine_asr.md",
       "docs/gguf.md"
     ]
   },

@@ -9,6 +9,7 @@
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](#higgs-audio-stt) |
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
+| Moonshine Streaming ASR | `moonshine_asr` | offline, streaming | [Moonshine Streaming ASR](models/moonshine_asr.md) |
 | Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |
 | Parakeet-TDT | `parakeet_tdt` | offline, streaming | [Parakeet-TDT](#parakeet-tdt) |
 | SenseVoice-Small | `sense_asr` | offline, streaming | [SenseVoice-Small](#sensevoice-small) |
