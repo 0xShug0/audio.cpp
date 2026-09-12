@@ -2,10 +2,13 @@
 
 `coqui_speedy_speech` is a native port of Coqui's Apache-2.0 LJSpeech
 SpeedySpeech checkpoint and its HiFi-GAN v2 vocoder. It performs feed-forward
-English text-to-speech at 22.05 kHz without Python at runtime.
+English text-to-speech at 22.05 kHz without Python at runtime. Its bundled
+MIT-licensed Gruut English lexicon matches the frontend used to train the
+checkpoint; eSpeak-ng is used only as a fallback for out-of-vocabulary words.
 
 Native audio.cpp output samples: [default rate](../assets/coqui-speedy-speech-demo.mp4)
 and [1.2x speaking rate](../assets/coqui-speedy-speech-demo-fast.mp4).
+Both say: “Today is a beautiful day to create natural speech on your computer.”
 
 ```bash
 audiocpp_cli --task tts --family coqui_speedy_speech \
@@ -29,6 +32,7 @@ uv run --with torch --with numpy --with safetensors \
   --acoustic-config speedy/config.json \
   --vocoder-checkpoint hifigan/model_file.pth \
   --vocoder-config hifigan/config.json \
+  --gruut-lexicon /path/to/gruut_lang_en/lexicon.db \
   --output converted/model.safetensors \
   --output-config converted/config.json
 

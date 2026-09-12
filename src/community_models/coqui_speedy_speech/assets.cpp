@@ -5,6 +5,7 @@
 #include "engine/framework/model_spec/package.h"
 
 #include <stdexcept>
+#include <sstream>
 #include <utility>
 
 namespace engine::community_models::coqui_speedy_speech {
@@ -46,6 +47,14 @@ load_assets(const std::filesystem::path &model_path) {
   Assets out;
   out.config = parse_config(resources);
   out.weights = resources.open_tensor_source("weights");
+  std::istringstream lexicon(resources.read_text("lexicon"));
+  for (std::string line; std::getline(lexicon, line);) {
+    const auto tab = line.find('\t');
+    if (tab != std::string::npos && tab != 0 && tab + 1 < line.size())
+      out.lexicon.emplace(line.substr(0, tab), line.substr(tab + 1));
+  }
+  if (out.lexicon.size() < 100000)
+    throw std::runtime_error("Coqui SpeedySpeech Gruut lexicon is incomplete");
   out.resources = std::move(resources);
   if (!out.weights->has_tensor("acoustic.emb.weight") ||
       !out.weights->has_tensor("vocoder.conv_pre.weight")) {

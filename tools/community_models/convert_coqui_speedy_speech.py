@@ -10,8 +10,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
+
+GRUUT_LICENSE = """MIT License
+
+Copyright (c) 2020 Michael Hansen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the \"Software\"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
 
 try:
     import numpy as np
@@ -97,6 +121,8 @@ def _validate_configs(acoustic: dict[str, Any], vocoder: dict[str, Any]) -> None
     }
     if actual != expected:
         raise ValueError(f"unsupported SpeedySpeech configuration: {actual}")
+    if acoustic.get("phonemizer") != "gruut" or acoustic.get("phoneme_language") != "en-us":
+        raise ValueError("SpeedySpeech conversion requires the released en-us Gruut frontend")
     generator = vocoder["generator_model_params"]
     if vocoder.get("generator_model") != "hifigan_generator" or generator != {
         "resblock_type": "1",
@@ -161,6 +187,18 @@ def convert(args: argparse.Namespace) -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     save_file(tensors, args.output, metadata={"family": "coqui_speedy_speech", "license": "Apache-2.0"})
     args.output_config.write_text(json.dumps(normalized, indent=2) + "\n", encoding="utf-8")
+    if args.gruut_lexicon:
+        lexicon_output = args.output_config.parent / "gruut-lexicon.tsv"
+        with sqlite3.connect(args.gruut_lexicon) as connection, lexicon_output.open("w", encoding="utf-8") as stream:
+            rows = connection.execute(
+                "SELECT word, phonemes FROM word_phonemes WHERE pron_order = 0 ORDER BY word"
+            )
+            for word, phonemes in rows:
+                # Coqui's Gruut wrapper drops stress, flattens phoneme clusters,
+                # and maps ASCII g to IPA script-g.
+                value = phonemes.replace(" ", "").replace("ˈ", "").replace("ˌ", "").replace("g", "ɡ")
+                stream.write(f"{word}\t{value}\n")
+        (args.output_config.parent / "GRUUT_LICENSE.txt").write_text(GRUUT_LICENSE, encoding="utf-8")
     print(f"wrote {len(tensors)} tensors to {args.output}")
 
 
@@ -170,6 +208,12 @@ def main() -> None:
     parser.add_argument("--acoustic-config", type=Path, required=True)
     parser.add_argument("--vocoder-checkpoint", type=Path, required=True)
     parser.add_argument("--vocoder-config", type=Path, required=True)
+    parser.add_argument(
+        "--gruut-lexicon",
+        type=Path,
+        required=True,
+        help="gruut-lang-en lexicon.db used by the checkpoint's training frontend",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--output-config", type=Path, required=True)
     convert(parser.parse_args())

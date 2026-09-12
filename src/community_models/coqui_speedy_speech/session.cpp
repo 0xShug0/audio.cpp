@@ -6,6 +6,7 @@
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <stdexcept>
 #include <unordered_map>
@@ -65,6 +66,48 @@ std::vector<int32_t> tokenize(const Config &config,
         "SpeedySpeech frontend produced no supported phonemes");
   return out;
 }
+
+std::string gruut_phonemize(
+    const Assets &assets,
+    const engine::models::inflect_v2::InflectV2Frontend &fallback,
+    const std::string &text) {
+  std::string normalized =
+      engine::models::inflect_v2::InflectV2Frontend::normalize(text);
+  std::string output;
+  std::string word;
+  const auto append_word = [&] {
+    if (word.empty())
+      return;
+    std::transform(word.begin(), word.end(), word.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+    auto found = assets.lexicon.find(word);
+    std::string phonemes = found != assets.lexicon.end()
+                               ? found->second
+                               : fallback.phonemize(word);
+    for (const auto mark : {std::string("ˈ"), std::string("ˌ")}) {
+      for (size_t at; (at = phonemes.find(mark)) != std::string::npos;)
+        phonemes.erase(at, mark.size());
+    }
+    if (!output.empty())
+      output.push_back(' ');
+    output += phonemes;
+    word.clear();
+  };
+  for (size_t index = 0; index <= normalized.size(); ++index) {
+    const char ch = index < normalized.size() ? normalized[index] : '\0';
+    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+        (ch == '\'' && !word.empty())) {
+      word.push_back(ch);
+      continue;
+    }
+    append_word();
+    if (ch != '\0' && assets.config.punctuations.find(ch) != std::string::npos &&
+        !std::isspace(static_cast<unsigned char>(ch)))
+      output.push_back(ch);
+  }
+  return output;
+}
 } // namespace
 
 Session::Session(
@@ -100,13 +143,16 @@ Session::run(const engine::runtime::TaskRequest &request) {
   float rate = engine::runtime::parse_finite_float_option(request.options,
                                                           {"speaking_rate"})
                    .value_or(1.0F);
+  if (request.voice && request.voice->style &&
+      request.voice->style->speaking_rate)
+    rate = *request.voice->style->speaking_rate;
   if (rate < 0.5F || rate > 2.0F)
     throw std::runtime_error(
         "SpeedySpeech speaking_rate must be between 0.5 and 2.0");
   engine::models::inflect_v2::InflectV2Frontend frontend(
       session_path(options(), "coqui_speedy_speech.espeak_library_path"),
       session_path(options(), "coqui_speedy_speech.espeak_data_path"));
-  const auto phonemes = frontend.phonemize(request.text_input->text);
+  const auto phonemes = gruut_phonemize(*assets_, frontend, request.text_input->text);
   engine::runtime::TaskResult result;
   result.audio_output =
       runtime_->synthesize(tokenize(assets_->config, phonemes), rate);

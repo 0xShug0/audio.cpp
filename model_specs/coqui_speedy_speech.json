@@ -32,7 +32,7 @@
   "dependencies": [],
   "ui": {"recommended_package": "coqui_speedy_speech_ljspeech_f32", "tags": ["TTS", "GGUF"], "docs": ["docs/community_models/coqui_speedy_speech.md"]},
   "sources": [
-    {"format": "gguf", "roots": {"model": ".", "weights": "$gguf"}, "files": {"config": "model:config.json"}, "tensors": {"weights": {"source": "weights:", "prefix": "weights"}}},
-    {"format": "safetensors", "roots": {"model": "."}, "files": {"config": "model:config.json"}, "tensors": {"weights": "model:model.safetensors"}}
+    {"format": "gguf", "roots": {"model": ".", "weights": "$gguf"}, "files": {"config": "model:config.json", "lexicon": "model:gruut-lexicon.tsv", "gruut_license": "model:GRUUT_LICENSE.txt"}, "tensors": {"weights": {"source": "weights:", "prefix": "weights"}}},
+    {"format": "safetensors", "roots": {"model": "."}, "files": {"config": "model:config.json", "lexicon": "model:gruut-lexicon.tsv", "gruut_license": "model:GRUUT_LICENSE.txt"}, "tensors": {"weights": "model:model.safetensors"}}
   ]
 }

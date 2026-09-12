@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::community_models::coqui_speedy_speech {
@@ -26,6 +27,7 @@ struct Assets {
   engine::assets::ResourceBundle resources;
   Config config;
   std::shared_ptr<const engine::assets::TensorSource> weights;
+  std::unordered_map<std::string, std::string> lexicon;
 };
 
 std::shared_ptr<const Assets>

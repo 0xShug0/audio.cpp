@@ -233,12 +233,14 @@ core::TensorValue encode(core::ModuleBuildContext &ctx, const Weights &w,
 }
 core::TensorValue durations(core::ModuleBuildContext &ctx, const Weights &w,
                             core::TensorValue x) {
-  x = conv(ctx, x, w.duration_conv1, 128, 256, 3);
-  x = pad_time(ctx, x, 1, 1);
+  // Glow-TTS DurationPredictor uses Conv1d(..., padding=kernel_size / 2),
+  // i.e. zero padding is applied to the input. Padding the convolution output
+  // is not equivalent at the sequence boundaries because it drops the bias
+  // and all valid boundary responses.
+  x = conv(ctx, pad_time(ctx, x, 1, 1), w.duration_conv1, 128, 256, 3);
   x = mod::ReluModule{}.build(ctx, x);
   x = channel_norm(ctx, x, w.duration_norm1, 256);
-  x = conv(ctx, x, w.duration_conv2, 256, 256, 3);
-  x = pad_time(ctx, x, 1, 1);
+  x = conv(ctx, pad_time(ctx, x, 1, 1), w.duration_conv2, 256, 256, 3);
   x = mod::ReluModule{}.build(ctx, x);
   x = channel_norm(ctx, x, w.duration_norm2, 256);
   return conv(ctx, x, w.duration_proj, 256, 1, 1);
