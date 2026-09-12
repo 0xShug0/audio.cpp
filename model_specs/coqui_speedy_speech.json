@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "family": "coqui_speedy_speech",
+  "display_name": "Coqui SpeedySpeech",
+  "description": "Native Coqui LJSpeech SpeedySpeech text-to-mel inference with its HiFi-GAN v2 vocoder.",
+  "category": "tts",
+  "status": "community",
+  "tasks": ["tts"],
+  "modes": ["offline"],
+  "languages": ["en"],
+  "runtime": {"tags": ["gguf"]},
+  "capabilities": {"tts": ["long_form"]},
+  "options": {
+    "request": [{"name": "speaking_rate", "type": "float", "description": "Speech-rate multiplier.", "required": false, "min": 0.5, "max": 2.0, "default": 1.0}],
+    "session": [
+      {"name": "espeak_library_path", "type": "path", "description": "Optional eSpeak-ng shared-library path.", "required": false},
+      {"name": "espeak_data_path", "type": "path", "description": "Optional eSpeak-ng data-directory path.", "required": false}
+    ],
+    "load": []
+  },
+  "package_defaults": {"download": {"kind": "huggingface_snapshot", "repo": "audio-cpp/audio.cpp-gguf", "revision": "refs/pr/8", "gated": false}},
+  "packages": [{
+    "id": "coqui_speedy_speech_ljspeech_f32",
+    "display_name": "Coqui SpeedySpeech LJSpeech F32 GGUF",
+    "default": true,
+    "format": "gguf",
+    "precision": "f32",
+    "target_directory": "Coqui-SpeedySpeech-LJSpeech-GGUF",
+    "files": ["Coqui-SpeedySpeech-LJSpeech-GGUF/coqui-speedy-speech-ljspeech-f32.gguf"],
+    "strip_prefix": "Coqui-SpeedySpeech-LJSpeech-GGUF"
+  }],
+  "dependencies": [],
+  "ui": {"recommended_package": "coqui_speedy_speech_ljspeech_f32", "tags": ["TTS", "GGUF"], "docs": ["docs/community_models/coqui_speedy_speech.md"]},
+  "sources": [
+    {"format": "gguf", "roots": {"model": ".", "weights": "$gguf"}, "files": {"config": "model:config.json"}, "tensors": {"weights": {"source": "weights:", "prefix": "weights"}}},
+    {"format": "safetensors", "roots": {"model": "."}, "files": {"config": "model:config.json"}, "tensors": {"weights": "model:model.safetensors"}}
+  ]
+}

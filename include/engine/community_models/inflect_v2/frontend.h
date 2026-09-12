@@ -27,6 +27,7 @@ public:
     InflectV2Frontend & operator=(const InflectV2Frontend &) = delete;
 
     InflectV2FrontendOutput encode(const std::string & text) const;
+    std::string phonemize(const std::string & text) const;
     static std::string normalize(const std::string & text);
     static std::vector<int32_t> tokens_from_phonemes(
         const std::string & phoneme_text);

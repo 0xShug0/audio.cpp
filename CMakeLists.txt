@@ -719,6 +719,18 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(coqui_speedy_speech
+    SOURCES
+        src/community_models/coqui_speedy_speech/assets.cpp
+        src/community_models/coqui_speedy_speech/runtime.cpp
+        src/community_models/coqui_speedy_speech/session.cpp
+        src/community_models/inflect_v2/frontend.cpp
+    INCLUDES
+        engine/community_models/coqui_speedy_speech/session.h
+    LOADERS
+        engine::community_models::coqui_speedy_speech::make_coqui_speedy_speech_loader
+)
+
 audiocpp_add_model(f5_tts
     SOURCES
         src/community_models/f5_tts/session.cpp

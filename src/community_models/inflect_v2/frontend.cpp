@@ -612,7 +612,7 @@ InflectV2FrontendOutput InflectV2Frontend::encode(const std::string & text) cons
     if (out.normalized_text.empty()) {
         throw std::runtime_error("Inflect v2 text must not be empty");
     }
-    out.phoneme_text = state_->espeak->phonemize(out.normalized_text);
+    out.phoneme_text = phonemize(out.normalized_text);
     replace_all(out.phoneme_text, "sˈæskɐtʃˌuːən", "sɐskˈætʃəwən");
     replace_all(out.phoneme_text, "flʊɹɹˈɛsənt", "flʊˈɹɛsənt");
     out.phoneme_text = collapse_space(std::move(out.phoneme_text));
@@ -620,6 +620,19 @@ InflectV2FrontendOutput InflectV2Frontend::encode(const std::string & text) cons
         throw std::runtime_error("Inflect v2 eSpeak-ng produced no phonemes");
     }
     out.token_ids = tokens_from_phonemes(out.phoneme_text);
+    return out;
+}
+
+std::string InflectV2Frontend::phonemize(const std::string & text) const {
+    const std::string normalized = normalize(text);
+    if (normalized.empty()) {
+        throw std::runtime_error("English phonemizer requires non-empty text");
+    }
+    std::string out = state_->espeak->phonemize(normalized);
+    out = collapse_space(std::move(out));
+    if (out.empty()) {
+        throw std::runtime_error("eSpeak-ng produced no phonemes");
+    }
     return out;
 }
 
