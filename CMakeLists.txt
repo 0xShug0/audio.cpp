@@ -1055,6 +1055,26 @@ audiocpp_add_model(magpie_tts
         engine::models::magpie_tts::make_magpie_tts_loader
 )
 
+audiocpp_add_model(bark_tts
+    SOURCES
+        src/models/bark_tts/assets.cpp
+        src/models/bark_tts/codec.cpp
+        src/models/bark_tts/generator.cpp
+        src/models/bark_tts/session.cpp
+        src/models/bark_tts/tokenizer.cpp
+        src/models/bark_tts/transformer.cpp
+    INCLUDES
+        engine/models/bark_tts/assets.h
+        engine/models/bark_tts/codec.h
+        engine/models/bark_tts/generator.h
+        engine/models/bark_tts/session.h
+        engine/models/bark_tts/tokenizer.h
+        engine/models/bark_tts/transformer.h
+        engine/models/bark_tts/types.h
+    LOADERS
+        engine::models::bark_tts::make_bark_tts_loader
+)
+
 audiocpp_add_model(confucius4_tts
     SOURCES
         src/models/confucius4_tts/assets.cpp
@@ -2279,6 +2299,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(hf_tokenizer_vocab_bounds_test tests/unittests/test_hf_tokenizer_vocab_bounds.cpp)
         add_test(NAME hf_tokenizer_vocab_bounds_test COMMAND hf_tokenizer_vocab_bounds_test)
 
+        add_engine_unittest(bark_tokenizer_test tests/unittests/test_bark_tokenizer.cpp)
+        add_test(NAME bark_tokenizer_test COMMAND bark_tokenizer_test)
+
         add_engine_unittest(safetensors_offsets_test tests/unittests/test_safetensors_offsets.cpp)
         add_test(NAME safetensors_offsets_test COMMAND safetensors_offsets_test)
 
@@ -2715,6 +2738,17 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             tests/miocodec/miocodec_wavlm_parity.cpp
         )
         target_link_libraries(miocodec_wavlm_parity PRIVATE engine_runtime ggml)
+
+        add_executable(bark_codec_parity EXCLUDE_FROM_ALL tests/bark_tts/bark_codec_parity.cpp)
+        target_link_libraries(bark_codec_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(bark_codec_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        add_executable(bark_transformer_parity EXCLUDE_FROM_ALL tests/bark_tts/bark_transformer_parity.cpp)
+        target_link_libraries(bark_transformer_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(bark_transformer_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
 
         add_engine_unittest(dots_tts_vocoder_parity tests/dots_tts/dots_tts_vocoder_parity.cpp)
 
