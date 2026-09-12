@@ -40,6 +40,20 @@ private:
     Conv1dConfig config_;
 };
 
+// Raw Metal fast paths on channel-fast activations (ne = [channels, frames], contiguous
+// F32) for the audio codec decoder's chained regions. Unlike the module build() methods
+// these take and return raw ggml tensors without the canonical [frames, channels]
+// orientation, so consecutive convolutions chain without paying two transposes per conv.
+// The caller owns layout conversion at region edges and causal padding.
+//
+// conv1d_pertap_channel_fast: requires padding=0, stride=1; per-tap GEMM decomposition;
+// returns [out_channels, output_frames] with bias broadcast-added when use_bias.
+ggml_tensor * conv1d_pertap_channel_fast(
+    core::ModuleBuildContext & ctx,
+    const Conv1dWeights & weights,
+    ggml_tensor * input_cf,
+    const Conv1dConfig & config);
+
 struct Conv2dConfig {
     int64_t in_channels = 0;
     int64_t out_channels = 0;
@@ -277,6 +291,16 @@ struct ConvTranspose1dWeights {
 bool is_conv_transpose1d_col2im_fast_path_eligible(
     const core::ModuleBuildContext & ctx,
     const ConvTranspose1dConfig & config) noexcept;
+
+// conv_transpose1d_col2im_channel_fast: same col2im math as ConvTranspose1dModule's fast
+// path but consumes channel-fast input directly (skipping its internal transpose) and
+// returns the raw time-fast [frames_out, out_channels] tensor with bias included; the
+// caller owns causal trimming and layout conversion.
+ggml_tensor * conv_transpose1d_col2im_channel_fast(
+    core::ModuleBuildContext & ctx,
+    const ConvTranspose1dWeights & weights,
+    ggml_tensor * input_cf,
+    const ConvTranspose1dConfig & config);
 
 class ConvTranspose1dModule {
 public:
