@@ -55,7 +55,7 @@ struct TestTensors {
 
 ggml_backend_t cpu_backend() {
     static std::unique_ptr<std::remove_pointer_t<ggml_backend_t>, BackendDeleter> backend(
-        ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr), BackendDeleter{});
+        core::init_backend(core::BackendConfig{}), BackendDeleter{});
     if (backend == nullptr) {
         throw std::runtime_error("test CPU backend init failed");
     }

@@ -1300,7 +1300,6 @@ void VibeVoiceDecoderWeightsRuntime::reset_cached_state(
 void VibeVoiceDecoderWeightsRuntime::prepare_cached_state(
     VibeVoiceDecoderCachedState & state,
     int64_t cache_capacity) const {
-    const auto & config = assets_->config.decoder;
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached state prepare requires positive cache capacity");
     }
@@ -1341,7 +1340,6 @@ void VibeVoiceDecoderWeightsRuntime::clone_cached_state(
     const VibeVoiceDecoderCachedState & source,
     VibeVoiceDecoderCachedState & target,
     int64_t cache_capacity) const {
-    const auto & config = assets_->config.decoder;
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached state clone requires positive cache capacity");
     }
