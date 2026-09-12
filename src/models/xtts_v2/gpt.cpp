@@ -199,10 +199,26 @@ XttsV2GptGeneration XttsV2GptRuntime::generate(
             prefill_ = std::make_unique<PrefillGraph>(execution_, weights_, static_cast<int64_t>(text.size()), static_cast<int64_t>(input.size()), graph_context_bytes_);
         auto output = prefill_->run(condition, text, input);
         std::vector<float> logits = output.logits;
+        std::vector<bool> penalized(1025, false);
+        // Transformers applies the processor to the complete synthetic input-id
+        // sequence. XTTS fills its 34+text prefix positions with token 1 and ends
+        // that prefix with the audio BOS token, even though those ids are replaced
+        // by cached embeddings inside the model.
+        penalized[1] = true;
+        penalized[1024] = true;
+        for (int32_t prefix_id : {1, 1024}) {
+            float & value = logits[static_cast<size_t>(prefix_id)];
+            value = value < 0.0F ? value * options.repetition_penalty : value / options.repetition_penalty;
+        }
         for (int32_t prior : result.codes) {
-            if (prior >= 0 && prior < 1025) {
+            // Hugging Face's RepetitionPenaltyLogitsProcessor applies the
+            // penalty once per token id present in the history, not once per
+            // occurrence. Reapplying it to repeated codes quickly destroys the
+            // acoustic distribution and produces rough, overlong speech.
+            if (prior >= 0 && prior < 1025 && !penalized[static_cast<size_t>(prior)]) {
                 float & value = logits[static_cast<size_t>(prior)];
                 value = value < 0.0F ? value * options.repetition_penalty : value / options.repetition_penalty;
+                penalized[static_cast<size_t>(prior)] = true;
             }
         }
         logits[1025] = step < 2 ? -std::numeric_limits<float>::infinity() : logits[1025];
