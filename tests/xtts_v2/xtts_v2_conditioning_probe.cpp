@@ -3,6 +3,7 @@
 #include "engine/models/xtts_v2/assets.h"
 #include "engine/models/xtts_v2/audio_features.h"
 #include "engine/models/xtts_v2/conditioning.h"
+#include "engine/models/xtts_v2/gpt.h"
 #include "engine/models/xtts_v2/speaker_encoder.h"
 
 #include <algorithm>
@@ -47,6 +48,9 @@ int main(int argc, char ** argv) try {
         assets->speaker_encoder->require_f32("torch_spec.1.mel_scale.fb", {257, 64}),
         4);
     const auto speaker = speaker_runtime.encode(speaker_mel);
+    const auto gpt_weights = engine::models::xtts_v2::load_xtts_v2_gpt_weights(
+        *assets, execution, 1536U * 1024U * 1024U,
+        engine::assets::TensorStorageType::Native);
     if (argc == 4) {
         std::ofstream output(argv[3], std::ios::binary);
         output.write(reinterpret_cast<const char *>(speaker.values.data()),
@@ -68,6 +72,7 @@ int main(int argc, char ** argv) try {
               << ",\"dims\":" << latent.dims
               << ",\"speaker_frames\":" << speaker_mel.frames
               << ",\"speaker_norm\":" << std::sqrt(speaker_sq)
+              << ",\"gpt_layers\":" << gpt_weights->layers.size()
               << ",\"sum\":" << sum
               << ",\"rms\":" << std::sqrt(sq / latent.values.size())
               << ",\"first\":[";
