@@ -35,16 +35,20 @@ std::vector<int32_t> semantic_tokens(BarkTransformer & model, const BarkTokenize
     const size_t history_start = preset.semantic.size() > 256 ? preset.semantic.size() - 256 : 0;
     history.assign(preset.semantic.begin() + static_cast<std::ptrdiff_t>(history_start), preset.semantic.end());
     history.resize(256, 10000);
+    // Bark's text model consumes one concatenated sequence:
+    // [256 text tokens][256 semantic-history tokens][SEMANTIC_INFER].
+    // These are sequence positions, not two embedding channels.  Passing
+    // them as separate channels sums embeddings at each position and
+    // produces invalid semantic audio.
     text_ids.push_back(129599);
-    history.push_back(10000);
+    text_ids.insert(text_ids.end(), history.begin(), history.end());
     std::vector<int32_t> generated;
     for (int64_t step = 0; step < options.max_tokens && text_ids.size() < 1024; ++step) {
-        auto logits = model.causal_logits({text_ids, history});
+        auto logits = model.causal_logits({text_ids});
         const int32_t id = sample(std::move(logits), 0, 10001, options.top_k, options.temperature, rng);
         if (id == 10000) break;
         generated.push_back(id);
         text_ids.push_back(id);
-        history.push_back(-1);
     }
     if (generated.empty()) throw std::runtime_error("Bark semantic model generated no speech tokens");
     return generated;
@@ -58,7 +62,8 @@ std::vector<int32_t> coarse_tokens(BarkTransformer & model, const BarkSpeakerPre
     std::vector<int32_t> coarse_history;
     if (preset.coarse.size() != 2) throw std::runtime_error("Bark preset coarse history must have two codebooks");
     for (size_t frame = 0; frame < preset.coarse[0].size(); ++frame)
-        for (int book = 0; book < 2; ++book) coarse_history.push_back(preset.coarse[book][frame] + book * 1024 + 10000);
+        for (int book = 0; book < 2; ++book)
+            coarse_history.push_back(preset.coarse[book][frame] + book * 1024 + 10000);
     const int max_sem_history = static_cast<int>(std::floor(630.0 / ratio));
     int sem_count = std::min<int>({max_sem_history, static_cast<int>(sem_history.size() / 2 * 2),
                                    static_cast<int>(std::floor(coarse_history.size() / ratio))});
