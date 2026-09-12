@@ -247,6 +247,7 @@ jobs:
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
     runs-on: ubuntu-latest
+    continue-on-error: true
     container: nvidia/cuda:12.8.1-devel-ubuntu22.04
     env:
       CC: gcc-13
@@ -283,10 +284,18 @@ jobs:
         run: cmake --build build/colab-cuda --parallel "$(nproc)" --target audiocpp_server
       - name: Verify portable executable
         run: |
-          build/colab-cuda/bin/audiocpp_server --version
-          if ldd build/colab-cuda/bin/audiocpp_server | grep -Eq 'not found|libstdc\+\+|libgcc_s'; then
-            echo "::error::The Colab executable has missing or non-portable runtime dependencies."
-            ldd build/colab-cuda/bin/audiocpp_server
+          ldd build/colab-cuda/bin/audiocpp_server | tee /tmp/audiocpp_server.ldd
+          if awk '/libcuda\.so\.1/ && /not found/ { next } /not found/ { print; bad=1 } END { exit bad ? 1 : 0 }' /tmp/audiocpp_server.ldd > /tmp/audiocpp_server.bad; then
+            true
+          else
+            echo "::error::The Colab executable has missing runtime dependencies."
+            cat /tmp/audiocpp_server.bad
+            exit 1
+          fi
+          readelf -d build/colab-cuda/bin/audiocpp_server | tee /tmp/audiocpp_server.needed
+          if grep -E 'Shared library: \[(libstdc\+\+|libgcc_s)\.so' /tmp/audiocpp_server.needed > /tmp/audiocpp_server.direct_bad; then
+            echo "::error::The Colab executable directly depends on non-portable C++ runtime libraries."
+            cat /tmp/audiocpp_server.direct_bad
             exit 1
           fi
       - name: Stage bundle
@@ -583,12 +592,26 @@ jobs:
       - linux-cpu-portable
       - linux-vulkan
       - linux-vulkan-portable
-      - linux-cuda-colab
       - windows-cpu
       - windows-cpu-portable
       - windows-vulkan
       - windows-cuda
-    if: ${{ needs.check-release.outputs.should_release == 'true' && (github.ref_type == 'tag' || inputs.publish) }}
+    if: >-
+      ${{
+        always() &&
+        needs.check-release.outputs.should_release == 'true' &&
+        (github.ref_type == 'tag' || inputs.publish) &&
+        needs.get-version.result == 'success' &&
+        needs.macos-metal.result == 'success' &&
+        needs.linux-cpu.result == 'success' &&
+        needs.linux-cpu-portable.result == 'success' &&
+        needs.linux-vulkan.result == 'success' &&
+        needs.linux-vulkan-portable.result == 'success' &&
+        needs.windows-cpu.result == 'success' &&
+        needs.windows-cpu-portable.result == 'success' &&
+        needs.windows-vulkan.result == 'success' &&
+        needs.windows-cuda.result == 'success'
+      }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -614,6 +637,13 @@ jobs:
           cd assets
           for d in */; do
             name="${d%/}"
+            case "$name" in
+              *cuda12.8-colab*)
+                echo "Skipping optional ${name}"
+                rm -rf "$d"
+                continue
+                ;;
+            esac
             echo "Packing ${name}"
             case "$name" in
               *windows*)

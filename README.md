@@ -12,9 +12,7 @@ ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gg
 
 > [!IMPORTANT]
 >
-> **2026-09-10 - Dev testing: Yue2 3B:** Yue2 native song generation is available on the [dev branch](https://github.com/0xShug0/audio.cpp/tree/dev) for community testing and optimization.
->
-> **2026-09-09 - VibeVoice ASR Streaming 7B and Irodori-TTS v4.1 Anime:** New GGUF packages are available for streaming VibeVoice ASR 7B and the anime fine-tuned Irodori-TTS v4.1 Small variant.
+> **2026-09-10 - Dev testing: Yue2 3B:** Yue2 native song generation is available on the [dev branch](https://github.com/0xShug0/audio.cpp/tree/dev) for community testing and optimization. Dev binaries are available from [Actions -> Release -> latest dev artifacts](https://github.com/0xShug0/audio.cpp/actions/workflows/release.yml?query=branch%3Adev).
 >
 > **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
@@ -53,7 +51,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-09-04 - Release 0.7.2:** This release adds BreezeTTS 2, CosyVoice3, Chatterbox Turbo TTS, Audio8 TTS, and Audio8 ASR, plus the new multipart audio alignment endpoint.
+> **2026-09-12 - Release 0.7.4:** This release adds VibeVoice ASR Streaming 7B, Irodori-TTS v4.1 Anime, Moonshine Streaming ASR, and Kokoro 82M, plus GGUF/package and UI updates for the latest community models. Thanks [@DrewThomasson](https://github.com/DrewThomasson) for the Colab UI!
 >
 > **2026-08-26 - Release 0.7:** This release adds MiniMax Music 3, MagpieTTS, PersonaPlex, MeanVC2, AudioSR, ControlFoley, FireRedTTS3, FireRedAudio, MiDashengLM-Gen, F5-TTS/Habibi, Granite Speech 5.0 TurboCTC, MMS Forced Aligner, and MOSS-VoiceGenerator, plus DotTTS Edit and ACE-Step 1.5 XL variants, bringing audio.cpp to **62** total model families and **85+** model variants! It also introduces the new Arena UI for side-by-side TTS, voice-conversion, and ASR comparison with shared inputs, queued runs, metrics, and result sorting.
 >
