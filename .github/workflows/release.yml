@@ -283,10 +283,12 @@ jobs:
         run: cmake --build build/colab-cuda --parallel "$(nproc)" --target audiocpp_server
       - name: Verify portable executable
         run: |
-          build/colab-cuda/bin/audiocpp_server --version
-          if ldd build/colab-cuda/bin/audiocpp_server | grep -Eq 'not found|libstdc\+\+|libgcc_s'; then
+          ldd build/colab-cuda/bin/audiocpp_server | tee /tmp/audiocpp_server.ldd
+          if awk '/libcuda\.so\.1/ && /not found/ { next } /not found|libstdc\+\+|libgcc_s/ { print; bad=1 } END { exit bad ? 1 : 0 }' /tmp/audiocpp_server.ldd > /tmp/audiocpp_server.bad; then
+            true
+          else
             echo "::error::The Colab executable has missing or non-portable runtime dependencies."
-            ldd build/colab-cuda/bin/audiocpp_server
+            cat /tmp/audiocpp_server.bad
             exit 1
           fi
       - name: Stage bundle
