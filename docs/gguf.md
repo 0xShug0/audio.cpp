@@ -80,6 +80,7 @@ Status labels:
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `mms_forced_aligner` | Done | Pass | --- | Pass | Pass (bit-identical) |
+| `moonshine_asr` | Done | Pass | --- | --- | Pass |
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `muscriptor` | Done | Pass | Pass | --- | --- |

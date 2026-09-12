@@ -108,6 +108,7 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 | **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
+| **moonshine_asr** | ASR | en | Moonshine Streaming Tiny/Small/Medium | GGUF Q8, Stream |
 | **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B | GGUF 16/Q8, Stream |
 | **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B, Qwen3-ASR-1.7B-hf | GGUF 16/Q8, Stream |
 | **qwen3_forced_aligner** | Align | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | GGUF 16/Q8 |
