@@ -9,30 +9,46 @@ High-impact areas right now:
 - UI and app-facing workflows
 - API server behavior, especially OpenAI-compatible serving
 - Pipeline and workflow subsystem improvements
+- Community model ports
+- Extending existing model families with additional variants
 - Model documentation, examples, and validation reports
 - Cross-platform build and packaging polish
 
-These areas help many model families at once. If you are unsure where to start, improving one of these shared surfaces is usually more valuable than adding another copy of an already-supported model.
+> [!TIP]
+> **High-impact optimization work:** as the framework evolves, newer models often gain better performance and memory-management patterns that older integrations have not yet adopted. Backporting those patterns is very useful, but it must be done model by model with careful regression tests for output quality, performance, and memory use.
+
+These areas either improve shared surfaces used by many model families or make existing model support more complete. For already-supported model families, please add new variants to the existing implementation instead of creating a duplicate port.
+
+## Pull Request Requirements
+
+Keep PRs focused. A model port, a server change, a pipeline change, and a broad refactor are easier to review and validate when they are separate.
+
+If a model port needs framework or runtime changes, split them when possible:
+
+- Additive framework/runtime support can be included if it is clearly scoped, opt-in, and genuinely reusable by other models. Do not promote model-specific logic into the framework just because it is convenient; prefer a model-local implementation unless the shared abstraction is clearly useful beyond one model.
+- Non-additive framework/runtime behavior changes should be a separate PR before the model port depends on them.
+- Backend or GGML changes should be separate PRs so regressions (if any) are easier to trace.
+
+If a PR changes runtime behavior, model implementation, backend logic, performance paths, or shared framework code, include actual runtime validation. Code inspection, generated tests, or "this should work" are not enough by themselves.
+
+For optimization PRs, include before/after measurements. For behavior changes, explain whether outputs, performance, memory, or only docs/build wiring are affected, and include regression checks for the affected route.
+
+**Please keep no more than 3 PRs open at the same time, including draft PRs.**
 
 ## Before Adding a Model
 
-Please check the supported model table in [README.md](README.md) before starting a new model port. Some model families are already released, and others are implemented but still marked as testing while they are validated, polished, or promoted into the broader released surface.
+Please check the supported model table in [README.md](README.md), the community model docs, and open PRs/issues before starting a new model port. Many requests are better handled by extending an existing family with a new variant, route, GGUF package, backend fix, or UI surface.
 
-If you want to add support for a model family that is already listed, please focus on improving the existing implementation instead of opening a duplicate port.
+If the model family is already listed, build on the existing implementation instead of opening a duplicate port. Add the new variant to the same family/spec/package layout unless there is a real architecture or task boundary that requires a separate family.
 
-When a loader is registered (or parked), keep the **package catalog** in sync. Installable `ModelPackage` entries must not advertise families that `audiocpp_cli --list-loaders` does not expose. Follow the checklist in [docs/maintainers/loader_and_catalog.md](docs/maintainers/loader_and_catalog.md) and run:
+For new or updated model packages, keep the loader, model spec, docs, and UI/model-manager package entries aligned. A package should not advertise a model that the CLI/server cannot actually load, and a spec should not claim options or routes the implementation does not support.
 
-```bash
-python3 tools/check_loader_catalog_sync.py --self-test
-python3 tools/check_loader_catalog_sync.py
-```
-
-Do not leave a live Hugging Face `SnapshotSource` for a loader that is commented out of `registry.cpp` — mark it `UnsupportedSource` (or remove it) and update the README package table.
 Good follow-up work for existing model families includes:
 
 - Better CLI or server examples
 - More complete path tests
 - Clearer model-manager package entries
+- Additional GGUF variants or model-size variants
 - Backend coverage improvements
 - Memory, latency, or portability improvements
 - Documentation for real user workflows
@@ -40,6 +56,10 @@ Good follow-up work for existing model families includes:
 ## New Model PRs
 
 New standalone model ports should normally start under `community_models/`. This keeps ownership clear and lets useful model ports land with a lighter review bar than core framework models. Models can graduate into the core model tree later after they are validated, polished, and maintained as part of the main release surface.
+
+Please read [Welcoming Community Models & Using Model Spec v1 for New Models](https://github.com/0xShug0/audio.cpp/issues/54) before starting a new model PR.
+
+New models should use model spec v1, follow existing model/package naming conventions, and reuse framework modules, runtimes, helpers, and ownership patterns when they fit. 
 
 Even for community models, PRs should include enough evidence for maintainers and users to understand exactly what was tested. Follow the validation style shown in [PR #19](https://github.com/0xShug0/audio.cpp/pull/19) and [PR #63](https://github.com/0xShug0/audio.cpp/pull/63).
 
@@ -66,14 +86,6 @@ Framework modules are a high-impact but higher-risk contribution area because th
 
 If your contribution is a variant of an existing module, add it as a separate experimental module, for example `xxxExp`, instead of branching inside or rewriting the existing module. The new module can replace the existing one later, after it has shown no regressions across all models that rely on the current implementation.
 
-## Pull Request Notes
-
-Keep PRs focused. A model port, a server change, a pipeline change, and a broad refactor are easier to review and validate when they are separate.
-
-When changing shared framework code, explain which model families or routes were checked. When changing model behavior, explain whether the change affects outputs, performance, memory, or only docs/build wiring.
-
-If a PR intentionally leaves a model under testing, say what remains before it should be marked released.
-
 ## Acknowledgments
 
 audio.cpp is moving faster because people keep showing up with real fixes, careful testing, and useful pressure on the parts that matter. Thank you to:
@@ -92,8 +104,8 @@ audio.cpp is moving faster because people keep showing up with real fixes, caref
 - [@xashr](https://github.com/xashr) for Dockerfiles, Docker examples, Docker documentation, portable CPU Docker builds, published-image docs, GGUF/Qwen3-TTS examples, CI workflow polish, CUDA probe cleanup, and portable CUDA architecture selection in [#30](https://github.com/0xShug0/audio.cpp/pull/30), [#51](https://github.com/0xShug0/audio.cpp/pull/51), [#81](https://github.com/0xShug0/audio.cpp/pull/81), [#84](https://github.com/0xShug0/audio.cpp/pull/84), [#107](https://github.com/0xShug0/audio.cpp/pull/107), [#109](https://github.com/0xShug0/audio.cpp/pull/109), and [#280](https://github.com/0xShug0/audio.cpp/pull/280).
 - [@5uck1ess](https://github.com/5uck1ess) for improving Citrinet CTC decoding through the SentencePiece model, hardening PocketTTS FlowLM step allocation, and adding live PCM transcription ingest to the server in [#49](https://github.com/0xShug0/audio.cpp/pull/49), [#59](https://github.com/0xShug0/audio.cpp/pull/59), and [#144](https://github.com/0xShug0/audio.cpp/pull/144).
 - [@dkruyt](https://github.com/dkruyt) for the first multipart transcription upload support in [#25](https://github.com/0xShug0/audio.cpp/pull/25).
-- [@CaptainArni](https://github.com/CaptainArni) for fixing PocketTTS empty output when switching cached voices, keeping the Windows CUDA build path healthy, and adding ACE-Step 1.5 XL DiT variants in [#22](https://github.com/0xShug0/audio.cpp/pull/22), [#93](https://github.com/0xShug0/audio.cpp/pull/93), and [#235](https://github.com/0xShug0/audio.cpp/pull/235).
-- [@IIIIIllllIIIIIlllll](https://github.com/IIIIIllllIIIIIlllll) for the experimental ROCm/HIP backend, Linux HIP build path, Windows HIP/ROCm distribution preparation, HIP build documentation, VibeVoice HIP enablement, backend device listing, Vulkan AMD integer-dot guard, IndexTTS-2.5 support, base64 voice references in server requests, IndexTTS2 speech-rate controls, IndexTTS2 HIP/text-normalization fixes, and BreezeTTS 2 performance and VRAM improvements in [#48](https://github.com/0xShug0/audio.cpp/pull/48), [#148](https://github.com/0xShug0/audio.cpp/pull/148), [#153](https://github.com/0xShug0/audio.cpp/pull/153), [#159](https://github.com/0xShug0/audio.cpp/pull/159), [#164](https://github.com/0xShug0/audio.cpp/pull/164), [#168](https://github.com/0xShug0/audio.cpp/pull/168), [#171](https://github.com/0xShug0/audio.cpp/pull/171), [#193](https://github.com/0xShug0/audio.cpp/pull/193), [#210](https://github.com/0xShug0/audio.cpp/pull/210), [#226](https://github.com/0xShug0/audio.cpp/pull/226), [#239](https://github.com/0xShug0/audio.cpp/pull/239), [#247](https://github.com/0xShug0/audio.cpp/pull/247), [#259](https://github.com/0xShug0/audio.cpp/pull/259), [#299](https://github.com/0xShug0/audio.cpp/pull/299), [#305](https://github.com/0xShug0/audio.cpp/pull/305), [#393](https://github.com/0xShug0/audio.cpp/pull/393), and [#431](https://github.com/0xShug0/audio.cpp/pull/431).
+- [@CaptainArni](https://github.com/CaptainArni) for fixing PocketTTS empty output when switching cached voices, keeping the Windows CUDA build path healthy, adding ACE-Step 1.5 XL DiT variants, allowing finished GGUFs to be re-converted, and fixing Windows CUDA setup when `PATH` contains stray quotes in [#22](https://github.com/0xShug0/audio.cpp/pull/22), [#93](https://github.com/0xShug0/audio.cpp/pull/93), [#235](https://github.com/0xShug0/audio.cpp/pull/235), [#464](https://github.com/0xShug0/audio.cpp/pull/464), and [#511](https://github.com/0xShug0/audio.cpp/pull/511).
+- [@IIIIIllllIIIIIlllll](https://github.com/IIIIIllllIIIIIlllll) for the experimental ROCm/HIP backend, Linux HIP build path, Windows HIP/ROCm distribution preparation, HIP build documentation, VibeVoice HIP enablement, backend device listing, Vulkan AMD integer-dot guard, IndexTTS-2.5 support, base64 voice references in server requests, IndexTTS2 speech-rate controls, IndexTTS2 HIP/text-normalization fixes, BreezeTTS 2 performance and VRAM improvements, ModelScope downloads, HIP build guards, and the Fish Audio HIP Fast-AR CMake target in [#48](https://github.com/0xShug0/audio.cpp/pull/48), [#148](https://github.com/0xShug0/audio.cpp/pull/148), [#153](https://github.com/0xShug0/audio.cpp/pull/153), [#159](https://github.com/0xShug0/audio.cpp/pull/159), [#164](https://github.com/0xShug0/audio.cpp/pull/164), [#168](https://github.com/0xShug0/audio.cpp/pull/168), [#171](https://github.com/0xShug0/audio.cpp/pull/171), [#193](https://github.com/0xShug0/audio.cpp/pull/193), [#210](https://github.com/0xShug0/audio.cpp/pull/210), [#226](https://github.com/0xShug0/audio.cpp/pull/226), [#239](https://github.com/0xShug0/audio.cpp/pull/239), [#247](https://github.com/0xShug0/audio.cpp/pull/247), [#259](https://github.com/0xShug0/audio.cpp/pull/259), [#299](https://github.com/0xShug0/audio.cpp/pull/299), [#305](https://github.com/0xShug0/audio.cpp/pull/305), [#393](https://github.com/0xShug0/audio.cpp/pull/393), [#431](https://github.com/0xShug0/audio.cpp/pull/431), [#450](https://github.com/0xShug0/audio.cpp/pull/450), [#480](https://github.com/0xShug0/audio.cpp/pull/480), and [#490](https://github.com/0xShug0/audio.cpp/pull/490).
 - [@francescobozzo](https://github.com/francescobozzo) for Nix ROCm/HIP backend support, selectable model targets, and Nix CI/package fixes in [#162](https://github.com/0xShug0/audio.cpp/pull/162), [#163](https://github.com/0xShug0/audio.cpp/pull/163), and [#172](https://github.com/0xShug0/audio.cpp/pull/172).
 - [@patrickvonplaten](https://github.com/patrickvonplaten) for Metal backend fixes, Voxtral Realtime streaming speedups, live audio streaming from stdin, and incremental transcript deltas in [#102](https://github.com/0xShug0/audio.cpp/pull/102), [#116](https://github.com/0xShug0/audio.cpp/pull/116), [#118](https://github.com/0xShug0/audio.cpp/pull/118), and [#127](https://github.com/0xShug0/audio.cpp/pull/127).
 - [@dleiferives](https://github.com/dleiferives) for Parakeet-TDT 0.6B v3 ASR support and follow-up standalone GGUF validation/docs in [#111](https://github.com/0xShug0/audio.cpp/pull/111) and [#139](https://github.com/0xShug0/audio.cpp/pull/139).
@@ -103,7 +115,7 @@ audio.cpp is moving faster because people keep showing up with real fixes, caref
 - [@liuzl](https://github.com/liuzl) for speeding up Metal `conv_transpose_1d` dispatch in [#149](https://github.com/0xShug0/audio.cpp/pull/149).
 - [@JayDataEngineer](https://github.com/JayDataEngineer) for fixing PocketTTS `clone_audio_path` option typing in [#147](https://github.com/0xShug0/audio.cpp/pull/147).
 - [@jasonchen31](https://github.com/jasonchen31) for adding server-side voice library folder support for name-based voice cloning, helping land SenseVoice-Small, fixing crashes on binaries built for older GPUs, adding Audio8 TTS, and fixing VoxCPM1 WebUI download/Yue language handling in [#191](https://github.com/0xShug0/audio.cpp/pull/191), [#219](https://github.com/0xShug0/audio.cpp/pull/219), [#240](https://github.com/0xShug0/audio.cpp/pull/240), [#333](https://github.com/0xShug0/audio.cpp/pull/333), and [#424](https://github.com/0xShug0/audio.cpp/pull/424).
-- [@mirek190](https://github.com/mirek190) for the native WebUI follow-up work around model management, package handling, request controls, package labels, new GGUF package surfacing, CUDA BF16 cuBLAS output on Ampere, MiniMax-H3 WebUI polish, retiring the legacy Python WebUI, adding the reusable native model package manager, clearing stale WebUI service workers, clarifying ACE-Step GGUF package labels, documenting server host/port options, and fixing Qwen compact-logits graph reuse in [#199](https://github.com/0xShug0/audio.cpp/pull/199), [#206](https://github.com/0xShug0/audio.cpp/pull/206), [#207](https://github.com/0xShug0/audio.cpp/pull/207), [#208](https://github.com/0xShug0/audio.cpp/pull/208), [#211](https://github.com/0xShug0/audio.cpp/pull/211), [#213](https://github.com/0xShug0/audio.cpp/pull/213), [#229](https://github.com/0xShug0/audio.cpp/pull/229), [#230](https://github.com/0xShug0/audio.cpp/pull/230), [#257](https://github.com/0xShug0/audio.cpp/pull/257), [#258](https://github.com/0xShug0/audio.cpp/pull/258), [#381](https://github.com/0xShug0/audio.cpp/pull/381), and [#426](https://github.com/0xShug0/audio.cpp/pull/426).
+- [@mirek190](https://github.com/mirek190) for the native WebUI follow-up work around model management, package handling, request controls, package labels, new GGUF package surfacing, CUDA BF16 cuBLAS output on Ampere, MiniMax-H3 WebUI polish, retiring the legacy Python WebUI, adding the reusable native model package manager, clearing stale WebUI service workers, clarifying ACE-Step GGUF package labels, documenting server host/port options, fixing Qwen compact-logits graph reuse, accelerating MiraTTS on CPU/Vulkan, adding Kokoro multilingual GGUF synthesis and CPU optimization, and sharing the eSpeak-ng phonemizer across model frontends in [#199](https://github.com/0xShug0/audio.cpp/pull/199), [#206](https://github.com/0xShug0/audio.cpp/pull/206), [#207](https://github.com/0xShug0/audio.cpp/pull/207), [#208](https://github.com/0xShug0/audio.cpp/pull/208), [#211](https://github.com/0xShug0/audio.cpp/pull/211), [#213](https://github.com/0xShug0/audio.cpp/pull/213), [#229](https://github.com/0xShug0/audio.cpp/pull/229), [#230](https://github.com/0xShug0/audio.cpp/pull/230), [#257](https://github.com/0xShug0/audio.cpp/pull/257), [#258](https://github.com/0xShug0/audio.cpp/pull/258), [#381](https://github.com/0xShug0/audio.cpp/pull/381), [#426](https://github.com/0xShug0/audio.cpp/pull/426), [#491](https://github.com/0xShug0/audio.cpp/pull/491), [#496](https://github.com/0xShug0/audio.cpp/pull/496), and [#502](https://github.com/0xShug0/audio.cpp/pull/502).
 - [@nikich340](https://github.com/nikich340) for adding explicit server model unloading support in [#197](https://github.com/0xShug0/audio.cpp/pull/197).
 - [@utsl42](https://github.com/utsl42) for fixing CUDA linking on NixOS in [#214](https://github.com/0xShug0/audio.cpp/pull/214).
 - [@yegorius](https://github.com/yegorius) for fixing PocketTTS handling in the model manager in [#205](https://github.com/0xShug0/audio.cpp/pull/205).
@@ -114,22 +126,31 @@ audio.cpp is moving faster because people keep showing up with real fixes, caref
 - [@Blakeolson21](https://github.com/Blakeolson21) for documenting macOS CPU-only builds and fixing HIP backend classification in tests in [#237](https://github.com/0xShug0/audio.cpp/pull/237) and [#238](https://github.com/0xShug0/audio.cpp/pull/238).
 - [@odest](https://github.com/odest) for adding Vulkan backend support to Windows builds in [#242](https://github.com/0xShug0/audio.cpp/pull/242).
 - [@JoeMattie](https://github.com/JoeMattie) for bringing up MiniMax Music3, fixing BF16 convolution issues, repairing conversion, wiring native WebUI support, and honoring required request options in Studio in [#243](https://github.com/0xShug0/audio.cpp/pull/243) and [#245](https://github.com/0xShug0/audio.cpp/pull/245).
-- [@Orion-zhen](https://github.com/Orion-zhen) for adding `--voice-dir` parsing to the server CLI in [#246](https://github.com/0xShug0/audio.cpp/pull/246).
+- [@Orion-zhen](https://github.com/Orion-zhen) for adding `--voice-dir` parsing to the server CLI and fixing a HIP build error in [#246](https://github.com/0xShug0/audio.cpp/pull/246) and [#486](https://github.com/0xShug0/audio.cpp/pull/486).
 - [@derekja](https://github.com/derekja) for multipart ASR recognition prompts, clearer large-request errors, ASR graph allocation fixes, and CUDA graph-cache cleanup for concurrent ASR pressure in [#262](https://github.com/0xShug0/audio.cpp/pull/262), [#264](https://github.com/0xShug0/audio.cpp/pull/264), [#276](https://github.com/0xShug0/audio.cpp/pull/276), and [#293](https://github.com/0xShug0/audio.cpp/pull/293).
 - [@kawshikbuet17](https://github.com/kawshikbuet17) for adding OmniVoice weight-type benchmark coverage, validation reports, and Python-to-C++ tests in [#269](https://github.com/0xShug0/audio.cpp/pull/269).
 - [@tareko](https://github.com/tareko) for adding F5-TTS community scaffolding with Habibi Arabic aliases in [#275](https://github.com/0xShug0/audio.cpp/pull/275).
 - [@jrohde](https://github.com/jrohde) for adding the MOSS-VoiceGenerator community model in [#278](https://github.com/0xShug0/audio.cpp/pull/278).
-- [@LysanderdeJong](https://github.com/LysanderdeJong) for adding the MMS-300M-1130 forced aligner community model in [#279](https://github.com/0xShug0/audio.cpp/pull/279).
-- [@drzsdrtfg](https://github.com/drzsdrtfg) for the tag-driven prebuilt release pipeline, Supertonic voice-preset request-option fix, Soprano TTS community model, and Qwen cached-graph prefill input fix in [#286](https://github.com/0xShug0/audio.cpp/pull/286), [#302](https://github.com/0xShug0/audio.cpp/pull/302), [#323](https://github.com/0xShug0/audio.cpp/pull/323), and [#331](https://github.com/0xShug0/audio.cpp/pull/331).
+- [@LysanderdeJong](https://github.com/LysanderdeJong) for adding the MMS-300M-1130 forced aligner community model, Sortformer v2.1 streaming diarization, the Orukeet r3 Parakeet-TDT weight variant, and VibeVoice ASR Streaming 7B performance work in [#279](https://github.com/0xShug0/audio.cpp/pull/279), [#493](https://github.com/0xShug0/audio.cpp/pull/493), [#523](https://github.com/0xShug0/audio.cpp/pull/523), and [#526](https://github.com/0xShug0/audio.cpp/pull/526).
+- [@drzsdrtfg](https://github.com/drzsdrtfg) for the tag-driven prebuilt release pipeline, Supertonic voice-preset request-option fix, Soprano TTS community model, Soprano maintainer metadata correction, and Qwen cached-graph prefill input fix in [#286](https://github.com/0xShug0/audio.cpp/pull/286), [#302](https://github.com/0xShug0/audio.cpp/pull/302), [#323](https://github.com/0xShug0/audio.cpp/pull/323), [#331](https://github.com/0xShug0/audio.cpp/pull/331), and [#451](https://github.com/0xShug0/audio.cpp/pull/451).
 - [@Hi5808](https://github.com/Hi5808) for documenting Jetson Orin bring-up and correcting native architecture wording in [#288](https://github.com/0xShug0/audio.cpp/pull/288).
 - [@SelfRef](https://github.com/SelfRef) for making embedded WebUI work behind a path-prefix reverse proxy and adding server model LRU controls in [#297](https://github.com/0xShug0/audio.cpp/pull/297) and [#298](https://github.com/0xShug0/audio.cpp/pull/298).
 - [@bjhengen](https://github.com/bjhengen) for dropping out-of-span chunk speech metadata instead of aborting the whole run in [#301](https://github.com/0xShug0/audio.cpp/pull/301).
-- [@gqf2008](https://github.com/gqf2008) for adding server idle unload and pre-load memory guard behavior, tightening indeterminate-footprint handling, adding Audio8 ASR, and improving default CJK text chunking in [#306](https://github.com/0xShug0/audio.cpp/pull/306), [#308](https://github.com/0xShug0/audio.cpp/pull/308), [#337](https://github.com/0xShug0/audio.cpp/pull/337), and [#441](https://github.com/0xShug0/audio.cpp/pull/441).
+- [@gqf2008](https://github.com/gqf2008) for adding server idle unload and pre-load memory guard behavior, tightening indeterminate-footprint handling, adding Audio8 ASR, improving default CJK text chunking, and bringing the unit test suite into Linux/macOS/Windows CI in [#306](https://github.com/0xShug0/audio.cpp/pull/306), [#308](https://github.com/0xShug0/audio.cpp/pull/308), [#337](https://github.com/0xShug0/audio.cpp/pull/337), [#441](https://github.com/0xShug0/audio.cpp/pull/441), and [#442](https://github.com/0xShug0/audio.cpp/pull/442).
 - [@ampersandru](https://github.com/ampersandru) for adding IBM Granite Speech 5.0 470M TurboCTC ASR as a community model in [#311](https://github.com/0xShug0/audio.cpp/pull/311).
 - [@iamwavecut](https://github.com/iamwavecut) for MiniMax Music3 performance work around native RoPE/SwiGLU lowering, opt-in CFG reuse, chunk hop support, batched ensemble takes, and Q4_K depth decoder support in [#321](https://github.com/0xShug0/audio.cpp/pull/321).
 - [@XythQ](https://github.com/XythQ) for resolving model contracts once per loaded model instead of per request in [#328](https://github.com/0xShug0/audio.cpp/pull/328).
 - [@pannagaps](https://github.com/pannagaps) for adding Chatterbox Turbo TTS as a community model in [#394](https://github.com/0xShug0/audio.cpp/pull/394).
 - [@gsaon](https://github.com/gsaon) for fixing Granite Speech ASR mel filterbank construction on the continuous frequency axis in [#384](https://github.com/0xShug0/audio.cpp/pull/384).
-- [@reezex0-ux](https://github.com/reezex0-ux) for adding the HIP Fast-AR top-k sampler path for Fish Audio in [#386](https://github.com/0xShug0/audio.cpp/pull/386).
+- [@reezex0-ux](https://github.com/reezex0-ux) for adding the HIP Fast-AR top-k sampler path for Fish Audio and keeping Fast-AR inputs on the HIP stream in [#386](https://github.com/0xShug0/audio.cpp/pull/386) and [#500](https://github.com/0xShug0/audio.cpp/pull/500).
 - [@feng19](https://github.com/feng19) for adding `HF_ENDPOINT` mirror support to model downloads in [#397](https://github.com/0xShug0/audio.cpp/pull/397).
 - [@CryptVenture](https://github.com/CryptVenture) for adding richer WAV output options, correcting the shared text chunk mode preset, accepting the MOSS VoiceGenerator instruction spelling used by the speech route, and forwarding `language` only when a model contract accepts it in [#358](https://github.com/0xShug0/audio.cpp/pull/358), [#370](https://github.com/0xShug0/audio.cpp/pull/370), [#371](https://github.com/0xShug0/audio.cpp/pull/371), and [#400](https://github.com/0xShug0/audio.cpp/pull/400).
+- [@voidash](https://github.com/voidash) for adding the sanoTTS voice family and expanding it with eleven more language voices plus acoustic calibration adapter support in [#449](https://github.com/0xShug0/audio.cpp/pull/449) and [#495](https://github.com/0xShug0/audio.cpp/pull/495).
+- [@XsquirrelC](https://github.com/XsquirrelC) for adding additive INT8/ternary GGML types, fused CPU ops, and the VibeASR INT8/ternary ASR pipeline in [#447](https://github.com/0xShug0/audio.cpp/pull/447) and [#448](https://github.com/0xShug0/audio.cpp/pull/448).
+- [@niksedk](https://github.com/niksedk) for fixing Higgs Audio TTS codec decode seams by giving the codec decoder right-hand context at the end of the stream in [#454](https://github.com/0xShug0/audio.cpp/pull/454).
+- [@Th-Underscore](https://github.com/Th-Underscore) for adding the `Ctrl` variant to the BreezeTTS model entry in [#463](https://github.com/0xShug0/audio.cpp/pull/463).
+- [@DrewThomasson](https://github.com/DrewThomasson) for adding the one-click Colab WebUI notebook and CUDA T4 release build path in [#501](https://github.com/0xShug0/audio.cpp/pull/501).
+- [@Anai-Guo](https://github.com/Anai-Guo) for fixing the Voxtral Realtime warmbench path to use the warmup case streaming flag in [#506](https://github.com/0xShug0/audio.cpp/pull/506).
+- [@dpmm99](https://github.com/dpmm99) for fixing the configured-model Yue2 UI parameter surface in [#509](https://github.com/0xShug0/audio.cpp/pull/509).
+- [@weidu-tpvision](https://github.com/weidu-tpvision) for preventing 32-bit `size_t` overflow in HiFT vocoder and model configuration allocation paths in [#512](https://github.com/0xShug0/audio.cpp/pull/512) and [#513](https://github.com/0xShug0/audio.cpp/pull/513).
+- [@SmilingWolf](https://github.com/SmilingWolf) for making PocketTTS reference audio fields visible again in [#528](https://github.com/0xShug0/audio.cpp/pull/528).
