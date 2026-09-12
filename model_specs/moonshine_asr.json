@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "family": "moonshine_asr",
+  "display_name": "Moonshine Streaming ASR",
+  "description": "Moonshine tiny/small/medium streaming English speech recognition models.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated transcript tokens. Defaults to audio-duration derived limit.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared matmul weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Frontend convolution weight storage type.",
+        "preset": "weight_type_conv",
+        "required": false
+      },
+      {
+        "name": "decoder_weight_type",
+        "type": "enum",
+        "description": "Decoder matmul weight storage type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "encoder_gelu",
+        "type": "enum",
+        "description": "Encoder GELU lowering.",
+        "values": [
+          "erf",
+          "exact",
+          "tanh",
+          "quick"
+        ],
+        "required": false,
+        "default": "quick"
+      },
+      {
+        "name": "cpu_blas_scheduler",
+        "type": "bool",
+        "description": "Use BLAS/Accelerate for supported CPU encoder matmuls.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cpu",
+      "stream"
+    ]
+  },
+  "ui": {
+    "recommended_package": "moonshine_streaming_tiny_q8_0",
+    "tags": [
+      "ASR",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moonshine_streaming_tiny_q8_0",
+      "display_name": "Moonshine Streaming Tiny Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Moonshine-Streaming-GGUF",
+      "files": [
+        "Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf"
+      ],
+      "strip_prefix": "Moonshine-Streaming-GGUF"
+    },
+    {
+      "id": "moonshine_streaming_small_q8_0",
+      "display_name": "Moonshine Streaming Small Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Moonshine-Streaming-GGUF",
+      "files": [
+        "Moonshine-Streaming-GGUF/moonshine-streaming-small-q8_0.gguf"
+      ],
+      "strip_prefix": "Moonshine-Streaming-GGUF"
+    },
+    {
+      "id": "moonshine_streaming_medium_q8_0",
+      "display_name": "Moonshine Streaming Medium Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Moonshine-Streaming-GGUF",
+      "files": [
+        "Moonshine-Streaming-GGUF/moonshine-streaming-medium-q8_0.gguf"
+      ],
+      "strip_prefix": "Moonshine-Streaming-GGUF"
+    },
+    {
+      "id": "moonshine_streaming_tiny_safetensors",
+      "display_name": "Moonshine Streaming Tiny Safetensors",
+      "format": "safetensors",
+      "precision": "f32",
+      "target_directory": "moonshine-streaming-tiny",
+      "files": [
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "moonshine-ai/moonshine-streaming-tiny",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "moonshine_streaming_small_safetensors",
+      "display_name": "Moonshine Streaming Small Safetensors",
+      "format": "safetensors",
+      "precision": "f32",
+      "target_directory": "moonshine-streaming-small",
+      "files": [
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "moonshine-ai/moonshine-streaming-small",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "moonshine_streaming_medium_safetensors",
+      "display_name": "Moonshine Streaming Medium Safetensors",
+      "format": "safetensors",
+      "precision": "f32",
+      "target_directory": "moonshine-streaming-medium",
+      "files": [
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "moonshine-ai/moonshine-streaming-medium",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "dependencies": [],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

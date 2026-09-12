@@ -150,6 +150,7 @@
     'firered_audio',
     'fireredtts3',
     'irodori_tts',
+    'kokoro_tts',
     'meanvc2',
     'midashenglm_gen'
   ]);
@@ -414,6 +415,7 @@
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family) && !supportsTextOnlyTts);
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
+  $: usesBuiltInVoiceSelector = Boolean(selected?.builtin_voices?.length);
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
   $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
@@ -423,11 +425,16 @@
   $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
     (Boolean(voiceFile) && isQwenBase);
   $: quickStartVoices = server && !server.ui_management
-    ? configuredVoices
+    ? Array.from(new Set([
+        ...configuredVoices,
+        ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+      ]))
+    : usesBuiltInVoiceSelector
+      ? selected?.builtin_voices || []
     : Object.entries(demoVoiceSources)
       .filter(([, source]) => bundledVoices.includes(source))
       .map(([voice]) => voice);
-  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false
+  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false && !usesBuiltInVoiceSelector
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
@@ -1005,6 +1012,9 @@
     if (!text.trim() && selected?.default_text) {
       text = selected.default_text;
     }
+    if (selected?.builtin_voices?.length && selected.default_voice && !quickStartVoice) {
+      quickStartVoice = selected.default_voice;
+    }
     advancedJson = '{}';
   }
 
@@ -1428,7 +1438,13 @@
     }
     try {
       configuredVoices = await availableVoices(selectedId);
-      if (quickStartVoice && !configuredVoices.includes(quickStartVoice)) quickStartVoice = '';
+      if (quickStartVoice) {
+        const allowed = new Set([
+          ...configuredVoices,
+          ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+        ]);
+        if (!allowed.has(quickStartVoice)) quickStartVoice = '';
+      }
     } catch (error) {
       configuredVoices = [];
       log(`Configured voices unavailable: ${error instanceof Error ? error.message : error}`);
@@ -2315,49 +2331,58 @@
               <div class="quick-voice-note">
                 {tr('voice.bundledNote')}
               </div>
-              <MediaPreview src={quickStartVoicePreview} name={quickStartVoice} kind="audio" label={tr('file.preview')} />
+              {#if quickStartVoicePreview}
+                <MediaPreview src={quickStartVoicePreview} name={quickStartVoice} kind="audio" label={tr('file.preview')} />
+              {/if}
             {/if}
           {/if}
-          <div class="reference-input-grid">
-            <div>
-              <label for="voice">{tr('voice.reference')} <span>{referenceVoiceRequired ? tr('voice.required') : tr('voice.optional')}</span></label>
-              <input id="voice" class="file file-native" type="file" accept="audio/*"
-                bind:this={voiceInput}
-                on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
-              <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
+            <div class="reference-input-grid">
+              <div>
+                <label for="voice">{tr('voice.reference')} <span>{referenceVoiceRequired ? tr('voice.required') : tr('voice.optional')}</span></label>
+                <input id="voice" class="file file-native" type="file" accept="audio/*"
+                  bind:this={voiceInput}
+                  on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
+                <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
+              </div>
+              <div>
+                <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
+                <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
+                  bind:this={referenceTextInput}
+                  on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
+                <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
+              </div>
             </div>
-            <div>
-              <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
-              <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
-                bind:this={referenceTextInput}
-                on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
-              <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
+          {/if}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
+            <div class="media-actions">
+              {#if recordingTarget === 'voice'}
+                <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+                <span class="recording-dot">{tr('voice.recording')}</span>
+              {:else}
+                <button type="button" disabled={Boolean(recorder) || liveRecording}
+                  on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
+                <button type="button"
+                  disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
+                  on:click={clearVoiceReference}>Clear reference</button>
+                {#if voiceFile}<span>{voiceFile.name}</span>{/if}
+              {/if}
             </div>
-          </div>
-          <div class="media-actions">
-            {#if recordingTarget === 'voice'}
-              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
-              <span class="recording-dot">{tr('voice.recording')}</span>
-            {:else}
-              <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
-              <button type="button"
-                disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
-                on:click={clearVoiceReference}>Clear reference</button>
-              {#if voiceFile}<span>{voiceFile.name}</span>{/if}
-            {/if}
-          </div>
-          <MediaPreview file={voiceFile} kind="audio" label={tr('file.preview')} />
-          <label for="reference">{tr('voice.transcript')}
-            <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
-          </label>
-          <textarea id="reference" rows="2" bind:value={referenceText}
-            placeholder={tr('voice.transcriptPlaceholder')}></textarea>
+          {/if}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
+            <MediaPreview file={voiceFile} kind="audio" label={tr('file.preview')} />
+            <label for="reference">{tr('voice.transcript')}
+              <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
+            </label>
+            <textarea id="reference" rows="2" bind:value={referenceText}
+              placeholder={tr('voice.transcriptPlaceholder')}></textarea>
+          {/if}
           <!--
             Saved voices keep a named reference recording and transcript for reuse. They are persisted only
             in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
             another browser/device, and are removed if this site's browser data is cleared.
           -->
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
           <div class="voice-library">
             <div>
               <label for="saved-voice">{tr('voice.saved')} <span>{tr('voice.browserOnly')}</span></label>
@@ -2377,6 +2402,7 @@
                 on:click={removeCurrentVoice}>{tr('common.delete')}</button>
             </div>
           </div>
+          {/if}
         {/if}
 
         {#if usesVibeVoiceSpeakerFiles}

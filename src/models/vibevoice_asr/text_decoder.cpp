@@ -70,6 +70,10 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoder
     out.stack.use_qk_norm = false;
     out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    // The suffix path appends onto the prefix KV cache; without this it
+    // takes the eager branch and materializes per-head F32 intermediates
+    // that scale with the cache size.
+    out.stack.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::FlashWithPrefix;
     out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     out.logits_size = config.vocab_size;
@@ -636,6 +640,10 @@ public:
         }
         runtime::TransformerKVCacheOptions cache_options;
         cache_options.allow_f16_storage = true;
+        if (runtime_->max_history_steps() > 0) {
+            cache_options.ring_mode = true;
+            cache_options.ring_pinned_steps = runtime_->pinned_prefix_steps();
+        }
         cache_ = runtime::TransformerKVCache(
             cache_steps_,
             step_elems,
@@ -668,6 +676,10 @@ public:
 
     int64_t current_end() const noexcept {
         return cache_.current_end();
+    }
+
+    int64_t slot_for_position(int64_t position) const {
+        return cache_.slot_for_position(position);
     }
 
     void import_state(const runtime::TransformerKVState & state) {
@@ -815,20 +827,33 @@ public:
         if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
             throw std::runtime_error("VibeVoice decoder cached step embedding size mismatch");
         }
-        if (cache_->valid_steps() >= cache_steps_) {
+        if (cache_->valid_steps() >= cache_steps_ && runtime_->max_history_steps() <= 0) {
             throw std::runtime_error("VibeVoice decoder cached step exceeds cache capacity");
         }
         ggml_backend_tensor_set(input_, embedding.data(), 0, embedding.size() * sizeof(float));
-        const int32_t position = static_cast<int32_t>(cache_->current_end());
-        ggml_backend_tensor_set(positions_, &position, 0, sizeof(position));
-        const int32_t cache_slot = static_cast<int32_t>(cache_->valid_steps());
+        const int64_t position = cache_->current_end();
+        const int32_t position_i32 = static_cast<int32_t>(position);
+        ggml_backend_tensor_set(positions_, &position_i32, 0, sizeof(position_i32));
+        const int32_t cache_slot = static_cast<int32_t>(cache_->slot_for_position(position));
         ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(cache_slot));
-        modules::write_qwen_cached_step_mask(
-            attention_mask_,
-            attention_mask_buffer_,
-            static_cast<int64_t>(attention_mask_buffer_.size()),
-            cache_->valid_steps(),
-            cache_->valid_steps());
+        {
+            const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
+            const auto visible = ggml_fp32_to_fp16(0.0F);
+            std::fill(attention_mask_buffer_.begin(), attention_mask_buffer_.end(), masked);
+            const int64_t valid = cache_->valid_steps();
+            const int64_t pinned = runtime_->pinned_prefix_steps();
+            for (int64_t row = 0; row < valid; ++row) {
+                const int64_t stored =
+                    runtime::ring_stored_position(row, valid, cache_->current_end(), pinned);
+                attention_mask_buffer_[static_cast<size_t>(cache_->slot_for_position(stored))] = visible;
+            }
+            attention_mask_buffer_[static_cast<size_t>(cache_slot)] = visible;
+            ggml_backend_tensor_set(
+                attention_mask_,
+                attention_mask_buffer_.data(),
+                0,
+                attention_mask_buffer_.size() * sizeof(ggml_fp16_t));
+        }
 
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
         const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
@@ -1004,13 +1029,17 @@ public:
         if (static_cast<int64_t>(embeddings.size()) != suffix_steps_ * config.hidden_size) {
             throw std::runtime_error("VibeVoice decoder cached suffix embedding size mismatch");
         }
-        if (cache_->valid_steps() + suffix_steps_ > cache_steps_) {
+        if (cache_->valid_steps() + suffix_steps_ > cache_steps_ && runtime_->max_history_steps() <= 0) {
             throw std::runtime_error("VibeVoice decoder cached suffix exceeds cache capacity");
         }
         ggml_backend_tensor_set(input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
+        const int64_t append_end = cache_->current_end();
+        const int64_t append_valid = cache_->valid_steps();
+        const int64_t pinned = runtime_->pinned_prefix_steps();
         for (int64_t step = 0; step < suffix_steps_; ++step) {
-            position_values_[static_cast<size_t>(step)] = static_cast<int32_t>(cache_->current_end() + step);
-            cache_slot_values_[static_cast<size_t>(step)] = static_cast<int32_t>(cache_->valid_steps() + step);
+            position_values_[static_cast<size_t>(step)] = static_cast<int32_t>(append_end + step);
+            cache_slot_values_[static_cast<size_t>(step)] =
+                static_cast<int32_t>(cache_->slot_for_position(append_end + step));
         }
         ggml_backend_tensor_set(positions_, position_values_.data(), 0, position_values_.size() * sizeof(int32_t));
         ggml_backend_tensor_set(cache_slot_, cache_slot_values_.data(), 0, cache_slot_values_.size() * sizeof(int32_t));
@@ -1018,16 +1047,19 @@ public:
         const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
         const auto visible = ggml_fp32_to_fp16(0.0F);
         std::fill(attention_mask_buffer_.begin(), attention_mask_buffer_.end(), masked);
+        for (int64_t row = 0; row < append_valid; ++row) {
+            const int64_t stored = runtime::ring_stored_position(row, append_valid, append_end, pinned);
+            const size_t slot = static_cast<size_t>(cache_->slot_for_position(stored));
+            for (int64_t query = 0; query < suffix_steps_; ++query) {
+                attention_mask_buffer_[static_cast<size_t>(query * attention_key_steps_) + slot] = visible;
+            }
+        }
         for (int64_t row = 0; row < suffix_steps_; ++row) {
-            const size_t row_offset = static_cast<size_t>(row * attention_key_steps_);
-            std::fill_n(
-                attention_mask_buffer_.begin() + static_cast<std::ptrdiff_t>(row_offset),
-                static_cast<size_t>(cache_->valid_steps()),
-                visible);
-            std::fill_n(
-                attention_mask_buffer_.begin() + static_cast<std::ptrdiff_t>(row_offset + cache_steps_),
-                static_cast<size_t>(row + 1),
-                visible);
+            for (int64_t step = 0; step <= row; ++step) {
+                const size_t slot =
+                    static_cast<size_t>(cache_->slot_for_position(append_end + step));
+                attention_mask_buffer_[static_cast<size_t>(row * attention_key_steps_) + slot] = visible;
+            }
         }
         ggml_backend_tensor_set(
             attention_mask_,
@@ -1089,11 +1121,16 @@ VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
     int threads,
     size_t weight_context_bytes,
     size_t constant_context_bytes,
-    assets::TensorStorageType weight_storage_type)
+    assets::TensorStorageType weight_storage_type,
+    int64_t max_history_steps)
     : assets_(std::move(assets)),
-      threads_(threads) {
+      threads_(threads),
+      max_history_steps_(max_history_steps) {
     if (assets_ == nullptr) {
         throw std::runtime_error("VibeVoice decoder weights runtime requires assets");
+    }
+    if (max_history_steps_ < 0) {
+        throw std::runtime_error("VibeVoice decoder max_history_steps must be >= 0 (0 disables the history window)");
     }
     if (threads_ <= 0) {
         throw std::runtime_error("VibeVoice decoder weights runtime requires positive thread count");
@@ -1149,6 +1186,39 @@ core::ConstantTensorCache & VibeVoiceDecoderWeightsRuntime::constants() const no
 
 int VibeVoiceDecoderWeightsRuntime::threads() const noexcept {
     return threads_;
+}
+
+void VibeVoiceDecoderWeightsRuntime::set_pinned_prefix_steps(int64_t steps) {
+    if (steps < 0) {
+        throw std::runtime_error("VibeVoice decoder pinned prefix steps must be >= 0");
+    }
+    pinned_prefix_steps_ = steps;
+}
+
+int64_t VibeVoiceDecoderWeightsRuntime::pinned_prefix_steps() const noexcept {
+    return pinned_prefix_steps_;
+}
+
+int64_t VibeVoiceDecoderWeightsRuntime::max_history_steps() const noexcept {
+    return max_history_steps_;
+}
+
+int64_t VibeVoiceDecoderWeightsRuntime::cached_state_end_plus(
+    const VibeVoiceDecoderCachedState & state,
+    int64_t incoming_steps) {
+    const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
+        ? state.cache_->current_end()
+        : state.pending_state_.current_end;
+    return current_end + incoming_steps;
+}
+
+int64_t VibeVoiceDecoderWeightsRuntime::apply_history_window(int64_t unbounded_required) const {
+    // Clamp before tiering: tiering throws past model capacity, which a long
+    // stream's absolute history can exceed while the window stays small.
+    if (max_history_steps_ <= 0) {
+        return cache_graph_capacity(unbounded_required, assets_->config.decoder.max_position_embeddings);
+    }
+    return cache_graph_capacity(max_history_steps_, assets_->config.decoder.max_position_embeddings);
 }
 
 VibeVoiceTokenEmbeddings VibeVoiceDecoderWeightsRuntime::embed_tokens(
@@ -1230,11 +1300,11 @@ void VibeVoiceDecoderWeightsRuntime::reset_cached_state(
 void VibeVoiceDecoderWeightsRuntime::prepare_cached_state(
     VibeVoiceDecoderCachedState & state,
     int64_t cache_capacity) const {
-    const auto & config = assets_->config.decoder;
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached state prepare requires positive cache capacity");
     }
-    const int64_t required_capacity = cache_graph_capacity(cache_capacity, config.max_position_embeddings);
+    const int64_t required_capacity =
+        apply_history_window(cache_capacity);
     if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
         state.pending_state_ = state.cache_->export_state();
         state.cache_has_state_ = false;
@@ -1270,7 +1340,6 @@ void VibeVoiceDecoderWeightsRuntime::clone_cached_state(
     const VibeVoiceDecoderCachedState & source,
     VibeVoiceDecoderCachedState & target,
     int64_t cache_capacity) const {
-    const auto & config = assets_->config.decoder;
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached state clone requires positive cache capacity");
     }
@@ -1278,9 +1347,8 @@ void VibeVoiceDecoderWeightsRuntime::clone_cached_state(
         throw std::runtime_error("VibeVoice decoder cached state clone requires live source graph state");
     }
     const auto source_state = source.cache_->export_state();
-    const int64_t required_capacity = cache_graph_capacity(
-        std::max<int64_t>(cache_capacity, source.cache_->current_end() + 1),
-        config.max_position_embeddings);
+    const int64_t required_capacity = apply_history_window(
+        std::max<int64_t>(cache_capacity, source.cache_->current_end() + 1));
     if (target.cache_ == nullptr || !target.cache_->can_run(*this, required_capacity)) {
         target.graph_.reset();
         target.suffix_graph_.reset();
@@ -1302,12 +1370,8 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached step requires positive cache capacity");
     }
-    const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
-        ? state.cache_->current_end()
-        : state.pending_state_.current_end;
-    const int64_t required_capacity = cache_graph_capacity(
-        std::max<int64_t>(cache_capacity, current_end + 1),
-        config.max_position_embeddings);
+    const int64_t required_capacity =
+        apply_history_window(std::max<int64_t>(cache_capacity, cached_state_end_plus(state, 1)));
     if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
         state.pending_state_ = state.cache_->export_state();
         state.cache_has_state_ = false;
@@ -1351,12 +1415,8 @@ void VibeVoiceDecoderWeightsRuntime::append_cached_step(
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached append requires positive cache capacity");
     }
-    const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
-        ? state.cache_->current_end()
-        : state.pending_state_.current_end;
-    const int64_t required_capacity = cache_graph_capacity(
-        std::max<int64_t>(cache_capacity, current_end + 1),
-        config.max_position_embeddings);
+    const int64_t required_capacity =
+        apply_history_window(std::max<int64_t>(cache_capacity, cached_state_end_plus(state, 1)));
     if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
         state.pending_state_ = state.cache_->export_state();
         state.cache_has_state_ = false;
@@ -1404,12 +1464,8 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_suffix(
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached suffix requires positive cache capacity");
     }
-    const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
-        ? state.cache_->current_end()
-        : state.pending_state_.current_end;
-    const int64_t required_capacity = cache_graph_capacity(
-        std::max<int64_t>(cache_capacity, current_end + steps),
-        config.max_position_embeddings);
+    const int64_t required_capacity =
+        apply_history_window(std::max<int64_t>(cache_capacity, cached_state_end_plus(state, steps)));
     if (state.cache_ != nullptr && state.cache_has_state_ && !state.cache_->can_run(*this, required_capacity)) {
         state.pending_state_ = state.cache_->export_state();
         state.cache_has_state_ = false;

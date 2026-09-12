@@ -219,3 +219,36 @@ Common request options:
 | `--repetition-penalty` | float | `1` | Generation repetition penalty. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline audio chunking mode. |
 | `--audio-chunk-seconds` | float seconds | `1200` | Offline chunk duration for fixed and VAD chunking. |
+| `--session-option vibevoice_asr_streaming.max_history_steps=<n>` | integer | `0` (uncapped) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
+
+### Long streams and the history window
+
+By default, the decoder stores the full conversation history. Memory use
+increases with stream length (approximately 0.4 MiB per step on Q8/CUDA).
+On very long streams, the GPU memory becomes full and transcription stops.
+
+Set `max_history_steps` to prevent this. The model then stores only the
+most recent steps. Memory use remains constant for streams of any length.
+
+```bash
+audiocpp_cli --task asr --family vibevoice_asr_streaming \
+  --model models/VibeVoice-ASR-Streaming-7B-GGUF/vibevoice-asr-streaming-7b-q8_0.gguf \
+  --backend cuda --mode streaming --audio - --input-format s16le \
+  --session-option vibevoice_asr_streaming.max_history_steps=4096
+```
+
+The model always stores the streaming prompt. It never removes the prompt.
+New steps replace the oldest stored steps, but not the prompt.
+
+Each step is approximately one audio frame or one generated word part.
+Speech contains approximately ten steps per second. Thus `4096` stores
+approximately ten minutes of speech. At `4096` on Q8/CUDA, total memory
+use is stable at approximately 10.0 GB. Larger windows use more memory.
+The value must not exceed the model position capacity (131072 for the 7B
+model). The program rejects larger values at startup.
+
+Note: A window changes the transcription when compared to full history
+because removed context is not available. The window size also causes very
+small differences in results because the model calculates in a different
+sequence. For reproducible results, do not change the binary or the window
+size.

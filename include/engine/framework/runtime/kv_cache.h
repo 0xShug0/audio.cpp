@@ -19,9 +19,24 @@ struct TransformerKVState {
     std::vector<KVLayerState> layers;
 };
 
+// Absolute position of the i-th stored row in a pinned-prefix ring:
+// pinned prefix first, then oldest-to-newest tail.
+inline int64_t ring_stored_position(
+    int64_t row,
+    int64_t valid_steps,
+    int64_t current_end,
+    int64_t pinned_prefix_steps) {
+    return row < pinned_prefix_steps ? row : current_end - valid_steps + row;
+}
+
 struct TransformerKVCacheOptions {
     bool allow_f16_storage = false;
     bool allow_bf16_storage = false;
+    // In-place ring: once full, appends overwrite the oldest unpinned
+    // entries instead of failing. The first ring_pinned_steps slots are
+    // reserved (e.g. prompt / attention sinks); positions stay absolute.
+    bool ring_mode = false;
+    int64_t ring_pinned_steps = 0;
 };
 
 class TransformerKVCache {
@@ -44,6 +59,8 @@ public:
 
     void advance_after_direct_append(int64_t steps);
     void retain_prefix(int64_t prefix_steps);
+
+    int64_t slot_for_position(int64_t position) const;
 
     int64_t valid_steps() const noexcept;
     int64_t current_end() const noexcept;

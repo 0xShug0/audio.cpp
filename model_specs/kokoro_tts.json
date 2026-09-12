@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "family": "kokoro_tts",
+  "display_name": "Kokoro 82M",
+  "description": "Kokoro 82M multilingual text-to-speech with 54 preset voices, optimized native CPU inference, and shared eSpeak-ng phonemization.",
+  "category": "tts",
+  "status": "community",
+  "tasks": ["tts"],
+  "modes": ["offline"],
+  "languages": ["en-us", "en-gb", "es", "fr-fr", "hi", "it", "ja", "pt-br", "zh"],
+  "runtime": {
+    "tags": ["gguf"]
+  },
+  "capabilities": {
+    "tts": ["built_in_voices", "long_form"]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Text language code; defaults to the selected voice prefix.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Decoder noise seed; omitted requests choose a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum codepoints per text chunk before synthesis. Default 240.",
+        "required": false,
+        "min": 32,
+        "default": 240
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native",
+        "description": "Storage type for matrix multiplication weights."
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native",
+        "description": "Storage type for convolution weights."
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight loading context size in MiB; default 512.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "predictor_duration_graph_mb",
+        "type": "int",
+        "description": "Predictor duration graph arena size in MiB; default 384.",
+        "required": false,
+        "min": 1,
+        "default": 384
+      },
+      {
+        "name": "predictor_text_graph_mb",
+        "type": "int",
+        "description": "Predictor text graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "predictor_tail_graph_mb",
+        "type": "int",
+        "description": "Predictor tail graph arena size in MiB; default 640.",
+        "required": false,
+        "min": 1,
+        "default": 640
+      },
+      {
+        "name": "graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy; default fixed.",
+        "values": ["fixed", "tiered", "grow", "double"],
+        "required": false,
+        "default": "fixed"
+      },
+      {
+        "name": "max_input_tokens",
+        "type": "int",
+        "description": "Predictor graph input token capacity; default min(512, model context length).",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "pre_tail_tokens",
+        "type": "int",
+        "description": "Optional prebuilt predictor tail token capacity; default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "kokoro_82m_q8_0",
+      "display_name": "Kokoro 82M Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Kokoro-82M-GGUF",
+      "files": [
+        "Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf"
+      ],
+      "strip_prefix": "Kokoro-82M-GGUF"
+    },
+    {
+      "id": "kokoro_82m_bf16",
+      "display_name": "Kokoro 82M BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Kokoro-82M-GGUF",
+      "files": [
+        "Kokoro-82M-GGUF/kokoro-82m-bf16.gguf"
+      ],
+      "strip_prefix": "Kokoro-82M-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "kokoro_82m_q8_0",
+    "tags": ["TTS", "GGUF"],
+    "builtin_voices": [
+      "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+      "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
+      "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+      "ef_dora", "em_alex", "em_santa", "ff_siwis", "hf_alpha", "hf_beta", "hm_omega", "hm_psi", "if_sara", "im_nicola",
+      "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo", "pf_dora", "pm_alex", "pm_santa",
+      "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi", "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang"
+    ],
+    "default_voice": "af_heart",
+    "docs": ["tests/kokoro_tts/MULTILINGUAL_GGUF.md"]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "voices": "model:voices.json",
+        "vocabulary": "model:vocab.tsv"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "kokoro"
+        }
+      }
+    }
+  ]
+}

@@ -108,6 +108,7 @@ private:
 #else
     size_t decoder_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
 #endif
+    int64_t max_history_steps_ = 0;
     assets::TensorStorageType tokenizer_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType connector_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType decoder_weight_storage_type_ = assets::TensorStorageType::Native;
