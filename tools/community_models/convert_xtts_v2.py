@@ -146,6 +146,13 @@ def main() -> int:
 
     for namespace, prefix in PREFIXES.items():
         tensors = extract_group(state, prefix)
+        if namespace == "gpt":
+            # Xtts.mel_stats is registered on the model rather than under gpt,
+            # but it is an inference input to the conditioning encoder.
+            mel_stats = state.get("mel_stats")
+            if not isinstance(mel_stats, torch.Tensor) or tuple(mel_stats.shape) != (80,):
+                raise RuntimeError("checkpoint is missing the 80-bin XTTS mel_stats tensor")
+            tensors["mel_stats"] = mel_stats.detach().cpu().float().contiguous()
         destination = output_dir / f"{namespace}.safetensors"
         save_file(tensors, str(destination))
         parameters = sum(t.numel() for t in tensors.values())
