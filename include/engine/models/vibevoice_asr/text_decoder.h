@@ -113,7 +113,8 @@ public:
         int threads,
         size_t weight_context_bytes = 256ull * 1024ull * 1024ull,
         size_t constant_context_bytes = 128ull * 1024ull * 1024ull,
-        assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native);
+        assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native,
+        int64_t max_history_steps = 0);
 
     ~VibeVoiceDecoderWeightsRuntime();
 
@@ -125,6 +126,9 @@ public:
     ggml_backend_t backend() const noexcept;
     core::ConstantTensorCache & constants() const noexcept;
     int threads() const noexcept;
+    int64_t max_history_steps() const noexcept;
+    int64_t pinned_prefix_steps() const noexcept;
+    void set_pinned_prefix_steps(int64_t steps);
 
     VibeVoiceTokenEmbeddings embed_tokens(const std::vector<int32_t> & input_ids) const;
     VibeVoiceDecoderPrefillOutput prefill_prompt(
@@ -159,8 +163,13 @@ private:
     std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<VibeVoiceDecoderEmbeddingGraph> embedding_graph_;
     mutable std::unique_ptr<VibeVoiceDecoderPrefillGraph> prefill_graph_;
+    int64_t apply_history_window(int64_t unbounded_required) const;
+    static int64_t cached_state_end_plus(const VibeVoiceDecoderCachedState & state, int64_t incoming_steps);
+
     ggml_backend_t backend_ = nullptr;
     int threads_ = 1;
+    int64_t max_history_steps_ = 0;
+    int64_t pinned_prefix_steps_ = 0;
 };
 
 VibeVoiceDecoderWeights load_vibevoice_decoder_weights(

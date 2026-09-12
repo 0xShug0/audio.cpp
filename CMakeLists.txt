@@ -2699,6 +2699,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             tests/personaplex/personaplex_ring_kv_cache_parity.cpp
         )
         target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE engine_runtime ggml)
+
+        add_engine_unittest(transformer_kv_ring_test tests/unittests/test_transformer_kv_ring.cpp)
+        add_test(NAME transformer_kv_ring_test COMMAND transformer_kv_ring_test)
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(personaplex_ring_kv_cache_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
