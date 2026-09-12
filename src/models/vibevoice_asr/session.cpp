@@ -99,6 +99,7 @@ bool is_allowed_session_option(const std::string & key) {
         ".tokenizer_weight_context_mb",
         ".connector_weight_context_mb",
         ".decoder_weight_context_mb",
+        ".max_history_steps",
         ".vad_model_path",
     };
     for (const char * prefix_value : {"vibevoice_asr", "vibevoice_asr_streaming"}) {
@@ -547,6 +548,7 @@ VibeVoiceASRSession::VibeVoiceASRSession(
       tokenizer_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vibevoice_asr_streaming.tokenizer_weight_context_mb", "vibevoice_asr.tokenizer_weight_context_mb"}, kDefaultTokenizerWeightContextBytes)),
       connector_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vibevoice_asr_streaming.connector_weight_context_mb", "vibevoice_asr.connector_weight_context_mb"}, kDefaultConnectorWeightContextBytes)),
       decoder_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vibevoice_asr_streaming.decoder_weight_context_mb", "vibevoice_asr.decoder_weight_context_mb"}, kDefaultDecoderWeightContextBytes)),
+      max_history_steps_(runtime::parse_i64_option(options.options, {"vibevoice_asr_streaming.max_history_steps", "vibevoice_asr.max_history_steps"}).value_or(0)),
       tokenizer_weight_storage_type_(option_weight_type(
           options,
           {"vibevoice_asr_streaming.tokenizer_weight_type", "vibevoice_asr.tokenizer_weight_type"},
@@ -588,7 +590,8 @@ VibeVoiceASRSession::VibeVoiceASRSession(
           options.backend.threads,
           decoder_weight_context_bytes_,
           128ull * 1024ull * 1024ull,
-          decoder_weight_storage_type_),
+          decoder_weight_storage_type_,
+          max_history_steps_),
       postprocessor_(tokenizer_),
       vad_model_path_(runtime::find_option(options.options, {"vibevoice_asr_streaming.vad_model_path", "vibevoice_asr.vad_model_path"}).value_or(default_vad_model_path().string())) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
@@ -603,6 +606,10 @@ VibeVoiceASRSession::VibeVoiceASRSession(
     validate_weight_storage(tokenizer_weight_storage_type_, "vibevoice_asr.tokenizer_weight_type");
     validate_weight_storage(connector_weight_storage_type_, "vibevoice_asr.connector_weight_type");
     validate_weight_storage(decoder_weight_storage_type_, "vibevoice_asr.decoder_weight_type");
+    if (max_history_steps_ > assets_->config.decoder.max_position_embeddings) {
+        throw std::runtime_error(
+            "vibevoice_asr_streaming.max_history_steps exceeds the model position capacity");
+    }
     for (const auto & [key, value] : options.options) {
         (void)value;
         if (!is_allowed_session_option(key) &&
@@ -1094,6 +1101,7 @@ void VibeVoiceASRSession::ensure_streaming_decoder_state(const VibeVoiceASRReque
     const auto prompt_ids = tokenizer_.build_streaming_prompt(request.context);
     const auto prompt_embeddings = text_decoder_.embed_tokens(prompt_ids);
     streaming_history_steps_ = prompt_embeddings.steps;
+    text_decoder_.set_pinned_prefix_steps(prompt_embeddings.steps);
     auto prefill = text_decoder_.prefill_embeddings(prompt_embeddings.values, streaming_history_steps_);
     streaming_decoder_state_ = std::make_unique<VibeVoiceDecoderCachedState>();
     text_decoder_.reset_cached_state(*streaming_decoder_state_, std::move(prefill.state));
@@ -1276,6 +1284,8 @@ runtime::TaskResult VibeVoiceASRSession::run_single(const VibeVoiceASRRequest & 
     const auto prompt_end = Clock::now();
 
     const auto decoder_start = Clock::now();
+    // Single-shot prompts embed the whole input; nothing is pinned here.
+    text_decoder_.set_pinned_prefix_steps(0);
     auto prefill = text_decoder_.prefill_prompt(prompt.input_ids, speech.values, prompt.speech_positions);
     const uint64_t rng_call_offset = (speech.next_rng_index + 3ull) / 4ull;
     std::string emitted_text;

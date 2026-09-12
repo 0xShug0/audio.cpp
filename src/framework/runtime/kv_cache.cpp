@@ -47,6 +47,20 @@ void write_cache_tensor(
     throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
 }
 
+void copy_cache_row(
+    const std::vector<float> & source,
+    int64_t source_row,
+    std::vector<float> & dest,
+    int64_t dest_row,
+    int64_t step_elems) {
+    const size_t src_begin = static_cast<size_t>(source_row * step_elems);
+    const size_t dst_begin = static_cast<size_t>(dest_row * step_elems);
+    const size_t count = static_cast<size_t>(step_elems);
+    std::copy(source.begin() + static_cast<std::ptrdiff_t>(src_begin),
+                source.begin() + static_cast<std::ptrdiff_t>(src_begin + count),
+                dest.begin() + static_cast<std::ptrdiff_t>(dst_begin));
+}
+
 std::vector<float> read_cache_tensor(const core::TensorValue & tensor, const TransformerKVCacheOptions & options) {
     validate_cache_tensor(tensor, options);
     if (tensor.type == GGML_TYPE_F32) {
@@ -81,6 +95,15 @@ TransformerKVCache::TransformerKVCache(
       options_(options) {
     if (step_elems_ <= 0) {
         throw std::runtime_error("TransformerKVCache requires positive step_elems");
+    }
+    if (options_.ring_mode) {
+        if (cache_steps_ <= 0) {
+            throw std::runtime_error("TransformerKVCache ring_mode requires positive cache_steps");
+        }
+        if (options_.ring_pinned_steps < 0 || options_.ring_pinned_steps >= cache_steps_) {
+            throw std::runtime_error(
+                "TransformerKVCache ring_pinned_steps must satisfy 0 <= pinned < cache_steps");
+        }
     }
     if (keys.size() != values.size()) {
         throw std::runtime_error("TransformerKVCache key/value layer counts must match");
@@ -130,8 +153,19 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
             std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
             std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
             if (keep_elems > 0) {
-                std::copy(source.key.begin(), source.key.end(), cache.import_key_scratch.begin());
-                std::copy(source.value.begin(), source.value.end(), cache.import_value_scratch.begin());
+                if (!options_.ring_mode) {
+                    std::copy(source.key.begin(), source.key.end(), cache.import_key_scratch.begin());
+                    std::copy(source.value.begin(), source.value.end(), cache.import_value_scratch.begin());
+                } else {
+                    for (int64_t row = 0; row < state_steps; ++row) {
+                        const int64_t position = ring_stored_position(
+                            row, state_steps, current_end_, options_.ring_pinned_steps);
+                        copy_cache_row(
+                            source.key, row, cache.import_key_scratch, slot_for_position(position), step_elems_);
+                        copy_cache_row(
+                            source.value, row, cache.import_value_scratch, slot_for_position(position), step_elems_);
+                    }
+                }
             }
             write_cache_tensor(cache.key_tensor, cache.import_key_scratch, options_);
             write_cache_tensor(cache.value_tensor, cache.import_value_scratch, options_);
@@ -152,14 +186,41 @@ TransformerKVState TransformerKVCache::export_state() const {
         }
         const auto key_values = read_cache_tensor(layers_[layer].key_tensor, options_);
         const auto value_values = read_cache_tensor(layers_[layer].value_tensor, options_);
-        out.key.assign(key_values.begin(), key_values.begin() + static_cast<ptrdiff_t>(keep_elems));
-        out.value.assign(value_values.begin(), value_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+        if (!options_.ring_mode) {
+            out.key.assign(key_values.begin(), key_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+            out.value.assign(value_values.begin(), value_values.begin() + static_cast<ptrdiff_t>(keep_elems));
+            continue;
+        }
+        out.key.resize(keep_elems);
+        out.value.resize(keep_elems);
+        for (int64_t row = 0; row < valid_steps_; ++row) {
+            const int64_t position =
+                ring_stored_position(row, valid_steps_, current_end_, options_.ring_pinned_steps);
+            copy_cache_row(key_values, slot_for_position(position), out.key, row, step_elems_);
+            copy_cache_row(value_values, slot_for_position(position), out.value, row, step_elems_);
+        }
     }
     return state;
 }
 
+int64_t TransformerKVCache::slot_for_position(int64_t position) const {
+    if (position < 0) {
+        throw std::runtime_error("TransformerKVCache slot_for_position requires a non-negative position");
+    }
+    if (!options_.ring_mode || position < options_.ring_pinned_steps) {
+        return position;
+    }
+    return options_.ring_pinned_steps +
+        ((position - options_.ring_pinned_steps) % (cache_steps_ - options_.ring_pinned_steps));
+}
+
 void TransformerKVCache::advance_after_direct_append(int64_t steps) {
     if (steps <= 0) {
+        return;
+    }
+    if (options_.ring_mode) {
+        valid_steps_ = std::min(cache_steps_, valid_steps_ + steps);
+        current_end_ += steps;
         return;
     }
     if (valid_steps_ + steps > cache_steps_) {
