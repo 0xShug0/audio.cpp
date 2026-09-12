@@ -2161,6 +2161,7 @@ if (ENGINE_BUILD_WARMBENCH)
         src/models/xtts_v2/assets.cpp
         src/models/xtts_v2/audio_features.cpp
         src/models/xtts_v2/conditioning.cpp
+        src/models/xtts_v2/decoder.cpp
         src/models/xtts_v2/gpt.cpp
         src/models/xtts_v2/speaker_encoder.cpp
         src/models/xtts_v2/tokenizer.cpp)

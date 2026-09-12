@@ -3,6 +3,7 @@
 #include "engine/models/xtts_v2/assets.h"
 #include "engine/models/xtts_v2/audio_features.h"
 #include "engine/models/xtts_v2/conditioning.h"
+#include "engine/models/xtts_v2/decoder.h"
 #include "engine/models/xtts_v2/gpt.h"
 #include "engine/models/xtts_v2/speaker_encoder.h"
 #include "engine/models/xtts_v2/tokenizer.h"
@@ -59,6 +60,11 @@ int main(int argc, char ** argv) try {
     generation_options.max_tokens = 3;
     generation_options.seed = 1234;
     const auto generation = gpt_runtime.generate(latent.values, text_tokens, generation_options);
+    engine::models::xtts_v2::XttsV2DecoderRuntime decoder_runtime(
+        *assets, execution, 128U * 1024U * 1024U, 1024U * 1024U * 1024U,
+        engine::assets::TensorStorageType::Native);
+    const auto waveform = decoder_runtime.decode(
+        generation.latents, static_cast<int64_t>(generation.codes.size()), speaker);
     const auto top = std::max_element(prefill.logits.begin(), prefill.logits.end());
     if (argc == 4) {
         std::ofstream output(argv[3], std::ios::binary);
@@ -78,6 +84,8 @@ int main(int argc, char ** argv) try {
         write_values(".cond", latent.values);
         write_values(".logits", prefill.logits);
         write_values(".gptlatent", prefill.latent);
+        write_values(".generated_latents", generation.latents);
+        write_values(".wav", waveform);
     }
     double speaker_sq = 0.0;
     for (float value : speaker.values) speaker_sq += static_cast<double>(value) * value;
@@ -92,6 +100,7 @@ int main(int argc, char ** argv) try {
               << ",\"speaker_norm\":" << std::sqrt(speaker_sq)
               << ",\"gpt_prefill_argmax\":" << std::distance(prefill.logits.begin(), top)
               << ",\"generated_codes\":" << generation.codes.size()
+              << ",\"waveform_samples\":" << waveform.size()
               << ",\"sum\":" << sum
               << ",\"rms\":" << std::sqrt(sq / latent.values.size())
               << ",\"first\":[";
