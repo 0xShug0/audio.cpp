@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -95,6 +96,25 @@ def validate_config(path: Path) -> None:
         raise ValueError(f"unsupported XTTS checkpoint configuration: {mismatches}")
 
 
+def stage_config(source: Path, destination: Path) -> None:
+    """Write strict JSON; Coqui's config contains non-standard Infinity values."""
+    config = json.loads(source.read_text(encoding="utf-8"))
+
+    def sanitize(value):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if isinstance(value, dict):
+            return {key: sanitize(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [sanitize(item) for item in value]
+        return value
+
+    destination.write_text(
+        json.dumps(sanitize(config), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def converter_command(output_dir: Path, converter: Path, quant_type: str) -> list[str]:
     command = [str(converter)]
     for namespace in PREFIXES:
@@ -158,7 +178,8 @@ def main() -> int:
         parameters = sum(t.numel() for t in tensors.values())
         print(f"wrote {destination} ({len(tensors)} tensors, {parameters:,} values)")
 
-    for filename in ("config.json", "vocab.json", "LICENSE.txt"):
+    stage_config(config, root / "config.json")
+    for filename in ("vocab.json", "LICENSE.txt"):
         shutil.copyfile(require_file(model_dir / filename, filename), root / filename)
     print(f"staged config, tokenizer, and CPML license in {root}")
 

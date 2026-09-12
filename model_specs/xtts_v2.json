@@ -9,8 +9,9 @@
   "modes": ["offline"],
   "languages": ["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko", "hi"],
   "runtime": {"tags": ["gguf"]},
-  "capabilities": {"clone": ["speaker_reference", "cross_lingual"]},
+  "capabilities": {"clone": ["speaker_reference"]},
   "options": {
+    "session": [],
     "request": [
       {"name": "language", "type": "string", "description": "Required XTTS language code.", "required": true, "default": "en"},
       {"name": "temperature", "type": "float", "description": "GPT sampling temperature.", "required": false, "min": 0.01, "max": 2.0, "default": 0.75},
@@ -21,11 +22,11 @@
       {"name": "seed", "type": "int", "description": "Non-negative deterministic sampling seed.", "required": false, "min": 0}
     ],
     "load": [
-      {"name": "xtts_v2.weight_type", "type": "enum", "preset": "weight_type_full", "description": "GPT matrix storage type.", "required": false, "default": "native"},
-      {"name": "xtts_v2.conv_weight_type", "type": "enum", "preset": "weight_type_conv", "description": "Conditioning, decoder, and speaker-encoder convolution storage type.", "required": false, "default": "native"},
-      {"name": "xtts_v2.gpt_graph_arena_mb", "type": "int", "description": "GPT graph arena size.", "required": false, "min": 64, "default": 512},
-      {"name": "xtts_v2.reference_graph_arena_mb", "type": "int", "description": "Reference-conditioning graph arena size.", "required": false, "min": 32, "default": 256},
-      {"name": "xtts_v2.decoder_graph_arena_mb", "type": "int", "description": "HiFiGAN decoder graph arena size.", "required": false, "min": 32, "default": 256}
+      {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "description": "GPT matrix storage type.", "required": false, "default": "native"},
+      {"name": "conv_weight_type", "type": "enum", "preset": "weight_type_conv", "description": "Conditioning, decoder, and speaker-encoder convolution storage type.", "required": false, "default": "native"},
+      {"name": "gpt_graph_arena_mb", "type": "int", "description": "GPT graph arena size.", "required": false, "min": 64, "default": 512},
+      {"name": "reference_graph_arena_mb", "type": "int", "description": "Reference-conditioning graph arena size.", "required": false, "min": 32, "default": 256},
+      {"name": "decoder_graph_arena_mb", "type": "int", "description": "HiFiGAN decoder graph arena size.", "required": false, "min": 32, "default": 256}
     ]
   },
   "package_defaults": {
@@ -73,7 +74,7 @@
   "dependencies": [],
   "ui": {
     "recommended_package": "xtts_v2_q8_0",
-    "tags": ["TTS", "Clone", "Multilingual", "Non-commercial", "GGUF"],
+    "tags": ["TTS", "Clone", "GGUF"],
     "docs": ["docs/community_models/xtts_v2.md"]
   }
 }

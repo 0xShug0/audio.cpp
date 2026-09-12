@@ -2156,6 +2156,11 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(higgs_audio_tts_warm_bench tests/higgs_audio_tts/higgs_audio_tts_warm_bench.cpp)
     add_engine_warmbench(hviske_asr_warm_bench tests/hviske_asr/hviske_asr_warm_bench.cpp)
     add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
+    add_engine_warmbench(xtts_v2_conditioning_probe tests/xtts_v2/xtts_v2_conditioning_probe.cpp)
+    target_sources(xtts_v2_conditioning_probe PRIVATE
+        src/models/xtts_v2/assets.cpp
+        src/models/xtts_v2/audio_features.cpp
+        src/models/xtts_v2/conditioning.cpp)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
