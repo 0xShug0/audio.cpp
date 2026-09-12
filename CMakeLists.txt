@@ -2162,7 +2162,8 @@ if (ENGINE_BUILD_WARMBENCH)
         src/models/xtts_v2/audio_features.cpp
         src/models/xtts_v2/conditioning.cpp
         src/models/xtts_v2/gpt.cpp
-        src/models/xtts_v2/speaker_encoder.cpp)
+        src/models/xtts_v2/speaker_encoder.cpp
+        src/models/xtts_v2/tokenizer.cpp)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)

@@ -5,6 +5,7 @@
 #include "engine/models/xtts_v2/conditioning.h"
 #include "engine/models/xtts_v2/gpt.h"
 #include "engine/models/xtts_v2/speaker_encoder.h"
+#include "engine/models/xtts_v2/tokenizer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -48,9 +49,13 @@ int main(int argc, char ** argv) try {
         assets->speaker_encoder->require_f32("torch_spec.1.mel_scale.fb", {257, 64}),
         4);
     const auto speaker = speaker_runtime.encode(speaker_mel);
-    const auto gpt_weights = engine::models::xtts_v2::load_xtts_v2_gpt_weights(
-        *assets, execution, 1536U * 1024U * 1024U,
+    engine::models::xtts_v2::XttsV2Tokenizer tokenizer(assets->tokenizer_path);
+    const auto text_tokens = tokenizer.encode("The quick brown fox.", "en");
+    engine::models::xtts_v2::XttsV2GptRuntime gpt_runtime(
+        *assets, execution, 1536U * 1024U * 1024U, 1536U * 1024U * 1024U,
         engine::assets::TensorStorageType::Native);
+    const auto prefill = gpt_runtime.prefill(latent.values, text_tokens);
+    const auto top = std::max_element(prefill.logits.begin(), prefill.logits.end());
     if (argc == 4) {
         std::ofstream output(argv[3], std::ios::binary);
         output.write(reinterpret_cast<const char *>(speaker.values.data()),
@@ -60,6 +65,15 @@ int main(int argc, char ** argv) try {
         mel_output.write(reinterpret_cast<const char *>(speaker_mel.values.data()),
                          static_cast<std::streamsize>(speaker_mel.values.size() * sizeof(float)));
         if (!mel_output) throw std::runtime_error("failed to write speaker mel dump");
+        const auto write_values = [&](const std::string & suffix, const std::vector<float> & values) {
+            std::ofstream stream(std::string(argv[3]) + suffix, std::ios::binary);
+            stream.write(reinterpret_cast<const char *>(values.data()),
+                         static_cast<std::streamsize>(values.size() * sizeof(float)));
+            if (!stream) throw std::runtime_error("failed to write XTTS probe tensor dump");
+        };
+        write_values(".cond", latent.values);
+        write_values(".logits", prefill.logits);
+        write_values(".gptlatent", prefill.latent);
     }
     double speaker_sq = 0.0;
     for (float value : speaker.values) speaker_sq += static_cast<double>(value) * value;
@@ -72,7 +86,7 @@ int main(int argc, char ** argv) try {
               << ",\"dims\":" << latent.dims
               << ",\"speaker_frames\":" << speaker_mel.frames
               << ",\"speaker_norm\":" << std::sqrt(speaker_sq)
-              << ",\"gpt_layers\":" << gpt_weights->layers.size()
+              << ",\"gpt_prefill_argmax\":" << std::distance(prefill.logits.begin(), top)
               << ",\"sum\":" << sum
               << ",\"rms\":" << std::sqrt(sq / latent.values.size())
               << ",\"first\":[";

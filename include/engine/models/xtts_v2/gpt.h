@@ -33,10 +33,37 @@ struct XttsV2GptWeights {
     modules::LinearWeights audio_head;
 };
 
+struct XttsV2GptPrefillResult {
+    std::vector<float> logits;
+    std::vector<float> latent;
+};
+
 std::shared_ptr<const XttsV2GptWeights> load_xtts_v2_gpt_weights(
     const XttsV2Assets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type);
+
+class XttsV2GptRuntime {
+public:
+    XttsV2GptRuntime(
+        const XttsV2Assets & assets,
+        core::ExecutionContext & execution,
+        size_t weight_context_bytes,
+        size_t graph_context_bytes,
+        assets::TensorStorageType storage_type);
+    ~XttsV2GptRuntime();
+
+    XttsV2GptPrefillResult prefill(
+        const std::vector<float> & conditioning_latent,
+        const std::vector<int32_t> & text_tokens);
+
+private:
+    class PrefillGraph;
+    core::ExecutionContext & execution_;
+    size_t graph_context_bytes_;
+    std::shared_ptr<const XttsV2GptWeights> weights_;
+    std::unique_ptr<PrefillGraph> prefill_;
+};
 
 }  // namespace engine::models::xtts_v2
