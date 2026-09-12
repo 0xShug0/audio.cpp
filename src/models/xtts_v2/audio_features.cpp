@@ -121,7 +121,15 @@ XttsV2MelFeatures compute_xtts_v2_speaker_mel(
     for (size_t i = 1; i < waveform_16000.size(); ++i) {
         emphasized[i] = waveform_16000[i] - 0.97F * waveform_16000[i - 1];
     }
-    auto out = power_mel(emphasized, 16000, 512, 160, 400, 64, 8000.0F, window, mel_filterbank, threads);
+    // Torchaudio stores MelScale.fb as [frequency, mel], whereas power_mel
+    // consumes a row-major [mel, frequency] matrix.
+    std::vector<float> transposed_filterbank(64U * 257U);
+    for (size_t f = 0; f < 257U; ++f) {
+        for (size_t m = 0; m < 64U; ++m) {
+            transposed_filterbank[m * 257U + f] = mel_filterbank[f * 64U + m];
+        }
+    }
+    auto out = power_mel(emphasized, 16000, 512, 160, 400, 64, 8000.0F, window, transposed_filterbank, threads);
     for (auto & value : out.values) value = std::log(value + 1.0e-6F);
 
     // InstanceNorm1d normalizes each mel channel across time without affine terms.
