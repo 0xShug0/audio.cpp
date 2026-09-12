@@ -242,6 +242,28 @@
         "Parakeet-TDT-0.6B-v3-GGUF/parakeet-tdt-0.6b-v3-f16.gguf"
       ],
       "strip_prefix": "Parakeet-TDT-0.6B-v3-GGUF"
+    },
+    {
+      "id": "orukeet_q8_0",
+      "display_name": "Orukeet r3 Q8_0 GGUF (Parakeet-TDT 0.6B v3 fine-tune)",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Orukeet-GGUF",
+      "files": [
+        "Orukeet-GGUF/orukeet-q8_0.gguf"
+      ],
+      "strip_prefix": "Orukeet-GGUF"
+    },
+    {
+      "id": "orukeet_f16",
+      "display_name": "Orukeet r3 F16 GGUF (Parakeet-TDT 0.6B v3 fine-tune)",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Orukeet-GGUF",
+      "files": [
+        "Orukeet-GGUF/orukeet-f16.gguf"
+      ],
+      "strip_prefix": "Orukeet-GGUF"
     }
   ],
   "dependencies": [],
