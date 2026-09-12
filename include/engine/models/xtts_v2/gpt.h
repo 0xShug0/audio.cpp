@@ -38,6 +38,11 @@ struct XttsV2GptPrefillResult {
     std::vector<float> latent;
 };
 
+struct XttsV2GptGeneration {
+    std::vector<int32_t> codes;
+    std::vector<float> latents;  // frame-major [codes, 1024]
+};
+
 std::shared_ptr<const XttsV2GptWeights> load_xtts_v2_gpt_weights(
     const XttsV2Assets & assets,
     core::ExecutionContext & execution,
@@ -57,6 +62,10 @@ public:
     XttsV2GptPrefillResult prefill(
         const std::vector<float> & conditioning_latent,
         const std::vector<int32_t> & text_tokens);
+    XttsV2GptGeneration generate(
+        const std::vector<float> & conditioning_latent,
+        const std::vector<int32_t> & text_tokens,
+        const XttsV2GenerationOptions & options);
 
 private:
     class PrefillGraph;

@@ -55,6 +55,10 @@ int main(int argc, char ** argv) try {
         *assets, execution, 1536U * 1024U * 1024U, 1536U * 1024U * 1024U,
         engine::assets::TensorStorageType::Native);
     const auto prefill = gpt_runtime.prefill(latent.values, text_tokens);
+    engine::models::xtts_v2::XttsV2GenerationOptions generation_options;
+    generation_options.max_tokens = 3;
+    generation_options.seed = 1234;
+    const auto generation = gpt_runtime.generate(latent.values, text_tokens, generation_options);
     const auto top = std::max_element(prefill.logits.begin(), prefill.logits.end());
     if (argc == 4) {
         std::ofstream output(argv[3], std::ios::binary);
@@ -87,6 +91,7 @@ int main(int argc, char ** argv) try {
               << ",\"speaker_frames\":" << speaker_mel.frames
               << ",\"speaker_norm\":" << std::sqrt(speaker_sq)
               << ",\"gpt_prefill_argmax\":" << std::distance(prefill.logits.begin(), top)
+              << ",\"generated_codes\":" << generation.codes.size()
               << ",\"sum\":" << sum
               << ",\"rms\":" << std::sqrt(sq / latent.values.size())
               << ",\"first\":[";
