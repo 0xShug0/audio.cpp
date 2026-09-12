@@ -458,14 +458,6 @@ HttpResponse chunked_audio_response(std::function<void(HttpStreamWriter &)> stre
     return response;
 }
 
-bool is_wav_upload_filename(const std::string & filename) {
-    std::string ext = std::filesystem::path(filename).extension().string();
-    for (char & ch : ext) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return ext.empty() || ext == ".wav";
-}
-
 std::string lower_ascii(std::string value) {
     for (char & ch : value) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -2597,12 +2589,6 @@ HttpResponse ServerState::handle_transcription_multipart(
     if (model_id.empty()) {
         throw std::runtime_error("multipart transcription request requires a 'model' field");
     }
-    if (!is_wav_upload_filename(file_part->filename)) {
-        return error_response(
-            400,
-            "only WAV audio uploads are currently supported for transcription; MP3 support is planned",
-            "invalid_request_error");
-    }
 
     engine::io::json::Value::Object fields;
     fields.emplace("model", engine::io::json::Value::make_string(model_id));
@@ -2615,10 +2601,21 @@ HttpResponse ServerState::handle_transcription_multipart(
     const auto body = engine::io::json::Value::make_object(std::move(fields));
 
     auto & model = require_model(body);
-    const auto request = apply_default_request_options(
-        model,
-        build_openai_transcription_request(
-            body, request_base_, model.accepts_language, &file_part->data));
+    engine::runtime::TaskRequest request;
+    try {
+        // Sniffed from the upload bytes rather than file_part->filename: browsers
+        // send MediaRecorder blobs as "audio.webm" or with no extension at all, and
+        // decode_audio_upload_f32() (via read_audio_buffer) is what actually knows
+        // which containers it can read.
+        request = apply_default_request_options(
+            model,
+            build_openai_transcription_request(
+                body, request_base_, model.accepts_language, &file_part->data));
+    } catch (const std::runtime_error & ex) {
+        // Deliberately runtime_error and not exception: a decode failure is the
+        // caller's malformed/unsupported upload, not a server fault.
+        return error_response(400, ex.what(), "invalid_request_error");
+    }
     if (stream) {
         if (detail) {
             return error_response(400, kDetailStreamUnsupported, "invalid_request_error");
@@ -2774,13 +2771,6 @@ HttpResponse ServerState::handle_alignment_multipart(const std::string & body_te
             "multipart alignment request requires a non-empty 'text' field",
             "invalid_request_error");
     }
-    if (!is_wav_upload_filename(file_part->filename)) {
-        return error_response(
-            400,
-            "only WAV audio uploads are currently supported for alignment",
-            "invalid_request_error");
-    }
-
     LoadedModel * model_ptr = nullptr;
     {
         std::lock_guard<std::mutex> state_lock(models_mutex_);
@@ -2808,7 +2798,17 @@ HttpResponse ServerState::handle_alignment_multipart(const std::string & body_te
     }
 
     engine::runtime::TaskRequest task_request;
-    task_request.audio_input = minitts::cli::read_audio_buffer(std::string_view(file_part->data));
+    try {
+        // Sniffed from the upload bytes rather than file_part->filename: browsers
+        // send MediaRecorder blobs as "audio.webm" or with no extension at all, and
+        // decode_audio_upload_f32() (via read_audio_buffer) is what actually knows
+        // which containers it can read.
+        task_request.audio_input = minitts::cli::read_audio_buffer(std::string_view(file_part->data));
+    } catch (const std::runtime_error & ex) {
+        // Deliberately runtime_error and not exception: a decode failure is the
+        // caller's malformed/unsupported upload, not a server fault.
+        return error_response(400, ex.what(), "invalid_request_error");
+    }
     task_request.text_input = engine::runtime::Transcript{std::move(text), std::move(language)};
     task_request = apply_default_request_options(model, std::move(task_request));
     return run_alignment(model, task_request, busy_timeout_ms);

@@ -2,6 +2,7 @@
 
 #include "args.h"
 
+#include "engine/framework/audio/decode.h"
 #include "engine/framework/audio/wav_reader.h"
 
 #include <cmath>
@@ -61,7 +62,10 @@ engine::runtime::AudioBuffer read_audio_buffer(std::istream & input) {
 }
 
 engine::runtime::AudioBuffer read_audio_buffer(std::string_view input) {
-    const auto wav = engine::audio::read_wav_f32(input);
+    // Unlike the path/stream overloads above, this one only ever sees bytes an
+    // HTTP client uploaded (server multipart handlers), so the container isn't
+    // guaranteed to be WAV: browsers and other tools commonly send MP3/FLAC too.
+    const auto wav = engine::audio::decode_audio_upload_f32(input);
     return engine::runtime::AudioBuffer{
         wav.sample_rate,
         wav.channels,

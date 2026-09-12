@@ -355,6 +355,7 @@ function(audiocpp_configure_runtime_object target_name)
         ${CMAKE_CURRENT_SOURCE_DIR}/external/llama_tokenizer
         ${CMAKE_CURRENT_SOURCE_DIR}/external/cJSON
         ${CMAKE_CURRENT_SOURCE_DIR}/external/libyaml/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio
     )
     target_compile_definitions(${target_name} PRIVATE ${AUDIOCPP_LIBYAML_COMPILE_DEFINITIONS})
     if (AUDIOCPP_HIP_STRIX_HALO_OPTIMIZATIONS_ACTIVE)
@@ -511,6 +512,7 @@ add_library(engine_core OBJECT
     src/framework/audio/waveform_ops.cpp
     src/framework/audio/wav_reader.cpp
     src/framework/audio/wav_writer.cpp
+    src/framework/audio/decode.cpp
     src/framework/audio/zipenhancer.cpp
     src/framework/runtime/flow_kv_cache.cpp
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
@@ -1887,6 +1889,16 @@ target_include_directories(cjson_vendor PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/cJSON
 )
 
+# miniaudio backs the non-WAV upload decoding path (app/server/runtime.cpp) with
+# a decode-only build: no playback/capture devices, engine, or threading APIs.
+add_library(miniaudio_vendor STATIC
+    external/miniaudio/miniaudio_impl.c
+)
+
+target_include_directories(miniaudio_vendor PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/miniaudio
+)
+
 # Native package management is deliberately opt-in. Normal CLI and server
 # builds do not configure an HTTP/TLS dependency. When enabled, package specs
 # remain embedded so the standalone manager and managed WebUI do not require a
@@ -1937,7 +1949,7 @@ target_include_directories(engine_runtime PRIVATE
 target_link_libraries(engine_runtime PUBLIC ggml)
 find_package(Threads REQUIRED)
 target_link_libraries(engine_runtime PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
-target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor)
+target_link_libraries(engine_runtime PRIVATE sentencepiece cjson_vendor yaml_vendor miniaudio_vendor)
 if(AUDIOCPP_STATIC_ESPEAK)
     include(tools/cmake/espeak_static.cmake)
 endif()
@@ -2275,6 +2287,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(wav_reader_chunk_bounds_test tests/unittests/test_wav_reader_chunk_bounds.cpp)
         add_test(NAME wav_reader_chunk_bounds_test COMMAND wav_reader_chunk_bounds_test)
+
+        add_engine_unittest(audio_decode_test tests/unittests/test_audio_decode.cpp)
+        add_test(NAME audio_decode_test COMMAND audio_decode_test)
 
         add_engine_unittest(hf_tokenizer_vocab_bounds_test tests/unittests/test_hf_tokenizer_vocab_bounds.cpp)
         add_test(NAME hf_tokenizer_vocab_bounds_test COMMAND hf_tokenizer_vocab_bounds_test)

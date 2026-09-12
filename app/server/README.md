@@ -364,7 +364,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
   -F file=@/path/to/input.wav
 ```
 
-`file` and `model` are required; `language` is optional. Uploaded WAV bytes are decoded in memory and are not written to a temporary file.
+`file` and `model` are required; `language` is optional. The upload is decoded in memory and is not written to a temporary file; WAV, MP3, and FLAC are recognized from the bytes themselves, not the filename, so a client-supplied name like `blob` or `audio.webm` does not matter. Ogg and WebM containers are rejected with a 400 explaining that their common payload, Opus, is not decoded yet — transcode with `ffmpeg -i input -ar 16000 -ac 1 output.wav` first (browsers record microphone input this way; see [issue #313](https://github.com/0xShug0/audio.cpp/issues/313)).
 
 For streaming-capable ASR models configured with `mode: "streaming"`, pass `stream=true` to receive OpenAI-style transcription SSE:
 
