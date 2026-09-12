@@ -1,7 +1,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/midi/sheetsage2_runtime.h"
+#include "engine/models/sheetsage/runtime.h"
 
 #include <algorithm>
 #include <cmath>
@@ -124,7 +124,7 @@ int main(int argc, char ** argv) {
         const int threads = static_cast<int>(std::stoll(optional_arg(argc, argv, "--threads", "8")));
         engine::core::ExecutionContext execution({parse_backend(optional_arg(argc, argv, "--backend", "cpu")), 0, threads});
         auto source = engine::assets::open_tensor_source(resolve_tensor_file(model));
-        engine::midi::SheetSage2DecoderRuntime runtime(source, execution);
+        engine::models::sheetsage::SheetSage2DecoderRuntime runtime(source, execution);
         const auto mixed = read_binary<float>(mixed_path);
         const auto ids = read_binary<int32_t>(ids_path);
         const auto logits = runtime.decode_logits(mixed, memory_steps, ids);
