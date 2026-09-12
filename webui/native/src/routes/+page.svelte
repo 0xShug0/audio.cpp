@@ -2336,7 +2336,7 @@
               {/if}
             {/if}
           {/if}
-          {#if !usesBuiltInVoiceSelector}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
             <div class="reference-input-grid">
               <div>
                 <label for="voice">{tr('voice.reference')} <span>{referenceVoiceRequired ? tr('voice.required') : tr('voice.optional')}</span></label>
@@ -2354,7 +2354,7 @@
               </div>
             </div>
           {/if}
-          {#if !usesBuiltInVoiceSelector}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
             <div class="media-actions">
               {#if recordingTarget === 'voice'}
                 <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
@@ -2369,7 +2369,7 @@
               {/if}
             </div>
           {/if}
-          {#if !usesBuiltInVoiceSelector}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
             <MediaPreview file={voiceFile} kind="audio" label={tr('file.preview')} />
             <label for="reference">{tr('voice.transcript')}
               <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
@@ -2382,7 +2382,7 @@
             in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
             another browser/device, and are removed if this site's browser data is cleared.
           -->
-          {#if !usesBuiltInVoiceSelector}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
           <div class="voice-library">
             <div>
               <label for="saved-voice">{tr('voice.saved')} <span>{tr('voice.browserOnly')}</span></label>
