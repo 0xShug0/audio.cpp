@@ -1,4 +1,4 @@
-#include "engine/models/moonshine_stt/runtime.h"
+#include "engine/models/moonshine_asr/runtime.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/core/backend.h"
@@ -20,8 +20,8 @@
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/sampling/hf_sampler.h"
-#include "engine/models/moonshine_stt/assets.h"
-#include "engine/models/moonshine_stt/weights.h"
+#include "engine/models/moonshine_asr/assets.h"
+#include "engine/models/moonshine_asr/weights.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
@@ -41,7 +41,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::moonshine_stt {
+namespace engine::models::moonshine_asr {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -51,7 +51,7 @@ constexpr size_t kDefaultGraphArenaBytes = 512ull * 1024ull * 1024ull;
 
 engine::modules::GeluApproximation parse_encoder_gelu_approximation(
     const std::unordered_map<std::string, std::string> & options) {
-    const auto value = runtime::find_option(options, {"moonshine_stt.encoder_gelu"});
+    const auto value = runtime::find_option(options, {"moonshine_asr.encoder_gelu"});
     if (!value.has_value() || *value == "quick") {
         return engine::modules::GeluApproximation::Quick;
     }
@@ -61,7 +61,7 @@ engine::modules::GeluApproximation parse_encoder_gelu_approximation(
     if (*value == "tanh") {
         return engine::modules::GeluApproximation::Tanh;
     }
-    throw std::runtime_error("moonshine_stt.encoder_gelu must be erf, exact, tanh, or quick");
+    throw std::runtime_error("moonshine_asr.encoder_gelu must be erf, exact, tanh, or quick");
 }
 
 struct GgmlContextDeleter {
@@ -482,7 +482,7 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize Moonshine encoder graph context");
         }
-        engine::core::ModuleBuildContext ctx{ctx_.get(), "moonshine_stt.encoder", execution_context.backend_type()};
+        engine::core::ModuleBuildContext ctx{ctx_.get(), "moonshine_asr.encoder", execution_context.backend_type()};
         input_ = engine::core::make_tensor(
             ctx,
             GGML_TYPE_F32,
@@ -593,9 +593,9 @@ public:
         for (const auto & mask : masks_) {
             engine::core::write_tensor_f16(mask.tensor, mask.values);
         }
-        debug::trace_log_scalar("moonshine_stt.encoder_attention_masks", static_cast<int64_t>(masks_.size()));
-        debug::trace_log_scalar("moonshine_stt.encoder_blas_scheduler", use_scheduler_);
-        debug::timing_log_scalar("moonshine_stt.encoder_graph_build_ms", engine::debug::elapsed_ms(build_start));
+        debug::trace_log_scalar("moonshine_asr.encoder_attention_masks", static_cast<int64_t>(masks_.size()));
+        debug::trace_log_scalar("moonshine_asr.encoder_blas_scheduler", use_scheduler_);
+        debug::timing_log_scalar("moonshine_asr.encoder_graph_build_ms", engine::debug::elapsed_ms(build_start));
     }
 
     ~EncoderGraph() {
@@ -618,7 +618,7 @@ public:
         engine::core::write_tensor_f32(input_, frames);
         const ggml_status status = use_scheduler_
             ? ggml_backend_sched_graph_compute(sched_.get(), graph_)
-            : engine::core::compute_graph(execution_context, graph_, plan_, "moonshine_stt.encoder");
+            : engine::core::compute_graph(execution_context, graph_, plan_, "moonshine_asr.encoder");
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Moonshine encoder graph compute failed");
         }
@@ -627,7 +627,7 @@ public:
         } else {
             ggml_backend_synchronize(backend_);
         }
-        debug::timing_log_scalar("moonshine_stt.encoder_compute_ms", engine::debug::elapsed_ms(compute_start));
+        debug::timing_log_scalar("moonshine_asr.encoder_compute_ms", engine::debug::elapsed_ms(compute_start));
         return engine::core::read_tensor_f32(output_);
     }
 
@@ -736,12 +736,12 @@ public:
         }
         const auto start = Clock::now();
         ggml_backend_tensor_set(memory_, memory.data(), 0, memory.size() * sizeof(float));
-        if (engine::core::compute_graph(execution_context, cross_graph_, cross_plan_, "moonshine_stt.decoder.cross_kv") != GGML_STATUS_SUCCESS) {
+        if (engine::core::compute_graph(execution_context, cross_graph_, cross_plan_, "moonshine_asr.decoder.cross_kv") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Moonshine decoder cross-KV graph compute failed");
         }
         ggml_backend_synchronize(backend_);
         reset_state();
-        debug::timing_log_scalar("moonshine_stt.decode_cross_kv_ms", engine::debug::elapsed_ms(start));
+        debug::timing_log_scalar("moonshine_asr.decode_cross_kv_ms", engine::debug::elapsed_ms(start));
     }
 
     std::vector<float> run_step(
@@ -764,7 +764,7 @@ public:
         step_upload_ms_ += engine::debug::elapsed_ms(upload_start);
 
         const auto compute_start = Clock::now();
-        if (engine::core::compute_graph(execution_context, step_graph_, step_plan_, "moonshine_stt.decoder.step") != GGML_STATUS_SUCCESS) {
+        if (engine::core::compute_graph(execution_context, step_graph_, step_plan_, "moonshine_asr.decoder.step") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Moonshine decoder step graph compute failed");
         }
         ggml_backend_synchronize(backend_);
@@ -783,10 +783,10 @@ public:
     }
 
     void log_step_timings() const {
-        debug::timing_log_scalar("moonshine_stt.decode_step_count", step_count_);
-        debug::timing_log_scalar("moonshine_stt.decode_step_upload_ms", step_upload_ms_);
-        debug::timing_log_scalar("moonshine_stt.decode_step_compute_ms", step_compute_ms_);
-        debug::timing_log_scalar("moonshine_stt.decode_step_read_ms", step_read_ms_);
+        debug::timing_log_scalar("moonshine_asr.decode_step_count", step_count_);
+        debug::timing_log_scalar("moonshine_asr.decode_step_upload_ms", step_upload_ms_);
+        debug::timing_log_scalar("moonshine_asr.decode_step_compute_ms", step_compute_ms_);
+        debug::timing_log_scalar("moonshine_asr.decode_step_read_ms", step_read_ms_);
     }
 
 private:
@@ -797,7 +797,7 @@ private:
         size_t /*graph_arena_bytes*/) {
         const auto & config = assets.config.decoder;
         memory_hidden_ = config.hidden_size;
-        engine::core::ModuleBuildContext ctx{cross_ctx_.get(), "moonshine_stt.decoder.cross_kv", execution_context.backend_type()};
+        engine::core::ModuleBuildContext ctx{cross_ctx_.get(), "moonshine_asr.decoder.cross_kv", execution_context.backend_type()};
         auto memory = engine::core::wrap_tensor(
             memory_,
             engine::core::TensorShape::from_dims({1, memory_frames_, config.hidden_size}),
@@ -835,7 +835,7 @@ private:
         std::vector<engine::core::TensorValue> self_keys,
         std::vector<engine::core::TensorValue> self_values) {
         const auto & config = assets.config.decoder;
-        engine::core::ModuleBuildContext ctx{step_ctx_.get(), "moonshine_stt.decoder.step", execution_context.backend_type()};
+        engine::core::ModuleBuildContext ctx{step_ctx_.get(), "moonshine_asr.decoder.step", execution_context.backend_type()};
         auto ids = engine::core::wrap_tensor(token_id_, engine::core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         auto positions = engine::core::wrap_tensor(position_, engine::core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         auto cache_slot = engine::core::wrap_tensor(cache_slot_, engine::core::TensorShape::from_dims({1}), GGML_TYPE_I32);
@@ -971,9 +971,9 @@ MoonshineRuntimeConfig make_moonshine_runtime_config(
     const std::unordered_map<std::string, std::string> & options) {
     MoonshineRuntimeConfig runtime_config;
     runtime_config.weight_context_bytes =
-        runtime::parse_size_mb_option(options, {"moonshine_stt.weight_context_mb"}, kDefaultWeightContextBytes);
+        runtime::parse_size_mb_option(options, {"moonshine_asr.weight_context_mb"}, kDefaultWeightContextBytes);
     runtime_config.graph_arena_bytes =
-        runtime::parse_size_mb_option(options, {"moonshine_stt.graph_arena_mb"}, kDefaultGraphArenaBytes);
+        runtime::parse_size_mb_option(options, {"moonshine_asr.graph_arena_mb"}, kDefaultGraphArenaBytes);
     runtime_config.encoder_gelu = parse_encoder_gelu_approximation(options);
     const auto default_matmul_storage =
         backend_type == engine::core::BackendType::Cpu &&
@@ -984,7 +984,7 @@ MoonshineRuntimeConfig make_moonshine_runtime_config(
         : engine::assets::TensorStorageType::Native;
     runtime_config.encoder_weight_storage_type = runtime::parse_tensor_storage_option(
         options,
-        "moonshine_stt.weight_type",
+        "moonshine_asr.weight_type",
         default_matmul_storage,
         {
             engine::assets::TensorStorageType::Native,
@@ -993,8 +993,8 @@ MoonshineRuntimeConfig make_moonshine_runtime_config(
         });
     runtime_config.decoder_weight_storage_type = runtime::parse_tensor_storage_option(
         options,
-        "moonshine_stt.decoder_weight_type",
-        "moonshine_stt.weight_type",
+        "moonshine_asr.decoder_weight_type",
+        "moonshine_asr.weight_type",
         engine::assets::TensorStorageType::Native,
         {
             engine::assets::TensorStorageType::Native,
@@ -1003,20 +1003,20 @@ MoonshineRuntimeConfig make_moonshine_runtime_config(
         });
     runtime_config.conv_weight_storage_type = runtime::parse_tensor_storage_option(
         options,
-        "moonshine_stt.conv_weight_type",
+        "moonshine_asr.conv_weight_type",
         engine::assets::TensorStorageType::Native,
         {
             engine::assets::TensorStorageType::Native,
             engine::assets::TensorStorageType::F32,
             engine::assets::TensorStorageType::F16,
         });
-    const auto cpu_blas_scheduler = runtime::find_option(options, {"moonshine_stt.cpu_blas_scheduler"});
+    const auto cpu_blas_scheduler = runtime::find_option(options, {"moonshine_asr.cpu_blas_scheduler"});
     runtime_config.cpu_blas_scheduler = !cpu_blas_scheduler.has_value() ||
-        runtime::parse_bool_option(*cpu_blas_scheduler, "moonshine_stt.cpu_blas_scheduler");
+        runtime::parse_bool_option(*cpu_blas_scheduler, "moonshine_asr.cpu_blas_scheduler");
     return runtime_config;
 }
 
-runtime::TaskResult transcribe_moonshine_stt(
+runtime::TaskResult transcribe_moonshine_asr(
     const MoonshineAssets & assets,
     const MoonshineWeights & weights,
     const engine::core::ExecutionContext & execution_context,
@@ -1031,7 +1031,7 @@ runtime::TaskResult transcribe_moonshine_stt(
         audio.sample_rate,
         audio.channels,
         static_cast<int>(assets.config.encoder.sample_rate));
-    debug::timing_log_scalar("moonshine_stt.resample_ms", engine::debug::elapsed_ms(resample_start));
+    debug::timing_log_scalar("moonshine_asr.resample_ms", engine::debug::elapsed_ms(resample_start));
 
     const auto frontend_start = Clock::now();
     const auto frames = prepare_compressed_frames(
@@ -1044,9 +1044,9 @@ runtime::TaskResult transcribe_moonshine_stt(
         return result;
     }
     const int64_t frame_count = static_cast<int64_t>(frames.size()) / assets.config.encoder.frame_length;
-    debug::timing_log_scalar("moonshine_stt.frontend_cpu_ms", engine::debug::elapsed_ms(frontend_start));
-    debug::trace_log_scalar("moonshine_stt.input_samples", mono.size());
-    debug::trace_log_scalar("moonshine_stt.input_frames", frame_count);
+    debug::timing_log_scalar("moonshine_asr.frontend_cpu_ms", engine::debug::elapsed_ms(frontend_start));
+    debug::trace_log_scalar("moonshine_asr.input_samples", mono.size());
+    debug::trace_log_scalar("moonshine_asr.input_frames", frame_count);
 
     EncoderGraph encoder_graph(
         assets,
@@ -1058,7 +1058,7 @@ runtime::TaskResult transcribe_moonshine_stt(
         config.graph_arena_bytes);
     const auto memory = encoder_graph.run(frames, execution_context);
     const int64_t memory_frames = encoder_graph.memory_frames();
-    debug::trace_log_scalar("moonshine_stt.memory_frames", memory_frames);
+    debug::trace_log_scalar("moonshine_asr.memory_frames", memory_frames);
 
     const int64_t audio_max_tokens = static_cast<int64_t>(
         std::ceil(static_cast<double>(memory_frames) * 0.020 * static_cast<double>(assets.config.max_tokens_per_second)));
@@ -1090,12 +1090,12 @@ runtime::TaskResult transcribe_moonshine_stt(
         const auto logits = decoder_graph.run_step(prefix.back(), static_cast<int32_t>(step), execution_context);
         const auto select_start = Clock::now();
         if (logits.size() != static_cast<size_t>(decoder_graph.vocab_size())) {
-            throw std::runtime_error("Moonshine STT logits shape mismatch");
+            throw std::runtime_error("Moonshine ASR logits shape mismatch");
         }
         const int32_t next = sampling::HfLogitsProcessor::argmax(
             logits.data(),
             logits.size(),
-            "Moonshine STT greedy decode");
+            "Moonshine ASR greedy decode");
         decode_step_select_ms += engine::debug::elapsed_ms(select_start);
         if (next == assets.config.decoder.eos_token_id) {
             break;
@@ -1104,15 +1104,15 @@ runtime::TaskResult transcribe_moonshine_stt(
         prefix.push_back(next);
     }
     decoder_graph.log_step_timings();
-    debug::timing_log_scalar("moonshine_stt.decode_step_select_ms", decode_step_select_ms);
-    debug::timing_log_scalar("moonshine_stt.decode_ms", engine::debug::elapsed_ms(decode_start));
-    debug::trace_log_scalar("moonshine_stt.output_tokens", decoded.size());
+    debug::timing_log_scalar("moonshine_asr.decode_step_select_ms", decode_step_select_ms);
+    debug::timing_log_scalar("moonshine_asr.decode_ms", engine::debug::elapsed_ms(decode_start));
+    debug::trace_log_scalar("moonshine_asr.output_tokens", decoded.size());
 
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{decode_moonshine_tokens(assets, decoded), "en"};
-    debug::timing_log_scalar("moonshine_stt.run_ms", engine::debug::elapsed_ms(start, Clock::now()));
+    debug::timing_log_scalar("moonshine_asr.run_ms", engine::debug::elapsed_ms(start, Clock::now()));
     return result;
 }
 
 
-}  // namespace engine::models::moonshine_stt
+}  // namespace engine::models::moonshine_asr

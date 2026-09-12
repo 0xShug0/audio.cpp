@@ -1,4 +1,4 @@
-#include "engine/models/moonshine_stt/weights.h"
+#include "engine/models/moonshine_asr/weights.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/packed_linear_weights.h"
@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace engine::models::moonshine_stt {
+namespace engine::models::moonshine_asr {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -196,7 +196,7 @@ MoonshineDecoderLayerWeights load_decoder_layer(
 
 }  // namespace
 
-std::shared_ptr<const MoonshineWeights> load_moonshine_stt_weights(
+std::shared_ptr<const MoonshineWeights> load_moonshine_asr_weights(
     const MoonshineAssets & assets,
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
@@ -209,7 +209,7 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_stt_weights(
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
         backend,
         backend_type,
-        "Moonshine STT",
+        "Moonshine ASR",
         weight_context_bytes);
     const auto & source = *assets.source;
     const auto & enc = assets.config.encoder;
@@ -217,7 +217,7 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_stt_weights(
 
     const auto log_k = source.require_f32("model.encoder.embedder.comp.log_k");
     if (log_k.size() != 1) {
-        throw std::runtime_error("Moonshine STT log_k must contain one scalar");
+        throw std::runtime_error("Moonshine ASR log_k must contain one scalar");
     }
     weights->encoder.frontend.log_k = log_k.front();
     weights->encoder.frontend.linear = binding::linear_from_source(
@@ -285,8 +285,8 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_stt_weights(
             dec.hidden_size,
             false);
     weights->store->upload();
-    debug::timing_log_scalar("moonshine_stt.weights_load_ms", engine::debug::elapsed_ms(start, Clock::now()));
+    debug::timing_log_scalar("moonshine_asr.weights_load_ms", engine::debug::elapsed_ms(start, Clock::now()));
     return weights;
 }
 
-}  // namespace engine::models::moonshine_stt
+}  // namespace engine::models::moonshine_asr

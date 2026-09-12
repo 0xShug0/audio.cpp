@@ -13,7 +13,7 @@ namespace engine::core {
 class ExecutionContext;
 }
 
-namespace engine::models::moonshine_stt {
+namespace engine::models::moonshine_asr {
 
 struct MoonshineAssets;
 struct MoonshineConfig;
@@ -34,7 +34,7 @@ MoonshineRuntimeConfig make_moonshine_runtime_config(
     engine::core::BackendType backend_type,
     const std::unordered_map<std::string, std::string> & options);
 
-runtime::TaskResult transcribe_moonshine_stt(
+runtime::TaskResult transcribe_moonshine_asr(
     const MoonshineAssets & assets,
     const MoonshineWeights & weights,
     const engine::core::ExecutionContext & execution_context,
@@ -42,4 +42,4 @@ runtime::TaskResult transcribe_moonshine_stt(
     const std::unordered_map<std::string, std::string> & options,
     const MoonshineRuntimeConfig & config);
 
-}  // namespace engine::models::moonshine_stt
+}  // namespace engine::models::moonshine_asr

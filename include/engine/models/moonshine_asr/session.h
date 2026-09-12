@@ -3,17 +3,17 @@
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/models/moonshine_stt/runtime.h"
+#include "engine/models/moonshine_asr/runtime.h"
 
 #include <memory>
 #include <string>
 
-namespace engine::models::moonshine_stt {
+namespace engine::models::moonshine_asr {
 
 struct MoonshineAssets;
 struct MoonshineWeights;
 
-std::shared_ptr<runtime::IVoiceModelLoader> make_moonshine_stt_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_moonshine_asr_loader();
 
 class MoonshineSTTSession final
     : public runtime::RuntimeSessionBase
@@ -52,4 +52,4 @@ private:
     bool stream_started_ = false;
 };
 
-}  // namespace engine::models::moonshine_stt
+}  // namespace engine::models::moonshine_asr
