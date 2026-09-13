@@ -134,18 +134,6 @@ function(audiocpp_collect_server_frontends)
         "${AUDIOCPP_SERVER_FRONTEND_COMPILE_DEFINITIONS}")
 endfunction()
 
-function(audiocpp_server_frontends_use_library AUDIOCPP_SERVER_FRONTEND_LIBRARY AUDIOCPP_SERVER_FRONTEND_OUT)
-    audiocpp_collect_server_frontends()
-    get_property(AUDIOCPP_SERVER_FRONTEND_LIBRARIES GLOBAL PROPERTY
-        "AUDIOCPP_SERVER_FRONTEND_SELECTED_LIBRARIES")
-    list(FIND AUDIOCPP_SERVER_FRONTEND_LIBRARIES "${AUDIOCPP_SERVER_FRONTEND_LIBRARY}" AUDIOCPP_SERVER_FRONTEND_LIBRARY_INDEX)
-    if (AUDIOCPP_SERVER_FRONTEND_LIBRARY_INDEX EQUAL -1)
-        set(${AUDIOCPP_SERVER_FRONTEND_OUT} OFF PARENT_SCOPE)
-    else()
-        set(${AUDIOCPP_SERVER_FRONTEND_OUT} ON PARENT_SCOPE)
-    endif()
-endfunction()
-
 function(audiocpp_configure_server_frontends AUDIOCPP_SERVER_TARGET)
     audiocpp_collect_server_frontends()
 
