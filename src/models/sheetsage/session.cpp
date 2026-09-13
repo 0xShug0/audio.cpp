@@ -197,7 +197,6 @@ SheetSage2DecoderRuntimeOptions decoder_options_from_session_options(const runti
             assets::TensorStorageType::F32,
             assets::TensorStorageType::F16,
             assets::TensorStorageType::BF16,
-            assets::TensorStorageType::Q8_0,
             assets::TensorStorageType::Q4_0,
             assets::TensorStorageType::Q4_K,
         });

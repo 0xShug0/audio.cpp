@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { tick } from 'svelte';
-  import { loadModel, models, runTask, uploadFile } from '$lib/api';
+  import { onMount, tick } from 'svelte';
+  import { loadModel, models, runTask, unloadModel, uploadFile } from '$lib/api';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import type { Translator } from '$lib/i18n';
   import type { CatalogEntry, LoadedModel, ParamSpec, ServerHealth } from '$lib/types';
@@ -47,6 +47,11 @@
   let coverAudioFile: File | null = null;
   let coverAudioInput: HTMLInputElement | null = null;
   let coverRunning = false;
+  const unloadSettingKey = 'audiocpp.ui.yue2.unloadSheetSageAfterConversion';
+  let unloadAfterConversion = true;
+  onMount(() => {
+    unloadAfterConversion = localStorage.getItem(unloadSettingKey) !== 'false';
+  });
   let coverStatus = '';
   let coverError = '';
   let abcDraft = '';
@@ -113,7 +118,6 @@
       load_options: entry.load_options || {},
       session_options: sessionOptionsFor(entry)
     });
-    await refreshModels();
   }
 
   async function transcribeCoverScore() {
@@ -121,10 +125,14 @@
     coverRunning = true;
     coverError = '';
     coverStatus = 'Preparing SheetSage2 cover score transcription...';
+    const shouldUnload = unloadAfterConversion && server?.ui_management === true;
+    let cleanupModelId: string | null = null;
     try {
       const entry = sheetSageModel();
       if (!entry) throw new Error('SheetSage2 is not available in the model catalog.');
       await ensureSheetSageLoaded(entry);
+      cleanupModelId = entry.id;
+      await refreshModels();
       coverStatus = 'Uploading source song...';
       const audio = await uploadFile(coverAudioFile);
       coverStatus = 'Transcribing source song to ABC with SheetSage2...';
@@ -148,6 +156,23 @@
       coverStatus = '';
       log(`SheetSage2 cover transcription failed: ${coverError}`);
     } finally {
+      if (shouldUnload && cleanupModelId) {
+        try {
+          await unloadModel(cleanupModelId);
+          log('SheetSage2 unloaded after cover transcription.');
+        } catch (error) {
+          const message = `SheetSage2 unload failed: ${error instanceof Error ? error.message : String(error)}`;
+          coverError = [coverError, message].filter(Boolean).join(' ');
+          log(message);
+        }
+        try {
+          await refreshModels();
+        } catch (error) {
+          const message = `Model status refresh failed: ${error instanceof Error ? error.message : String(error)}`;
+          coverError = [coverError, message].filter(Boolean).join(' ');
+          log(message);
+        }
+      }
       coverRunning = false;
     }
   }
@@ -271,6 +296,18 @@
             {coverRunning ? 'Transcribing...' : 'Extract ABC'}
           </button>
         </div>
+        <label class="yue2-unload-toggle"
+          title={server?.ui_management ? undefined : 'Requires server UI model management'}>
+          <input type="checkbox" role="switch"
+            checked={unloadAfterConversion && server?.ui_management === true}
+            disabled={coverRunning || !server?.ui_management}
+            on:change={(event) => {
+              unloadAfterConversion = event.currentTarget.checked;
+              localStorage.setItem(unloadSettingKey, String(unloadAfterConversion));
+            }} />
+          <span>Unload SheetSage2 after conversion</span>
+        </label>
+        <small class="yue2-error">Warning: VRAM may remain in use after unloading.</small>
         <input id="yue2-cover-audio" class="file file-native" type="file" accept="audio/*"
           bind:this={coverAudioInput}
           on:change={(event) => coverAudioFile = event.currentTarget.files?.[0] || null} />
@@ -532,6 +569,57 @@
 
   .yue2-cover-picker {
     margin: 0;
+  }
+
+  .yue2-unload-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .yue2-unload-toggle input {
+    appearance: none;
+    position: relative;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 20px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--muted);
+    cursor: pointer;
+  }
+
+  .yue2-unload-toggle input::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+  }
+
+  .yue2-unload-toggle input:checked {
+    background: var(--cyan);
+  }
+
+  .yue2-unload-toggle input:checked::before {
+    transform: translateX(14px);
+  }
+
+  .yue2-unload-toggle input:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+  }
+
+  .yue2-unload-toggle input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .yue2-error {

@@ -81,20 +81,8 @@
       "precision": "orig",
       "target_directory": "SheetSage2-GGUF",
       "files": [
-        "SheetSage2-GGUF/sheetsage2-orig.gguf"
-      ],
-      "strip_prefix": "SheetSage2-GGUF"
-    },
-    {
-      "id": "sheetsage2_q8_0",
-      "display_name": "SheetSage2 Q8_0 GGUF",
-      "format": "gguf",
-      "precision": "q8_0",
-      "target_directory": "SheetSage2-GGUF",
-      "files": [
-        "SheetSage2-GGUF/sheetsage2-q8_0.gguf"
-      ],
-      "strip_prefix": "SheetSage2-GGUF"
+        "sheetsage2-orig.gguf"
+      ]
     }
   ],
   "dependencies": [],

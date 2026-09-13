@@ -86,7 +86,16 @@ std::vector<float> SheetSage2AudioFrontend::prepare(
                 const double distance = tap - center - static_cast<double>(phase) / phases;
                 const double angle = pi * distance * cutoff;
                 const double radius = 2.0 * distance / taps;
-                const double window = std::cyl_bessel_i(0.0, 9.0 * std::sqrt(std::max(0.0, 1.0 - radius * radius)));
+                const double x = 9.0 * std::sqrt(std::max(0.0, 1.0 - radius * radius));
+                const double quarter_square = x * x / 4.0;
+                // I0(x) series for 0 <= x <= 9; the tail after k=32 is below 2e-31.
+                // Avoid special functions unavailable in Apple's libc++.
+                double window = 1.0;
+                double term = 1.0;
+                for (int k = 1; k <= 32; ++k) {
+                    term *= quarter_square / (k * k);
+                    window += term;
+                }
                 const double value = (angle == 0.0 ? 1.0 : std::sin(angle) / angle) * window;
                 if (phase == 0) {
                     normalization += value;
