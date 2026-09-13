@@ -245,13 +245,27 @@ void HiggsTTSSession::prepare(const runtime::SessionPreparationRequest & request
 runtime::TaskResult HiggsTTSSession::run(const runtime::TaskRequest & request) {
     require_prepared("Higgs TTS run");
     const auto wall_start = Clock::now();
+
+    runtime::TaskRequest seeded_request = request;
+    if (!runtime::parse_u64_option(seeded_request.options, {"seed"}).has_value()) {
+        // generator_->generate() is called once per text chunk below, and each
+        // call draws a fresh random seed when none is set (generator.cpp). Left
+        // alone, an unseeded long request would sample every chunk with
+        // independent entropy against the same reference conditioning -- a
+        // plausible contributor to the voice/timbre drift between chunks
+        // reported in #471. Resolving one seed up front and copying it onto
+        // every chunk keeps them on a consistent sampling trajectory, the same
+        // way chunks already behave when a caller passes --seed explicitly.
+        seeded_request.options["seed"] = std::to_string(runtime::random_u64_seed());
+    }
+
     const int64_t text_chunk_size =
-        engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
+        engine::text::parse_text_chunk_size_override(seeded_request.options).value_or(kDefaultTextChunkSize);
     const auto text_chunk_mode =
-        engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
-    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
-    const std::string reference_text = runtime::find_option(request.options, {"reference_text"}).value_or("");
-    const auto * reference_audio = find_reference_audio(request);
+        engine::text::parse_text_chunk_mode_override(seeded_request.options).value_or(engine::text::TextChunkMode::Default);
+    const auto chunk_requests = runtime::chunk_text_request(seeded_request, text_chunk_size, text_chunk_mode);
+    const std::string reference_text = runtime::find_option(seeded_request.options, {"reference_text"}).value_or("");
+    const auto * reference_audio = find_reference_audio(seeded_request);
     const HiggsCodecEncodeOutput * reference_codes =
         reference_audio != nullptr ? &resolve_reference_codes(*reference_audio, reference_text) : nullptr;
     debug::trace_log_scalar("higgs_audio_tts.text_chunk_size", text_chunk_size);
