@@ -688,22 +688,22 @@ struct Yue2ArRuntime::Impl {
         const auto total_start = Clock::now();
         engine::debug::timing_log_scalar("yue2.ar.generate.prefix_tokens", prefix.size());
         engine::debug::timing_log_scalar("yue2.ar.generate.max_tokens", window.max_tokens);
-        const auto prefill_start = Clock::now();
-        auto prefill = active_runtime->prefill_tokens(prefix);
-        engine::debug::timing_log_scalar("yue2.ar.generate.prefill_ms", engine::debug::elapsed_ms(prefill_start));
-        const auto start_decode_start = Clock::now();
         auto cache_steps_for = [](int64_t prefix_tokens, int64_t remaining_tokens) {
             return prefix_tokens + std::min<int64_t>(remaining_tokens, kArDecodeChunkTokens);
         };
-        active_runtime->start_decode_tokens(
-            prefill.state,
+        const auto prefill_start = Clock::now();
+        auto prefill = active_runtime->prefill_tokens_into_decode_cache(
+            prefix,
             cache_steps_for(static_cast<int64_t>(prefix.size()), window.max_tokens));
-        double start_decode_ms = engine::debug::elapsed_ms(start_decode_start);
+        engine::debug::timing_log_scalar("yue2.ar.generate.prefill_ms", engine::debug::elapsed_ms(prefill_start));
+        double start_decode_ms = 0.0;
         std::vector<int32_t> emitted;
         emitted.reserve(static_cast<size_t>(window.max_tokens));
         std::mt19937 rng(static_cast<uint32_t>(seed));
         Yue2SamplerScratch scratch;
-        std::vector<float> logits = std::move(prefill.logits);
+        engine::modules::QwenCausalDecodeStepResult decode_result;
+        decode_result.logits = std::move(prefill.logits);
+        decode_result.hidden = std::move(prefill.hidden);
         double sample_ms = 0.0;
         double decode_ms = 0.0;
         double refill_prefill_ms = 0.0;
@@ -711,8 +711,8 @@ struct Yue2ArRuntime::Impl {
         for (int64_t step = 0; step < window.max_tokens; ++step) {
             const auto sample_start = Clock::now();
             const int32_t token = compact_semantic ?
-                sample_semantic_token(logits, emitted, window, rng, scratch) :
-                sample_token(logits, emitted, window, rng, scratch);
+                sample_semantic_token(decode_result.logits, emitted, window, rng, scratch) :
+                sample_token(decode_result.logits, emitted, window, rng, scratch);
             sample_ms += engine::debug::elapsed_ms(sample_start);
             if (token == window.stop_token) {
                 engine::debug::timing_log_scalar("yue2.ar.generate.start_decode_ms", start_decode_ms);
@@ -734,20 +734,18 @@ struct Yue2ArRuntime::Impl {
                 refill_prefix.insert(refill_prefix.end(), prefix.begin(), prefix.end());
                 refill_prefix.insert(refill_prefix.end(), emitted.begin(), emitted.end());
                 const auto refill_prefill_start = Clock::now();
-                auto refill = active_runtime->prefill_tokens(refill_prefix);
-                refill_prefill_ms += engine::debug::elapsed_ms(refill_prefill_start);
                 const int64_t remaining = window.max_tokens - static_cast<int64_t>(emitted.size());
-                const auto refill_decode_start = Clock::now();
-                active_runtime->start_decode_tokens(
-                    refill.state,
+                auto refill = active_runtime->prefill_tokens_into_decode_cache(
+                    refill_prefix,
                     cache_steps_for(static_cast<int64_t>(refill_prefix.size()), remaining));
-                start_decode_ms += engine::debug::elapsed_ms(refill_decode_start);
-                logits = std::move(refill.logits);
+                refill_prefill_ms += engine::debug::elapsed_ms(refill_prefill_start);
+                decode_result.logits = std::move(refill.logits);
+                decode_result.hidden = std::move(refill.hidden);
                 ++refill_count;
                 continue;
             }
             const auto decode_start = Clock::now();
-            logits = active_runtime->decode_token(token).logits;
+            active_runtime->decode_token_into(token, decode_result);
             decode_ms += engine::debug::elapsed_ms(decode_start);
         }
         engine::debug::timing_log_scalar("yue2.ar.generate.start_decode_ms", start_decode_ms);
