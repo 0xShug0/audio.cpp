@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path.home() / "Desktop" / "SheetSage2-GGUF" / "sheetsage2-q8_0.gguf",
+        default=Path.home() / "Desktop" / "SheetSage2-GGUF" / "sheetsage2-orig.gguf",
         help="Output GGUF path.",
     )
     parser.add_argument(
@@ -82,7 +82,7 @@ def parse_args() -> argparse.Namespace:
         default=REPO_ROOT / "build" / "debug" / "bin" / "audiocpp_gguf",
         help="Path to audio.cpp GGUF converter.",
     )
-    parser.add_argument("--type", default="q8_0", choices=["orig", "f16", "bf16", "q8_0", "q4_0", "q4_k"])
+    parser.add_argument("--type", default="orig", choices=["orig", "f16", "bf16", "q4_0", "q4_k"])
     parser.add_argument("--keep-merged", type=Path, help="Optional path to keep the merged safetensors directory.")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
