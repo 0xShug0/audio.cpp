@@ -2,9 +2,10 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
+| Built-in audio utilities | `builtin_audio_utils` | `s2s` denoise/enhance/super-resolution | [Built-in audio utilities](#built-in-audio-utilities) |
 | AudioSR | `audiosr` | `s2s` audio super-resolution | [AudioSR](#audiosr) |
 | ControlFoley | `controlfoley` | `gen` Foley/SFX generation | [ControlFoley](#controlfoley) |
-| GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility | [GTCRN](#gtcrn) |
+| GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility API | [GTCRN](#gtcrn) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
@@ -27,6 +28,56 @@ Common CLI shape:
 
 ```bash
 audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda ...
+```
+
+## Built-in Audio Utilities
+
+The `builtin_audio_utils` family exposes the built-in framework audio utility
+models through the normal CLI and server model-loading path. These utilities do
+not use a GGUF or external model directory as `--model`; pass the utility id
+directly.
+
+| Utility id | Operation | Input rate | Output rate |
+|---|---|---:|---:|
+| `deepfilternet2` | Denoise/enhance | 48 kHz | 48 kHz |
+| `rnnoise` | Denoise/enhance | 48 kHz | 48 kHz |
+| `zipenhancer` | Denoise/enhance | 16 kHz | 16 kHz |
+| `gtcrn` | Denoise/enhance, alias for `gtcrn_streaming` | 16 kHz | 16 kHz |
+| `gtcrn_streaming` | Denoise/enhance | 16 kHz | 16 kHz |
+| `gtcrn_dns3` | Denoise/enhance | 16 kHz | 16 kHz |
+| `gtcrn_vctk` | Denoise/enhance | 16 kHz | 16 kHz |
+| `flashsr` | Audio super-resolution | 16 kHz | 48 kHz |
+
+CLI example:
+
+```bash
+audiocpp_cli --task s2s --family builtin_audio_utils \
+  --model rnnoise \
+  --backend cuda \
+  --audio input.wav \
+  --out enhanced.wav \
+  --log \
+  --log-file rnnoise.log
+```
+
+Server config example:
+
+```json
+{
+  "id": "builtin-rnnoise",
+  "family": "builtin_audio_utils",
+  "path": "rnnoise",
+  "task": "s2s",
+  "mode": "offline"
+}
+```
+
+Server request example:
+
+```bash
+curl http://127.0.0.1:8080/v1/tasks/run \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"builtin-rnnoise","request":{"audio":"input.wav"}}'
 ```
 
 ## AudioSR
