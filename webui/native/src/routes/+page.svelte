@@ -34,6 +34,7 @@
   import MediaPreview from '$lib/MediaPreview.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
+  import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
   import Arena from './Arena.svelte';
   import type {
     AudioOutput,
@@ -154,6 +155,7 @@
     'meanvc2',
     'midashenglm_gen'
   ]);
+  const noGenericControlReplacements: GenericControlReplacements = {};
 
   function chooseUiLanguage(code: string) {
     uiLanguage = resolveUiLanguage([code]);
@@ -248,34 +250,6 @@
       const frames = Number(value);
       if (Number.isFinite(frames) && frames > 0) duration = frames / 24;
     }
-  }
-
-  const yue2ComponentParamNames = ['main_gguf', 'vae_gguf'];
-  const yue2CoreParamNames = ['style', 'cot', 'cfg_scale', 'num_inference_steps'];
-  const yue2AbcParamNames = ['abc', 'abc_file'];
-  const yue2SemanticParamNames = [
-    'semantic_temperature',
-    'semantic_top_p',
-    'semantic_top_k',
-    'semantic_repetition_penalty',
-    'semantic_penalty_window',
-    'semantic_min_tokens',
-    'semantic_max_tokens'
-  ];
-  const yue2PlannerParamNames = [
-    'abc_temperature',
-    'abc_top_p',
-    'abc_top_k',
-    'abc_repetition_penalty',
-    'abc_penalty_window',
-    'abc_min_tokens',
-    'abc_max_tokens'
-  ];
-
-  function parameterSpecsByName(names: string[], specs: ParamSpec[]) {
-    return names
-      .map((name) => specs.find((spec) => spec.name === name))
-      .filter((spec): spec is ParamSpec => spec !== undefined);
   }
 
   function ensureYue2DefaultLyrics(entry = selected) {
@@ -430,15 +404,10 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
-  $: isYue2 = selected?.family === 'yue2';
-  // paramSpecs must be read in the statement itself: Svelte 5 derives $:
-  // dependencies statically, so reading it only inside parameterSpecsByName()
-  // left these lists stale when the yue2 model was selected after another one.
-  $: yue2ComponentSpecs = isYue2 ? parameterSpecsByName(yue2ComponentParamNames, paramSpecs) : [];
-  $: yue2CoreSpecs = isYue2 ? parameterSpecsByName(yue2CoreParamNames, paramSpecs) : [];
-  $: yue2AbcSpecs = isYue2 ? parameterSpecsByName(yue2AbcParamNames, paramSpecs) : [];
-  $: yue2SemanticSpecs = isYue2 ? parameterSpecsByName(yue2SemanticParamNames, paramSpecs) : [];
-  $: yue2PlannerSpecs = isYue2 ? parameterSpecsByName(yue2PlannerParamNames, paramSpecs) : [];
+  $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family);
+  $: modelStudioPanel = modelStudioPanelConfig?.component;
+  $: replacesGenericControls = modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements;
+  $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
@@ -451,7 +420,7 @@
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit;
-  $: acceptsSource = needsSource || (selected?.task === 'gen' && !isYue2);
+  $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
@@ -479,7 +448,8 @@
   $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false && !usesBuiltInVoiceSelector
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
-  $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) && !isYue2;
+  $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
+    !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming'].includes(selected?.family);
   $: modelInventoryLoading = server === null ||
@@ -1057,7 +1027,7 @@
     } else if (selected?.task === 'gen') {
       duration = 30;
     }
-    if (isYue2) {
+    if (usesYue2Request) {
       text = '';
       lyrics = '';
       ensureYue2DefaultLyrics();
@@ -1304,7 +1274,7 @@
       .filter(([name, value]) => {
         const spec = paramSpecs.find((candidate) => candidate.name === name);
         if (spec?.scope === 'session') return false;
-        if (isYue2 && typeof value === 'string' && value.trim().length === 0) return false;
+        if (usesYue2Request && typeof value === 'string' && value.trim().length === 0) return false;
         return true;
       }));
     return { ...defaults, ...requestValues, ...raw };
@@ -1741,10 +1711,10 @@
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !isYue2) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !isYue2) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request) request.language = language;
         if (selected.task === 'gen') {
-          if (isYue2) {
+          if (usesYue2Request) {
             request.lyrics = lyrics.trim();
           } else {
             const resolvedText = requestText();
@@ -2229,7 +2199,7 @@
           <span>{selectedId ? tr('studio.estimatedVram', { value: selected?.min_vram_gb || '?' }) : tr('studio.vram')}</span>
         </div>
 
-        {#if selectedId && (selected.install_packages || []).length && !isYue2}
+        {#if selectedId && (selected.install_packages || []).length && !replacesGenericControls.packageButtons}
           <div class="studio-package-buttons" aria-label="Model format">
             {#each studioPackageSlots(selected) as slot}
               {@const choice = slot.choice}
@@ -2288,126 +2258,23 @@
         {/if}
 
         {#if selected.task === 'gen'}
-          {#if isYue2}
-            <div class="model-form yue2-form">
-              <label for="lyrics">{tr('request.lyrics')} <span>{tr('voice.required')}</span></label>
-              <textarea id="lyrics" rows="5" bind:value={lyrics} required aria-required="true"
-                placeholder="[Verse]&#10;...&#10;[Chorus]&#10;..."></textarea>
-
-              <div class="field-grid">
-                <div>
-                  <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
-                  <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
-                </div>
-                {#each yue2ComponentSpecs as spec}
-                  <div>
-                    <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
-                    <select id={'param-' + spec.name} value={String(advancedValues[spec.name] ?? '')}
-                      on:change={(event) => setParameterValue(spec, event.currentTarget.value)}>
-                      {#each spec.choices || [] as choice}<option value={choice}>{choice}</option>{/each}
-                    </select>
-                    {#if localizedParameterText(spec, 'info', tr)}<small>{localizedParameterText(spec, 'info', tr)}</small>{/if}
-                  </div>
-                {/each}
-              </div>
-
-              <div class="parameter-grid">
-                {#each yue2CoreSpecs as spec}
-                  <div class:wide={spec.type === 'text'}>
-                    <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
-                    {#if spec.type === 'choice'}
-                      <select id={'param-' + spec.name} value={String(advancedValues[spec.name] ?? '')}
-                        on:change={(event) => setParameterValue(spec, event.currentTarget.value)}>
-                        {#each spec.choices || [] as choice}<option value={choice}>{choice}</option>{/each}
-                      </select>
-                    {:else if spec.type === 'slider'}
-                      <div class="range">
-                        <input id={'param-' + spec.name} type="range" min={spec.minimum} max={spec.maximum} step={spec.step}
-                          value={Number(advancedValues[spec.name] ?? spec.default)}
-                          on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
-                        <output>{String(advancedValues[spec.name])}</output>
-                      </div>
-                    {:else}
-                      <input id={'param-' + spec.name} type={spec.type === 'number' ? 'number' : 'text'}
-                        min={spec.minimum} max={spec.maximum} step={spec.step}
-                        value={String(advancedValues[spec.name] ?? '')}
-                        placeholder={localizedParameterText(spec, 'placeholder', tr)}
-                        on:input={(event) => setParameterValue(spec,
-                          spec.type === 'number' ? event.currentTarget.valueAsNumber : event.currentTarget.value)} />
-                    {/if}
-                    {#if localizedParameterText(spec, 'info', tr)}<small>{localizedParameterText(spec, 'info', tr)}</small>{/if}
-                  </div>
-                {/each}
-              </div>
-
-              <details>
-                <summary>Yue2 ABC conditioning <span>{yue2AbcSpecs.length}</span></summary>
-                <div class="parameter-grid">
-                  {#each yue2AbcSpecs as spec}
-                    <div class:wide={spec.type === 'text'}>
-                      <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
-                      {#if spec.name === 'abc'}
-                        <textarea id={'param-' + spec.name} rows="4"
-                          value={String(advancedValues[spec.name] ?? '')}
-                          placeholder={localizedParameterText(spec, 'placeholder', tr)}
-                          on:input={(event) => setParameterValue(spec, event.currentTarget.value)}></textarea>
-                      {:else}
-                        <input id={'param-' + spec.name} type="text"
-                          value={String(advancedValues[spec.name] ?? '')}
-                          placeholder={localizedParameterText(spec, 'placeholder', tr)}
-                          on:input={(event) => setParameterValue(spec, event.currentTarget.value)} />
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              </details>
-
-              <details>
-                <summary>Yue2 semantic sampling <span>{yue2SemanticSpecs.length}</span></summary>
-                <div class="parameter-grid">
-                  {#each yue2SemanticSpecs as spec}
-                    <div>
-                      <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
-                      {#if spec.type === 'slider'}
-                        <div class="range">
-                          <input id={'param-' + spec.name} type="range" min={spec.minimum} max={spec.maximum} step={spec.step}
-                            value={Number(advancedValues[spec.name] ?? spec.default)}
-                            on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
-                          <output>{String(advancedValues[spec.name])}</output>
-                        </div>
-                      {:else}
-                        <input id={'param-' + spec.name} type="number" min={spec.minimum} max={spec.maximum} step={spec.step}
-                          value={String(advancedValues[spec.name] ?? '')}
-                          on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              </details>
-
-              <details>
-                <summary>Yue2 ABC planner sampling <span>{yue2PlannerSpecs.length}</span></summary>
-                <div class="parameter-grid">
-                  {#each yue2PlannerSpecs as spec}
-                    <div>
-                      <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
-                      {#if spec.type === 'slider'}
-                        <div class="range">
-                          <input id={'param-' + spec.name} type="range" min={spec.minimum} max={spec.maximum} step={spec.step}
-                            value={Number(advancedValues[spec.name] ?? spec.default)}
-                            on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
-                          <output>{String(advancedValues[spec.name])}</output>
-                        </div>
-                      {:else}
-                        <input id={'param-' + spec.name} type="number" min={spec.minimum} max={spec.maximum} step={spec.step}
-                          value={String(advancedValues[spec.name] ?? '')}
-                          on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              </details>
-            </div>
+          {#if modelStudioPanel}
+            <svelte:component
+              this={modelStudioPanel}
+              bind:lyrics
+              bind:seed
+              {paramSpecs}
+              {advancedValues}
+              catalogEntries={activeCatalog}
+              {loadedModels}
+              {server}
+              modelPathFor={selectedModelPath}
+              sessionOptionsFor={mergedSessionOptions}
+              refreshModels={refresh}
+              {log}
+              {tr}
+              {localizedParameterText}
+              {setParameterValue} />
           {:else}
             <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
             <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
@@ -2435,13 +2302,13 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !isYue2}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language}
             <div>
               <label for="language">{tr('request.language')} <span>{tr('request.autoLanguage')}</span></label>
               <input id="language" bind:value={language} placeholder="auto" />
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !isYue2}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
@@ -2453,7 +2320,7 @@
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
             </div>
           {/if}
-          {#if selected.task === 'gen' && !isYue2}
+          {#if selected.task === 'gen' && !replacesGenericControls.duration}
             <div>
               <label for="duration">{tr('request.duration')}{#if allowsAutoDuration} <span>{tr('request.autoDuration')}</span>{/if}</label>
               <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
@@ -2623,7 +2490,7 @@
           </div>
         {/if}
 
-        {#if paramSpecs.length && !isYue2}
+        {#if paramSpecs.length && !replacesGenericControls.params}
           <details>
             <summary>{tr('options.modelParameters')} <span>{paramSpecs.length}</span></summary>
             <div class="parameter-grid">
@@ -2664,7 +2531,7 @@
           </details>
         {/if}
 
-        {#if !isYue2}
+        {#if !replacesGenericControls.advancedJson}
           <details>
             <summary>{tr('options.additional')} <span>JSON</span></summary>
             <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
