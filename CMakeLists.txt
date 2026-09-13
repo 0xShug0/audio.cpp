@@ -1421,9 +1421,13 @@ audiocpp_add_model(yue2
 
 audiocpp_add_model(sheetsage2
     SOURCES
+        src/models/sheetsage/audio_frontend.cpp
+        src/models/sheetsage/processing.cpp
         src/models/sheetsage/runtime.cpp
         src/models/sheetsage/session.cpp
     INCLUDES
+        engine/models/sheetsage/audio_frontend.h
+        engine/models/sheetsage/processing.h
         engine/models/sheetsage/types.h
         engine/models/sheetsage/runtime.h
         engine/models/sheetsage/session.h
@@ -2314,6 +2318,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
+
+        if(sheetsage2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(sheetsage_audio_frontend_test tests/unittests/test_sheetsage_audio_frontend.cpp)
+            add_test(NAME sheetsage_audio_frontend_test COMMAND sheetsage_audio_frontend_test --log)
+            add_engine_unittest(sheetsage_processing_test tests/unittests/test_sheetsage_processing.cpp)
+            add_test(NAME sheetsage_processing_test COMMAND sheetsage_processing_test --log)
+        endif()
 
         add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
         add_test(NAME midi_file_test COMMAND midi_file_test)

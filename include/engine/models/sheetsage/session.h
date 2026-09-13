@@ -3,6 +3,7 @@
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/models/sheetsage/runtime.h"
+#include "engine/models/sheetsage/audio_frontend.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
@@ -20,6 +21,7 @@ struct SheetSage2Assets {
     engine::audio::SparseMelFilterbank mel_filterbank;
     std::vector<float> mel_mean;
     std::vector<float> mel_std;
+    std::vector<float> stft_window;
 };
 
 std::shared_ptr<const SheetSage2Assets> load_sheetsage2_assets(const std::filesystem::path & model_path);
@@ -47,6 +49,7 @@ private:
     std::shared_ptr<const SheetSage2Assets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
     Mert2EncoderRuntime encoder_;
+    SheetSage2AudioFrontend audio_frontend_;
     SheetSage2DecoderRuntime decoder_;
 };
 

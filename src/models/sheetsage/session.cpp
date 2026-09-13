@@ -1,7 +1,7 @@
 #include "engine/models/sheetsage/session.h"
+#include "engine/models/sheetsage/processing.h"
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/model_spec/package.h"
@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -50,18 +49,6 @@ constexpr std::array<const char *, 8> kPromptNames = {
     "melody_full",
 };
 
-constexpr std::array<const char *, 23> kStructureLabels = {
-    "silence", "intro", "outro", "verse", "chorus", "bridge", "pre-chorus", "post-chorus",
-    "interlude", "fade-out", "loop", "rap", "preshot", "irregular", "instrumental",
-    "intro and verse", "pre-chorus and chorus", "verse and pre-chorus", "solo", "theme",
-    "development", "variation", "pre-outro",
-};
-
-constexpr std::array<int, 24> kDurationTemplates = {
-    1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64,
-    96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096,
-};
-
 struct SheetSage2Tokenizer {
     int64_t audio_seconds = 300;
     int64_t sos = 1;
@@ -78,7 +65,7 @@ struct SheetSage2Tokenizer {
     int64_t eighth_start = meter_end;
     int64_t eighth_end = eighth_start + 256;
     int64_t structure_start = eighth_end;
-    int64_t structure_end = structure_start + static_cast<int64_t>(kStructureLabels.size());
+    int64_t structure_end = structure_start + sheetsage2_structure_label_count();
     int64_t key_start = structure_end;
     int64_t key_end = key_start + 24;
     int64_t majmin_chord_start = key_end;
@@ -88,7 +75,7 @@ struct SheetSage2Tokenizer {
     int64_t pitch_start = full_chord_end;
     int64_t pitch_end = pitch_start + 256;
     int64_t duration_start = pitch_end;
-    int64_t duration_end = duration_start + static_cast<int64_t>(kDurationTemplates.size());
+    int64_t duration_end = duration_start + sheetsage2_duration_bin_count();
     int64_t vocab_size = duration_end;
 
     explicit SheetSage2Tokenizer(int64_t seconds) : audio_seconds(std::max<int64_t>(1, seconds)) {
@@ -98,7 +85,7 @@ struct SheetSage2Tokenizer {
         eighth_start = meter_end;
         eighth_end = eighth_start + 256;
         structure_start = eighth_end;
-        structure_end = structure_start + static_cast<int64_t>(kStructureLabels.size());
+        structure_end = structure_start + sheetsage2_structure_label_count();
         key_start = structure_end;
         key_end = key_start + 24;
         majmin_chord_start = key_end;
@@ -108,7 +95,7 @@ struct SheetSage2Tokenizer {
         pitch_start = full_chord_end;
         pitch_end = pitch_start + 256;
         duration_start = pitch_end;
-        duration_end = duration_start + static_cast<int64_t>(kDurationTemplates.size());
+        duration_end = duration_start + sheetsage2_duration_bin_count();
         vocab_size = duration_end;
     }
 };
@@ -136,29 +123,6 @@ struct SheetSage2GrammarState {
         RhythmAfterMeter,
         MelodyAfterPitch,
     } incomplete = Incomplete::None;
-};
-
-struct SheetSage2Event {
-    int64_t subbeat = 0;
-    int64_t source_subbeat = 0;
-    int64_t global_subbeat = 0;
-    int window_index = 0;
-    float window_start = 0.0F;
-    float time = 0.0F;
-    std::optional<float> timestamp;
-    std::optional<std::pair<int, int>> meter;
-    std::optional<int64_t> eighth_position;
-    std::optional<std::string> structure;
-    std::optional<std::string> key;
-    std::optional<std::string> chord;
-    std::vector<std::pair<int, int>> notes;
-    std::vector<float> note_end_times;
-    std::vector<int32_t> timestamp_tokens;
-    std::vector<int32_t> rhythm_tokens;
-    std::vector<int32_t> structure_tokens;
-    std::vector<int32_t> key_tokens;
-    std::vector<int32_t> chord_tokens;
-    std::vector<int32_t> melody_tokens;
 };
 
 struct SheetSage2Window {
@@ -456,30 +420,35 @@ std::vector<SheetSage2Event> decode_events(
                 event.rhythm_tokens.push_back(static_cast<int32_t>(token));
             } else if (type == SheetSage2TokenType::Structure) {
                 const int64_t index = token - tokenizer.structure_start;
-                event.structure = kStructureLabels[static_cast<size_t>(std::clamp<int64_t>(
-                    index,
-                    0,
-                    static_cast<int64_t>(kStructureLabels.size() - 1)))];
+                event.structure = sheetsage2_structure_label(index);
                 event.structure_tokens.push_back(static_cast<int32_t>(token));
             } else if (type == SheetSage2TokenType::Key) {
-                static constexpr std::array<const char *, 12> keys = {"C", "^C", "D", "^D", "E", "F", "^F", "G", "^G", "A", "^A", "B"};
                 const int64_t index = token - tokenizer.key_start;
-                event.key = std::string(keys[static_cast<size_t>(index % 12)]) + (index >= 12 ? "m" : "");
+                event.key = sheetsage2_key_label(index);
                 event.key_tokens.push_back(static_cast<int32_t>(token));
             } else if (type == SheetSage2TokenType::Chord) {
-                event.chord = "chord";
+                if (token >= tokenizer.full_chord_start && token < tokenizer.full_chord_end) {
+                    const int64_t index = token - tokenizer.full_chord_start;
+                    event.chord = sheetsage2_chord_label(true, index);
+                } else {
+                    const int64_t index = token - tokenizer.majmin_chord_start;
+                    event.chord = sheetsage2_chord_label(false, index);
+                }
                 event.chord_tokens.push_back(static_cast<int32_t>(token));
             } else if (type == SheetSage2TokenType::Pitch) {
                 const int pitch_id = static_cast<int>(token - tokenizer.pitch_start);
-                int duration = 4;
+                int duration_bin = 0;
                 event.melody_tokens.push_back(static_cast<int32_t>(token));
                 if (pos + 1 < tokens.size() && token_type(tokenizer, tokens[pos + 1]) == SheetSage2TokenType::Duration) {
                     const int64_t bin = tokens[pos + 1] - tokenizer.duration_start;
-                    duration = kDurationTemplates[static_cast<size_t>(std::clamp<int64_t>(bin, 0, static_cast<int64_t>(kDurationTemplates.size() - 1)))];
+                    duration_bin = static_cast<int>(std::clamp<int64_t>(
+                        bin,
+                        0,
+                        sheetsage2_duration_bin_count() - 1));
                     event.melody_tokens.push_back(tokens[pos + 1]);
                     ++pos;
                 }
-                event.notes.push_back({pitch_id % 128, duration});
+                event.notes.push_back(sheetsage2_note_from_pitch_duration(pitch_id, duration_bin));
             }
             ++pos;
         }
@@ -775,134 +744,13 @@ std::vector<SheetSage2Event> stitched_window_events(
         event.note_end_times.clear();
         event.note_end_times.reserve(event.notes.size());
         for (const auto & note : event.notes) {
-            const double local_end = time_lookup(event.subbeat + note.second);
+            const double local_end = time_lookup(event.subbeat + note.duration_steps);
             const double end_time = std::min(song_duration, std::max(abs_time + 0.04, window.start + local_end));
             event.note_end_times.push_back(static_cast<float>(end_time));
         }
         accepted.push_back(std::move(event));
     }
     return accepted;
-}
-
-std::string abc_pitch(int midi) {
-    static constexpr std::array<const char *, 12> names = {"C", "^C", "D", "^D", "E", "F", "^F", "G", "^G", "A", "^A", "B"};
-    int octave = midi / 12 - 1;
-    std::string out = names[static_cast<size_t>(midi % 12)];
-    if (octave >= 5) {
-        std::transform(out.begin(), out.end(), out.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        for (int i = 0; i < octave - 5; ++i) {
-            out.push_back('\'');
-        }
-    } else {
-        for (int i = 0; i < 4 - octave; ++i) {
-            out.push_back(',');
-        }
-    }
-    return out;
-}
-
-std::string abc_duration(int steps) {
-    const int units = std::max(1, (steps + 1) / 2);
-    return units == 1 ? std::string{} : std::to_string(units);
-}
-
-std::string events_to_abc(const std::vector<SheetSage2Event> & events) {
-    std::pair<int, int> meter{4, 4};
-    std::string key = "C";
-    for (const auto & event : events) {
-        if (event.meter.has_value()) {
-            meter = *event.meter;
-            break;
-        }
-    }
-    for (const auto & event : events) {
-        if (event.key.has_value()) {
-            key = *event.key;
-            break;
-        }
-    }
-    std::ostringstream out;
-    out << "X:1\n"
-        << "T:SheetSage2 transcription\n"
-        << "M:" << meter.first << "/" << meter.second << "\n"
-        << "L:1/16\n"
-        << "Q:1/4=120\n"
-        << "K:" << key << "\n"
-        << "V:1 name=\"Melody\"\n";
-    int note_count = 0;
-    for (const auto & event : events) {
-        for (const auto & note : event.notes) {
-            out << abc_pitch(note.first) << abc_duration(note.second);
-            ++note_count;
-            out << (note_count % 8 == 0 ? "\n" : " ");
-        }
-    }
-    if (note_count == 0) {
-        out << "z4\n";
-    } else if (note_count % 8 != 0) {
-        out << "\n";
-    }
-    return out.str();
-}
-
-std::string events_json(const std::vector<SheetSage2Event> & events) {
-    const auto write_i32_array = [](std::ostringstream & out, const std::vector<int32_t> & values) {
-        out << "[";
-        for (size_t i = 0; i < values.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            out << values[i];
-        }
-        out << "]";
-    };
-    std::ostringstream out;
-    out << "{\"events\":[";
-    for (size_t i = 0; i < events.size(); ++i) {
-        if (i != 0) {
-            out << ",";
-        }
-        const auto & event = events[i];
-        out << "{\"subbeat\":" << event.subbeat
-            << ",\"time\":" << event.time
-            << ",\"window_index\":" << event.window_index
-            << ",\"source_subbeat\":" << event.source_subbeat
-            << ",\"global_subbeat\":" << event.global_subbeat
-            << ",\"tokens_by_field\":{";
-        bool wrote = false;
-        const auto write_field = [&](const char * name, const std::vector<int32_t> & values) {
-            if (values.empty()) {
-                return;
-            }
-            if (wrote) {
-                out << ",";
-            }
-            wrote = true;
-            out << "\"" << name << "\":";
-            write_i32_array(out, values);
-        };
-        write_field("timestamp", event.timestamp_tokens);
-        write_field("rhythm", event.rhythm_tokens);
-        write_field("structure", event.structure_tokens);
-        write_field("key", event.key_tokens);
-        write_field("chord", event.chord_tokens);
-        write_field("melody", event.melody_tokens);
-        out << "},\"notes\":[";
-        for (size_t n = 0; n < event.notes.size(); ++n) {
-            if (n != 0) {
-                out << ",";
-            }
-            out << "{\"pitch\":" << event.notes[n].first
-                << ",\"duration_steps\":" << event.notes[n].second;
-            if (n < event.note_end_times.size()) {
-                out << ",\"end_time\":" << event.note_end_times[n];
-            }
-            out << "}";
-        }
-        out << "]}";
-    }
-    out << "]}";
-    return out.str();
 }
 
 std::vector<float> prepare_normalized_mel(
@@ -922,10 +770,9 @@ std::vector<float> prepare_normalized_mel(
         engine::audio::STFTPadMode::Reflect,
         engine::audio::STFTFamily::Default,
     };
-    const auto & window = engine::audio::get_cached_stft_window(stft_config);
     auto magnitude = engine::audio::STFT().compute_magnitude(
         waveform,
-        window,
+        assets.stft_window,
         1,
         target_samples,
         stft_config,
@@ -1058,6 +905,7 @@ std::shared_ptr<const SheetSage2Assets> load_sheetsage2_assets(const std::filesy
         {assets->config.encoder_hidden_size, assets->config.encoder_hidden_size});
     assets->mel_mean = assets->weights->require_f32("feature_extractor.mel_mean", {assets->config.mel_bins});
     assets->mel_std = assets->weights->require_f32("feature_extractor.mel_std", {assets->config.mel_bins});
+    assets->stft_window = assets->weights->require_f32("feature_extractor.spectrogram.window", {assets->config.win_length});
     assets->mel_filterbank = engine::audio::MelFilterbank().prepare_sparse(
         load_mel_filterbank(*assets->weights, assets->config.n_fft, assets->config.mel_bins));
     return assets;
@@ -1127,13 +975,12 @@ runtime::TaskResult SheetSage2Session::run(const runtime::TaskRequest & request)
     }
 
     const auto frontend_start = Clock::now();
-    const auto waveform = engine::audio::convert_interleaved_audio_to_mono_torchaudio_sinc_hann_resampled(
+    const auto waveform = audio_frontend_.prepare(
         request.audio_input->samples,
         request.audio_input->sample_rate,
         request.audio_input->channels,
         static_cast<int>(assets_->config.sampling_rate),
-        engine::audio::torchaudio_sinc_hann_float32_options(),
-        engine::audio::MonoMixAccumulation::Float64);
+        std::max(1, RuntimeSessionBase::options().backend.threads));
     if (static_cast<int64_t>(waveform.size()) <= assets_->config.n_fft) {
         throw std::runtime_error("SheetSage2 input audio is too short for the audio frontend");
     }
@@ -1224,7 +1071,9 @@ runtime::TaskResult SheetSage2Session::run(const runtime::TaskRequest & request)
     engine::debug::timing_log_scalar("sheetsage2.decoder.generate_ms", generation_ms);
 
     const auto post_start = Clock::now();
-    const auto abc = events_to_abc(stitched_events);
+    const auto abc = events_to_abc(
+        stitched_events,
+        static_cast<double>(waveform.size()) / static_cast<double>(assets_->config.sampling_rate));
     const auto json = events_json(stitched_events);
     engine::debug::timing_log_scalar("sheetsage2.postprocess_ms", engine::debug::elapsed_ms(post_start, Clock::now()));
 
