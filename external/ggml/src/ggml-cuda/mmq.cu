@@ -76,7 +76,6 @@ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, con
 
 void ggml_cuda_mul_mat_q(
         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst) {
-    GGML_ASSERT(        src1->type == GGML_TYPE_F32);
     GGML_ASSERT(        dst->type  == GGML_TYPE_F32);
     GGML_ASSERT(!ids || ids->type  == GGML_TYPE_I32); // Optional, used for batched GGML_MUL_MAT_ID.
 
@@ -84,6 +83,11 @@ void ggml_cuda_mul_mat_q(
 
     cudaStream_t stream = ctx.stream();
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const bool use_nvfp4_f16_activation =
+        blackwell_mma_available(cc) &&
+        src0->type == GGML_TYPE_NVFP4 &&
+        src1->type == GGML_TYPE_F16 &&
+        ggml_get_op_params_i32(dst, 1) == GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION;
 
     const size_t ts_src0 = ggml_type_size(src0->type);
     const size_t ts_src1 = ggml_type_size(src1->type);
@@ -93,10 +97,11 @@ void ggml_cuda_mul_mat_q(
     GGML_ASSERT(        nb10       == ts_src1);
     GGML_ASSERT(        nb0        == ts_dst);
     GGML_ASSERT(!ids || ids->nb[0] == ggml_type_size(ids->type));
+    GGML_ASSERT(src1->type == GGML_TYPE_F32 || use_nvfp4_f16_activation);
 
-    const char  * src0_d = (const char  *) src0->data;
-    const float * src1_d = (const float *) src1->data;
-    float       *  dst_d = (float       *)  dst->data;
+    const char * src0_d = (const char *) src0->data;
+    const void * src1_d = (const void *) src1->data;
+    float      * dst_d  = (float      *) dst->data;
 
     // If src0 is a temporary compute buffer, clear any potential padding.
     if (ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_COMPUTE) {
@@ -133,13 +138,16 @@ void ggml_cuda_mul_mat_q(
             const int64_t s11 = src1->nb[1] / ts_src1;
             const int64_t s12 = src1->nb[2] / ts_src1;
             const int64_t s13 = src1->nb[3] / ts_src1;
-            if (use_native_fp4) {
+            if (use_nvfp4_f16_activation) {
+                quantize_mmq_nvfp4_f16_cuda((const half *) src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
+                                            ne11, ne12, ne13, stream);
+            } else if (use_native_fp4) {
                 static_assert(sizeof(block_fp4_mmq) == 4 * sizeof(block_q8_1));
-                quantize_mmq_fp4_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
+                quantize_mmq_fp4_cuda((const float *) src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
                                         ne11, ne12, ne13, stream);
 
             } else {
-                quantize_mmq_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
+                quantize_mmq_q8_1_cuda((const float *) src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
                                        ne11, ne12, ne13, stream);
             }
             CUDA_CHECK(cudaGetLastError());
@@ -196,11 +204,14 @@ void ggml_cuda_mul_mat_q(
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[3] / ts_src1;
 
-        if (use_native_fp4) {
-            quantize_mmq_fp4_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
+        if (use_nvfp4_f16_activation) {
+            quantize_mmq_nvfp4_f16_cuda((const half *) src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
+                                    ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
+        } else if (use_native_fp4) {
+            quantize_mmq_fp4_cuda((const float *) src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
                                     ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         } else {
-            quantize_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
+            quantize_mmq_q8_1_cuda((const float *) src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
                                    ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         }
         CUDA_CHECK(cudaGetLastError());

@@ -18,6 +18,7 @@
 #include "ggml-cuda/conv2d.cuh"
 #include "ggml-cuda/conv2d-dw.cuh"
 #include "ggml-cuda/conv2d-transpose.cuh"
+#include "ggml-cuda/conv3d.cuh"
 #include "ggml-cuda/convert.cuh"
 #include "ggml-cuda/count-equal.cuh"
 #include "ggml-cuda/cpy.cuh"
@@ -1842,32 +1843,65 @@ static void ggml_cuda_op_mul_mat_cublas(
                         CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 #endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
         } else {
-            ggml_cuda_pool_alloc<half> dst_f16(ctx.pool(id), row_diff*src1_ncols);
+            const bool tile_f16_output =
+                ggml_get_op_params_i32(dst, 1) == GGML_MUL_MAT_LOWERING_CUDA_TILE_F16_ACCUM_OUTPUT &&
+                ldc == row_diff;
+            ggml_cuda_pool_alloc<half> dst_f16(ctx.pool(id));
 
             const half alpha_f16 = 1.0f;
             const half beta_f16 = 0.0f;
 
+            if (tile_f16_output) {
+                constexpr int64_t max_scratch_elements = 64ll * 1024ll * 1024ll;
+                const int64_t col_tile = std::max<int64_t>(1, std::min<int64_t>(src1_ncols, max_scratch_elements / row_diff));
+                dst_f16.alloc(row_diff * col_tile);
+                const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(GGML_TYPE_F16);
+                for (int64_t col = 0; col < src1_ncols; col += col_tile) {
+                    const int64_t current_cols = std::min<int64_t>(col_tile, src1_ncols - col);
 #if defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
-            GGML_UNUSED_VARS(alpha_f16, beta_f16);
-            ggml_hipblaslt_gemm(ctx, stream,
-                    row_diff, src1_ncols, ne10,
-                    src0_ptr,      CUDA_R_16F, ne00, 0,
-                    src1_ptr,      CUDA_R_16F, ne10, 0,
-                    dst_f16.get(), CUDA_R_16F, ldc,  0,
-                    1);
+                    GGML_UNUSED_VARS(alpha_f16, beta_f16);
+                    ggml_hipblaslt_gemm(ctx, stream,
+                            row_diff, current_cols, ne10,
+                            src0_ptr,                 CUDA_R_16F, ne00, 0,
+                            src1_ptr + col * ne10,    CUDA_R_16F, ne10, 0,
+                            dst_f16.get(),            CUDA_R_16F, row_diff,  0,
+                            1);
 #else
-            CUBLAS_CHECK(
-                cublasGemmEx(ctx.cublas_handle(id), CUBLAS_OP_T, CUBLAS_OP_N,
+                    CUBLAS_CHECK(
+                        cublasGemmEx(ctx.cublas_handle(id), CUBLAS_OP_T, CUBLAS_OP_N,
+                                row_diff, current_cols, ne10,
+                                &alpha_f16, src0_ptr,                 CUDA_R_16F, ne00,
+                                            src1_ptr + col * ne10,    CUDA_R_16F, ne10,
+                                &beta_f16,  dst_f16.get(),            CUDA_R_16F, row_diff,
+                                CUBLAS_COMPUTE_16F,
+                                CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+#endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+                    to_fp32_cuda(dst_f16.get(), dst_dd_i + col * ldc, row_diff * current_cols, stream);
+                }
+            } else {
+                dst_f16.alloc(row_diff*src1_ncols);
+#if defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
+                GGML_UNUSED_VARS(alpha_f16, beta_f16);
+                ggml_hipblaslt_gemm(ctx, stream,
                         row_diff, src1_ncols, ne10,
-                        &alpha_f16, src0_ptr,      CUDA_R_16F, ne00,
-                                    src1_ptr,      CUDA_R_16F, ne10,
-                        &beta_f16,  dst_f16.get(), CUDA_R_16F, ldc,
-                        CUBLAS_COMPUTE_16F,
-                        CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                        src0_ptr,      CUDA_R_16F, ne00, 0,
+                        src1_ptr,      CUDA_R_16F, ne10, 0,
+                        dst_f16.get(), CUDA_R_16F, ldc,  0,
+                        1);
+#else
+                CUBLAS_CHECK(
+                    cublasGemmEx(ctx.cublas_handle(id), CUBLAS_OP_T, CUBLAS_OP_N,
+                            row_diff, src1_ncols, ne10,
+                            &alpha_f16, src0_ptr,      CUDA_R_16F, ne00,
+                                        src1_ptr,      CUDA_R_16F, ne10,
+                            &beta_f16,  dst_f16.get(), CUDA_R_16F, ldc,
+                            CUBLAS_COMPUTE_16F,
+                            CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 #endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
 
-            const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(GGML_TYPE_F16);
-            to_fp32_cuda(dst_f16.get(), dst_dd_i, row_diff*src1_ncols, stream);
+                const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(GGML_TYPE_F16);
+                to_fp32_cuda(dst_f16.get(), dst_dd_i, row_diff*src1_ncols, stream);
+            }
         }
     } else {
         ggml_cuda_pool_alloc<float> src0_ddq_as_f32(ctx.pool(id));
@@ -2719,11 +2753,15 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
     bool use_mul_mat_f     = !ggml_is_quantized(src0->type)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+    const int device_cc = ggml_cuda_info().devices[ctx.device].cc;
+    const bool use_nvfp4_f16_mmq = !split && src0->type == GGML_TYPE_NVFP4 && src1->type == GGML_TYPE_F16 &&
+        dst->type == GGML_TYPE_F32 && blackwell_mma_available(device_cc) &&
+        ggml_get_op_params_i32(dst, 1) == GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION;
     bool use_mul_mat_vec_q = ggml_is_quantized(src0->type) && !bad_padding_clear
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
         && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
     bool use_mul_mat_q     = ggml_is_quantized(src0->type) && !bad_padding_clear
-        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+        && (src1->type == GGML_TYPE_F32 || use_nvfp4_f16_mmq) && dst->type == GGML_TYPE_F32;
 
     bool any_gpus_with_slow_fp16 = false;
 
@@ -3114,6 +3152,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_CONCAT:
             ggml_cuda_op_concat(ctx, dst);
             break;
+        case GGML_OP_ROPE_INTERLEAVED_PAIRS:
+            ggml_cuda_op_rope_interleaved_pairs(ctx, dst);
+            break;
         case GGML_OP_UPSCALE:
             ggml_cuda_op_upscale(ctx, dst);
             break;
@@ -3137,6 +3178,15 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_RMS_NORM:
             ggml_cuda_op_rms_norm(ctx, dst);
+            break;
+        case GGML_OP_RMS_NORM_CHANNELS:
+            ggml_cuda_op_rms_norm_channels(ctx, dst);
+            break;
+        case GGML_OP_RMS_NORM_CHANNELS_SILU:
+            ggml_cuda_op_rms_norm_channels_silu(ctx, dst);
+            break;
+        case GGML_OP_RMS_NORM_CHANNELS_ADD_BIAS_SILU:
+            ggml_cuda_op_rms_norm_channels_add_bias_silu(ctx, dst);
             break;
         case GGML_OP_RMS_NORM_BACK:
             ggml_cuda_op_rms_norm_back(ctx, dst);
@@ -3211,6 +3261,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_CONV_2D:
             ggml_cuda_op_conv2d(ctx, dst);
+            break;
+        case GGML_OP_CONV_3D_CONCAT_PAD_SPATIAL_GEMM:
+            ggml_cuda_op_conv3d_concat_pad_spatial_gemm(ctx, dst);
             break;
         case GGML_OP_CONV_2D_DW:
             ggml_cuda_op_conv2d_dw(ctx, dst);
@@ -5586,6 +5639,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             break;
         case GGML_OP_NORM:
         case GGML_OP_RMS_NORM:
+        case GGML_OP_RMS_NORM_CHANNELS:
+        case GGML_OP_RMS_NORM_CHANNELS_SILU:
+        case GGML_OP_RMS_NORM_CHANNELS_ADD_BIAS_SILU:
         case GGML_OP_L2_NORM:
             return true;
         case GGML_OP_RMS_NORM_BACK:
@@ -5648,6 +5704,11 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_ROPE_BACK: {
             return op->src[0]->nb[0] == ggml_type_size(op->src[0]->type) && ggml_is_contiguous_2(op->src[0]);
         }
+        case GGML_OP_ROPE_INTERLEAVED_PAIRS:
+            return op->src[0]->type == op->type &&
+                   op->src[1]->type == op->type &&
+                   op->src[2]->type == GGML_TYPE_F32 &&
+                   op->src[3]->type == GGML_TYPE_F32;
         case GGML_OP_IM2COL:
         case GGML_OP_IM2COL_FAST_1D:
         case GGML_OP_IM2COL_3D:
@@ -5656,6 +5717,14 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_CONV_TRANSPOSE_2D:
         case GGML_OP_POOL_2D:
             return true;
+        case GGML_OP_CONV_3D_CONCAT_PAD_SPATIAL_GEMM:
+            return op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[1]->type == GGML_TYPE_F32 &&
+                   op->src[2]->type == GGML_TYPE_F32 &&
+                   (op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_F32) &&
+                   ggml_is_contiguous(op->src[0]) &&
+                   ggml_is_contiguous(op->src[1]) &&
+                   ggml_is_contiguous(op->src[2]);
         case GGML_OP_COL2IM_1D:
             return ggml_is_contiguous(op->src[0]) &&
                    (op->src[0]->type == GGML_TYPE_F32 ||
