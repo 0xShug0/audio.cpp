@@ -250,7 +250,11 @@ void apply_batched_static_rope(
     for (int64_t batch = 0; batch < q.shape.dims[0]; ++batch) {
         auto q_row = SliceModule({0, batch, 1}).build(ctx, q);
         auto k_row = SliceModule({0, batch, 1}).build(ctx, k);
-        const auto pos_row = SliceModule({0, batch, 1}).build(ctx, positions);
+        auto pos_row = SliceModule({0, batch, 1}).build(ctx, positions);
+        if (ctx.backend_type == core::BackendType::Vulkan) {
+            // Vulkan RoPE cannot address a position view at a non-aligned byte offset.
+            pos_row = core::ensure_backend_addressable_layout(ctx, pos_row);
+        }
         q_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, q_row, pos_row, rope_factors));
         k_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, k_row, pos_row, rope_factors));
     }
