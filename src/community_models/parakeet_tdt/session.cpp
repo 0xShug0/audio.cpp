@@ -345,14 +345,47 @@ void ParakeetTDTOfflineSession::prepare(const runtime::SessionPreparationRequest
     int64_t capacity_samples = request.audio->max_input_samples;
     int capacity_channels = request.audio->channels;
     int capacity_sample_rate = request.audio->sample_rate;
-    if (offline_mode_ == "long_form" ||
-        (offline_mode_ == "auto" &&
-         request.audio->max_input_samples / std::max(request.audio->channels, 1) >
-             auto_full_context_max_samples_)) {
+
+    // Mirror the dispatch in run(). vad and fixed take a bounded-window path
+    // whatever offline_mode says, so sizing the graph from offline_mode alone
+    // leaves prepare() and run() disagreeing: a long clip with
+    // audio_chunk_mode=vad gets a graph built for the whole recording and
+    // fails the encoder's relative-position ceiling before a chunk is cut.
+    const auto chunk_mode = engine::audio::parse_audio_chunk_mode(request.options);
+    const bool bounded_windows =
+        chunk_mode == engine::audio::AudioChunkMode::Vad ||
+        chunk_mode == engine::audio::AudioChunkMode::Fixed ||
+        // run() rejects quiet_energy outright. Size it bounded so prepare() does
+        // not pre-empt that with a ceiling error about input run() never encodes.
+        chunk_mode == engine::audio::AudioChunkMode::QuietEnergy ||
+        (chunk_mode == engine::audio::AudioChunkMode::Auto &&
+         (offline_mode_ == "long_form" ||
+          (offline_mode_ == "auto" &&
+           request.audio->max_input_samples / std::max(request.audio->channels, 1) >
+               auto_full_context_max_samples_)));
+
+    if (bounded_windows) {
         capacity_samples =
             left_context_samples_ + center_samples_ + right_context_samples_;
         capacity_channels = 1;
         capacity_sample_rate = assets_->config.frontend.sample_rate;
+
+        // A vad window is capped at audio_chunk_duration_sec, which is free to
+        // exceed the long-form window: the contexts default to 14s in total and
+        // the chunk duration is settable well past that.
+        if (chunk_mode == engine::audio::AudioChunkMode::Vad) {
+            auto chunk_seconds =
+                engine::audio::parse_audio_chunk_seconds_override(request.options);
+            if (!chunk_seconds.has_value()) {
+                chunk_seconds =
+                    engine::audio::parse_audio_chunk_seconds_override(this->options().options);
+            }
+            if (chunk_seconds.has_value() && *chunk_seconds > 0.0F) {
+                capacity_samples = std::max(
+                    capacity_samples,
+                    seconds_to_samples(*chunk_seconds, capacity_sample_rate));
+            }
+        }
     }
     const int64_t frames = frontend_frames_for_samples(
         capacity_samples,
