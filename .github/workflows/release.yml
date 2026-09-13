@@ -596,6 +596,7 @@ jobs:
       - windows-cpu-portable
       - windows-vulkan
       - windows-cuda
+      - linux-cuda-colab
     if: >-
       ${{
         always() &&
@@ -637,13 +638,6 @@ jobs:
           cd assets
           for d in */; do
             name="${d%/}"
-            case "$name" in
-              *cuda12.8-colab*)
-                echo "Skipping optional ${name}"
-                rm -rf "$d"
-                continue
-                ;;
-            esac
             echo "Packing ${name}"
             case "$name" in
               *windows*)
