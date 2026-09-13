@@ -101,12 +101,16 @@ option(AUDIOCPP_STATIC_ESPEAK "Build and statically link GPL-3.0-or-later eSpeak
 option(AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER
     "Build native model-manager tools and server download/install support"
     OFF)
+include("${CMAKE_CURRENT_SOURCE_DIR}/app/server/server_frontends.cmake")
 option(AUDIOCPP_USE_SYSTEM_OPENSSL
     "Use system OpenSSL for native model management instead of bundled BoringSSL"
     OFF)
-if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+audiocpp_server_frontends_use_library(audiocpp_cpp_httplib AUDIOCPP_SERVER_FRONTENDS_USE_CPP_HTTPLIB)
+if (AUDIOCPP_USE_SYSTEM_OPENSSL AND NOT AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER AND NOT AUDIOCPP_SERVER_FRONTENDS_USE_CPP_HTTPLIB)
     message(FATAL_ERROR
-        "AUDIOCPP_USE_SYSTEM_OPENSSL requires AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON")
+        "AUDIOCPP_USE_SYSTEM_OPENSSL requires AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON "
+        "or AUDIOCPP_BUILD_SERVER_FRONTENDS=ON with AUDIOCPP_SERVER_FRONTENDS_DIR set "
+        "and a frontend module that uses cpp-httplib")
 endif()
 option(ENGINE_ENABLE_CPU_ALL_VARIANTS
     "Build CPU backends as dynamic libraries with per-ISA variants (for Docker/portable builds)"
@@ -1923,8 +1927,10 @@ target_include_directories(cjson_vendor PUBLIC
 # builds do not configure an HTTP/TLS dependency. When enabled, package specs
 # remain embedded so the standalone manager and managed WebUI do not require a
 # source checkout or an external model_specs directory.
-if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER OR AUDIOCPP_SERVER_FRONTENDS_USE_CPP_HTTPLIB)
     add_subdirectory(external/cpp-httplib)
+endif()
+if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     add_library(audiocpp_package_manager STATIC
         src/framework/package_manager/manager.cpp
         src/framework/io/json.cpp
@@ -2251,6 +2257,7 @@ add_executable(audiocpp_server
     app/server/main.cpp
     app/server/base64.cpp
     app/server/config.cpp
+    app/server/frontend.cpp
     app/server/http.cpp
     app/server/model_memory.cpp
     app/server/multipart.cpp
@@ -2266,6 +2273,7 @@ target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
 if(AUDIOCPP_STATIC_ESPEAK)
     audiocpp_stage_espeak(audiocpp_server)
 endif()
+audiocpp_configure_server_frontends(audiocpp_server)
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_sources(audiocpp_server PRIVATE app/server/model_installer.cpp)
     target_link_libraries(audiocpp_server PRIVATE audiocpp_package_manager)

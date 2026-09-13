@@ -1058,6 +1058,7 @@ ServerState::ServerState(
             models_root_);
     }
 #endif
+    register_static_server_frontends(frontends_);
     load_models();
     if (config_.idle_unload_ms > 0) {
         idle_unload_thread_ = std::thread(&ServerState::idle_unload_loop, this);
@@ -1076,6 +1077,35 @@ ServerState::~ServerState() {
 }
 
 HttpResponse ServerState::handle(const HttpRequest & request) {
+    return handle_request(request, true);
+}
+
+HttpResponse ServerState::forward_to_core(const HttpRequest & request) {
+    return handle_request(request, false);
+}
+
+std::filesystem::path ServerState::resolve_request_path(const std::filesystem::path & path) const {
+    return resolve_path(request_base_, path);
+}
+
+std::filesystem::path ServerState::make_frontend_temp_path(std::string_view filename) {
+    std::lock_guard<std::mutex> lock(upload_root_mutex_);
+    if (upload_root_.empty()) {
+        upload_root_ = std::filesystem::temp_directory_path() /
+            ("audiocpp-server-" + std::to_string(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count()));
+        std::filesystem::create_directories(upload_root_);
+    }
+    const auto id = next_upload_id_.fetch_add(1);
+    return upload_root_ / (std::to_string(id) + "-" + safe_upload_name(std::string(filename)));
+}
+
+std::unique_ptr<ServerFrontendListener> ServerState::make_frontend_listener(std::string_view name) const {
+    return frontends_.make_listener(name);
+}
+
+HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_frontends) {
   HttpResponse response;
   const std::string allowed_origin = get_allowed_origin(request);
   try {
@@ -1085,6 +1115,9 @@ HttpResponse ServerState::handle(const HttpRequest & request) {
         response.content_type = "text/plain";
         response.headers["Access-Control-Allow-Headers"] = "*";
         response.headers["Access-Control-Allow-Methods"] = "GET, POST";
+    }
+    else if (use_frontends && !frontends_.empty()) {
+        response = frontends_.handle(*this, request);
     }
     else if (request.method == "GET" && (request.path == "/" || request.path == "/index.html")) {
         response = handle_ui_asset();
@@ -2523,8 +2556,19 @@ HttpResponse ServerState::handle_transcription(const HttpRequest & request, bool
     if (const auto it = request.headers.find("content-type"); it != request.headers.end()) {
         content_type = it->second;
     }
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[SERVER_TRANSCRIPTION_DEBUG] core.transcription.enter content_type=" + content_type +
+            " body_bytes=" + std::to_string(request.body.size()));
+    }
     if (const auto boundary = extract_multipart_boundary(content_type)) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message("[SERVER_TRANSCRIPTION_DEBUG] core.transcription.route multipart");
+        }
         return handle_transcription_multipart(request.body, *boundary, detail);
+    }
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message("[SERVER_TRANSCRIPTION_DEBUG] core.transcription.route json");
     }
     return handle_transcription_json(request.body, detail);
 }
@@ -2552,6 +2596,11 @@ HttpResponse ServerState::handle_transcription_json(const std::string & body_tex
 HttpResponse ServerState::handle_transcription_multipart(
     const std::string & body_text, const std::string & boundary, bool detail) {
     const auto parts = parse_multipart_body(body_text, boundary);
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(
+            "[SERVER_TRANSCRIPTION_DEBUG] core.multipart.parts count=" + std::to_string(parts.size()) +
+            " body_bytes=" + std::to_string(body_text.size()));
+    }
     log_multipart_request_summary_if_enabled(config_, parts);
 
     const MultipartPart * file_part = nullptr;
@@ -2592,12 +2641,20 @@ HttpResponse ServerState::handle_transcription_multipart(
         }
     }
     if (file_part == nullptr || file_part->data.empty()) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message("[SERVER_TRANSCRIPTION_DEBUG] core.multipart.missing_file");
+        }
         throw std::runtime_error("multipart transcription request requires a non-empty 'file' field");
     }
     if (model_id.empty()) {
         throw std::runtime_error("multipart transcription request requires a 'model' field");
     }
     if (!is_wav_upload_filename(file_part->filename)) {
+        if (engine::debug::log_enabled()) {
+            engine::debug::log_message(
+                "[SERVER_TRANSCRIPTION_DEBUG] core.multipart.reject_non_wav filename=" + file_part->filename +
+                " bytes=" + std::to_string(file_part->data.size()));
+        }
         return error_response(
             400,
             "only WAV audio uploads are currently supported for transcription; MP3 support is planned",

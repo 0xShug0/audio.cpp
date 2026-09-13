@@ -13,6 +13,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -44,6 +46,25 @@ bool has_arg(int argc, char ** argv, const std::string & name) {
     return false;
 }
 
+std::vector<std::string> arg_values(int argc, char ** argv, const std::string & name) {
+    std::vector<std::string> out;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (argv[i] == name) {
+            out.emplace_back(argv[i + 1]);
+            ++i;
+        }
+    }
+    return out;
+}
+
+std::pair<std::string, std::string> parse_key_value_arg(const std::string & text, const std::string & name) {
+    const auto eq = text.find('=');
+    if (eq == std::string::npos || eq == 0) {
+        throw std::runtime_error(name + " must be key=value");
+    }
+    return {text.substr(0, eq), text.substr(eq + 1)};
+}
+
 std::filesystem::path executable_directory(const char * argv0) {
     if (argv0 == nullptr || *argv0 == '\0') {
         return std::filesystem::current_path();
@@ -66,6 +87,7 @@ void print_help() {
         << "                [--device <id>] [--list-devices] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
+        << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
         << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
@@ -89,6 +111,8 @@ void print_help() {
         << "                                   least this many MiB free after the load; default 0\n"
         << "                                   (guard disabled)\n"
         << "  --voice-dir <directory>          override the shared reference voice library directory\n"
+        << "  --frontend-listener <name>       opt-in frontend transport listener, e.g. https or websocket\n"
+        << "  --frontend-option key=value      listener-specific option; may be repeated\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
         << "                                   requests from any origin for trusted local demos only\n"
         << "\n"
@@ -217,6 +241,16 @@ int main(int argc, char ** argv) {
         if (const auto voice_dir = arg_value(argc, argv, "--voice-dir")) {
             config.voice_dir = std::filesystem::path(*voice_dir);
         }
+        if (const auto frontend_listener = arg_value(argc, argv, "--frontend-listener")) {
+            config.frontend_listener = *frontend_listener;
+        }
+        for (const auto & option : arg_values(argc, argv, "--frontend-option")) {
+            auto [key, value] = parse_key_value_arg(option, "--frontend-option");
+            config.frontend_options[std::move(key)] = std::move(value);
+        }
+        if (config.frontend_listener.empty() && !config.frontend_options.empty()) {
+            throw std::runtime_error("--frontend-option requires --frontend-listener");
+        }
         if (!(config.cors_origins == "*" || config.cors_origins == "")) {
             throw std::runtime_error("--cors-origins must be '*' (allow all origins) or '' (disabled)");
         }
@@ -241,7 +275,23 @@ int main(int argc, char ** argv) {
             config,
             std::filesystem::current_path(),
             ui_resource_anchor);
-        minitts::server::serve_http(config.host, config.port, state, shutdown_requested, config.max_request_body_bytes);
+        if (!config.frontend_listener.empty()) {
+            auto listener = state.make_frontend_listener(config.frontend_listener);
+            listener->serve(
+                config.host,
+                config.port,
+                state,
+                shutdown_requested,
+                config.max_request_body_bytes,
+                config.frontend_options);
+        } else {
+            minitts::server::serve_http(
+                config.host,
+                config.port,
+                state,
+                shutdown_requested,
+                config.max_request_body_bytes);
+        }
         return 0;
     } catch (const std::exception & ex) {
         std::cerr << "audiocpp_server failed: " << ex.what() << "\n";
