@@ -278,11 +278,14 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
     for (const auto & item : models->as_array()) {
         ServerModelConfig model;
         model.id = engine::io::json::require_string(item, "id");
-        model.path = resolve_path(base, engine::io::json::require_string(item, "path"));
+        model.family = engine::io::json::require_string(item, "family");
+        const auto raw_path = engine::io::json::require_string(item, "path");
+        model.path = model.family == "builtin_audio_utils"
+            ? std::filesystem::path(raw_path)
+            : resolve_path(base, raw_path);
         if (const auto * value = item.find("model_spec_override")) {
             model.model_spec_override = resolve_path(base, value->as_string());
         }
-        model.family = engine::io::json::require_string(item, "family");
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);

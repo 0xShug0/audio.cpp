@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "family": "builtin_audio_utils",
+  "display_name": "Built-in Audio Utilities",
+  "description": "Built-in denoise, enhancement, and audio super-resolution utilities packaged with audio.cpp.",
+  "category": "audio_tools",
+  "status": "experimental",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "cpu",
+      "cuda"
+    ]
+  },
+  "capabilities": {
+    "s2s": [
+      "audio_enhancement"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [],
+    "load": []
+  },
+  "packages": [],
+  "dependencies": [],
+  "ui": {
+    "tags": [],
+    "docs": [
+      "docs/audio_tools.md"
+    ]
+  },
+  "sources": []
+}

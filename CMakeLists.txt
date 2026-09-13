@@ -1697,6 +1697,15 @@ audiocpp_add_model(audiosr
         engine::models::audiosr::make_audiosr_loader
 )
 
+audiocpp_add_model(builtin_audio_utils
+    SOURCES
+        src/models/builtin_audio_utils/session.cpp
+    INCLUDES
+        engine/models/builtin_audio_utils/session.h
+    LOADERS
+        engine::models::builtin_audio_utils::make_builtin_audio_utils_loader
+)
+
 audiocpp_add_model(controlfoley
     SOURCES
         src/models/controlfoley/assets.cpp

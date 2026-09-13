@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <array>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -94,7 +95,71 @@ bool is_gtcrn_model(std::string_view model) {
     return model == "gtcrn" || model == "gtcrn_dns3" || model == "gtcrn_vctk" || model == "gtcrn_streaming";
 }
 
+constexpr std::array<BuiltinAudioUtilityInfo, 8> kBuiltinUtilities{{
+    {"deepfilternet2", BuiltinAudioUtilityKind::Denoise, 48000, 48000},
+    {"rnnoise", BuiltinAudioUtilityKind::Denoise, 48000, 48000},
+    {"zipenhancer", BuiltinAudioUtilityKind::Denoise, 16000, 16000},
+    {"gtcrn", BuiltinAudioUtilityKind::Denoise, 16000, 16000},
+    {"gtcrn_streaming", BuiltinAudioUtilityKind::Denoise, 16000, 16000},
+    {"gtcrn_dns3", BuiltinAudioUtilityKind::Denoise, 16000, 16000},
+    {"gtcrn_vctk", BuiltinAudioUtilityKind::Denoise, 16000, 16000},
+    {"flashsr", BuiltinAudioUtilityKind::SuperResolve, 16000, 48000},
+}};
+
 }  // namespace
+
+std::filesystem::path default_audio_utility_assets_root() {
+    return std::filesystem::path("assets/framework/audio_utilities");
+}
+
+std::vector<BuiltinAudioUtilityInfo> list_builtin_audio_utilities() {
+    return std::vector<BuiltinAudioUtilityInfo>(kBuiltinUtilities.begin(), kBuiltinUtilities.end());
+}
+
+std::optional<BuiltinAudioUtilityInfo> find_builtin_audio_utility(std::string_view model) {
+    const auto it = std::find_if(
+        kBuiltinUtilities.begin(),
+        kBuiltinUtilities.end(),
+        [&](const BuiltinAudioUtilityInfo & info) {
+            return info.id == model;
+        });
+    if (it == kBuiltinUtilities.end()) {
+        return std::nullopt;
+    }
+    return *it;
+}
+
+BuiltinAudioUtilityInfo require_builtin_audio_utility(std::string_view model) {
+    if (auto info = find_builtin_audio_utility(model)) {
+        return *info;
+    }
+    throw_unsupported_model(
+        "builtin_audio_utils",
+        model,
+        "deepfilternet2, rnnoise, zipenhancer, gtcrn, gtcrn_streaming, gtcrn_dns3, gtcrn_vctk, flashsr");
+}
+
+std::filesystem::path resolve_builtin_audio_utility_asset(
+    const AudioUtilityPaths & paths,
+    std::string_view model) {
+    (void) require_builtin_audio_utility(model);
+    if (model == "deepfilternet2") {
+        return require_model_dir(paths, "deepfilternet2");
+    }
+    if (model == "rnnoise") {
+        return require_model_dir(paths, "rnnoise") / "rnnoise10Gb_15.safetensors";
+    }
+    if (model == "zipenhancer") {
+        return require_model_dir(paths, "zipenhancer");
+    }
+    if (is_gtcrn_model(model)) {
+        return gtcrn_checkpoint_for(paths, model);
+    }
+    if (model == "flashsr") {
+        return require_model_dir(paths, "flashsr");
+    }
+    throw_unsupported_model("builtin_audio_utils", model, "");
+}
 
 void denoise_file(
     const std::filesystem::path & input_wav,
