@@ -10381,8 +10381,7 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
         } break;
     case GGML_OP_COL2IM_1D:
         {
-            const uint32_t total = (uint32_t)(dst->ne[0] * dst->ne[1]);
-            elements = { total, 1, 1 };
+            elements = { uint32_t(dst->ne[0]), uint32_t(dst->ne[1]), 1 };
         } break;
     case GGML_OP_IM2COL_3D:
         {

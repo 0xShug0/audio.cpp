@@ -19,31 +19,29 @@ layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
 layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 
 void main() {
-    uint idx = gl_GlobalInvocationID.x;
-    const uint total = p.T_out * p.OC;
-    const uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    const uint t_out = gl_GlobalInvocationID.x;
+    const uint oc = gl_GlobalInvocationID.y;
 
-    while (idx < total) {
-        const int t_out = int(idx % p.T_out);
-        const int oc = int(idx / p.T_out);
-        const int t_abs = t_out + p.p0;
-
-        int t_in_min = (t_abs - int(p.K) + p.s0) / p.s0;
-        if (t_in_min < 0) {
-            t_in_min = 0;
-        }
-        int t_in_max = t_abs / p.s0;
-        if (t_in_max >= int(p.T_in)) {
-            t_in_max = int(p.T_in) - 1;
-        }
-
-        float sum = 0.0;
-        for (int t_in = t_in_min; t_in <= t_in_max; ++t_in) {
-            const int k = t_abs - t_in * p.s0;
-            sum += float(data_a[uint(oc) * p.K + uint(k) + uint(t_in) * p.K_OC]);
-        }
-
-        data_d[idx] = D_TYPE(sum);
-        idx += stride;
+    if (t_out >= p.T_out || oc >= p.OC) {
+        return;
     }
+
+    const int t_abs = int(t_out) + p.p0;
+
+    int t_in_min = (t_abs - int(p.K) + p.s0) / p.s0;
+    if (t_in_min < 0) {
+        t_in_min = 0;
+    }
+    int t_in_max = t_abs / p.s0;
+    if (t_in_max >= int(p.T_in)) {
+        t_in_max = int(p.T_in) - 1;
+    }
+
+    float sum = 0.0;
+    for (int t_in = t_in_min; t_in <= t_in_max; ++t_in) {
+        const int k = t_abs - t_in * p.s0;
+        sum += float(data_a[uint(oc) * p.K + uint(k) + uint(t_in) * p.K_OC]);
+    }
+
+    data_d[t_out + oc * p.T_out] = D_TYPE(sum);
 }
