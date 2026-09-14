@@ -411,6 +411,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/model.cpp
     src/framework/model_spec/metadata.cpp
     src/framework/runtime/session.cpp
+    src/framework/runtime/task_vocabulary.cpp
     src/framework/runtime/artifacts.cpp
     src/framework/runtime/cache.cpp
     src/framework/runtime/graph_executor.cpp
@@ -2538,6 +2539,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME transformer_kv_ring_test COMMAND transformer_kv_ring_test)
 
         add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
+        # So the test can read the specs this repository ships, rather than a
+        # copy of them staged somewhere.
+        target_compile_definitions(model_spec_system_test
+            PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME model_spec_system_test COMMAND model_spec_system_test)
     endif()

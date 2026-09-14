@@ -1,4 +1,5 @@
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/task_vocabulary.h"
 #include "engine/framework/text/chunking.h"
 
 #include <algorithm>
@@ -89,35 +90,12 @@ void DiscreteGraphCapacityAdapter::prepare_capacity(int64_t capacity) {
 }
 
 const char * to_string(VoiceTaskKind task) noexcept {
-    switch (task) {
-    case VoiceTaskKind::Vad:
-        return "vad";
-    case VoiceTaskKind::Asr:
-        return "asr";
-    case VoiceTaskKind::Diarization:
-        return "diar";
-    case VoiceTaskKind::SourceSeparation:
-        return "sep";
-    case VoiceTaskKind::AudioGeneration:
-        return "gen";
-    case VoiceTaskKind::Tts:
-        return "tts";
-    case VoiceTaskKind::VoiceCloning:
-        return "clon";
-    case VoiceTaskKind::VoiceConversion:
-        return "vc";
-    case VoiceTaskKind::SpeechToSpeech:
-        return "s2s";
-    case VoiceTaskKind::Alignment:
-        return "align";
-    case VoiceTaskKind::VoiceDesign:
-        return "vdes";
-    case VoiceTaskKind::SpeakerRecognition:
-        return "spk";
-    case VoiceTaskKind::Svc:
-        return "svc";
-    case VoiceTaskKind::Midi:
-        return "midi";
+    std::size_t count = 0;
+    const auto * entries = task_vocabulary(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (entries[i].kind == task) {
+            return entries[i].token.data();
+        }
     }
     return "unknown";
 }
@@ -156,49 +134,27 @@ const char * to_string(GraphCapacityMode mode) noexcept {
 }
 
 VoiceTaskKind parse_voice_task_kind(const std::string & value) {
-    if (value == "vad") {
-        return VoiceTaskKind::Vad;
+    std::size_t count = 0;
+    const auto * entries = task_vocabulary(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (entries[i].token == value) {
+            return entries[i].kind;
+        }
     }
-    if (value == "asr") {
-        return VoiceTaskKind::Asr;
+    // The list in this message was a fifth copy of the vocabulary; it is built
+    // from the table now, so a task kind added later cannot leave behind an
+    // error message that says it does not exist.
+    std::string expected;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (i != 0) {
+            expected += ", ";
+        }
+        if (i + 1 == count) {
+            expected += "or ";
+        }
+        expected.append(entries[i].token);
     }
-    if (value == "diar") {
-        return VoiceTaskKind::Diarization;
-    }
-    if (value == "sep") {
-        return VoiceTaskKind::SourceSeparation;
-    }
-    if (value == "gen") {
-        return VoiceTaskKind::AudioGeneration;
-    }
-    if (value == "tts") {
-        return VoiceTaskKind::Tts;
-    }
-    if (value == "clon") {
-        return VoiceTaskKind::VoiceCloning;
-    }
-    if (value == "vc") {
-        return VoiceTaskKind::VoiceConversion;
-    }
-    if (value == "s2s") {
-        return VoiceTaskKind::SpeechToSpeech;
-    }
-    if (value == "align") {
-        return VoiceTaskKind::Alignment;
-    }
-    if (value == "vdes") {
-        return VoiceTaskKind::VoiceDesign;
-    }
-    if (value == "spk") {
-        return VoiceTaskKind::SpeakerRecognition;
-    }
-    if (value == "svc") {
-        return VoiceTaskKind::Svc;
-    }
-    if (value == "midi") {
-        return VoiceTaskKind::Midi;
-    }
-    throw std::runtime_error("unsupported task: " + value + " (expected vad, asr, diar, sep, gen, tts, clon, vc, s2s, align, vdes, spk, svc, or midi)");
+    throw std::runtime_error("unsupported task: " + value + " (expected " + expected + ")");
 }
 
 RunMode parse_run_mode(const std::string & value) {

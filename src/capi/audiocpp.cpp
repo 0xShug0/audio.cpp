@@ -13,6 +13,8 @@
 
 #include "audiocpp.h"
 
+#include "engine/framework/runtime/task_vocabulary.h"
+
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/runtime/model.h"
@@ -584,6 +586,46 @@ audiocpp_request * audiocpp_request_create(void) {
 
 void audiocpp_request_free(audiocpp_request * request) {
     delete request;
+}
+
+size_t audiocpp_task_count(void) {
+    size_t count = 0;
+    (void) rt::task_vocabulary(count);
+    return count;
+}
+
+const char * audiocpp_task_name(size_t index) {
+    size_t count = 0;
+    const auto * entries = rt::task_vocabulary(count);
+    if (index >= count) {
+        return nullptr;
+    }
+    /* Every token is a string literal in the table, so this outlives any call
+     * and the caller never owns it. */
+    return entries[index].token.data();
+}
+
+const char * audiocpp_task_from_spec_name(const char * spec_task) {
+    if (spec_task == nullptr) {
+        return nullptr;
+    }
+    const auto token = rt::task_token_for_spec_name(spec_task);
+    return token.empty() ? nullptr : token.data();
+}
+
+audiocpp_status audiocpp_request_set_text_language(audiocpp_request * request, const char * language) {
+    if (request == nullptr) {
+        return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request must be non-null");
+    }
+    return guard([&] {
+        /* Deliberately not touching request->request.options: that is the whole
+         * difference between this and set_text's language argument. */
+        if (!request->request.text_input.has_value()) {
+            request->request.text_input = rt::Transcript{};
+        }
+        request->request.text_input->language = language != nullptr ? language : "";
+        return AUDIOCPP_OK;
+    });
 }
 
 audiocpp_status audiocpp_request_set_text(audiocpp_request * request, const char * text, const char * language) {
