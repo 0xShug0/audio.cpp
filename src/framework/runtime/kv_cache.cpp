@@ -122,6 +122,15 @@ TransformerKVCache::TransformerKVCache(
     }
 }
 
+void TransformerKVCache::clear_on_backend() {
+    for (auto & layer : layers_) {
+        ggml_backend_tensor_memset(layer.key_tensor.tensor, 0, 0, ggml_nbytes(layer.key_tensor.tensor));
+        ggml_backend_tensor_memset(layer.value_tensor.tensor, 0, 0, ggml_nbytes(layer.value_tensor.tensor));
+    }
+    current_end_ = 0;
+    valid_steps_ = 0;
+}
+
 void TransformerKVCache::import_state(const TransformerKVState & state) {
     current_end_ = state.current_end;
     if (layers_.empty()) {

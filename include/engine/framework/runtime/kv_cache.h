@@ -55,6 +55,7 @@ public:
         TransformerKVCacheOptions options);
 
     void import_state(const TransformerKVState & state);
+    void clear_on_backend();
     TransformerKVState export_state() const;
 
     void advance_after_direct_append(int64_t steps);
