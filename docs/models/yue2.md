@@ -149,3 +149,4 @@ Inline ABC can be passed with `--request-option abc=<abc text>`.
 | `--session-option yue2.ar_decode_graph_arena_mb=<n>` | MiB integer >= 1 | `1536` | AR one-token decode graph arena size. |
 | `--session-option yue2.nar_graph_arena_mb=<n>` | MiB integer >= 1 | `6144` | NAR acoustic flow graph arena size. |
 | `--session-option yue2.vae_graph_arena_mb=<n>` | MiB integer >= 1 | `1536` | VAE decode graph arena size. |
+| `--session-option yue2.attention=<mode>` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |

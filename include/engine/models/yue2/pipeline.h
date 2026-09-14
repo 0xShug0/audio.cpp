@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/codecs/oobleck_audio_vae_runtime.h"
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/yue2/assets.h"
@@ -25,7 +26,8 @@ public:
         size_t ar_prefill_graph_arena_bytes,
         size_t ar_decode_graph_arena_bytes,
         size_t nar_graph_arena_bytes,
-        size_t vae_graph_arena_bytes);
+        size_t vae_graph_arena_bytes,
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto);
     ~Yue2PipelineRuntime();
 
     Yue2Plan plan(const Yue2Request & request);

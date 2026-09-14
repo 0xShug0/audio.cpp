@@ -274,12 +274,13 @@ core::TensorValue mixed_attention(
     const core::TensorValue & v,
     const core::TensorValue * attention_mask,
     const Yue2ModelConfig & config,
-    core::BackendType backend_type) {
+    core::BackendType backend_type,
+    bool allow_flash_attention) {
     auto q_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
     auto k_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = engine::modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    if (backend_type != core::BackendType::Cpu) {
+    if (backend_type != core::BackendType::Cpu && allow_flash_attention) {
         auto * flash = ggml_flash_attn_ext(
             ctx.ggml,
             q_heads.tensor,
@@ -292,6 +293,31 @@ core::TensorValue mixed_attention(
         ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
         return core::wrap_tensor(
             flash,
+            core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], config.head_dim}),
+            GGML_TYPE_F32);
+    }
+
+    if (backend_type != core::BackendType::Cpu) {
+        // Eager lowering for GPUs whose flash kernel is missing or slow. K/V
+        // stay grouped: ggml_mul_mat broadcasts the kv heads over the query
+        // heads (ne12 % ne02 == 0), so no F16 repeat is materialized (Vulkan
+        // has no REPEAT kernel for F16 and the copies would dominate anyway).
+        // Layouts (ggml ne order): q {dim, steps, heads, batch},
+        // k {dim, kv_steps, kv_heads, batch}, v^T {kv_steps, dim, kv_heads, batch}.
+        auto * scores = ggml_mul_mat(ctx.ggml, k_heads.tensor, q_heads.tensor);
+        ggml_mul_mat_set_prec(scores, GGML_PREC_F32);
+        auto * attn = ggml_soft_max_ext(
+            ctx.ggml,
+            scores,
+            attention_mask != nullptr ? attention_mask->tensor : nullptr,
+            1.0F / std::sqrt(static_cast<float>(config.head_dim)),
+            0.0F);
+        // v is {dim, kv_heads, kv_steps, batch}; mul_mat wants kv_steps innermost.
+        auto * v_t = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, v.tensor, 1, 2, 0, 3));
+        auto * context = ggml_mul_mat(ctx.ggml, v_t, attn);
+        ggml_mul_mat_set_prec(context, GGML_PREC_F32);
+        return core::wrap_tensor(
+            ggml_permute(ctx.ggml, context, 0, 2, 1, 3),
             core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], config.head_dim}),
             GGML_TYPE_F32);
     }
@@ -340,7 +366,8 @@ core::TensorValue build_cached_nar_layer(
     const core::TensorValue & ar_key,
     const core::TensorValue & ar_value,
     const Yue2ModelConfig & config,
-    core::BackendType backend_type) {
+    core::BackendType backend_type,
+    bool allow_flash_attention) {
     auto norm = engine::modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                     .build(ctx, input, nar_weights.input_norm);
     auto qkv = build_qkv_part(ctx, norm, nar_weights, config);
@@ -354,7 +381,7 @@ core::TensorValue build_cached_nar_layer(
     qkv.v = core::wrap_tensor(ggml_cast(ctx.ggml, qkv.v.tensor, GGML_TYPE_F16), qkv.v.shape, GGML_TYPE_F16);
     auto k = engine::modules::ConcatModule({1}).build(ctx, ar_key, qkv.k);
     auto v = engine::modules::ConcatModule({1}).build(ctx, ar_value, qkv.v);
-    auto context = mixed_attention(ctx, qkv.q, k, v, nullptr, config, backend_type);
+    auto context = mixed_attention(ctx, qkv.q, k, v, nullptr, config, backend_type, allow_flash_attention);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
         ctx,
@@ -376,10 +403,12 @@ struct Yue2NarRuntime::Impl {
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType weight_type,
         size_t weight_context_bytes,
-        size_t graph_arena_bytes)
+        size_t graph_arena_bytes,
+        bool allow_flash_attention)
         : execution(execution),
           assets(std::move(assets)),
-          graph_arena_bytes(graph_arena_bytes) {
+          graph_arena_bytes(graph_arena_bytes),
+          allow_flash_attention(allow_flash_attention) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 NAR runtime requires assets");
         }
@@ -476,7 +505,8 @@ struct Yue2NarRuntime::Impl {
                     ar_keys[static_cast<size_t>(layer)],
                     ar_values[static_cast<size_t>(layer)],
                     config,
-                    owner.execution.backend_type());
+                    owner.execution.backend_type(),
+                    owner.allow_flash_attention);
             }
             hidden = engine::modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                          .build(build, hidden, owner.weights->final_norm);
@@ -717,6 +747,7 @@ struct Yue2NarRuntime::Impl {
     core::ExecutionContext & execution;
     std::shared_ptr<const Yue2Assets> assets;
     size_t graph_arena_bytes = 0;
+    bool allow_flash_attention = true;
     std::shared_ptr<const Yue2NarWeights> weights;
     std::unique_ptr<Graph> graph;
 };
@@ -726,13 +757,15 @@ Yue2NarRuntime::Yue2NarRuntime(
     std::shared_ptr<const Yue2Assets> assets,
     assets::TensorStorageType weight_type,
     size_t weight_context_bytes,
-    size_t graph_arena_bytes)
+    size_t graph_arena_bytes,
+    bool allow_flash_attention)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
           weight_type,
           weight_context_bytes,
-          graph_arena_bytes)) {}
+          graph_arena_bytes,
+          allow_flash_attention)) {}
 
 Yue2NarRuntime::~Yue2NarRuntime() = default;
 
