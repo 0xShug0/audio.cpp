@@ -9,6 +9,7 @@
 
 #include "engine/framework/core/backend.h"
 
+#include "frontend.h"
 #include "http.h"
 
 namespace minitts::server {
@@ -105,6 +106,8 @@ struct ServerConfig {
     // Fleet-wide bounds for incrementally delivered request bodies. The defaults are
     // in LiveIngestLimits; a model entry may override any subset of them.
     LiveIngestLimits live_ingest;
+    std::string frontend_listener;
+    ServerFrontendOptions frontend_options;
     std::optional<std::filesystem::path> model_spec_override;
     // Voice library shared across all TTS models: *.wav files plus a `prompt_text`
     // mapping file (<basename>|<transcript>). A request `voice` name that is not a

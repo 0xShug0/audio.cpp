@@ -1,6 +1,7 @@
 #include "engine/framework/runtime/registry.h"
 
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/audio/utility_api.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/filesystem.h"
@@ -149,7 +150,13 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const std::filesystem::pa
 }
 
 void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
-    if (!engine::io::is_existing_file(request.model_path) && !engine::io::is_existing_directory(request.model_path)) {
+    const bool builtin_audio_utility_id =
+        request.family_hint.has_value() &&
+        *request.family_hint == "builtin_audio_utils" &&
+        engine::audio::find_builtin_audio_utility(request.model_path.generic_string()).has_value();
+    if (!builtin_audio_utility_id &&
+        !engine::io::is_existing_file(request.model_path) &&
+        !engine::io::is_existing_directory(request.model_path)) {
         throw std::runtime_error("model path does not exist: " + request.model_path.string());
     }
     if (request.family_hint.has_value() && !supports_family(*request.family_hint)) {

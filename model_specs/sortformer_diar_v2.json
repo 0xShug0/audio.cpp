@@ -138,9 +138,9 @@
       "precision": "f32",
       "target_directory": "Sortformer-Diar-v2.1-local",
       "files": [
-        "config.json",
-        "processor_config.json",
-        "model.safetensors"
+        "Sortformer-Diar-v2.1-local/config.json",
+        "Sortformer-Diar-v2.1-local/processor_config.json",
+        "Sortformer-Diar-v2.1-local/model.safetensors"
       ],
       "strip_prefix": "Sortformer-Diar-v2.1-local"
     },

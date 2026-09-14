@@ -359,6 +359,16 @@ LinearWeights linear_from_source(
 }
 
 template <typename Store>
+LinearWeights linear_from_transposed_named_source(
+    Store & store,
+    const assets::TensorSource & source,
+    const std::string & weight_name,
+    const std::optional<std::string> & bias_name,
+    assets::TensorStorageType storage_type,
+    int64_t in_features,
+    int64_t out_features);
+
+template <typename Store>
 LinearWeights hf_conv1d_linear_from_source(
     Store & store,
     const assets::TensorSource & source,
@@ -367,7 +377,26 @@ LinearWeights hf_conv1d_linear_from_source(
     int64_t in_features,
     int64_t out_features,
     bool use_bias) {
-    const auto source_weight = source.require_f32(prefix + ".weight", {in_features, out_features});
+    return linear_from_transposed_named_source(
+        store,
+        source,
+        prefix + ".weight",
+        use_bias ? std::optional<std::string>{prefix + ".bias"} : std::nullopt,
+        storage_type,
+        in_features,
+        out_features);
+}
+
+template <typename Store>
+LinearWeights linear_from_transposed_named_source(
+    Store & store,
+    const assets::TensorSource & source,
+    const std::string & weight_name,
+    const std::optional<std::string> & bias_name,
+    assets::TensorStorageType storage_type,
+    int64_t in_features,
+    int64_t out_features) {
+    const auto source_weight = source.require_f32(weight_name, {in_features, out_features});
     std::vector<float> transposed(static_cast<std::size_t>(out_features * in_features));
     for (int64_t in = 0; in < in_features; ++in) {
         for (int64_t out = 0; out < out_features; ++out) {
@@ -380,8 +409,8 @@ LinearWeights hf_conv1d_linear_from_source(
         core::TensorShape::from_dims({out_features, in_features}),
         storage_type,
         std::move(transposed));
-    if (use_bias) {
-        weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_features});
+    if (bias_name.has_value()) {
+        weights.bias = store.load_f32_tensor(source, *bias_name, {out_features});
     }
     return weights;
 }
