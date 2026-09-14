@@ -2982,6 +2982,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             qwen_decoder_packed_projection_test
             tests/unittests/test_qwen_decoder_packed_projections.cpp
         )
+        add_engine_unittest(qwen_chunked_prefill_test tests/unittests/test_qwen_chunked_prefill.cpp)
+        add_test(NAME qwen_chunked_prefill_test COMMAND qwen_chunked_prefill_test)
         add_test(
             NAME qwen_decoder_packed_projection_test
             COMMAND qwen_decoder_packed_projection_test

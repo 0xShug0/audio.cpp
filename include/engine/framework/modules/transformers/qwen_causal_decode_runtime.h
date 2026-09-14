@@ -69,6 +69,11 @@ public:
     QwenCausalPrefillResult prefill_tokens(const std::vector<int32_t> & token_ids);
     QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps);
 
+    // Prefill bounded blocks directly into the token-decode cache on the backend.
+    // No host KV export/import; subsequent decode_token calls continue this state.
+    QwenCausalDecodeStepResult prefill_embeddings_into_cache(
+        const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps);
+
     QwenCausalBatchedPrefillResult prefill_tokens_batched(
         const std::vector<int32_t> & token_ids,
         int64_t batch_size,

@@ -680,7 +680,40 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     const core::TensorValue & cache_value,
     const std::optional<core::TensorValue> & cache_slot,
     const core::TensorValue & attention_mask) const {
+    return build_static_cache_impl(ctx, graph, input, positions, weights, cache_key, cache_value,
+                                   cache_slot, attention_mask, false);
+}
+
+QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_block(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenDecoderLayerWeights & weights,
+    const core::TensorValue & cache_key,
+    const core::TensorValue & cache_value,
+    const std::optional<core::TensorValue> & cache_slot,
+    const core::TensorValue & attention_mask) const {
+    return build_static_cache_impl(ctx, graph, input, positions, weights, cache_key, cache_value,
+                                   cache_slot, attention_mask, true);
+}
+
+QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenDecoderLayerWeights & weights,
+    const core::TensorValue & cache_key,
+    const core::TensorValue & cache_value,
+    const std::optional<core::TensorValue> & cache_slot,
+    const core::TensorValue & attention_mask,
+    bool block) const {
     validate_sequence_input(input, config_.hidden_size, "input");
+    if (block && (input.shape.dims[0] != 1 ||
+        config_.runtime.static_cache.update_mode != QwenDecoderStaticCacheUpdateMode::DirectSetRows)) {
+        throw std::runtime_error("Qwen static-cache blocks require a single sequence and DirectSetRows");
+    }
     const int64_t dim = require_head_dim(config_);
     const int64_t kv_repeats = config_.num_attention_heads / config_.num_key_value_heads;
 
@@ -735,8 +768,10 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
                 ? FastKVSetRowsMode::BackendViewOptimized
                 : FastKVSetRowsMode::Exact,
         });
-        attention_key_cache = set_rows.build(ctx, cache_key, k, *cache_slot);
-        attention_value_cache = set_rows.build(ctx, cache_value, v, *cache_slot);
+        attention_key_cache = block ? set_rows.build_block(ctx, cache_key, k, *cache_slot)
+                                    : set_rows.build(ctx, cache_key, k, *cache_slot);
+        attention_value_cache = block ? set_rows.build_block(ctx, cache_value, v, *cache_slot)
+                                      : set_rows.build(ctx, cache_value, v, *cache_slot);
         if (config_.activation_cast.enabled && config_.activation_cast.after_static_cache_update) {
             attention_key_cache = activation_cast(ctx, attention_key_cache, config_.activation_cast);
             attention_value_cache = activation_cast(ctx, attention_value_cache, config_.activation_cast);
@@ -806,7 +841,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     context = core::reshape_tensor(
         ctx,
         context,
-        core::TensorShape::from_dims({1, 1, config_.num_attention_heads * dim}));
+        core::TensorShape::from_dims({1, block ? input.shape.dims[1] : 1, config_.num_attention_heads * dim}));
 
     auto attn_out = LinearModule(
                         {
