@@ -3,8 +3,6 @@
 #include "engine/framework/modules/packed_linear_weights.h"
 #include "engine/framework/modules/weight_binding.h"
 
-#include <cmath>
-
 namespace engine::models::canary_asr {
 
 std::unique_ptr<CanaryWeights> load_canary_weights(
@@ -41,17 +39,18 @@ std::unique_ptr<CanaryWeights> load_canary_weights(
         w.out_weight = o.weight; w.out_bias = o.bias;
         return w;
     };
-    out->conv0 = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.0",
+    out->subsampling.input_conv = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.0",
         assets::TensorStorageType::F32, 256, 1, 3, 3, true);
-    out->pointwise1 = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.3",
+    out->subsampling.stages.resize(2);
+    out->subsampling.stages[0].pointwise = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.3",
         assets::TensorStorageType::F32, 256, 256, 1, 1, true);
-    out->pointwise2 = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.6",
+    out->subsampling.stages[1].pointwise = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.6",
         assets::TensorStorageType::F32, 256, 256, 1, 1, true);
-    out->depthwise1 = store.load_f32_tensor(source, "encoder.pre_encode.conv.2.weight", {256, 1, 3, 3});
-    out->depthwise1_bias = store.load_f32_tensor(source, "encoder.pre_encode.conv.2.bias", {256});
-    out->depthwise2 = store.load_f32_tensor(source, "encoder.pre_encode.conv.5.weight", {256, 1, 3, 3});
-    out->depthwise2_bias = store.load_f32_tensor(source, "encoder.pre_encode.conv.5.bias", {256});
-    out->subsampling_out = linear("encoder.pre_encode.out");
+    out->subsampling.stages[0].depthwise = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.2",
+        assets::TensorStorageType::F32, 256, 1, 3, 3, true);
+    out->subsampling.stages[1].depthwise = binding::conv2d_from_source(store, source, "encoder.pre_encode.conv.5",
+        assets::TensorStorageType::F32, 256, 1, 3, 3, true);
+    out->subsampling.projection = linear("encoder.pre_encode.out");
     out->encoder_out = linear("encoder_decoder_proj");
     for (int64_t i = 0; i < 17; ++i) {
         const auto p = "encoder.layers." + std::to_string(i);
@@ -73,17 +72,7 @@ std::unique_ptr<CanaryWeights> load_canary_weights(
             store.load_f32_tensor(source, p + ".conv.pointwise_conv2.bias", {512})};
         w.conv.depthwise = binding::depthwise_conv1d_from_source(store, source,
             p + ".conv.depthwise_conv", assets::TensorStorageType::F32, 512, 9, true);
-        const auto gamma = source.require_f32(p + ".conv.batch_norm.weight", {512});
-        const auto beta = source.require_f32(p + ".conv.batch_norm.bias", {512});
-        const auto mean = source.require_f32(p + ".conv.batch_norm.running_mean", {512});
-        const auto variance = source.require_f32(p + ".conv.batch_norm.running_var", {512});
-        std::vector<float> scale(512), bias(512);
-        for (size_t c = 0; c < 512; ++c) {
-            scale[c] = gamma[c] / std::sqrt(variance[c] + 1e-5f);
-            bias[c] = beta[c] - mean[c] * scale[c];
-        }
-        w.conv.depthwise_norm.scale = store.make_from_f32(core::TensorShape::from_dims({512}), assets::TensorStorageType::F32, std::move(scale));
-        w.conv.depthwise_norm.bias = store.make_from_f32(core::TensorShape::from_dims({512}), assets::TensorStorageType::F32, std::move(bias));
+        w.conv.depthwise_norm = binding::batch_norm_eval_from_source(store, source, p + ".conv.batch_norm", 512, 1e-5f);
         w.norm2 = norm(p + ".norm_feed_forward2");
         w.ffn2_fc1 = linear(p + ".feed_forward2.linear1");
         w.ffn2_fc2 = linear(p + ".feed_forward2.linear2");
@@ -96,10 +85,10 @@ std::unique_ptr<CanaryWeights> load_canary_weights(
     out->decoder_norm = norm("transf_decoder._decoder.final_layer_norm");
     for (int64_t i = 0; i < 4; ++i) {
         const auto p = "transf_decoder._decoder.layers." + std::to_string(i);
-        CanaryDecoderLayer w;
-        w.self_norm = norm(p + ".layer_norm_1");
-        w.cross_norm = norm(p + ".layer_norm_2");
-        w.ff_norm = norm(p + ".layer_norm_3");
+        modules::TransformerDecoderBlockWeights w;
+        w.norm1 = norm(p + ".layer_norm_1");
+        w.norm2 = norm(p + ".layer_norm_2");
+        w.norm3 = norm(p + ".layer_norm_3");
         const auto self = p + ".first_sub_layer";
         const auto packed = modules::PackedLinearWeightsBuilder({1024, {
             {self + ".query_net.weight", self + ".query_net.bias", 1024},
@@ -111,8 +100,9 @@ std::unique_ptr<CanaryWeights> load_canary_weights(
         w.self_attention.out_weight = self_out.weight;
         w.self_attention.out_bias = self_out.bias;
         w.cross_attention = attention(p + ".second_sub_layer", false);
-        w.fc1 = linear(p + ".third_sub_layer.dense_in");
-        w.fc2 = linear(p + ".third_sub_layer.dense_out");
+        const auto fc1 = linear(p + ".third_sub_layer.dense_in");
+        const auto fc2 = linear(p + ".third_sub_layer.dense_out");
+        w.feed_forward = {fc1.weight, fc1.bias, fc2.weight, fc2.bias};
         out->decoder.push_back(std::move(w));
     }
     out->head = linear("log_softmax.mlp.layer0");

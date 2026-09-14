@@ -9,6 +9,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/runtime/bounded_static_kv_decode.h"
+#include "engine/framework/runtime/graph_optimizer.h"
 
 #include "ggml-alloc.h"
 
@@ -47,6 +48,13 @@ struct Graph {
         ggml_free(context);
     }
     void allocate() {
+        if (execution.backend_type() == core::BackendType::Cpu) {
+            // Fold explicit parameter repeats into the CPU kernels' native broadcasting.
+            auto options = runtime::graph_optimization_options_for_backend(runtime::GraphOptimizationBackend::Other);
+            options.backend = runtime::GraphOptimizationBackend::Cpu;
+            options.fold_broadcast_repeats = true;
+            runtime::optimize_graph(*graph, options);
+        }
         core::validate_backend_graph_supported(execution.backend(), graph, "Canary");
         if (!ggml_gallocr_alloc_graph(allocator, graph)) {
             throw std::runtime_error("Canary graph allocation failed");
@@ -84,7 +92,7 @@ struct CanaryRuntime::Graphs {
         core::ModuleBuildContext state_ctx{ };
         state_ctx.ggml = state_context.get();
         state_ctx.backend_type = execution.backend_type();
-        features = core::make_tensor(state_ctx, GGML_TYPE_F32, TensorShape::from_dims({1, 1, frames * 8, 128}));
+        features = core::make_tensor(state_ctx, GGML_TYPE_F32, TensorShape::from_dims({1, frames * 8, 128}));
         pos = core::make_tensor(state_ctx, GGML_TYPE_F32, TensorShape::from_dims({1, 2 * frames - 1, 512}));
         mask = core::make_tensor(state_ctx, GGML_TYPE_F32, TensorShape::from_dims({frames, frames}));
         keep = core::make_tensor(state_ctx, GGML_TYPE_I32, TensorShape::from_dims({1, frames}));
@@ -124,60 +132,13 @@ struct CanaryRuntime::Graphs {
         for (auto input : {features, pos, mask, keep, stage1_keep, stage2_keep}) {
             ggml_set_input(input.tensor);
         }
-        auto x = modules::Conv2dModule({1, 256, 3, 3, 2, 2, 1, 1, 1, 1, true}).build(ctx, features, w.conv0);
-        x = modules::ReluModule().build(ctx, x);
-        x = modules::TimeMask4dModule().build(ctx, x, stage1_keep);
-        x = modules::DepthwiseConv2dModule({256, 3, 3, 2, 2, 1, 1, 1, 1, true})
-            .build(ctx, x, {w.depthwise1, w.depthwise1_bias});
-        x = modules::TimeMask4dModule().build(ctx, x, stage2_keep);
-        x = modules::Conv2dModule({256, 256, 1, 1, 1, 1, 0, 0, 1, 1, true}).build(ctx, x, w.pointwise1);
-        x = modules::ReluModule().build(ctx, x);
-        x = modules::TimeMask4dModule().build(ctx, x, stage2_keep);
-        x = modules::DepthwiseConv2dModule({256, 3, 3, 2, 2, 1, 1, 1, 1, true})
-            .build(ctx, x, {w.depthwise2, w.depthwise2_bias});
-        x = modules::TimeMask4dModule().build(ctx, x, keep);
-        x = modules::Conv2dModule({256, 256, 1, 1, 1, 1, 0, 0, 1, 1, true}).build(ctx, x, w.pointwise2);
-        x = modules::ReluModule().build(ctx, x);
-        x = modules::TimeMask4dModule().build(ctx, x, keep);
-        x = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
-        x = core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
-        x = modules::ReshapeModule({TensorShape::from_dims({1, frames, 4096})}).build(ctx, x);
-        x = modules::LinearModule({4096, 512, true}).build(ctx, x, w.subsampling_out);
+        auto x = modules::DepthwiseConvSubsamplingModule({128, 512, 256})
+            .build(ctx, features, w.subsampling, {stage1_keep, stage2_keep, keep});
+        modules::ConformerBlockConfig encoder_config{512, 8, 2048, 9};
+        encoder_config.contiguous_glu_gate = true;
         for (const auto & layer : w.encoder) {
-            auto y = modules::LayerNormModule({512}).build(ctx, x, layer.ffn1_norm);
-            y = modules::LinearModule({512, 2048, true}).build(ctx, y, layer.ffn1_fc1);
-            y = modules::SiluModule().build(ctx, y);
-            y = modules::LinearModule({2048, 512, true}).build(ctx, y, layer.ffn1_fc2);
-            y = core::wrap_tensor(ggml_scale(ctx.ggml, y.tensor, 0.5f), y.shape, GGML_TYPE_F32);
-            x = modules::AddModule().build(ctx, x, y);
-            y = modules::LayerNormModule({512}).build(ctx, x, layer.norm1);
-            y = modules::RelativeSelfAttentionModule({512, 8, true}).build(ctx, y, pos, layer.self_attention, mask, keep);
-            x = modules::AddModule().build(ctx, x, y);
-            y = modules::LayerNormModule({512}).build(ctx, x, layer.conv.norm);
-            y = modules::LinearModule({512, 1024, true}).build(ctx, y, layer.conv.pointwise_in);
-            const auto lhs = modules::SliceModule({2, 0, 512}).build(ctx, y);
-            auto gate = modules::SliceModule({2, 512, 512}).build(ctx, y);
-            // The framework GLU currently passes a strided view to CUDA sigmoid.
-            gate = core::wrap_tensor(ggml_cont(ctx.ggml, gate.tensor), gate.shape, GGML_TYPE_F32);
-            gate = modules::SigmoidModule().build(ctx, gate);
-            y = modules::MulModule().build(ctx, lhs, gate);
-            y = modules::MaskingModule().build(ctx, y, keep);
-            y = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, y);
-            y = modules::DepthwiseConv1dModule({512, 9, 1, 4, 1, true}).build(ctx, y, layer.conv.depthwise);
-            y = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, y);
-            y = core::wrap_tensor(ggml_cont(ctx.ggml, y.tensor), y.shape, GGML_TYPE_F32);
-            y = core::wrap_tensor(ggml_mul(ctx.ggml, y.tensor, layer.conv.depthwise_norm.scale.tensor), y.shape, GGML_TYPE_F32);
-            y = core::wrap_tensor(ggml_add(ctx.ggml, y.tensor, layer.conv.depthwise_norm.bias.tensor), y.shape, GGML_TYPE_F32);
-            y = modules::SiluModule().build(ctx, y);
-            y = modules::LinearModule({512, 512, true}).build(ctx, y, layer.conv.pointwise_out);
-            x = modules::AddModule().build(ctx, x, y);
-            y = modules::LayerNormModule({512}).build(ctx, x, layer.norm2);
-            y = modules::LinearModule({512, 2048, true}).build(ctx, y, layer.ffn2_fc1);
-            y = modules::SiluModule().build(ctx, y);
-            y = modules::LinearModule({2048, 512, true}).build(ctx, y, layer.ffn2_fc2);
-            y = core::wrap_tensor(ggml_scale(ctx.ggml, y.tensor, 0.5f), y.shape, GGML_TYPE_F32);
-            x = modules::AddModule().build(ctx, x, y);
-            x = modules::LayerNormModule({512}).build(ctx, x, layer.final_norm);
+            x = modules::RelativeConformerBlockModule(encoder_config)
+                .build(ctx, x, pos, layer, mask, keep, keep);
         }
         x = modules::LinearModule({512, 1024, true}).build(ctx, x, w.encoder_out);
         modules::AttentionConfig cross_config{1024, 8, true};
@@ -212,25 +173,13 @@ struct CanaryRuntime::Graphs {
         auto p = modules::EmbeddingModule({1024, 1024}).build(ctx, position, w.positions);
         x = modules::AddModule().build(ctx, x, p);
         x = modules::LayerNormModule({1024}).build(ctx, x, w.embedding_norm);
-        modules::AttentionConfig self_config{1024, 8, true};
-        self_config.use_packed_qkv = true;
-        self_config.causal = true;
-        modules::AttentionConfig cross_config{1024, 8, true};
-        cross_config.use_packed_kv = true;
+        modules::TransformerDecoderBlockConfig decoder_config{1024, 8, 4096};
+        decoder_config.activation = modules::FeedForwardActivation::Relu;
+        decoder_config.use_packed_qkv = true;
+        decoder_config.use_packed_kv = true;
         for (size_t i = 0; i < w.decoder.size(); ++i) {
-            const auto & layer = w.decoder[i];
-            auto y = modules::LayerNormModule({1024}).build(ctx, x, layer.self_norm);
-            y = modules::SelfAttentionModule(self_config).build_cached_tail(ctx, y, layer.self_attention,
-                keys[i], values[i], slot, causal_mask).output;
-            x = modules::AddModule().build(ctx, x, y);
-            y = modules::LayerNormModule({1024}).build(ctx, x, layer.cross_norm);
-            y = modules::CrossAttentionModule(cross_config).build_cached(ctx, y, cross[i], layer.cross_attention, memory_mask);
-            x = modules::AddModule().build(ctx, x, y);
-            y = modules::LayerNormModule({1024}).build(ctx, x, layer.ff_norm);
-            y = modules::LinearModule({1024, 4096, true}).build(ctx, y, layer.fc1);
-            y = modules::ReluModule().build(ctx, y);
-            y = modules::LinearModule({4096, 1024, true}).build(ctx, y, layer.fc2);
-            x = modules::AddModule().build(ctx, x, y);
+            x = modules::TransformerDecoderBlockModule(decoder_config).build_cached_tail(ctx, x, w.decoder[i],
+                keys[i], values[i], slot, causal_mask, cross[i], memory_mask);
         }
         x = modules::LayerNormModule({1024}).build(ctx, x, w.decoder_norm);
         logits = modules::LinearModule({1024, 5248, true}).build(ctx, x, w.head);
