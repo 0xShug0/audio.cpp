@@ -103,22 +103,34 @@ function splitLongLine(line: string, budget: number): string[] {
 
   const chunks: string[] = [];
   let current = '';
+  // Whatever whitespace actually followed the last sentence added to `current`.
+  // splitSentences keeps it, and it has to be carried rather than replaced with
+  // a space: sentences in Chinese, Japanese and Korean are adjacent, separated
+  // by a full-width terminator and nothing else. Inserting a space there both
+  // changes the text the model is asked to speak and spends a character of the
+  // budget, so three 20-character sentences stop fitting in two 40-character
+  // chunks and become three requests instead of two.
+  let separator = '';
 
   for (const raw of sentences) {
     const sentence = raw.trimEnd();
     if (!sentence) continue;
+    const trailing = raw.slice(sentence.length);
 
-    if (current && current.length + 1 + sentence.length > room) {
+    if (current && current.length + separator.length + sentence.length > room) {
       chunks.push(prefix + current.trim());
       current = '';
+      separator = '';
     }
     if (sentence.length <= room) {
-      current = current ? `${current} ${sentence}` : sentence;
+      current = current ? `${current}${separator}${sentence}` : sentence;
+      separator = trailing;
       continue;
     }
     if (current) {
       chunks.push(prefix + current.trim());
       current = '';
+      separator = '';
     }
     // No sentence boundary fits, so fall back to word boundaries. Only a token
     // longer than the whole budget is ever cut mid-word.
