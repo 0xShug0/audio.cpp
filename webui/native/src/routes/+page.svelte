@@ -284,6 +284,7 @@
     cosyvoice3: 'CosyVoice3',
     magpie_tts: 'MagpieTTS',
     meanvc2: 'MeanVC2',
+    niagara_asr: 'Niagara ASR',
     personaplex: 'PersonaPlex'
   };
 

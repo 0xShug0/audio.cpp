@@ -27,13 +27,13 @@ REPOS = {
         "repo": "abr-ai/niagara-19m-batch.en",
         "base": "niagara-19m-batch.en",
         "tokenizer": "sentencepiece_256.model",
-        "output": "Niagara-19M-Batch-EN-GGUF/niagara-19m-batch.en.gguf",
+        "output": "Niagara-ASR-GGUF/niagara-19m-batch.en-f32.gguf",
     },
     "38m": {
         "repo": "abr-ai/niagara-38m-batch.en",
         "base": "niagara-38m-batch.en",
         "tokenizer": "sentencepiece_1024.model",
-        "output": "Niagara-38M-Batch-EN-GGUF/niagara-38m-batch.en.gguf",
+        "output": "Niagara-ASR-GGUF/niagara-38m-batch.en-f32.gguf",
     },
 }
 

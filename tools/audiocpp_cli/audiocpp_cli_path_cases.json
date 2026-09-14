@@ -2473,7 +2473,7 @@
       "id": "niagara_asr_paths",
       "coverage": "Niagara ASR offline CPU CTC decode on short and longer Librispeech inputs with session reuse",
       "family": "niagara_asr",
-      "model": "models/Niagara-19M-Batch-EN-GGUF",
+      "model": "models/Niagara-ASR-GGUF/niagara-19m-batch.en-f32.gguf",
       "task": "asr",
       "mode": "offline",
       "outputs": [

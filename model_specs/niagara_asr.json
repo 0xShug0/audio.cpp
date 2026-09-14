@@ -71,7 +71,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "niagara_19m_orig",
+    "recommended_package": "niagara_19m_f32",
     "tags": [
       "ASR",
       "GGUF"
@@ -84,33 +84,33 @@
   },
   "package_defaults": {
     "download": {
-      "kind": "unsupported",
-      "reason": "convert the original ABR Niagara PT2 CPU package with tests/niagara_asr/convert_niagara_asr.py"
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf"
     }
   },
   "packages": [
     {
-      "id": "niagara_19m_orig",
-      "display_name": "Niagara 19M Batch English Original GGUF",
+      "id": "niagara_19m_f32",
+      "display_name": "Niagara 19M Batch English F32 GGUF",
       "default": true,
       "format": "gguf",
-      "precision": "orig",
-      "target_directory": "Niagara-19M-Batch-EN-GGUF",
+      "precision": "f32",
+      "target_directory": "Niagara-ASR-GGUF",
       "files": [
-        "Niagara-19M-Batch-EN-GGUF/niagara-19m-batch.en.gguf"
+        "Niagara-ASR-GGUF/niagara-19m-batch.en-f32.gguf"
       ],
-      "strip_prefix": "Niagara-19M-Batch-EN-GGUF"
+      "strip_prefix": "Niagara-ASR-GGUF"
     },
     {
-      "id": "niagara_38m_orig",
-      "display_name": "Niagara 38M Batch English Original GGUF",
+      "id": "niagara_38m_f32",
+      "display_name": "Niagara 38M Batch English F32 GGUF",
       "format": "gguf",
-      "precision": "orig",
-      "target_directory": "Niagara-38M-Batch-EN-GGUF",
+      "precision": "f32",
+      "target_directory": "Niagara-ASR-GGUF",
       "files": [
-        "Niagara-38M-Batch-EN-GGUF/niagara-38m-batch.en.gguf"
+        "Niagara-ASR-GGUF/niagara-38m-batch.en-f32.gguf"
       ],
-      "strip_prefix": "Niagara-38M-Batch-EN-GGUF"
+      "strip_prefix": "Niagara-ASR-GGUF"
     }
   ],
   "sources": [
