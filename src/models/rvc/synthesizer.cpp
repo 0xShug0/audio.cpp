@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <mutex>
 #include <memory>
 #include <stdexcept>
@@ -27,6 +28,12 @@
 
 namespace engine::models::rvc {
 namespace {
+
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultGraphCtxBytes = 1024ull * 1024ull * 1024ull;
+#else
+constexpr size_t kDefaultGraphCtxBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 using engine::core::TensorShape;
 using engine::core::TensorValue;
@@ -793,7 +800,7 @@ RvcSynthesizerOutput RvcSynthesizer::infer(const RvcSynthesizerInput & input) co
         state_->frames = input.frames;
         state_->feature_dim = input.feature_dim;
         state_->speaker_id = input.speaker_id;
-        state_->graph_ctx = ggml_init({4096ull * 1024ull * 1024ull, nullptr, true});
+        state_->graph_ctx = ggml_init({kDefaultGraphCtxBytes, nullptr, true});
         if (state_->graph_ctx == nullptr) {
             throw std::runtime_error("failed to initialize RVC synthesizer graph context");
         }

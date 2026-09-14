@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -23,7 +24,11 @@ constexpr const char * kFamily = "higgs_audio_stt";
 constexpr size_t kDefaultAudioEncoderGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultTextDecoderPrefillGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultTextDecoderDecodeGraphArenaBytes = 256ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultTextDecoderWeightContextBytes = 1024ull * 1024ull * 1024ull;
+#else
 constexpr size_t kDefaultTextDecoderWeightContextBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 std::shared_ptr<const HiggsAudioSTTAssets> require_assets(std::shared_ptr<const HiggsAudioSTTAssets> assets) {
     if (assets == nullptr) {

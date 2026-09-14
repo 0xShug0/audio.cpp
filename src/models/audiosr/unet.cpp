@@ -16,6 +16,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -38,6 +39,11 @@ constexpr int64_t kUnetGroups = 32;
 constexpr float kUnetNormEps = 1.0e-6F;
 constexpr int64_t kTimeEmbeddingDim = 128;
 constexpr int64_t kTimeHiddenDim = 512;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultWeightStoreBytes = 1024ull * 1024ull * 1024ull;
+#else
+constexpr size_t kDefaultWeightStoreBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -225,7 +231,7 @@ UnetWeights load_weights(
         backend,
         backend_type,
         "audiosr.unet.weights",
-        4096ull * 1024ull * 1024ull);
+        kDefaultWeightStoreBytes);
     const auto & source = *assets.weights;
     const std::string prefix = "model.diffusion_model";
     weights.time0 = binding::linear_from_source(*weights.store, source, prefix + ".time_embed.0", type, kTimeHiddenDim, kTimeEmbeddingDim, true);
