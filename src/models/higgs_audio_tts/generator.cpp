@@ -508,12 +508,6 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     engine::debug::timing_log_scalar("higgs_audio_tts.generator.decode_ms",
                                      engine::debug::elapsed_ms(decode_start, Clock::now()));
     if (!state.generation_done) {
-        // max_tokens bounds AR frames per *chunk*, not per whole request (session.cpp
-        // splits long text into chunks before calling generate() on each), so this
-        // means one chunk's text needed more codec frames than the budget allows,
-        // not that the request as a whole was too long. Denser scripts (see #471,
-        // reported with Arabic text) need more frames per chunk than the same
-        // chunk length would in English.
         throw std::runtime_error(
             "Higgs TTS generation reached max_tokens (" + std::to_string(request.options.max_tokens) +
             ") before EOC for this text chunk; raise it with --max-tokens on the CLI or "
