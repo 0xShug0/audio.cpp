@@ -28,6 +28,41 @@ constexpr TaskVocabularyEntry kVocabulary[] = {
     {VoiceTaskKind::Midi, "midi", {"midi"}, 1},
 };
 
+/// Compile-time exhaustiveness, kept deliberately.
+///
+/// Replacing the hand-written switches with a table lookup gave up something
+/// they provided for free: `-Wswitch` told you when a VoiceTaskKind was added
+/// and not handled. A table cannot, so a new kind would have silently become
+/// `to_string` -> "unknown" and an ABI enumeration that omits it.
+///
+/// This switch has no default and every case falls through to one return, so
+/// adding a kind without adding a row below fails the build the same way it
+/// used to. It carries no data, so it cannot drift from the table -- it only
+/// forces whoever adds a kind to open this file.
+constexpr bool vocabulary_is_exhaustive(VoiceTaskKind kind) {
+    switch (kind) {
+    case VoiceTaskKind::Vad:
+    case VoiceTaskKind::Asr:
+    case VoiceTaskKind::Diarization:
+    case VoiceTaskKind::SourceSeparation:
+    case VoiceTaskKind::AudioGeneration:
+    case VoiceTaskKind::Tts:
+    case VoiceTaskKind::VoiceCloning:
+    case VoiceTaskKind::VoiceConversion:
+    case VoiceTaskKind::SpeechToSpeech:
+    case VoiceTaskKind::Alignment:
+    case VoiceTaskKind::VoiceDesign:
+    case VoiceTaskKind::SpeakerRecognition:
+    case VoiceTaskKind::Svc:
+    case VoiceTaskKind::Midi:
+        return true;
+    }
+    return false;
+}
+
+static_assert(vocabulary_is_exhaustive(VoiceTaskKind::Vad),
+              "every VoiceTaskKind must be listed above and have a row in kVocabulary");
+
 }  // namespace
 
 const TaskVocabularyEntry * task_vocabulary(std::size_t & count) noexcept {
