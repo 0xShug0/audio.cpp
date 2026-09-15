@@ -541,6 +541,13 @@ public:
         }
         ensure_decode_token_graph(required_cache_steps);
         ensure_prefill_token_graph(static_cast<int64_t>(token_ids.size()), true);
+        // The prefill graph only writes the prompt slots; decode attention then
+        // spans every slot with the unused ones masked to -inf. The masked V
+        // rows are still multiplied by the zero weight, so uninitialised F16
+        // that decodes to Inf/NaN makes the logits non-finite (seen on AMD
+        // Vulkan, where fresh device memory is not zeroed). Zero the cache the
+        // way prefill_embeddings_into_cache() and import_state() already do.
+        decode_cache_.clear_on_backend();
         ggml_backend_tensor_set(
             prefill_input_,
             token_ids.data(),
