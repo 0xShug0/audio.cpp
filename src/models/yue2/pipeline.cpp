@@ -287,7 +287,7 @@ public:
         return audio;
     }
 
-    runtime::AudioBuffer run(const Yue2Request & request) {
+    Yue2RunResult run(const Yue2Request & request) {
         if (engine::debug::trace_log_enabled()) {
             std::ostringstream settings;
             settings << "seed=" << request.seed
@@ -333,7 +333,15 @@ public:
         if (vae) {
             vae->release_runtime_graphs();
         }
-        return audio;
+        Yue2RunResult out;
+        out.audio = std::move(audio);
+        if (request.cot != Yue2CotMode::Off && request.abc.empty() && !semantic.plan.abc_ids.empty()) {
+            const auto decode_start = Clock::now();
+            out.plan_abc_text = tokenizer.decode(semantic.plan.abc_ids);
+            engine::debug::timing_log_scalar("yue2.plan.abc_decode_ms", engine::debug::elapsed_ms(decode_start, Clock::now()));
+            out.plan_abc_truncated = semantic.plan.truncated;
+        }
+        return out;
     }
 
     void release_runtime_graphs() {
@@ -467,7 +475,7 @@ runtime::AudioBuffer Yue2PipelineRuntime::decode_audio(const std::vector<float> 
     return impl_->decode_audio(latents, frames);
 }
 
-runtime::AudioBuffer Yue2PipelineRuntime::run(const Yue2Request & request) {
+Yue2RunResult Yue2PipelineRuntime::run(const Yue2Request & request) {
     return impl_->run(request);
 }
 

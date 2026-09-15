@@ -99,6 +99,30 @@ Write the melody over this score." \
 
 Inline ABC can be passed with `--request-option abc=<abc text>`.
 
+## Generated ABC Export
+
+When the model generates its own plan (`cot=melody` or `cot=full` with no
+external `abc` / `abc_file`), the decoded ABC score is attached to the result
+as a `score` artifact (`text/vnd.abc`). The WebUI shows a Save ABC download in
+the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
+
+```bash
+./build/debug/bin/audiocpp_cli \
+  --task gen \
+  --family yue2 \
+  --model models/Yue2-3B-GGUF \
+  --backend cuda \
+  --threads 8 \
+  --lyrics "..." \
+  --request-option style="English, folk pop" \
+  --request-option cot=full \
+  --seed 1234 \
+  --out yue2.wav \
+  --out-dir yue2_out \
+  --log
+# -> yue2_out/score.abc
+```
+
 ## Request Options
 
 | Option | Values | Default | Meaning |

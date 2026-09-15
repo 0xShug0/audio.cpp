@@ -241,7 +241,21 @@ runtime::TaskResult Yue2Session::run(const runtime::TaskRequest & request) {
     const auto wall_start = Clock::now();
     const auto parsed = parse_yue2_request(request, assets_->config.generation);
     runtime::TaskResult result;
-    result.audio_output = pipeline_->run(parsed);
+    const auto run_result = pipeline_->run(parsed);
+    result.audio_output = std::move(run_result.audio);
+    if (!run_result.plan_abc_text.empty()) {
+        result.output_artifacts.push_back(runtime::make_text_artifact(
+            runtime::ArtifactKind::Custom,
+            "score",
+            run_result.plan_abc_text,
+            {
+                {"mime", "text/vnd.abc"},
+                {"format", "abc"},
+                {"extension", "abc"},
+                {"source", "generated"},
+                {"truncated", run_result.plan_abc_truncated ? "true" : "false"},
+            }));
+    }
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     return result;
 }
