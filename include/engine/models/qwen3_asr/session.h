@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/qwen3_asr/assets.h"
 #include "engine/models/qwen3_asr/audio_encoder.h"

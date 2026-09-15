@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/parakeet_tdt/assets.h"
 #include "engine/community_models/parakeet_tdt/decoder.h"
@@ -14,7 +15,6 @@
 #include <memory>
 #include <string>
 
-#include "engine/framework/runtime/partial_text.h"
 #include <unordered_map>
 #include <vector>
 

@@ -4,9 +4,9 @@
 #include "engine/community_models/sense_asr/encoder.h"
 #include "engine/community_models/sense_asr/frontend.h"
 #include "engine/community_models/sense_asr/types.h"
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 
 #include <chrono>

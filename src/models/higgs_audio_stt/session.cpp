@@ -1,9 +1,9 @@
 #include "engine/models/higgs_audio_stt/session.h"
 
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
@@ -71,7 +71,6 @@ void emit_transcript_delta(
     event.partial_text = runtime::Transcript{std::move(delta), transcript.language};
     sink(event);
 }
-
 
 std::string append_streaming_transcript(
     runtime::TaskResult & total,

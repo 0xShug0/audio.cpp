@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace engine::runtime {
@@ -48,10 +49,10 @@ private:
 // Longest common prefix of two transcripts, backed off so the result never
 // lands inside a UTF-8 sequence. Exposed for tests and for callers that need
 // the offset rather than the text.
-size_t transcript_common_prefix(const std::string & lhs, const std::string & rhs);
+std::size_t transcript_common_prefix(const std::string & lhs, const std::string & rhs);
 
 // How much of `text` is safe to publish: everything up to the last complete
 // UTF-8 sequence. Equal to text.size() unless the tail is a partial character.
-size_t transcript_publishable_end(const std::string & text);
+std::size_t transcript_publishable_end(const std::string & text);
 
 }  // namespace engine::runtime

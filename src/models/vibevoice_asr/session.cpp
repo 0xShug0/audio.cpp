@@ -1,10 +1,10 @@
 #include "engine/models/vibevoice_asr/session.h"
 
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/silero_vad/session.h"
 
@@ -146,7 +146,6 @@ void emit_transcript_delta(
     event.partial_text = runtime::Transcript{std::move(delta), transcript.language};
     sink(event);
 }
-
 
 std::string append_streaming_transcript(
     runtime::TaskResult & total,

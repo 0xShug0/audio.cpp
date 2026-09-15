@@ -67,10 +67,26 @@ void test_revision_resumes_on_a_character_boundary() {
     require_eq(delta, std::string("\xE4\xB8\x81"), "whole character re-sent");
 }
 
+// A decode that truncates mid-character must not un-publish the character it
+// cut: the decode that restores it would then send it twice, and a consumer
+// that appends every delta would show it twice.
+void test_truncated_decode_does_not_resend() {
+    const std::string cjk = "\xE4\xB8\x80";
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish("ab" + cjk), "ab" + cjk, "published whole");
+    require_eq(publisher.publish("ab" + cjk.substr(0, 2)), std::string(""), "truncated");
+    require_eq(publisher.publish("ab" + cjk), std::string(""), "not resent");
+    require_eq(appended({"ab" + cjk, "ab" + cjk.substr(0, 2), "ab" + cjk}),
+               "ab" + cjk, "consumer sees it once");
+}
+
 void test_shrinking_transcript_publishes_nothing() {
     PartialTextPublisher publisher;
     require_eq(publisher.publish("abcdef"), std::string("abcdef"), "first");
     require_eq(publisher.publish("abc"), std::string(""), "shrunk");
+    // And the text it dropped is not re-sent when it comes back, because the
+    // consumer was never told to remove it.
+    require_eq(publisher.publish("abcdef"), std::string(""), "not resent");
 }
 
 void test_reset_forgets_the_published_prefix() {
@@ -96,6 +112,7 @@ int main() {
         test_two_byte_characters_are_held_too();
         test_four_byte_character_is_held_until_complete();
         test_revision_resumes_on_a_character_boundary();
+        test_truncated_decode_does_not_resend();
         test_shrinking_transcript_publishes_nothing();
         test_reset_forgets_the_published_prefix();
         test_empty_and_ascii_edges();

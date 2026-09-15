@@ -5,8 +5,8 @@
 #include "engine/community_models/kroko_asr/encoder.h"
 #include "engine/community_models/kroko_asr/tokenizer.h"
 #include "engine/community_models/kroko_asr/zipformer.h"
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 
 #include <chrono>
