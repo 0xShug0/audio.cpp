@@ -218,11 +218,9 @@ int64_t seconds_to_samples(float seconds, int sample_rate) {
 }
 
 // Longest common prefix of the published transcript and a fresh decode, backed
-// off to a UTF-8 boundary. Re-decoding with more right context can revise what
-// was already sent rather than only extending it, and without the boundary
-// check a revision landing mid-character would split a code point across two
-// deltas. Parakeet v3 is multilingual, so that is reachable rather than
-// theoretical.
+// off to a UTF-8 boundary. Re-decoding can revise what was already published
+// rather than only extending it, and without the backoff a divergence landing
+// mid-character would start a delta half way through a code point.
 size_t common_prefix_size(const std::string & lhs, const std::string & rhs) {
     size_t size = 0;
     while (size < lhs.size() && size < rhs.size() && lhs[size] == rhs[size]) {
@@ -232,6 +230,38 @@ size_t common_prefix_size(const std::string & lhs, const std::string & rhs) {
         --size;
     }
     return size;
+}
+
+// How much of a decode is safe to publish: everything up to the last complete
+// UTF-8 sequence. The tokenizer falls back to bytes for text its vocabulary
+// does not cover, so a decode can end part way through a character -- and a
+// delta cut there is invalid UTF-8 by the time it reaches the SSE JSON. The
+// remainder is held back and goes out with the window that completes it.
+size_t complete_utf8_end(const std::string & text) {
+    size_t lead = text.size();
+    while (lead > 0 && (static_cast<unsigned char>(text[lead - 1]) & 0xC0) == 0x80) {
+        --lead;
+    }
+    if (lead == 0) {
+        return text.size();
+    }
+    --lead;
+    const auto first = static_cast<unsigned char>(text[lead]);
+    size_t needed = 0;
+    if ((first & 0x80) == 0x00) {
+        needed = 1;
+    } else if ((first & 0xE0) == 0xC0) {
+        needed = 2;
+    } else if ((first & 0xF0) == 0xE0) {
+        needed = 3;
+    } else if ((first & 0xF8) == 0xF0) {
+        needed = 4;
+    } else {
+        // Not a lead byte at all. Nothing sensible to hold back, and dropping
+        // bytes would lose text, so publish it and let the consumer see it.
+        return text.size();
+    }
+    return (text.size() - lead) < needed ? lead : text.size();
 }
 
 }  // namespace
@@ -935,11 +965,21 @@ runtime::StreamEvent ParakeetTDTStreamingSession::process_ready_windows(bool flu
         // transcript.text.delta. merged_decode() re-renders the whole
         // transcript from every token so far, so publishing it unchanged made
         // an appending client build "Some call meSome call me nature".
+        const size_t publishable = complete_utf8_end(decoded.text);
         const size_t published = common_prefix_size(emitted_text_, decoded.text);
-        if (published < decoded.text.size()) {
-            event.partial_text = runtime::Transcript{decoded.text.substr(published), ""};
+        if (published < publishable) {
+            event.partial_text = runtime::Transcript{
+                decoded.text.substr(published, publishable - published), ""};
         }
-        emitted_text_ = decoded.text;
+        // What has actually gone out, so a character held back above is
+        // reconsidered against the next decode rather than skipped.
+        emitted_text_.assign(decoded.text, 0, publishable);
+        // word_timestamps stays cumulative, deliberately. It is not a delta
+        // field: it is the finalized set so far, which is why the provisional
+        // last word is dropped below rather than carried. So the two fields in
+        // this event have different shapes on purpose -- partial_text is what
+        // is new, word_timestamps is everything settled -- because each matches
+        // its own contract rather than each other.
         event.word_timestamps = std::move(decoded.word_timestamps);
         // The last word has no following word boundary yet, so it remains
         // provisional and is withheld from the finalized timestamp list.
