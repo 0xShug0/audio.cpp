@@ -1,0 +1,33 @@
+[
+  {
+    "id": "long-fixed-10-pnc",
+    "audio": "build/logs/canary_asr/long-16k.wav",
+    "language": "en",
+    "pnc": true,
+    "audio_chunk_mode": "fixed",
+    "audio_chunk_duration_sec": 10
+  },
+  {
+    "id": "long-fixed-10-no-pnc",
+    "audio": "build/logs/canary_asr/long-16k.wav",
+    "language": "en",
+    "pnc": false,
+    "audio_chunk_mode": "fixed",
+    "audio_chunk_duration_sec": 10
+  },
+  {
+    "id": "short-none",
+    "audio": "resources/sample_16k.wav",
+    "language": "en",
+    "pnc": true,
+    "audio_chunk_mode": "none"
+  },
+  {
+    "id": "short-quiet-5",
+    "audio": "resources/sample_16k.wav",
+    "language": "en",
+    "pnc": true,
+    "audio_chunk_mode": "quiet_energy",
+    "audio_chunk_duration_sec": 5
+  }
+]

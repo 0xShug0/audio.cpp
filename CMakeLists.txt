@@ -1267,6 +1267,18 @@ audiocpp_add_model(nemotron_asr
         engine::models::nemotron_asr::make_nemotron_asr_loader
 )
 
+audiocpp_add_model(cohere_asr
+    SOURCES
+        src/models/cohere_asr/assets.cpp
+        src/models/cohere_asr/weights.cpp
+        src/models/cohere_asr/runtime.cpp
+        src/models/cohere_asr/session.cpp
+    INCLUDES
+        engine/models/cohere_asr/model.h
+    LOADERS
+        engine::models::cohere_asr::make_cohere_asr_loader
+)
+
 audiocpp_add_model(canary_asr
     SOURCES
         src/models/canary_asr/assets.cpp
