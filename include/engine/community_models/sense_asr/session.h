@@ -6,7 +6,6 @@
 #include "engine/community_models/sense_asr/types.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/model_spec/metadata.h"
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 
 #include <chrono>
@@ -88,7 +87,7 @@ private:
   runtime::AudioBuffer streaming_audio_;
   size_t streaming_audio_offset_values_ = 0;
   std::string streaming_text_;
-  runtime::PartialTextPublisher streaming_partials_;
+  size_t streaming_published_bytes_ = 0;
   int64_t streaming_windows_processed_ = 0;
   runtime::StreamEventCallback stream_event_sink_;
   bool stream_started_ = false;
