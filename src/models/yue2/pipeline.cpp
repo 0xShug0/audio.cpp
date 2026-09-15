@@ -1,6 +1,7 @@
 #include "engine/models/yue2/pipeline.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/models/yue2/ar_runtime.h"
 #include "engine/models/yue2/nar_runtime.h"
 
@@ -115,7 +116,8 @@ public:
         size_t ar_prefill_graph_arena_bytes,
         size_t ar_decode_graph_arena_bytes,
         size_t nar_graph_arena_bytes,
-        size_t vae_graph_arena_bytes)
+        size_t vae_graph_arena_bytes,
+        core::AttentionPreference attention_preference)
         : execution(&execution),
           assets(std::move(assets)),
           tokenizer(this->assets->tiktoken_path),
@@ -131,6 +133,18 @@ public:
             throw std::runtime_error("Yue2 pipeline requires assets");
         }
         (void) this->nar_graph_arena_bytes;
+        allow_flash_attention = core::resolve_flash_attention(
+            execution.backend(),
+            this->assets->config.model.head_dim,
+            attention_preference);
+        // Intel Vulkan: ggml-vulkan's flash kernels lose to the NAR's eager
+        // lowering by 2.2x (Arc Pro B70, 275 s -> 126 s NAR); explicit
+        // flash/eager still win.
+        if (attention_preference == core::AttentionPreference::Auto && allow_flash_attention &&
+            core::vulkan_device_is_intel(execution.backend())) {
+            allow_flash_attention = false;
+        }
+        engine::debug::trace_log_scalar("yue2.attention.allow_flash", allow_flash_attention);
     }
 
     Yue2Plan plan(const Yue2Request & request) {
@@ -384,13 +398,15 @@ private:
             assets,
             model_weight_type,
             model_weight_context_bytes,
-            nar_graph_arena_bytes);
+            nar_graph_arena_bytes,
+            allow_flash_attention);
         engine::debug::timing_log_scalar("yue2.nar.init_ms", engine::debug::elapsed_ms(start));
     }
 
     core::ExecutionContext * execution = nullptr;
     std::shared_ptr<const Yue2Assets> assets;
     Yue2TextTokenizer tokenizer;
+    bool allow_flash_attention = true;
     assets::TensorStorageType model_weight_type = assets::TensorStorageType::Native;
     assets::TensorStorageType vae_weight_type = assets::TensorStorageType::Native;
     size_t model_weight_context_bytes = 0;
@@ -414,7 +430,8 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
     size_t ar_prefill_graph_arena_bytes,
     size_t ar_decode_graph_arena_bytes,
     size_t nar_graph_arena_bytes,
-    size_t vae_graph_arena_bytes)
+    size_t vae_graph_arena_bytes,
+    core::AttentionPreference attention_preference)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -425,7 +442,8 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
           ar_prefill_graph_arena_bytes,
           ar_decode_graph_arena_bytes,
           nar_graph_arena_bytes,
-          vae_graph_arena_bytes)) {}
+          vae_graph_arena_bytes,
+          attention_preference)) {}
 
 Yue2PipelineRuntime::~Yue2PipelineRuntime() = default;
 
