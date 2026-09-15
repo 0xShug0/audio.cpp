@@ -16,7 +16,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
-    parser.add_argument("--actual", nargs="+", required=True, help="audio-stem=CLI-stdout, server-details JSON, or SSE file")
+    parser.add_argument("--actual", nargs="+", required=True, help="audio-stem=CLI-stdout, server-details JSON, SSE file, or streaming-client events JSONL")
+    parser.add_argument("--require-text-increments", action="store_true",
+                        help="Require text deltas that do not wait for a closing timestamp/speaker delimiter")
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--max-timestamp-drift", type=float, default=0.0)
@@ -35,17 +37,31 @@ def main():
         name, actual_path = value.split("=", 1)
         reference = references[name]
         expected = reference["trials"][0]["segments"]
-        if Path(actual_path).suffix == ".sse":
-            data = [line[6:] for line in Path(actual_path).read_text().splitlines() if line.startswith("data: ")]
-            if not data or data[-1] != "[DONE]":
-                raise AssertionError("Streaming response did not finish")
-            events = [json.loads(line) for line in data[:-1]]
+        if Path(actual_path).suffix in {".sse", ".jsonl"}:
+            if Path(actual_path).suffix == ".jsonl":
+                records = [json.loads(line) for line in Path(actual_path).read_text(encoding="utf-8").splitlines()]
+                if not records or records[-1].get("data") != "[DONE]":
+                    raise AssertionError("Streaming client did not receive completion")
+                events = [record["event"] for record in records[:-1]]
+                if len(records) < 3 or records[0]["elapsed_ms"] >= records[-2]["elapsed_ms"]:
+                    raise AssertionError("No incremental event arrived before the final transcript")
+            else:
+                data = [line[6:] for line in Path(actual_path).read_text(encoding="utf-8").splitlines() if line.startswith("data: ")]
+                if not data or data[-1] != "[DONE]":
+                    raise AssertionError("Streaming response did not finish")
+                events = [json.loads(line) for line in data[:-1]]
             if (not events or events[-1]["type"] != "transcript.text.done"
                     or any(event["type"] != "transcript.text.delta" for event in events[:-1])):
                 raise AssertionError("Unexpected streaming event order")
             text = events[-1]["text"]
             if len(events) < 2 or "".join(event["delta"] for event in events[:-1]) != text:
                 raise AssertionError("Streaming deltas do not reproduce the final transcript")
+            if args.require_text_increments and not any(
+                    "]" not in event["delta"] and any(ch.isalpha() for ch in event["delta"])
+                    for event in events[:-1]):
+                raise AssertionError("Text streaming still waits for timestamp/speaker delimiters")
+            for event in events[:-1]:
+                event["delta"].encode("utf-8", errors="strict")
             if events[-1]["timing"]["ttft_ms"] <= 0:
                 raise AssertionError("Missing streaming first-token timing")
             turns = segments = None

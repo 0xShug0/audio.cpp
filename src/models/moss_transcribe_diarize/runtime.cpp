@@ -11,6 +11,7 @@
 #include "engine/framework/modules/speech_encoders/whisper_frontend.h"
 #include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 
@@ -273,22 +274,17 @@ public:
             if (token == kEosToken) {
                 active_ = false;
                 debug::trace_log_scalar("moss_transcribe_diarize.generated_tokens", static_cast<int64_t>(generated_.size()));
-                auto text = tokenizer_->decode(generated_, true);
-                auto delta = text.substr(published_);
-                published_ = text.size();
-                return delta.empty() ? std::nullopt : std::make_optional(std::move(delta));
+                if (partials_.published().size() != decoded_text_.size()) {
+                    throw std::runtime_error("MOSS-Transcribe-Diarize ended with incomplete UTF-8 text");
+                }
+                return std::nullopt;
             }
             generated_.push_back(token);
-            // An ASCII delimiter completes any preceding UTF-8 token fragments.
-            const auto piece = tokenizer_->decode({token}, true);
-            if (piece.find(']') != std::string::npos) {
-                const auto text = tokenizer_->decode(generated_, true);
-                const auto end = text.rfind(']') + 1;
-                if (end > published_) {
-                    auto delta = text.substr(published_, end - published_);
-                    published_ = end;
-                    return delta;
-                }
+            // BPE decoding is byte-concatenative; the publisher holds incomplete UTF-8 tails.
+            decoded_text_ += tokenizer_->decode({token}, true);
+            auto delta = partials_.publish(decoded_text_);
+            if (!delta.empty()) {
+                return delta;
             }
         }
         throw std::runtime_error("MOSS-Transcribe-Diarize reached max_tokens before EOS; increase max_tokens");
@@ -298,7 +294,8 @@ public:
         active_ = false;
         generated_.clear();
         logits_.clear();
-        published_ = 0;
+        decoded_text_.clear();
+        partials_.reset();
         max_tokens_ = 0;
     }
 
@@ -313,7 +310,8 @@ private:
     int64_t vocab_ = 0;
     bool active_ = false;
     int64_t max_tokens_ = 0;
-    size_t published_ = 0;
+    std::string decoded_text_;
+    runtime::PartialTextPublisher partials_;
     std::vector<int32_t> generated_;
     std::vector<float> logits_;
     int64_t max_context_ = 0;
