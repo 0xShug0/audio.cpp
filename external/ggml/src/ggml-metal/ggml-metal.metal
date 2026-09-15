@@ -7932,6 +7932,8 @@ template [[host_name("kernel_cpy_contig_f16_f16")]] kernel kernel_cpy_contig_t k
 #if defined(GGML_METAL_HAS_BF16)
 template [[host_name("kernel_cpy_contig_bf16_f32")]]  kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, float>;
 template [[host_name("kernel_cpy_contig_bf16_bf16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, bfloat>;
+template [[host_name("kernel_cpy_contig_f16_bf16")]]  kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<half,   bfloat>;
+template [[host_name("kernel_cpy_contig_bf16_f16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, half>;
 #endif
 
 template<typename T>
@@ -8064,6 +8066,8 @@ template [[host_name("kernel_cpy_f16_f16")]]   kernel kernel_cpy_t kernel_cpy_t_
 #if defined(GGML_METAL_HAS_BF16)
 template [[host_name("kernel_cpy_bf16_f32")]]  kernel kernel_cpy_t kernel_cpy_t_t<bfloat,  float>;
 template [[host_name("kernel_cpy_bf16_bf16")]] kernel kernel_cpy_t kernel_cpy_t_t<bfloat,  bfloat>;
+template [[host_name("kernel_cpy_f16_bf16")]]  kernel kernel_cpy_t kernel_cpy_t_t<half,    bfloat>;
+template [[host_name("kernel_cpy_bf16_f16")]]  kernel kernel_cpy_t kernel_cpy_t_t<bfloat,  half>;
 #endif
 
 template<short QK,
