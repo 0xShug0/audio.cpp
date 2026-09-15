@@ -532,6 +532,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
+    src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
@@ -1411,6 +1412,38 @@ audiocpp_add_model(stable_audio
         engine/models/stable_audio/loader.h
     LOADERS
         engine::models::stable_audio::make_stable_audio_loader
+)
+
+audiocpp_add_model(yue2
+    SOURCES
+        src/models/yue2/ar_runtime.cpp
+        src/models/yue2/assets.cpp
+        src/models/yue2/nar_runtime.cpp
+        src/models/yue2/pipeline.cpp
+        src/models/yue2/request.cpp
+        src/models/yue2/session.cpp
+        src/models/yue2/tokenizer_text.cpp
+        src/models/yue2/types.cpp
+    INCLUDES
+        engine/models/yue2/session.h
+    LOADERS
+        engine::models::yue2::make_yue2_loader
+)
+
+audiocpp_add_model(sheetsage2
+    SOURCES
+        src/models/sheetsage/audio_frontend.cpp
+        src/models/sheetsage/processing.cpp
+        src/models/sheetsage/runtime.cpp
+        src/models/sheetsage/session.cpp
+    INCLUDES
+        engine/models/sheetsage/audio_frontend.h
+        engine/models/sheetsage/processing.h
+        engine/models/sheetsage/types.h
+        engine/models/sheetsage/runtime.h
+        engine/models/sheetsage/session.h
+    LOADERS
+        engine::models::sheetsage::make_sheetsage2_loader
 )
 
 audiocpp_add_model(supertonic
@@ -2329,6 +2362,25 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
+    add_executable(yue2_vae_parity_probe
+        tests/yue2/yue2_vae_parity_probe.cpp
+    )
+    target_link_libraries(yue2_vae_parity_probe PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(yue2_vae_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    add_executable(sheetsage2_decoder_parity_probe
+        src/models/sheetsage/runtime.cpp
+        tests/yue2/sheetsage2_decoder_parity_probe.cpp
+    )
+    target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+endif()
+
 if (ENGINE_BUILD_WARMBENCH)
     function(add_engine_warmbench target_name source_file)
         add_executable(${target_name}
@@ -2467,6 +2519,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
+
+        if(sheetsage2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(sheetsage_audio_frontend_test tests/unittests/test_sheetsage_audio_frontend.cpp)
+            add_test(NAME sheetsage_audio_frontend_test COMMAND sheetsage_audio_frontend_test --log)
+            add_engine_unittest(sheetsage_processing_test tests/unittests/test_sheetsage_processing.cpp)
+            add_test(NAME sheetsage_processing_test COMMAND sheetsage_processing_test --log)
+        endif()
 
         add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
         add_test(NAME midi_file_test COMMAND midi_file_test)

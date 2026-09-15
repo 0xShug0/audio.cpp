@@ -1,4 +1,5 @@
 #include "engine/framework/core/backend.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/transformers/qwen_causal_decoder.h"
 #include "engine/framework/modules/transformers/qwen_decoder.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
@@ -7,6 +8,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -36,6 +38,9 @@ void require_allclose(
         throw std::runtime_error(label + " size mismatch");
     }
     for (size_t i = 0; i < actual.size(); ++i) {
+        if (!std::isfinite(actual[i]) || !std::isfinite(expected[i])) {
+            throw std::runtime_error(label + " contains non-finite values");
+        }
         const float diff = std::fabs(actual[i] - expected[i]);
         if (diff > tolerance) {
             std::ostringstream message;
@@ -52,9 +57,12 @@ struct LayerResult {
     std::vector<float> value;
 };
 
-LayerResult run_layer(bool packed) {
-    constexpr int64_t batch = 1;
-    constexpr int64_t steps = 3;
+LayerResult run_layer(bool packed,
+    engine::core::BackendType backend_type = engine::core::BackendType::Cpu,
+    bool batched_decode = false) {
+    const int64_t batch = batched_decode ? 2 : 1;
+    const int64_t steps = batched_decode ? 1 : 3;
+    constexpr int64_t cache_steps = 8;
     constexpr int64_t hidden = 8;
     constexpr int64_t heads = 2;
     constexpr int64_t kv_heads = 1;
@@ -63,10 +71,10 @@ LayerResult run_layer(bool packed) {
     constexpr int64_t q_out = heads * head_dim;
     constexpr int64_t kv_out = kv_heads * head_dim;
 
-    engine::core::BackendConfig backend_config{engine::core::BackendType::Cpu, 0, 4};
+    engine::core::BackendConfig backend_config{backend_type, 0, 8};
     ggml_backend_t backend = engine::core::init_backend(backend_config);
     if (backend == nullptr) {
-        throw std::runtime_error("failed to initialize CPU backend");
+        throw std::runtime_error("failed to initialize test backend");
     }
 
     ggml_init_params params{kGraphBytes, nullptr, true};
@@ -78,7 +86,7 @@ LayerResult run_layer(bool packed) {
 
     ggml_backend_buffer_t buffer = nullptr;
     try {
-        engine::core::ModuleBuildContext ctx{ggml, "qwen_packed_projection_test", engine::core::BackendType::Cpu};
+        engine::core::ModuleBuildContext ctx{ggml, "qwen_packed_projection_test", backend_type};
         auto make_f32 = [&](std::initializer_list<int64_t> dims) {
             return engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims(dims));
         };
@@ -87,7 +95,7 @@ LayerResult run_layer(bool packed) {
         auto positions = engine::core::make_tensor(
             ctx,
             GGML_TYPE_I32,
-            engine::core::TensorShape::from_dims({steps}));
+            engine::core::TensorShape::from_dims({batched_decode ? batch : steps}));
 
         engine::modules::QwenDecoderLayerWeights weights;
         weights.input_norm = {make_f32({hidden}), std::nullopt};
@@ -131,21 +139,63 @@ LayerResult run_layer(bool packed) {
         config.use_qk_norm = false;
         config.runtime.attention.prefill_mode = engine::modules::QwenDecoderAttentionMode::ManualRepeat;
 
-        const auto outputs = engine::modules::QwenDecoderLayerModule(config).build(
-            ctx,
-            input,
-            positions,
-            weights);
-
         ggml_cgraph * graph = ggml_new_graph_custom(ggml, kGraphNodes, false);
+        engine::modules::QwenDecoderLayerOutputs outputs;
+        engine::core::TensorValue cache_key, cache_value, cache_slot, mask;
+        if (batched_decode) {
+            cache_key = make_f32({batch, cache_steps, kv_heads, head_dim});
+            cache_value = make_f32({batch, cache_steps, kv_heads, head_dim});
+            cache_slot = engine::core::make_tensor(ctx, GGML_TYPE_I32,
+                engine::core::TensorShape::from_dims({batch}));
+            mask = make_f32({batch, 1, 1, cache_steps});
+            config.runtime.static_cache.update_mode = engine::modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+            config.runtime.attention.static_mode = engine::modules::QwenDecoderAttentionMode::ManualRepeat;
+            outputs = engine::modules::QwenDecoderLayerModule(config).build_with_static_cache_tail_batched(
+                ctx, graph, input, positions, weights, cache_key, cache_value, cache_slot, mask);
+        } else {
+            outputs = engine::modules::QwenDecoderLayerModule(config).build(ctx, input, positions, weights);
+        }
         ggml_build_forward_expand(graph, outputs.output.tensor);
+        if (batched_decode) {
+            int rope_nodes = 0;
+            int copied_positions = 0;
+            for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+                const auto * node = ggml_graph_node(graph, i);
+                if (node->op != GGML_OP_ROPE) {
+                    continue;
+                }
+                ++rope_nodes;
+                if (node->src[1]->op == GGML_OP_CONT) {
+                    ++copied_positions;
+                }
+                if (backend_type == engine::core::BackendType::Vulkan && node->src[1]->view_offs != 0) {
+                    throw std::runtime_error("Vulkan batched RoPE retains an offset position view");
+                }
+            }
+            const int expected_copies = backend_type == engine::core::BackendType::Vulkan ? 2 : 0;
+            if (rope_nodes != 4 || copied_positions != expected_copies) {
+                throw std::runtime_error("Unexpected batched RoPE position layout");
+            }
+        }
         buffer = ggml_backend_alloc_ctx_tensors(ggml, backend);
         if (buffer == nullptr) {
             throw std::runtime_error("failed to allocate test tensors");
         }
 
         engine::core::write_tensor_f32(input, patterned(static_cast<size_t>(batch * steps * hidden), 2.1f, 0.20f));
-        engine::core::write_tensor_i32(positions, {0, 1, 2});
+        engine::core::write_tensor_i32(positions, batched_decode ? std::vector<int32_t>{2, 5} : std::vector<int32_t>{0, 1, 2});
+        if (batched_decode) {
+            engine::core::write_tensor_f32(cache_key, patterned(batch * cache_steps * kv_out, 0.4f, 0.1f));
+            engine::core::write_tensor_f32(cache_value, patterned(batch * cache_steps * kv_out, 0.8f, 0.1f));
+            engine::core::write_tensor_i32(cache_slot, {2, cache_steps + 5});
+            std::vector<float> mask_values(batch * cache_steps, -std::numeric_limits<float>::infinity());
+            for (int64_t b = 0; b < batch; ++b) {
+                for (int64_t t = 0; t <= (b == 0 ? 2 : 5); ++t) {
+                    mask_values[b * cache_steps + t] = 0.0f;
+                }
+            }
+            engine::core::write_tensor_f32(mask, mask_values);
+        }
         engine::core::write_tensor_f32(*weights.input_norm.weight, patterned(hidden, 0.3f, 0.7f));
         engine::core::write_tensor_f32(*weights.post_norm.weight, patterned(hidden, 0.7f, 0.8f));
         engine::core::write_tensor_f32(
@@ -176,7 +226,9 @@ LayerResult run_layer(bool packed) {
             engine::core::write_tensor_f32(weights.mlp.up_proj.weight, up_values);
         }
 
-        ggml_backend_graph_compute(backend, graph);
+        if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("test graph execution failed");
+        }
         LayerResult result;
         engine::core::read_tensor_f32_into(outputs.output.tensor, result.output);
         engine::core::read_tensor_f32_into(outputs.key.tensor, result.key);
@@ -567,9 +619,29 @@ void test_higgs_decode_graph_exposes_cuda_fast_paths() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     try {
+        bool vulkan = false;
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (arg == "--vulkan") {
+                vulkan = true;
+            } else if (arg == "--log") {
+                engine::debug::configure_logging({true, ""});
+            } else {
+                throw std::runtime_error("Unknown argument: " + arg);
+            }
+        }
         test_packed_qkv_and_gate_up_match_separate_projections();
+        for (bool packed : {false, true}) {
+            const auto reference = run_layer(packed, engine::core::BackendType::Cpu, true);
+            if (vulkan) {
+                const auto actual = run_layer(packed, engine::core::BackendType::Vulkan, true);
+                require_allclose(actual.output, reference.output, 2.0e-5f, "Vulkan batched decoder output");
+                require_allclose(actual.key, reference.key, 2.0e-5f, "Vulkan batched decoder key");
+                require_allclose(actual.value, reference.value, 2.0e-5f, "Vulkan batched decoder value");
+            }
+        }
         test_suffix_causal_mask();
         test_f16_kv_set_rows();
         test_f16_kv_set_rows_batched();

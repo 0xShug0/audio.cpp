@@ -116,6 +116,20 @@ QwenCausalDecoderWeights causal_decoder_weights(const QwenCausalDecodeRuntimeWei
     return out;
 }
 
+core::TensorValue apply_readback_rounding(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const QwenCausalDecodeRuntimeConfig & config,
+    core::BackendType backend_type) {
+    if (!config.readback_round_type.has_value()) {
+        return input;
+    }
+    if (*config.readback_round_type == GGML_TYPE_BF16 && backend_type != core::BackendType::Metal) {
+        return core::wrap_tensor(ggml_round_bf16(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32);
+    }
+    return input;
+}
+
 void round_readback(std::vector<float> & values, const QwenCausalDecodeRuntimeConfig & config) {
     if (!config.readback_round_type.has_value()) {
         return;
@@ -243,6 +257,52 @@ void write_batched_cached_step_mask(
             scratch[offset + static_cast<size_t>(i)] = visible;
         }
         scratch[offset + static_cast<size_t>(current_slot)] = visible;
+    }
+    ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
+}
+
+void write_batched_cached_step_mask_variable(
+    const QwenCausalDecodeRuntimeConfig & config,
+    ggml_tensor * tensor,
+    std::vector<ggml_fp16_t> & scratch,
+    int64_t batch_size,
+    int64_t mask_steps,
+    const std::vector<int64_t> & visible_prefix_steps,
+    const std::vector<int32_t> & current_slots,
+    const std::vector<int64_t> & positions) {
+    if (tensor == nullptr) {
+        throw std::runtime_error("QwenCausalDecodeRuntime variable batched cached mask requires a tensor");
+    }
+    if (batch_size <= 0 || mask_steps <= 0 ||
+        visible_prefix_steps.size() != static_cast<size_t>(batch_size) ||
+        current_slots.size() != static_cast<size_t>(batch_size) ||
+        positions.size() != static_cast<size_t>(batch_size)) {
+        throw std::runtime_error("QwenCausalDecodeRuntime variable batched cached mask shape mismatch");
+    }
+    const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
+    const auto visible = ggml_fp32_to_fp16(0.0F);
+    const size_t row_size = static_cast<size_t>(mask_steps);
+    const size_t total_size = static_cast<size_t>(batch_size) * row_size;
+    if (scratch.size() != total_size) {
+        scratch.resize(total_size);
+    }
+    std::fill(scratch.begin(), scratch.end(), masked);
+    for (int64_t batch = 0; batch < batch_size; ++batch) {
+        const int64_t visible_steps = visible_prefix_steps[static_cast<size_t>(batch)];
+        const int64_t current_slot =
+            current_slots[static_cast<size_t>(batch)] - static_cast<int32_t>(batch * mask_steps);
+        if (visible_steps < 0 || visible_steps > mask_steps || current_slot < 0 || current_slot >= mask_steps) {
+            throw std::runtime_error("QwenCausalDecodeRuntime variable batched cached mask row range is invalid");
+        }
+        const size_t row_offset = static_cast<size_t>(batch) * row_size;
+        int64_t begin = 0;
+        if (config.sliding_window > 0) {
+            begin = std::max<int64_t>(0, positions[static_cast<size_t>(batch)] - config.sliding_window + 1);
+        }
+        for (int64_t i = begin; i < visible_steps; ++i) {
+            scratch[row_offset + static_cast<size_t>(i)] = visible;
+        }
+        scratch[row_offset + static_cast<size_t>(current_slot)] = visible;
     }
     ggml_backend_tensor_set(tensor, scratch.data(), 0, scratch.size() * sizeof(ggml_fp16_t));
 }
@@ -461,13 +521,32 @@ public:
         if (token_ids.empty()) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill requires tokens");
         }
-        ensure_prefill_token_graph(static_cast<int64_t>(token_ids.size()));
+        ensure_prefill_token_graph(static_cast<int64_t>(token_ids.size()), false);
         ggml_backend_tensor_set(
             prefill_input_,
             token_ids.data(),
             0,
             token_ids.size() * sizeof(int32_t));
         return run_prefill();
+    }
+
+    QwenCausalPrefillIntoDecodeResult prefill_tokens_into_decode_cache(
+        const std::vector<int32_t> & token_ids,
+        int64_t required_cache_steps) {
+        if (token_ids.empty()) {
+            throw std::runtime_error("QwenCausalDecodeRuntime prefill requires tokens");
+        }
+        if (required_cache_steps <= 0) {
+            throw std::runtime_error("QwenCausalDecodeRuntime decode requires positive cache capacity");
+        }
+        ensure_decode_token_graph(required_cache_steps);
+        ensure_prefill_token_graph(static_cast<int64_t>(token_ids.size()), true);
+        ggml_backend_tensor_set(
+            prefill_input_,
+            token_ids.data(),
+            0,
+            token_ids.size() * sizeof(int32_t));
+        return run_prefill_into_decode_cache();
     }
 
     QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps) {
@@ -609,6 +688,15 @@ public:
         return run_decode_step();
     }
 
+    void decode_token_into(int32_t token, QwenCausalDecodeStepResult & out) {
+        ensure_decode_started();
+        if (decode_input_kind_ != InputKind::Token) {
+            throw std::runtime_error("QwenCausalDecodeRuntime decode graph expects embeddings");
+        }
+        ggml_backend_tensor_set(decode_input_, &token, 0, sizeof(int32_t));
+        run_decode_step_into(out);
+    }
+
     QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding) {
         ensure_decode_started();
         if (decode_input_kind_ != InputKind::Embedding) {
@@ -627,7 +715,9 @@ public:
         if (required_cache_steps <= 0) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode requires positive cache capacity");
         }
-        ensure_batched_decode_token_graph(required_cache_steps, state.batch_size);
+        const bool variable_positions =
+            !state.current_end_by_batch.empty() || !state.valid_steps_by_batch.empty();
+        ensure_batched_decode_token_graph(required_cache_steps, state.batch_size, variable_positions);
         batched_decode_cache_.import_state(state);
     }
 
@@ -641,7 +731,9 @@ public:
         if (required_cache_steps <= 0) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode requires positive cache capacity");
         }
-        ensure_batched_decode_embedding_graph(required_cache_steps, state.batch_size);
+        const bool variable_positions =
+            !state.current_end_by_batch.empty() || !state.valid_steps_by_batch.empty();
+        ensure_batched_decode_embedding_graph(required_cache_steps, state.batch_size, variable_positions);
         batched_decode_cache_.import_state(state);
     }
 
@@ -700,13 +792,14 @@ private:
         Embedding,
     };
 
-    void ensure_prefill_token_graph(int64_t steps) {
-        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Token && prefill_steps_ == steps) {
+    void ensure_prefill_token_graph(int64_t steps, bool populate_decode_cache) {
+        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Token && prefill_steps_ == steps &&
+            prefill_populates_decode_cache_ == populate_decode_cache) {
             debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
             return;
         }
         release_prefill_graph();
-        build_prefill_graph(InputKind::Token, steps);
+        build_prefill_graph(InputKind::Token, steps, populate_decode_cache);
     }
 
     void ensure_prefill_embedding_graph(int64_t steps) {
@@ -715,10 +808,18 @@ private:
             return;
         }
         release_prefill_graph();
-        build_prefill_graph(InputKind::Embedding, steps);
+        build_prefill_graph(InputKind::Embedding, steps, false);
     }
 
-    void build_prefill_graph(InputKind input_kind, int64_t steps) {
+    void build_prefill_graph(InputKind input_kind, int64_t steps, bool populate_decode_cache) {
+        if (populate_decode_cache) {
+            if (decode_graph_ == nullptr) {
+                throw std::runtime_error("QwenCausalDecodeRuntime prefill-to-decode requires an initialized decode graph");
+            }
+            if (steps > decode_cache_steps_) {
+                throw std::runtime_error("QwenCausalDecodeRuntime prefill-to-decode exceeds decode cache capacity");
+            }
+        }
         const auto build_start = Clock::now();
         ggml_init_params params{config_.prefill_graph_arena_bytes, nullptr, true};
         prefill_ctx_.reset(ggml_init(params));
@@ -750,22 +851,51 @@ private:
             GGML_TYPE_F16);
         auto decoder_out = build_causal_prefill(ctx, config_, x, positions, weights_, attention_mask);
         prefill_logits_readback_token_ids_ = make_logits_readback_token_ids(prefill_ctx_.get(), config_);
-        for (const auto & layer : decoder_out.state.layers) {
+        if (populate_decode_cache) {
+            prefill_graph_ = ggml_new_graph_custom(prefill_ctx_.get(), 65536, false);
+        }
+        for (size_t layer_index = 0; layer_index < decoder_out.state.layers.size(); ++layer_index) {
+            const auto & layer = decoder_out.state.layers[layer_index];
             if (!layer.key.has_value() || !layer.value.has_value()) {
                 throw std::runtime_error("QwenCausalDecodeRuntime prefill decoder did not return K/V state");
             }
-            auto * key = ggml_cpy(
-                prefill_ctx_.get(),
-                layer.key->tensor,
-                ggml_dup_tensor(prefill_ctx_.get(), layer.key->tensor));
-            auto * value = ggml_cpy(
-                prefill_ctx_.get(),
-                layer.value->tensor,
-                ggml_dup_tensor(prefill_ctx_.get(), layer.value->tensor));
-            ggml_set_output(key);
-            ggml_set_output(value);
-            prefill_keys_.push_back(key);
-            prefill_values_.push_back(value);
+            if (populate_decode_cache) {
+                auto key = apply_readback_rounding(ctx, *layer.key, config_, backend_type_);
+                auto value = apply_readback_rounding(ctx, *layer.value, config_, backend_type_);
+                auto key_dest = runtime::view_transformer_kv_cache_steps(
+                    ctx,
+                    decode_cache_.key_tensor(layer_index),
+                    0,
+                    steps,
+                    config_.decoder.stack.num_key_value_heads,
+                    config_.decoder.stack.head_dim,
+                    "QwenCausalDecodeRuntime prefill key cache",
+                    decode_cache_.key_tensor(layer_index).type);
+                auto value_dest = runtime::view_transformer_kv_cache_steps(
+                    ctx,
+                    decode_cache_.value_tensor(layer_index),
+                    0,
+                    steps,
+                    config_.decoder.stack.num_key_value_heads,
+                    config_.decoder.stack.head_dim,
+                    "QwenCausalDecodeRuntime prefill value cache",
+                    decode_cache_.value_tensor(layer_index).type);
+                ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, key.tensor, key_dest.tensor));
+                ggml_build_forward_expand(prefill_graph_, ggml_cpy(ctx.ggml, value.tensor, value_dest.tensor));
+            } else {
+                auto * key = ggml_cpy(
+                    prefill_ctx_.get(),
+                    layer.key->tensor,
+                    ggml_dup_tensor(prefill_ctx_.get(), layer.key->tensor));
+                auto * value = ggml_cpy(
+                    prefill_ctx_.get(),
+                    layer.value->tensor,
+                    ggml_dup_tensor(prefill_ctx_.get(), layer.value->tensor));
+                ggml_set_output(key);
+                ggml_set_output(value);
+                prefill_keys_.push_back(key);
+                prefill_values_.push_back(value);
+            }
         }
         if (config_.output_mode == QwenCausalDecodeOutputMode::Logits) {
             auto logits = decoder_out.logits;
@@ -789,7 +919,9 @@ private:
                 ggml_dup_tensor(prefill_ctx_.get(), decoder_out.hidden.tensor));
             ggml_set_output(prefill_hidden_);
         }
-        prefill_graph_ = ggml_new_graph_custom(prefill_ctx_.get(), 65536, false);
+        if (!populate_decode_cache) {
+            prefill_graph_ = ggml_new_graph_custom(prefill_ctx_.get(), 65536, false);
+        }
         for (auto * key : prefill_keys_) {
             ggml_build_forward_expand(prefill_graph_, key);
         }
@@ -825,6 +957,7 @@ private:
         }
         prefill_input_kind_ = input_kind;
         prefill_steps_ = steps;
+        prefill_populates_decode_cache_ = populate_decode_cache;
         debug::timing_log_scalar(
             config_.trace_name + ".prefill.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -832,6 +965,9 @@ private:
     }
 
     QwenCausalPrefillResult run_prefill() {
+        if (prefill_populates_decode_cache_) {
+            throw std::runtime_error("QwenCausalDecodeRuntime prefill graph populates decode cache");
+        }
         // The gallocr considers the persistent position/mask inputs dead after
         // their last read inside a compute and may hand their memory to other
         // tensors, so a cached prefill graph must be re-fed before recompute.
@@ -878,6 +1014,47 @@ private:
             round_readback(state.key, config_);
             round_readback(state.value, config_);
         }
+        return out;
+    }
+
+    QwenCausalPrefillIntoDecodeResult run_prefill_into_decode_cache() {
+        if (!prefill_populates_decode_cache_) {
+            throw std::runtime_error("QwenCausalDecodeRuntime prefill graph does not populate decode cache");
+        }
+        ggml_backend_tensor_set(
+            prefill_positions_,
+            prefill_positions_values_.data(),
+            0,
+            prefill_positions_values_.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(
+            prefill_attention_mask_,
+            prefill_attention_mask_values_.data(),
+            0,
+            prefill_attention_mask_values_.size() * sizeof(ggml_fp16_t));
+        if (prefill_logits_readback_token_ids_ != nullptr) {
+            upload_logits_readback_token_ids(prefill_logits_readback_token_ids_, config_);
+        }
+        core::set_backend_threads(backend_, threads_);
+        const ggml_status status = core::compute_backend_graph(backend_, prefill_graph_);
+        ggml_backend_synchronize(backend_);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("QwenCausalDecodeRuntime prefill graph compute failed");
+        }
+        QwenCausalPrefillIntoDecodeResult out;
+        if (prefill_logits_ != nullptr) {
+            out.logits.resize(static_cast<size_t>(ggml_nelements(prefill_logits_)));
+            ggml_backend_tensor_get(prefill_logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
+        }
+        if (prefill_hidden_ != nullptr) {
+            out.hidden.resize(static_cast<size_t>(ggml_nelements(prefill_hidden_)));
+            ggml_backend_tensor_get(prefill_hidden_, out.hidden.data(), 0, out.hidden.size() * sizeof(float));
+            round_readback(out.hidden, config_);
+        }
+        decode_cache_.retain_prefix(0);
+        decode_cache_.advance_after_direct_append(prefill_steps_);
+        begin_decode_mask();
+        out.current_end = decode_cache_.current_end();
+        out.valid_steps = decode_cache_.valid_steps();
         return out;
     }
 
@@ -1195,25 +1372,31 @@ private:
         debug::trace_log_scalar(config_.trace_name + ".decode.cache_steps", cache_steps);
     }
 
-    void ensure_batched_decode_token_graph(int64_t cache_steps, int64_t batch_size) {
+    void ensure_batched_decode_token_graph(int64_t cache_steps, int64_t batch_size, bool variable_positions) {
         if (batched_decode_graph_ != nullptr && batched_decode_input_kind_ == InputKind::Token &&
-            batched_decode_cache_steps_ >= cache_steps && batched_decode_batch_size_ == batch_size) {
+            batched_decode_cache_steps_ >= cache_steps && batched_decode_batch_size_ == batch_size &&
+            batched_decode_variable_positions_ == variable_positions) {
             return;
         }
         release_batched_decode_graph();
-        build_batched_decode_graph(InputKind::Token, batch_size, cache_steps);
+        build_batched_decode_graph(InputKind::Token, batch_size, cache_steps, variable_positions);
     }
 
-    void ensure_batched_decode_embedding_graph(int64_t cache_steps, int64_t batch_size) {
+    void ensure_batched_decode_embedding_graph(int64_t cache_steps, int64_t batch_size, bool variable_positions) {
         if (batched_decode_graph_ != nullptr && batched_decode_input_kind_ == InputKind::Embedding &&
-            batched_decode_cache_steps_ >= cache_steps && batched_decode_batch_size_ == batch_size) {
+            batched_decode_cache_steps_ >= cache_steps && batched_decode_batch_size_ == batch_size &&
+            batched_decode_variable_positions_ == variable_positions) {
             return;
         }
         release_batched_decode_graph();
-        build_batched_decode_graph(InputKind::Embedding, batch_size, cache_steps);
+        build_batched_decode_graph(InputKind::Embedding, batch_size, cache_steps, variable_positions);
     }
 
-    void build_batched_decode_graph(InputKind input_kind, int64_t batch_size, int64_t cache_steps) {
+    void build_batched_decode_graph(
+        InputKind input_kind,
+        int64_t batch_size,
+        int64_t cache_steps,
+        bool variable_positions) {
         if (batch_size <= 0) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode requires positive batch size");
         }
@@ -1240,10 +1423,13 @@ private:
             batched_decode_input_ = input.tensor;
             x = input;
         }
-        batched_decode_positions_ = ggml_new_tensor_1d(batched_decode_ctx_.get(), GGML_TYPE_I32, 1);
+        batched_decode_positions_ = ggml_new_tensor_1d(
+            batched_decode_ctx_.get(),
+            GGML_TYPE_I32,
+            variable_positions ? batch_size : 1);
         auto positions = core::wrap_tensor(
             batched_decode_positions_,
-            core::TensorShape::from_dims({1}),
+            core::TensorShape::from_dims({variable_positions ? batch_size : 1}),
             GGML_TYPE_I32);
         auto slot = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({batch_size}));
         batched_decode_cache_slot_ = slot.tensor;
@@ -1308,6 +1494,7 @@ private:
         batched_decode_batch_size_ = batch_size;
         batched_decode_cache_steps_ = cache_steps;
         batched_decode_input_kind_ = input_kind;
+        batched_decode_variable_positions_ = variable_positions;
         debug::timing_log_scalar(
             config_.trace_name + ".batched_decode.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -1323,6 +1510,29 @@ private:
         if (batched_decode_graph_ == nullptr) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode graph has not been started");
         }
+    }
+
+    void begin_decode_mask() {
+        if (config_.sliding_window > 0) {
+            return;
+        }
+        if (decode_attention_mask_ == nullptr) {
+            throw std::runtime_error("QwenCausalDecodeRuntime decode attention mask is not initialized");
+        }
+        std::fill(
+            decode_attention_mask_values_.begin(),
+            decode_attention_mask_values_.end(),
+            ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
+        const int64_t visible_steps = std::min<int64_t>(decode_cache_.valid_steps(), decode_cache_steps_);
+        std::fill(
+            decode_attention_mask_values_.begin(),
+            decode_attention_mask_values_.begin() + static_cast<std::ptrdiff_t>(visible_steps),
+            ggml_fp32_to_fp16(0.0F));
+        ggml_backend_tensor_set(
+            decode_attention_mask_,
+            decode_attention_mask_values_.data(),
+            0,
+            decode_attention_mask_values_.size() * sizeof(ggml_fp16_t));
     }
 
     QwenCausalDecodeStepResult run_decode_step() {
@@ -1361,31 +1571,110 @@ private:
         return out;
     }
 
+    void run_decode_step_into(QwenCausalDecodeStepResult & out) {
+        if (decode_cache_.valid_steps() >= decode_cache_steps_) {
+            throw std::runtime_error("QwenCausalDecodeRuntime decode cache exhausted");
+        }
+        const int32_t position = static_cast<int32_t>(decode_cache_.current_end());
+        ggml_backend_tensor_set(decode_positions_, &position, 0, sizeof(int32_t));
+        const int32_t cache_slot = static_cast<int32_t>(decode_cache_.valid_steps());
+        ggml_backend_tensor_set(decode_cache_slot_, &cache_slot, 0, sizeof(int32_t));
+        if (config_.sliding_window <= 0) {
+            const auto visible = ggml_fp32_to_fp16(0.0F);
+            decode_attention_mask_values_[static_cast<size_t>(cache_slot)] = visible;
+            ggml_backend_tensor_set(
+                decode_attention_mask_,
+                &visible,
+                static_cast<size_t>(cache_slot) * sizeof(ggml_fp16_t),
+                sizeof(ggml_fp16_t));
+        } else {
+            write_cached_step_mask(
+                config_,
+                decode_attention_mask_,
+                decode_attention_mask_values_,
+                decode_cache_steps_,
+                decode_cache_.valid_steps(),
+                cache_slot,
+                position);
+        }
+        core::set_backend_threads(backend_, threads_);
+        const ggml_status status = core::compute_backend_graph(backend_, decode_graph_);
+        ggml_backend_synchronize(backend_);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("QwenCausalDecodeRuntime decode graph compute failed");
+        }
+        if (decode_logits_ != nullptr) {
+            out.logits.resize(static_cast<size_t>(ggml_nelements(decode_logits_)));
+            ggml_backend_tensor_get(decode_logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
+        } else {
+            out.logits.clear();
+        }
+        if (decode_hidden_ != nullptr) {
+            out.hidden.resize(static_cast<size_t>(ggml_nelements(decode_hidden_)));
+            ggml_backend_tensor_get(decode_hidden_, out.hidden.data(), 0, out.hidden.size() * sizeof(float));
+            round_readback(out.hidden, config_);
+        } else {
+            out.hidden.clear();
+        }
+        decode_cache_.advance_after_direct_append(1);
+    }
+
     QwenCausalDecodeStepResult run_batched_decode_step() {
         if (batched_decode_cache_.valid_steps() >= batched_decode_cache_steps_) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode cache exhausted");
         }
-        const int32_t position = static_cast<int32_t>(batched_decode_cache_.current_end());
-        ggml_backend_tensor_set(batched_decode_positions_, &position, 0, sizeof(int32_t));
+        int32_t position = static_cast<int32_t>(batched_decode_cache_.current_end());
         const int32_t cache_slot = static_cast<int32_t>(batched_decode_cache_.valid_steps());
-        for (int64_t batch = 0; batch < batched_decode_batch_size_; ++batch) {
-            batched_decode_cache_slots_[static_cast<size_t>(batch)] =
-                static_cast<int32_t>(batch * batched_decode_cache_steps_ + cache_slot);
+        if (batched_decode_variable_positions_) {
+            const auto & current_ends = batched_decode_cache_.current_end_by_batch();
+            const auto & valid_steps = batched_decode_cache_.valid_steps_by_batch();
+            if (current_ends.size() != static_cast<size_t>(batched_decode_batch_size_) ||
+                valid_steps.size() != static_cast<size_t>(batched_decode_batch_size_)) {
+                throw std::runtime_error("QwenCausalDecodeRuntime variable batched decode state is incomplete");
+            }
+            batched_decode_positions_values_.resize(static_cast<size_t>(batched_decode_batch_size_));
+            for (int64_t batch = 0; batch < batched_decode_batch_size_; ++batch) {
+                const int64_t row_valid_steps = valid_steps[static_cast<size_t>(batch)];
+                batched_decode_positions_values_[static_cast<size_t>(batch)] =
+                    static_cast<int32_t>(current_ends[static_cast<size_t>(batch)]);
+                batched_decode_cache_slots_[static_cast<size_t>(batch)] =
+                    static_cast<int32_t>(batch * batched_decode_cache_steps_ + row_valid_steps);
+            }
+            ggml_backend_tensor_set(
+                batched_decode_positions_,
+                batched_decode_positions_values_.data(),
+                0,
+                batched_decode_positions_values_.size() * sizeof(int32_t));
+            write_batched_cached_step_mask_variable(
+                config_,
+                batched_decode_attention_mask_,
+                batched_decode_attention_mask_values_,
+                batched_decode_batch_size_,
+                batched_decode_cache_steps_,
+                valid_steps,
+                batched_decode_cache_slots_,
+                current_ends);
+        } else {
+            ggml_backend_tensor_set(batched_decode_positions_, &position, 0, sizeof(int32_t));
+            for (int64_t batch = 0; batch < batched_decode_batch_size_; ++batch) {
+                batched_decode_cache_slots_[static_cast<size_t>(batch)] =
+                    static_cast<int32_t>(batch * batched_decode_cache_steps_ + cache_slot);
+            }
+            write_batched_cached_step_mask(
+                config_,
+                batched_decode_attention_mask_,
+                batched_decode_attention_mask_values_,
+                batched_decode_batch_size_,
+                batched_decode_cache_steps_,
+                batched_decode_cache_.valid_steps(),
+                cache_slot,
+                position);
         }
         ggml_backend_tensor_set(
             batched_decode_cache_slot_,
             batched_decode_cache_slots_.data(),
             0,
             batched_decode_cache_slots_.size() * sizeof(int32_t));
-        write_batched_cached_step_mask(
-            config_,
-            batched_decode_attention_mask_,
-            batched_decode_attention_mask_values_,
-            batched_decode_batch_size_,
-            batched_decode_cache_steps_,
-            batched_decode_cache_.valid_steps(),
-            cache_slot,
-            position);
         core::set_backend_threads(backend_, threads_);
         const ggml_status status = core::compute_backend_graph(backend_, batched_decode_graph_);
         ggml_backend_synchronize(backend_);
@@ -1437,6 +1726,7 @@ private:
         prefill_attention_mask_values_.clear();
         prefill_steps_ = 0;
         prefill_input_kind_ = InputKind::None;
+        prefill_populates_decode_cache_ = false;
     }
 
     void release_batched_prefill_graph() {
@@ -1530,6 +1820,9 @@ private:
 
     void release_decode_graph() {
         release_block_graph();
+        if (prefill_populates_decode_cache_) {
+            release_prefill_graph();
+        }
         if (decode_graph_ != nullptr) {
             core::release_backend_graph_resources(
                 backend_, decode_graph_, config_.evict_cuda_graph_cache_on_release);
@@ -1574,9 +1867,11 @@ private:
         batched_decode_cache_ = runtime::TransformerBatchedKVCache();
         batched_decode_attention_mask_values_.clear();
         batched_decode_cache_slots_.clear();
+        batched_decode_positions_values_.clear();
         batched_decode_batch_size_ = 0;
         batched_decode_cache_steps_ = 0;
         batched_decode_input_kind_ = InputKind::None;
+        batched_decode_variable_positions_ = false;
     }
 
     ggml_backend_t backend_ = nullptr;
@@ -1603,6 +1898,7 @@ private:
     std::vector<ggml_fp16_t> prefill_attention_mask_values_;
     int64_t prefill_steps_ = 0;
     InputKind prefill_input_kind_ = InputKind::None;
+    bool prefill_populates_decode_cache_ = false;
 
     std::unique_ptr<ggml_context, GgmlContextDeleter> batched_prefill_ctx_;
     ggml_tensor * batched_prefill_input_ = nullptr;
@@ -1659,10 +1955,12 @@ private:
     ggml_backend_buffer_t batched_decode_buffer_ = nullptr;
     std::vector<ggml_fp16_t> batched_decode_attention_mask_values_;
     std::vector<int32_t> batched_decode_cache_slots_;
+    std::vector<int32_t> batched_decode_positions_values_;
     runtime::TransformerBatchedKVCache batched_decode_cache_;
     int64_t batched_decode_batch_size_ = 0;
     int64_t batched_decode_cache_steps_ = 0;
     InputKind batched_decode_input_kind_ = InputKind::None;
+    bool batched_decode_variable_positions_ = false;
 };
 
 QwenCausalDecodeRuntime::QwenCausalDecodeRuntime(
@@ -1681,6 +1979,12 @@ QwenCausalPrefillResult QwenCausalDecodeRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) {
     return impl_->prefill_embeddings(embeddings, steps);
+}
+
+QwenCausalPrefillIntoDecodeResult QwenCausalDecodeRuntime::prefill_tokens_into_decode_cache(
+    const std::vector<int32_t> & token_ids,
+    int64_t required_cache_steps) {
+    return impl_->prefill_tokens_into_decode_cache(token_ids, required_cache_steps);
 }
 
 QwenCausalBatchedPrefillResult QwenCausalDecodeRuntime::prefill_tokens_batched(
@@ -1716,6 +2020,10 @@ void QwenCausalDecodeRuntime::start_decode_embeddings(
 
 QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_token(int32_t token) {
     return impl_->decode_token(token);
+}
+
+void QwenCausalDecodeRuntime::decode_token_into(int32_t token, QwenCausalDecodeStepResult & out) {
+    impl_->decode_token_into(token, out);
 }
 
 QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_embedding(const std::vector<float> & embedding) {
