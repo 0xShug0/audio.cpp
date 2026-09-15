@@ -55,14 +55,13 @@ struct GgmlContextDeleter {
 modules::QwenDecoderActivationCastPolicy breeze_bf16_activation_policy(core::BackendType backend_type) {
     modules::QwenDecoderActivationCastPolicy policy;
     if (backend_type != core::BackendType::Cuda && backend_type != core::BackendType::Hip &&
-        backend_type != core::BackendType::Vulkan) {
+        backend_type != core::BackendType::Vulkan && backend_type != core::BackendType::Metal) {
         return policy;
     }
     policy.enabled = true;
     policy.type = GGML_TYPE_BF16;
     // CUDA/HIP/Vulkan implement the fused round-to-bf16 unary op.
-    policy.fused_round = backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan;
+    policy.fused_round = backend_type != core::BackendType::Metal;
     policy.after_input_norm = true;
     policy.after_qkv_projection = true;
     policy.after_qk_norm = true;
@@ -114,12 +113,13 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan) {
+        backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal) {
         // BF16 KV cache matches the reference implementation, but flash
         // attention only accelerates bf16 cache with native bf16 MMA
         // (sm_80+); on older parts it is ~3x slower, so only HIP uses it.
         out.decoder.static_cache_type =
-            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+            (backend_type == core::BackendType::Hip || backend_type == core::BackendType::Metal)
+                ? GGML_TYPE_BF16 : GGML_TYPE_F16;
         out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
     }
     out.decoder.logits_size = config.lm_head_size;
@@ -168,11 +168,12 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan) {
+        backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal) {
         // See backbone_config: only HIP uses a bf16 KV cache; CUDA and Vulkan
         // keep F16.
         out.decoder.static_cache_type =
-            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+            (backend_type == core::BackendType::Hip || backend_type == core::BackendType::Metal)
+                ? GGML_TYPE_BF16 : GGML_TYPE_F16;
         out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
     }
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
