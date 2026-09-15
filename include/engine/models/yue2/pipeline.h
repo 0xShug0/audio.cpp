@@ -10,9 +10,16 @@
 #include "engine/models/yue2/tokenizer_text.h"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace engine::models::yue2 {
+
+struct Yue2RunResult {
+    runtime::AudioBuffer audio;
+    std::string plan_abc_text;
+    bool plan_abc_truncated = false;
+};
 
 class Yue2PipelineRuntime {
 public:
@@ -37,7 +44,7 @@ public:
         const Yue2GenerationConfig & generation,
         uint64_t seed);
     runtime::AudioBuffer decode_audio(const std::vector<float> & latents, int64_t frames);
-    runtime::AudioBuffer run(const Yue2Request & request);
+    Yue2RunResult run(const Yue2Request & request);
     void release_runtime_graphs();
 
 private:
