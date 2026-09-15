@@ -125,6 +125,10 @@ private:
     std::vector<int32_t> token_frame_indices_;
     std::vector<int32_t> token_durations_;
     runtime::StreamEventCallback stream_event_sink_;
+    // The transcript already published as partials. merged_decode() returns the
+    // whole transcript each time, so this is what turns it back into the
+    // increment a partial is contracted to be.
+    std::string emitted_text_;
     bool stream_started_ = false;
     bool finalized_ = false;
 };

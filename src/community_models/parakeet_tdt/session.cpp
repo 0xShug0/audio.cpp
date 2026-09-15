@@ -217,6 +217,23 @@ int64_t seconds_to_samples(float seconds, int sample_rate) {
         static_cast<double>(seconds) * static_cast<double>(sample_rate)));
 }
 
+// Longest common prefix of the published transcript and a fresh decode, backed
+// off to a UTF-8 boundary. Re-decoding with more right context can revise what
+// was already sent rather than only extending it, and without the boundary
+// check a revision landing mid-character would split a code point across two
+// deltas. Parakeet v3 is multilingual, so that is reachable rather than
+// theoretical.
+size_t common_prefix_size(const std::string & lhs, const std::string & rhs) {
+    size_t size = 0;
+    while (size < lhs.size() && size < rhs.size() && lhs[size] == rhs[size]) {
+        ++size;
+    }
+    while (size > 0 && (static_cast<unsigned char>(rhs[size]) & 0xC0) == 0x80) {
+        --size;
+    }
+    return size;
+}
+
 }  // namespace
 
 ParakeetTDTSessionBase::ParakeetTDTSessionBase(
@@ -789,6 +806,7 @@ void ParakeetTDTStreamingSession::reset() {
     token_ids_.clear();
     token_frame_indices_.clear();
     token_durations_.clear();
+    emitted_text_.clear();
     decoder_->reset_state();
     stream_started_ = true;
     finalized_ = false;
@@ -912,7 +930,16 @@ runtime::StreamEvent ParakeetTDTStreamingSession::process_ready_windows(bool flu
     runtime::StreamEvent event;
     if (changed && !token_ids_.empty()) {
         auto decoded = merged_decode();
-        event.partial_text = runtime::Transcript{decoded.text, ""};
+        // A partial is the text decoded since the last one: the CLI appends
+        // them into a scrolling transcript and the server forwards each as a
+        // transcript.text.delta. merged_decode() re-renders the whole
+        // transcript from every token so far, so publishing it unchanged made
+        // an appending client build "Some call meSome call me nature".
+        const size_t published = common_prefix_size(emitted_text_, decoded.text);
+        if (published < decoded.text.size()) {
+            event.partial_text = runtime::Transcript{decoded.text.substr(published), ""};
+        }
+        emitted_text_ = decoded.text;
         event.word_timestamps = std::move(decoded.word_timestamps);
         // The last word has no following word boundary yet, so it remains
         // provisional and is withheld from the finalized timestamp list.
