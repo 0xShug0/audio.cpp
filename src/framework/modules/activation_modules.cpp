@@ -513,6 +513,8 @@ const core::ModuleSchema & SoftmaxModule::static_schema() noexcept {
     return kSoftmaxSchema;
 }
 
+GLUModule::GLUModule(GLUConfig config) : config_(config) {}
+
 const core::ModuleSchema & GLUModule::schema() const noexcept {
     return static_schema();
 }
@@ -540,6 +542,9 @@ core::TensorValue GLUModule::build(core::ModuleBuildContext & ctx, const core::T
         ggml_view_2d(ctx.ggml, flat.tensor, hidden, flat.shape.dims[0], flat.tensor->nb[1], hidden * sizeof(float)),
         core::TensorShape::from_dims({flat.shape.dims[0], hidden}),
         GGML_TYPE_F32);
+    if (config_.contiguous_gate) {
+        rhs = core::wrap_tensor(ggml_cont(ctx.ggml, rhs.tensor), rhs.shape, GGML_TYPE_F32);
+    }
     rhs = core::wrap_tensor(ggml_sigmoid(ctx.ggml, rhs.tensor), rhs.shape, GGML_TYPE_F32);
     auto output = core::wrap_tensor(ggml_mul(ctx.ggml, lhs.tensor, rhs.tensor), lhs.shape, GGML_TYPE_F32);
 

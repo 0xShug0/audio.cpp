@@ -20,6 +20,28 @@
 
 namespace engine::modules::binding {
 
+template <typename Store>
+ChannelAffineWeights batch_norm_eval_from_source(
+    Store & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    int64_t channels,
+    float eps,
+    assets::TensorStorageType storage_type = assets::TensorStorageType::F32) {
+    const auto gamma = source.require_f32(prefix + ".weight", {channels});
+    const auto beta = source.require_f32(prefix + ".bias", {channels});
+    const auto mean = source.require_f32(prefix + ".running_mean", {channels});
+    const auto variance = source.require_f32(prefix + ".running_var", {channels});
+    std::vector<float> scale(static_cast<size_t>(channels)), bias(static_cast<size_t>(channels));
+    for (size_t i = 0; i < scale.size(); ++i) {
+        scale[i] = gamma[i] / std::sqrt(variance[i] + eps);
+        bias[i] = beta[i] - mean[i] * scale[i];
+    }
+    const auto shape = core::TensorShape::from_dims({channels});
+    return {store.make_from_f32(shape, storage_type, std::move(scale)),
+        store.make_from_f32(shape, storage_type, std::move(bias))};
+}
+
 inline LinearConfig linear_config(
     int64_t in_features,
     int64_t out_features,

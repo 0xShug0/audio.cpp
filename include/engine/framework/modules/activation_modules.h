@@ -114,11 +114,20 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 };
 
+struct GLUConfig {
+    bool contiguous_gate = false;
+};
+
 class GLUModule {
 public:
+    GLUModule() = default;
+    explicit GLUModule(GLUConfig config);
     const core::ModuleSchema & schema() const noexcept;
     core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
     static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    GLUConfig config_;
 };
 
 struct Snake1dConfig {
