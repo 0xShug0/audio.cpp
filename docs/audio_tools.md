@@ -13,6 +13,7 @@
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
 | MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
+| SheetSage2 | `sheetsage2` | `midi` audio to ABC score | [SheetSage2](#sheetsage2) |
 | HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
 | BS-RoFormer | `bs_roformer` | `sep` | [BS-RoFormer](#bs-roformer) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
@@ -274,6 +275,21 @@ VeVo2 covers speech, singing, voice conversion, singing conversion, and editing 
 ```bash
 audiocpp_cli --task vc --family vevo2 --model models/VeVo2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
 ```
+
+## SheetSage2
+
+SheetSage2 transcribes music into an ABC score. It uses the `midi` task route but
+writes ABC notation, not a binary MIDI file.
+
+```bash
+audiocpp_cli --task midi --family sheetsage2 \
+  --model models/SheetSage2-GGUF/sheetsage2-orig.gguf \
+  --backend cuda --threads 8 --audio song.wav \
+  --out score.abc --log
+```
+
+Use the original-precision package; Q8 is not supported. The resulting score can
+condition [YuE2](models/yue2.md) through `abc_file` with `cot=melody` or `cot=full`.
 
 ## MuScriptor
 
