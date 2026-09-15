@@ -243,7 +243,7 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
             # 50/61/70 (Maxwell/Pascal/Volta) unsupported by CUDA 13 toolkits
             list(APPEND CMAKE_CUDA_ARCHITECTURES 50-virtual 61-virtual 70-virtual)
         endif()
-        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-virtual 80-virtual 86-real)
+        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-real 80-virtual 86-real)
         if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.8")
             list(APPEND CMAKE_CUDA_ARCHITECTURES 89-real 90-virtual)
         endif()
