@@ -464,7 +464,6 @@ struct Yue2ArRuntime::Impl {
         : execution(execution),
           assets(std::move(assets)),
           weight_type(weight_type) {
-        const auto total_start = Clock::now();
         if (!this->assets) {
             throw std::runtime_error("Yue2 AR runtime requires assets");
         }
@@ -475,13 +474,8 @@ struct Yue2ArRuntime::Impl {
             weight_context_bytes);
         const auto & config = this->assets->config.model;
         const auto & source = *this->assets->model_weights;
-        const auto load_start = Clock::now();
         runtime_weights = load_prefix_weights(*store, source, config, weight_type);
-        engine::debug::timing_log_scalar("yue2.ar.weights_load_ms", engine::debug::elapsed_ms(load_start));
-        const auto upload_start = Clock::now();
         store->upload();
-        engine::debug::timing_log_scalar("yue2.ar.prefix_weights_upload_ms", engine::debug::elapsed_ms(upload_start));
-        engine::debug::timing_log_scalar("yue2.ar.weights_upload_ms", engine::debug::elapsed_ms(upload_start));
         runtime_config = make_runtime_config(
             config,
             execution.backend_type(),
@@ -499,14 +493,12 @@ struct Yue2ArRuntime::Impl {
             prefill_graph_arena_bytes,
             decode_graph_arena_bytes,
             kCodecSize + 1);
-        engine::debug::timing_log_scalar("yue2.ar.init_total_ms", engine::debug::elapsed_ms(total_start));
     }
 
     struct PrefixStateGraph {
         PrefixStateGraph(Impl & owner, int64_t steps)
             : owner(&owner),
               steps(steps) {
-            const auto total_start = Clock::now();
             const auto & config = owner.assets->config.model;
             ggml_init_params params{owner.runtime_config.prefill_graph_arena_bytes, nullptr, true};
             ctx.reset(ggml_init(params));
@@ -588,7 +580,6 @@ struct Yue2ArRuntime::Impl {
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
             ggml_backend_tensor_set(attention_mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));
             engine::debug::timing_log_scalar("yue2.ar.prefix_state.graph.build_ms", engine::debug::elapsed_ms(build_start));
-            engine::debug::timing_log_scalar("yue2.ar.prefix_state.graph.total_ms", engine::debug::elapsed_ms(total_start));
         }
 
         ~PrefixStateGraph() {
@@ -607,7 +598,6 @@ struct Yue2ArRuntime::Impl {
 
         runtime::TransformerKVState run(const std::vector<int32_t> & tokens) {
             compute(tokens);
-            const auto read_start = Clock::now();
             runtime::TransformerKVState out;
             out.current_end = steps;
             out.layers.resize(keys.size());
@@ -619,18 +609,15 @@ struct Yue2ArRuntime::Impl {
                 core::round_f32_to_bf16_in_place(state.key);
                 core::round_f32_to_bf16_in_place(state.value);
             }
-            engine::debug::timing_log_scalar("yue2.ar.prefix_state.output_read_ms", engine::debug::elapsed_ms(read_start));
             return out;
         }
 
         Yue2ArDevicePrefixState run_device(const std::vector<int32_t> & tokens) {
             compute(tokens);
-            const auto copy_start = Clock::now();
             for (size_t layer = 0; layer < keys.size(); ++layer) {
                 ggml_backend_tensor_copy(keys[layer], key_values[layer].tensor);
                 ggml_backend_tensor_copy(values[layer], value_values[layer].tensor);
             }
-            engine::debug::timing_log_scalar("yue2.ar.prefix_state.device_copy_ms", engine::debug::elapsed_ms(copy_start));
             Yue2ArDevicePrefixState out;
             out.current_end = steps;
             out.keys = key_values;
@@ -642,15 +629,11 @@ struct Yue2ArRuntime::Impl {
             if (static_cast<int64_t>(tokens.size()) != steps) {
                 throw std::runtime_error("Yue2 AR prefix-state token size mismatch");
             }
-            const auto upload_start = Clock::now();
             ggml_backend_tensor_set(input, tokens.data(), 0, tokens.size() * sizeof(int32_t));
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
             ggml_backend_tensor_set(attention_mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));
-            engine::debug::timing_log_scalar("yue2.ar.prefix_state.input_upload_ms", engine::debug::elapsed_ms(upload_start));
-            const auto compute_start = Clock::now();
             const auto status = core::compute_backend_graph(owner->execution.backend(), graph, nullptr, "yue2.ar.prefix_state");
             ggml_backend_synchronize(owner->execution.backend());
-            engine::debug::timing_log_scalar("yue2.ar.prefix_state.graph_compute_ms", engine::debug::elapsed_ms(compute_start));
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("Yue2 AR prefix-state graph compute failed");
             }
@@ -687,7 +670,6 @@ struct Yue2ArRuntime::Impl {
         auto & active_runtime = compact_semantic ? semantic_runtime : (compact_abc ? abc_runtime : runtime);
         const auto total_start = Clock::now();
         engine::debug::timing_log_scalar("yue2.ar.generate.prefix_tokens", prefix.size());
-        engine::debug::timing_log_scalar("yue2.ar.generate.max_tokens", window.max_tokens);
         auto cache_steps_for = [](int64_t prefix_tokens, int64_t remaining_tokens) {
             return prefix_tokens + std::min<int64_t>(remaining_tokens, kArDecodeChunkTokens);
         };
@@ -696,7 +678,6 @@ struct Yue2ArRuntime::Impl {
             prefix,
             cache_steps_for(static_cast<int64_t>(prefix.size()), window.max_tokens));
         engine::debug::timing_log_scalar("yue2.ar.generate.prefill_ms", engine::debug::elapsed_ms(prefill_start));
-        double start_decode_ms = 0.0;
         std::vector<int32_t> emitted;
         emitted.reserve(static_cast<size_t>(window.max_tokens));
         std::mt19937 rng(static_cast<uint32_t>(seed));
@@ -715,7 +696,6 @@ struct Yue2ArRuntime::Impl {
                 sample_token(decode_result.logits, emitted, window, rng, scratch);
             sample_ms += engine::debug::elapsed_ms(sample_start);
             if (token == window.stop_token) {
-                engine::debug::timing_log_scalar("yue2.ar.generate.start_decode_ms", start_decode_ms);
                 engine::debug::timing_log_scalar("yue2.ar.generate.sample_ms", sample_ms);
                 engine::debug::timing_log_scalar("yue2.ar.generate.decode_ms", decode_ms);
                 engine::debug::timing_log_scalar("yue2.ar.generate.refill_prefill_ms", refill_prefill_ms);
@@ -748,7 +728,6 @@ struct Yue2ArRuntime::Impl {
             active_runtime->decode_token_into(token, decode_result);
             decode_ms += engine::debug::elapsed_ms(decode_start);
         }
-        engine::debug::timing_log_scalar("yue2.ar.generate.start_decode_ms", start_decode_ms);
         engine::debug::timing_log_scalar("yue2.ar.generate.sample_ms", sample_ms);
         engine::debug::timing_log_scalar("yue2.ar.generate.decode_ms", decode_ms);
         engine::debug::timing_log_scalar("yue2.ar.generate.refill_prefill_ms", refill_prefill_ms);
@@ -774,8 +753,6 @@ struct Yue2ArRuntime::Impl {
         const auto total_start = Clock::now();
         engine::debug::timing_log_scalar("yue2.ar.cfg.positive_prefix_tokens", positive_prefix.size());
         engine::debug::timing_log_scalar("yue2.ar.cfg.negative_prefix_tokens", negative_prefix.size());
-        engine::debug::timing_log_scalar("yue2.ar.cfg.max_tokens", window.max_tokens);
-        engine::debug::timing_log_scalar("yue2.ar.cfg.guidance_scale", static_cast<double>(guidance_scale));
         const auto positive_prefill_start = Clock::now();
         auto positive = positive_runtime->prefill_tokens(positive_prefix);
         engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_positive_ms", engine::debug::elapsed_ms(positive_prefill_start));
@@ -797,25 +774,21 @@ struct Yue2ArRuntime::Impl {
         std::mt19937 rng(static_cast<uint32_t>(seed));
         Yue2SamplerScratch scratch;
         std::vector<float> logits(positive.logits.size(), 0.0F);
-        double guidance_ms = 0.0;
         double sample_ms = 0.0;
         double decode_batched_ms = 0.0;
         for (int64_t step = 0; step < window.max_tokens; ++step) {
             if (positive.logits.size() != negative.logits.size()) {
                 throw std::runtime_error("Yue2 CFG logits size mismatch");
             }
-            const auto guidance_start = Clock::now();
             for (size_t i = 0; i < logits.size(); ++i) {
                 logits[i] = negative.logits[i] + (positive.logits[i] - negative.logits[i]) * guidance_scale;
             }
-            guidance_ms += engine::debug::elapsed_ms(guidance_start);
             const auto sample_start = Clock::now();
             const int32_t token = compact_semantic ?
                 sample_semantic_token(logits, emitted, window, rng, scratch) :
                 sample_token(logits, emitted, window, rng, scratch);
             sample_ms += engine::debug::elapsed_ms(sample_start);
             if (token == window.stop_token) {
-                engine::debug::timing_log_scalar("yue2.ar.cfg.guidance_ms", guidance_ms);
                 engine::debug::timing_log_scalar("yue2.ar.cfg.sample_ms", sample_ms);
                 engine::debug::timing_log_scalar("yue2.ar.cfg.decode_batched_ms", decode_batched_ms);
                 engine::debug::timing_log_scalar("yue2.ar.cfg.emitted_tokens", emitted.size());
@@ -836,7 +809,6 @@ struct Yue2ArRuntime::Impl {
             positive.logits.assign(batched.logits.begin(), batched.logits.begin() + static_cast<std::ptrdiff_t>(row));
             negative.logits.assign(batched.logits.begin() + static_cast<std::ptrdiff_t>(row), batched.logits.end());
         }
-        engine::debug::timing_log_scalar("yue2.ar.cfg.guidance_ms", guidance_ms);
         engine::debug::timing_log_scalar("yue2.ar.cfg.sample_ms", sample_ms);
         engine::debug::timing_log_scalar("yue2.ar.cfg.decode_batched_ms", decode_batched_ms);
         engine::debug::timing_log_scalar("yue2.ar.cfg.emitted_tokens", emitted.size());
@@ -845,26 +817,20 @@ struct Yue2ArRuntime::Impl {
     }
 
     runtime::TransformerKVState prefill_state(const std::vector<int32_t> & tokens) {
-        const auto start = Clock::now();
-        engine::debug::timing_log_scalar("yue2.ar.prefill_state.tokens", tokens.size());
         const int64_t steps = static_cast<int64_t>(tokens.size());
         if (!prefix_state_graph || !prefix_state_graph->matches(steps)) {
             prefix_state_graph = std::make_unique<PrefixStateGraph>(*this, steps);
         }
         auto state = prefix_state_graph->run(tokens);
-        engine::debug::timing_log_scalar("yue2.ar.prefill_state_ms", engine::debug::elapsed_ms(start));
         return state;
     }
 
     Yue2ArDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens) {
-        const auto start = Clock::now();
-        engine::debug::timing_log_scalar("yue2.ar.prefill_state.tokens", tokens.size());
         const int64_t steps = static_cast<int64_t>(tokens.size());
         if (!prefix_state_graph || !prefix_state_graph->matches(steps)) {
             prefix_state_graph = std::make_unique<PrefixStateGraph>(*this, steps);
         }
         auto state = prefix_state_graph->run_device(tokens);
-        engine::debug::timing_log_scalar("yue2.ar.prefill_state_ms", engine::debug::elapsed_ms(start));
         return state;
     }
 
@@ -898,16 +864,8 @@ struct Yue2ArRuntime::Impl {
                 execution.backend_type(),
                 "yue2.ar.generation.weights",
                 64ull * 1024ull * 1024ull);
-            const auto bind_start = Clock::now();
             load_generation_weights(runtime_weights, *generation_store, source, config, weight_type);
-            engine::debug::timing_log_scalar(
-                "yue2.ar.generation_weights_bind_ms",
-                engine::debug::elapsed_ms(bind_start));
-            const auto upload_start = Clock::now();
             generation_store->upload();
-            engine::debug::timing_log_scalar(
-                "yue2.ar.generation_weights_upload_ms",
-                engine::debug::elapsed_ms(upload_start));
             ggml_init_params view_params{ggml_tensor_overhead() * 8, nullptr, true};
             generation_view_ctx.reset(ggml_init(view_params));
             if (generation_view_ctx == nullptr) {
@@ -939,7 +897,6 @@ struct Yue2ArRuntime::Impl {
                 std::nullopt,
             };
         }
-        const auto runtime_start = Clock::now();
         if (!active_runtime) {
             active_runtime = std::make_unique<engine::modules::QwenCausalDecodeRuntime>(
                 execution,
@@ -952,7 +909,6 @@ struct Yue2ArRuntime::Impl {
                 active_config,
                 compact_semantic ? semantic_runtime_weights : (compact_abc ? abc_runtime_weights : runtime_weights));
         }
-        engine::debug::timing_log_scalar("yue2.ar.runtime_build_ms", engine::debug::elapsed_ms(runtime_start));
         engine::debug::timing_log_scalar("yue2.ar.ensure_generation_ms", engine::debug::elapsed_ms(total_start));
     }
 

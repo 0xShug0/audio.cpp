@@ -23,7 +23,7 @@
   export let setParameterValue: (spec: ParamSpec, value: unknown) => void = () => {};
 
   const componentParamNames = ['main_gguf', 'vae_gguf'];
-  const coreParamNames = ['style', 'cot', 'cfg_scale', 'num_inference_steps'];
+  const coreParamNames = ['style', 'cot', 'guidance_scale', 'num_inference_steps'];
   const abcParamNames = ['abc', 'abc_file'];
   const semanticParamNames = [
     'semantic_temperature',

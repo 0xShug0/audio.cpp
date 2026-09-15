@@ -4,7 +4,7 @@
   "display_name": "YuE2",
   "description": "YuE2 music generation model with symbolic ABC planning, semantic codec generation, NAR acoustic flow synthesis, and Oobleck VAE decode.",
   "category": "audio_generation",
-  "status": "experimental",
+  "status": "supported",
   "tasks": [
     "music"
   ],
@@ -77,19 +77,13 @@
         "required": false
       },
       {
-        "name": "semantic_codes_file",
-        "type": "string",
-        "description": "Teacher-forced raw int32 semantic codec IDs for downstream parity validation.",
-        "required": false
-      },
-      {
         "name": "nar_noise_file",
         "type": "string",
-        "description": "Teacher-forced raw float32 NAR noise [frames,64] for downstream parity validation.",
+        "description": "Path to a raw float32 noise file for NAR generation, shaped [frames,64].",
         "required": false
       },
       {
-        "name": "cfg_scale",
+        "name": "guidance_scale",
         "type": "float",
         "description": "Semantic classifier-free guidance scale. Default follows the upstream route defaults.",
         "required": false,
@@ -102,7 +96,7 @@
         "description": "Generation seed.",
         "required": false,
         "min": 0,
-        "default": 831001
+        "default": 1234
       },
       {
         "name": "num_inference_steps",
@@ -110,7 +104,7 @@
         "description": "NAR midpoint ODE steps.",
         "required": false,
         "min": 1,
-        "default": 32
+        "default": 8
       },
       {
         "name": "abc_temperature",

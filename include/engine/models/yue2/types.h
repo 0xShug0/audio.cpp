@@ -55,7 +55,7 @@ struct Yue2SamplingConfig {
 struct Yue2GenerationConfig {
     Yue2SamplingConfig abc;
     Yue2SamplingConfig semantic;
-    int64_t ode_steps = 32;
+    int64_t ode_steps = 8;
     int64_t context = kContextTokens;
 };
 
@@ -76,9 +76,8 @@ struct Yue2Request {
     std::string lyrics;
     Yue2CotMode cot = Yue2CotMode::Full;
     std::string abc;
-    std::vector<int32_t> semantic_codes;
     std::vector<float> nar_noise;
-    uint64_t seed = 831001;
+    uint64_t seed = 1234;
     float cfg_scale = -1.0F;
     Yue2GenerationConfig generation;
 };

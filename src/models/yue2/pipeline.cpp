@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -140,25 +141,12 @@ public:
             out.abc_ids = tokenizer.encode(request.abc);
         }
         out.prefix = token_prefixes(request, tokenizer, out.abc_ids);
-        engine::debug::timing_log_scalar("yue2.plan.prefix_tokens", out.prefix.size());
-        engine::debug::timing_log_scalar("yue2.plan.abc_tokens", out.abc_ids.size());
         return out;
     }
 
     Yue2SemanticResult generate_semantic(const Yue2Request & request, Yue2Plan plan) {
-        const auto total_start = Clock::now();
         Yue2SemanticResult out;
         out.plan = std::move(plan);
-        if (!request.semantic_codes.empty()) {
-            out.tokens.reserve(request.semantic_codes.size());
-            for (const int32_t code : request.semantic_codes) {
-                out.tokens.push_back(code + kCodecOffset);
-            }
-            engine::debug::timing_log_scalar("yue2.semantic.input_codes", request.semantic_codes.size());
-            engine::debug::timing_log_scalar("yue2.semantic.tokens", out.tokens.size());
-            engine::debug::timing_log_scalar("yue2.semantic.total_inner_ms", engine::debug::elapsed_ms(total_start));
-            return out;
-        }
         if (request.cot != Yue2CotMode::Off && request.abc.empty()) {
             ensure_ar();
             const auto abc_start = Clock::now();
@@ -173,23 +161,16 @@ public:
             ar->release_runtime_graphs();
         }
         ensure_ar();
-        const auto negative_start = Clock::now();
         const auto neg = negative_prefix(request, tokenizer, out.plan.abc_ids);
-        engine::debug::timing_log_scalar("yue2.semantic.negative_prefix_ms", engine::debug::elapsed_ms(negative_start));
-        engine::debug::timing_log_scalar("yue2.semantic.positive_prefix_tokens", out.plan.prefix.size());
-        engine::debug::timing_log_scalar("yue2.semantic.negative_prefix_tokens", neg.size());
-        const auto music_start = Clock::now();
         out.tokens = ar->generate_cfg(
             out.plan.prefix,
             neg,
             semantic_window(request.generation),
             request_guidance_scale(request),
             request.seed);
-        engine::debug::timing_log_scalar("yue2.semantic.music_generate_ms", engine::debug::elapsed_ms(music_start));
         out.truncated = static_cast<int64_t>(out.tokens.size()) >= request.generation.semantic.max_tokens;
         engine::debug::timing_log_scalar("yue2.semantic.tokens", out.tokens.size());
         engine::debug::timing_log_scalar("yue2.semantic.truncated", out.truncated);
-        engine::debug::timing_log_scalar("yue2.semantic.total_inner_ms", engine::debug::elapsed_ms(total_start));
         ar->release_runtime_graphs();
         return out;
     }
@@ -199,10 +180,7 @@ public:
         const Yue2GenerationConfig & generation,
         const std::vector<float> & noise,
         uint64_t seed) {
-        const auto codec_start = Clock::now();
         const auto codec = codec_from_semantic_tokens(semantic.tokens);
-        engine::debug::timing_log_scalar("yue2.nar.codec_extract_ms", engine::debug::elapsed_ms(codec_start));
-        engine::debug::timing_log_scalar("yue2.nar.codec_tokens", codec.size());
         if (codec.empty()) {
             throw std::runtime_error("Yue2 semantic generation produced no codec tokens");
         }
@@ -233,11 +211,8 @@ public:
             throw std::runtime_error("Yue2 VAE tile configuration is invalid");
         }
         engine::debug::timing_log_scalar("yue2.vae_decode.latent_frames", frames);
-        engine::debug::timing_log_scalar("yue2.vae_decode.channels", channels);
-        double planar_pack_ms = 0.0;
 
         auto make_planar_tile = [&](int64_t begin, int64_t end) {
-            const auto start = Clock::now();
             const int64_t tile_frames = end - begin;
             std::vector<float> planar(static_cast<size_t>(channels * tile_frames), 0.0F);
             for (int64_t t = 0; t < tile_frames; ++t) {
@@ -246,7 +221,6 @@ public:
                         latents[static_cast<size_t>((begin + t) * channels + c)];
                 }
             }
-            planar_pack_ms += engine::debug::elapsed_ms(start);
             return planar;
         };
 
@@ -254,9 +228,7 @@ public:
             const auto decode_start = Clock::now();
             auto audio = vae->decode(make_planar_tile(0, frames), 1, frames).front();
             engine::debug::timing_log_scalar("yue2.vae_decode.tiles", 1);
-            engine::debug::timing_log_scalar("yue2.vae_decode.planar_pack_ms", planar_pack_ms);
             engine::debug::timing_log_scalar("yue2.vae_decode.tile_decode_ms", engine::debug::elapsed_ms(decode_start));
-            engine::debug::timing_log_scalar("yue2.vae_decode.tile_copy_ms", 0.0);
             engine::debug::timing_log_scalar("yue2.vae_decode.output_frames", static_cast<int64_t>(audio.samples.size()) / audio.channels);
             return audio;
         }
@@ -271,7 +243,6 @@ public:
         audio.samples.assign(static_cast<size_t>(total_output_frames * audio.channels), 0.0F);
         int64_t tiles = 0;
         double tile_decode_ms = 0.0;
-        double tile_copy_ms = 0.0;
         for (int64_t start = 0; start < frames; start += core_frames) {
             const int64_t end = std::min(frames, start + core_frames);
             const int64_t left = std::max<int64_t>(0, start - halo_frames);
@@ -288,25 +259,48 @@ public:
                 crop_start + copy_frames > static_cast<int64_t>(tile_audio.samples.size()) / tile_audio.channels) {
                 throw std::runtime_error("Yue2 VAE tile did not cover output core");
             }
-            const auto copy_start = Clock::now();
             for (int64_t t = 0; t < copy_frames; ++t) {
                 for (int64_t c = 0; c < audio.channels; ++c) {
                     audio.samples[static_cast<size_t>((out_start + t) * audio.channels + c)] =
                         tile_audio.samples[static_cast<size_t>((crop_start + t) * tile_audio.channels + c)];
                 }
             }
-            tile_copy_ms += engine::debug::elapsed_ms(copy_start);
             ++tiles;
         }
         engine::debug::timing_log_scalar("yue2.vae_decode.tiles", tiles);
-        engine::debug::timing_log_scalar("yue2.vae_decode.planar_pack_ms", planar_pack_ms);
         engine::debug::timing_log_scalar("yue2.vae_decode.tile_decode_ms", tile_decode_ms);
-        engine::debug::timing_log_scalar("yue2.vae_decode.tile_copy_ms", tile_copy_ms);
         engine::debug::timing_log_scalar("yue2.vae_decode.output_frames", total_output_frames);
         return audio;
     }
 
     runtime::AudioBuffer run(const Yue2Request & request) {
+        if (engine::debug::trace_log_enabled()) {
+            std::ostringstream settings;
+            settings << "seed=" << request.seed
+                     << " cot=" << cot_mode_name(request.cot)
+                     << " guidance_scale=" << request_guidance_scale(request)
+                     << " num_inference_steps=" << request.generation.ode_steps
+                     << " context=" << request.generation.context
+                     << " abc=" << (request.abc.empty() ?
+                         (request.cot == Yue2CotMode::Off ? "none" : "generated") : "provided")
+                     << " nar_noise=" << (request.nar_noise.empty() ? "generated" : "provided");
+            engine::debug::trace_log_scalar("yue2.request", settings.str());
+            for (const bool abc : {true, false}) {
+                if (abc && (request.cot == Yue2CotMode::Off || !request.abc.empty())) {
+                    continue;
+                }
+                const auto & sampling = abc ? request.generation.abc : request.generation.semantic;
+                std::ostringstream config;
+                config << "temperature=" << sampling.temperature
+                       << " top_p=" << sampling.top_p
+                       << " top_k=" << sampling.top_k
+                       << " repetition_penalty=" << sampling.repetition_penalty
+                       << " penalty_window=" << sampling.penalty_window
+                       << " min_tokens=" << sampling.min_tokens
+                       << " max_tokens=" << sampling.max_tokens;
+                engine::debug::trace_log_scalar(abc ? "yue2.sampling.abc" : "yue2.sampling.semantic", config.str());
+            }
+        }
         const auto plan_start = Clock::now();
         auto planned = plan(request);
         engine::debug::timing_log_scalar("yue2.plan_ms", engine::debug::elapsed_ms(plan_start, Clock::now()));

@@ -201,7 +201,7 @@
     {"name": "abc", "type": "text", "label": "abc", "label_en": "ABC score", "default": "", "placeholder": "Optional ABC notation. Use cot=melody or cot=full.", "lines": 4},
     {"name": "abc_file", "type": "text", "label": "abc_file", "label_en": "ABC file path", "default": "", "placeholder": "/path/to/score.abc"},
     {"name": "cot", "type": "choice", "label": "cot", "label_en": "Planning route", "default": "off", "choices": ["off", "melody", "full"], "info": "off = direct generation; melody/full use or generate ABC planning."},
-    {"name": "cfg_scale", "type": "slider", "label": "cfg_scale", "label_en": "Semantic guidance", "default": 1.01, "minimum": 0.0, "maximum": 5.0, "step": 0.01},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "label_en": "Semantic guidance", "default": 1.01, "minimum": 0.0, "maximum": 5.0, "step": 0.01},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "NAR steps", "default": 8, "minimum": 1, "maximum": 64, "step": 1, "precision": 0},
     {"name": "abc_temperature", "type": "slider", "label": "abc_temperature", "label_en": "ABC temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "abc_top_p", "type": "slider", "label": "abc_top_p", "label_en": "ABC top-p", "default": 0.9, "minimum": 0.01, "maximum": 1.0, "step": 0.01},

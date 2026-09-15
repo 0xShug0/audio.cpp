@@ -22,7 +22,7 @@ Stay with the rhythm, let it carry us home.
 Sing with the sunrise, we are never alone." \
   --request-option style="English, indie pop, bright acoustic guitar, soft drums, warm lead vocal, polished demo mix" \
   --request-option cot=off \
-  --seed 831001 \
+  --seed 1234 \
   --out yue2.wav \
   --log
 ```
@@ -62,7 +62,7 @@ Soft morning light is touching the window.
 Stay with the rhythm, let it carry us home." \
   --request-option style="English, pop rock, bright guitars, clean drums, warm vocal" \
   --request-option cot=off \
-  --seed 831001 \
+  --seed 1234 \
   --out yue2-bf16.wav \
   --log
 ```
@@ -92,7 +92,7 @@ Write the melody over this score." \
   --request-option style="English, folk pop, acoustic guitar, steady drums" \
   --request-option cot=melody \
   --request-option abc_file=/path/to/score.abc \
-  --seed 831001 \
+  --seed 1234 \
   --out yue2-abc.wav \
   --log
 ```
@@ -109,11 +109,10 @@ Inline ABC can be passed with `--request-option abc=<abc text>`.
 | `--request-option cot=<mode>` | `off`, `melody`, `full` | `full` | Symbolic planning route. |
 | `--request-option abc=<text>` | ABC text | empty | Inline ABC score; requires `cot=melody` or `cot=full`. |
 | `--request-option abc_file=<path>` | path | empty | ABC score file; requires `cot=melody` or `cot=full`. |
-| `--request-option semantic_codes_file=<path>` | raw int32 file | empty | Teacher-forced semantic codec IDs for parity/debug runs. |
-| `--request-option nar_noise_file=<path>` | raw float32 file | empty | Teacher-forced NAR noise rows with 64 columns for parity/debug runs. |
-| `--request-option cfg_scale=<f>` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. |
-| `--request-option num_inference_steps=<n>` | integer > 0 | `32` | NAR midpoint ODE steps. |
-| `--seed <n>` | integer in `[0, 2^63)` | `831001` | Generation seed. Equivalent to `--request-option seed=<n>`. |
+| `--request-option nar_noise_file=<path>` | raw float32 file | empty | Provide a noise file for NAR generation, shaped `[frames,64]`. |
+| `--request-option guidance_scale=<f>` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. Legacy alias: `cfg_scale`. |
+| `--request-option num_inference_steps=<n>` | integer > 0 | `8` | NAR midpoint ODE steps. |
+| `--seed <n>` | integer in `[0, 2^63)` | `1234` | Generation seed. Equivalent to `--request-option seed=<n>`. |
 
 ## Sampling Options
 

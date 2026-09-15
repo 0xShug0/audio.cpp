@@ -112,7 +112,6 @@ std::shared_ptr<const Yue2NarWeights> load_nar_weights(
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
-    const auto total_start = Clock::now();
     auto weights = std::make_shared<Yue2NarWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         execution.backend(),
@@ -121,7 +120,6 @@ std::shared_ptr<const Yue2NarWeights> load_nar_weights(
         weight_context_bytes);
     const auto & source = *assets.model_weights;
     const auto & config = assets.config.model;
-    const auto bind_start = Clock::now();
     weights->vae2llm = binding::linear_from_source(
         *weights->store,
         source,
@@ -164,11 +162,7 @@ std::shared_ptr<const Yue2NarWeights> load_nar_weights(
         config.latent_dim,
         config.hidden_size,
         true);
-    engine::debug::timing_log_scalar("yue2.nar.weights_bind_ms", engine::debug::elapsed_ms(bind_start));
-    const auto upload_start = Clock::now();
     weights->store->upload();
-    engine::debug::timing_log_scalar("yue2.nar.weights_upload_ms", engine::debug::elapsed_ms(upload_start));
-    engine::debug::timing_log_scalar("yue2.nar.weights_total_ms", engine::debug::elapsed_ms(total_start));
     return weights;
 }
 
@@ -383,15 +377,8 @@ struct Yue2NarRuntime::Impl {
         if (!this->assets) {
             throw std::runtime_error("Yue2 NAR runtime requires assets");
         }
-        const auto start = Clock::now();
         weights = load_nar_weights(*this->assets, execution, weight_context_bytes, weight_type);
-        engine::debug::timing_log_scalar("yue2.nar.init_total_ms", engine::debug::elapsed_ms(start));
     }
-
-    struct HostVelocityTiming {
-        double pad_ms = 0.0;
-        double timestep_ms = 0.0;
-    };
 
     struct Graph {
         Graph(
@@ -409,7 +396,6 @@ struct Yue2NarRuntime::Impl {
                 static_cast<int64_t>(ar_state.values.size()) != config.layers) {
                 throw std::runtime_error("Yue2 NAR prefix cache layer count mismatch");
             }
-            const auto total_start = Clock::now();
             nar_length = frames + 2;
             total_length = ar_length + nar_length;
             ggml_init_params input_params{
@@ -502,11 +488,7 @@ struct Yue2NarRuntime::Impl {
                 pos_values[static_cast<size_t>(i)] = static_cast<int32_t>(ar_length + i);
             }
             ggml_backend_tensor_set(positions.tensor, pos_values.data(), 0, pos_values.size() * sizeof(int32_t));
-            engine::debug::timing_log_scalar("yue2.nar.graph.static_upload_ms", 0.0);
             engine::debug::timing_log_scalar("yue2.nar.graph.frames", frames);
-            engine::debug::timing_log_scalar("yue2.nar.graph.ar_tokens", ar_length);
-            engine::debug::timing_log_scalar("yue2.nar.graph.nar_tokens", nar_length);
-            engine::debug::timing_log_scalar("yue2.nar.graph.total_ms", engine::debug::elapsed_ms(total_start));
         }
 
         ~Graph() {
@@ -531,22 +513,15 @@ struct Yue2NarRuntime::Impl {
                 static_cast<int64_t>(time_features.size()) != 256) {
                 throw std::runtime_error("Yue2 NAR step input shape mismatch");
             }
-            const auto upload_start = Clock::now();
             core::write_tensor_f32(state, padded_state);
             core::write_tensor_f32(time, time_features);
-            input_upload_ms += engine::debug::elapsed_ms(upload_start);
-            const auto compute_start = Clock::now();
             const auto status = core::compute_backend_graph(owner->execution.backend(), graph, nullptr, "yue2.nar.velocity");
             ggml_backend_synchronize(owner->execution.backend());
-            graph_compute_ms += engine::debug::elapsed_ms(compute_start);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("Yue2 NAR graph compute failed");
             }
             std::vector<float> out;
-            const auto read_start = Clock::now();
             core::read_tensor_f32_into(output.tensor, out);
-            output_read_ms += engine::debug::elapsed_ms(read_start);
-            ++runs;
             return out;
         }
 
@@ -566,18 +541,13 @@ struct Yue2NarRuntime::Impl {
         std::vector<core::TensorValue> ar_keys;
         std::vector<core::TensorValue> ar_values;
         core::TensorValue output;
-        double input_upload_ms = 0.0;
-        double graph_compute_ms = 0.0;
-        double output_read_ms = 0.0;
-        int64_t runs = 0;
     };
 
     std::vector<float> velocity(
         Graph & graph,
         const Yue2ArDevicePrefixState & ar_state,
         const std::vector<float> & state,
-        float raw_t,
-        HostVelocityTiming & host_timing) {
+        float raw_t) {
         const auto & config = assets->config.model;
         const int64_t frames = static_cast<int64_t>(state.size()) / config.latent_dim;
         if (frames <= 0 || frames * config.latent_dim != static_cast<int64_t>(state.size())) {
@@ -586,14 +556,10 @@ struct Yue2NarRuntime::Impl {
         if (!graph.matches(frames, ar_state.current_end)) {
             throw std::runtime_error("Yue2 NAR graph shape changed during chunk solve");
         }
-        const auto pad_start = Clock::now();
         std::vector<float> padded(static_cast<size_t>((frames + 2) * config.latent_dim), 0.0F);
         std::copy(state.begin(), state.end(), padded.begin() + static_cast<std::ptrdiff_t>(config.latent_dim));
-        host_timing.pad_ms += engine::debug::elapsed_ms(pad_start);
         const auto shifted = shifted_t_value(raw_t, config.timestep_shift);
-        const auto timestep_start = Clock::now();
         auto features = timestep_features(shifted, 1);
-        host_timing.timestep_ms += engine::debug::elapsed_ms(timestep_start);
         return graph.run(padded, features);
     }
 
@@ -602,40 +568,23 @@ struct Yue2NarRuntime::Impl {
         const std::vector<float> & noise,
         int64_t ode_steps) {
         auto state = noise;
-        const auto total_start = Clock::now();
         const auto & config = assets->config.model;
         const int64_t frames = static_cast<int64_t>(state.size()) / config.latent_dim;
         graph = std::make_unique<Graph>(*this, frames, ar_state);
         auto & chunk_graph = *graph;
         const float dt = 1.0F / static_cast<float>(ode_steps);
-        HostVelocityTiming host_timing;
-        double host_update_ms = 0.0;
         for (int64_t step = 0; step < ode_steps; ++step) {
             const float t = 1.0F - static_cast<float>(step) * dt;
-            const auto first = velocity(chunk_graph, ar_state, state, logit_clamped(t), host_timing);
-            const auto mid_start = Clock::now();
+            const auto first = velocity(chunk_graph, ar_state, state, logit_clamped(t));
             std::vector<float> mid(state.size(), 0.0F);
             for (size_t i = 0; i < state.size(); ++i) {
                 mid[i] = state[i] - first[i] * (dt / 2.0F);
             }
-            host_update_ms += engine::debug::elapsed_ms(mid_start);
-            const auto second = velocity(chunk_graph, ar_state, mid, logit_clamped(t - dt / 2.0F), host_timing);
-            const auto update_start = Clock::now();
+            const auto second = velocity(chunk_graph, ar_state, mid, logit_clamped(t - dt / 2.0F));
             for (size_t i = 0; i < state.size(); ++i) {
                 state[i] -= second[i] * dt;
             }
-            host_update_ms += engine::debug::elapsed_ms(update_start);
         }
-        engine::debug::timing_log_scalar("yue2.nar.chunk.frames", frames);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.ode_steps", ode_steps);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.velocity_runs", chunk_graph.runs);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.host_pad_ms", host_timing.pad_ms);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.host_timestep_ms", host_timing.timestep_ms);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.host_update_ms", host_update_ms);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.input_upload_ms", chunk_graph.input_upload_ms);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.graph_compute_ms", chunk_graph.graph_compute_ms);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.output_read_ms", chunk_graph.output_read_ms);
-        engine::debug::timing_log_scalar("yue2.nar.chunk.total_ms", engine::debug::elapsed_ms(total_start));
         return state;
     }
 
@@ -650,13 +599,10 @@ struct Yue2NarRuntime::Impl {
         const auto total_start = Clock::now();
         const auto & config = assets->config.model;
         const auto ranges = chunk_ranges(static_cast<int64_t>(codec.size()), static_cast<int64_t>(prefix.size()), context);
-        engine::debug::timing_log_scalar("yue2.nar.synthesize.prefix_tokens", prefix.size());
         engine::debug::timing_log_scalar("yue2.nar.synthesize.codec_tokens", codec.size());
         engine::debug::timing_log_scalar("yue2.nar.synthesize.chunks", ranges.size());
-        engine::debug::timing_log_scalar("yue2.nar.synthesize.ode_steps", ode_steps);
         engine::debug::timing_log_scalar("yue2.nar.synthesize.context", context);
         std::vector<float> full_noise(static_cast<size_t>(codec.size() * config.latent_dim), 0.0F);
-        const auto noise_start = Clock::now();
         if (noise.empty()) {
             std::mt19937 rng(static_cast<uint32_t>(seed));
             std::normal_distribution<float> normal(0.0F, 1.0F);
@@ -669,47 +615,33 @@ struct Yue2NarRuntime::Impl {
             }
             full_noise = noise;
         }
-        engine::debug::timing_log_scalar("yue2.nar.synthesize.noise_ms", engine::debug::elapsed_ms(noise_start));
         std::vector<float> out;
         out.reserve(full_noise.size());
-        double token_build_ms = 0.0;
-        double noise_slice_ms = 0.0;
         double prefill_ms = 0.0;
         double solve_ms = 0.0;
-        double append_ms = 0.0;
         for (const auto & [begin, end] : ranges) {
-            const auto token_start = Clock::now();
             std::vector<int32_t> ar_tokens = prefix;
             ar_tokens.reserve(prefix.size() + static_cast<size_t>(end - begin) + 1);
             for (int64_t i = begin; i < end; ++i) {
                 ar_tokens.push_back(codec[static_cast<size_t>(i)] + kCodecOffset);
             }
             ar_tokens.push_back(kMusicEndToken);
-            token_build_ms += engine::debug::elapsed_ms(token_start);
-            const auto slice_start = Clock::now();
             const size_t begin_elem = static_cast<size_t>(begin * config.latent_dim);
             const size_t end_elem = static_cast<size_t>(end * config.latent_dim);
             std::vector<float> noise(end_elem - begin_elem);
             std::copy(full_noise.begin() + static_cast<std::ptrdiff_t>(begin_elem),
                       full_noise.begin() + static_cast<std::ptrdiff_t>(end_elem),
                       noise.begin());
-            noise_slice_ms += engine::debug::elapsed_ms(slice_start);
             const auto prefill_start = Clock::now();
             auto ar_state = prefill_state(ar_tokens);
             prefill_ms += engine::debug::elapsed_ms(prefill_start);
             const auto solve_start = Clock::now();
             auto chunk = solve_chunk(ar_state, noise, ode_steps);
             solve_ms += engine::debug::elapsed_ms(solve_start);
-            const auto append_start = Clock::now();
             out.insert(out.end(), chunk.begin(), chunk.end());
-            append_ms += engine::debug::elapsed_ms(append_start);
         }
-        engine::debug::timing_log_scalar("yue2.nar.synthesize.token_build_ms", token_build_ms);
-        engine::debug::timing_log_scalar("yue2.nar.synthesize.noise_slice_ms", noise_slice_ms);
         engine::debug::timing_log_scalar("yue2.nar.synthesize.prefill_state_ms", prefill_ms);
         engine::debug::timing_log_scalar("yue2.nar.synthesize.solve_chunks_ms", solve_ms);
-        engine::debug::timing_log_scalar("yue2.nar.synthesize.output_append_ms", append_ms);
-        engine::debug::timing_log_scalar("yue2.nar.synthesize.output_latents", out.size());
         engine::debug::timing_log_scalar("yue2.nar.synthesize.total_ms", engine::debug::elapsed_ms(total_start));
         return out;
     }

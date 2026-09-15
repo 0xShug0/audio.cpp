@@ -161,9 +161,9 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"abc", "string", "ABC score conditioning text.", false},
         {"abc_file", "path", "Path to ABC score conditioning text.", false},
         {"cot", "off|melody|full", "Planning mode.", false, "off"},
-        {"seed", "int", "Generation seed.", false, "0"},
-        {"cfg_scale", "float", "Classifier-free guidance scale.", false, "1.0", "0.0", "20.0"},
-        {"num_inference_steps", "int", "NAR ODE steps.", false, "10", "1"},
+        {"seed", "int", "Generation seed.", false, "1234"},
+        {"guidance_scale", "float", "Classifier-free guidance scale (legacy alias: cfg_scale).", false, "1.0", "0.0", "20.0"},
+        {"num_inference_steps", "int", "NAR ODE steps.", false, "8", "1"},
     };
     out.session_options = {
         {"yue2.model_gguf", "string", "Yue2 main AR/NAR component GGUF file relative to the model root.", false, "yue2-3b-q8_0.gguf"},

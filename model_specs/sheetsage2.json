@@ -4,7 +4,7 @@
   "display_name": "SheetSage2",
   "description": "SheetSage2 audio-to-symbolic transcription. This native path consumes an input recording from a self-contained GGUF and emits an ABC score artifact.",
   "category": "audio_tools",
-  "status": "experimental",
+  "status": "supported",
   "tasks": [
     "midi"
   ],

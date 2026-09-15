@@ -64,14 +64,14 @@ void apply_options(
     if (out.seed >= (uint64_t{1} << 63U)) {
         throw std::runtime_error("Yue2 seed must be in [0, 2^63)");
     }
-    if (const auto value = runtime::parse_finite_float_option(options, {"cfg_scale"})) {
+    if (const auto value = runtime::parse_finite_float_option(options, {"guidance_scale", "cfg_scale"})) {
         if (*value < 0.0F || *value > 20.0F) {
-            throw std::runtime_error("Yue2 cfg_scale must be in [0,20]");
+            throw std::runtime_error("Yue2 guidance_scale must be in [0,20]");
         }
         out.cfg_scale = *value;
     }
     out.generation.ode_steps =
-        runtime::parse_positive_i64_option(options, {"num_inference_steps"}, out.generation.ode_steps);
+        runtime::parse_positive_i64_option(options, {"num_inference_steps"}, Yue2GenerationConfig{}.ode_steps);
     if (out.generation.ode_steps <= 0) {
         throw std::runtime_error("Yue2 num_inference_steps must be positive");
     }
@@ -116,21 +116,6 @@ void apply_options(
     out.abc = abc_from_options(options);
     if (!out.abc.empty() && out.cot == Yue2CotMode::Off) {
         throw std::runtime_error("Yue2 external ABC requires cot=melody or cot=full");
-    }
-    if (const auto semantic_codes_file = runtime::find_option(options, {"semantic_codes_file"})) {
-        const std::filesystem::path path(*semantic_codes_file);
-        if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error("Yue2 semantic_codes_file does not exist: " + path.string());
-        }
-        out.semantic_codes = engine::io::read_i32_file(path);
-        if (out.semantic_codes.empty()) {
-            throw std::runtime_error("Yue2 semantic_codes_file is empty: " + path.string());
-        }
-        for (const int32_t code : out.semantic_codes) {
-            if (code < 0 || code >= kCodecSize) {
-                throw std::runtime_error("Yue2 semantic_codes_file contains a code outside [0,32768)");
-            }
-        }
     }
     if (const auto nar_noise_file = runtime::find_option(options, {"nar_noise_file"})) {
         const std::filesystem::path path(*nar_noise_file);
