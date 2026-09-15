@@ -236,8 +236,25 @@ void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
     engine::debug::timing_log_scalar("kokoro.prepare.decoder_runtime_build_ms", build_ms);
 }
 
+namespace {
+
+/// The "no override, use the built-in G2P" sentinel, so the chunk loop can bind a reference.
+const std::string kNoSuppliedPhonemes;
+
+/// A list-valued request option, or empty when the caller did not set one.
+const std::vector<std::string> & find_option_array(
+    const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
+    const std::string & key) {
+    static const std::vector<std::string> none;
+    const auto it = option_arrays.find(key);
+    return it == option_arrays.end() ? none : it->second;
+}
+
+}  // namespace
+
 void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    runtime::validate_spec_backed_request_options(
+        request.options, request.option_arrays, *contract_, kModelName);
     if (const auto seed = runtime::parse_u64_option(request.options, {"seed"})) {
         if (rng_seed_ != *seed) {
             rng_seed_ = *seed;
@@ -248,18 +265,32 @@ void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & reques
     }
     auto adapter = make_graph_capacity_adapter();
     int64_t request_size = 0;
+    const auto prepare_phonemes = find_option_array(request.option_arrays, "phonemes");
     if (request.text.has_value()) {
         const int64_t text_chunk_size =
             engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
-        const auto text_chunks = engine::text::split_text_chunks(request.text->text, text_chunk_size);
+        // The graph is sized for the LARGEST chunk either way. With supplied phonemes the
+        // caller's own chunking decides that, so the text is not split -- splitting it would
+        // size the graph against a boundary run() is never going to use.
+        const auto text_chunks = prepare_phonemes.empty()
+            ? engine::text::split_text_chunks(request.text->text, text_chunk_size)
+            : std::vector<std::string>{request.text->text};
         for (const auto & chunk : text_chunks) {
             runtime::SessionPreparationRequest chunk_request = request;
             chunk_request.text = runtime::Transcript{chunk, request.text->language};
             const auto frontend_state =
                 resolve_kokoro_frontend_session_state(chunk_request.text, chunk_request.voice, *assets_);
-            request_size = std::max(
-                request_size,
-                estimate_kokoro_request_tokens(chunk_request, frontend_state, *assets_));
+            if (prepare_phonemes.empty()) {
+                request_size = std::max(
+                    request_size,
+                    estimate_kokoro_request_tokens(chunk_request, frontend_state, *assets_));
+            } else {
+                for (const auto & supplied : prepare_phonemes) {
+                    request_size = std::max(
+                        request_size,
+                        estimate_kokoro_request_tokens(chunk_request, frontend_state, *assets_, supplied));
+                }
+            }
         }
     }
     graph_capacity_controller_.ensure_prepared(adapter, request_size);
@@ -271,19 +302,36 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
     if (!request.text_input.has_value()) {
         throw std::runtime_error("Kokoro TTS run requires text_input");
     }
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    runtime::validate_spec_backed_request_options(
+        request.options, request.option_arrays, *contract_, kModelName);
 
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
-    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size);
+    // ⚠ WHEN PHONEMES ARE SUPPLIED THE CALLER OWNS THE CHUNKING. Chunking splits the TEXT, and
+    // nothing here knows where the matching cut points in someone else's phoneme stream are --
+    // only their G2P does. So the option is a LIST: one entry per chunk, rendered in order and
+    // merged into one result exactly as text chunks are. A caller whose document exceeds the
+    // 510-symbol limit therefore still makes ONE call and gets ONE buffer back, instead of
+    // having to stitch the audio itself.
+    const auto supplied_phonemes = find_option_array(request.option_arrays, "phonemes");
+    const auto chunk_requests = supplied_phonemes.empty()
+        ? runtime::chunk_text_request(request, text_chunk_size)
+        : std::vector<runtime::TaskRequest>(supplied_phonemes.size(), request);
     engine::debug::trace_log_scalar("kokoro.text_chunk_size", text_chunk_size);
     engine::debug::trace_log_scalar("kokoro.text_chunk_count", static_cast<int64_t>(chunk_requests.size()));
+    if (!supplied_phonemes.empty()) {
+        engine::debug::trace_log_scalar(
+            "kokoro.supplied_phoneme_chunks", static_cast<int64_t>(supplied_phonemes.size()));
+    }
     double frontend_ms = 0.0;
     double inference_ms = 0.0;
     double predictor_ms = 0.0;
     double decoder_ms = 0.0;
     runtime::AudioBuffer merged_audio;
-    for (const auto & chunk_request : chunk_requests) {
+    for (size_t chunk_index = 0; chunk_index < chunk_requests.size(); ++chunk_index) {
+        const auto & chunk_request = chunk_requests[chunk_index];
+        const std::string & chunk_phonemes =
+            supplied_phonemes.empty() ? kNoSuppliedPhonemes : supplied_phonemes[chunk_index];
         const auto frontend_state =
             resolve_kokoro_frontend_session_state(chunk_request.text_input, chunk_request.voice, *assets_);
         const std::string cache_key =
@@ -291,14 +339,20 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
             frontend_state.language_code + ":" +
             std::to_string(frontend_state.speaking_rate) + ":" +
             std::to_string(chunk_request.text_input->text.size()) + ":" +
-            chunk_request.text_input->text;
+            chunk_request.text_input->text + ":" +
+            // Without this, two requests with the same text and different supplied phonemes
+            // would hit the same cache entry and the second would be spoken as the first --
+            // and with a list, every chunk shares one text, so this is the ONLY thing telling
+            // them apart.
+            chunk_phonemes;
         KokoroSynthesisInput input;
         frontend_ms += measure_ms([&]() {
             if (!cache_key.empty() && cached_input_ && cache_key == cached_request_key_) {
                 input = *cached_input_;
                 return;
             }
-            input = build_kokoro_synthesis_input(*chunk_request.text_input, frontend_state, *assets_);
+            input = build_kokoro_synthesis_input(
+                *chunk_request.text_input, frontend_state, *assets_, chunk_phonemes);
             if (!cache_key.empty()) {
                 cached_request_key_ = cache_key;
                 cached_input_ = std::make_unique<KokoroSynthesisInput>(input);

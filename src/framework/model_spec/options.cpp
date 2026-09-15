@@ -50,6 +50,7 @@ const std::unordered_map<std::string, std::unordered_set<std::string>> & shared_
         {"min_p", {"float"}},
         {"matmul_weight_type", {"enum"}},
         {"negative_prompt", {"string"}},
+        {"phonemes", {"string_list"}},
         {"num_beams", {"int"}},
         {"num_inference_steps", {"int"}},
         {"output_sample_rate", {"int"}},
