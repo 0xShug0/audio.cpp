@@ -569,6 +569,16 @@ add_library(engine_model_marblenet_vad OBJECT
 set_target_properties(engine_model_marblenet_vad PROPERTIES EXCLUDE_FROM_ALL TRUE)
 audiocpp_configure_runtime_object(engine_model_marblenet_vad)
 
+audiocpp_add_model(moss_transcribe_diarize
+    SOURCES
+        src/models/moss_transcribe_diarize/runtime.cpp
+        src/models/moss_transcribe_diarize/session.cpp
+    INCLUDES
+        engine/models/moss_transcribe_diarize/session.h
+    LOADERS
+        engine::models::moss_transcribe_diarize::make_moss_transcribe_diarize_loader
+)
+
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp

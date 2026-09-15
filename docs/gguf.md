@@ -85,6 +85,7 @@ Status labels:
 | `moonshine_asr` | Done | Pass | --- | --- | Pass |
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
+| `moss_transcribe_diarize` | Done | --- | Pass | --- | Pass |
 | `muscriptor` | Done | Pass | Pass | --- | --- |
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |
 | `neutts` | Done | Pass | --- | Pass | --- |
@@ -119,12 +120,16 @@ Additional lower-bit checks:
 | Family | Format | Tested |
 |---|---|---|
 | `meanvc2` | `q4_k` | Pass |
+| `moss_transcribe_diarize` | `q4_k` | No (long-audio segmentation/timestamp drift) |
 | `personaplex` | `q4_k` | Pass |
 | `vibevoice_asr_streaming` | `q4_k` | Pass (quick CUDA check; transcript stays usable and matches the BF16 wording class) |
 | `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
 
 Q8 packaging notes:
 
+- [MOSS-Transcribe-Diarize](models/moss_transcribe_diarize.md) uses BF16 for
+  original weights and also provides Q8_0 and Q4_K. Prefer BF16 or Q8_0 when
+  segment boundaries and timestamps matter; Q4_K is not parity-safe.
 - `chatterbox` Q8 is intentionally mixed type. Graph-sensitive scalar, norm,
   bias, and side tensors stay in non-Q8 types while matmul-compatible weights
   are quantized.
