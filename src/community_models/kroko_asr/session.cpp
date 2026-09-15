@@ -955,10 +955,14 @@ runtime::TaskResult KrokoASRSession::finalize() {
     if (stream_event_sink_) {
         stream_event_sink_(event);
     }
-    runtime::TaskResult result;
-    result.text_output = event.partial_text;
-    result.speech_segments = endpoint_segments_;
-    result.word_timestamps = std::move(event.word_timestamps);
+    // Built from the combined decode, not from event.partial_text. The partial
+    // is the increment since the last one now, so reusing it here would report
+    // only the final window as the transcript -- this read the whole transcript
+    // out of the partial only because the partial restated it every time.
+    runtime::TaskResult result = make_result(
+        combined_decoded(),
+        streaming_total_samples_,
+        streaming_language_);
     engine::debug::timing_log_scalar(
         "kroko_asr.session_ms",
         engine::debug::elapsed_ms(stream_start_, Clock::now()));
