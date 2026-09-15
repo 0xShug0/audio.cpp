@@ -80,6 +80,30 @@ void test_truncated_decode_does_not_resend() {
                "ab" + cjk, "consumer sees it once");
 }
 
+// The agreement check is bounded, so state what that buys and what it gives up.
+// A revision near the end -- where a streaming decode actually revises -- is
+// seen, and the delta resumes from it.
+void test_revision_within_the_window_is_seen() {
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish("the quick brown fox"), std::string("the quick brown fox"), "first");
+    const std::string delta = publisher.publish("the quick brown dog");
+    require_eq(delta, std::string("dog"), "resumes at the divergence");
+}
+
+// A revision further back than the window is not seen, and cannot be: the text
+// it would correct has already gone out and nothing can retract it. The
+// publisher keeps going forward instead of re-sending a transcript the consumer
+// cannot un-append.
+void test_revision_behind_the_window_does_not_resend_history() {
+    PartialTextPublisher publisher;
+    std::string transcript(600, 'a');
+    require_eq(publisher.publish(transcript).size(), transcript.size(), "first");
+    std::string revised = transcript;
+    revised[0] = 'b';           // far behind the 256-byte window
+    revised += "tail";
+    require_eq(publisher.publish(revised), std::string("tail"), "only the new tail");
+}
+
 void test_shrinking_transcript_publishes_nothing() {
     PartialTextPublisher publisher;
     require_eq(publisher.publish("abcdef"), std::string("abcdef"), "first");
@@ -113,6 +137,8 @@ int main() {
         test_four_byte_character_is_held_until_complete();
         test_revision_resumes_on_a_character_boundary();
         test_truncated_decode_does_not_resend();
+        test_revision_within_the_window_is_seen();
+        test_revision_behind_the_window_does_not_resend_history();
         test_shrinking_transcript_publishes_nothing();
         test_reset_forgets_the_published_prefix();
         test_empty_and_ascii_edges();

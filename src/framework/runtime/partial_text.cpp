@@ -1,11 +1,22 @@
 #include "engine/framework/runtime/partial_text.h"
 
+#include <algorithm>
+#include <cstring>
+
 namespace engine::runtime {
 
 std::size_t transcript_common_prefix(const std::string & lhs, const std::string & rhs) {
+    const std::size_t limit = std::min(lhs.size(), rhs.size());
+    // The overwhelmingly common case is that the update only extended what was
+    // published, so test that wholesale before walking byte by byte: a single
+    // compare over the shared span instead of a per-byte loop.
     std::size_t size = 0;
-    while (size < lhs.size() && size < rhs.size() && lhs[size] == rhs[size]) {
-        ++size;
+    if (limit > 0 && std::memcmp(lhs.data(), rhs.data(), limit) == 0) {
+        size = limit;
+    } else {
+        while (size < limit && lhs[size] == rhs[size]) {
+            ++size;
+        }
     }
     // A divergence inside a character would otherwise start the next delta on a
     // continuation byte.
@@ -43,9 +54,31 @@ std::size_t transcript_publishable_end(const std::string & text) {
     return (text.size() - lead) < needed ? lead : text.size();
 }
 
+// How much of `published_` the update still agrees with.
+//
+// Checked over a bounded window rather than the whole transcript. A decode
+// revises what it has just heard, not text from minutes ago -- and a delta that
+// has gone out cannot be retracted anyway, so a divergence behind the window is
+// not something this could act on even if it found it. Bounding the check keeps
+// publish() O(1) in the length of the transcript instead of O(n), which is what
+// makes it as cheap as the byte offset it replaces on a long session.
+std::size_t agreed_prefix(const std::string & published, const std::string & transcript) {
+    constexpr std::size_t kWindow = 256;
+    if (transcript.size() >= published.size()) {
+        const std::size_t start = published.size() > kWindow ? published.size() - kWindow : 0;
+        if (std::memcmp(published.data() + start, transcript.data() + start,
+                        published.size() - start) == 0) {
+            return published.size();
+        }
+    }
+    // Disagreed inside the window, or the transcript shrank: fall back to the
+    // exact answer, which is rare enough to afford.
+    return transcript_common_prefix(published, transcript);
+}
+
 std::string PartialTextPublisher::publish(const std::string & transcript) {
     const std::size_t publishable = transcript_publishable_end(transcript);
-    const std::size_t already = transcript_common_prefix(published_, transcript);
+    const std::size_t already = agreed_prefix(published_, transcript);
     if (already >= publishable) {
         // Nothing new that is whole. Leave `published_` alone rather than
         // shortening it to this decode: a decode that truncates mid-character
@@ -56,7 +89,18 @@ std::string PartialTextPublisher::publish(const std::string & transcript) {
     std::string delta = transcript.substr(already, publishable - already);
     // What has actually gone out, so a held-back character is reconsidered
     // against the update that completes it rather than skipped.
-    published_.assign(transcript, 0, publishable);
+    //
+    // Appended rather than reassigned in the common case. A streaming
+    // transcript is rebuilt from scratch on every update, so assigning the
+    // whole thing here copies the entire transcript once per update -- O(n^2)
+    // over a session, which is a real cost on a long one and the reason a
+    // byte-offset is cheaper. When the update only extended what was already
+    // published, appending the delta is O(delta) instead.
+    if (already == published_.size()) {
+        published_.append(delta);
+    } else {
+        published_.assign(transcript, 0, publishable);
+    }
     return delta;
 }
 
