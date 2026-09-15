@@ -97,7 +97,11 @@
       "files": [
         "config.json",
         "model.safetensors",
-        "tokenizer.json"
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "audio_tokenizer/config.json",
+        "audio_tokenizer/preprocessor_config.json",
+        "audio_tokenizer/model.safetensors"
       ],
       "download": {
         "kind": "huggingface_snapshot",

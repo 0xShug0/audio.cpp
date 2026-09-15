@@ -96,7 +96,25 @@
       "files": [
         "config.yaml",
         "bpe.model",
-        "gpt.safetensors"
+        "gpt.safetensors",
+        "w2v-bert-2.0/config.json",
+        "w2v-bert-2.0/preprocessor_config.json",
+        "bigvgan/config.json",
+        "qwen0.6bemo4-merge/config.json",
+        "qwen0.6bemo4-merge/generation_config.json",
+        "qwen0.6bemo4-merge/tokenizer.json",
+        "qwen0.6bemo4-merge/tokenizer_config.json",
+        "qwen0.6bemo4-merge/vocab.json",
+        "qwen0.6bemo4-merge/merges.txt",
+        "s2mel.safetensors",
+        "feat1.safetensors",
+        "feat2.safetensors",
+        "wav2vec2bert_stats.safetensors",
+        "w2v-bert-2.0/model.safetensors",
+        "semantic_codec_model.safetensors",
+        "campplus.safetensors",
+        "bigvgan/model.safetensors",
+        "qwen0.6bemo4-merge/model.safetensors"
       ],
       "download": {
         "kind": "huggingface_snapshot",
