@@ -1,0 +1,108 @@
+#include "engine/framework/runtime/partial_text.h"
+
+#include "test_assert.h"
+
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace {
+
+using engine::runtime::PartialTextPublisher;
+using engine::test::require_eq;
+
+// What a consumer assembles by appending every delta, which is the contract:
+// partials concatenate into the transcript.
+std::string appended(const std::vector<std::string> & decodes) {
+    PartialTextPublisher publisher;
+    std::string client;
+    for (const auto & decode : decodes) {
+        client += publisher.publish(decode);
+    }
+    return client;
+}
+
+void test_growing_transcript_yields_increments() {
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish("Some call me nat"), std::string("Some call me nat"), "first");
+    require_eq(publisher.publish("Some call me nature. Others"), std::string("ure. Others"), "second");
+    require_eq(publisher.publish("Some call me nature. Others"), std::string(""), "unchanged");
+}
+
+// The reason this is shared rather than reimplemented per family: a tokenizer
+// falls back to bytes for text its vocabulary does not cover, so a decode can
+// stop part way through a character. Publishing that puts half a code point on
+// the wire, where it reaches a JSON encoder as invalid UTF-8.
+void test_partial_character_is_held_until_complete() {
+    const std::string cjk = "\xE4\xB8\x80";  // U+4E00, three bytes
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish("ab" + cjk.substr(0, 1)), std::string("ab"), "lead byte held");
+    require_eq(publisher.publish("ab" + cjk.substr(0, 2)), std::string(""), "still incomplete");
+    require_eq(publisher.publish("ab" + cjk), cjk, "released whole");
+    require_eq(appended({"ab" + cjk.substr(0, 1), "ab" + cjk.substr(0, 2), "ab" + cjk}),
+               "ab" + cjk, "assembled");
+}
+
+void test_two_byte_characters_are_held_too() {
+    const std::string ru = "\xD0\x9F\xD1\x80\xD0\xB8";  // При
+    require_eq(appended({ru.substr(0, 1), ru.substr(0, 3), ru.substr(0, 5), ru}), ru, "cyrillic");
+}
+
+void test_four_byte_character_is_held_until_complete() {
+    const std::string emoji = "\xF0\x9F\x8E\xB5";  // U+1F3B5
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish(emoji.substr(0, 3)), std::string(""), "incomplete");
+    require_eq(publisher.publish(emoji), emoji, "released whole");
+}
+
+// A revision cannot be retracted -- the delta has already gone out -- but the
+// next one must still start on a character boundary rather than inside one.
+void test_revision_resumes_on_a_character_boundary() {
+    const std::string cjk = "\xE4\xB8\x80";
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish("ab" + cjk), "ab" + cjk, "published");
+    // Same first byte of the character, different continuation.
+    const std::string revised = "ab\xE4\xB8\x81";
+    const std::string delta = publisher.publish(revised);
+    require_eq(delta, std::string("\xE4\xB8\x81"), "whole character re-sent");
+}
+
+void test_shrinking_transcript_publishes_nothing() {
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish("abcdef"), std::string("abcdef"), "first");
+    require_eq(publisher.publish("abc"), std::string(""), "shrunk");
+}
+
+void test_reset_forgets_the_published_prefix() {
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish("hello"), std::string("hello"), "first");
+    publisher.reset();
+    require_eq(publisher.published(), std::string(""), "cleared");
+    require_eq(publisher.publish("hello"), std::string("hello"), "republished after reset");
+}
+
+void test_empty_and_ascii_edges() {
+    PartialTextPublisher publisher;
+    require_eq(publisher.publish(""), std::string(""), "empty");
+    require_eq(publisher.publish("a"), std::string("a"), "single byte");
+}
+
+}  // namespace
+
+int main() {
+    try {
+        test_growing_transcript_yields_increments();
+        test_partial_character_is_held_until_complete();
+        test_two_byte_characters_are_held_too();
+        test_four_byte_character_is_held_until_complete();
+        test_revision_resumes_on_a_character_boundary();
+        test_shrinking_transcript_publishes_nothing();
+        test_reset_forgets_the_published_prefix();
+        test_empty_and_ascii_edges();
+        std::cout << "partial_text_test passed\n";
+    } catch (const std::exception & ex) {
+        std::cerr << "partial_text_test failed: " << ex.what() << "\n";
+        return 1;
+    }
+    return 0;
+}

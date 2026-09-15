@@ -407,7 +407,7 @@ void Qwen3ASRSession::reset() {
     streaming_audio_ = runtime::AudioBuffer{};
     streaming_audio_offset_values_ = 0;
     streaming_text_.clear();
-    streaming_published_bytes_ = 0;
+    streaming_partials_.reset();
     streaming_windows_processed_ = 0;
     stream_started_ = false;
     stream_wall_start_ = {};
@@ -619,12 +619,11 @@ runtime::StreamEvent Qwen3ASRSession::process_one_stream_chunk(const runtime::Au
         streaming_result_.text_output->language = item.text_output->language;
     }
     streaming_result_.text_output->text = streaming_text_;
-    if (streaming_published_bytes_ < streaming_text_.size()) {
+    if (std::string partial = streaming_partials_.publish(streaming_text_); !partial.empty()) {
         event.partial_text = runtime::Transcript{
-            streaming_text_.substr(streaming_published_bytes_),
+            std::move(partial),
             streaming_result_.text_output->language,
         };
-        streaming_published_bytes_ = streaming_text_.size();
     }
     return event;
 }

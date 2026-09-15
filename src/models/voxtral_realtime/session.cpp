@@ -277,7 +277,7 @@ void VoxtralRealtimeSession::reset() {
     frontend_stream_state_ = VoxtralRealtimeFrontendStreamState{};
     audio_stream_state_ = audio_encoder_.make_stream_state();
     streaming_text_.clear();
-    streaming_published_bytes_ = 0;
+    streaming_partials_.reset();
     streaming_token_count_ = 0;
     previous_stream_token_ = 0;
     first_stream_chunk_ = true;
@@ -498,11 +498,11 @@ void VoxtralRealtimeSession::take_stream_delta(runtime::StreamEvent & event) {
     // Partials carry only the text decoded since the last one, as the other streaming ASR sessions
     // already emit. Restating the transcript is quadratic in its length and hands a consumer of
     // transcript.text.delta text it was already given.
-    if (streaming_published_bytes_ >= streaming_text_.size()) {
+    std::string delta = streaming_partials_.publish(streaming_text_);
+    if (delta.empty()) {
         return;
     }
-    event.partial_text = runtime::Transcript{streaming_text_.substr(streaming_published_bytes_), ""};
-    streaming_published_bytes_ = streaming_text_.size();
+    event.partial_text = runtime::Transcript{std::move(delta), ""};
 }
 
 }  // namespace engine::models::voxtral_realtime

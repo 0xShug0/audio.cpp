@@ -627,6 +627,7 @@ void KrokoASRSession::reset() {
     endpoint_segments_.clear();
     processed_feature_offset_ = 0;
     streaming_total_samples_ = 0;
+    streaming_partials_.reset();
     streaming_source_offset_ = 0;
     streaming_source_frames_ = 0;
     streaming_next_output_sample_ = 0;
@@ -903,7 +904,21 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
             decoded,
             streaming_total_samples_,
             streaming_language_);
-        event.partial_text = result.text_output;
+        // A partial is the text decoded since the last one, not the whole
+        // transcript re-rendered: combined_decoded() restates everything
+        // decoded so far, so an appending consumer built it up quadratically.
+        // word_timestamps stays cumulative -- it is the finalized set, not a
+        // delta -- so the two fields differ on purpose.
+        if (result.text_output.has_value()) {
+            std::string delta =
+                streaming_partials_.publish(
+                    result.text_output->text);
+            if (!delta.empty()) {
+                event.partial_text = runtime::Transcript{
+                    std::move(delta),
+                    result.text_output->language};
+            }
+        }
         event.word_timestamps = result.word_timestamps;
     }
     return event;

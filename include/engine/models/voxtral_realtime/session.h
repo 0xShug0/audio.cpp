@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/voxtral_realtime/assets.h"
 #include "engine/models/voxtral_realtime/audio_encoder.h"
@@ -81,7 +82,7 @@ private:
     // The transcript decoded so far, and how much of it has already gone out as a partial. Every
     // partial is the suffix between the two, so the deltas concatenate to exactly this string.
     std::string streaming_text_;
-    size_t streaming_published_bytes_ = 0;
+    runtime::PartialTextPublisher streaming_partials_;
     int64_t streaming_token_count_ = 0;
     int32_t previous_stream_token_ = 0;
     bool stream_started_ = false;
