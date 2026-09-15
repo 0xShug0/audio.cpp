@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "family": "xtts_v2",
+  "display_name": "Coqui XTTS v2",
+  "description": "Multilingual zero-shot voice-cloning TTS with GPT acoustic-token generation and a speaker-conditioned HiFiGAN decoder at 24 kHz.",
+  "category": "tts",
+  "status": "community",
+  "tasks": ["tts", "clone"],
+  "modes": ["offline"],
+  "languages": ["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko", "hi"],
+  "runtime": {"tags": ["gguf"]},
+  "capabilities": {"clone": ["speaker_reference"]},
+  "options": {
+    "session": [],
+    "request": [
+      {"name": "language", "type": "string", "description": "Required XTTS language code.", "required": true, "default": "en"},
+      {"name": "temperature", "type": "float", "description": "GPT sampling temperature.", "required": false, "min": 0.01, "max": 2.0, "default": 0.75},
+      {"name": "top_k", "type": "int", "description": "GPT top-k sampling cutoff.", "required": false, "min": 1, "default": 50},
+      {"name": "top_p", "type": "float", "description": "GPT nucleus-sampling cutoff.", "required": false, "min": 0.01, "max": 1.0, "default": 0.85},
+      {"name": "repetition_penalty", "type": "float", "description": "GPT repetition penalty.", "required": false, "min": 1.0, "default": 5.0},
+      {"name": "max_tokens", "type": "int", "description": "Maximum generated acoustic-token count.", "required": false, "min": 1, "max": 603, "default": 603},
+      {"name": "speed", "type": "float", "description": "Output speaking-rate multiplier.", "required": false, "min": 0.05, "max": 4.0, "default": 1.0},
+      {"name": "seed", "type": "int", "description": "Non-negative deterministic sampling seed.", "required": false, "min": 0}
+    ],
+    "load": [
+      {"name": "weight_type", "type": "enum", "preset": "weight_type_full", "description": "GPT matrix storage type.", "required": false, "default": "native"},
+      {"name": "conv_weight_type", "type": "enum", "preset": "weight_type_conv", "description": "Conditioning, decoder, and speaker-encoder convolution storage type.", "required": false, "default": "native"},
+      {"name": "gpt_graph_arena_mb", "type": "int", "description": "GPT graph arena size.", "required": false, "min": 64, "default": 512},
+      {"name": "reference_graph_arena_mb", "type": "int", "description": "Reference-conditioning graph arena size.", "required": false, "min": 32, "default": 256},
+      {"name": "decoder_graph_arena_mb", "type": "int", "description": "HiFiGAN decoder graph arena size.", "required": false, "min": 32, "default": 256}
+    ]
+  },
+  "package_defaults": {
+    "download": {"kind": "huggingface_snapshot", "repo": "audio-cpp/audio.cpp-gguf", "revision": "refs/pr/9"}
+  },
+  "packages": [
+    {
+      "id": "xtts_v2_q8_0",
+      "display_name": "Coqui XTTS v2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "XTTS-v2-GGUF",
+      "files": ["XTTS-v2-GGUF/xtts-v2-q8_0.gguf", "XTTS-v2-GGUF/LICENSE.txt"],
+      "strip_prefix": "XTTS-v2-GGUF"
+    },
+    {
+      "id": "xtts_v2_f16",
+      "display_name": "Coqui XTTS v2 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "XTTS-v2-GGUF",
+      "files": ["XTTS-v2-GGUF/xtts-v2-f16.gguf", "XTTS-v2-GGUF/LICENSE.txt"],
+      "strip_prefix": "XTTS-v2-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {"model": ".", "weights": "$gguf"},
+      "files": {"config": "model:config.json", "tokenizer": "model:vocab.json", "model_license": "model:LICENSE.txt"},
+      "tensors": {
+        "gpt": {"source": "weights:", "prefix": "gpt"},
+        "decoder": {"source": "weights:", "prefix": "decoder"},
+        "speaker_encoder": {"source": "weights:", "prefix": "speaker_encoder"}
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {"model": "."},
+      "files": {"config": "model:config.json", "tokenizer": "model:vocab.json", "model_license": "model:LICENSE.txt"},
+      "tensors": {"gpt": "model:gpt.safetensors", "decoder": "model:decoder.safetensors", "speaker_encoder": "model:speaker_encoder.safetensors"}
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "xtts_v2_q8_0",
+    "tags": ["TTS", "Clone", "GGUF"],
+    "docs": ["docs/community_models/xtts_v2.md"]
+  }
+}
