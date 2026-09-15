@@ -241,7 +241,7 @@ runtime::TaskResult Yue2Session::run(const runtime::TaskRequest & request) {
     const auto wall_start = Clock::now();
     const auto parsed = parse_yue2_request(request, assets_->config.generation);
     runtime::TaskResult result;
-    const auto run_result = pipeline_->run(parsed);
+    auto run_result = pipeline_->run(parsed);
     result.audio_output = std::move(run_result.audio);
     if (!run_result.plan_abc_text.empty()) {
         result.output_artifacts.push_back(runtime::make_text_artifact(
