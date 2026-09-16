@@ -616,12 +616,6 @@ std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
         token_ids.push_back(best_id);
     }
 
-    debug::timing_log_scalar(
-        "granite5asr.encoder.graph_cache_hit",
-        entry.graph != nullptr && graph_cache_->entries.size() > 1 ? 1.0 : 0.0);
-    debug::timing_log_scalar(
-        "granite5asr.encoder_ms",
-        engine::debug::elapsed_ms(wall_start, Clock::now()));
     return token_ids;
 }
 
