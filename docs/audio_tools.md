@@ -3,7 +3,9 @@
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
 | Built-in audio utilities | `builtin_audio_utils` | `s2s` denoise/enhance/super-resolution | [Built-in audio utilities](#built-in-audio-utilities) |
+| Apollo | `apollo` | `s2s` music restoration | [Apollo](models/apollo.md) |
 | AudioSR | `audiosr` | `s2s` audio super-resolution | [AudioSR](#audiosr) |
+| UniverSR | `universr` | `s2s` audio/speech super-resolution | [UniverSR](models/universr.md) |
 | ControlFoley | `controlfoley` | `gen` Foley/SFX generation | [ControlFoley](#controlfoley) |
 | GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility API | [GTCRN](#gtcrn) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |

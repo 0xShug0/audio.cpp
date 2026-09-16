@@ -58,6 +58,7 @@ Status labels:
 | Family | Package-spec refactor | Safetensors tested after refactor | `orig` GGUF tested | 16-bit GGUF tested | `q8_0` GGUF tested |
 |---|---|---|---|---|---|
 | `ace_step` | Done | Pass | --- | Pass (drift) | No (planner sampling can fail) |
+| `apollo` | Done | --- | Pass (drift) | --- | --- |
 | `bs_roformer` | Done | Pass | --- | --- | Pass |
 | `canary_asr` | Done | Pass | Pass | --- | Pass |
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
@@ -94,6 +95,7 @@ Status labels:
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
 | `personaplex` | Done | --- | --- | --- | Pass |
 | `pocket_tts` | Done | Pass | --- | Pass | Pass (drift) |
+| `pulsevad` | Done | Pass | Pass | --- | --- |
 | `qwen3_asr` | Done | Pass | --- | Pass | Pass |
 | `qwen3_forced_aligner` | Done | Pass | --- | Pass | Pass |
 | `qwen3_tts` base | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
@@ -108,6 +110,7 @@ Status labels:
 | `sortformer_diar_v2` | Done | Pass | Pass | Pass (mixed; output-turn criteria) | No (speaker drift) |
 | `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `supertonic` | Done | Pass | Pass | Pass | No (Q8 blockers unresolved) |
+| `universr` | Done | --- | Pass | --- | --- |
 | `vevo2` | Done | Pass | Pass | Pass (drift) | No (mixed route drift; speech ASR match) |
 | `vibevoice` | Done | Pass | --- | Pass | Pass (drift) |
 | `vibevoice_asr` | Done | Pass | --- | Pass | Pass |
@@ -128,6 +131,8 @@ Additional lower-bit checks:
 
 Q8 packaging notes:
 
+- Apollo and UniverSR `orig` packages preserve F32 weights. See the
+  [Apollo](models/apollo.md) and [UniverSR](models/universr.md) usage guides.
 - `chatterbox` Q8 is intentionally mixed type. Graph-sensitive scalar, norm,
   bias, and side tensors stay in non-Q8 types while matmul-compatible weights
   are quantized.

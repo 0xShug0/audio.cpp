@@ -114,6 +114,7 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 | **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
+| **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
 | **moonshine_asr** | ASR | en | Moonshine Streaming Tiny/Small/Medium | GGUF Q8, Stream |
 | **moss_transcribe_diarize** | ASR | auto, 50+ languages | MOSS-Transcribe-Diarize with speaker labels and timestamps | GGUF BF16/Q8/Q4_K, Stream |
 | **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B | GGUF 16/Q8, Stream |
@@ -131,6 +132,8 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
 | **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
+| **apollo** | S2S | lang agnostic | Apollo music restoration | GGUF F32 |
+| **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
 | **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |
 | **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft | GGUF 16/Q8 |
