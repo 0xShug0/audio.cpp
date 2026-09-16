@@ -494,10 +494,11 @@ void NemotronDecoderRuntime::decode_stream_chunk(
     const int64_t max_tokens = stream_decode_options_.max_tokens > 0
         ? stream_decode_options_.max_tokens
         : (std::numeric_limits<int64_t>::max() / 4);
-    for (int64_t local_frame = 0; local_frame < chunk.valid_frames; ++local_frame) {
-        if (static_cast<int64_t>(stream_token_ids_.size()) - 1 >= max_tokens) {
-            break; // same cap semantics as decode()/decode_streaming()
-        }
+    // One encoder frame can emit up to max_symbols_per_step tokens before the loop
+    // advances (blank or symbol cap) — the frame pointer must NOT move per token.
+    int64_t local_frame = 0;
+    while (local_frame < chunk.valid_frames &&
+           static_cast<int64_t>(stream_token_ids_.size()) - 1 < max_tokens) {
         const float * frame = chunk.values.data() + static_cast<std::ptrdiff_t>(local_frame * chunk.hidden_size);
         const int32_t token = run_step(stream_input_token_, frame, stream_decoder_cache_initialized_);
         stream_decoder_cache_initialized_ = true;
@@ -510,6 +511,8 @@ void NemotronDecoderRuntime::decode_stream_chunk(
         if (blank || force_advance) {
             stream_symbols_at_frame_ = 0;
             stream_durations_.push_back(1);
+            ++local_frame;
+            ++stream_frame_index_;
         } else {
             stream_durations_.push_back(0);
         }
@@ -525,7 +528,6 @@ void NemotronDecoderRuntime::decode_stream_chunk(
             }
         }
         stream_input_token_ = token;
-        ++stream_frame_index_;
     }
 }
 
