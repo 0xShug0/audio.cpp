@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { jsonRequest, loadModel, models, runTask, unloadModel, uploadFile } from '$lib/api';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import type { Translator } from '$lib/i18n';
@@ -7,6 +7,8 @@
 
   export let lyrics = '';
   export let seed = 1234;
+  export let loraUploading = false;
+  export let busy = false;
   export let paramSpecs: ParamSpec[] = [];
   export let advancedValues: Record<string, unknown> = {};
   export let catalogEntries: CatalogEntry[] = [];
@@ -45,6 +47,34 @@
   ];
 
   let coverAudioFile: File | null = null;
+  let loraInput: HTMLInputElement | null = null;
+  let loraError = '';
+  let loraUpload: AbortController | null = null;
+  onDestroy(() => loraUpload?.abort());
+
+  async function selectLora(file: File | null) {
+    if (!file) return;
+    loraError = '';
+    if (!file.name.toLowerCase().endsWith('.safetensors')) {
+      loraError = 'Select an unfused AR .safetensors adapter.';
+      return;
+    }
+    loraUploading = true;
+    loraUpload = new AbortController();
+    try {
+      const path = await uploadFile(file, loraUpload.signal);
+      setNamedParameter('lora', path);
+      log(`YuE2 LoRA selected: ${file.name}`);
+    } catch (error) {
+      if (!loraUpload.signal.aborted) {
+        loraError = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      loraUploading = false;
+      loraUpload = null;
+      if (loraInput) loraInput.value = '';
+    }
+  }
   let coverAudioInput: HTMLInputElement | null = null;
   let coverRunning = false;
   const unloadSettingKey = 'audiocpp.ui.yue2.unloadSheetSageAfterConversion';
@@ -263,6 +293,40 @@
       </div>
     {/each}
   </div>
+
+  {#if specByName('lora')}
+    <div class="yue2-grid">
+      <div class="yue2-field">
+        <label for="param-lora">LoRA adapter</label>
+        <input id="param-lora" type="text" placeholder="Server path (.safetensors)"
+          disabled={!server?.ui_management || busy || loraUploading}
+          value={String(advancedValues.lora ?? '')}
+          on:input={(event) => setNamedParameter('lora', event.currentTarget.value.trim())} />
+        <input id="yue2-lora-file" class="file file-native" type="file" accept=".safetensors"
+          bind:this={loraInput} disabled={!server?.ui_management || busy || loraUploading}
+          on:change={(event) => selectLora(event.currentTarget.files?.[0] || null)} />
+        <div class="media-actions">
+          <button type="button" disabled={!server?.ui_management || busy || loraUploading}
+            on:click={() => loraInput?.click()}>{loraUploading ? 'Uploading...' : 'Choose LoRA'}</button>
+          <button type="button" disabled={!server?.ui_management || busy || loraUploading || !advancedValues.lora}
+            on:click={() => { setNamedParameter('lora', ''); loraError = ''; }}>Clear</button>
+        </div>
+        <small>LoRA requirements vary. Read the original adapter's documentation for usage instructions.</small>
+        {#if loraError}<span class="yue2-error" role="alert">{loraError}</span>{/if}
+      </div>
+      <div class="yue2-field">
+        <label for="param-lora_scale">LoRA strength</label>
+        <input id="param-lora_scale" type="number" step="0.1"
+          disabled={!server?.ui_management || busy || loraUploading || !advancedValues.lora}
+          value={Number(advancedValues.lora_scale ?? 1)}
+          on:change={(event) => {
+            if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+              setNamedParameter('lora_scale', event.currentTarget.valueAsNumber);
+            }
+          }} />
+      </div>
+    </div>
+  {/if}
 
   <div class="yue2-grid yue2-grid-core">
     {#each coreSpecs as spec}
