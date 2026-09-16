@@ -358,8 +358,11 @@ Granite5ASRStreamingSession::Granite5ASRStreamingSession(
     : Granite5ASRSessionBase(std::move(task), std::move(options), std::move(assets)) {
     // Chunked-streaming geometry (publisher chunked TurboCTC recipe): every
     // center chunk carries its left context through the encoder and is decoded
-    // immediately, so partials stream per chunk. Defaults keep the compute
-    // amplification low enough to keep up with realtime even on one thread.
+    // immediately, so partials stream per chunk. Defaults tuned for END-OF-TURN
+    // latency: a 1 s center keeps the final flush window small. Raising
+    // center_chunk_sec to 2 cuts total encoder compute ~30% at equal accuracy
+    // (fewer, larger windows) but adds ~20-25% end-of-turn latency at 1 thread;
+    // left contexts below 2 s duplicate words across window boundaries.
     float center_sec = 1.0f;
     float left_sec = 2.0f;
     const auto & opts = RuntimeSessionBase::options().options;

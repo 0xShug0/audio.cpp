@@ -16,6 +16,7 @@
 #include <ggml.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -25,6 +26,8 @@
 
 namespace engine::community_models::granite5asr {
 namespace {
+
+using Clock = std::chrono::steady_clock;
 
 constexpr size_t kEncoderGraphNodes = 1048576;
 constexpr float kLayerNormEpsilon = 1.0e-5f;
@@ -488,10 +491,12 @@ Granite5EncoderRuntime::GraphCacheEntry & Granite5EncoderRuntime::ensure_graph_e
                 graph_cache_->entries.erase(graph_cache_->entries.begin() + static_cast<std::ptrdiff_t>(i));
                 graph_cache_->entries.insert(graph_cache_->entries.begin(), std::move(entry));
             }
+            debug::timing_log_scalar("granite5asr.encoder.graph_build_ms", 0.0);
             return graph_cache_->entries.front();
         }
     }
 
+    const auto build_start = Clock::now();
     GraphCacheEntry entry;
     entry.input_frames = input_frames;
     entry.feature_dim = feature_dim;
@@ -565,6 +570,9 @@ Granite5EncoderRuntime::GraphCacheEntry & Granite5EncoderRuntime::ensure_graph_e
         ggml_free(oldest.ggml_ctx);
         graph_cache_->entries.pop_back();
     }
+    debug::timing_log_scalar(
+        "granite5asr.encoder.graph_build_ms",
+        engine::debug::elapsed_ms(build_start, Clock::now()));
     return graph_cache_->entries.front();
 }
 
@@ -575,6 +583,7 @@ std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
     }
 
     const auto & config = assets_->config;
+    const auto wall_start = Clock::now();
     auto & entry = ensure_graph_entry(features.frames, features.feature_dim);
 
     std::vector<int32_t> token_ids;
@@ -602,6 +611,7 @@ std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
         0,
         logits_data.size() * sizeof(float));
 
+    const auto argmax_start = Clock::now();
     token_ids.reserve(static_cast<size_t>(out_frames));
     for (int64_t t = 0; t < out_frames; ++t) {
         const float * frame_logits = &logits_data[static_cast<size_t>(t * vocab_size)];
@@ -615,7 +625,14 @@ std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
         }
         token_ids.push_back(best_id);
     }
+    const double argmax_ms = engine::debug::elapsed_ms(argmax_start, Clock::now());
 
+    debug::timing_log_scalar(
+        "granite5asr.encoder.compute_ms",
+        engine::debug::elapsed_ms(wall_start, Clock::now()) - argmax_ms);
+    debug::timing_log_scalar(
+        "granite5asr.encoder_ms",
+        engine::debug::elapsed_ms(wall_start, Clock::now()));
     return token_ids;
 }
 
