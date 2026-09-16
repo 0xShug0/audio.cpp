@@ -6,6 +6,7 @@
 #include <array>
 #include <vector>
 #include <map>
+#include <chrono>
 #include <thread>
 #include <mutex>
 #include <future>
@@ -34,6 +35,9 @@
 
 std::mutex lock;
 std::vector<std::pair<std::string, std::string>> shader_fnames;
+// Set when a shader yields no SPIR-V, so the build stops at generation rather
+// than at a link error that points nowhere useful.
+bool generation_failed = false;
 std::locale c_locale("C");
 
 std::string GLSLC = "glslc";
@@ -324,6 +328,14 @@ compile_count_guard acquire_compile_slot() {
     return compile_count_guard(&compile_count, &decrement_compile_count);
 }
 
+// A shader is usable only if its SPIR-V exists and is non-empty. A zero-byte
+// file is what an interrupted or silently-failed compile leaves behind.
+static bool spv_is_usable(const std::string & path) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    return !ec && size > 0;
+}
+
 void string_to_spv_func(std::string name, std::string in_path, std::string out_path, std::map<std::string, std::string> defines, bool coopmat, bool dep_file, compile_count_guard slot) {
     std::string target_env = (name.find("_cm2") != std::string::npos) ? "--target-env=vulkan1.3" : "--target-env=vulkan1.2";
 
@@ -365,20 +377,47 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
 
     std::string stdout_str, stderr_str;
     try {
-        // std::cout << "Executing command: ";
-        // for (const auto& part : cmd) {
-        //     std::cout << part << " ";
-        // }
-        // std::cout << std::endl;
+        // Success is judged by the artefact, not by stderr. Judging by stderr
+        // discards a shader over a warning, and misses the case that matters
+        // more: a compile that reports nothing and writes nothing.
+        //
+        // An empty result is retried rather than accepted. It has been seen in
+        // CI with no accompanying diagnostic, and retrying costs milliseconds
+        // on a genuinely broken shader while saving a build that would
+        // otherwise fail much later at link, naming a symbol whose absence has
+        // no visible cause.
+        constexpr int max_attempts = 3;
+        bool produced = false;
 
-        execute_command(cmd, stdout_str, stderr_str);
-        if (!stderr_str.empty()) {
-            std::cerr << "cannot compile " << name << "\n\n";
+        for (int attempt = 1; attempt <= max_attempts && !produced; ++attempt) {
+            stdout_str.clear();
+            stderr_str.clear();
+            execute_command(cmd, stdout_str, stderr_str);
+            produced = spv_is_usable(out_path);
+
+            if (!produced && attempt < max_attempts) {
+                std::cerr << "shader " << name << " produced no SPIR-V; retrying ("
+                          << (attempt + 1) << "/" << max_attempts << ")" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100 * attempt));
+            }
+        }
+
+        if (!produced) {
+            std::cerr << "cannot compile " << name << " after " << max_attempts
+                      << " attempts\n\n";
             for (const auto& part : cmd) {
                 std::cerr << part << " ";
             }
             std::cerr << "\n\n" << stderr_str << std::endl;
+            generation_failed = true;
             return;
+        }
+
+        if (!stderr_str.empty()) {
+            // Diagnostics alongside a usable artefact are warnings. Keeping the
+            // shader is the point: dropping it is what leaves a declaration
+            // with no definition.
+            std::cerr << "warnings compiling " << name << ":\n" << stderr_str << std::endl;
         }
 
         if (dep_file) {
@@ -1050,6 +1089,12 @@ void write_output_files() {
         if (input_filepath != "") {
             std::string data = read_binary_file(path);
             if (data.empty()) {
+                // The declaration above is already written, so skipping the
+                // definition leaves a symbol declared and never defined, which
+                // surfaces much later as an undefined reference at link.
+                std::cerr << "ERROR: shader '" << name << "' produced no SPIR-V ("
+                          << path << ")\n";
+                generation_failed = true;
                 continue;
             }
 
@@ -1195,6 +1240,11 @@ int main(int argc, char** argv) {
     process_shaders();
 
     write_output_files();
+
+    if (generation_failed) {
+        std::cerr << "shader generation failed; see errors above" << std::endl;
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }
