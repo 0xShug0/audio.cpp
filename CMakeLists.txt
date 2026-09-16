@@ -238,6 +238,10 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
 
     # Define default archs
     if ("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "" AND "$ENV{CUDAARCHS}" STREQUAL "")
+        # Remembered so the summary below can tell the difference between "the
+        # portable list is what you asked for" and "the portable list is what you
+        # got by not asking".
+        set(_AUDIOCPP_CUDA_ARCH_DEFAULTED TRUE)
         # XX-virtual = PTX (JIT, forward-compatible); XX-real = SASS (native).
         if (CUDAToolkit_VERSION VERSION_LESS "13")
             # 50/61/70 (Maxwell/Pascal/Volta) unsupported by CUDA 13 toolkits
@@ -280,10 +284,34 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     endif()
     message(STATUS "Using CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} CMAKE_CUDA_ARCHITECTURES_NATIVE=${CMAKE_CUDA_ARCHITECTURES_NATIVE}")
 
+    # The line above prints both halves of this and interprets neither: how many
+    # architectures are about to be compiled, and which one this host can run.
+    # The option is documented (README, docs/build/linux.md), but configure is
+    # where the choice is actually being made, so say it here too.
+    if (_AUDIOCPP_CUDA_ARCH_DEFAULTED AND
+        CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES "^[0-9]")
+        list(LENGTH CMAKE_CUDA_ARCHITECTURES _AUDIOCPP_ARCH_COUNT)
+        message(STATUS "  portable default: ${_AUDIOCPP_ARCH_COUNT} architectures, so every .cu file is compiled ${_AUDIOCPP_ARCH_COUNT} times")
+        message(STATUS "  this host is ${CMAKE_CUDA_ARCHITECTURES_NATIVE}; for a local build roughly 3x faster:")
+        message(STATUS "      -DCMAKE_CUDA_ARCHITECTURES=native    (the result then runs on this GPU only)")
+    endif()
+
     if (NOT MSVC)
         set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
     endif()
 endif()
+
+# ⚠ Outside the CUDA block on purpose: ccache is not a CUDA concern, and a
+# CPU-only, Vulkan or HIP build benefits from it just as much. GGML_CCACHE is
+# forced OFF above, so ggml's own probe never runs and nothing caches anything
+# unless the caller wires a launcher up by hand.
+find_program(AUDIOCPP_CCACHE_PROGRAM ccache)
+if (AUDIOCPP_CCACHE_PROGRAM AND
+    NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "ccache is installed (${AUDIOCPP_CCACHE_PROGRAM}) and NOT in use. Rebuilds are much faster with:")
+    message(STATUS "    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache")
+endif()
+
 if (ENGINE_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED COMPONENTS CXX)
 endif()
