@@ -27,7 +27,8 @@ void rejects(F fn) {
 }
 
 void check_upload(const assets::TensorSource & source, const std::string & name,
-                  const std::vector<int64_t> & shape, assets::TensorStorageType type) {
+                  const std::vector<int64_t> & shape, assets::TensorStorageType type,
+                  const assets::TensorSource * reference = nullptr) {
     auto backend = core::init_backend({core::BackendType::Cpu, 0, 1});
     auto ctx = ggml_init({ggml_tensor_overhead() * 2, nullptr, true});
     auto tensor = ggml_new_tensor_2d(ctx, assets::ggml_type_for_tensor_storage(type), shape[1], shape[0]);
@@ -36,12 +37,40 @@ void check_upload(const assets::TensorSource & source, const std::string & name,
     source.set_backend_tensor(tensor, name, type, shape);
     std::vector<std::byte> actual(ggml_nbytes(tensor));
     ggml_backend_tensor_get(tensor, actual.data(), 0, actual.size());
-    const auto expected = source.require_tensor(name, type, shape);
+    const auto expected = (reference ? *reference : source).require_tensor(name, type, shape);
     ggml_backend_buffer_free(buffer);
     ggml_free(ctx);
     ggml_backend_free(backend);
     require(actual == expected.bytes, "backend upload differs from raw export conversion");
 }
+
+class CountingSource final : public assets::TensorSource {
+public:
+    explicit CountingSource(std::shared_ptr<const assets::TensorSource> source) : source_(std::move(source)) {}
+    const std::filesystem::path & source_path() const noexcept override { return source_->source_path(); }
+    bool has_tensor(std::string_view name) const noexcept override { return source_->has_tensor(name); }
+    assets::TensorMetadata require_metadata(std::string_view name) const override {
+        return source_->require_metadata(name);
+    }
+    std::vector<assets::TensorMetadata> tensors() const override { return source_->tensors(); }
+    void release_storage() const override { source_->release_storage(); }
+    assets::RawTensorData require_tensor_data(std::string_view name) const override {
+        return source_->require_tensor_data(name);
+    }
+    std::vector<float> require_f32(std::string_view name,
+        const std::optional<std::vector<int64_t>> & shape) const override {
+        ++reads;
+        return source_->require_f32(name, shape);
+    }
+    std::optional<std::vector<float>> optional_f32(std::string_view name,
+        const std::optional<std::vector<int64_t>> & shape) const override {
+        return source_->optional_f32(name, shape);
+    }
+    int64_t require_i64_scalar(std::string_view name) const override { return source_->require_i64_scalar(name); }
+    mutable size_t reads = 0;
+private:
+    std::shared_ptr<const assets::TensorSource> source_;
+};
 
 void run(const std::filesystem::path & root) {
     std::vector<float> weights(64), a(64), b = {1.0F, 1.0F, -0.75F, 0.25F};
@@ -124,6 +153,52 @@ void run(const std::filesystem::path & root) {
     }
     overlay->release_storage();
     require(overlay->require_f32("weight") == expected, "release/reopen changed merge");
+
+    for (auto mode : {assets::LoraMergeMode::AccumulateF32, assets::LoraMergeMode::RoundedBF16Delta}) {
+        auto counted = std::make_shared<CountingSource>(base);
+        auto cached_delta = delta;
+        cached_delta.merge_mode = mode;
+        auto reference = assets::make_lora_tensor_source(base, {{"weight", cached_delta}});
+        auto cached = assets::make_lora_tensor_source(counted, {{"weight", cached_delta}}, {}, "cached", true);
+        size_t expected_reads = 0;
+        for (auto type : {assets::TensorStorageType::F32, assets::TensorStorageType::F16,
+                          assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0,
+                          assets::TensorStorageType::Q4_0, assets::TensorStorageType::Q8_0,
+                          assets::TensorStorageType::Q4_0}) {
+            check_upload(*cached, "weight", {2, 32}, type, reference.get());
+            require(counted->reads == ++expected_reads, "dtype replacement did not merge from original base");
+            cached->release_storage();
+            for (int repeat = 0; repeat < 3; ++repeat) {
+                check_upload(*cached, "weight", {2, 32}, type, reference.get());
+                require(counted->reads == expected_reads, "cached upload re-read/re-merged weights");
+            }
+        }
+        auto uncached = assets::make_lora_tensor_source(counted, {{"weight", cached_delta}});
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            check_upload(*uncached, "weight", {2, 32}, assets::TensorStorageType::Q8_0, reference.get());
+            require(counted->reads == ++expected_reads, "default overlay unexpectedly caches weights");
+        }
+    }
+
+    // Exercise retained bytes in the parallel F16/BF16 conversion paths too.
+    std::vector<float> large_weights(1024 * 1024);
+    for (size_t i = 0; i < large_weights.size(); ++i) large_weights[i] = float(i % 997) / 997.0F;
+    io::write_safetensors_file(root / "large.safetensors", {
+        {"weight", "F32", {1024, 1024}, bytes(large_weights)}
+    });
+    auto large_base = assets::open_tensor_source(root / "large.safetensors");
+    assets::LoraTensorDelta large_delta;
+    large_delta.in = large_delta.out = 1024;
+    large_delta.r = 1;
+    large_delta.a.assign(1024, 0.123F);
+    large_delta.b.assign(1024, -0.456F);
+    auto large_cached = assets::make_lora_tensor_source(large_base, {{"weight", large_delta}}, {}, "large", true);
+    auto large_reference = assets::make_lora_tensor_source(large_base, {{"weight", large_delta}});
+    for (auto type : {assets::TensorStorageType::F16, assets::TensorStorageType::BF16}) {
+        check_upload(*large_reference, "weight", {1024, 1024}, type);
+        check_upload(*large_cached, "weight", {1024, 1024}, type, large_reference.get());
+        check_upload(*large_cached, "weight", {1024, 1024}, type, large_reference.get());
+    }
 }
 }  // namespace
 

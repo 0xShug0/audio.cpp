@@ -1034,6 +1034,14 @@
       duration = 30;
     }
     if (selected?.family === 'yue2') {
+      if (server?.ui_management === false) {
+        const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
+        advancedValues = {
+          ...advancedValues,
+          lora: configured?.['yue2.lora'] ?? '',
+          lora_scale: Number(configured?.['yue2.lora_scale'] ?? 1)
+        };
+      }
       text = '';
       lyrics = '';
       ensureYue2DefaultLyrics();

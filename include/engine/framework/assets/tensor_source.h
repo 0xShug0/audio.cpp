@@ -146,12 +146,14 @@ inline void require_tensor_shape(
     std::initializer_list<int64_t> expected_shape) {
     require_tensor_shape(source, name, std::vector<int64_t>(expected_shape));
 }
+// When requested, retain the exact upload bytes for reuse instead of reconverting.
 void set_backend_tensor_from_f32_parallel(
     ggml_tensor * tensor,
     std::string_view name,
     const std::vector<float> & values,
     const core::TensorShape & shape,
-    ggml_type type);
+    ggml_type type,
+    std::vector<std::byte> * retained_bytes = nullptr);
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path);
 std::shared_ptr<const TensorSource> open_tensor_source(
     const std::filesystem::path & path,

@@ -41,10 +41,13 @@ LoraTensorDelta load_lora_tensor_delta(
 // with the matrix product accumulated in F32 before scaling.
 // Base metadata/storage policy is retained; merged raw exports are F32 and
 // backend uploads use the requested dtype through the existing conversion API.
+// Optional upload caching retains one dtype per adapted tensor until source
+// destruction, including across release_storage(). A dtype change replaces it.
 std::shared_ptr<const TensorSource> make_lora_tensor_source(
     std::shared_ptr<const TensorSource> base,
     std::unordered_map<std::string, LoraTensorDelta> deltas,
     std::unordered_map<std::string, TensorOverride> overrides = {},
-    std::string log_prefix = "lora");
+    std::string log_prefix = "lora",
+    bool cache_backend_weights = false);
 
 }  // namespace engine::assets

@@ -95,6 +95,10 @@ and generation are unchanged.
 The adapter modifies AR attention and MLP projections at load time, using
 `BF16(W + BF16(scale * (B @ A)))`. There is no extra alpha/rank scaling or
 per-token adapter computation. NAR and VAE weights are unchanged.
+Merged AR tensors are cached in CPU memory in their upload dtype for the session,
+so later requests skip merging. Only one dtype per adapted tensor is retained;
+unloading the session frees the cache. AR weights are still released from VRAM
+before VAE decoding.
 Use the BF16 main GGUF for the closest match to the original weights. Loading
 onto Q8/Q4 bases merges into dequantized weights and requantizes the result;
 it is not equivalent to merging into the original BF16 model first.

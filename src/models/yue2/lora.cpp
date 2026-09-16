@@ -47,7 +47,7 @@ std::shared_ptr<const assets::TensorSource> make_yue2_lora_source(
         "AR LoRA: " + adapter_path.string() + ", projections=" + std::to_string(deltas.size()) +
         ", scale=" + std::to_string(scale));
     if (scale == 0.0F) return base;
-    return assets::make_lora_tensor_source(std::move(base), std::move(deltas), {}, "yue2.lora");
+    return assets::make_lora_tensor_source(std::move(base), std::move(deltas), {}, "yue2.lora", true);
 }
 
 }  // namespace engine::models::yue2

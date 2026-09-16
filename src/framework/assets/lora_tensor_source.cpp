@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -78,10 +79,12 @@ public:
         std::shared_ptr<const TensorSource> base,
         std::unordered_map<std::string, LoraTensorDelta> deltas,
         std::unordered_map<std::string, TensorOverride> overrides,
-        std::string log_prefix)
+        std::string log_prefix,
+        bool cache_backend_weights)
         : base_(std::move(base)),
           deltas_(std::move(deltas)),
-          overrides_(std::move(overrides)), log_prefix_(std::move(log_prefix)) {}
+          overrides_(std::move(overrides)), log_prefix_(std::move(log_prefix)),
+          cache_backend_weights_(cache_backend_weights) {}
 
     const std::filesystem::path & source_path() const noexcept override {
         return base_->source_path();
@@ -145,10 +148,31 @@ public:
         if (expected_shape != std::vector<int64_t>({delta->second.out, delta->second.in})) {
             throw std::runtime_error("tensor shape mismatch for " + key);
         }
+        std::unique_lock<std::mutex> lock(upload_cache_mutex_, std::defer_lock);
+        if (cache_backend_weights_) {
+            lock.lock();
+            auto cached = upload_cache_.find(key);
+            if (cached != upload_cache_.end() && cached->second.type != type) {
+                // Replace, never accumulate precision variants or requantize a lossy copy.
+                upload_cache_.erase(cached);
+                cached = upload_cache_.end();
+            }
+            if (cached != upload_cache_.end()) {
+                const auto & data = cached->second;
+                if (tensor->type != data.type || ggml_nbytes(tensor) != data.bytes.size()) {
+                    throw std::runtime_error("backend tensor storage mismatch for " + key);
+                }
+                ggml_backend_tensor_set(tensor, data.bytes.data(), 0, data.bytes.size());
+                return;
+            }
+        }
         auto merged = merged_f32_values(*base_, key, delta->second);
         record_decoder_merge(merged.base_read_ms, merged.compute_ms, merged.values.size());
         const auto upload_started = std::chrono::steady_clock::now();
-        set_backend_tensor_from_f32_parallel(tensor, key, merged.values, shape, type);
+        TensorData cached{shape, type, {}};
+        set_backend_tensor_from_f32_parallel(
+            tensor, key, merged.values, shape, type, cache_backend_weights_ ? &cached.bytes : nullptr);
+        if (cache_backend_weights_) upload_cache_.emplace(key, std::move(cached));
         record_decoder_upload(engine::debug::elapsed_ms(upload_started), merged.values.size());
     }
 
@@ -276,6 +300,9 @@ private:
     std::unordered_map<std::string, LoraTensorDelta> deltas_;
     std::unordered_map<std::string, TensorOverride> overrides_;
     std::string log_prefix_;
+    bool cache_backend_weights_;
+    mutable std::mutex upload_cache_mutex_;
+    mutable std::unordered_map<std::string, TensorData> upload_cache_;
     mutable double decoder_base_read_ms_ = 0.0;
     mutable double decoder_merge_compute_ms_ = 0.0;
     mutable uint64_t decoder_merge_values_ = 0;
@@ -326,7 +353,8 @@ std::shared_ptr<const TensorSource> make_lora_tensor_source(
     std::shared_ptr<const TensorSource> base,
     std::unordered_map<std::string, LoraTensorDelta> deltas,
     std::unordered_map<std::string, TensorOverride> overrides,
-    std::string log_prefix) {
+    std::string log_prefix,
+    bool cache_backend_weights) {
     if (!base) {
         throw std::runtime_error("LoRA overlay requires a base tensor source");
     }
@@ -355,7 +383,7 @@ std::shared_ptr<const TensorSource> make_lora_tensor_source(
         }
     }
     return std::make_shared<LoraTensorSource>(
-        std::move(base), std::move(deltas), std::move(overrides), std::move(log_prefix));
+        std::move(base), std::move(deltas), std::move(overrides), std::move(log_prefix), cache_backend_weights);
 }
 
 }  // namespace engine::assets
