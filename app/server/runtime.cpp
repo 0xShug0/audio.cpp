@@ -2695,7 +2695,11 @@ HttpResponse ServerState::run_transcription(
         : run_model(model, request, busy_timeout_ms);
     const auto & result = timed_result.result;
     if (!result.text_output.has_value()) {
-        throw std::runtime_error("model result did not contain transcript text");
+        std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+        // Diarization has no transcript, even when silence yields no speaker turns.
+        if (!detail || model.task.task != engine::runtime::VoiceTaskKind::Diarization) {
+            throw std::runtime_error("model result did not contain transcript text");
+        }
     }
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("transcription timing requires audio_input");
@@ -2710,8 +2714,8 @@ HttpResponse ServerState::run_transcription(
     // discards them. This is the opt-in route that keeps them, so the shape stays
     // a superset of the plain one: text first, timing last, details in between.
     std::ostringstream out;
-    out << "{\"text\":" << json_quote(result.text_output->text);
-    if (!result.text_output->language.empty()) {
+    out << "{\"text\":" << (result.text_output ? json_quote(result.text_output->text) : "\"\"");
+    if (result.text_output && !result.text_output->language.empty()) {
         out << ",\"language\":" << json_quote(result.text_output->language);
     }
     write_transcript_detail_fields(out, result, [&](const std::string & name) {
