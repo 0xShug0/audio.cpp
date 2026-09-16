@@ -1628,11 +1628,44 @@ bool gguf_has_embedded_sidecars(const std::filesystem::path & path) {
 }
 
 std::vector<std::string> gguf_embedded_sidecar_names(const std::filesystem::path & path) {
-    std::vector<std::string> names;
-    for (const auto & [name, content] : read_gguf_embedded_sidecars(path)) {
-        (void) content;
-        names.push_back(name);
+    // Reads only "audiocpp.embedded_files.names". Going through
+    // read_gguf_embedded_sidecars would copy every sidecar's CONTENT into a string
+    // to return the keys -- 38 MB for the Kokoro package and far more for a large
+    // one, per call.
+    ggml_context * tensor_context = nullptr;
+    gguf_context * gguf =
+        gguf_init_from_file(path.string().c_str(), gguf_init_params{true, &tensor_context});
+    if (gguf == nullptr) {
+        if (tensor_context != nullptr) ggml_free(tensor_context);
+        throw std::runtime_error("failed to read GGUF metadata: " + path.string());
     }
+    std::vector<std::string> names;
+    try {
+        const int64_t names_key = gguf_find_key(gguf, "audiocpp.embedded_files.names");
+        if (names_key >= 0 && gguf_get_kv_type(gguf, names_key) == GGUF_TYPE_ARRAY &&
+            gguf_get_arr_type(gguf, names_key) == GGUF_TYPE_STRING) {
+            const size_t count = gguf_get_arr_n(gguf, names_key);
+            names.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                // Same rejection as the full reader: a name that escapes the package
+                // root must not reach a caller that is about to write files from it.
+                const std::string name = gguf_get_arr_str(gguf, names_key, i);
+                const std::filesystem::path relative(name);
+                const auto normalized = relative.lexically_normal();
+                if (name.empty() || relative.is_absolute() || normalized.empty() ||
+                    *normalized.begin() == "..") {
+                    throw std::runtime_error("GGUF contains an unsafe embedded sidecar name: " + name);
+                }
+                names.push_back(normalized.generic_string());
+            }
+        }
+    } catch (...) {
+        gguf_free(gguf);
+        if (tensor_context != nullptr) ggml_free(tensor_context);
+        throw;
+    }
+    gguf_free(gguf);
+    if (tensor_context != nullptr) ggml_free(tensor_context);
     return names;
 }
 

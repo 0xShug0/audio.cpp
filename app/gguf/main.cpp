@@ -393,13 +393,6 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
     return errors;
 }
 
-// What the conversion embeds, and where it looks for anything else: the small
-// files (configs, tokenizers) that
-// belong in the output. `--root` wins, and so does an explicit `--sidecar`
-// set. Otherwise a GGUF input's own embedded copies are used — for a re-encode
-// they are exactly the files that package ships, where the directory the file
-// happens to sit in is only a guess. Everything else keeps using that
-// directory, which is what every safetensors conversion does.
 struct SidecarPlan {
     std::filesystem::path root;
     // Carried across by name rather than rediscovered by walking `root`. A
@@ -415,10 +408,17 @@ struct SidecarPlan {
     std::filesystem::path reused_from;
 };
 
+// What the conversion embeds, and where it looks for anything else. The small
+// files (configs, tokenizers) that belong in the output: `--root` wins, and so
+// does an explicit `--sidecar` set. Otherwise a GGUF input's own embedded copies
+// are used — for a re-encode they are exactly the files that package ships,
+// where the directory the file happens to sit in is only a guess. Everything
+// else keeps using that directory, which is what every safetensors conversion
+// does.
 SidecarPlan plan_sidecars(const std::filesystem::path & requested,
-                                 const std::vector<engine::assets::TensorSourceInput> & inputs,
-                                 const std::vector<engine::assets::GgufEmbeddedFile> & explicit_sidecars,
-                                 bool embed_sidecars) {
+                          const std::vector<engine::assets::TensorSourceInput> & inputs,
+                          const std::vector<engine::assets::GgufEmbeddedFile> & explicit_sidecars,
+                          bool embed_sidecars) {
     if (!requested.empty())
         return {std::filesystem::weakly_canonical(requested), {}, {}};
     const auto parent = std::filesystem::weakly_canonical(inputs.front().path.parent_path());
@@ -716,8 +716,8 @@ int main(int argc, char ** argv) {
         const auto sidecar_plan = plan_sidecars(sidecar_root, inputs, sidecars, embed_sidecars);
         const auto & resolved_sidecar_root = sidecar_plan.root;
         // Empty unless the input was a GGUF whose sidecars are being reused, which
-        // plan_sidecars only does when the caller passed no --sidecar of its
-        // own -- so these cannot collide with an explicit destination.
+        // plan_sidecars only does when the caller passed no --sidecar of its own,
+        // so these cannot collide with an explicit destination.
         sidecars.insert(sidecars.end(), sidecar_plan.carried.begin(), sidecar_plan.carried.end());
         std::optional<engine::assets::GgufEmbeddedModelSpec> embedded_model_spec;
         if (!allow_missing_model_spec) {
@@ -790,9 +790,8 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("embedded model spec family is '" + written_spec->family + "', expected '" +
                                      embedded_model_spec->family + "'");
         }
+        std::cout << "embedded_sidecars=" << (written_sidecars.empty() ? "false" : "true") << "\n";
         std::cout << "embedded_sidecar_count=" << written_sidecars.size() << "\n";
-        std::cout << "embedded_sidecars=" << (written_sidecars.empty() ? "false" : "true")
-                  << "\n";
         std::cout << "embedded_model_spec=" << (written_spec.has_value() ? "true" : "false") << "\n";
         if (written_spec.has_value()) {
             std::cout << "model_spec_family=" << written_spec->family << "\n";
