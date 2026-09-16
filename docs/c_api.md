@@ -71,6 +71,33 @@ if ((audiocpp_abi_version() >> 16) != AUDIOCPP_ABI_VERSION_MAJOR) {
 }
 ```
 
+**minor** increments when entry points are added. Nothing is removed or changed
+by such a release, so a caller built against a lower minor keeps working
+untouched — but a caller that needs a newer entry point can say so, which is
+the only reason the field carries information:
+
+```c
+/* audiocpp_request_set_option_array arrived in 0.2. */
+if ((audiocpp_abi_version() & 0xffff) < 0x0200) {
+    /* fall back, or refuse, rather than resolving a symbol that is not there */
+}
+```
+
+A C caller can also just resolve the symbol and test for NULL, which is exact
+and needs no number at all. The version is for the callers that cannot: a
+binding that declares its imports up front — C#, JNA, ctypes with prototypes —
+binds on first use and raises a missing-symbol error from inside the call, which
+is a poor way to discover that a library is too old.
+
+**patch** is for behaviour fixes that add and change no surface. Do not gate on
+it; it tells a caller nothing about what it may call.
+
+⚠ `0.1` covers two different surfaces. The four entry points added in #544
+(`audiocpp_task_count`, `audiocpp_task_name`, `audiocpp_task_from_spec_name`,
+`audiocpp_request_set_text_language`) shipped without a bump, before this rule
+existed, so a library reporting `0.1` may or may not have them. From `0.2`
+onward the minor is the answer.
+
 ## Usage
 
 ```c
