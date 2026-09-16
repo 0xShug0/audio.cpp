@@ -483,7 +483,8 @@ struct Granite5EncoderRuntime::GraphCache {
 Granite5EncoderRuntime::GraphCacheEntry & Granite5EncoderRuntime::ensure_graph_entry(
     int64_t input_frames,
     int64_t feature_dim) {
-    for (size_t i = 0; i < graph_cache_->entries.size(); ++i) {
+    static const bool kBenchNoCache = std::getenv("GRANITE_NO_CACHE") != nullptr;
+    if (!kBenchNoCache) for (size_t i = 0; i < graph_cache_->entries.size(); ++i) {
         if (graph_cache_->entries[i].input_frames == input_frames &&
             graph_cache_->entries[i].feature_dim == feature_dim) {
             if (i != 0) {
