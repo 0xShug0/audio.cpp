@@ -569,6 +569,16 @@ add_library(engine_model_marblenet_vad OBJECT
 set_target_properties(engine_model_marblenet_vad PROPERTIES EXCLUDE_FROM_ALL TRUE)
 audiocpp_configure_runtime_object(engine_model_marblenet_vad)
 
+audiocpp_add_model(moss_transcribe_diarize
+    SOURCES
+        src/models/moss_transcribe_diarize/runtime.cpp
+        src/models/moss_transcribe_diarize/session.cpp
+    INCLUDES
+        engine/models/moss_transcribe_diarize/session.h
+    LOADERS
+        engine::models::moss_transcribe_diarize::make_moss_transcribe_diarize_loader
+)
+
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp
@@ -1265,6 +1275,30 @@ audiocpp_add_model(nemotron_asr
         engine/models/nemotron_asr/loader.h
     LOADERS
         engine::models::nemotron_asr::make_nemotron_asr_loader
+)
+
+audiocpp_add_model(cohere_asr
+    SOURCES
+        src/models/cohere_asr/assets.cpp
+        src/models/cohere_asr/weights.cpp
+        src/models/cohere_asr/runtime.cpp
+        src/models/cohere_asr/session.cpp
+    INCLUDES
+        engine/models/cohere_asr/model.h
+    LOADERS
+        engine::models::cohere_asr::make_cohere_asr_loader
+)
+
+audiocpp_add_model(canary_asr
+    SOURCES
+        src/models/canary_asr/assets.cpp
+        src/models/canary_asr/weights.cpp
+        src/models/canary_asr/runtime.cpp
+        src/models/canary_asr/session.cpp
+    INCLUDES
+        engine/models/canary_asr/model.h
+    LOADERS
+        engine::models::canary_asr::make_canary_asr_loader
 )
 
 audiocpp_add_model(moonshine_asr

@@ -2,6 +2,8 @@
 
 | Model | Family | Mode(s) | Quick Start |
 |---|---|---|---|
+| Canary 180M Flash | `canary_asr` | offline | [Canary 180M Flash](models/canary_asr.md) |
+| Cohere Transcribe | `cohere_asr` | offline | [Cohere Transcribe](models/cohere_asr.md) |
 | Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
 | Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](community_models/granite5asr.md) |
 | Qwen3 ASR | `qwen3_asr` | offline, streaming | [Qwen3 ASR](#qwen3-asr) |
@@ -10,6 +12,7 @@
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](#higgs-audio-stt) |
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
 | Moonshine Streaming ASR | `moonshine_asr` | offline, streaming | [Moonshine Streaming ASR](models/moonshine_asr.md) |
+| MOSS-Transcribe-Diarize | `moss_transcribe_diarize` | offline, text-output streaming | [MOSS-Transcribe-Diarize](models/moss_transcribe_diarize.md) |
 | Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |
 | Niagara ASR | `niagara_asr` | offline | [Niagara ASR](#niagara-asr) |
 | Parakeet-TDT | `parakeet_tdt` | offline, streaming | [Parakeet-TDT](#parakeet-tdt) |
