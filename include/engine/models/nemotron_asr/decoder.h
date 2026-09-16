@@ -45,6 +45,18 @@ public:
         const std::function<bool(NemotronEncodedAudio &)> & next_chunk,
         const NemotronTextDeltaCallback & on_text_delta = nullptr);
 
+    // Incremental chunk-at-a-time decoding: begin resets the prediction-network
+    // state, decode_stream_chunk consumes the frames of one encoded chunk while
+    // continuing that state (firing on_text_delta for newly emitted text), and
+    // finish finalizes the transcript and word timestamps. decode_streaming() is
+    // implemented on top of these three; sessions that receive audio live (SSE
+    // /live, WebSocket, ...) call them directly so partials stream per chunk.
+    void begin_stream_decode(const NemotronDecodeOptions & options);
+    void decode_stream_chunk(
+        const NemotronEncodedAudio & chunk,
+        const NemotronTextDeltaCallback & on_text_delta = nullptr);
+    NemotronDecodedText finish_stream_decode();
+
 private:
     struct Graph;
     struct JointGraph;
@@ -68,6 +80,17 @@ private:
     std::vector<float> logits_scratch_;
     std::vector<float> hidden_read_scratch_;
     std::vector<float> cell_read_scratch_;
+
+    // Persistent state across decode_stream_chunk() calls.
+    bool stream_decode_active_ = false;
+    NemotronDecodeOptions stream_decode_options_;
+    int64_t stream_frame_index_ = 0;
+    int64_t stream_symbols_at_frame_ = 0;
+    int32_t stream_input_token_ = 0;
+    bool stream_decoder_cache_initialized_ = false;
+    std::vector<int32_t> stream_token_ids_;
+    std::vector<int32_t> stream_durations_;
+    std::string stream_emitted_text_;
 };
 
 }  // namespace engine::models::nemotron_asr

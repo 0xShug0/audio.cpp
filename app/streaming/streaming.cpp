@@ -130,12 +130,12 @@ engine::runtime::TaskResult run_stream(
             }
             feed_audio_stream(session, *stream, resolve_chunk_samples(policy, stream->format), sink);
         }
-        if (policy.output == engine::runtime::StreamingOutputKind::PullEvents) {
-            pull_stream_events(session, sink);
-        }
-        auto result = session.finish_stream();
-        session.set_stream_event_sink(nullptr);
-        return result;
+		if (policy.output == engine::runtime::StreamingOutputKind::PullEvents) {
+			pull_stream_events(session, sink);
+		}
+		auto result = session.finish_stream();
+		session.set_stream_event_sink(nullptr);
+		return result;
     } catch (...) {
         session.set_stream_event_sink(nullptr);
         throw;

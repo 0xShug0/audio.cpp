@@ -93,6 +93,24 @@ public:
 
 private:
     runtime::StreamEventCallback stream_event_sink_;
+
+    // Native chunked-streaming pipeline state. Audio is encoded window-by-window
+    // through encode_stream_chunk (cache-aware, publisher chunk contract) and the
+    // decoder runs incrementally across chunks, so partials stream as chunks land
+    // instead of only at finalize.
+    bool encode_and_decode_next_chunk(bool flush_tail, std::string & delta_out);
+    int64_t stream_lookahead_ = 0;
+    int64_t stream_prompt_id_ = 0;
+    NemotronDecodeOptions stream_decode_options_;
+    NemotronEncoderStreamState encoder_stream_state_;
+    int64_t stream_first_samples_ = 0;
+    int64_t stream_samples_per_chunk_ = 0;
+    int64_t stream_first_mel_frames_ = 0;
+    int64_t stream_mel_frames_per_chunk_ = 0;
+    int64_t stream_next_chunk_start_ = 0;
+    bool stream_await_first_chunk_ = true;
+    bool stream_tail_encoded_ = false;
+    bool stream_decode_active_ = false;
 };
 
 }  // namespace engine::models::nemotron_asr

@@ -73,6 +73,22 @@
         "description": "Path to the Silero VAD model directory used by automatic audio chunking.",
         "required": false,
         "default": "assets/framework/models/silero_vad"
+      },
+      {
+        "name": "center_chunk_sec",
+        "type": "float",
+        "description": "Center-chunk duration in seconds for buffered streaming; each chunk is decoded as soon as it is complete, which sets the partial cadence.",
+        "required": false,
+        "min": 0.05,
+        "default": 1.0
+      },
+      {
+        "name": "left_context_sec",
+        "type": "float",
+        "description": "Left-context audio re-encoded with every center chunk to give the block-attention CTC model its past context.",
+        "required": false,
+        "min": 0.0,
+        "default": 2.0
       }
     ],
     "load": []
