@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { loadModel, models, runTask, unloadModel, uploadFile } from '$lib/api';
+  import { jsonRequest, loadModel, models, runTask, unloadModel, uploadFile } from '$lib/api';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import type { Translator } from '$lib/i18n';
   import type { CatalogEntry, LoadedModel, ParamSpec, ServerHealth } from '$lib/types';
@@ -107,7 +107,10 @@
     const resident = current.find((model) => model.id === entry.id && model.loaded);
     if (resident) return;
     if (!server?.ui_management) {
-      throw new Error('SheetSage2 is not loaded. Start the server with UI management or add SheetSage2 to server config.');
+      if (!current.some((model) => model.id === entry.id)) {
+        throw new Error('SheetSage2 is not registered. Add SheetSage2 to server config.');
+      }
+      return;
     }
     await loadModel({
       id: entry.id,
@@ -125,7 +128,7 @@
     coverRunning = true;
     coverError = '';
     coverStatus = 'Preparing SheetSage2 cover score transcription...';
-    const shouldUnload = unloadAfterConversion && server?.ui_management === true;
+    const shouldUnload = unloadAfterConversion;
     let cleanupModelId: string | null = null;
     try {
       const entry = sheetSageModel();
@@ -158,7 +161,14 @@
     } finally {
       if (shouldUnload && cleanupModelId) {
         try {
-          await unloadModel(cleanupModelId);
+          if (server?.ui_management) {
+            await unloadModel(cleanupModelId);
+          } else {
+            await jsonRequest('/v1/tasks/unload_models', {
+              method: 'POST',
+              body: JSON.stringify({ model_ids: [cleanupModelId] })
+            });
+          }
           log('SheetSage2 unloaded after cover transcription.');
         } catch (error) {
           const message = `SheetSage2 unload failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -296,11 +306,10 @@
             {coverRunning ? 'Transcribing...' : 'Extract ABC'}
           </button>
         </div>
-        <label class="yue2-unload-toggle"
-          title={server?.ui_management ? undefined : 'Requires server UI model management'}>
+        <label class="yue2-unload-toggle">
           <input type="checkbox" role="switch"
-            checked={unloadAfterConversion && server?.ui_management === true}
-            disabled={coverRunning || !server?.ui_management}
+            checked={unloadAfterConversion}
+            disabled={coverRunning}
             on:change={(event) => {
               unloadAfterConversion = event.currentTarget.checked;
               localStorage.setItem(unloadSettingKey, String(unloadAfterConversion));

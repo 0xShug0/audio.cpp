@@ -2271,7 +2271,9 @@
               {server}
               modelPathFor={selectedModelPath}
               sessionOptionsFor={mergedSessionOptions}
-              refreshModels={refresh}
+              refreshModels={selected.family === 'yue2' && !server?.ui_management
+                ? async () => { loadedModels = await models(); }
+                : refresh}
               {log}
               {tr}
               {localizedParameterText}
