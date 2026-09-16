@@ -398,24 +398,50 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
 // they are exactly the files that package ships, where the directory the file
 // happens to sit in is only a guess. Everything else keeps using that
 // directory, which is what every safetensors conversion does.
-std::filesystem::path resolve_sidecar_root(const std::filesystem::path & requested,
-                                           const std::vector<engine::assets::TensorSourceInput> & inputs,
-                                           const std::vector<engine::assets::GgufEmbeddedFile> & explicit_sidecars,
-                                           bool embed_sidecars) {
+struct SidecarPlan {
+    std::filesystem::path root;
+    // Carried across by name rather than rediscovered by walking `root`. A
+    // directory walk applies excluded_sidecar(), which drops .bin, .pt, .pth and
+    // anything over 64 MiB — right for a source tree full of weights, wrong for
+    // files that were already chosen as a finished package's sidecars. Kokoro's
+    // voices are voices/*.bin, so a re-encode silently produced a package with
+    // none of its 54 voices while reporting embedded_sidecars=true.
+    std::vector<engine::assets::GgufEmbeddedFile> carried;
+};
+
+SidecarPlan resolve_sidecar_root(const std::filesystem::path & requested,
+                                 const std::vector<engine::assets::TensorSourceInput> & inputs,
+                                 const std::vector<engine::assets::GgufEmbeddedFile> & explicit_sidecars,
+                                 bool embed_sidecars) {
     if (!requested.empty())
-        return std::filesystem::weakly_canonical(requested);
+        return {std::filesystem::weakly_canonical(requested), {}};
     const auto parent = std::filesystem::weakly_canonical(inputs.front().path.parent_path());
     if (!embed_sidecars || !explicit_sidecars.empty())
-        return parent;
+        return {parent, {}};
     for (const auto & input : inputs) {
         if (!is_gguf_path(input.path) || !engine::assets::gguf_has_embedded_sidecars(input.path))
             continue;
         const auto materialized = engine::assets::materialize_gguf_sidecars(input.path);
-        std::cerr << "note: reusing the sidecars embedded in " << input.path.string()
+        std::vector<engine::assets::GgufEmbeddedFile> carried;
+        std::error_code walk_error;
+        for (std::filesystem::recursive_directory_iterator it(materialized, walk_error), end;
+             !walk_error && it != end; it.increment(walk_error)) {
+            if (!it->is_regular_file())
+                continue;
+            carried.push_back({it->path(),
+                               std::filesystem::relative(it->path(), materialized).lexically_normal()});
+        }
+        if (walk_error) {
+            throw std::runtime_error("failed to enumerate sidecars embedded in " + input.path.string() + ": " +
+                                     walk_error.message());
+        }
+        std::sort(carried.begin(), carried.end(),
+                  [](const auto & lhs, const auto & rhs) { return lhs.destination < rhs.destination; });
+        std::cerr << "note: reusing the " << carried.size() << " sidecars embedded in " << input.path.string()
                   << "; pass --root to override\n";
-        return materialized;
+        return {materialized, std::move(carried)};
     }
-    return parent;
+    return {parent, {}};
 }
 
 PackageSpecCandidate select_package_spec(const std::vector<engine::assets::TensorSourceInput> & inputs,
@@ -679,8 +705,12 @@ int main(int argc, char ** argv) {
             }
         }
         const auto storage_type = engine::assets::parse_tensor_storage_type(type);
-        const auto resolved_sidecar_root =
-            resolve_sidecar_root(sidecar_root, inputs, sidecars, embed_sidecars);
+        const auto sidecar_plan = resolve_sidecar_root(sidecar_root, inputs, sidecars, embed_sidecars);
+        const auto & resolved_sidecar_root = sidecar_plan.root;
+        // Empty unless the input was a GGUF whose sidecars are being reused, which
+        // resolve_sidecar_root only does when the caller passed no --sidecar of its
+        // own -- so these cannot collide with an explicit destination.
+        sidecars.insert(sidecars.end(), sidecar_plan.carried.begin(), sidecar_plan.carried.end());
         std::optional<engine::assets::GgufEmbeddedModelSpec> embedded_model_spec;
         if (!allow_missing_model_spec) {
             embedded_model_spec =
