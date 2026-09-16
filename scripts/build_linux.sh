@@ -10,6 +10,7 @@ CUDA_ARCH=""
 VULKAN_MODE="off"
 HIP_MODE="off"
 GPU_TARGETS=""
+USE_CCACHE="OFF"
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
 WITH_WARMBENCH="OFF"
@@ -81,6 +82,10 @@ while [[ $# -gt 0 ]]; do
         --cuda-arch)
             CUDA_ARCH="$2"
             shift 2
+            ;;
+        --ccache)
+            USE_CCACHE="ON"
+            shift
             ;;
         --with-tests)
             WITH_TESTS="ON"
@@ -396,6 +401,28 @@ CMAKE_ARGS=(
 )
 if [[ -n "$AUDIOCPP_BORINGSSL_ARCHIVE" ]]; then
     CMAKE_ARGS+=(-DAUDIOCPP_BORINGSSL_ARCHIVE="$AUDIOCPP_BORINGSSL_ARCHIVE")
+fi
+
+# Opt-in: ggml probes for ccache upstream, but audio.cpp's CMakeLists forces that
+# probe off, so nothing caches anything unless a launcher is wired up by hand.
+# Measured on this tree: ~2% slower on a cold build, ~14x faster on a rebuild.
+# Configure prints a hint when ccache is installed and unused; this is the flag
+# that hint points at. A launcher already set in the environment is left alone --
+# -D wins over both the environment and the existing cache, and this flag means
+# "cache the build", not "use ccache rather than whatever you already chose".
+if [[ "$USE_CCACHE" == "ON" ]]; then
+    if ! command -v ccache >/dev/null 2>&1; then
+        echo "--ccache was passed but ccache is not installed" >&2
+        exit 1
+    fi
+    for lang in C CXX CUDA; do
+        launcher_var="CMAKE_${lang}_COMPILER_LAUNCHER"
+        if [[ -n "${!launcher_var:-}" ]]; then
+            echo "$launcher_var=${!launcher_var} is set; leaving the $lang launcher alone."
+            continue
+        fi
+        CMAKE_ARGS+=("-D${launcher_var}=ccache")
+    done
 fi
 
 if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
