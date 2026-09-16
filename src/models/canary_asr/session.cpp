@@ -22,9 +22,8 @@ public:
         if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
             throw std::runtime_error("Canary ASR requires an offline ASR session");
         }
-        const auto type = runtime::parse_tensor_storage_option(options.options, "canary_asr.weight_type",
-            assets::TensorStorageType::Native, {assets::TensorStorageType::Native, assets::TensorStorageType::F32,
-                assets::TensorStorageType::F16, assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0});
+        const auto type = assets::parse_tensor_storage_type(
+            runtime::find_option(options.options, {"canary_asr.weight_type"}).value_or("native"));
         weights_ = load_canary_weights(*assets_, execution_context(), type);
         runtime_ = std::make_unique<CanaryRuntime>(*assets_, *weights_, execution_context());
     }

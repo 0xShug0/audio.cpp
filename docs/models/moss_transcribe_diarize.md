@@ -1,6 +1,17 @@
 # MOSS-Transcribe-Diarize
 
 MOSS-Transcribe-Diarize transcribes audio with speaker labels and segment timestamps.
+It supports 50+ languages without requiring a language hint.
+
+## Install
+
+```bash
+python3 tools/model_manager_v2.py install moss_transcribe_diarize_bf16
+```
+
+For a smaller download, install `moss_transcribe_diarize_q8_0` or
+`moss_transcribe_diarize_q4_k` instead and use the corresponding `-q8_0.gguf` or
+`-q4_k.gguf` filename below.
 
 ## Quick Start
 
@@ -31,8 +42,9 @@ audiocpp_cli \
 | Output | Transcript, speech segments, and speaker turns |
 
 Each GGUF includes the tokenizer and configuration; no separate encoder or
-diarization model is required. Q4_K can change segment boundaries and timestamps.
-Use BF16 or Q8_0 when accurate timing matters.
+diarization model is required.
+
+Use `--backend cpu --threads 8` for CPU inference or `--backend vulkan` for Vulkan.
 
 ## Options
 

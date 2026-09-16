@@ -62,7 +62,7 @@ Status labels:
 | `canary_asr` | Done | Pass | Pass | --- | Pass |
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `citrinet_asr` | Done | Pass | --- | --- | Pass |
-| `cohere_asr` | Done | Pass | Pass | --- | --- |
+| `cohere_asr` | Done | Pass | Pass | --- | Pass (drift) |
 | `fish_audio` | Done | Pass | --- | Pass | Pass |
 | `fun_asr_nano` | Done | Pass | --- | Pass | Pass |
 | `glm_tts` | Done | Pass (TTS + clone) | --- | --- | Pass (ASR match, drift) |
@@ -119,6 +119,7 @@ Additional lower-bit checks:
 
 | Family | Format | Tested |
 |---|---|---|
+| `cohere_asr` | `q4_0` | Pass (drift) |
 | `meanvc2` | `q4_k` | Pass |
 | `moss_transcribe_diarize` | `q4_k` | No (long-audio segmentation/timestamp drift) |
 | `personaplex` | `q4_k` | Pass |
@@ -127,9 +128,6 @@ Additional lower-bit checks:
 
 Q8 packaging notes:
 
-- [MOSS-Transcribe-Diarize](models/moss_transcribe_diarize.md) uses BF16 for
-  original weights and also provides Q8_0 and Q4_K. Prefer BF16 or Q8_0 when
-  segment boundaries and timestamps matter; Q4_K is not parity-safe.
 - `chatterbox` Q8 is intentionally mixed type. Graph-sensitive scalar, norm,
   bias, and side tensors stay in non-Q8 types while matmul-compatible weights
   are quantized.
