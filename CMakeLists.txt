@@ -401,6 +401,7 @@ add_library(engine_core OBJECT
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/weight_norm_folding.cpp
+    src/framework/assets/lora_tensor_source.cpp
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
@@ -1421,6 +1422,7 @@ audiocpp_add_model(yue2
     SOURCES
         src/models/yue2/ar_runtime.cpp
         src/models/yue2/assets.cpp
+        src/models/yue2/lora.cpp
         src/models/yue2/nar_runtime.cpp
         src/models/yue2/pipeline.cpp
         src/models/yue2/request.cpp
@@ -2598,6 +2600,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
         target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME gguf_tensor_source_test COMMAND gguf_tensor_source_test)
+        add_engine_unittest(lora_tensor_source_test tests/unittests/test_lora_tensor_source.cpp)
+        add_test(NAME lora_tensor_source_test COMMAND lora_tensor_source_test --log)
 
         add_engine_unittest(transformer_kv_ring_test tests/unittests/test_transformer_kv_ring.cpp)
         add_test(NAME transformer_kv_ring_test COMMAND transformer_kv_ring_test)

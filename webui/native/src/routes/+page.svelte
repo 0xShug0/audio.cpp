@@ -61,6 +61,7 @@
   let server: ServerHealth | null = null;
   let installed: boolean | null = null;
   let loadingModel = false;
+  let loraUploading = false;
   let running = false;
   let rewritingCaption = false;
   let status = 'Ready';
@@ -246,6 +247,10 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
+    if (selected?.family === 'yue2' && spec.scope === 'session') {
+      isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
+        modelMatchesSelectedPackage(model, selected));
+    }
     if (selected?.family === 'minimax_h3' && spec.name === 'num_frames') {
       const frames = Number(value);
       if (Number.isFinite(frames) && frames > 0) duration = frames / 24;
@@ -1028,7 +1033,15 @@
     } else if (selected?.task === 'gen') {
       duration = 30;
     }
-    if (usesYue2Request) {
+    if (selected?.family === 'yue2') {
+      if (server?.ui_management === false) {
+        const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
+        advancedValues = {
+          ...advancedValues,
+          lora: configured?.['yue2.lora'] ?? '',
+          lora_scale: Number(configured?.['yue2.lora_scale'] ?? 1)
+        };
+      }
       text = '';
       lyrics = '';
       ensureYue2DefaultLyrics();
@@ -1143,6 +1156,7 @@
   }
 
   async function doLoad(modeOverride?: string) {
+    if (usesYue2Request && loraUploading) return;
     if (!selectedId) {
       status = 'Choose an installed model before loading.';
       warningStatus = status;
@@ -1607,7 +1621,7 @@
   }
 
   async function run() {
-    if (running) return;
+    if (running || (usesYue2Request && loraUploading)) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -2218,7 +2232,7 @@
           </div>
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
-            disabled={!selectedId || loadingModel || installed === false || !server?.ui_management}
+            disabled={!selectedId || loadingModel || (usesYue2Request && loraUploading) || installed === false || !server?.ui_management}
             title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
             on:click={toggleSingleModel}>
             {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
@@ -2264,6 +2278,8 @@
               this={modelStudioPanel}
               bind:lyrics
               bind:seed
+              bind:loraUploading
+              busy={running || loadingModel}
               {paramSpecs}
               {advancedValues}
               catalogEntries={activeCatalog}
@@ -2542,7 +2558,7 @@
         {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || (!isLoaded && installed === false)} on:click={run}
+          <button class="run" disabled={!selectedId || running || (usesYue2Request && loraUploading) || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
             <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>

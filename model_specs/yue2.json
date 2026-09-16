@@ -211,6 +211,19 @@
     ],
     "session": [
       {
+        "name": "lora",
+        "type": "string",
+        "description": "Unfused AR LoRA safetensors file. Absolute path or relative to the model root. Requires session reload.",
+        "required": false
+      },
+      {
+        "name": "lora_scale",
+        "type": "float",
+        "description": "AR LoRA delta scale; zero disables the adapter. Requires session reload.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "values": [
