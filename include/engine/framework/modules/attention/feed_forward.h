@@ -9,12 +9,18 @@
 
 namespace engine::modules {
 
+enum class FeedForwardActivation {
+    Gelu,
+    Relu,
+};
+
 struct FeedForwardConfig {
     int64_t hidden_size = 0;
     int64_t intermediate_size = 0;
     bool use_bias = true;
     GeluApproximation gelu_approximation = GeluApproximation::ExactErf;
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
+    FeedForwardActivation activation = FeedForwardActivation::Gelu;
 };
 
 struct FeedForwardWeights {

@@ -2,6 +2,8 @@
 
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
 
+#include "engine/framework/debug/trace.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -144,9 +146,23 @@ EncodedInputIds encode_input_ids_and_count(
                 throw std::runtime_error("invalid UTF-8 continuation byte in Kokoro phoneme string");
             }
         }
-        const auto it = assets.vocab.find(phonemes.substr(i, width));
+        const std::string symbol = phonemes.substr(i, width);
+        const auto it = assets.vocab.find(symbol);
         if (it == assets.vocab.end()) {
-            throw std::runtime_error("Kokoro vocab is missing phoneme symbol: " + phonemes.substr(i, width));
+            // Skipped, not fatal, matching the reference implementation: hexgrad/Kokoro's KModel
+            // tokenizes with `filter(None, map(vocab.get, phonemes))`, which drops any phoneme the
+            // 114-entry vocab has no id for.
+            //
+            // This matters because our OWN G2P produces such symbols for ordinary words: eSpeak-ng
+            // glottalises /t/ before a syllabic nasal, so "button" is `b'V?n` with a U+0329
+            // syllabic mark the vocab does not carry. Throwing there loses the whole request;
+            // dropping the mark gives a correct reading of the word.
+            //
+            // Malformed UTF-8 above still throws — that is a real error. An unknown but
+            // well-formed phoneme is not.
+            engine::debug::trace_log_scalar("kokoro.skipped_phoneme", std::string_view(symbol));
+            i += width;
+            continue;
         }
         encoded.ids.push_back(it->second);
         ++encoded.phoneme_count;

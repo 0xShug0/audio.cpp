@@ -186,7 +186,23 @@ std::string artifact_extension(const engine::runtime::VoiceArtifact & artifact) 
     if (artifact.kind == engine::runtime::ArtifactKind::Midi) {
         return ".mid";
     }
+    const auto it = artifact.meta.find("extension");
+    if (it != artifact.meta.end() && !it->second.empty()) {
+        std::string ext = it->second;
+        if (ext.front() != '.') {
+            ext.insert(ext.begin(), '.');
+        }
+        return ext;
+    }
     return ".json";
+}
+
+bool artifact_is_json_payload(const engine::runtime::VoiceArtifact & artifact) {
+    const auto it = artifact.meta.find("mime");
+    if (it == artifact.meta.end() || it->second.empty()) {
+        return true;
+    }
+    return it->second.rfind("application/json", 0) == 0;
 }
 
 void write_artifact_output(
@@ -415,7 +431,8 @@ void emit_task_result(
             if (artifact_out_dir.has_value()) {
                 std::filesystem::create_directories(*artifact_out_dir);
                 const auto path = *artifact_out_dir / (safe_output_name(artifact.id) + artifact_extension(artifact));
-                if (artifact.kind == engine::runtime::ArtifactKind::Midi) {
+                if (artifact.kind == engine::runtime::ArtifactKind::Midi ||
+                    !artifact_is_json_payload(artifact)) {
                     write_artifact_output(path, artifact);
                 } else {
                     std::ofstream(path) << artifact_to_json(artifact) << "\n";

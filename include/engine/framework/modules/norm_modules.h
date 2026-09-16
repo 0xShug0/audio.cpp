@@ -19,6 +19,11 @@ struct NormWeights {
     std::optional<core::TensorValue> bias;
 };
 
+struct ChannelAffineWeights {
+    core::TensorValue scale;
+    core::TensorValue bias;
+};
+
 class LayerNormModule {
 public:
     explicit LayerNormModule(NormConfig config);

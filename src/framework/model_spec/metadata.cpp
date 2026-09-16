@@ -1,4 +1,5 @@
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/task_vocabulary.h"
 
 #include "engine/framework/model_spec/options.h"
 #include "engine/framework/model_spec/package.h"
@@ -19,49 +20,25 @@ namespace {
 namespace json = engine::io::json;
 
 runtime::VoiceTaskKind parse_task_kind(const std::string & value) {
-    if (value == "vad") {
-        return runtime::VoiceTaskKind::Vad;
+    // Spec names, not ABI tokens: "music" here is "gen" there. The mapping is
+    // in runtime::task_vocabulary, which the schema's allowed set reads too, so
+    // a name the schema accepts cannot be one this rejects.
+    const auto token = runtime::task_token_for_spec_name(value);
+    if (!token.empty()) {
+        return runtime::parse_voice_task_kind(std::string(token));
     }
-    if (value == "asr") {
-        return runtime::VoiceTaskKind::Asr;
+    std::string expected;
+    std::size_t count = 0;
+    const auto * entries = runtime::task_vocabulary(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        for (std::size_t alias = 0; alias < entries[i].alias_count; ++alias) {
+            if (!expected.empty()) {
+                expected += ", ";
+            }
+            expected.append(entries[i].aliases[alias]);
+        }
     }
-    if (value == "diar") {
-        return runtime::VoiceTaskKind::Diarization;
-    }
-    if (value == "sep") {
-        return runtime::VoiceTaskKind::SourceSeparation;
-    }
-    if (value == "audio_generation" || value == "music" || value == "sfx" || value == "edit") {
-        return runtime::VoiceTaskKind::AudioGeneration;
-    }
-    if (value == "tts") {
-        return runtime::VoiceTaskKind::Tts;
-    }
-    if (value == "clone") {
-        return runtime::VoiceTaskKind::VoiceCloning;
-    }
-    if (value == "vc") {
-        return runtime::VoiceTaskKind::VoiceConversion;
-    }
-    if (value == "s2s") {
-        return runtime::VoiceTaskKind::SpeechToSpeech;
-    }
-    if (value == "align") {
-        return runtime::VoiceTaskKind::Alignment;
-    }
-    if (value == "design") {
-        return runtime::VoiceTaskKind::VoiceDesign;
-    }
-    if (value == "speaker") {
-        return runtime::VoiceTaskKind::SpeakerRecognition;
-    }
-    if (value == "svc") {
-        return runtime::VoiceTaskKind::Svc;
-    }
-    if (value == "midi") {
-        return runtime::VoiceTaskKind::Midi;
-    }
-    throw std::runtime_error("unknown model spec task: " + value);
+    throw std::runtime_error("unknown model spec task: " + value + " (expected one of " + expected + ")");
 }
 
 runtime::RunMode parse_run_mode(const std::string & value) {

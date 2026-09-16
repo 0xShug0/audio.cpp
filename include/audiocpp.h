@@ -51,11 +51,14 @@ extern "C" {
 /* ------------------------------------------------------------------ */
 
 #define AUDIOCPP_ABI_VERSION_MAJOR 0
-#define AUDIOCPP_ABI_VERSION_MINOR 1
+#define AUDIOCPP_ABI_VERSION_MINOR 2
 #define AUDIOCPP_ABI_VERSION_PATCH 0
 
 /* Packed as (major << 16) | (minor << 8) | patch. A caller built against a
- * different MAJOR must not use the library. */
+ * different MAJOR must not use the library. MINOR increments when entry points
+ * are added -- nothing is removed or changed -- so a caller needing a newer one
+ * can require a minimum; PATCH is behaviour only and must not be gated on. See
+ * docs/c_api.md. */
 AUDIOCPP_API uint32_t audiocpp_abi_version(void);
 
 /* audio.cpp's own build version, e.g. "0.2.1". Borrowed, static lifetime. */
@@ -120,6 +123,33 @@ AUDIOCPP_API audiocpp_status audiocpp_registry_family(const audiocpp_registry * 
                                                       size_t index,
                                                       const char ** out_family);
 
+/* ---- Task vocabulary -------------------------------------------------------
+ *
+ * The tasks this build knows, askable without a model. Every other task-aware
+ * entry point takes an audiocpp_model, so a caller that is deciding what to
+ * install -- reading model_specs/*.json to build a picker, say -- has had
+ * nothing to ask and has had to hardcode a copy of the table in
+ * src/framework/model_spec/metadata.cpp.
+ *
+ * Model specs and this ABI use different spellings for the same kinds: a spec
+ * says "music", "sfx", "edit" or "audio_generation" where this says "gen",
+ * "clone" for "clon", "design" for "vdes", "speaker" for "spk". Nine of the
+ * fourteen are identical, which is what makes comparing them directly appear
+ * to work.
+ */
+
+/* How many task tokens this build accepts. */
+AUDIOCPP_API size_t audiocpp_task_count(void);
+
+/* The canonical token at `index`, or NULL when out of range. The returned
+ * pointer is static and outlives any call. */
+AUDIOCPP_API const char * audiocpp_task_name(size_t index);
+
+/* The canonical token for a model-spec task name ("music" -> "gen"), or NULL
+ * when the name names no task kind -- which is also how a caller detects a
+ * spec declaring a task this build cannot serve. */
+AUDIOCPP_API const char * audiocpp_task_from_spec_name(const char * spec_task);
+
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
 /* ------------------------------------------------------------------ */
@@ -129,6 +159,7 @@ AUDIOCPP_API audiocpp_status audiocpp_registry_family(const audiocpp_registry * 
  *   config_id            --config, for packages that ship several configs
  *   weight_id            --weight, for packages that ship several weight sets
  *   model_spec_override  --model-spec-override */
+
 typedef struct audiocpp_model_config {
     const char * family_hint;
     const char * config_id;
@@ -147,9 +178,20 @@ AUDIOCPP_API void            audiocpp_model_free(audiocpp_model * model);
 AUDIOCPP_API const char * audiocpp_model_family(const audiocpp_model * model);
 AUDIOCPP_API const char * audiocpp_model_description(const audiocpp_model * model);
 
-/* Capability queries. task/mode are the same spellings the CLI accepts,
- * e.g. "tts", "asr", "vad", "diarization", "alignment" / "offline",
- * "streaming". Returns 1 when supported, 0 when not or when unrecognised. */
+/* Capability queries. `task` is one of the tokens audiocpp_task_name()
+ * enumerates -- "vad", "asr", "diar", "sep", "gen", "tts", "clon", "vc",
+ * "s2s", "align", "vdes", "spk", "svc", "midi" -- and `mode` is "offline" or
+ * "streaming".
+ *
+ * Returns 1 when supported and 0 otherwise, which includes a task or mode this
+ * build does not recognise: a caller cannot tell a misspelled question from a
+ * negative answer. Validate against audiocpp_task_name() first if that
+ * distinction matters.
+ *
+ * (This comment previously gave "diarization" and "alignment" as examples.
+ * Neither has ever parsed, so a caller following it was told "no" for every
+ * model that does diarize, with nothing to indicate the question was
+ * malformed.) */
 AUDIOCPP_API int audiocpp_model_supports(const audiocpp_model * model,
                                          const char * task,
                                          const char * mode);
@@ -236,9 +278,31 @@ AUDIOCPP_API void               audiocpp_request_free(audiocpp_request * request
  * "language" option, because that is what audiocpp_cli's --language does and
  * some families read only the option. A later audiocpp_request_set_option with
  * the same key overrides it. */
+/* Sets the request text, and -- when `language` is non-NULL and non-empty --
+ * both the transcript language and options["language"], mirroring what
+ * audiocpp_cli's --language does. Some families read only the option, so the
+ * two travel together by default.
+ *
+ * That coupling cannot be undone through this call: pass NULL and use
+ * audiocpp_request_set_text_language() below to set the transcript language
+ * alone. Needed because "does this model declare a language option" and "does
+ * this model need a transcript language" are different questions with
+ * different answers -- parakeet_tdt validates its request options strictly and
+ * refuses a language it does not declare, while qwen3_forced_aligner declares
+ * no language option and requires the transcript language anyway. */
 AUDIOCPP_API audiocpp_status audiocpp_request_set_text(audiocpp_request * request,
                                                        const char * text,
                                                        const char * language);
+
+/* Sets the transcript language without touching options["language"].
+ *
+ * The reference server needs exactly this and reaches around the ABI for it
+ * (drop_unsupported_language_option in app/server/runtime.cpp erases the option
+ * and keeps the transcript language). A C ABI client could not express that:
+ * set_text is the only way to reach the transcript language and it writes the
+ * option as a side effect, so the two arrived together or not at all. */
+AUDIOCPP_API audiocpp_status audiocpp_request_set_text_language(audiocpp_request * request,
+                                                                const char * language);
 
 /* Interleaved float PCM. Copied into the request, so `samples` need not
  * outlive the call. `frames` is per-channel. */
@@ -308,6 +372,21 @@ AUDIOCPP_API audiocpp_status audiocpp_request_set_artifact_meta(audiocpp_request
 AUDIOCPP_API audiocpp_status audiocpp_request_set_option(audiocpp_request * request,
                                                          const char * key,
                                                          const char * value);
+
+/* Sets a list-valued request option -- the transport for the `*_list` option
+ * types the model spec already declares. `values` is `count` UTF-8 strings,
+ * copied into the request, so neither the array nor the strings need outlive
+ * the call. A second call with the same key REPLACES the list rather than
+ * appending, matching set_option's assignment semantics.
+ *
+ * List options live in their own map, so a key set here is not visible to a
+ * family reading single-valued options and vice versa; a family declares which
+ * one it wants by the type it puts in its spec. `count` may be 0, which sets an
+ * empty list -- distinct from never setting the key at all. */
+AUDIOCPP_API audiocpp_status audiocpp_request_set_option_array(audiocpp_request * request,
+                                                               const char * key,
+                                                               const char * const * values,
+                                                               size_t count);
 
 /* ------------------------------------------------------------------ */
 /* Result                                                              */

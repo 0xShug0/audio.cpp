@@ -34,6 +34,7 @@
   import MediaPreview from '$lib/MediaPreview.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
+  import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
   import Arena from './Arena.svelte';
   import type {
     AudioOutput,
@@ -60,6 +61,7 @@
   let server: ServerHealth | null = null;
   let installed: boolean | null = null;
   let loadingModel = false;
+  let loraUploading = false;
   let running = false;
   let rewritingCaption = false;
   let status = 'Ready';
@@ -154,6 +156,7 @@
     'meanvc2',
     'midashenglm_gen'
   ]);
+  const noGenericControlReplacements: GenericControlReplacements = {};
 
   function chooseUiLanguage(code: string) {
     uiLanguage = resolveUiLanguage([code]);
@@ -244,10 +247,19 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
+    if (selected?.family === 'yue2' && spec.scope === 'session') {
+      isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
+        modelMatchesSelectedPackage(model, selected));
+    }
     if (selected?.family === 'minimax_h3' && spec.name === 'num_frames') {
       const frames = Number(value);
       if (Number.isFinite(frames) && frames > 0) duration = frames / 24;
     }
+  }
+
+  function ensureYue2DefaultLyrics(entry = selected) {
+    if (entry?.family !== 'yue2' || lyrics.trim()) return;
+    lyrics = entry.default_text || '';
   }
 
   function requestText() {
@@ -398,6 +410,10 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
+  $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family);
+  $: modelStudioPanel = modelStudioPanelConfig?.component;
+  $: replacesGenericControls = modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements;
+  $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
@@ -410,7 +426,7 @@
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit;
-  $: acceptsSource = needsSource || selected?.task === 'gen';
+  $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
@@ -438,7 +454,8 @@
   $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false && !usesBuiltInVoiceSelector
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
-  $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
+  $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
+    !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming'].includes(selected?.family);
   $: modelInventoryLoading = server === null ||
@@ -498,13 +515,19 @@
 
   function mergedSessionOptions(entry: CatalogEntry) {
     const packageChoice = selectedPackageChoice(entry);
-    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}) };
+    const sessionParams = entry.id === selectedId ? sessionParameterOptions() : {};
+    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}), ...sessionParams };
   }
 
   function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
-    const expected = choice.session_options || {};
+    const expected = mergedSessionOptions(entry);
     const keys = Array.from(new Set((entry.install_packages || [])
       .flatMap((candidate) => Object.keys(candidate.session_options || {}))));
+    if (entry.id === selectedId) {
+      for (const spec of paramSpecs.filter((candidate) => candidate.scope === 'session')) {
+        keys.push(spec.session_option || spec.name);
+      }
+    }
     if (!keys.length) return true;
     const actual = model.session_options || {};
     return keys.every((key) => actual[key] === expected[key]);
@@ -1010,7 +1033,19 @@
     } else if (selected?.task === 'gen') {
       duration = 30;
     }
-    if (!text.trim() && selected?.default_text) {
+    if (selected?.family === 'yue2') {
+      if (server?.ui_management === false) {
+        const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
+        advancedValues = {
+          ...advancedValues,
+          lora: configured?.['yue2.lora'] ?? '',
+          lora_scale: Number(configured?.['yue2.lora_scale'] ?? 1)
+        };
+      }
+      text = '';
+      lyrics = '';
+      ensureYue2DefaultLyrics();
+    } else if (!text.trim() && selected?.default_text) {
       text = selected.default_text;
     }
     if (selected?.builtin_voices?.length && selected.default_voice && !quickStartVoice) {
@@ -1121,6 +1156,7 @@
   }
 
   async function doLoad(modeOverride?: string) {
+    if (usesYue2Request && loraUploading) return;
     if (!selectedId) {
       status = 'Choose an installed model before loading.';
       warningStatus = status;
@@ -1141,7 +1177,8 @@
     try {
       const targetPath = comparablePath(modelPath);
       const replaced = loadedModels.filter((model) => model.loaded &&
-        (model.id !== selected.id || comparablePath(model.path) !== targetPath));
+        (model.id !== selected.id || comparablePath(model.path) !== targetPath ||
+          !modelMatchesSelectedPackage(model, selected)));
       for (const model of replaced) {
         log(`Unloading ${loadedModelName(model)} before loading ${selected.display_name}.`);
         await unloadModel(model.id);
@@ -1248,7 +1285,21 @@
       throw new Error(`Advanced JSON is invalid: ${error instanceof Error ? error.message : error}`);
     }
     const defaults = selected.default_options || {};
-    return { ...defaults, ...advancedValues, ...raw };
+    const requestValues = Object.fromEntries(Object.entries(advancedValues)
+      .filter(([name, value]) => {
+        const spec = paramSpecs.find((candidate) => candidate.name === name);
+        if (spec?.scope === 'session') return false;
+        if (usesYue2Request && typeof value === 'string' && value.trim().length === 0) return false;
+        return true;
+      }));
+    return { ...defaults, ...requestValues, ...raw };
+  }
+
+  function sessionParameterOptions() {
+    return Object.fromEntries(paramSpecs
+      .filter((spec) => spec.scope === 'session')
+      .map((spec) => [spec.session_option || spec.name, String(advancedValues[spec.name] ?? spec.default ?? '')])
+      .filter(([, value]) => value.length > 0));
   }
 
   function base64Text(value: string): string {
@@ -1570,7 +1621,7 @@
   }
 
   async function run() {
-    if (running) return;
+    if (running || (usesYue2Request && loraUploading)) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -1675,15 +1726,19 @@
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim()) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request) request.language = language;
         if (selected.task === 'gen') {
-          const resolvedText = requestText();
-          if (resolvedText) request.text = resolvedText;
-          if (lyrics.trim()) request.lyrics = lyrics;
-          if (!isFireRedAudioEdit) {
-            if (usesDurationSecOption) options.duration_sec = duration;
-            else request.duration_seconds = duration;
+          if (usesYue2Request) {
+            request.lyrics = lyrics.trim();
+          } else {
+            const resolvedText = requestText();
+            if (resolvedText) request.text = resolvedText;
+            if (lyrics.trim()) request.lyrics = lyrics;
+            if (!isFireRedAudioEdit) {
+              if (usesDurationSecOption) options.duration_sec = duration;
+              else request.duration_seconds = duration;
+            }
           }
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
@@ -2159,7 +2214,7 @@
           <span>{selectedId ? tr('studio.estimatedVram', { value: selected?.min_vram_gb || '?' }) : tr('studio.vram')}</span>
         </div>
 
-        {#if selectedId && (selected.install_packages || []).length}
+        {#if selectedId && (selected.install_packages || []).length && !replacesGenericControls.packageButtons}
           <div class="studio-package-buttons" aria-label="Model format">
             {#each studioPackageSlots(selected) as slot}
               {@const choice = slot.choice}
@@ -2177,7 +2232,7 @@
           </div>
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
-            disabled={!selectedId || loadingModel || installed === false || !server?.ui_management}
+            disabled={!selectedId || loadingModel || (usesYue2Request && loraUploading) || installed === false || !server?.ui_management}
             title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
             on:click={toggleSingleModel}>
             {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
@@ -2218,9 +2273,32 @@
         {/if}
 
         {#if selected.task === 'gen'}
-          <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
-          <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
-            aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
+          {#if modelStudioPanel}
+            <svelte:component
+              this={modelStudioPanel}
+              bind:lyrics
+              bind:seed
+              bind:loraUploading
+              busy={running || loadingModel}
+              {paramSpecs}
+              {advancedValues}
+              catalogEntries={activeCatalog}
+              {loadedModels}
+              {server}
+              modelPathFor={selectedModelPath}
+              sessionOptionsFor={mergedSessionOptions}
+              refreshModels={selected.family === 'yue2' && !server?.ui_management
+                ? async () => { loadedModels = await models(); }
+                : refresh}
+              {log}
+              {tr}
+              {localizedParameterText}
+              {setParameterValue} />
+          {:else}
+            <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
+            <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
+              aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
+          {/if}
           {#if selected.family === 'ace_step'}
             <div class="media-actions">
               <button type="button" disabled={running || rewritingCaption || (!text.trim() && !lyrics.trim())}
@@ -2243,13 +2321,13 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language}
             <div>
               <label for="language">{tr('request.language')} <span>{tr('request.autoLanguage')}</span></label>
               <input id="language" bind:value={language} placeholder="auto" />
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
@@ -2261,7 +2339,7 @@
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
             </div>
           {/if}
-          {#if selected.task === 'gen'}
+          {#if selected.task === 'gen' && !replacesGenericControls.duration}
             <div>
               <label for="duration">{tr('request.duration')}{#if allowsAutoDuration} <span>{tr('request.autoDuration')}</span>{/if}</label>
               <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
@@ -2431,7 +2509,7 @@
           </div>
         {/if}
 
-        {#if paramSpecs.length}
+        {#if paramSpecs.length && !replacesGenericControls.params}
           <details>
             <summary>{tr('options.modelParameters')} <span>{paramSpecs.length}</span></summary>
             <div class="parameter-grid">
@@ -2472,13 +2550,15 @@
           </details>
         {/if}
 
-        <details>
-          <summary>{tr('options.additional')} <span>JSON</span></summary>
-          <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
-        </details>
+        {#if !replacesGenericControls.advancedJson}
+          <details>
+            <summary>{tr('options.additional')} <span>JSON</span></summary>
+            <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
+          </details>
+        {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || (!isLoaded && installed === false)} on:click={run}
+          <button class="run" disabled={!selectedId || running || (usesYue2Request && loraUploading) || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
             <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>

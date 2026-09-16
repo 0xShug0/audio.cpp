@@ -8,6 +8,7 @@
 #include "engine/framework/audio/utility_api.h"
 #include "engine/framework/audio/zipenhancer.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/runtime/options.h"
 
 #include <chrono>
 #include <stdexcept>
@@ -56,23 +57,23 @@ std::string operation_name(engine::audio::BuiltinAudioUtilityKind kind) {
 
 UtilityRuntime load_utility_runtime(
     const std::string & model_id,
-    const engine::audio::AudioUtilityPaths & paths) {
-    const auto asset = engine::audio::resolve_builtin_audio_utility_asset(paths, model_id);
+    const std::filesystem::path & asset,
+    const engine::core::BackendConfig & backend) {
     if (model_id == "deepfilternet2") {
-        return engine::audio::DeepFilterNet2Model::load_from_directory(asset, paths.backend);
+        return engine::audio::DeepFilterNet2Model::load_from_directory(asset, backend);
     }
     if (model_id == "rnnoise") {
-        return engine::audio::RnnoiseModel::load_from_safetensors(asset, paths.backend);
+        return engine::audio::RnnoiseModel::load_from_safetensors(asset, backend);
     }
     if (model_id == "zipenhancer") {
-        return engine::audio::ZipEnhancerModel::load_from_directory(asset, paths.backend);
+        return engine::audio::ZipEnhancerModel::load_from_directory(asset, backend);
     }
     if (model_id == "gtcrn" || model_id == "gtcrn_streaming" ||
         model_id == "gtcrn_dns3" || model_id == "gtcrn_vctk") {
-        return engine::audio::GTCRNModel::load_from_safetensors(asset, paths.backend);
+        return engine::audio::GTCRNModel::load_from_safetensors(asset, backend);
     }
     if (model_id == "flashsr") {
-        return engine::audio::FlashSrModel::load_from_directory(asset, paths.backend);
+        return engine::audio::FlashSrModel::load_from_directory(asset, backend);
     }
     (void) engine::audio::require_builtin_audio_utility(model_id);
     throw std::runtime_error("unreachable builtin audio utility model: " + model_id);
@@ -95,16 +96,13 @@ public:
     BuiltinAudioUtilsSession(
         runtime::TaskSpec task,
         const runtime::SessionOptions & options,
-        std::string model_id)
+        std::string model_id,
+        const std::filesystem::path & asset)
         : runtime::RuntimeSessionBase(options),
           task_(task),
           model_id_(std::move(model_id)),
           info_(engine::audio::require_builtin_audio_utility(model_id_)),
-          runtime_(load_utility_runtime(
-              model_id_,
-              engine::audio::AudioUtilityPaths{
-                  engine::audio::default_audio_utility_assets_root(),
-                  options.backend})) {
+          runtime_(load_utility_runtime(model_id_, asset, options.backend)) {
         if (task_.task != runtime::VoiceTaskKind::SpeechToSpeech) {
             throw std::runtime_error("builtin_audio_utils only supports --task s2s");
         }
@@ -193,21 +191,37 @@ public:
         if (!request.family_hint.has_value() || *request.family_hint != family()) {
             return false;
         }
-        return engine::audio::find_builtin_audio_utility(request.model_path.generic_string()).has_value();
+        return true;
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto model_id = request.model_path.generic_string();
-        const auto info = engine::audio::require_builtin_audio_utility(model_id);
+        const auto utility = runtime::find_option(request.options, {"builtin_audio_utils.utility", "utility"});
+        if (!utility) {
+            throw std::runtime_error("builtin_audio_utils requires --load-option utility=<utility-id> and --model <weights-path>");
+        }
+        const std::string model_id = *utility;
+        (void) engine::audio::require_builtin_audio_utility(model_id);
+        const bool directory_model = model_id == "deepfilternet2" ||
+            model_id == "zipenhancer" || model_id == "flashsr";
+        const auto filename = model_id == "rnnoise" ? "rnnoise10Gb_15.safetensors"
+            : (model_id == "gtcrn" ? "gtcrn_streaming" : model_id) + ".safetensors";
+        auto asset = std::filesystem::canonical(request.model_path);
+        if (std::filesystem::is_directory(asset)) {
+            asset /= filename;
+        }
+        if (!std::filesystem::is_regular_file(asset)) {
+            throw std::runtime_error("builtin audio utility weights not found: " + asset.string());
+        }
+        if (directory_model && asset.filename() != filename) {
+            throw std::runtime_error(model_id + " requires a model directory containing " + filename);
+        }
         runtime::ModelInspection inspection;
-        inspection.model_root = engine::audio::default_audio_utility_assets_root();
+        inspection.model_root = asset.parent_path();
         inspection.metadata = builtin_audio_utils_metadata(model_id);
         inspection.capabilities = builtin_audio_utils_capabilities();
         inspection.discovered_weights.push_back(runtime::NamedAsset{
             model_id,
-            engine::audio::resolve_builtin_audio_utility_asset(
-                engine::audio::AudioUtilityPaths{engine::audio::default_audio_utility_assets_root()},
-                model_id)});
+            asset});
         inspection.cli.request_options.push_back(runtime::CliOptionInfo{
             "audio",
             "wav",
@@ -219,23 +233,27 @@ public:
             "Output WAV path.",
             true});
         inspection.cli.load_options.push_back(runtime::CliOptionInfo{
-            "operation",
-            operation_name(info.kind),
-            "Selected built-in audio utility operation.",
-            false,
-            operation_name(info.kind)});
+            "utility",
+            "utility-id",
+            "Built-in audio utility to load.",
+            true});
         return inspection;
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return std::make_unique<BuiltinAudioUtilsLoadedModel>(request.model_path.generic_string());
+        const auto inspection = inspect(request);
+        const auto & id = inspection.metadata.variant;
+        const auto asset = id == "deepfilternet2" || id == "zipenhancer" || id == "flashsr"
+            ? inspection.model_root : inspection.discovered_weights.front().path;
+        return std::make_unique<BuiltinAudioUtilsLoadedModel>(id, asset);
     }
 };
 
 }  // namespace
 
-BuiltinAudioUtilsLoadedModel::BuiltinAudioUtilsLoadedModel(std::string model_id)
+BuiltinAudioUtilsLoadedModel::BuiltinAudioUtilsLoadedModel(std::string model_id, std::filesystem::path asset)
     : model_id_(std::move(model_id)),
+      asset_(std::move(asset)),
       metadata_(builtin_audio_utils_metadata(model_id_)),
       capabilities_(builtin_audio_utils_capabilities()) {
     (void) engine::audio::require_builtin_audio_utility(model_id_);
@@ -252,7 +270,7 @@ const runtime::CapabilitySet & BuiltinAudioUtilsLoadedModel::capabilities() cons
 std::unique_ptr<runtime::IVoiceTaskSession> BuiltinAudioUtilsLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    return std::make_unique<BuiltinAudioUtilsSession>(task, options, model_id_);
+    return std::make_unique<BuiltinAudioUtilsSession>(task, options, model_id_, asset_);
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_builtin_audio_utils_loader() {

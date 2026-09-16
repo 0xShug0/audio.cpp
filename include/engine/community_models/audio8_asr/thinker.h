@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/runtime/greedy_qwen_decoder.h"
 #include "engine/community_models/audio8_asr/types.h"
 
 #include <cstddef>
@@ -9,9 +10,9 @@
 
 namespace engine::community_models::audio8_asr {
 
-// Greedy causal decoder for the Audio8 8-layer Qwen2-style LM. Audio
-// embeddings are injected into the token embedding sequence at the prompt's
-// audio placeholder positions before prefill.
+// The Audio8 8-layer Qwen2-style decoder, expressed through the framework's
+// shared greedy Qwen decoder runtime (prefill with audio-embedding injection
+// plus static-cache step decode). Owns only the family-specific spec.
 class Audio8ThinkerRuntime {
 public:
     Audio8ThinkerRuntime(
@@ -33,8 +34,8 @@ public:
         const Audio8ASRGenerationOptions & options);
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    runtime::GreedyQwenDecoderRuntime runtime_;
+    std::shared_ptr<const Audio8ASRDecoderConfig> config_;
 };
 
 }  // namespace engine::community_models::audio8_asr

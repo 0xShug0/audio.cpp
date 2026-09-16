@@ -789,6 +789,7 @@ void ParakeetTDTStreamingSession::reset() {
     token_ids_.clear();
     token_frame_indices_.clear();
     token_durations_.clear();
+    partials_.reset();
     decoder_->reset_state();
     stream_started_ = true;
     finalized_ = false;
@@ -912,7 +913,21 @@ runtime::StreamEvent ParakeetTDTStreamingSession::process_ready_windows(bool flu
     runtime::StreamEvent event;
     if (changed && !token_ids_.empty()) {
         auto decoded = merged_decode();
-        event.partial_text = runtime::Transcript{decoded.text, ""};
+        // A partial is the text decoded since the last one: the CLI appends
+        // them into a scrolling transcript and the server forwards each as a
+        // transcript.text.delta. merged_decode() re-renders the whole
+        // transcript from every token so far, so publishing it unchanged made
+        // an appending client build "Some call meSome call me nature".
+        std::string delta = partials_.publish(decoded.text);
+        if (!delta.empty()) {
+            event.partial_text = runtime::Transcript{std::move(delta), ""};
+        }
+        // word_timestamps stays cumulative, deliberately. It is not a delta
+        // field: it is the finalized set so far, which is why the provisional
+        // last word is dropped below rather than carried. So the two fields in
+        // this event have different shapes on purpose -- partial_text is what
+        // is new, word_timestamps is everything settled -- because each matches
+        // its own contract rather than each other.
         event.word_timestamps = std::move(decoded.word_timestamps);
         // The last word has no following word boundary yet, so it remains
         // provisional and is withheld from the finalized timestamp list.

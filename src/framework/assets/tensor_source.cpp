@@ -272,23 +272,28 @@ void set_backend_tensor_from_f32(
     std::string_view name,
     const std::vector<float> & values,
     const core::TensorShape & shape,
-    ggml_type type) {
+    ggml_type type,
+    std::vector<std::byte> * retained_bytes = nullptr) {
     if (type == GGML_TYPE_F32) {
         set_tensor_bytes(tensor, values.data(), values.size() * sizeof(float), name);
+        if (retained_bytes) *retained_bytes = f32_bytes(values);
         return;
     }
     if (type == GGML_TYPE_F16) {
-        const auto bytes = f16_bytes(values);
+        auto bytes = f16_bytes(values);
         set_tensor_bytes(tensor, bytes.data(), bytes.size(), name);
+        if (retained_bytes) *retained_bytes = std::move(bytes);
         return;
     }
     if (type == GGML_TYPE_BF16) {
-        const auto bytes = bf16_bytes(values);
+        auto bytes = bf16_bytes(values);
         set_tensor_bytes(tensor, bytes.data(), bytes.size(), name);
+        if (retained_bytes) *retained_bytes = std::move(bytes);
         return;
     }
-    const auto bytes = quantize_f32_rows(name, values, shape, type);
+    auto bytes = quantize_f32_rows(name, values, shape, type);
     set_tensor_bytes(tensor, bytes.data(), bytes.size(), name);
+    if (retained_bytes) *retained_bytes = std::move(bytes);
 }
 
 }  // namespace
@@ -298,10 +303,11 @@ void set_backend_tensor_from_f32_parallel(
     std::string_view name,
     const std::vector<float> & values,
     const core::TensorShape & shape,
-    ggml_type type) {
+    ggml_type type,
+    std::vector<std::byte> * retained_bytes) {
     if (static_cast<int64_t>(values.size()) < kParallelF32ConvertElements ||
         (type != GGML_TYPE_F16 && type != GGML_TYPE_BF16)) {
-        set_backend_tensor_from_f32(tensor, name, values, shape, type);
+        set_backend_tensor_from_f32(tensor, name, values, shape, type, retained_bytes);
         return;
     }
 
@@ -316,6 +322,10 @@ void set_backend_tensor_from_f32_parallel(
             ggml_fp32_to_fp16_row(values.data() + offset, converted.data() + offset, length);
         }
         set_tensor_bytes(tensor, converted.data(), converted.size() * sizeof(ggml_fp16_t), name);
+        if (retained_bytes) {
+            const auto * begin = reinterpret_cast<const std::byte *>(converted.data());
+            retained_bytes->assign(begin, begin + converted.size() * sizeof(ggml_fp16_t));
+        }
         return;
     }
 
@@ -329,6 +339,10 @@ void set_backend_tensor_from_f32_parallel(
         ggml_fp32_to_bf16_row(values.data() + offset, converted.data() + offset, length);
     }
     set_tensor_bytes(tensor, converted.data(), converted.size() * sizeof(ggml_bf16_t), name);
+    if (retained_bytes) {
+        const auto * begin = reinterpret_cast<const std::byte *>(converted.data());
+        retained_bytes->assign(begin, begin + converted.size() * sizeof(ggml_bf16_t));
+    }
 }
 
 namespace {

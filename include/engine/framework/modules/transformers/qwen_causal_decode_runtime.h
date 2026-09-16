@@ -44,6 +44,13 @@ struct QwenCausalPrefillResult {
     runtime::TransformerKVState state;
 };
 
+struct QwenCausalPrefillIntoDecodeResult {
+    std::vector<float> logits;
+    std::vector<float> hidden;
+    int64_t current_end = 0;
+    int64_t valid_steps = 0;
+};
+
 struct QwenCausalBatchedPrefillResult {
     std::vector<float> logits;
     std::vector<float> hidden;
@@ -68,6 +75,14 @@ public:
 
     QwenCausalPrefillResult prefill_tokens(const std::vector<int32_t> & token_ids);
     QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps);
+    QwenCausalPrefillIntoDecodeResult prefill_tokens_into_decode_cache(
+        const std::vector<int32_t> & token_ids,
+        int64_t required_cache_steps);
+
+    // Prefill bounded blocks directly into the token-decode cache on the backend.
+    // No host KV export/import; subsequent decode_token calls continue this state.
+    QwenCausalDecodeStepResult prefill_embeddings_into_cache(
+        const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps);
 
     QwenCausalBatchedPrefillResult prefill_tokens_batched(
         const std::vector<int32_t> & token_ids,
@@ -81,6 +96,7 @@ public:
     void start_decode_tokens(const runtime::TransformerKVState & state, int64_t required_cache_steps);
     void start_decode_embeddings(const runtime::TransformerKVState & state, int64_t required_cache_steps);
     QwenCausalDecodeStepResult decode_token(int32_t token);
+    void decode_token_into(int32_t token, QwenCausalDecodeStepResult & out);
     QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding);
 
     void start_decode_tokens_batched(

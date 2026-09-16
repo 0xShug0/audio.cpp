@@ -4,6 +4,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/silero_vad/session.h"
 
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <limits>
@@ -31,7 +33,11 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr size_t kDefaultTokenizerWeightContextBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultConnectorWeightContextBytes = 128ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultDecoderWeightContextBytes = 1024ull * 1024ull * 1024ull;
+#else
 constexpr size_t kDefaultDecoderWeightContextBytes = 4096ull * 1024ull * 1024ull;
+#endif
 constexpr double kDefaultAudioChunkSeconds = 20.0 * 60.0;
 constexpr int64_t kDefaultStreamingMaxTokensPerChunk = 256;
 constexpr int64_t kStreamingDecoderInitialCacheSteps = 1024;
@@ -125,31 +131,20 @@ runtime::AudioBuffer pad_audio_tail(runtime::AudioBuffer audio, int64_t target_f
     return audio;
 }
 
-size_t common_prefix_size(const std::string & lhs, const std::string & rhs) {
-    const size_t limit = std::min(lhs.size(), rhs.size());
-    size_t size = 0;
-    while (size < limit && lhs[size] == rhs[size]) {
-        ++size;
-    }
-    return size;
-}
-
 void emit_transcript_delta(
     const runtime::StreamEventCallback & sink,
     const runtime::Transcript & transcript,
-    std::string & emitted_text) {
+    runtime::PartialTextPublisher & partials) {
     if (!sink || transcript.text.empty()) {
         return;
     }
-    const size_t prefix_size = common_prefix_size(emitted_text, transcript.text);
-    if (prefix_size == transcript.text.size()) {
-        emitted_text = transcript.text;
+    std::string delta = partials.publish(transcript.text);
+    if (delta.empty()) {
         return;
     }
     runtime::StreamEvent event;
-    event.partial_text = runtime::Transcript{transcript.text.substr(prefix_size), transcript.language};
+    event.partial_text = runtime::Transcript{std::move(delta), transcript.language};
     sink(event);
-    emitted_text = transcript.text;
 }
 
 std::string append_streaming_transcript(
@@ -1288,7 +1283,7 @@ runtime::TaskResult VibeVoiceASRSession::run_single(const VibeVoiceASRRequest & 
     text_decoder_.set_pinned_prefix_steps(0);
     auto prefill = text_decoder_.prefill_prompt(prompt.input_ids, speech.values, prompt.speech_positions);
     const uint64_t rng_call_offset = (speech.next_rng_index + 3ull) / 4ull;
-    std::string emitted_text;
+    runtime::PartialTextPublisher partials;
     std::function<void(const std::vector<int32_t> &)> token_callback;
     if (task_.mode == runtime::RunMode::Streaming && stream_event_sink_ != nullptr) {
         token_callback = [&](const std::vector<int32_t> & partial_tokens) {
@@ -1297,7 +1292,7 @@ runtime::TaskResult VibeVoiceASRSession::run_single(const VibeVoiceASRRequest & 
             emit_transcript_delta(
                 stream_event_sink_,
                 runtime::Transcript{partial_text, request.language},
-                emitted_text);
+                partials);
         };
     }
     auto generated = generate_tokens(request, prompt, std::move(prefill), rng_call_offset, token_callback);
@@ -1309,7 +1304,7 @@ runtime::TaskResult VibeVoiceASRSession::run_single(const VibeVoiceASRRequest & 
         emit_transcript_delta(
             stream_event_sink_,
             runtime::Transcript{decoded.text, request.language},
-            emitted_text);
+            partials);
     }
     const auto post_end = Clock::now();
 
