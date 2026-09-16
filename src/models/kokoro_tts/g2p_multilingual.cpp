@@ -180,6 +180,13 @@ std::string english_kokoro_mapping(std::string ps, bool british) {
     ps = syllabic_to_schwa(std::move(ps));
 
     if (british) {
+        // Dead in upstream too, and kept that way on purpose. kE2M above is sorted longest
+        // key first, and `e^ə` is not one of its keys, so the bare {"e", "A"} rule has
+        // already turned every `e^ə` into `A^ə` before control reaches here — SQUARE comes
+        // out of upstream as `skwˈAə`, never `skwˈɛː`. Making this line live would be the more
+        // faithful transcription and the wrong change: Kokoro's bf_/bm_ voices were trained
+        // on `Aə` for SQUARE, so `ɛː` would push en-GB off-distribution. Retained so this
+        // function stays diffable line-for-line against misaki.
         replace(ps, u8"e^ə", u8"ɛː");
         replace(ps, u8"iə", u8"ɪə");
         replace(ps, u8"ə^ʊ", "Q");
