@@ -198,7 +198,10 @@ void convert_tensor_source_to_gguf(const std::filesystem::path & input_path, con
 [[nodiscard]] bool gguf_has_embedded_sidecars(const std::filesystem::path & path);
 // The destinations of a GGUF's embedded sidecars, in the order it stores them.
 // Read from the file itself, so a caller re-emitting a package does not have to
-// infer the set from whatever is sitting in the materialisation cache.
+// infer the set from whatever is sitting in the materialisation cache. Throws on
+// the same malformed metadata that materialising the sidecars would reject: this
+// answers what the package holds, and a package whose byte ranges do not fit its
+// blob holds nothing anyone can read.
 [[nodiscard]] std::vector<std::string> gguf_embedded_sidecar_names(const std::filesystem::path & path);
 [[nodiscard]] std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::filesystem::path & path);
 [[nodiscard]] std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & path);

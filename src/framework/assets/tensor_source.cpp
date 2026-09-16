@@ -1542,8 +1542,14 @@ std::shared_ptr<const TensorSource> make_prefixed_tensor_source(
 
 namespace {
 
+// `with_contents == false` validates the same metadata but skips copying each
+// sidecar's bytes out of the blob -- 38 MB for the Kokoro package, per call, when
+// the caller only wants the names. Validation is deliberately not skipped with it:
+// a caller that reads the names of a malformed package must fail the way a caller
+// that reads its contents does.
 std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
-    const std::filesystem::path & path) {
+    const std::filesystem::path & path,
+    bool with_contents) {
     ggml_context * tensor_context = nullptr;
     gguf_context * gguf = gguf_init_from_file(
         path.string().c_str(), gguf_init_params{true, &tensor_context});
@@ -1605,10 +1611,12 @@ std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
                 }
                 std::string content;
                 const size_t length = static_cast<size_t>(offsets[i + 1] - offsets[i]);
-                if (length > 0) content.assign(data + offsets[i], length);
+                if (with_contents && length > 0) content.assign(data + offsets[i], length);
                 result.emplace_back(normalized.generic_string(), std::move(content));
             } else {
-                result.emplace_back(normalized.generic_string(), gguf_get_arr_str(gguf, contents_key, i));
+                result.emplace_back(
+                    normalized.generic_string(),
+                    with_contents ? std::string(gguf_get_arr_str(gguf, contents_key, i)) : std::string());
             }
         }
     } catch (...) {
@@ -1624,48 +1632,14 @@ std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
 }  // namespace
 
 bool gguf_has_embedded_sidecars(const std::filesystem::path & path) {
-    return !read_gguf_embedded_sidecars(path).empty();
+    return !read_gguf_embedded_sidecars(path, false).empty();
 }
 
 std::vector<std::string> gguf_embedded_sidecar_names(const std::filesystem::path & path) {
-    // Reads only "audiocpp.embedded_files.names". Going through
-    // read_gguf_embedded_sidecars would copy every sidecar's CONTENT into a string
-    // to return the keys -- 38 MB for the Kokoro package and far more for a large
-    // one, per call.
-    ggml_context * tensor_context = nullptr;
-    gguf_context * gguf =
-        gguf_init_from_file(path.string().c_str(), gguf_init_params{true, &tensor_context});
-    if (gguf == nullptr) {
-        if (tensor_context != nullptr) ggml_free(tensor_context);
-        throw std::runtime_error("failed to read GGUF metadata: " + path.string());
-    }
+    const auto sidecars = read_gguf_embedded_sidecars(path, false);
     std::vector<std::string> names;
-    try {
-        const int64_t names_key = gguf_find_key(gguf, "audiocpp.embedded_files.names");
-        if (names_key >= 0 && gguf_get_kv_type(gguf, names_key) == GGUF_TYPE_ARRAY &&
-            gguf_get_arr_type(gguf, names_key) == GGUF_TYPE_STRING) {
-            const size_t count = gguf_get_arr_n(gguf, names_key);
-            names.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                // Same rejection as the full reader: a name that escapes the package
-                // root must not reach a caller that is about to write files from it.
-                const std::string name = gguf_get_arr_str(gguf, names_key, i);
-                const std::filesystem::path relative(name);
-                const auto normalized = relative.lexically_normal();
-                if (name.empty() || relative.is_absolute() || normalized.empty() ||
-                    *normalized.begin() == "..") {
-                    throw std::runtime_error("GGUF contains an unsafe embedded sidecar name: " + name);
-                }
-                names.push_back(normalized.generic_string());
-            }
-        }
-    } catch (...) {
-        gguf_free(gguf);
-        if (tensor_context != nullptr) ggml_free(tensor_context);
-        throw;
-    }
-    gguf_free(gguf);
-    if (tensor_context != nullptr) ggml_free(tensor_context);
+    names.reserve(sidecars.size());
+    for (const auto & sidecar : sidecars) names.push_back(sidecar.first);
     return names;
 }
 
@@ -1716,7 +1690,7 @@ std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::fi
 
 std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & path) {
     const auto canonical = std::filesystem::weakly_canonical(path);
-    const auto sidecars = read_gguf_embedded_sidecars(canonical);
+    const auto sidecars = read_gguf_embedded_sidecars(canonical, true);
     if (sidecars.empty()) {
         throw std::runtime_error("GGUF does not contain embedded model sidecars: " + canonical.string());
     }
