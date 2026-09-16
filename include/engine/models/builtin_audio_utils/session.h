@@ -11,7 +11,7 @@ namespace engine::models::builtin_audio_utils {
 
 class BuiltinAudioUtilsLoadedModel final : public runtime::ILoadedVoiceModel {
 public:
-    explicit BuiltinAudioUtilsLoadedModel(std::string model_id);
+    BuiltinAudioUtilsLoadedModel(std::string model_id, std::filesystem::path asset);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -21,6 +21,7 @@ public:
 
 private:
     std::string model_id_;
+    std::filesystem::path asset_;
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
 };

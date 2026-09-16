@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "builtin_audio_utils",
   "display_name": "Built-in Audio Utilities",
-  "description": "Built-in denoise, enhancement, and audio super-resolution utilities packaged with audio.cpp.",
+  "description": "Built-in denoise, enhancement, and audio super-resolution utilities with separately downloaded weights.",
   "category": "audio_tools",
   "status": "experimental",
   "tasks": [
@@ -28,7 +28,15 @@
   "options": {
     "request": [],
     "session": [],
-    "load": []
+    "load": [
+      {
+        "name": "utility",
+        "type": "enum",
+        "values": ["deepfilternet2", "rnnoise", "zipenhancer", "gtcrn", "gtcrn_streaming", "gtcrn_dns3", "gtcrn_vctk", "flashsr"],
+        "required": true,
+        "description": "Utility implementation to load from the model path."
+      }
+    ]
   },
   "packages": [],
   "dependencies": [],

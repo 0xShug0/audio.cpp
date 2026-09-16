@@ -295,9 +295,7 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         model.id = engine::io::json::require_string(item, "id");
         model.family = engine::io::json::require_string(item, "family");
         const auto raw_path = engine::io::json::require_string(item, "path");
-        model.path = model.family == "builtin_audio_utils"
-            ? std::filesystem::path(raw_path)
-            : resolve_path(base, raw_path);
+        model.path = resolve_path(base, raw_path);
         if (const auto * value = item.find("model_spec_override")) {
             model.model_spec_override = resolve_path(base, value->as_string());
         }
