@@ -4,7 +4,7 @@
   "display_name": "Canary 180M Flash",
   "description": "NVIDIA Canary multilingual speech recognition and speech translation.",
   "category": "asr",
-  "status": "experimental",
+  "status": "supported",
   "tasks": [
     "asr"
   ],
@@ -104,9 +104,42 @@
     ],
     "docs": [
       "docs/models/canary_asr.md"
-    ]
+    ],
+    "recommended_package": "canary_180m_flash_f32"
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "canary_180m_flash_f32",
+      "display_name": "Canary 180M Flash GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Canary-180M-Flash-GGUF",
+      "files": [
+        "Canary-180M-Flash-GGUF/canary-180m-flash-f32.gguf"
+      ],
+      "strip_prefix": "Canary-180M-Flash-GGUF"
+    },
+    {
+      "id": "canary_180m_flash_q8_0",
+      "display_name": "Canary 180M Flash GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Canary-180M-Flash-GGUF",
+      "files": [
+        "Canary-180M-Flash-GGUF/canary-180m-flash-q8_0.gguf"
+      ],
+      "strip_prefix": "Canary-180M-Flash-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "safetensors",

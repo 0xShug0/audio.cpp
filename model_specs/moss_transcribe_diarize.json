@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "moss_transcribe_diarize",
   "display_name": "MOSS-Transcribe-Diarize",
-  "description": "Joint transcription, speaker diarization, and timestamps with a Whisper encoder and Qwen3 decoder.",
+  "description": "Joint transcription, speaker diarization, and timestamps across 50+ languages with a Whisper encoder and Qwen3 decoder.",
   "category": "asr",
   "status": "supported",
   "tasks": [
@@ -13,8 +13,8 @@
     "streaming"
   ],
   "languages": [
-    "en",
-    "zh"
+    "auto",
+    "50+ languages"
   ],
   "capabilities": {
     "asr": [

@@ -4,7 +4,7 @@
   "display_name": "Cohere Transcribe",
   "description": "Cohere multilingual speech transcription with punctuation control.",
   "category": "asr",
-  "status": "experimental",
+  "status": "supported",
   "tasks": [
     "asr"
   ],
@@ -109,9 +109,31 @@
     ],
     "docs": [
       "docs/models/cohere_asr.md"
-    ]
+    ],
+    "recommended_package": "cohere_transcribe_bf16"
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "cohere_transcribe_bf16",
+      "display_name": "Cohere Transcribe GGUF BF16",
+      "default": true,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Cohere-Transcribe-GGUF",
+      "files": [
+        "Cohere-Transcribe-GGUF/cohere-transcribe-03-2026-bf16.gguf"
+      ],
+      "strip_prefix": "Cohere-Transcribe-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "safetensors",
