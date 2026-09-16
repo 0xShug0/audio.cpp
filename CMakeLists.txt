@@ -294,6 +294,7 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
         message(STATUS "  portable default: ${_AUDIOCPP_ARCH_COUNT} architectures, so every .cu file is compiled ${_AUDIOCPP_ARCH_COUNT} times")
         message(STATUS "  this host is ${CMAKE_CUDA_ARCHITECTURES_NATIVE}; for a local build roughly 3x faster:")
         message(STATUS "      -DCMAKE_CUDA_ARCHITECTURES=native    (the result then runs on this GPU only)")
+        message(STATUS "      scripts/build_linux.sh: --cuda-arch native")
     endif()
 
     if (NOT MSVC)
@@ -310,6 +311,7 @@ if (AUDIOCPP_CCACHE_PROGRAM AND
     NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     message(STATUS "ccache is installed (${AUDIOCPP_CCACHE_PROGRAM}) and NOT in use. Rebuilds are much faster with:")
     message(STATUS "    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache")
+    message(STATUS "    scripts/build_linux.sh: --ccache")
 endif()
 
 if (ENGINE_ENABLE_OPENMP)

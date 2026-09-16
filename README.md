@@ -332,6 +332,15 @@ scripts/build_linux.sh --backend cuda --cuda-arch native --target audiocpp_cli -
 scripts/build_linux.sh --backend cuda --cuda-arch "86;89" --target audiocpp_cli --target audiocpp_server
 ```
 
+Nothing caches compiler output by default. `--ccache` wires ccache up as the
+compiler launcher, which leaves a cold build about as slow as it already is and
+makes a rebuild roughly 14x faster. A `CMAKE_<LANG>_COMPILER_LAUNCHER` already
+set in the environment is left alone.
+
+```bash
+scripts/build_linux.sh --backend cuda --cuda-arch native --ccache --target audiocpp_cli
+```
+
 Composite examples:
 
 ```bash
