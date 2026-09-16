@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "family": "pulsevad",
+  "display_name": "PulseVAD",
+  "description": "Speech activity detection for 16 kHz mono audio with 2.1K student and 81K teacher weights.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "vad"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "vad": [
+      "speech_segments"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "threshold",
+        "type": "float",
+        "description": "Speech probability threshold.",
+        "required": false,
+        "default": 0.5,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "hop_size_samples",
+        "type": "int",
+        "description": "Window step in samples; 1600 samples is 100 ms at 16 kHz.",
+        "required": false,
+        "default": 1600,
+        "min": 1
+      },
+      {
+        "name": "min_speech_duration_ms",
+        "type": "int",
+        "description": "Minimum speech segment duration in milliseconds.",
+        "required": false,
+        "default": 100,
+        "min": 0
+      },
+      {
+        "name": "min_silence_duration_ms",
+        "type": "int",
+        "description": "Minimum silence before closing a speech segment, in milliseconds.",
+        "required": false,
+        "default": 100,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage override; native preserves the packaged tensor types.",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16"
+        ],
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "pulsevad_2_1k_f32",
+      "display_name": "PulseVAD 2.1K GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "PulseVAD-GGUF",
+      "files": [
+        "PulseVAD-GGUF/pulsevad-2.1k-f32.gguf"
+      ],
+      "strip_prefix": "PulseVAD-GGUF"
+    },
+    {
+      "id": "pulsevad_81k_f32",
+      "display_name": "PulseVAD 81K GGUF F32",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "PulseVAD-GGUF",
+      "files": [
+        "PulseVAD-GGUF/pulsevad-81k-f32.gguf"
+      ],
+      "strip_prefix": "PulseVAD-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "VAD",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/pulsevad.md"
+    ],
+    "recommended_package": "pulsevad_2_1k_f32"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "tensors": {
+        "weights": "model:pulsevad-f32.safetensors"
+      }
+    }
+  ]
+}
