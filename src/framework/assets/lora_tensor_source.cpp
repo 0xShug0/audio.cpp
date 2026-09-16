@@ -30,6 +30,26 @@ LoraMergeResult merged_f32_values(
     const double base_read_ms = engine::debug::elapsed_ms(base_read_started);
     // values[o, i] += scale * sum_k B[o, k] * A[k, i]
     const auto compute_started = std::chrono::steady_clock::now();
+    if (delta.merge_mode == LoraMergeMode::RoundedBF16Delta) {
+        std::vector<float> product(values.size(), 0.0F);
+        #ifdef _OPENMP
+        const int64_t merge_work_items = delta.out * delta.in * delta.r;
+        #pragma omp parallel for if(merge_work_items >= kParallelLoraMergeWorkItems) schedule(static)
+        #endif
+        for (int64_t o = 0; o < delta.out; ++o) {
+            const int64_t row = o * delta.in;
+            for (int64_t k = 0; k < delta.r; ++k) {
+                const float b = delta.b[static_cast<size_t>(o * delta.r + k)];
+                const float * a = delta.a.data() + static_cast<size_t>(k * delta.in);
+                for (int64_t i = 0; i < delta.in; ++i) product[row + i] += b * a[i];
+            }
+            for (int64_t i = 0; i < delta.in; ++i) {
+                const float update = ggml_bf16_to_fp32(ggml_fp32_to_bf16(delta.scale * product[row + i]));
+                values[row + i] = ggml_bf16_to_fp32(ggml_fp32_to_bf16(values[row + i] + update));
+            }
+        }
+        return {std::move(values), base_read_ms, engine::debug::elapsed_ms(compute_started)};
+    }
     #ifdef _OPENMP
     const int64_t merge_work_items = delta.out * delta.in * delta.r;
     #pragma omp parallel for if(merge_work_items >= kParallelLoraMergeWorkItems) schedule(static)

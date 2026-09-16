@@ -75,6 +75,33 @@ Select the F32 VAE:
 
 The component paths are relative to `--model`; absolute paths are rejected.
 
+## AR LoRA
+
+Load an unfused YuE2 AR adapter with session options:
+
+```bash
+--session-option yue2.lora=/path/to/ar_lora_inst_v3abc.safetensors \
+--session-option yue2.lora_scale=1.0 \
+--request-option cot=full
+```
+
+Both FP32 and BF16 adapter files are supported. Use the standard A/B files from
+[the instrumental adapter repository](https://huggingface.co/Mothersuperior/YuE2-instrumental-cot-full-loras),
+not its ComfyUI fused file. NAR adapters are not supported by this option.
+Relative adapter paths resolve under the model root. Reload the session after
+changing the adapter or scale; `0` disables it. With no adapter, weight loading
+and generation are unchanged.
+
+The adapter modifies AR attention and MLP projections at load time, using
+`BF16(W + BF16(scale * (B @ A)))`. There is no extra alpha/rank scaling or
+per-token adapter computation. NAR and VAE weights are unchanged.
+Use the BF16 main GGUF for the closest match to the original weights. Loading
+onto Q8/Q4 bases merges into dequantized weights and requantizes the result;
+it is not equivalent to merging into the original BF16 model first.
+
+For this instrumental adapter, use `cot=full`, instrument/style tags in `style`,
+and `[instrumental]` or section tags in `lyrics`. Its license is CC BY-NC 4.0.
+
 ## ABC Conditioning
 
 Use `cot=melody` or `cot=full` to run the symbolic route. External ABC requires
@@ -163,6 +190,8 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 |---|---|---:|---|
 | `--session-option yue2.model_gguf=<file>` | relative GGUF path | `yue2-3b-q8_0.gguf` | Main AR/NAR component. |
 | `--session-option yue2.vae_gguf=<file>` | relative GGUF path | `yue2-vae-f16.gguf` | VAE component. |
+| `--session-option yue2.lora=<file>` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
+| `--session-option yue2.lora_scale=<float>` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
 | `--session-option yue2.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
 | `--session-option yue2.model_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Main model weight storage override. |
 | `--session-option yue2.vae_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | VAE weight storage override. |

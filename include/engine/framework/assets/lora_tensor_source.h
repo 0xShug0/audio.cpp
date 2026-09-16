@@ -6,6 +6,11 @@
 
 namespace engine::assets {
 
+enum class LoraMergeMode {
+    AccumulateF32,
+    RoundedBF16Delta,
+};
+
 struct LoraTensorDelta {
     std::vector<float> a;
     std::vector<float> b;
@@ -13,6 +18,7 @@ struct LoraTensorDelta {
     int64_t in = 0;
     int64_t out = 0;
     float scale = 1.0F;
+    LoraMergeMode merge_mode = LoraMergeMode::AccumulateF32;
 };
 
 struct TensorOverride {
@@ -31,6 +37,8 @@ LoraTensorDelta load_lora_tensor_delta(
 // Merge arithmetic preserves FP32 rank-wise accumulation: for each k,
 // W[o,i] += (scale * B[o,k]) * A[k,i], skipping zero scaled B values.
 // This is NOT a rounded matrix-product delta followed by one base addition.
+// RoundedBF16Delta explicitly selects BF16(W + BF16(scale * (B @ A))),
+// with the matrix product accumulated in F32 before scaling.
 // Base metadata/storage policy is retained; merged raw exports are F32 and
 // backend uploads use the requested dtype through the existing conversion API.
 std::shared_ptr<const TensorSource> make_lora_tensor_source(

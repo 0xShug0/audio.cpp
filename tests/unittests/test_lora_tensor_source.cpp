@@ -76,6 +76,21 @@ void run(const std::filesystem::path & root) {
     require(overlay->require_f32("weight") == expected, "merge arithmetic changed");
     require(overlay->require_f32("weight") == expected, "repeated read applies adapter twice");
     require(base->require_f32("weight") == weights, "overlay changed base storage");
+    auto rounded_delta = delta;
+    rounded_delta.merge_mode = assets::LoraMergeMode::RoundedBF16Delta;
+    auto rounded = assets::make_lora_tensor_source(base, {{"weight", rounded_delta}});
+    auto rounded_expected = weights;
+    for (int o = 0; o < 2; ++o) {
+        for (int i = 0; i < 32; ++i) {
+            float product = 0.0F;
+            for (int k = 0; k < 2; ++k) product += b[o * 2 + k] * a[k * 32 + i];
+            const float update = ggml_bf16_to_fp32(ggml_fp32_to_bf16(product));
+            rounded_expected[o * 32 + i] = ggml_bf16_to_fp32(
+                ggml_fp32_to_bf16(weights[o * 32 + i] + update));
+        }
+    }
+    require(rounded_expected != expected, "merge modes need distinct rounding fixtures");
+    require(rounded->require_f32("weight") == rounded_expected, "BF16 delta merge differs");
     require(overlay->require_tensor_data("untouched").bytes == base->require_tensor_data("untouched").bytes,
             "unadapted tensor changed");
     require(overlay->require_metadata("weight").dtype == base->require_metadata("weight").dtype,
@@ -103,6 +118,7 @@ void run(const std::filesystem::path & root) {
                       assets::TensorStorageType::BF16, assets::TensorStorageType::Q8_0,
                       assets::TensorStorageType::Q4_0}) {
         check_upload(*overlay, "weight", {2, 32}, type);
+        check_upload(*rounded, "weight", {2, 32}, type);
         check_upload(*overlay, "untouched", {2, 32}, type);
         check_upload(*overridden, "weight", {2, 32}, type);
     }

@@ -113,6 +113,14 @@ std::shared_ptr<const Yue2Assets> select_component_assets(
         resolve_component_gguf_path(*base, "yue2.vae_gguf", vae_gguf),
         "vae_weights");
     validate_component_anchors(*selected);
+    if (const auto path = runtime::find_option(options, {"yue2.lora"}); path && !path->empty()) {
+        auto adapter_path = std::filesystem::u8path(*path);
+        if (adapter_path.is_relative()) adapter_path = selected->model_root / adapter_path;
+        selected->model_weights = make_yue2_lora_source(
+            selected->model_weights, adapter_path,
+            runtime::parse_finite_float_option(options, {"yue2.lora_scale"}).value_or(1.0F),
+            selected->config.model.layers);
+    }
     return selected;
 }
 
@@ -174,6 +182,8 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"num_inference_steps", "int", "NAR ODE steps.", false, "8", "1"},
     };
     out.session_options = {
+        {"yue2.lora", "path", "Unfused AR LoRA safetensors file; relative paths use the model root."},
+        {"yue2.lora_scale", "float", "AR LoRA delta scale; zero disables the adapter.", false, "1.0"},
         {"yue2.model_gguf", "string", "Yue2 main AR/NAR component GGUF file relative to the model root.", false, "yue2-3b-q8_0.gguf"},
         {"yue2.vae_gguf", "string", "Yue2 VAE component GGUF file relative to the model root.", false, "yue2-vae-f16.gguf"},
         {"yue2.model_weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "Yue2 main model weight storage type.", false, "native"},

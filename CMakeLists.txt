@@ -1422,6 +1422,7 @@ audiocpp_add_model(yue2
     SOURCES
         src/models/yue2/ar_runtime.cpp
         src/models/yue2/assets.cpp
+        src/models/yue2/lora.cpp
         src/models/yue2/nar_runtime.cpp
         src/models/yue2/pipeline.cpp
         src/models/yue2/request.cpp
