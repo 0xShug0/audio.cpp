@@ -392,7 +392,8 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
     return errors;
 }
 
-// Where the conversion looks for the small files (configs, tokenizers) that
+// What the conversion embeds, and where it looks for anything else: the small
+// files (configs, tokenizers) that
 // belong in the output. `--root` wins, and so does an explicit `--sidecar`
 // set. Otherwise a GGUF input's own embedded copies are used — for a re-encode
 // they are exactly the files that package ships, where the directory the file
@@ -409,7 +410,7 @@ struct SidecarPlan {
     std::vector<engine::assets::GgufEmbeddedFile> carried;
 };
 
-SidecarPlan resolve_sidecar_root(const std::filesystem::path & requested,
+SidecarPlan plan_sidecars(const std::filesystem::path & requested,
                                  const std::vector<engine::assets::TensorSourceInput> & inputs,
                                  const std::vector<engine::assets::GgufEmbeddedFile> & explicit_sidecars,
                                  bool embed_sidecars) {
@@ -422,21 +423,20 @@ SidecarPlan resolve_sidecar_root(const std::filesystem::path & requested,
         if (!is_gguf_path(input.path) || !engine::assets::gguf_has_embedded_sidecars(input.path))
             continue;
         const auto materialized = engine::assets::materialize_gguf_sidecars(input.path);
+        // ⚠ The names come from the GGUF, not from a walk of `materialized`. That
+        // directory is a cache keyed by path+size+mtime and shared between runs, so
+        // walking it would carry across anything that happened to be sitting in it.
+        // The file is the authority on what the package contains.
         std::vector<engine::assets::GgufEmbeddedFile> carried;
-        std::error_code walk_error;
-        for (std::filesystem::recursive_directory_iterator it(materialized, walk_error), end;
-             !walk_error && it != end; it.increment(walk_error)) {
-            if (!it->is_regular_file())
-                continue;
-            carried.push_back({it->path(),
-                               std::filesystem::relative(it->path(), materialized).lexically_normal()});
+        for (const auto & name : engine::assets::gguf_embedded_sidecar_names(input.path)) {
+            const auto destination = std::filesystem::path(name).lexically_normal();
+            const auto source = materialized / destination;
+            if (!engine::io::is_existing_file(source)) {
+                throw std::runtime_error("sidecar '" + name + "' embedded in " + input.path.string() +
+                                         " did not materialise at " + source.string());
+            }
+            carried.push_back({source, destination});
         }
-        if (walk_error) {
-            throw std::runtime_error("failed to enumerate sidecars embedded in " + input.path.string() + ": " +
-                                     walk_error.message());
-        }
-        std::sort(carried.begin(), carried.end(),
-                  [](const auto & lhs, const auto & rhs) { return lhs.destination < rhs.destination; });
         std::cerr << "note: reusing the " << carried.size() << " sidecars embedded in " << input.path.string()
                   << "; pass --root to override\n";
         return {materialized, std::move(carried)};
@@ -677,8 +677,11 @@ int main(int argc, char ** argv) {
             std::cout << "gguf=" << std::filesystem::weakly_canonical(inspect_path).string() << "\n";
             std::cout << "tensors=" << tensors.size() << "\n";
             std::cout << "rank0_scalars=" << scalar_count << "\n";
-            std::cout << "embedded_sidecars="
-                      << (engine::assets::gguf_has_embedded_sidecars(inspect_path) ? "true" : "false") << "\n";
+            // The count, not just the boolean: a package that lost 54 of its 59
+            // sidecars still reports true, which is how that went unnoticed.
+            const auto inspect_sidecars = engine::assets::gguf_embedded_sidecar_names(inspect_path);
+            std::cout << "embedded_sidecars=" << (inspect_sidecars.empty() ? "false" : "true") << "\n";
+            std::cout << "embedded_sidecar_count=" << inspect_sidecars.size() << "\n";
             const auto model_spec = engine::assets::read_gguf_embedded_model_spec(inspect_path);
             std::cout << "embedded_model_spec=" << (model_spec.has_value() ? "true" : "false") << "\n";
             if (model_spec.has_value())
@@ -705,10 +708,10 @@ int main(int argc, char ** argv) {
             }
         }
         const auto storage_type = engine::assets::parse_tensor_storage_type(type);
-        const auto sidecar_plan = resolve_sidecar_root(sidecar_root, inputs, sidecars, embed_sidecars);
+        const auto sidecar_plan = plan_sidecars(sidecar_root, inputs, sidecars, embed_sidecars);
         const auto & resolved_sidecar_root = sidecar_plan.root;
         // Empty unless the input was a GGUF whose sidecars are being reused, which
-        // resolve_sidecar_root only does when the caller passed no --sidecar of its
+        // plan_sidecars only does when the caller passed no --sidecar of its
         // own -- so these cannot collide with an explicit destination.
         sidecars.insert(sidecars.end(), sidecar_plan.carried.begin(), sidecar_plan.carried.end());
         std::optional<engine::assets::GgufEmbeddedModelSpec> embedded_model_spec;
@@ -741,7 +744,9 @@ int main(int argc, char ** argv) {
             std::cout << "excluded_prefix=" << prefix << "\n";
         std::cout << "type_overrides=" << conversion_options.type_overrides.size() << "\n";
         std::cout << "folded_weight_norm_patterns=" << conversion_options.folded_weight_norm_patterns.size() << "\n";
-        std::cout << "embedded_sidecars=" << (engine::assets::gguf_has_embedded_sidecars(output) ? "true" : "false")
+        const auto written_sidecars = engine::assets::gguf_embedded_sidecar_names(output);
+        std::cout << "embedded_sidecar_count=" << written_sidecars.size() << "\n";
+        std::cout << "embedded_sidecars=" << (written_sidecars.empty() ? "false" : "true")
                   << "\n";
         std::cout << "embedded_model_spec=" << (embedded_model_spec.has_value() ? "true" : "false") << "\n";
         if (embedded_model_spec.has_value()) {

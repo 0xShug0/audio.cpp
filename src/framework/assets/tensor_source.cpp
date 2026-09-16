@@ -1627,6 +1627,15 @@ bool gguf_has_embedded_sidecars(const std::filesystem::path & path) {
     return !read_gguf_embedded_sidecars(path).empty();
 }
 
+std::vector<std::string> gguf_embedded_sidecar_names(const std::filesystem::path & path) {
+    std::vector<std::string> names;
+    for (const auto & [name, content] : read_gguf_embedded_sidecars(path)) {
+        (void) content;
+        names.push_back(name);
+    }
+    return names;
+}
+
 std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::filesystem::path & path) {
     ggml_context * tensor_context = nullptr;
     gguf_context * gguf = gguf_init_from_file(path.string().c_str(), gguf_init_params{true, &tensor_context});
