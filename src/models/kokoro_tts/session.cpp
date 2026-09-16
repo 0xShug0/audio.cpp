@@ -241,6 +241,29 @@ namespace {
 /// The "no override, use the built-in G2P" sentinel, so the chunk loop can bind a reference.
 const std::string kNoSuppliedPhonemes;
 
+constexpr const char * kPhonemesOption = "phonemes";
+
+/// Request options, validated against the package's own contract.
+///
+/// Older standalone GGUF packages embed a schema-v1 contract written before
+/// `phonemes` existed, and a published package cannot be edited in place. Drop
+/// the key from the VALIDATION COPY so those packages can still be given
+/// phonemes -- the engine serves the request either way -- while every unrelated
+/// unknown option is still rejected. Same shape as irodori_tts.codec_backend and
+/// the Parakeet TDT VAD controls, which are older options in the same position.
+void validate_request_options(
+    const std::unordered_map<std::string, std::string> & options,
+    const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
+    const engine::model_spec::ModelContract & contract) {
+    if (contract.request_option_keys.find(kPhonemesOption) != contract.request_option_keys.end()) {
+        runtime::validate_spec_backed_request_options(options, option_arrays, contract, kModelName);
+        return;
+    }
+    auto validation_arrays = option_arrays;
+    validation_arrays.erase(kPhonemesOption);
+    runtime::validate_spec_backed_request_options(options, validation_arrays, contract, kModelName);
+}
+
 /// A list-valued request option, or empty when the caller did not set one.
 const std::vector<std::string> & find_option_array(
     const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
@@ -253,8 +276,7 @@ const std::vector<std::string> & find_option_array(
 }  // namespace
 
 void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(
-        request.options, request.option_arrays, *contract_, kModelName);
+    validate_request_options(request.options, request.option_arrays, *contract_);
     if (const auto seed = runtime::parse_u64_option(request.options, {"seed"})) {
         if (rng_seed_ != *seed) {
             rng_seed_ = *seed;
@@ -265,7 +287,7 @@ void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & reques
     }
     auto adapter = make_graph_capacity_adapter();
     int64_t request_size = 0;
-    const auto prepare_phonemes = find_option_array(request.option_arrays, "phonemes");
+    const auto prepare_phonemes = find_option_array(request.option_arrays, kPhonemesOption);
     if (request.text.has_value()) {
         const int64_t text_chunk_size =
             engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
@@ -302,8 +324,7 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
     if (!request.text_input.has_value()) {
         throw std::runtime_error("Kokoro TTS run requires text_input");
     }
-    runtime::validate_spec_backed_request_options(
-        request.options, request.option_arrays, *contract_, kModelName);
+    validate_request_options(request.options, request.option_arrays, *contract_);
 
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
@@ -313,7 +334,7 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
     // merged into one result exactly as text chunks are. A caller whose document exceeds the
     // 510-symbol limit therefore still makes ONE call and gets ONE buffer back, instead of
     // having to stitch the audio itself.
-    const auto supplied_phonemes = find_option_array(request.option_arrays, "phonemes");
+    const auto supplied_phonemes = find_option_array(request.option_arrays, kPhonemesOption);
     const auto chunk_requests = supplied_phonemes.empty()
         ? runtime::chunk_text_request(request, text_chunk_size)
         : std::vector<runtime::TaskRequest>(supplied_phonemes.size(), request);
