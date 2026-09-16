@@ -83,16 +83,13 @@ private:
     runtime::AudioBuffer streaming_audio_;
     runtime::TaskRequest streaming_request_;
 
-    // Cache-aware chunked streaming. Granite's attention is block-local (each
-    // context_size frame block attends only within itself), so a chunk needs no
-    // left-context re-encoding and no attention cache: every chunk is encoded
-    // ONCE, prepended only with a short waveform carry that covers the two
-    // stride-2 subsample blocks' convolution reach and the frontend's padding —
-    // streaming compute therefore matches offline (~1x) instead of re-encoding
-    // a left-context window per chunk.
-    bool encode_next_chunk(bool flush_tail, std::string & delta_out);
+    // Windowed chunked-streaming state (the publisher's chunked TurboCTC recipe):
+    // every center chunk is (re-)encoded together with its left-context window and
+    // CTC-greedy decoded continuously, so partials stream as chunks land.
+    bool decode_next_center_window(bool flush_tail, std::string & delta_out);
     int64_t stream_center_samples_ = 0;
-    int64_t stream_processed_samples_ = 0;
+    int64_t stream_left_context_samples_ = 0;
+    int64_t stream_next_center_start_ = 0;
     int32_t stream_last_raw_token_ = -1;
     std::vector<int32_t> stream_collapsed_ids_;
     std::string stream_emitted_text_;

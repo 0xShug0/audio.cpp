@@ -42,10 +42,19 @@ void validate_matmul_weight_storage(engine::assets::TensorStorageType storage_ty
         storage_type == engine::assets::TensorStorageType::F32 ||
         storage_type == engine::assets::TensorStorageType::F16 ||
         storage_type == engine::assets::TensorStorageType::BF16 ||
-        storage_type == engine::assets::TensorStorageType::Q8_0) {
+        storage_type == engine::assets::TensorStorageType::Q8_0 ||
+        storage_type == engine::assets::TensorStorageType::Q4_0 ||
+        storage_type == engine::assets::TensorStorageType::Q4_1 ||
+        storage_type == engine::assets::TensorStorageType::Q5_0 ||
+        storage_type == engine::assets::TensorStorageType::Q5_1 ||
+        storage_type == engine::assets::TensorStorageType::Q4_K ||
+        storage_type == engine::assets::TensorStorageType::Q5_K ||
+        storage_type == engine::assets::TensorStorageType::Q6_K) {
+        // Sub-q8_0 types are re-quantized from the source weights at load
+        // (dequant -> ggml_quantize_chunk): faster CPU GEMMs, some accuracy risk.
         return;
     }
-    throw std::runtime_error(std::string(option_name) + " supports only native, f32, f16, bf16, and q8_0");
+    throw std::runtime_error(std::string(option_name) + " supports only native, f32, f16, bf16, q8_0, q4_0, q4_1, q5_0, q5_1, q4_k, q5_k, and q6_k");
 }
 
 void validate_conv_weight_storage(engine::assets::TensorStorageType storage_type, const char * option_name) {
