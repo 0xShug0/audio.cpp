@@ -76,6 +76,7 @@
   let duration = 30;
   let seed = 1234;
       let maxTokens = 1024;
+  let asrMaxTokens = 0;
       let sourceFile: File | null = null;
       let videoFile: File | null = null;
       let voiceFile: File | null = null;
@@ -145,6 +146,9 @@
     demo_4_woman: 'demo_4_woman'
   };
   const exposeAllStudioPackageFamilies = new Set([
+    'canary_asr',
+    'cohere_asr',
+    'moss_transcribe_diarize',
     'audiosr',
     'controlfoley',
     'breeze_tts',
@@ -297,7 +301,21 @@
     magpie_tts: 'MagpieTTS',
     meanvc2: 'MeanVC2',
     niagara_asr: 'Niagara ASR',
+    canary_asr: 'Canary 180M Flash',
+    cohere_asr: 'Cohere Transcribe',
+    moss_transcribe_diarize: 'MOSS-Transcribe-Diarize',
+    apollo: 'Apollo',
+    universr: 'UniverSR',
+    pulsevad: 'PulseVAD',
     personaplex: 'PersonaPlex'
+  };
+
+  const asrTokenDefaults: Record<string, number> = {
+    canary_asr: 0, cohere_asr: 256, moss_transcribe_diarize: 5120
+  };
+  const asrLanguages: Record<string, string[]> = {
+    canary_asr: ['en', 'de', 'es', 'fr'],
+    cohere_asr: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'el', 'ar', 'ja', 'zh', 'vi', 'ko']
   };
 
   function pathVariantLabel(path: string) {
@@ -455,6 +473,7 @@
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
+    !['apollo', 'universr'].includes(selected?.family) &&
     !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming'].includes(selected?.family);
@@ -1027,6 +1046,8 @@
       !(selected?.family === 'vibevoice' && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
+    if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
+    if (selected?.family in asrLanguages) language = 'en';
     if (selected?.family === 'minimax_h3') {
       duration = 15;
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration), dit_acceleration: 'none' };
@@ -1257,7 +1278,7 @@
 
   async function stagedPath(file: File | null): Promise<string | undefined> {
     if (!file) return undefined;
-    const targetSampleRate = selected.task === 'sep'
+    const targetSampleRate = selected.task === 'sep' || selected.family === 'apollo'
       ? 44100
       : ['asr', 'vad', 'diar', 'align', 'midi'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
@@ -1289,6 +1310,8 @@
       .filter(([name, value]) => {
         const spec = paramSpecs.find((candidate) => candidate.name === name);
         if (spec?.scope === 'session') return false;
+        if (selected?.family === 'canary_asr' && name === 'target_language' && value === '') return false;
+        if (selected?.family === 'universr' && name === 'input_sample_rate' && value === '') return false;
         if (usesYue2Request && typeof value === 'string' && value.trim().length === 0) return false;
         return true;
       }));
@@ -1714,6 +1737,7 @@
         }, null, 2);
       } else if (selected.task === 'asr') {
         if (!audio) throw new StatusWarning('Choose an audio file.');
+        if (selected.family in asrTokenDefaults) options.max_tokens = asrMaxTokens;
         const result = await transcription({
           model: selected.id,
           audio,
@@ -1726,8 +1750,8 @@
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !['apollo', 'universr'].includes(selected.family)) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr'].includes(selected.family)) request.language = language;
         if (selected.task === 'gen') {
           if (usesYue2Request) {
             request.lyrics = lyrics.trim();
@@ -1743,7 +1767,7 @@
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
-          request.seed = resolvedSeed;
+          if (selected.family !== 'apollo') request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
@@ -2321,13 +2345,19 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize'].includes(selected.family)}
             <div>
-              <label for="language">{tr('request.language')} <span>{tr('request.autoLanguage')}</span></label>
-              <input id="language" bind:value={language} placeholder="auto" />
+              <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
+              {#if asrLanguages[selected.family]}
+                <select id="language" bind:value={language}>
+                  {#each asrLanguages[selected.family] as code}<option value={code}>{code}</option>{/each}
+                </select>
+              {:else}
+                <input id="language" bind:value={language} placeholder="auto" />
+              {/if}
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && selected.family !== 'apollo'}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
@@ -2336,7 +2366,13 @@
           {#if supportsMaxTokens(selected)}
             <div>
               <label for="tokens">{tr('request.maxTokens')}</label>
-              <input id="tokens" type="number" min="1" bind:value={maxTokens} />
+              {#if selected.family in asrTokenDefaults}
+                <input id="tokens" type="number" min={selected.family === 'canary_asr' ? 0 : 1}
+                  max={selected.family === 'canary_asr' ? 1015 : selected.family === 'cohere_asr' ? 1014 : undefined}
+                  bind:value={asrMaxTokens} />
+              {:else}
+                <input id="tokens" type="number" min="1" bind:value={maxTokens} />
+              {/if}
             </div>
           {/if}
           {#if selected.task === 'gen' && !replacesGenericControls.duration}

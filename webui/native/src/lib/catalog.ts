@@ -40,6 +40,9 @@ const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
 
 const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
 const exposeAllGgufPackageFamilies = new Set([
+  'canary_asr',
+  'cohere_asr',
+  'moss_transcribe_diarize',
   'audiosr',
   'controlfoley',
   'breeze_tts',
