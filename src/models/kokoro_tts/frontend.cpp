@@ -252,13 +252,18 @@ KokoroSynthesisInput build_kokoro_synthesis_input(
     const runtime::Transcript & text,
     const KokoroFrontendSessionState & state,
     const KokoroAssets & assets,
-    const std::string & phoneme_override) {
+    std::optional<std::string_view> phoneme_override) {
     if (state.voice_pack == nullptr) {
         throw std::runtime_error("Kokoro frontend session voice pack was not prepared");
     }
-    const bool supplied = !phoneme_override.empty();
+    const bool supplied = phoneme_override.has_value();
+    if (supplied && phoneme_override->empty()) {
+        // Falling back to the built-in G2P here would speak `text` for a chunk the caller
+        // asked to be spoken from phonemes, which reads as the engine ignoring the option.
+        throw std::runtime_error("Kokoro supplied phonemes are empty; an override must carry symbols");
+    }
     const std::string phonemes =
-        supplied ? phoneme_override : phonemize_text(text, state.language_code, assets);
+        supplied ? std::string(*phoneme_override) : phonemize_text(text, state.language_code, assets);
     // Strict for a caller's stream, lenient for our own -- see encode_input_ids_and_count.
     const EncodedInputIds encoded = encode_input_ids_and_count(phonemes, assets, supplied);
     if (encoded.phoneme_count > 510) {
@@ -291,7 +296,7 @@ int64_t estimate_kokoro_request_tokens(
     const runtime::SessionPreparationRequest & request,
     const KokoroFrontendSessionState & state,
     const KokoroAssets & assets,
-    const std::string & phoneme_override) {
+    std::optional<std::string_view> phoneme_override) {
     if (!request.text.has_value()) {
         return 0;
     }
