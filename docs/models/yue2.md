@@ -80,8 +80,8 @@ The component paths are relative to `--model`; absolute paths are rejected.
 Load an unfused YuE2 AR adapter with session options:
 
 ```bash
---session-option yue2.lora=/path/to/ar_lora_inst_v3abc.safetensors \
---session-option yue2.lora_scale=1.0 \
+--session-option yue2.ar_lora=/path/to/ar_lora_inst_v3abc.safetensors \
+--session-option yue2.ar_lora_scale=1.0 \
 --request-option cot=full
 ```
 
@@ -194,8 +194,8 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 |---|---|---:|---|
 | `--session-option yue2.model_gguf=<file>` | relative GGUF path | `yue2-3b-q8_0.gguf` | Main AR/NAR component. |
 | `--session-option yue2.vae_gguf=<file>` | relative GGUF path | `yue2-vae-f16.gguf` | VAE component. |
-| `--session-option yue2.lora=<file>` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
-| `--session-option yue2.lora_scale=<float>` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
+| `--session-option yue2.ar_lora=<file>` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
+| `--session-option yue2.ar_lora_scale=<float>` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
 | `--session-option yue2.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
 | `--session-option yue2.model_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Main model weight storage override. |
 | `--session-option yue2.vae_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | VAE weight storage override. |

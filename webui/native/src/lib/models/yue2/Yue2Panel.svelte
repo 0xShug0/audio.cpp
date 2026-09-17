@@ -63,8 +63,8 @@
     loraUpload = new AbortController();
     try {
       const path = await uploadFile(file, loraUpload.signal);
-      setNamedParameter('lora', path);
-      log(`YuE2 LoRA selected: ${file.name}`);
+      setNamedParameter('ar_lora', path);
+      log(`YuE2 AR LoRA selected: ${file.name}`);
     } catch (error) {
       if (!loraUpload.signal.aborted) {
         loraError = error instanceof Error ? error.message : String(error);
@@ -294,34 +294,34 @@
     {/each}
   </div>
 
-  {#if specByName('lora')}
+  {#if specByName('ar_lora')}
     <div class="yue2-grid">
       <div class="yue2-field">
-        <label for="param-lora">LoRA adapter</label>
-        <input id="param-lora" type="text" placeholder="Server path (.safetensors)"
+        <label for="param-ar_lora">AR LoRA adapter</label>
+        <input id="param-ar_lora" type="text" placeholder="Server path (.safetensors)"
           disabled={!server?.ui_management || busy || loraUploading}
-          value={String(advancedValues.lora ?? '')}
-          on:input={(event) => setNamedParameter('lora', event.currentTarget.value.trim())} />
-        <input id="yue2-lora-file" class="file file-native" type="file" accept=".safetensors"
+          value={String(advancedValues.ar_lora ?? '')}
+          on:input={(event) => setNamedParameter('ar_lora', event.currentTarget.value.trim())} />
+        <input id="yue2-ar-lora-file" class="file file-native" type="file" accept=".safetensors"
           bind:this={loraInput} disabled={!server?.ui_management || busy || loraUploading}
           on:change={(event) => selectLora(event.currentTarget.files?.[0] || null)} />
         <div class="media-actions">
           <button type="button" disabled={!server?.ui_management || busy || loraUploading}
-            on:click={() => loraInput?.click()}>{loraUploading ? 'Uploading...' : 'Choose LoRA'}</button>
-          <button type="button" disabled={!server?.ui_management || busy || loraUploading || !advancedValues.lora}
-            on:click={() => { setNamedParameter('lora', ''); loraError = ''; }}>Clear</button>
+            on:click={() => loraInput?.click()}>{loraUploading ? 'Uploading...' : 'Choose AR LoRA'}</button>
+          <button type="button" disabled={!server?.ui_management || busy || loraUploading || !advancedValues.ar_lora}
+            on:click={() => { setNamedParameter('ar_lora', ''); loraError = ''; }}>Clear</button>
         </div>
         <small>LoRA requirements vary. Read the original adapter's documentation for usage instructions.</small>
         {#if loraError}<span class="yue2-error" role="alert">{loraError}</span>{/if}
       </div>
       <div class="yue2-field">
-        <label for="param-lora_scale">LoRA strength</label>
-        <input id="param-lora_scale" type="number" step="0.1"
-          disabled={!server?.ui_management || busy || loraUploading || !advancedValues.lora}
-          value={Number(advancedValues.lora_scale ?? 1)}
+        <label for="param-ar_lora_scale">AR LoRA strength</label>
+        <input id="param-ar_lora_scale" type="number" step="0.1"
+          disabled={!server?.ui_management || busy || loraUploading || !advancedValues.ar_lora}
+          value={Number(advancedValues.ar_lora_scale ?? 1)}
           on:change={(event) => {
             if (Number.isFinite(event.currentTarget.valueAsNumber)) {
-              setNamedParameter('lora_scale', event.currentTarget.valueAsNumber);
+              setNamedParameter('ar_lora_scale', event.currentTarget.valueAsNumber);
             }
           }} />
       </div>

@@ -11,9 +11,9 @@ namespace engine::models::yue2 {
 std::shared_ptr<const assets::TensorSource> make_yue2_lora_source(
     std::shared_ptr<const assets::TensorSource> base,
     const std::filesystem::path & adapter_path, float scale, int64_t layer_count) {
-    if (!std::isfinite(scale)) throw std::runtime_error("yue2.lora_scale must be finite");
+    if (!std::isfinite(scale)) throw std::runtime_error("yue2.ar_lora_scale must be finite");
     if (adapter_path.extension() != ".safetensors") {
-        throw std::runtime_error("yue2.lora must be an AR adapter safetensors file (unfused A/B layout)");
+        throw std::runtime_error("yue2.ar_lora must be an AR adapter safetensors file (unfused A/B layout)");
     }
     const auto adapter = assets::open_tensor_source(adapter_path);
     std::unordered_set<std::string> consumed;
@@ -47,7 +47,7 @@ std::shared_ptr<const assets::TensorSource> make_yue2_lora_source(
         "AR LoRA: " + adapter_path.string() + ", projections=" + std::to_string(deltas.size()) +
         ", scale=" + std::to_string(scale));
     if (scale == 0.0F) return base;
-    return assets::make_lora_tensor_source(std::move(base), std::move(deltas), {}, "yue2.lora", true);
+    return assets::make_lora_tensor_source(std::move(base), std::move(deltas), {}, "yue2.ar_lora", true);
 }
 
 }  // namespace engine::models::yue2

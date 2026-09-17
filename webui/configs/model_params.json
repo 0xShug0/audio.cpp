@@ -195,8 +195,8 @@
   ],
 
   "yue2": [
-    {"name": "lora", "type": "text", "scope": "session", "session_option": "yue2.lora", "label": "lora", "label_en": "LoRA adapter", "default": ""},
-    {"name": "lora_scale", "type": "number", "scope": "session", "session_option": "yue2.lora_scale", "label": "lora_scale", "label_en": "LoRA strength", "default": 1, "step": 0.1},
+    {"name": "ar_lora", "type": "text", "scope": "session", "session_option": "yue2.ar_lora", "label": "ar_lora", "label_en": "AR LoRA adapter", "default": ""},
+    {"name": "ar_lora_scale", "type": "number", "scope": "session", "session_option": "yue2.ar_lora_scale", "label": "ar_lora_scale", "label_en": "AR LoRA strength", "default": 1, "step": 0.1},
     {"name": "main_gguf", "type": "choice", "scope": "session", "session_option": "yue2.model_gguf", "label": "main_gguf", "label_en": "Main weights", "default": "yue2-3b-q8_0.gguf", "choices": ["yue2-3b-q8_0.gguf", "yue2-3b-q4_0.gguf", "yue2-3b-bf16.gguf"], "info": "Reload the model after changing this value."},
     {"name": "vae_gguf", "type": "choice", "scope": "session", "session_option": "yue2.vae_gguf", "label": "vae_gguf", "label_en": "VAE weights", "default": "yue2-vae-f16.gguf", "choices": ["yue2-vae-f16.gguf", "yue2-vae-f32.gguf"], "info": "Reload the model after changing this value."},
     {"name": "style", "type": "text", "label": "style", "label_en": "Style", "default": "English, indie pop, bright acoustic guitar, soft drums, warm lead vocal, polished demo mix", "placeholder": "English, city pop, groovy bass, synth, energetic vocal"},

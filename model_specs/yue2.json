@@ -211,13 +211,13 @@
     ],
     "session": [
       {
-        "name": "lora",
+        "name": "ar_lora",
         "type": "string",
         "description": "Unfused AR LoRA safetensors file. Absolute path or relative to the model root. Requires session reload.",
         "required": false
       },
       {
-        "name": "lora_scale",
+        "name": "ar_lora_scale",
         "type": "float",
         "description": "AR LoRA delta scale; zero disables the adapter. Requires session reload.",
         "required": false,
