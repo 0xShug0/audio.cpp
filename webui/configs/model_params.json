@@ -1,4 +1,36 @@
 {
+  "canary_asr": [
+    {"name": "target_language", "type": "choice", "label": "Target language", "default": "", "choices": ["", "en", "de", "es", "fr"]},
+    {"name": "pnc", "type": "bool", "label": "Punctuation and capitalization", "default": true},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "Audio chunk mode", "default": "auto", "choices": ["auto", "fixed", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "Audio chunk duration (s)", "default": 40, "minimum": 0.02, "maximum": 40, "step": 0.1}
+  ],
+  "cohere_asr": [
+    {"name": "pnc", "type": "bool", "label": "Punctuation and capitalization", "default": true},
+    {"name": "audio_chunk_mode", "type": "choice", "label": "Audio chunk mode", "default": "auto", "choices": ["auto", "quiet_energy", "fixed", "none"]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "Audio chunk duration (s)", "default": 35, "minimum": 0.04, "maximum": 35, "step": 0.1}
+  ],
+  "moss_transcribe_diarize": [
+    {"name": "instruct", "type": "text", "label": "Instruction", "default": "", "lines": 3}
+  ],
+  "apollo": [
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "Audio chunk duration (s)", "default": 0, "minimum": 0, "step": 1},
+    {"name": "audio_chunk_overlap_sec", "type": "number", "label": "Audio chunk overlap (s)", "default": 1, "minimum": 0, "step": 0.1},
+    {"name": "edge_pad_duration_sec", "type": "number", "label": "Edge padding (s)", "default": 0, "minimum": 0, "step": 0.1}
+  ],
+  "universr": [
+    {"name": "input_sample_rate", "type": "choice", "label": "Input bandwidth (Hz)", "default": "", "choices": ["", 8000, 12000, 16000, 24000]},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "Audio chunk duration (s)", "default": 0, "minimum": 0, "step": 1},
+    {"name": "sampler_mode", "type": "choice", "label": "Sampler", "default": "midpoint", "choices": ["euler", "midpoint", "rk4"]},
+    {"name": "num_inference_steps", "type": "number", "label": "Inference steps", "default": 4, "minimum": 1, "step": 1},
+    {"name": "guidance_scale", "type": "number", "label": "Guidance scale", "default": 1.5, "minimum": 0, "step": 0.1}
+  ],
+  "pulsevad": [
+    {"name": "threshold", "type": "slider", "label": "Speech threshold", "default": 0.5, "minimum": 0, "maximum": 1, "step": 0.01},
+    {"name": "hop_size_samples", "type": "number", "label": "Hop size (samples)", "default": 1600, "minimum": 1, "step": 1},
+    {"name": "min_speech_duration_ms", "type": "number", "label": "Minimum speech (ms)", "default": 100, "minimum": 0, "step": 1},
+    {"name": "min_silence_duration_ms", "type": "number", "label": "Minimum silence (ms)", "default": 100, "minimum": 0, "step": 1}
+  ],
   "echo_tts": [
     {"name": "num_inference_steps", "type": "slider", "label": "num_inference_steps", "label_en": "Sampling steps", "default": 40, "minimum": 8, "maximum": 40, "step": 1, "precision": 0, "info": "Euler sampler steps."},
     {"name": "text_guidance_scale", "type": "slider", "label": "text_guidance_scale", "label_en": "Text guidance", "default": 3.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
