@@ -232,3 +232,34 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 | `yue2.nar_graph_arena_mb` | MiB integer >= 1 | `6144` | NAR acoustic flow graph arena size. |
 | `yue2.vae_graph_arena_mb` | MiB integer >= 1 | `1536` | VAE decode graph arena size. |
 | `yue2.attention` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |
+
+## Parity Probes
+
+The parity probes compare the port against tensors dumped from the Python
+reference without adding reference-only inputs to the request surface. Build
+them with `-DENGINE_BUILD_TESTS=ON` (or `-DENGINE_BUILD_EXTENDED_TESTS=ON` /
+`-DENGINE_BUILD_MODEL_TESTS=ON`).
+
+| Probe | Reference dump | Compares |
+|---|---|---|
+| `yue2_vae_parity_probe` | `tests/yue2/yue2_vae_reference_dump.py` | VAE encode/decode planar tensors. |
+| `yue2_nar_parity_probe` | `tests/yue2/yue2_nar_reference_dump.py` | NAR acoustic-flow latents. |
+
+`yue2_nar_reference_dump.py` runs ABC and semantic sampling greedily, draws the
+same fp32 noise `yue2.nar.song_chunks` uses, and writes `prefix.i32`,
+`codec.i32`, `noise.f32`, `latents_ref.f32` and `metadata.json`.
+`yue2_nar_parity_probe` feeds exactly those tensors through `Yue2ArRuntime` /
+`Yue2NarRuntime` and reports `max_abs`, `rmse` and `cosine` against
+`latents_ref.f32`:
+
+```bash
+python tests/yue2/yue2_nar_reference_dump.py --reference-root reference/YuE \
+    --model models/YuE2-3B --vae models/YuE2-Vae --out-dir /tmp/yue2nar
+build/bin/yue2_nar_parity_probe --model models/Yue2-3B-GGUF \
+    --reference /tmp/yue2nar --backend cuda
+```
+
+Measured cosine is `>= 0.9999` with the bf16 package and `>= 0.995` with the
+shipped q8_0 package, which accumulates more error over long prefixes. Use
+`--min-cosine` / `--max-rmse` for a stricter gate, and `--model-gguf` /
+`--weight-type` to match the deployment under test.

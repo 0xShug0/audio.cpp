@@ -2474,6 +2474,18 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(yue2_vae_parity_probe PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
+    # The NAR probe uses the YuE2 model runtime, which only exists when the
+    # model composite links it; the VAE probe above only needs framework code.
+    if ("yue2" IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(yue2_nar_parity_probe
+            tests/yue2/yue2_nar_parity_probe.cpp
+        )
+        target_link_libraries(yue2_nar_parity_probe PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(yue2_nar_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endif()
+
     add_executable(sheetsage2_decoder_parity_probe
         src/models/sheetsage/runtime.cpp
         tests/yue2/sheetsage2_decoder_parity_probe.cpp
