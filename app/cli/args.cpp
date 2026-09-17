@@ -199,4 +199,25 @@ engine::core::BackendType parse_backend(const std::string & value) {
     throw std::runtime_error("unsupported backend: " + value);
 }
 
+engine::audio::WavSampleFormat parse_wav_sample_format(const std::string & value) {
+    if (value == "pcm16") {
+        return engine::audio::WavSampleFormat::Pcm16;
+    }
+    if (value == "pcm24") {
+        return engine::audio::WavSampleFormat::Pcm24;
+    }
+    if (value == "float32") {
+        return engine::audio::WavSampleFormat::Float32;
+    }
+    throw std::runtime_error("unsupported --out-format: " + value + " (expected pcm16, pcm24, or float32)");
+}
+
+engine::audio::WavWriteOptions wav_write_options_from_cli(int argc, char ** argv) {
+    engine::audio::WavWriteOptions options;
+    if (const auto value = find_arg(argc, argv, "--out-format")) {
+        options.format = parse_wav_sample_format(*value);
+    }
+    return options;
+}
+
 }  // namespace minitts::cli

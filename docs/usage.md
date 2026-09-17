@@ -35,6 +35,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--language` | language-aware models | Language code. |
 | `--out` | single-primary-output models | Output file path, such as WAV for audio tasks or MIDI/JSON for MuScriptor. |
 | `--out-dir` | multi-output or batch models | Output directory. |
+| `--out-format` | audio outputs written by `--out` / `--out-dir` | WAV sample format: `pcm16` (default), `pcm24`, or `float32`. `float32` keeps samples above full scale instead of clipping them. |
 | `--segments-out` | VAD | Speech segments JSON. |
 | `--vad-chunks-out` | offline VAD | VAD-based audio chunk windows JSON. |
 | `--turns-out` | diarization | Speaker turns JSON. |

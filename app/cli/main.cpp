@@ -144,6 +144,7 @@ void print_task_list_help() {
         << "  Outputs:\n"
         << "    --out <file>\n"
         << "    --out-dir <dir>  Write named multi-audio outputs or batch request outputs\n"
+        << "    --out-format pcm16|pcm24|float32  WAV sample format for --out/--out-dir audio, default pcm16\n"
         << "    --text-out <txt>\n"
         << "    --segments-out <json>\n"
         << "    --vad-chunks-out <json>  Write offline VAD-based chunk windows\n"
@@ -560,7 +561,8 @@ void run_streaming(
                 out_dir,
                 std::nullopt,
                 std::nullopt,
-                std::nullopt);
+                std::nullopt,
+                outputs.wav_options);
             for (const auto & activity : event.voice_activity) {
                 std::cout << "event=";
                 switch (activity.kind) {
@@ -593,7 +595,8 @@ void run_streaming(
         outputs.output_dir,
         outputs.segments_base,
         outputs.turns_base,
-        outputs.words_base);
+        outputs.words_base,
+        outputs.wav_options);
     if (text_out.has_value()) {
         write_text_output(result, *text_out, "text_out");
     }
@@ -832,6 +835,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
         omp_set_num_threads(threads);
 #endif
         session_options.options = collect_key_value_args(argc, argv, "--session-option");
+        // Parsed before the model loads so a bad value fails fast.
+        const auto wav_options = wav_write_options_from_cli(argc, argv);
         auto model = registry.load(load_request);
         auto session = model->create_task_session(task_spec, session_options);
         const auto voice_state_out = optional_path_arg(argc, argv, "--voice-state-out");
@@ -845,6 +850,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             optional_path_arg(argc, argv, "--turns-out"),
             words_out,
             optional_path_arg(argc, argv, "--batch-manifest-out"),
+            wav_options,
         };
         const auto input_format = find_arg(argc, argv, "--input-format").value_or("s16le");
 
@@ -960,7 +966,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
                 outputs.output_dir,
                 outputs.segments_base,
                 outputs.turns_base,
-                words_out);
+                words_out,
+                outputs.wav_options);
             if (vad_chunks_out.has_value()) {
                 write_vad_chunks_output(
                     result,
