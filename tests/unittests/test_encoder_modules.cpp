@@ -1,9 +1,13 @@
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/conformer_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/graph_optimizer.h"
 
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -11,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 namespace {
 
@@ -33,7 +38,7 @@ void require_allclose(
     }
     for (size_t i = 0; i < actual.size(); ++i) {
         const float diff = std::fabs(actual[i] - expected[i]);
-        if (diff > atol) {
+        if (!std::isfinite(diff) || diff > atol) {
             std::ostringstream oss;
             oss << label << " mismatch at " << i << ": expected " << expected[i] << ", got " << actual[i]
                 << ", diff=" << diff;
@@ -788,10 +793,310 @@ void test_relative_attention_specialized_flash_matches_reference_on_realistic_sh
     }
 }
 
+void test_glu_contiguous_gate_opt_in() {
+    using namespace engine;
+    modules::GLUModule legacy = {};
+    legacy = []() -> modules::GLUModule { return {}; }();
+    const std::vector<float> data{1, -2, 3, 4, 0, 1, -1, 2, -3, 2, 1, -1, -2, 0, 2, 1};
+    std::vector<float> expected;
+    for (size_t row = 0; row < 2; ++row) {
+        for (size_t col = 0; col < 4; ++col) {
+            expected.push_back(data[row * 8 + col] / (1.0f + std::exp(-data[row * 8 + col + 4])));
+        }
+    }
+    require(!modules::GLUConfig{}.contiguous_gate, "GLU layout change must be opt-in");
+    require(!modules::ConformerBlockConfig{}.contiguous_glu_gate, "Conformer layout change must be opt-in");
+    for (const auto type : {core::BackendType::Cpu, core::BackendType::Cuda}) {
+        if (type == core::BackendType::Cuda && !backend_is_available(type)) {
+            continue;
+        }
+        for (const bool opt_in : {false, true}) {
+            if (type == core::BackendType::Cuda && !opt_in) {
+                continue;  // Legacy strided sigmoid is not supported on CUDA.
+            }
+            ModuleRunner runner;
+            set_runner_backend(runner, type);
+            runner.ctx.backend_type = type;
+            auto input = runner.make_f32(core::TensorShape::from_dims({1, 2, 8}));
+            const auto module = opt_in ? modules::GLUModule(modules::GLUConfig{true}) : legacy;
+            auto output = module.build(runner.ctx, input);
+            auto graph = ggml_new_graph_custom(runner.ggml, kTestGraphNodes, false);
+            ggml_build_forward_expand(graph, output.tensor);
+            bool found_sigmoid = false;
+            for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+                auto node = ggml_graph_node(graph, i);
+                if (node->op == GGML_OP_UNARY && ggml_get_unary_op(node) == GGML_UNARY_OP_SIGMOID) {
+                    require(ggml_is_contiguous(node->src[0]) == opt_in, "GLU gate layout opt-in");
+                    found_sigmoid = true;
+                }
+            }
+            require(found_sigmoid, "GLU sigmoid node");
+            runner.allocate_tensors();
+            core::write_tensor_f32(input, data);
+            require_allclose(runner.run_f32(output), expected, 1e-5f, "GLU output");
+        }
+    }
+}
+
+void test_depthwise_subsampling_stage_masks() {
+    using namespace engine;
+    ModuleRunner runner;
+    auto input = runner.make_f32(core::TensorShape::from_dims({1, 8, 4}));
+    auto first_mask = runner.make_i32(core::TensorShape::from_dims({1, 4}));
+    auto second_mask = runner.make_i32(core::TensorShape::from_dims({1, 2}));
+    auto kernel = runner.make_f32(core::TensorShape::from_dims({1, 1, 1, 1}));
+    auto bias = runner.make_f32(core::TensorShape::from_dims({1}));
+    auto depth_bias = runner.make_f32(core::TensorShape::from_dims({1}));
+    auto point_kernel = runner.make_f32(core::TensorShape::from_dims({1, 1, 1, 1}));
+    auto point_bias = runner.make_f32(core::TensorShape::from_dims({1}));
+    auto proj = runner.make_f32(core::TensorShape::from_dims({1, 1}));
+    auto proj_bias = runner.make_f32(core::TensorShape::from_dims({1}));
+    modules::DepthwiseConvSubsamplingWeights weights{
+        {kernel, bias}, {{{kernel, depth_bias}, {point_kernel, point_bias}}}, {proj, proj_bias}};
+    const modules::DepthwiseConvSubsamplingModule module({4, 1, 1, 1, 2, 0, true});
+    auto masked = module.build(runner.ctx, input, weights, {first_mask, second_mask});
+    auto unmasked = module.build(runner.ctx, input, weights);
+    require(masked.shape.dims[1] == 2, "two-stage subsampling output length");
+    bool rejected = false;
+    try {
+        module.build(runner.ctx, input, weights, {first_mask});
+    } catch (const std::runtime_error &) {
+        rejected = true;
+    }
+    require(rejected, "subsampling rejects missing stage masks");
+    runner.allocate_tensors();
+    std::vector<float> data(32);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<float>(i + 1);
+    core::write_tensor_f32(input, data);
+    core::write_tensor_f32(kernel, {1});
+    core::write_tensor_f32(bias, {1});
+    core::write_tensor_f32(depth_bias, {2});
+    core::write_tensor_f32(point_kernel, {3});
+    core::write_tensor_f32(point_bias, {5});
+    core::write_tensor_f32(proj, {2});
+    core::write_tensor_f32(proj_bias, {7});
+    core::write_tensor_i32(first_mask, {1, 1, 1, 0});
+    core::write_tensor_i32(second_mask, {1, 0});
+    require_allclose(runner.run_f32(masked), {41, 7}, 1e-6f, "subsampling tail mask");
+    require_allclose(runner.run_f32(unmasked), {41, 137}, 1e-6f, "subsampling unmasked");
+    core::write_tensor_i32(first_mask, {1, 1, 0, 0});
+    core::write_tensor_i32(second_mask, {1, 1});
+    require_allclose(runner.run_f32(masked), {41, 29}, 1e-6f, "subsampling earlier stage mask");
+}
+
+class AffineTestSource final : public engine::assets::TensorSource {
+public:
+    std::unordered_map<std::string, std::vector<float>> values;
+    const std::filesystem::path & source_path() const noexcept override { return path_; }
+    bool has_tensor(std::string_view name) const noexcept override { return values.count(std::string(name)) != 0; }
+    engine::assets::TensorMetadata require_metadata(std::string_view name) const override {
+        return {std::string(name), "f32", {static_cast<int64_t>(values.at(std::string(name)).size())}};
+    }
+    std::vector<engine::assets::TensorMetadata> tensors() const override {
+        std::vector<engine::assets::TensorMetadata> result;
+        for (const auto & entry : values) result.push_back(require_metadata(entry.first));
+        return result;
+    }
+    engine::assets::RawTensorData require_tensor_data(std::string_view name) const override {
+        engine::assets::RawTensorData result;
+        result.metadata = require_metadata(name);
+        const auto & data = values.at(std::string(name));
+        result.bytes.resize(data.size() * sizeof(float));
+        std::memcpy(result.bytes.data(), data.data(), result.bytes.size());
+        return result;
+    }
+    std::vector<float> require_f32(std::string_view name,
+        const std::optional<std::vector<int64_t>> & shape) const override {
+        require(!shape || *shape == require_metadata(name).shape, "affine source shape");
+        return values.at(std::string(name));
+    }
+    std::optional<std::vector<float>> optional_f32(std::string_view name,
+        const std::optional<std::vector<int64_t>> & shape) const override {
+        return has_tensor(name) ? std::optional<std::vector<float>>(require_f32(name, shape)) : std::nullopt;
+    }
+    int64_t require_i64_scalar(std::string_view) const override { throw std::runtime_error("not an integer tensor"); }
+private:
+    std::filesystem::path path_{"affine-test"};
+};
+
+void test_batch_norm_eval_binding() {
+    using namespace engine;
+    ModuleRunner runner;
+    core::BackendWeightStore store(runner.backend, core::BackendType::Cpu, "affine-test", 1024 * 1024);
+    AffineTestSource source;
+    source.values = {{"bn.weight", {2, -3}}, {"bn.bias", {1, 2}},
+        {"bn.running_mean", {4, -2}}, {"bn.running_var", {3, 8}}};
+    auto weights = modules::binding::batch_norm_eval_from_source(store, source, "bn", 2, 1.0f);
+    store.upload();
+    std::vector<float> scale, bias;
+    core::read_tensor_f32_into(weights.scale.tensor, scale);
+    core::read_tensor_f32_into(weights.bias.tensor, bias);
+    require_allclose(scale, {1, -1}, 1e-6f, "batch norm eval scale");
+    require_allclose(bias, {-3, 0}, 1e-6f, "batch norm eval bias");
+}
+
+void test_feed_forward_activation_opt_in() {
+    using namespace engine;
+    ModuleRunner runner;
+    auto input = runner.make_f32(core::TensorShape::from_dims({1, 1, 4}));
+    auto identity = runner.make_f32(core::TensorShape::from_dims({4, 4}));
+    modules::FeedForwardWeights weights{identity, std::nullopt, identity, std::nullopt};
+    modules::FeedForwardConfig config{4, 4, false};
+    require(config.activation == modules::FeedForwardActivation::Gelu, "default activation remains GELU");
+    auto legacy = modules::FeedForwardModule(config).build(runner.ctx, input, weights);
+    config.activation = modules::FeedForwardActivation::Relu;
+    auto relu = modules::FeedForwardModule(config).build(runner.ctx, input, weights);
+    runner.allocate_tensors();
+    const std::vector<float> data{-2, -1, 1, 2};
+    core::write_tensor_f32(input, data);
+    core::write_tensor_f32(identity, {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
+    std::vector<float> expected;
+    for (float v : data) expected.push_back(0.5f * v * (1.0f + std::erf(v / std::sqrt(2.0f))));
+    require_allclose(runner.run_f32(legacy), expected, 1e-6f, "legacy GELU");
+    require_allclose(runner.run_f32(relu), {0,0,1,2}, 1e-6f, "opt-in ReLU");
+}
+
+void test_cached_decoder_block_matches_composition(bool flash_cross) {
+    using namespace engine;
+    using core::TensorShape;
+    constexpr int64_t hidden = 32;
+    ModuleRunner runner;
+    std::vector<std::pair<core::TensorValue, std::vector<float>>> initializers;
+    auto param = [&](const TensorShape & shape) {
+        auto tensor = runner.make_f32(shape);
+        initializers.emplace_back(tensor, make_patterned_f32(shape.num_elements(), 0.37f, 0.07f));
+        return tensor;
+    };
+    auto norm = [&]() -> modules::NormWeights {
+        auto weight = param(TensorShape::from_dims({hidden}));
+        initializers.back().second.assign(hidden, 1.0f);
+        return {weight, param(TensorShape::from_dims({hidden}))};
+    };
+    modules::TransformerDecoderBlockWeights w;
+    w.norm1 = norm(); w.norm2 = norm(); w.norm3 = norm();
+    w.self_attention.qkv_weight = param(TensorShape::from_dims({3 * hidden, hidden}));
+    w.self_attention.qkv_bias = param(TensorShape::from_dims({3 * hidden}));
+    w.self_attention.out_weight = param(TensorShape::from_dims({hidden, hidden}));
+    w.self_attention.out_bias = param(TensorShape::from_dims({hidden}));
+    w.cross_attention.q_weight = param(TensorShape::from_dims({hidden, hidden}));
+    w.cross_attention.q_bias = param(TensorShape::from_dims({hidden}));
+    w.cross_attention.out_weight = param(TensorShape::from_dims({hidden, hidden}));
+    w.cross_attention.out_bias = param(TensorShape::from_dims({hidden}));
+    w.feed_forward = {param(TensorShape::from_dims({64, hidden})), param(TensorShape::from_dims({64})),
+        param(TensorShape::from_dims({hidden, 64})), param(TensorShape::from_dims({hidden}))};
+    auto input = runner.make_f32(TensorShape::from_dims({1, 1, hidden}));
+    auto slot = runner.make_i32(TensorShape::from_dims({1}));
+    auto mask = core::make_tensor(runner.ctx, GGML_TYPE_F16, TensorShape::from_dims({1, 8}));
+    auto memory_mask = runner.make_i32(TensorShape::from_dims({1, 3}));
+    auto flash_mask = core::make_tensor(runner.ctx, GGML_TYPE_F16, TensorShape::from_dims({1, 1, 1, 3}));
+    modules::CrossAttentionKeyValue memory{param(TensorShape::from_dims({1, 1, 3, hidden})),
+        param(TensorShape::from_dims({1, 1, 3, hidden}))};
+    std::vector<core::TensorValue> caches;
+    for (int i = 0; i < 4; ++i) caches.push_back(core::make_tensor(runner.ctx, GGML_TYPE_F16,
+        TensorShape::from_dims({1, 8, 1, hidden})));
+    modules::TransformerDecoderBlockConfig config{hidden, 1, 64};
+    require(!config.use_flash_cross_attention, "cached cross flash remains opt-in");
+    config.use_flash_cross_attention = flash_cross;
+    config.activation = modules::FeedForwardActivation::Relu;
+    config.use_packed_qkv = true;
+    config.use_packed_kv = true;
+    auto actual = modules::TransformerDecoderBlockModule(config).build_cached_tail(runner.ctx, input, w,
+        caches[0], caches[1], slot, mask, memory, flash_cross ? flash_mask : memory_mask);
+    modules::AttentionConfig attention{hidden, 1, true};
+    attention.causal = true;
+    attention.use_packed_qkv = true;
+    auto y = modules::LayerNormModule({hidden}).build(runner.ctx, input, w.norm1);
+    y = modules::SelfAttentionModule(attention).build_cached_tail(runner.ctx, y, w.self_attention,
+        caches[2], caches[3], slot, mask).output;
+    auto expected = modules::AddModule().build(runner.ctx, input, y);
+    y = modules::LayerNormModule({hidden}).build(runner.ctx, expected, w.norm2);
+    modules::AttentionConfig cross_attention{hidden, 1, true};
+    cross_attention.use_packed_kv = true;
+    y = modules::CrossAttentionModule(cross_attention).build_cached(runner.ctx, y, memory, w.cross_attention, memory_mask);
+    expected = modules::AddModule().build(runner.ctx, expected, y);
+    y = modules::LayerNormModule({hidden}).build(runner.ctx, expected, w.norm3);
+    y = modules::LinearModule({hidden, 64, true}).build(runner.ctx, y, {w.feed_forward.fc1_weight, w.feed_forward.fc1_bias});
+    y = modules::ReluModule().build(runner.ctx, y);
+    y = modules::LinearModule({64, hidden, true}).build(runner.ctx, y, {w.feed_forward.fc2_weight, w.feed_forward.fc2_bias});
+    expected = modules::AddModule().build(runner.ctx, expected, y);
+    runner.allocate_tensors();
+    for (const auto & item : initializers) core::write_tensor_f32(item.first, item.second);
+    for (const auto & cache : caches) core::write_tensor_f16(cache, std::vector<float>(8 * hidden, 0));
+    core::write_tensor_i32(memory_mask, {1, 1, 0});
+    core::write_tensor_f16(flash_mask, {0, 0, -std::numeric_limits<float>::infinity()});
+    for (int32_t step = 0; step < 3; ++step) {
+        core::write_tensor_f32(input, make_patterned_f32(hidden, 0.4f + step, 0.3f));
+        core::write_tensor_i32(slot, &step, 1);
+        std::vector<float> causal(8, -std::numeric_limits<float>::infinity());
+        std::fill_n(causal.begin(), step + 1, 0.0f);
+        core::write_tensor_f16(mask, causal);
+        require_allclose(runner.run_f32(actual), runner.run_f32(expected), 1e-5f, "cached decoder composition");
+    }
+}
+
+void test_cached_cross_flash_masks() {
+    using namespace engine;
+    using core::TensorShape;
+    ModuleRunner runner;
+    modules::AttentionConfig config{64, 2, false};
+    config.use_packed_kv = true;
+    const modules::CrossAttentionModule module(config);
+    auto query = runner.make_f32(TensorShape::from_dims({2, 2, 64}));
+    auto weight = runner.make_f32(TensorShape::from_dims({64, 64}));
+    modules::AttentionWeights weights;
+    weights.q_weight = weight;
+    weights.out_weight = weight;
+    modules::CrossAttentionKeyValue kv{
+        runner.make_f32(TensorShape::from_dims({2, 2, 3, 32})),
+        runner.make_f32(TensorShape::from_dims({2, 2, 3, 32}))};
+    auto keep = runner.make_i32(TensorShape::from_dims({2, 3}));
+    auto mask = core::make_tensor(runner.ctx, GGML_TYPE_F16, TensorShape::from_dims({2, 1, 2, 3}));
+    auto shared_mask = core::make_tensor(runner.ctx, GGML_TYPE_F16, TensorShape::from_dims({1, 1, 2, 3}));
+    auto per_head_mask = core::make_tensor(runner.ctx, GGML_TYPE_F16, TensorShape::from_dims({2, 2, 2, 3}));
+    auto expected = module.build_cached(runner.ctx, query, kv, weights, keep);
+    auto actual = module.build_cached_flash(runner.ctx, query, kv, weights, mask);
+    auto shared = module.build_cached_flash(runner.ctx, query, kv, weights, shared_mask);
+    auto per_head = module.build_cached_flash(runner.ctx, query, kv, weights, per_head_mask);
+    for (const auto & invalid : {keep,
+        runner.make_f32(TensorShape::from_dims({2, 1, 2, 3})),
+        core::make_tensor(runner.ctx, GGML_TYPE_F16, TensorShape::from_dims({2, 1, 1, 3})),
+        core::make_tensor(runner.ctx, GGML_TYPE_F16, TensorShape::from_dims({2, 1, 2, 4}))}) {
+        bool rejected = false;
+        try { module.build_cached_flash(runner.ctx, query, kv, weights, invalid); }
+        catch (const std::runtime_error &) { rejected = true; }
+        require(rejected, "cached flash rejects invalid mask contracts");
+    }
+    runner.allocate_tensors();
+    std::vector<float> identity(64 * 64, 0);
+    for (size_t i = 0; i < 64; ++i) identity[i * 64 + i] = 1;
+    core::write_tensor_f32(weight, identity);
+    core::write_tensor_f32(query, make_patterned_f32(256, 0.2f, 0.3f));
+    core::write_tensor_f32(kv.key, make_patterned_f32(384, 0.4f, 0.2f));
+    core::write_tensor_f32(kv.value, make_patterned_f32(384, 0.7f, 0.1f));
+    const float excluded = -std::numeric_limits<float>::infinity();
+    core::write_tensor_i32(keep, {1, 1, 0, 1, 0, 1});
+    core::write_tensor_f16(mask, {0, 0, excluded, 0, 0, excluded, 0, excluded, 0, 0, excluded, 0});
+    require_allclose(runner.run_f32(actual), runner.run_f32(expected), 1e-5f, "batched cached flash padding");
+    core::write_tensor_i32(keep, {1, 1, 0, 1, 1, 0});
+    core::write_tensor_f16(shared_mask, {0, 0, excluded, 0, 0, excluded});
+    std::vector<float> per_head_values(24);
+    for (size_t i = 0; i < per_head_values.size(); ++i) per_head_values[i] = i % 3 == 2 ? excluded : 0;
+    core::write_tensor_f16(per_head_mask, per_head_values);
+    require_allclose(runner.run_f32(shared), runner.run_f32(expected), 1e-5f, "shared cached flash mask");
+    require_allclose(runner.run_f32(per_head), runner.run_f32(expected), 1e-5f, "per-head cached flash mask");
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_glu_contiguous_gate_opt_in();
+        test_depthwise_subsampling_stage_masks();
+        test_batch_norm_eval_binding();
+        test_feed_forward_activation_opt_in();
+        test_cached_decoder_block_matches_composition(false);
+        test_cached_decoder_block_matches_composition(true);
+        test_cached_cross_flash_masks();
         test_graph_optimizer_elides_metadata_nodes_without_changing_output();
         test_graph_optimizer_two_sided_broadcast_binary_matches_repeat();
         test_graph_optimizer_unary_broadcast_scale_matches_repeat();

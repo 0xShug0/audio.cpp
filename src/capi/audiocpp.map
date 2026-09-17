@@ -1,0 +1,14 @@
+/* Restricts the ELF dynamic symbol table to the C ABI.
+ *
+ * C_VISIBILITY_PRESET/CXX_VISIBILITY_PRESET only reach this target's own
+ * sources; the static libraries linked in (ggml, cJSON, sentencepiece, ...)
+ * were compiled without -fvisibility=hidden, so without this their symbols
+ * are re-exported from libaudiocpp and can collide with whatever the host
+ * application has already loaded.
+ */
+AUDIOCPP_0 {
+    global:
+        audiocpp_*;
+    local:
+        *;
+};

@@ -224,6 +224,44 @@ core::TensorValue cache_view(
         GGML_TYPE_F32);
 }
 
+void apply_batched_static_rope(
+    core::ModuleBuildContext & ctx,
+    const QwenDecoderLayerConfig & config,
+    const QwenDecoderLayerWeights & weights,
+    const core::TensorValue & positions,
+    core::TensorValue & q,
+    core::TensorValue & k,
+    int64_t dim) {
+    const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
+        ? &*weights.rope_frequency_factors
+        : nullptr;
+    if (positions.shape.rank == 1 && positions.shape.dims[0] == q.shape.dims[1]) {
+        q = RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, q, positions, rope_factors);
+        k = RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, k, positions, rope_factors);
+        return;
+    }
+    if (q.shape.dims[1] != 1 || positions.shape.rank != 1 || positions.shape.dims[0] != q.shape.dims[0]) {
+        throw std::runtime_error("Qwen decoder batched static-cache RoPE positions must be [1] or [batch]");
+    }
+    std::vector<core::TensorValue> q_rows;
+    std::vector<core::TensorValue> k_rows;
+    q_rows.reserve(static_cast<size_t>(q.shape.dims[0]));
+    k_rows.reserve(static_cast<size_t>(q.shape.dims[0]));
+    for (int64_t batch = 0; batch < q.shape.dims[0]; ++batch) {
+        auto q_row = SliceModule({0, batch, 1}).build(ctx, q);
+        auto k_row = SliceModule({0, batch, 1}).build(ctx, k);
+        auto pos_row = SliceModule({0, batch, 1}).build(ctx, positions);
+        if (ctx.backend_type == core::BackendType::Vulkan) {
+            // Vulkan RoPE cannot address a position view at a non-aligned byte offset.
+            pos_row = core::ensure_backend_addressable_layout(ctx, pos_row);
+        }
+        q_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, q_row, pos_row, rope_factors));
+        k_rows.push_back(RoPEModule({dim, config.rope_type, config.rope_theta}).build(ctx, k_row, pos_row, rope_factors));
+    }
+    q = concat_all(ctx, q_rows, 0);
+    k = concat_all(ctx, k_rows, 0);
+}
+
 LinearWeights require_linear(const LinearWeights & weights, bool use_bias, const char * name) {
     if (use_bias && !weights.bias.has_value()) {
         throw std::runtime_error(std::string(name) + " bias is required");
@@ -680,7 +718,40 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     const core::TensorValue & cache_value,
     const std::optional<core::TensorValue> & cache_slot,
     const core::TensorValue & attention_mask) const {
+    return build_static_cache_impl(ctx, graph, input, positions, weights, cache_key, cache_value,
+                                   cache_slot, attention_mask, false);
+}
+
+QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_block(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenDecoderLayerWeights & weights,
+    const core::TensorValue & cache_key,
+    const core::TensorValue & cache_value,
+    const std::optional<core::TensorValue> & cache_slot,
+    const core::TensorValue & attention_mask) const {
+    return build_static_cache_impl(ctx, graph, input, positions, weights, cache_key, cache_value,
+                                   cache_slot, attention_mask, true);
+}
+
+QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
+    core::ModuleBuildContext & ctx,
+    ggml_cgraph * graph,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const QwenDecoderLayerWeights & weights,
+    const core::TensorValue & cache_key,
+    const core::TensorValue & cache_value,
+    const std::optional<core::TensorValue> & cache_slot,
+    const core::TensorValue & attention_mask,
+    bool block) const {
     validate_sequence_input(input, config_.hidden_size, "input");
+    if (block && (input.shape.dims[0] != 1 ||
+        config_.runtime.static_cache.update_mode != QwenDecoderStaticCacheUpdateMode::DirectSetRows)) {
+        throw std::runtime_error("Qwen static-cache blocks require a single sequence and DirectSetRows");
+    }
     const int64_t dim = require_head_dim(config_);
     const int64_t kv_repeats = config_.num_attention_heads / config_.num_key_value_heads;
 
@@ -735,8 +806,10 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
                 ? FastKVSetRowsMode::BackendViewOptimized
                 : FastKVSetRowsMode::Exact,
         });
-        attention_key_cache = set_rows.build(ctx, cache_key, k, *cache_slot);
-        attention_value_cache = set_rows.build(ctx, cache_value, v, *cache_slot);
+        attention_key_cache = block ? set_rows.build_block(ctx, cache_key, k, *cache_slot)
+                                    : set_rows.build(ctx, cache_key, k, *cache_slot);
+        attention_value_cache = block ? set_rows.build_block(ctx, cache_value, v, *cache_slot)
+                                      : set_rows.build(ctx, cache_value, v, *cache_slot);
         if (config_.activation_cast.enabled && config_.activation_cast.after_static_cache_update) {
             attention_key_cache = activation_cast(ctx, attention_key_cache, config_.activation_cast);
             attention_value_cache = activation_cast(ctx, attention_value_cache, config_.activation_cast);
@@ -806,7 +879,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
     context = core::reshape_tensor(
         ctx,
         context,
-        core::TensorShape::from_dims({1, 1, config_.num_attention_heads * dim}));
+        core::TensorShape::from_dims({1, block ? input.shape.dims[1] : 1, config_.num_attention_heads * dim}));
 
     auto attn_out = LinearModule(
                         {
@@ -886,11 +959,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
     auto v = reshape_qwen_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
 
     if (config_.position_encoding == QwenDecoderPositionEncoding::Rotary) {
-        const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
-            ? &*weights.rope_frequency_factors
-            : nullptr;
-        q = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, q, positions, rope_factors);
-        k = RoPEModule({dim, config_.rope_type, config_.rope_theta}).build(ctx, k, positions, rope_factors);
+        apply_batched_static_rope(ctx, config_, weights, positions, q, k, dim);
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
             q = activation_cast(ctx, q, config_.activation_cast);
             k = activation_cast(ctx, k, config_.activation_cast);

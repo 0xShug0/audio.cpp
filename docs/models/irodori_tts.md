@@ -65,7 +65,7 @@ audiocpp_cli --task clon --family irodori_tts \
   --out out.wav
 ```
 
-## Request Options
+## Request Options (use with `--request-option`)
 
 v4 uses the normalized schema-v1 option names directly. New requests should use these names:
 
@@ -91,7 +91,7 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `seed` | integer | random | Generation seed. |
 | `trim_tail` | bool | `true` | Trim trailing silence-like samples. |
 
-## Session Options
+## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|

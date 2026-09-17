@@ -41,15 +41,25 @@ path:
 --request-option audio_chunk_overlap_sec=2
 ```
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Source waveform to super-resolve. |
-| `--request-option num_inference_steps=<n>` | integer > 0 | `50` | DDIM sampler steps. |
-| `--request-option guidance_scale=<f>` | float | `3.5` | Classifier-free guidance scale. |
-| `--request-option ddim_eta=<f>` | float >= 0 | `1.0` | DDIM eta. |
-| `--request-option audio_chunk_duration_sec=<seconds>` | seconds | `15` | Long-audio chunk size. |
-| `--request-option audio_chunk_overlap_sec=<seconds>` | seconds | `2` | Overlap between long-audio chunks. |
-| `--request-option seed=<n>` | integer, `-1` for random | `42` | Sampler seed. |
-| `--session-option audiosr.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `num_inference_steps` | integer > 0 | `50` | DDIM sampler steps. |
+| `guidance_scale` | float | `3.5` | Classifier-free guidance scale. |
+| `ddim_eta` | float >= 0 | `1.0` | DDIM eta. |
+| `audio_chunk_duration_sec` | seconds | `15` | Long-audio chunk size. |
+| `audio_chunk_overlap_sec` | seconds | `2` | Overlap between long-audio chunks. |
+| `seed` | integer, `-1` for random | `42` | Sampler seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `audiosr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |

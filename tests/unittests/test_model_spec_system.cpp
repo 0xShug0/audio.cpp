@@ -1,4 +1,5 @@
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/task_vocabulary.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/model_spec/schema.h"
 #include "engine/framework/io/json.h"
@@ -9,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -1342,6 +1344,112 @@ void test_loading_and_resource_bundle() {
     std::filesystem::remove_all(root);
 }
 
+// Every task name is written down once, and the surfaces that read it agree.
+//
+// They did not. The schema allowed "codec", which no parser mapped to a task
+// kind, so model_specs/miocodec.json threw on load; the spec parser accepted
+// "audio_generation", which the schema rejected; include/audiocpp.h documented
+// "diarization" and "alignment", which nothing accepts; and no test read the
+// shipped specs, so none of it surfaced here.
+void test_task_vocabulary_is_consistent() {
+    std::size_t count = 0;
+    const auto * entries = engine::runtime::task_vocabulary(count);
+    engine::test::require(count > 0, "task vocabulary should not be empty");
+
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto & entry = entries[i];
+        const std::string token(entry.token);
+
+        // The canonical token round-trips through the ABI's own parser.
+        engine::test::require(
+            engine::runtime::parse_voice_task_kind(token) == entry.kind,
+            "task token should parse back to its kind: " + token);
+        engine::test::require_eq(
+            std::string(engine::runtime::to_string(entry.kind)),
+            token,
+            "to_string should return the canonical token");
+
+        // Every spec alias maps to that token.
+        engine::test::require(entry.alias_count > 0,
+                              "task kind should have at least one spec name: " + token);
+        for (std::size_t alias = 0; alias < entry.alias_count; ++alias) {
+            const std::string name(entry.aliases[alias]);
+            engine::test::require_eq(
+                std::string(engine::runtime::task_token_for_spec_name(name)),
+                token,
+                "spec name should map to its token: " + name);
+        }
+    }
+
+    // A name that is neither is rejected rather than guessed at.
+    engine::test::require(
+        engine::runtime::task_token_for_spec_name("codec").empty(),
+        "a name that maps to no task kind should report as such");
+    engine::test::require(
+        engine::runtime::task_token_for_spec_name("diarization").empty(),
+        "the header's old example spelling should not silently resolve");
+}
+
+void test_vad_timestamp_capability() {
+    const auto root = make_temp_root();
+    auto spec = json::parse(schema_v1_spec_text("[]")).as_object();
+    spec["category"] = json::Value::make_string("audio_tools");
+    spec["tasks"] = json::parse(R"(["vad"])");
+    for (const bool segments : {false, true}) {
+        spec["capabilities"] = json::parse(segments ? R"({"vad":["speech_segments"]})" : R"({"vad":["chunk_planning"]})");
+        const auto path = write_text(root, "toy_model.json", json::stringify(json::Value::make_object(spec)));
+        (void)engine::model_spec::load_spec(path);
+        const engine::model_spec::ScopedSpecOverride spec_override(root);
+        const auto capabilities = engine::model_spec::advertised_capabilities("toy_model");
+        engine::test::require(capabilities.has_value(), "VAD capabilities should be projected");
+        engine::test::require_eq(capabilities->supports_timestamps, segments,
+                                "only speech_segments should enable VAD timestamps");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Every task name the shipped specs declare is one the engine can serve.
+//
+// The two that were not -- moss_voicegen declaring the ABI token "vdes" where
+// the spec vocabulary wants "design", and miocodec declaring "codec", which
+// names no task kind -- were found by a binding reading the spec files, not by
+// anything here. Both threw from parse_task_kind at load, so the families were
+// unreachable.
+void test_shipped_model_specs_declare_known_tasks() {
+    const std::filesystem::path specs =
+        std::filesystem::path(AUDIOCPP_SOURCE_DIR) / "model_specs";
+    engine::test::require(std::filesystem::is_directory(specs),
+                          "model_specs should exist at " + specs.string());
+
+    std::vector<std::string> failures;
+    std::size_t checked = 0;
+    for (const auto & entry : std::filesystem::directory_iterator(specs)) {
+        if (entry.path().extension() != ".json") {
+            continue;
+        }
+        const auto spec = engine::model_spec::load_spec(entry.path());
+        const auto * tasks = spec.find("tasks");
+        if (tasks == nullptr || !tasks->is_array()) {
+            continue;
+        }
+        ++checked;
+        for (const auto & task : tasks->as_array()) {
+            const auto name = task.as_string();
+            if (engine::runtime::task_token_for_spec_name(name).empty()) {
+                failures.push_back(entry.path().filename().string() + " declares '" + name + "'");
+            }
+        }
+    }
+
+    for (const auto & failure : failures) {
+        std::cerr << "  unmappable task: " << failure << "\n";
+    }
+    engine::test::require(failures.empty(),
+                          "every shipped spec should declare task names the engine knows (" +
+                              std::to_string(failures.size()) + " did not)");
+    engine::test::require(checked > 0, "should have checked at least one shipped spec");
+}
+
 }  // namespace
 
 int main() {
@@ -1358,6 +1466,9 @@ int main() {
         test_experimental_spec_without_installable_package();
         test_contract_spec_prefers_workspace_over_package_local_spec();
         test_loading_and_resource_bundle();
+        test_task_vocabulary_is_consistent();
+        test_vad_timestamp_capability();
+        test_shipped_model_specs_declare_known_tasks();
     } catch (const std::exception & error) {
         std::cerr << "model_spec_system_test failed: " << error.what() << "\n";
         return 1;

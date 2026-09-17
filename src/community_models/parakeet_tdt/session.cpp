@@ -345,20 +345,83 @@ void ParakeetTDTOfflineSession::prepare(const runtime::SessionPreparationRequest
     int64_t capacity_samples = request.audio->max_input_samples;
     int capacity_channels = request.audio->channels;
     int capacity_sample_rate = request.audio->sample_rate;
-    if (offline_mode_ == "long_form" ||
-        (offline_mode_ == "auto" &&
-         request.audio->max_input_samples / std::max(request.audio->channels, 1) >
-             auto_full_context_max_samples_)) {
+
+    // Mirror the dispatch in run(). vad and fixed take a bounded-window path
+    // whatever offline_mode says, so sizing the graph from offline_mode alone
+    // leaves prepare() and run() disagreeing: a long clip with
+    // audio_chunk_mode=vad gets a graph built for the whole recording and
+    // fails the encoder's relative-position ceiling before a chunk is cut.
+    const auto chunk_mode = engine::audio::parse_audio_chunk_mode(request.options);
+    const bool bounded_windows =
+        chunk_mode == engine::audio::AudioChunkMode::Vad ||
+        chunk_mode == engine::audio::AudioChunkMode::Fixed ||
+        // run() rejects quiet_energy outright. Size it bounded so prepare() does
+        // not pre-empt that with a ceiling error about input run() never encodes.
+        chunk_mode == engine::audio::AudioChunkMode::QuietEnergy ||
+        (chunk_mode == engine::audio::AudioChunkMode::Auto &&
+         (offline_mode_ == "long_form" ||
+          (offline_mode_ == "auto" &&
+           request.audio->max_input_samples / std::max(request.audio->channels, 1) >
+               auto_full_context_max_samples_)));
+
+    if (bounded_windows) {
         capacity_samples =
             left_context_samples_ + center_samples_ + right_context_samples_;
         capacity_channels = 1;
         capacity_sample_rate = assets_->config.frontend.sample_rate;
+
+        // A vad window is capped at audio_chunk_duration_sec, which is free to
+        // exceed the long-form window: the contexts default to 14s in total and
+        // the chunk duration is settable well past that.
+        if (chunk_mode == engine::audio::AudioChunkMode::Vad) {
+            auto chunk_seconds =
+                engine::audio::parse_audio_chunk_seconds_override(request.options);
+            if (!chunk_seconds.has_value()) {
+                chunk_seconds =
+                    engine::audio::parse_audio_chunk_seconds_override(this->options().options);
+            }
+            if (chunk_seconds.has_value() && *chunk_seconds > 0.0F) {
+                // The duration is a ceiling on a span, not a promise of one:
+                // spans are cut from the recording, so none can be longer than
+                // the recording is. Sizing from the configured duration alone
+                // built a 600-second graph for a 10-second clip and failed the
+                // encoder's relative-position ceiling on input that fits
+                // comfortably.
+                double window_seconds = static_cast<double>(*chunk_seconds);
+                if (request.audio->sample_rate > 0) {
+                    const double input_seconds =
+                        static_cast<double>(request.audio->max_input_samples /
+                                            std::max(request.audio->channels, 1)) /
+                        static_cast<double>(request.audio->sample_rate);
+                    if (input_seconds > 0.0) {
+                        window_seconds = std::min(window_seconds, input_seconds);
+                    }
+                }
+                capacity_samples = std::max(
+                    capacity_samples,
+                    seconds_to_samples(static_cast<float>(window_seconds), capacity_sample_rate));
+            }
+        }
     }
-    const int64_t frames = frontend_frames_for_samples(
+    int64_t frames = frontend_frames_for_samples(
         capacity_samples,
         capacity_channels,
         capacity_sample_rate,
         assets_->config.frontend);
+
+    // On a bounded path, never ask for more than the encoder can represent.
+    // prepare_capacity() builds the relative positional encoding eagerly, so
+    // over-sizing throws here while under-sizing only grows the graph at run
+    // time. A recording longer than the ceiling but shorter than the configured
+    // chunk duration -- 420 seconds with a 600-second limit -- is still cut
+    // into spans that fit; failing in prepare() would reject input run()
+    // handles. Full-context sizing is deliberately left alone: there the whole
+    // recording really is encoded in one pass, and the early, clear error is
+    // the right one.
+    if (bounded_windows && assets_->config.encoder.max_position_embeddings > 0) {
+        frames = std::min(frames, assets_->config.encoder.max_position_embeddings);
+    }
+
     if (frames > 0) {
         encoder_->prepare_capacity(frames, assets_->config.frontend.feature_size);
     }
@@ -726,6 +789,7 @@ void ParakeetTDTStreamingSession::reset() {
     token_ids_.clear();
     token_frame_indices_.clear();
     token_durations_.clear();
+    partials_.reset();
     decoder_->reset_state();
     stream_started_ = true;
     finalized_ = false;
@@ -849,7 +913,21 @@ runtime::StreamEvent ParakeetTDTStreamingSession::process_ready_windows(bool flu
     runtime::StreamEvent event;
     if (changed && !token_ids_.empty()) {
         auto decoded = merged_decode();
-        event.partial_text = runtime::Transcript{decoded.text, ""};
+        // A partial is the text decoded since the last one: the CLI appends
+        // them into a scrolling transcript and the server forwards each as a
+        // transcript.text.delta. merged_decode() re-renders the whole
+        // transcript from every token so far, so publishing it unchanged made
+        // an appending client build "Some call meSome call me nature".
+        std::string delta = partials_.publish(decoded.text);
+        if (!delta.empty()) {
+            event.partial_text = runtime::Transcript{std::move(delta), ""};
+        }
+        // word_timestamps stays cumulative, deliberately. It is not a delta
+        // field: it is the finalized set so far, which is why the provisional
+        // last word is dropped below rather than carried. So the two fields in
+        // this event have different shapes on purpose -- partial_text is what
+        // is new, word_timestamps is everything settled -- because each matches
+        // its own contract rather than each other.
         event.word_timestamps = std::move(decoded.word_timestamps);
         // The last word has no following word boundary yet, so it remains
         // provisional and is withheld from the finalized timestamp list.

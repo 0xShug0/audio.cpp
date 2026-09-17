@@ -101,6 +101,7 @@ option(AUDIOCPP_STATIC_ESPEAK "Build and statically link GPL-3.0-or-later eSpeak
 option(AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER
     "Build native model-manager tools and server download/install support"
     OFF)
+include("${CMAKE_CURRENT_SOURCE_DIR}/app/server/server_frontends.cmake")
 option(AUDIOCPP_USE_SYSTEM_OPENSSL
     "Use system OpenSSL for native model management instead of bundled BoringSSL"
     OFF)
@@ -116,6 +117,9 @@ option(ENGINE_BUILD_TESTS "Build framework unit tests" OFF)
 option(ENGINE_BUILD_EXTENDED_TESTS "Build extended non-model tests and probes" OFF)
 option(ENGINE_BUILD_MODEL_TESTS "Build model-specific tests and probes" OFF)
 option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
+option(AUDIOCPP_BUILD_C_API "Build the C ABI (include/audiocpp.h) as a shared library" OFF)
+set(AUDIOCPP_C_API_MODEL_ROOT "" CACHE PATH
+    "Models root for the C API model test. Unset leaves the test registered but skipping.")
 set(AUDIOCPP_GGML_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/external/ggml"
     CACHE PATH "ggml source tree to build with AudioCPP")
@@ -234,12 +238,16 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
 
     # Define default archs
     if ("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "" AND "$ENV{CUDAARCHS}" STREQUAL "")
+        # Remembered so the summary below can tell the difference between "the
+        # portable list is what you asked for" and "the portable list is what you
+        # got by not asking".
+        set(_AUDIOCPP_CUDA_ARCH_DEFAULTED TRUE)
         # XX-virtual = PTX (JIT, forward-compatible); XX-real = SASS (native).
         if (CUDAToolkit_VERSION VERSION_LESS "13")
             # 50/61/70 (Maxwell/Pascal/Volta) unsupported by CUDA 13 toolkits
             list(APPEND CMAKE_CUDA_ARCHITECTURES 50-virtual 61-virtual 70-virtual)
         endif()
-        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-virtual 80-virtual 86-real)
+        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-real 80-virtual 86-real)
         if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.8")
             list(APPEND CMAKE_CUDA_ARCHITECTURES 89-real 90-virtual)
         endif()
@@ -276,12 +284,44 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     endif()
     message(STATUS "Using CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} CMAKE_CUDA_ARCHITECTURES_NATIVE=${CMAKE_CUDA_ARCHITECTURES_NATIVE}")
 
+    # The line above prints both halves of this and interprets neither: how many
+    # architectures are about to be compiled, and which one this host can run.
+    # The option is documented (README, docs/build/linux.md), but configure is
+    # where the choice is actually being made, so say it here too.
+    if (_AUDIOCPP_CUDA_ARCH_DEFAULTED AND
+        CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES "^[0-9]")
+        list(LENGTH CMAKE_CUDA_ARCHITECTURES _AUDIOCPP_ARCH_COUNT)
+        message(STATUS "  portable default: ${_AUDIOCPP_ARCH_COUNT} architectures, so every .cu file is compiled ${_AUDIOCPP_ARCH_COUNT} times")
+        message(STATUS "  this host is ${CMAKE_CUDA_ARCHITECTURES_NATIVE}; for a local build roughly 3x faster:")
+        message(STATUS "      -DCMAKE_CUDA_ARCHITECTURES=native    (the result then runs on this GPU only)")
+        message(STATUS "      scripts/build_linux.sh: --cuda-arch native")
+    endif()
+
     if (NOT MSVC)
         set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
     endif()
 endif()
+
+# ⚠ Outside the CUDA block on purpose: ccache is not a CUDA concern, and a
+# CPU-only, Vulkan or HIP build benefits from it just as much. GGML_CCACHE is
+# forced OFF above, so ggml's own probe never runs and nothing caches anything
+# unless the caller wires a launcher up by hand.
+find_program(AUDIOCPP_CCACHE_PROGRAM ccache)
+if (AUDIOCPP_CCACHE_PROGRAM AND
+    NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "ccache is installed (${AUDIOCPP_CCACHE_PROGRAM}) and NOT in use. Rebuilds are much faster with:")
+    message(STATUS "    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache")
+    message(STATUS "    scripts/build_linux.sh: --ccache")
+endif()
+
 if (ENGINE_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED COMPONENTS CXX)
+endif()
+
+if (AUDIOCPP_BUILD_C_API)
+    # engine_runtime and ggml are static/object libraries here; linking them into
+    # a shared libaudiocpp requires position-independent code throughout.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (ENGINE_ENABLE_CPU_ALL_VARIANTS)
@@ -391,6 +431,7 @@ add_library(engine_core OBJECT
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/weight_norm_folding.cpp
+    src/framework/assets/lora_tensor_source.cpp
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
@@ -401,6 +442,8 @@ add_library(engine_core OBJECT
     src/framework/runtime/model.cpp
     src/framework/model_spec/metadata.cpp
     src/framework/runtime/session.cpp
+    src/framework/runtime/task_vocabulary.cpp
+    src/framework/runtime/partial_text.cpp
     src/framework/runtime/artifacts.cpp
     src/framework/runtime/cache.cpp
     src/framework/runtime/graph_executor.cpp
@@ -408,6 +451,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/host_ops.cpp
     src/framework/runtime/kv_cache.cpp
     src/framework/runtime/bounded_static_kv_decode.cpp
+    src/framework/runtime/greedy_qwen_decoder.cpp
     src/framework/runtime/options.cpp
     src/framework/runtime/session_base.cpp
     src/framework/runtime/workspace.cpp
@@ -489,6 +533,7 @@ add_library(engine_core OBJECT
     src/framework/modules/optimizations/fast_kv_modules.cpp
     src/framework/tokenizers/hf_tokenizer_json.cpp
     src/framework/tokenizers/llama_bpe.cpp
+    src/framework/tokenizers/qwen_bpe_bundle.cpp
     external/llama_tokenizer/bpe-core.cpp
     external/llama_tokenizer/unicode.cpp
     external/llama_tokenizer/unicode-data.cpp
@@ -521,6 +566,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
+    src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
@@ -552,6 +598,50 @@ add_library(engine_model_marblenet_vad OBJECT
 )
 set_target_properties(engine_model_marblenet_vad PROPERTIES EXCLUDE_FROM_ALL TRUE)
 audiocpp_configure_runtime_object(engine_model_marblenet_vad)
+
+audiocpp_add_model(moss_transcribe_diarize
+    SOURCES
+        src/models/moss_transcribe_diarize/runtime.cpp
+        src/models/moss_transcribe_diarize/session.cpp
+    INCLUDES
+        engine/models/moss_transcribe_diarize/session.h
+    LOADERS
+        engine::models::moss_transcribe_diarize::make_moss_transcribe_diarize_loader
+)
+
+audiocpp_add_model(universr
+    SOURCES
+        src/models/universr/assets.cpp
+        src/models/universr/network.cpp
+        src/models/universr/runtime.cpp
+        src/models/universr/frontend.cpp
+        src/models/universr/session.cpp
+    INCLUDES
+        engine/models/universr/session.h
+    LOADERS
+        engine::models::universr::make_universr_loader
+)
+
+audiocpp_add_model(apollo
+    SOURCES
+        src/models/apollo/assets.cpp
+        src/models/apollo/runtime.cpp
+        src/models/apollo/session.cpp
+    INCLUDES
+        engine/models/apollo/session.h
+    LOADERS
+        engine::models::apollo::make_apollo_loader
+)
+
+audiocpp_add_model(pulsevad
+    SOURCES
+        src/models/pulsevad/runtime.cpp
+        src/models/pulsevad/session.cpp
+    INCLUDES
+        engine/models/pulsevad/session.h
+    LOADERS
+        engine::models::pulsevad::make_pulsevad_loader
+)
 
 audiocpp_add_model(roformer
     SOURCES
@@ -1251,6 +1341,30 @@ audiocpp_add_model(nemotron_asr
         engine::models::nemotron_asr::make_nemotron_asr_loader
 )
 
+audiocpp_add_model(cohere_asr
+    SOURCES
+        src/models/cohere_asr/assets.cpp
+        src/models/cohere_asr/weights.cpp
+        src/models/cohere_asr/runtime.cpp
+        src/models/cohere_asr/session.cpp
+    INCLUDES
+        engine/models/cohere_asr/model.h
+    LOADERS
+        engine::models::cohere_asr::make_cohere_asr_loader
+)
+
+audiocpp_add_model(canary_asr
+    SOURCES
+        src/models/canary_asr/assets.cpp
+        src/models/canary_asr/weights.cpp
+        src/models/canary_asr/runtime.cpp
+        src/models/canary_asr/session.cpp
+    INCLUDES
+        engine/models/canary_asr/model.h
+    LOADERS
+        engine::models::canary_asr::make_canary_asr_loader
+)
+
 audiocpp_add_model(moonshine_asr
     SOURCES
         src/models/moonshine_asr/assets.cpp
@@ -1402,6 +1516,39 @@ audiocpp_add_model(stable_audio
         engine::models::stable_audio::make_stable_audio_loader
 )
 
+audiocpp_add_model(yue2
+    SOURCES
+        src/models/yue2/ar_runtime.cpp
+        src/models/yue2/assets.cpp
+        src/models/yue2/lora.cpp
+        src/models/yue2/nar_runtime.cpp
+        src/models/yue2/pipeline.cpp
+        src/models/yue2/request.cpp
+        src/models/yue2/session.cpp
+        src/models/yue2/tokenizer_text.cpp
+        src/models/yue2/types.cpp
+    INCLUDES
+        engine/models/yue2/session.h
+    LOADERS
+        engine::models::yue2::make_yue2_loader
+)
+
+audiocpp_add_model(sheetsage2
+    SOURCES
+        src/models/sheetsage/audio_frontend.cpp
+        src/models/sheetsage/processing.cpp
+        src/models/sheetsage/runtime.cpp
+        src/models/sheetsage/session.cpp
+    INCLUDES
+        engine/models/sheetsage/audio_frontend.h
+        engine/models/sheetsage/processing.h
+        engine/models/sheetsage/types.h
+        engine/models/sheetsage/runtime.h
+        engine/models/sheetsage/session.h
+    LOADERS
+        engine::models::sheetsage::make_sheetsage2_loader
+)
+
 audiocpp_add_model(supertonic
     SOURCES
         src/models/supertonic/assets.cpp
@@ -1440,6 +1587,25 @@ audiocpp_add_model(granite5asr
         granite_speech5_asr
         granite_speech
         granite_speech5_ctc
+)
+
+audiocpp_add_model(niagara_asr
+    SOURCES
+        src/models/niagara_asr/assets.cpp
+        src/models/niagara_asr/encoder.cpp
+        src/models/niagara_asr/frontend.cpp
+        src/models/niagara_asr/runtime.cpp
+        src/models/niagara_asr/session.cpp
+        src/models/niagara_asr/weights.cpp
+    INCLUDES
+        engine/models/niagara_asr/assets.h
+        engine/models/niagara_asr/encoder.h
+        engine/models/niagara_asr/frontend.h
+        engine/models/niagara_asr/runtime.h
+        engine/models/niagara_asr/session.h
+        engine/models/niagara_asr/weights.h
+    LOADERS
+        engine::models::niagara_asr::make_niagara_asr_loader
 )
 
 audiocpp_add_model(audio8_asr
@@ -1688,6 +1854,15 @@ audiocpp_add_model(audiosr
         engine::models::audiosr::make_audiosr_loader
 )
 
+audiocpp_add_model(builtin_audio_utils
+    SOURCES
+        src/models/builtin_audio_utils/session.cpp
+    INCLUDES
+        engine/models/builtin_audio_utils/session.h
+    LOADERS
+        engine::models::builtin_audio_utils::make_builtin_audio_utils_loader
+)
+
 audiocpp_add_model(controlfoley
     SOURCES
         src/models/controlfoley/assets.cpp
@@ -1883,6 +2058,20 @@ add_library(cjson_vendor STATIC
     external/cJSON/cJSON.c
 )
 
+# cJSON annotates every CJSON_PUBLIC function with __declspec(dllexport) on
+# Windows unless told otherwise (external/cJSON/cJSON.h:59-66 defaults
+# CJSON_EXPORT_SYMBOLS on). Those annotations live in the object files, so any
+# DLL that absorbs this static library re-exports all 78 of them -- dllexport is
+# additive, it says "also export this", never "export only this". Measured: a
+# shared build exported 147 symbols where 69 were intended.
+#
+# No DLL is built from this tree by default, so this is latent rather than
+# broken today; AUDIOCPP_BUILD_C_API is the first target to expose it.
+# CJSON_HIDE_SYMBOLS is cJSON's own mechanism for exactly this case and selects
+# a plain declaration with no storage class. PUBLIC rather than PRIVATE so every
+# translation unit that includes cJSON.h agrees on the linkage.
+target_compile_definitions(cjson_vendor PUBLIC CJSON_HIDE_SYMBOLS)
+
 target_include_directories(cjson_vendor PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/cJSON
 )
@@ -2025,6 +2214,152 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_cli PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+# ---------------------------------------------------------------------------
+# C ABI (opt-in)
+#
+# A thin facade over engine::runtime for embedding audio.cpp in-process from
+# languages that can call C. Purely additive: nothing above this point changes
+# when AUDIOCPP_BUILD_C_API is OFF, which is the default.
+# ---------------------------------------------------------------------------
+if (AUDIOCPP_BUILD_C_API)
+    add_library(audiocpp SHARED src/capi/audiocpp.cpp)
+    target_link_libraries(audiocpp PRIVATE engine_runtime ggml)
+    target_include_directories(audiocpp PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    )
+    target_compile_definitions(audiocpp
+        PRIVATE
+            AUDIOCPP_BUILD_DLL
+            AUDIOCPP_VERSION_STRING="${AUDIOCPP_VERSION}"
+        # Anything linking this gets __declspec(dllimport) on Windows without
+        # having to know to ask for it. No effect elsewhere.
+        INTERFACE
+            AUDIOCPP_USE_DLL
+    )
+    set_target_properties(audiocpp PROPERTIES
+        VERSION 0.1.0
+        SOVERSION 0
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+    # The visibility presets above only reach this target's own sources. The
+    # static libraries linked in (ggml, cJSON, sentencepiece, ...) are built
+    # without -fvisibility=hidden, so without an explicit export list they are
+    # re-exported from libaudiocpp -- measured at 2767 dynamic symbols where the
+    # header declares 69 -- and can collide with whatever the host application
+    # has already loaded. Restrict the surface to audiocpp_*.
+    #
+    # Windows has no equivalent of these allowlists: __declspec(dllexport) is
+    # additive, so a DLL's surface is whatever its own annotations plus its
+    # dependencies' annotations add up to. Exclusivity there comes from making
+    # sure no dependency annotates its symbols, which is why cjson_vendor is
+    # built with CJSON_HIDE_SYMBOLS above.
+    if (APPLE)
+        target_link_options(audiocpp PRIVATE
+            "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/src/capi/audiocpp.symbols")
+        set_property(TARGET audiocpp APPEND PROPERTY
+            LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/capi/audiocpp.symbols")
+    elseif (NOT WIN32)
+        target_link_options(audiocpp PRIVATE
+            "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/capi/audiocpp.map"
+            "-Wl,--exclude-libs,ALL")
+        set_property(TARGET audiocpp APPEND PROPERTY
+            LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/capi/audiocpp.map")
+    endif()
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(audiocpp PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+    if(AUDIOCPP_STATIC_ESPEAK)
+        audiocpp_stage_espeak(audiocpp)
+    endif()
+
+    # enable_testing() is called again further down for the framework test
+    # suites; repeating it here is harmless, and it is what lets this test
+    # register without depending on ENGINE_BUILD_TESTS.
+    enable_testing()
+
+    # Compiled as C, not C++: the point of the test is that the header is
+    # consumable by a C compiler with no C++ runtime on the caller's side.
+    add_executable(audiocpp_c_api_path_test tests/capi/path_test.c)
+    target_link_libraries(audiocpp_c_api_path_test PRIVATE audiocpp)
+    set_target_properties(audiocpp_c_api_path_test PROPERTIES C_STANDARD 99)
+    add_test(NAME audiocpp_c_api_path
+        COMMAND audiocpp_c_api_path_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/framework/models/silero_vad"
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav")
+
+    # Real families across task types. Needs downloaded models, so it reports
+    # SKIP rather than failure when AUDIOCPP_C_API_MODEL_ROOT is unset or a
+    # package is absent -- a checkout with no downloads still goes green.
+    add_executable(audiocpp_c_api_model_test tests/capi/model_test.c)
+    target_link_libraries(audiocpp_c_api_model_test PRIVATE audiocpp)
+    set_target_properties(audiocpp_c_api_model_test PROPERTIES C_STANDARD 99)
+    # Source separation dominates this test's wall time and scales with threads
+    # (measured 191s at 4, 113s at 16), and thread count does not change results
+    # -- verified bit-identical stems at both. So use the host's cores.
+    include(ProcessorCount)
+    ProcessorCount(AUDIOCPP_C_API_TEST_THREADS)
+    if (AUDIOCPP_C_API_TEST_THREADS EQUAL 0)
+        set(AUDIOCPP_C_API_TEST_THREADS 4)
+    endif()
+    add_test(NAME audiocpp_c_api_model
+        COMMAND audiocpp_c_api_model_test
+            "${AUDIOCPP_C_API_MODEL_ROOT}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
+            "cpu"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/ace_step/assets/complete_source_demucs_8s.wav"
+            "${AUDIOCPP_C_API_TEST_THREADS}")
+    set_tests_properties(audiocpp_c_api_model PROPERTIES SKIP_RETURN_CODE 77)
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+
+    # The export surface is a property three platforms reach three different
+    # ways, and on Windows nothing enforces it at all -- a newly vendored
+    # library that annotates its own symbols would silently widen the DLL.
+    # cJSON did exactly that. So it is asserted rather than left to a comment.
+    if (Python3_Interpreter_FOUND)
+        # dumpbin ships beside the cl.exe that built the library, so its location
+        # is already known here -- no searching, no version guessing, and it is
+        # guaranteed to match the toolset that produced the binary. It is not on
+        # PATH outside a Developer Command Prompt, so without this the check
+        # silently skips on the one platform that has no export allowlist.
+        set(AUDIOCPP_EXPORT_TOOL_ARGS "")
+        if (MSVC)
+            get_filename_component(AUDIOCPP_MSVC_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            find_program(AUDIOCPP_DUMPBIN dumpbin HINTS "${AUDIOCPP_MSVC_BIN}" NO_DEFAULT_PATH)
+            if (AUDIOCPP_DUMPBIN)
+                list(APPEND AUDIOCPP_EXPORT_TOOL_ARGS --symbol-tool "${AUDIOCPP_DUMPBIN}")
+            endif()
+            # The tool ships with the compiler, so on MSVC its absence is a real
+            # problem rather than an unsupported platform. Fail loudly instead of
+            # reporting a green run with the invariant unchecked.
+            list(APPEND AUDIOCPP_EXPORT_TOOL_ARGS --require-tool)
+        endif()
+        add_test(NAME audiocpp_c_api_exports
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capi/export_surface.py"
+                --build-dir "${CMAKE_BINARY_DIR}"
+                --header "${CMAKE_CURRENT_SOURCE_DIR}/include/audiocpp.h"
+                ${AUDIOCPP_EXPORT_TOOL_ARGS})
+        set_tests_properties(audiocpp_c_api_exports PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+
+    # The C API drives the same runtime audiocpp_cli does, so for identical
+    # inputs the two must produce identical output. That is the property worth
+    # testing -- not that the facade is plausible, but that it agrees. Skips
+    # when the CLI or the models are absent.
+    if (Python3_Interpreter_FOUND)
+        add_test(NAME audiocpp_c_api_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/capi/parity.py"
+                --build-dir "${CMAKE_BINARY_DIR}"
+                --models-root "${AUDIOCPP_C_API_MODEL_ROOT}"
+                --audio "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
+                --alt-audio "${CMAKE_CURRENT_SOURCE_DIR}/tests/ace_step/assets/complete_source_demucs_8s.wav"
+                --threads "${AUDIOCPP_C_API_TEST_THREADS}")
+        set_tests_properties(audiocpp_c_api_parity PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+endif()
+
 set(AUDIOCPP_UI_DIST "${CMAKE_CURRENT_SOURCE_DIR}/webui/native/dist/index.html")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AUDIOCPP_UI_DIST}")
 if (EXISTS "${AUDIOCPP_UI_DIST}")
@@ -2073,6 +2408,7 @@ add_executable(audiocpp_server
     app/server/main.cpp
     app/server/base64.cpp
     app/server/config.cpp
+    app/server/frontend.cpp
     app/server/http.cpp
     app/server/model_memory.cpp
     app/server/multipart.cpp
@@ -2088,6 +2424,7 @@ target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
 if(AUDIOCPP_STATIC_ESPEAK)
     audiocpp_stage_espeak(audiocpp_server)
 endif()
+audiocpp_configure_server_frontends(audiocpp_server)
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_sources(audiocpp_server PRIVATE app/server/model_installer.cpp)
     target_link_libraries(audiocpp_server PRIVATE audiocpp_package_manager)
@@ -2126,6 +2463,37 @@ target_link_libraries(model_perf PRIVATE engine_runtime ggml)
 target_include_directories(model_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
+    add_executable(yue2_vae_parity_probe
+        tests/yue2/yue2_vae_parity_probe.cpp
+    )
+    target_link_libraries(yue2_vae_parity_probe PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(yue2_vae_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    # The NAR probe uses the YuE2 model runtime, which only exists when the
+    # model composite links it; the VAE probe above only needs framework code.
+    if ("yue2" IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(yue2_nar_parity_probe
+            tests/yue2/yue2_nar_parity_probe.cpp
+        )
+        target_link_libraries(yue2_nar_parity_probe PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(yue2_nar_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endif()
+
+    add_executable(sheetsage2_decoder_parity_probe
+        src/models/sheetsage/runtime.cpp
+        tests/yue2/sheetsage2_decoder_parity_probe.cpp
+    )
+    target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
 endif()
 
 if (ENGINE_BUILD_WARMBENCH)
@@ -2267,6 +2635,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
 
+        if(sheetsage2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(sheetsage_audio_frontend_test tests/unittests/test_sheetsage_audio_frontend.cpp)
+            add_test(NAME sheetsage_audio_frontend_test COMMAND sheetsage_audio_frontend_test --log)
+            add_engine_unittest(sheetsage_processing_test tests/unittests/test_sheetsage_processing.cpp)
+            add_test(NAME sheetsage_processing_test COMMAND sheetsage_processing_test --log)
+        endif()
+
         add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
         add_test(NAME midi_file_test COMMAND midi_file_test)
 
@@ -2284,6 +2659,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
         add_test(NAME audio_chunking_test COMMAND audio_chunking_test)
+        add_engine_unittest(partial_text_test tests/unittests/test_partial_text.cpp)
+        add_test(NAME partial_text_test COMMAND partial_text_test)
 
         add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
         add_test(NAME wav_writer_formats_test COMMAND wav_writer_formats_test)
@@ -2326,14 +2703,24 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(encoder_module_test tests/unittests/test_encoder_modules.cpp)
         add_test(NAME encoder_module_test COMMAND encoder_module_test)
 
+        add_engine_unittest(transpose_module_test tests/unittests/test_transpose_module.cpp)
+        target_include_directories(transpose_module_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME transpose_module_test COMMAND transpose_module_test)
+
         add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
         target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME gguf_tensor_source_test COMMAND gguf_tensor_source_test)
+        add_engine_unittest(lora_tensor_source_test tests/unittests/test_lora_tensor_source.cpp)
+        add_test(NAME lora_tensor_source_test COMMAND lora_tensor_source_test --log)
 
         add_engine_unittest(transformer_kv_ring_test tests/unittests/test_transformer_kv_ring.cpp)
         add_test(NAME transformer_kv_ring_test COMMAND transformer_kv_ring_test)
 
         add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
+        # So the test can read the specs this repository ships, rather than a
+        # copy of them staged somewhere.
+        target_compile_definitions(model_spec_system_test
+            PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME model_spec_system_test COMMAND model_spec_system_test)
     endif()
@@ -2773,6 +3160,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             qwen_decoder_packed_projection_test
             tests/unittests/test_qwen_decoder_packed_projections.cpp
         )
+        add_engine_unittest(qwen_chunked_prefill_test tests/unittests/test_qwen_chunked_prefill.cpp)
+        add_test(NAME qwen_chunked_prefill_test COMMAND qwen_chunked_prefill_test)
         add_test(
             NAME qwen_decoder_packed_projection_test
             COMMAND qwen_decoder_packed_projection_test

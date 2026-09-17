@@ -37,15 +37,22 @@ Use the V2 voice-conversion path for speech voice conversion. This route uses se
 audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda --task-route v2_vc --audio source.wav --voice-ref target.wav --out converted.wav
 ```
 
+### Common Options (use directly)
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--num-inference-steps` | integer | `30` | V2 CFM denoising steps. |
-| `--request-option length_adjust=<float>` | float | `1.0` | Stretch or compress generated duration. |
-| `--request-option intelligibility_guidance_scale=<float>` | float | `0.7` | CFG strength for source-content intelligibility. |
-| `--request-option similarity_guidance_scale=<float>` | float | `0.7` | CFG strength for target-speaker similarity. |
 | `--seed` | integer | random if omitted | Seed for V2 random sampling/noise. |
-| `--request-option voice_anonymization=true\|false` | bool | `false` | Use randomized voice conditioning instead of target-speaker conditioning. |
-| `--request-option noise_path=<path>` | path | empty | Optional deterministic noise input for validation. |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
+| `intelligibility_guidance_scale` | float | `0.7` | CFG strength for source-content intelligibility. |
+| `similarity_guidance_scale` | float | `0.7` | CFG strength for target-speaker similarity. |
+| `voice_anonymization` | bool | `false` | Use randomized voice conditioning instead of target-speaker conditioning. |
+| `noise_path` | path | empty | Optional deterministic noise input for validation. |
 
 ## V1 Whisper + BigVGAN Voice Conversion
 
@@ -64,12 +71,19 @@ Use this V1 route when you want Whisper content features and the BigVGAN vocoder
 audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda --task-route v1_whisper_bigvgan_vc --audio source.wav --voice-ref target.wav --out converted.wav
 ```
 
+### Common Options (use directly)
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--num-inference-steps` | integer | `30` | V1 CFM denoising steps. |
-| `--request-option length_adjust=<float>` | float | `1.0` | Stretch or compress generated duration. |
-| `--request-option inference_guidance_scale=<float>` | float | `0.7` | V1 CFM guidance strength. |
 | `--seed` | integer | random if omitted | Seed for V1 random noise. |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
+| `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
 
 ## V1 XLSR + HiFT Voice Conversion
 
@@ -88,12 +102,19 @@ Use this V1 route when you want XLSR content features and the HiFT vocoder.
 audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda --task-route v1_xlsr_hift_vc --audio source.wav --voice-ref target.wav --out converted.wav
 ```
 
+### Common Options (use directly)
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--num-inference-steps` | integer | `30` | V1 CFM denoising steps. |
-| `--request-option length_adjust=<float>` | float | `1.0` | Stretch or compress generated duration. |
-| `--request-option inference_guidance_scale=<float>` | float | `0.7` | V1 CFM guidance strength. |
 | `--seed` | integer | random if omitted | Seed for V1 random noise. |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
+| `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
 
 ## V1 Singing Voice Conversion
 
@@ -112,24 +133,36 @@ Use this route for singing voice conversion. It supports the V1 F0 and pitch con
 audiocpp_cli --task svc --family seed_vc --model models/SeedVC-MLX --backend cuda --task-route v1_svc --audio singing.wav --voice-ref target.wav --out svc.wav
 ```
 
+### Common Options (use directly)
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--num-inference-steps` | integer | `30` | V1 CFM denoising steps. |
-| `--request-option length_adjust=<float>` | float | `1.0` | Stretch or compress generated duration. |
-| `--request-option inference_guidance_scale=<float>` | float | `0.7` | V1 CFM guidance strength. |
-| `--request-option f0_condition=true\|false` | bool | `false` | Enable F0-conditioned conversion. |
-| `--request-option auto_f0_adjust=true\|false` | bool | `false` | Automatically adjust F0 when F0 conditioning is enabled. |
-| `--request-option semitone_shift=<n>` | integer | `0` | Shift pitch by semitones when F0 conditioning is enabled. |
 | `--seed` | integer | random if omitted | Seed for V1 random noise. |
 
-## Shared Controls
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
+| `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
+| `f0_condition` | bool | `false` | Enable F0-conditioned conversion. |
+| `auto_f0_adjust` | bool | `false` | Automatically adjust F0 when F0 conditioning is enabled. |
+| `semitone_shift` | integer | `0` | Shift pitch by semitones when F0 conditioning is enabled. |
+
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--task-route` | `v2_vc`, `v1_whisper_bigvgan_vc`, `v1_xlsr_hift_vc`, `v1_svc` | `v2_vc` for `vc`; `v1_svc` for `svc` | Select the conversion route. |
 | `--audio` | WAV path | required | Source speech or singing audio. |
 | `--voice-ref` | WAV path | required | Target voice or singer reference. |
-| `--session-option seed_vc.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage type. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `seed_vc.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage type. |
 
 ## Compatibility
 

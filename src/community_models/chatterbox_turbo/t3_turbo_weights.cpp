@@ -1,10 +1,17 @@
 #include "engine/community_models/chatterbox_turbo/t3_turbo_component.h"
 
+#include <cstdint>
 #include <stdexcept>
 
 namespace engine::community_models::chatterbox_turbo {
 
 namespace {
+
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultWeightStoreBytes = 1024ull * 1024ull * 1024ull;
+#else
+constexpr size_t kDefaultWeightStoreBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 T3TurboGraphWeight load_graph_weight(
     engine::core::BackendWeightStore & store,
@@ -69,7 +76,7 @@ std::shared_ptr<const T3TurboInferenceWeights> load_t3_turbo_inference_weights(
         execution_context.backend(),
         execution_context.backend_type(),
         "chatterbox_turbo.t3.weights",
-        4096ull * 1024ull * 1024ull);
+        kDefaultWeightStoreBytes);
 
     const auto text_emb_info = source.require_metadata("text_emb.weight");
     const auto speech_emb_info = source.require_metadata("speech_emb.weight");

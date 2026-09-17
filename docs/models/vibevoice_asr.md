@@ -88,7 +88,7 @@ audiocpp_gguf.exe --input models\VibeVoice-ASR\model.safetensors.index.json --ou
 Configuration and tokenizer assets are embedded by default, so the output
 directory may contain only `model.gguf`.
 
-Options:
+### Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
@@ -107,7 +107,12 @@ Options:
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 | `--segments-out` | JSON path | not set | Write structured ASR segments when produced. |
 | `--turns-out` | JSON path | not set | Write speaker turns when produced. |
-| `--session-option vibevoice_asr.vad_model_path=<path>` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `vibevoice_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
 
 ## VibeVoice ASR Streaming 7B
 
@@ -205,12 +210,11 @@ ffmpeg -hide_banner -loglevel error -i input.wav -f s16le -ac 1 -ar 16000 - \
       'http://127.0.0.1:8080/v1/audio/transcriptions/live?model=vibevoice-streaming-7b&sample_rate=16000&channels=1&sample_format=s16le'
 ```
 
-Common request options:
+### Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--language` | language label | `auto` | ASR language label. |
-| `--request-option context=<text>` | text | empty string | Extra context or hotwords injected into the streaming prompt. |
 | `--max-tokens` | integer | `256` | Maximum generated transcript tokens per chunk. |
 | `--temperature` | float | `0` | Sampling temperature; `0` uses deterministic decoding. |
 | `--top-p` | float | `1` | Nucleus sampling probability. |
@@ -219,7 +223,18 @@ Common request options:
 | `--repetition-penalty` | float | `1` | Generation repetition penalty. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline audio chunking mode. |
 | `--audio-chunk-seconds` | float seconds | `1200` | Offline chunk duration for fixed and VAD chunking. |
-| `--session-option vibevoice_asr_streaming.max_history_steps=<n>` | integer | `0` (uncapped) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `context` | text | empty string | Extra context or hotwords injected into the streaming prompt. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `vibevoice_asr_streaming.max_history_steps` | integer | `0` (uncapped) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
 
 ### Long streams and the history window
 

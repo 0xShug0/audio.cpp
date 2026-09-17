@@ -60,17 +60,27 @@ audiocpp_cli \
 | AC-V2A | `--audio`, `--request-option video=<path>` |
 | V2A | `--request-option video=<path>` |
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--text` | prompt text | optional | Text conditioning prompt. |
 | `--audio` | WAV path | optional | Reference audio for audio-conditioned video generation. |
-| `--request-option video=<path>` | video path | optional | Video conditioning source. |
-| `--request-option duration_sec=<seconds>` | float | `8` | Target temporal budget. |
-| `--request-option num_inference_steps=<n>` | integer > 0 | `25` | Euler flow inference steps. |
-| `--request-option guidance_scale=<f>` | float | `4.5` | Classifier-free guidance scale. |
-| `--request-option negative_prompt=<text>` | text | empty | Negative text branch for CFG. |
-| `--request-option mask_away_clip=true\|false` | bool | `false` | Disable OpenCLIP video conditioning while keeping visual and sync conditioning. |
-| `--request-option seed=<n>` | integer >= 0 | `42` | Sampler seed. |
-| `--session-option controlfoley.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `video` | video path | optional | Video conditioning source. |
+| `duration_sec` | float | `8` | Target temporal budget. |
+| `num_inference_steps` | integer > 0 | `25` | Euler flow inference steps. |
+| `guidance_scale` | float | `4.5` | Classifier-free guidance scale. |
+| `negative_prompt` | text | empty | Negative text branch for CFG. |
+| `mask_away_clip` | bool | `false` | Disable OpenCLIP video conditioning while keeping visual and sync conditioning. |
+| `seed` | integer >= 0 | `42` | Sampler seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `controlfoley.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |

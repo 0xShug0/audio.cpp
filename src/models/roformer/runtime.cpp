@@ -242,7 +242,12 @@ core::TensorValue matmul_f32(
     rhs_transposed = ensure_contiguous(ctx, rhs_transposed);
     core::TensorShape output_shape = lhs.shape;
     output_shape.dims[rank - 1] = rhs.shape.dims[rank - 1];
-    ggml_tensor * output = ggml_mul_mat(ctx.ggml, rhs_transposed.tensor, lhs.tensor);
+    // HIP's non-contiguous batched GEMM falls back to one launch per head.
+    // Pack the left operand without changing its dtype or attention arithmetic.
+    const auto lhs_ready = ctx.backend_type == core::BackendType::Hip
+        ? ensure_contiguous(ctx, lhs)
+        : lhs;
+    ggml_tensor * output = ggml_mul_mat(ctx.ggml, rhs_transposed.tensor, lhs_ready.tensor);
     ggml_mul_mat_set_prec(output, GGML_PREC_F32);
     return core::wrap_tensor(output, output_shape, GGML_TYPE_F32);
 }

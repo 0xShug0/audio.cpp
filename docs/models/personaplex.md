@@ -91,25 +91,36 @@ Use `--request-option voice_id=<id>` to select one. If omitted, `NATF2` is used.
 If `--voice-ref` is supplied, the runtime uses that reference audio instead of a
 packaged prompt.
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | User speech input. |
-| `--text` / `--request-option system_prompt=<text>` | text | empty | Assistant persona/system prompt. |
-| `--request-option voice_id=<id>` | packaged id | `NATF2` | Packaged PersonaPlex voice prompt id. |
+| `--text` | text | empty | Assistant persona/system prompt. |
 | `--voice-ref` | WAV path | not set | User reference voice prompt. Overrides packaged `voice_id` when present. |
-| `--temperature` / `--request-option temperature=<f>` | float >= 0 | `0.8` | Audio-token sampling temperature. |
-| `--request-option text_temperature=<f>` | float >= 0 | follows `temperature` | Text-token sampling temperature. |
-| `--top-k` / `--request-option top_k=<n>` | integer >= 0 | `250` | Audio-token top-k sampling limit. |
-| `--request-option text_top_k=<n>` | integer >= 0 | follows `top_k` | Text-token top-k sampling limit. |
-| `--request-option do_sample=true\|false` | bool | `true` | Enable stochastic sampling. Set false for greedy decoding. |
-| `--seed` / `--request-option seed=<n>` | integer >= 0 | `42424242` | Seed for text and audio token sampling. |
-| `--session-option personaplex.graph_arena_mb=<mb>` | integer MiB | `1024` | Reusable graph arena size for LM, depformer, and Mimi graphs. |
-| `--session-option personaplex.lm_weight_context_mb=<mb>` | integer MiB | `64` | Main LM weight metadata arena size. |
-| `--session-option personaplex.depformer_weight_context_mb=<mb>` | integer MiB | `64` | Depth transformer weight metadata arena size. |
-| `--session-option personaplex.mimi_weight_context_mb=<mb>` | integer MiB | `64` | Mimi codec weight metadata arena size. |
-| `--session-option personaplex.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | LM and Mimi matmul weight storage type when supported. |
+| `--temperature` | float >= 0 | `0.8` | Audio-token sampling temperature. |
+| `--top-k` | integer >= 0 | `250` | Audio-token top-k sampling limit. |
+| `--seed` | integer >= 0 | `42424242` | Seed for text and audio token sampling. |
 
-For GGUF packages, leave weight options at `native` unless you are deliberately
-testing conversion or storage behavior.
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `system_prompt` | text | empty | Assistant persona/system prompt. |
+| `voice_id` | packaged id | `NATF2` | Packaged PersonaPlex voice prompt id. |
+| `temperature` | float >= 0 | `0.8` | Audio-token sampling temperature. |
+| `text_temperature` | float >= 0 | follows `temperature` | Text-token sampling temperature. |
+| `top_k` | integer >= 0 | `250` | Audio-token top-k sampling limit. |
+| `text_top_k` | integer >= 0 | follows `top_k` | Text-token top-k sampling limit. |
+| `do_sample` | bool | `true` | Enable stochastic sampling. Set false for greedy decoding. |
+| `seed` | integer >= 0 | `42424242` | Seed for text and audio token sampling. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `personaplex.graph_arena_mb` | integer MiB | `1024` | Reusable graph arena size for LM, depformer, and Mimi graphs. |
+| `personaplex.lm_weight_context_mb` | integer MiB | `64` | Main LM weight metadata arena size. |
+| `personaplex.depformer_weight_context_mb` | integer MiB | `64` | Depth transformer weight metadata arena size. |
+| `personaplex.mimi_weight_context_mb` | integer MiB | `64` | Mimi codec weight metadata arena size. |
+| `personaplex.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | LM and Mimi matmul weight storage type when supported. |

@@ -3,11 +3,13 @@
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -23,7 +25,11 @@ constexpr const char * kFamily = "higgs_audio_stt";
 constexpr size_t kDefaultAudioEncoderGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultTextDecoderPrefillGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr size_t kDefaultTextDecoderDecodeGraphArenaBytes = 256ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultTextDecoderWeightContextBytes = 1024ull * 1024ull * 1024ull;
+#else
 constexpr size_t kDefaultTextDecoderWeightContextBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 std::shared_ptr<const HiggsAudioSTTAssets> require_assets(std::shared_ptr<const HiggsAudioSTTAssets> assets) {
     if (assets == nullptr) {
@@ -50,31 +56,20 @@ int64_t audio_frame_count(const runtime::AudioBuffer & audio) {
     return static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
 }
 
-size_t common_prefix_size(const std::string & lhs, const std::string & rhs) {
-    const size_t limit = std::min(lhs.size(), rhs.size());
-    size_t size = 0;
-    while (size < limit && lhs[size] == rhs[size]) {
-        ++size;
-    }
-    return size;
-}
-
 void emit_transcript_delta(
     const runtime::StreamEventCallback & sink,
     const runtime::Transcript & transcript,
-    std::string & emitted_text) {
+    runtime::PartialTextPublisher & partials) {
     if (!sink || transcript.text.empty()) {
         return;
     }
-    const size_t prefix_size = common_prefix_size(emitted_text, transcript.text);
-    if (prefix_size == transcript.text.size()) {
-        emitted_text = transcript.text;
+    std::string delta = partials.publish(transcript.text);
+    if (delta.empty()) {
         return;
     }
     runtime::StreamEvent event;
-    event.partial_text = runtime::Transcript{transcript.text.substr(prefix_size), transcript.language};
+    event.partial_text = runtime::Transcript{std::move(delta), transcript.language};
     sink(event);
-    emitted_text = transcript.text;
 }
 
 std::string append_streaming_transcript(
@@ -385,7 +380,7 @@ runtime::TaskResult HiggsAudioSTTSession::run_single(const HiggsAudioSTTRequest 
     const auto audio_embeddings = audio_encoder_.encode(features);
     const auto encoder_end = Clock::now();
     const auto text_decoder_start = Clock::now();
-    std::string emitted_text;
+    runtime::PartialTextPublisher partials;
     HiggsAudioSTTTokenCallback token_callback;
     if (task_.mode == runtime::RunMode::Streaming && stream_event_sink_ != nullptr) {
         token_callback = [&](const HiggsAudioSTTGeneratedTokens & partial_tokens) {
@@ -393,7 +388,7 @@ runtime::TaskResult HiggsAudioSTTSession::run_single(const HiggsAudioSTTRequest 
             emit_transcript_delta(
                 stream_event_sink_,
                 runtime::Transcript{partial.text, partial.language},
-                emitted_text);
+                partials);
         };
     }
     const auto tokens = text_decoder_.generate(prompt, audio_embeddings, asr_request.generation, token_callback);
@@ -404,7 +399,7 @@ runtime::TaskResult HiggsAudioSTTSession::run_single(const HiggsAudioSTTRequest 
         emit_transcript_delta(
             stream_event_sink_,
             runtime::Transcript{decoded.text, decoded.language},
-            emitted_text);
+            partials);
     }
     const auto postprocess_end = Clock::now();
 

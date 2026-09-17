@@ -5,7 +5,6 @@
   "category": "audio_tools",
   "status": "supported",
   "tasks": [
-    "codec",
     "vc",
     "s2s"
   ],

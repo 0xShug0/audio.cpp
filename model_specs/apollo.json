@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "family": "apollo",
+  "display_name": "Apollo",
+  "description": "Band-sequence music restoration for compressed audio at 44.1 kHz.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "s2s": [
+      "audio_enhancement"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Chunk duration in seconds; zero selects upstream whole-file inference.",
+        "min": 0,
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "audio_chunk_overlap_sec",
+        "type": "float",
+        "description": "Normalized linear crossfade duration; at most half the chunk duration.",
+        "min": 0,
+        "default": 1,
+        "required": false
+      },
+      {
+        "name": "edge_pad_duration_sec",
+        "type": "float",
+        "description": "Surrounding audio inferred and discarded on each side of a chunk.",
+        "min": 0,
+        "default": 0,
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; native preserves the GGUF tensor types.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "apollo_orig",
+      "display_name": "Apollo GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Apollo-GGUF",
+      "files": [
+        "Apollo-GGUF/apollo-orig.gguf"
+      ],
+      "strip_prefix": "Apollo-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [],
+    "recommended_package": "apollo_orig"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "frontend": {
+          "source": "weights:",
+          "prefix": "frontend"
+        }
+      }
+    }
+  ]
+}

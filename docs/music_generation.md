@@ -8,6 +8,7 @@
 | MiniMax Music 3 | `minimax_music3` | text-to-music, lyrics conditioning | [MiniMax Music 3](#minimax-music-3) |
 | Stable Audio | `stable_audio` | music, SFX, init-audio, inpaint | [Stable Audio](#stable-audio) |
 | HeartMuLa | `heartmula` | lyrics/tags to music | [HeartMuLa](#heartmula) |
+| YuE2 | `yue2` | lyrics/style to music, optional ABC score conditioning | [YuE2](models/yue2.md) |
 
 Use `--task gen` for models that generate music, sound effects, video, or audio from text and optional audio conditioning. These models are not normal TTS models: text chunking for speech TTS does not apply unless a model explicitly documents a long-output mode.
 

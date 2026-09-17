@@ -134,6 +134,7 @@
       "Stream"
     ],
     "docs": [
+      "docs/models/higgs_audio_stt.md",
       "docs/asr.md",
       "docs/gguf.md"
     ]

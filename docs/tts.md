@@ -10,7 +10,7 @@
 | DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
 | F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](community_models/f5_tts.md) |
-| MioTTS | `miotts` | `tts` | [MioTTS](#miotts) |
+| MioTTS | `miotts` | `tts` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
 | MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](community_models/moss_voicegen.md) |
@@ -21,7 +21,7 @@
 | PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
 | VoxCPM1 | `voxcpm1` | `tts` | [VoxCPM1](#voxcpm1) |
 | VoxCPM2 | `voxcpm2` | `tts`, `vdes` | [VoxCPM2](#voxcpm2) |
-| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](#higgs-audio-v3-tts) |
+| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
 | Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
 | FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
 | FireRedAudio | `firered_audio` | `asr`, `tts`, `clon`, `vdes` | [FireRedAudio](models/firered_audio.md) |
@@ -271,47 +271,9 @@ For MeanFlow, install `dots_tts_mf_q8_0` and use
 
 ## MioTTS
 
-MioTTS is a 1.7B voice-clone TTS path that uses MioCodec for acoustic decoding. It requires a reference voice and a MioCodec model.
-Best-of-N candidate scoring can optionally use Qwen3-ASR.
-
-| Field | Value |
-|---|---|
-| Family | `miotts` |
-| GGUF model | `models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf` |
-| Required dependency | MioCodec through `--session-option miotts.codec_model_path=<dir>` |
-| Task | `tts` |
-| Modes | `offline` |
-| Languages | Model auto-handles supported text languages; no explicit language selector is exposed |
-| Voice input | Required reference WAV through `--voice-ref` |
-| Built-in voices | Not exposed |
-
-```bash
-audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf --backend cuda --session-option miotts.codec_model_path=models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --text "Hello from MioTTS." --voice-ref assets/resources/b.wav --out out.wav
-```
-
-With best-of-N scoring, also provide a Qwen3-ASR model:
-
-```bash
-audiocpp_cli --task tts --family miotts --model models/MioTTS-1.7B-GGUF/miotts-1.7b-q8_0.gguf --backend cuda --session-option miotts.codec_model_path=models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --session-option miotts.best_of_n_asr_model_path=models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --request-option miotts.best_of_n_enabled=true --request-option miotts.best_of_n=2 --text "Hello from MioTTS." --voice-ref assets/resources/b.wav --out out.wav
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--voice-ref` | WAV path | required | Reference speaker audio. |
-| `--text-chunk-size` | integer chars | `180` | Long-form chunk size. |
-| `--max-tokens` | integer | `700` | Maximum generated LM tokens per chunk. |
-| `--temperature` | float | `0.8` | LM sampling temperature. |
-| `--top-k` | integer | `50` | LM top-k sampling limit. |
-| `--top-p` | float | `1.0` | LM nucleus sampling limit. |
-| `--repetition-penalty` | float | `1.0` | LM repetition penalty. |
-| `--do-sample` | `true`, `false` | `true` | Enable stochastic LM sampling. |
-| `--session-option miotts.codec_model_path=<dir>` | directory | sibling MioCodec directory | MioCodec model used for acoustic decoding. |
-| `--request-option miotts.best_of_n_enabled=true\|false` | bool | `false` | Run best-of-N candidate selection. |
-| `--request-option miotts.best_of_n=<n>` | integer | session default | Generate n candidates and select by ASR scoring. |
-| `--session-option miotts.best_of_n_default=<n>` | integer | `1` | Default best-of-N candidate count. |
-| `--session-option miotts.best_of_n_max=<n>` | integer | `8` | Maximum best-of-N candidate count. |
-| `--session-option miotts.best_of_n_language=auto\|en\|ja` | enum | `auto` | Default language used when scoring candidates. |
-| `--session-option miotts.best_of_n_asr_model_path=<dir>` | directory | sibling Qwen3-ASR directory | Qwen3-ASR model used for best-of-N scoring. |
+MioTTS uses MioCodec for acoustic decoding and can optionally use Qwen3-ASR for
+best-of-N candidate scoring. See the dedicated [MioTTS guide](models/miotts.md)
+for dependencies, commands, and options.
 
 ## MOSS-TTS-Local
 
@@ -576,39 +538,9 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 
 ## Higgs Audio v3 TTS
 
-Higgs Audio v3 TTS is a voice-clone TTS model. The current integration uses the framework chunker for long text and keeps the reference prompt state in the model session.
-
-| Field | Value |
-|---|---|
-| Family | `higgs_audio_tts` |
-| Model path | `models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf` when installed through the model manager |
-| Task | `tts` |
-| Modes | `offline` |
-| Languages | Model auto-handles supported languages |
-| Voice input | Reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
-| Built-in voices | Not exposed |
-
-```bash
-audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf --backend cuda --text "Hello from Higgs Audio." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
-```
-
-The model manager installs the Q8_0 standalone GGUF package by default:
-
-```bash
-python3 tools/model_manager_v2.py install --models-root models higgs_audio_tts_4b_q8_0
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--voice-ref` | WAV path | required | Reference speaker audio. |
-| `--reference-text` | text | empty string | Transcript for reference audio. |
-| `--text-chunk-size` | integer chars | `1024` | Long-form chunk size. |
-| `--max-tokens` | integer | `2048` | Maximum generated AR tokens per chunk. |
-| `--temperature` | float | `0.8` | AR sampling temperature. |
-| `--top-k` | integer | `30` | AR top-k sampling limit. The narrower default is less prone to premature EOC than the Python client's `50`. |
-| `--top-p` | float | `0.8` | AR nucleus sampling limit. The Python client's unfiltered equivalent is `1.0`. |
-| `--repetition-penalty` | float | `1.1` | Accepted for Python API compatibility; Higgs audio-code sampling does not consume it. |
-| `--session-option higgs_audio_tts.attention=<mode>` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |
+Higgs Audio v3 TTS supports voice cloning and long-form generation through the
+framework chunker. See the dedicated [Higgs Audio v3 TTS guide](models/higgs_audio_tts.md)
+for installation, usage, and options.
 
 ## Fish Audio S2 Pro
 

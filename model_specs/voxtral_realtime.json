@@ -45,6 +45,7 @@
       "Stream"
     ],
     "docs": [
+      "docs/models/voxtral_realtime.md",
       "docs/asr.md",
       "docs/gguf.md"
     ]

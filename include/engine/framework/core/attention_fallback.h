@@ -41,4 +41,11 @@ AttentionPreference parse_attention_preference(const std::string & value, const 
 // their ManualRepeat/Explicit equivalents based on the result.
 bool resolve_flash_attention(ggml_backend_t backend, int64_t head_dim, AttentionPreference preference);
 
+// True when the backend's device is an Intel GPU on the Vulkan backend. Does
+// not influence resolve_flash_attention(); it is a building block for families
+// whose eager lowering has been measured faster than ggml-vulkan's flash
+// kernels on Intel (yue2 NAR: 2.2x on Arc Battlemage). Families whose eager
+// path materializes an F16 ggml_repeat must not use it on Vulkan (no kernel).
+bool vulkan_device_is_intel(ggml_backend_t backend);
+
 }  // namespace engine::core

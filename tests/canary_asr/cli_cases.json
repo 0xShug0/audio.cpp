@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "id": "canary_asr_session_reuse",
+      "coverage": "Short to long graph growth, long-form chunking, cache reset, and target-language switching in one session",
+      "family": "canary_asr",
+      "model": "Canary-180M-Flash-GGUF/canary-180m-flash-f32.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "short", "audio": "resources/sample_16k.wav"},
+        {"id": "long", "audio": "resources/long_180s.wav"},
+        {"id": "short_again", "audio": "resources/sample_16k.wav"},
+        {
+          "id": "translate",
+          "audio": "resources/sample_16k.wav",
+          "language": "en",
+          "options": {"target_language": "fr"}
+        },
+        {
+          "id": "translate_de",
+          "audio": "resources/sample_16k.wav",
+          "language": "en",
+          "options": {"target_language": "de"}
+        },
+        {
+          "id": "translate_es",
+          "audio": "resources/sample_16k.wav",
+          "language": "en",
+          "options": {"target_language": "es"}
+        },
+        {
+          "id": "asr_no_pnc",
+          "audio": "resources/sample_16k.wav",
+          "language": "en",
+          "options": {"pnc": false}
+        },
+        {
+          "id": "translate_no_pnc",
+          "audio": "resources/sample_16k.wav",
+          "language": "en",
+          "options": {"target_language": "fr", "pnc": false}
+        },
+        {
+          "id": "asr_after_translation",
+          "audio": "resources/sample_16k.wav",
+          "language": "en"
+        }
+      ]
+    }
+  ]
+}

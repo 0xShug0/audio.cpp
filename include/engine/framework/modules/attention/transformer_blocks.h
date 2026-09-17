@@ -225,6 +225,10 @@ struct TransformerDecoderBlockConfig {
     int64_t intermediate_size = 0;
     float eps = 1e-5f;
     bool use_bias = true;
+    FeedForwardActivation activation = FeedForwardActivation::Gelu;
+    bool use_packed_qkv = false;
+    bool use_packed_kv = false;
+    bool use_flash_cross_attention = false;
 };
 
 struct TransformerDecoderBlockWeights {
@@ -248,6 +252,21 @@ public:
         const core::TensorValue & input,
         const core::TensorValue & memory,
         const TransformerDecoderBlockWeights & weights) const;
+
+    // Requires packed QKV/KV opt-ins. Caches and masks are caller-owned, using
+    // SelfAttentionModule::build_cached_tail and CrossAttentionModule::build_cached layouts.
+    // When use_flash_cross_attention is enabled, memory_mask instead follows
+    // CrossAttentionModule::build_cached_flash's additive F16 mask contract.
+    core::TensorValue build_cached_tail(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const TransformerDecoderBlockWeights & weights,
+        const core::TensorValue & self_key_cache,
+        const core::TensorValue & self_value_cache,
+        const core::TensorValue & cache_slot,
+        const core::TensorValue & causal_mask,
+        const CrossAttentionKeyValue & memory_key_value,
+        const core::TensorValue & memory_mask) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
 

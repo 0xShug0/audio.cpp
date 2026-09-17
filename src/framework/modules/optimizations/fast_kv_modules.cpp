@@ -119,6 +119,38 @@ core::TensorValue FastKVSetRowsModule::build(
     return core::reshape_tensor(ctx, flat_updated, cache.shape);
 }
 
+
+core::TensorValue FastKVSetRowsModule::build_block(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & cache,
+    const core::TensorValue & rows,
+    const core::TensorValue & indices) const {
+    core::validate_rank_between(cache, 4, 4, "cache");
+    core::validate_rank_between(rows, 4, 4, "rows");
+    const int64_t queries = rows.shape.dims[1];
+    core::validate_shape(rows, core::TensorShape::from_dims(
+        {1, queries, cache.shape.dims[2], cache.shape.dims[3]}), "rows");
+    core::validate_shape(indices, core::TensorShape::from_dims({queries}), "indices");
+    if (ctx.ggml == nullptr || cache.shape.dims[0] != 1 || queries <= 0 ||
+        queries > cache.shape.dims[1] || rows.type != GGML_TYPE_F32 ||
+        (indices.type != GGML_TYPE_I32 && indices.type != GGML_TYPE_I64)) {
+        throw std::runtime_error("FastKVSetRowsModule block requires one sequence, f32 rows and integer indices");
+    }
+    const bool optimized = config_.mode == FastKVSetRowsMode::BackendViewOptimized;
+    if ((!optimized && cache.type != GGML_TYPE_F32) ||
+        (optimized && cache.type != GGML_TYPE_F32 && cache.type != GGML_TYPE_F16 && cache.type != GGML_TYPE_BF16) ||
+        !core::has_backend_addressable_layout(cache.tensor)) {
+        throw std::runtime_error("FastKVSetRowsModule block cache type or layout is unsupported");
+    }
+    const int64_t width = cache.shape.dims[2] * cache.shape.dims[3];
+    auto flat_cache = core::reshape_tensor(ctx, cache, core::TensorShape::from_dims({cache.shape.dims[1], width}));
+    auto contiguous_rows = tensor_layout::ensure_contiguous_layout_if_needed(ctx, rows);
+    auto flat_rows = core::reshape_tensor(ctx, contiguous_rows, core::TensorShape::from_dims({queries, width}));
+    auto * updated = ggml_set_rows(ctx.ggml, flat_cache.tensor, flat_rows.tensor, indices.tensor);
+    if (optimized) { updated->src[2] = cache.tensor; }
+    return core::reshape_tensor(ctx, core::wrap_tensor(updated, flat_cache.shape, cache.type), cache.shape);
+}
+
 const core::ModuleSchema & FastKVSetRowsModule::static_schema() noexcept {
     return kFastKVSetRowsSchema;
 }

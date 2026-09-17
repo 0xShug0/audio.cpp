@@ -87,6 +87,26 @@ void test_inline_default_and_named_presets() {
     require(model.voice_presets.at("builtin").voice_id == "alba", "named voice_id parsed");
 }
 
+void test_builtin_utility_model_paths() {
+    const auto root = make_temp_root();
+    const auto absolute = (root / "weights" / "rnnoise.safetensors").generic_string();
+    const auto config_path = write_config(root, "server.json",
+        "{\"models\":["
+        "{\"id\":\"relative\",\"family\":\"builtin_audio_utils\","
+        "\"path\":\"weights/rnnoise.safetensors\",\"task\":\"s2s\","
+        "\"load_options\":{\"utility\":\"rnnoise\"}},"
+        "{\"id\":\"absolute\",\"family\":\"builtin_audio_utils\","
+        "\"path\":\"" + absolute + "\",\"task\":\"s2s\","
+        "\"load_options\":{\"utility\":\"rnnoise\"}}]}");
+    const auto config = minitts::server::load_server_config(config_path);
+    require(config.models.at(0).path == root / "weights/rnnoise.safetensors",
+        "builtin utility relative path resolves against config directory");
+    require(config.models.at(1).path == std::filesystem::path(absolute),
+        "builtin utility absolute path is preserved");
+    require(config.models.at(0).load_options.at("utility") == "rnnoise",
+        "builtin utility selector is forwarded");
+}
+
 void test_default_preset_name() {
     const auto root = make_temp_root();
     const auto config_path = write_config(
@@ -610,6 +630,7 @@ void test_model_memory_estimator() {
 int main() {
     try {
         test_inline_default_and_named_presets();
+        test_builtin_utility_model_paths();
         test_default_preset_name();
         test_default_request_options();
         test_missing_default_preset_name_is_rejected();

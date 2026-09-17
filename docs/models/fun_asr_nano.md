@@ -49,7 +49,16 @@ audiocpp_cli \
 The same command accepts the F16 GGUF file or the official safetensors model
 directory.
 
-### Request Options
+## Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---|---|
+| `--language` | `auto`, `zh`, `en`, `ja` | `auto` | Recognition language hint. |
+| `--max-tokens` | positive integer | `512` | Maximum transcript tokens generated per chunk. |
+| `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Offline audio chunking policy. |
+| `--audio-chunk-seconds` | positive seconds | `30` | Chunk duration for fixed/automatic chunking. |
+
+## Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---|---|
@@ -58,6 +67,21 @@ directory.
 | `max_tokens` | positive integer | `512` | Maximum transcript tokens generated per chunk. |
 | `audio_chunk_mode` | `auto`, `fixed`, `none` | `auto` | Offline audio chunking policy. |
 | `audio_chunk_seconds` | positive seconds | `30` | Chunk duration for fixed/automatic chunking. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---|---|
+| `fun_asr_nano.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared model weight storage type. |
+| `fun_asr_nano.encoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Encoder matmul weight storage type. |
+| `fun_asr_nano.adaptor_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Adaptor matmul weight storage type. |
+| `fun_asr_nano.decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Decoder matmul weight storage type. |
+
+On CUDA, native, F16, and Q8 shared preferences are promoted to BF16 for the
+decoder to keep logits stable. Encoder and adaptor weights retain the shared
+type, so a Q8_0 GGUF keeps those large matrix paths quantized. An explicit
+`fun_asr_nano.decoder_weight_type` forces that component's storage type. CPU
+uses the requested or native stored types without promotion.
 
 For example:
 
@@ -70,19 +94,6 @@ audiocpp_cli --task asr --family fun_asr_nano \
   --audio-chunk-mode fixed \
   --audio-chunk-seconds 30
 ```
-
-### Weight Storage
-
-`fun_asr_nano.weight_type` sets a shared storage preference. Component overrides are
-`fun_asr_nano.encoder_weight_type`, `fun_asr_nano.adaptor_weight_type`, and
-`fun_asr_nano.decoder_weight_type`. Supported values are `native`, `f32`,
-`f16`, `bf16`, and `q8_0`.
-
-On CUDA, native, F16, and Q8 shared preferences are promoted to BF16 for the
-decoder to keep logits stable. Encoder and adaptor weights retain the shared
-type, so a Q8_0 GGUF keeps those large matrix paths quantized. An explicit
-`fun_asr_nano.decoder_weight_type` forces that component's storage type. CPU
-uses the requested or native stored types without promotion.
 
 ## Server
 

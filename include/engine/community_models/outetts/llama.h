@@ -56,7 +56,11 @@ public:
         core::BackendType backend_type,
         int device,
         int threads,
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+        size_t weight_context_bytes = 1024ull * 1024ull * 1024ull,
+#else
         size_t weight_context_bytes = 4ull * 1024ull * 1024ull * 1024ull,
+#endif
         size_t constant_context_bytes = 256ull * 1024ull * 1024ull,
         assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native);
     ~OuteTTSLlamaRuntime();

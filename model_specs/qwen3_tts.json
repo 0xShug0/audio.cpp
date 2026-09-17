@@ -172,7 +172,9 @@
         "model.safetensors",
         "speech_tokenizer/config.json",
         "speech_tokenizer/model.safetensors",
-        "tokenizer_config.json"
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt"
       ],
       "download": {
         "kind": "huggingface_snapshot",

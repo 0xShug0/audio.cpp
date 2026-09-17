@@ -103,32 +103,51 @@ audiocpp_cli --task tts --family dots_tts \
   --out longform.wav
 ```
 
+## Common Options (use directly)
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--reference-text` / `--request-option reference_text=<text>` | text | empty | Transcript for prompt audio. |
-| `--request-option reference_duration_sec=<f>` | seconds | not set | Trim prompt audio before reference conditioning. |
-| `--request-option template_name=<name>` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package. |
-| `--request-option source_audio=<path>` | WAV path | not set | Source audio for `template_name=edit`. |
-| `--request-option instruction=<text>` / `--request-option instruct=<text>` | text | request text | Structured DotTTS Edit instruction. |
-| `--request-option source_text=<text>` | text | derived | Optional source transcript override for DotTTS Edit. |
-| `--request-option target_text=<text>` | text | derived | Optional target transcript override for DotTTS Edit. |
-| `--request-option use_xvector=<mode>` | `auto`, `on`, `off` | `auto` | Speaker-guidance control for DotTTS Edit. |
-| `--language` / `--request-option language=<code>` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
-| `--request-option num_inference_steps=<n>` | integer | `10` | Flow-matching inference steps. |
-| `--guidance-scale` / `--request-option guidance_scale=<f>` | float | `1.2` | Classifier-free guidance scale. |
-| `--request-option speaker_scale=<f>` | float | `1.5` | Prompt speaker embedding scale. |
-| `--request-option sampler_mode=<name>` | `euler`, `midpoint`, `rk4` | `euler` | Flow sampler mode. |
-| `--max-tokens` / `--request-option max_tokens=<n>` | integer | `500` | Maximum generated audio patch count per segment. |
-| `--text-chunk-size` / `--request-option text_chunk_size=<n>` | chars | `320` | Long-form chunk size. |
-| `--text-chunk-mode` / `--request-option text_chunk_mode=<name>` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework chunking mode. |
-| `--request-option vocoder_merge_steps=<n>` | integer | `4` | Streaming vocoder latent merge size. |
-| `--seed` / `--request-option seed=<n>` | integer | `42` | Prompt latent and flow noise seed. |
-| `--session-option dots_tts.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
-| `--session-option dots_tts.speaker_encoder_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Speaker encoder matmul weight storage type. |
-| `--session-option dots_tts.codec_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | AudioVAE matmul and recurrent weight storage type. |
-| `--session-option dots_tts.patch_encoder_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Patch encoder matmul weight storage type. |
-| `--session-option dots_tts.llm_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | LLM matmul weight storage type. |
-| `--session-option dots_tts.flow_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | SOAR or MeanFlow DiT matmul weight storage type. |
-| `--session-option dots_tts.codec_conv_weight_type=<type>` | `native`, `f32`, `f16` | `native` | AudioVAE convolution weight storage type. |
-| `--session-option dots_tts.reference_cache_slots=<n>` | integer | `4` | Prepared reference-audio cache slots; use `0` to disable reuse. |
-| `--session-option dots_tts.mem_saver=true\|false` | bool | `false` | Release request-phase components while keeping reference cache slots alive. |
+| `--reference-text` | text | empty | Transcript for prompt audio. |
+| `--language` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
+| `--guidance-scale` | float | `1.2` | Classifier-free guidance scale. |
+| `--max-tokens` | integer | `500` | Maximum generated audio patch count per segment. |
+| `--text-chunk-size` | chars | `320` | Long-form chunk size. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework chunking mode. |
+| `--seed` | integer | `42` | Prompt latent and flow noise seed. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `reference_text` | text | empty | Transcript for prompt audio. |
+| `reference_duration_sec` | seconds | not set | Trim prompt audio before reference conditioning. |
+| `template_name` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package. |
+| `source_audio` | WAV path | not set | Source audio for `template_name=edit`. |
+| `instruction` / `instruct` | text | request text | Structured DotTTS Edit instruction. |
+| `source_text` | text | derived | Optional source transcript override for DotTTS Edit. |
+| `target_text` | text | derived | Optional target transcript override for DotTTS Edit. |
+| `use_xvector` | `auto`, `on`, `off` | `auto` | Speaker-guidance control for DotTTS Edit. |
+| `language` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
+| `num_inference_steps` | integer | `10` | Flow-matching inference steps. |
+| `guidance_scale` | float | `1.2` | Classifier-free guidance scale. |
+| `speaker_scale` | float | `1.5` | Prompt speaker embedding scale. |
+| `sampler_mode` | `euler`, `midpoint`, `rk4` | `euler` | Flow sampler mode. |
+| `max_tokens` | integer | `500` | Maximum generated audio patch count per segment. |
+| `text_chunk_size` | chars | `320` | Long-form chunk size. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework chunking mode. |
+| `vocoder_merge_steps` | integer | `4` | Streaming vocoder latent merge size. |
+| `seed` | integer | `42` | Prompt latent and flow noise seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `dots_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
+| `dots_tts.speaker_encoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Speaker encoder matmul weight storage type. |
+| `dots_tts.codec_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | AudioVAE matmul and recurrent weight storage type. |
+| `dots_tts.patch_encoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | Patch encoder matmul weight storage type. |
+| `dots_tts.llm_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | LLM matmul weight storage type. |
+| `dots_tts.flow_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `weight_type` | SOAR or MeanFlow DiT matmul weight storage type. |
+| `dots_tts.codec_conv_weight_type` | `native`, `f32`, `f16` | `native` | AudioVAE convolution weight storage type. |
+| `dots_tts.reference_cache_slots` | integer | `4` | Prepared reference-audio cache slots; use `0` to disable reuse. |
+| `dots_tts.mem_saver` | bool | `false` | Release request-phase components while keeping reference cache slots alive. |

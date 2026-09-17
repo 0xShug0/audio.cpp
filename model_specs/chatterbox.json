@@ -101,7 +101,12 @@
         "ve.safetensors",
         "t3_cfg.safetensors",
         "s3gen.safetensors",
-        "tokenizer.json"
+        "tokenizer.json",
+        "grapheme_mtl_merged_expanded_v1.json",
+        "Cangjie5_TC.json",
+        "conds.pt",
+        "t3_mtl23ls_v2.safetensors",
+        "t3_mtl23ls_v3.safetensors"
       ],
       "download": {
         "kind": "huggingface_snapshot",
