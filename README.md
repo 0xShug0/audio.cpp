@@ -834,6 +834,7 @@ Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy 
 - [audio.cpp-hub](https://github.com/IIIIIllllIIIIIlllll/audio.cpp-hub) is a Web GUI for audio.cpp that packages model-oriented workflows around the native runtime.
 - [Delusion](https://github.com/BrokenSource/Delusion) provide Pythonic, strongly typed wrapper classes around audio.cpp usage, including model download/cache helpers and typed request surfaces.
 - [AudioCppTray](https://github.com/spicchio72/AudioCppTray) is a Windows tray management tool for `audiocpp_server.exe`, with start/stop/restart controls, notifications, log viewing, log rotation, and server configuration shortcuts.
+- [AudioCpp.NET](https://github.com/dongfangzhizhu/AudioCpp.NET) provides .NET 10 bindings for audio.cpp behind a small versioned C ABI shim, shipped as managed, CPU runtime, and CUDA runtime NuGet packages for Windows and Linux.
 
 
 ## Performance Metrics
