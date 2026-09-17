@@ -75,13 +75,31 @@ Select the F32 VAE:
 
 The component paths are relative to `--model`; absolute paths are rejected.
 
-## AR LoRA
+## AR and NAR LoRA
+
+Use `yue2.ar_lora` for score/semantic planning and `yue2.nar_lora` for acoustic
+rendering. Either adapter can be used alone or both together. Use unfused
+SafeTensors files, not the `_comfyui` layouts. Changing adapters requires a new
+session; merged weights are cached within that session, not merged per request.
+
+For example, add the acoustic adapter alongside the AR adapter:
+
+```bash
+--session-option yue2.nar_lora=/path/to/nar_lora_joint_v4.safetensors \
+--session-option yue2.nar_lora_scale=1.0
+```
+
+The [NAR adapter](https://huggingface.co/Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4)
+includes full `vae2llm` and `llm2vae` projection replacements in addition to LoRA
+deltas. Its scale applies only to deltas; replacements are loaded at full strength.
+A scale of `0` disables the entire adapter, including replacements. No separate
+audio-tokenizer head is needed for text-to-music generation.
 
 Load an unfused YuE2 AR adapter with session options:
 
 ```bash
---session-option yue2.lora=/path/to/ar_lora_inst_v3abc.safetensors \
---session-option yue2.lora_scale=1.0 \
+--session-option yue2.ar_lora=/path/to/ar_lora_inst_v3abc.safetensors \
+--session-option yue2.ar_lora_scale=1.0 \
 --request-option cot=full
 ```
 
@@ -194,8 +212,10 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 |---|---|---:|---|
 | `--session-option yue2.model_gguf=<file>` | relative GGUF path | `yue2-3b-q8_0.gguf` | Main AR/NAR component. |
 | `--session-option yue2.vae_gguf=<file>` | relative GGUF path | `yue2-vae-f16.gguf` | VAE component. |
-| `--session-option yue2.lora=<file>` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
-| `--session-option yue2.lora_scale=<float>` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
+| `--session-option yue2.ar_lora=<file>` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
+| `--session-option yue2.ar_lora_scale=<float>` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
+| `--session-option yue2.nar_lora=<file>` | safetensors path | none | Unfused NAR adapter; relative paths use the model root. |
+| `--session-option yue2.nar_lora_scale=<float>` | finite float | `1.0` | NAR delta scale; replacements stay at full strength. `0` disables the entire adapter. |
 | `--session-option yue2.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
 | `--session-option yue2.model_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Main model weight storage override. |
 | `--session-option yue2.vae_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | VAE weight storage override. |
