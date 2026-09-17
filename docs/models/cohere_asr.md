@@ -45,7 +45,7 @@ audiocpp_cli --task asr --family cohere_asr \
   --text-out transcript.txt --log
 ```
 
-## Options
+## Request Options (use with `--request-option`)
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -54,8 +54,12 @@ audiocpp_cli --task asr --family cohere_asr \
 | `audio_chunk_mode` | `auto` | `auto` and `quiet_energy` use quiet boundaries; `fixed` uses equal-length chunks; `none` requires at most 35 seconds. |
 | `audio_chunk_duration_sec` | `35` | Maximum audio chunk length, from 0.04 to 35 seconds. |
 | `max_tokens` | `256` | Maximum generated tokens per chunk, up to 1014. Increase if generation reaches the limit before EOS. |
-| `cohere_asr.weight_type` (session) | `native` | Weight storage type override; `native` keeps the precision stored in the model file. |
 
-Request options use `--request-option name=value`; session options use
-`--session-option name=value`. Audio chunks must contain at least 20 ms.
+## Session Options (use with `--session-option`)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `cohere_asr.weight_type` | `native` | Weight storage type override; `native` keeps the precision stored in the model file. |
+
+Audio chunks must contain at least 20 ms.
 Translation, diarization, timestamps, and live audio streaming are not supported.

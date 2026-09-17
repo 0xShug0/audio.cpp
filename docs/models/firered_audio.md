@@ -74,26 +74,38 @@ audiocpp_cli \
 | `semantic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
 | `acoustic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--request-option template_name=<name>` | `asr`, `understand`, `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Request template. |
-| `--language` / `--request-option language=<code>` | language tag | `zh` | Generation or text-path language tag. |
+| `--language` | language tag | `zh` | Generation or text-path language tag. |
 | `--voice-ref` | WAV path | required for clone | Prompt/reference voice. |
-| `--reference-text` / `--request-option reference_text=<text>` | text | empty | Transcript for the prompt audio. |
-| `--request-option instruction=<text>` | text | required for design/edit | Voice design or edit instruction. |
-| `--request-option num_inference_steps=<n>` | integer > 0 | `10` | FireRedAudio DiT flow steps per latent patch. |
-| `--request-option guidance_scale=<f>` | float >= 0 | `2.0` | FireRedAudio DiT CFG scale. |
-| `--request-option max_new_audio_steps=<n>` | integer > 0 | `750` | Maximum generated RedAE latent patches. |
-| `--request-option min_new_audio_steps=<n>` | integer >= 0 | `6` | Minimum audio patches before stop may be accepted. |
-| `--request-option max_new_text_tokens=<n>` | integer > 0 | `512` | Text-mode token budget before audio mode. |
-| `--request-option max_new_tokens=<n>` | integer > 0 | `300` | ASR/understanding text token budget. |
-| `--request-option enable_thinking=true\|false` | bool | `false` | Enable open thinking block for `understand`; invalid for plain `asr`. |
-| `--request-option top_k=<n>` | integer >= 0 | `20` | Understanding top-k sampling. |
-| `--request-option top_p=<f>` | `0..1` | `0.8` | Understanding nucleus sampling. |
-| `--request-option temperature=<f>` | float >= 0 | `0.7` | Understanding sampling temperature. |
-| `--request-option seed=<n>` | integer >= 0 | `1234` | Generation seed. |
-| `--session-option firered_audio.reference_cache_slots=<n>` | integer >= 0 | `2` | Prepared reference-audio cache slots. |
-| `--session-option firered_audio.mem_saver=true\|false` | bool | `false` | Release runtime graphs after request phases. |
-| `--session-option firered_audio.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+| `--reference-text` | text | empty | Transcript for the prompt audio. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `template_name` | `asr`, `understand`, `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Request template. |
+| `language` | language tag | `zh` | Generation or text-path language tag. |
+| `reference_text` | text | empty | Transcript for the prompt audio. |
+| `instruction` | text | required for design/edit | Voice design or edit instruction. |
+| `num_inference_steps` | integer > 0 | `10` | FireRedAudio DiT flow steps per latent patch. |
+| `guidance_scale` | float >= 0 | `2.0` | FireRedAudio DiT CFG scale. |
+| `max_new_audio_steps` | integer > 0 | `750` | Maximum generated RedAE latent patches. |
+| `min_new_audio_steps` | integer >= 0 | `6` | Minimum audio patches before stop may be accepted. |
+| `max_new_text_tokens` | integer > 0 | `512` | Text-mode token budget before audio mode. |
+| `max_new_tokens` | integer > 0 | `300` | ASR/understanding text token budget. |
+| `enable_thinking` | bool | `false` | Enable open thinking block for `understand`; invalid for plain `asr`. |
+| `top_k` | integer >= 0 | `20` | Understanding top-k sampling. |
+| `top_p` | `0..1` | `0.8` | Understanding nucleus sampling. |
+| `temperature` | float >= 0 | `0.7` | Understanding sampling temperature. |
+| `seed` | integer >= 0 | `1234` | Generation seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `firered_audio.reference_cache_slots` | integer >= 0 | `2` | Prepared reference-audio cache slots. |
+| `firered_audio.mem_saver` | bool | `false` | Release runtime graphs after request phases. |
+| `firered_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |

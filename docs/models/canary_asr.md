@@ -44,7 +44,7 @@ audiocpp_cli --task asr --family canary_asr \
   --text-out translation.txt --log
 ```
 
-## Options
+## Request Options (use with `--request-option`)
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -54,8 +54,11 @@ audiocpp_cli --task asr --family canary_asr \
 | `audio_chunk_mode` | `auto` | `auto` or `fixed` splits long audio; `none` requires at most 40 seconds. |
 | `audio_chunk_duration_sec` | `40` | Maximum chunk length, at most 40 seconds. |
 | `max_tokens` | `0` | Generated tokens per chunk; zero derives a limit from encoder length. |
-| `canary_asr.weight_type` (session) | `native` | Weight storage type override; `native` keeps the precision stored in the model file. |
 
-Request options use `--request-option name=value`; session options use
-`--session-option name=value`. Use `--backend cpu --threads 8` for CPU inference
-or `--backend vulkan` for Vulkan.
+## Session Options (use with `--session-option`)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `canary_asr.weight_type` | `native` | Weight storage type override; `native` keeps the precision stored in the model file. |
+
+Use `--backend cpu --threads 8` for CPU inference or `--backend vulkan` for Vulkan.

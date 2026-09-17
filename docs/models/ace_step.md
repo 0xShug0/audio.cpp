@@ -143,7 +143,7 @@ Replace a time span inside source audio. Source audio and a repaint window are r
 audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --task-route repaint --audio song.wav --text "replace the middle with a brighter chorus" --repaint-start 20 --repaint-end 35 --out repaint.wav
 ```
 
-## Shared Controls
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
@@ -154,7 +154,6 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `--duration-seconds` | float, `-1` for auto | `-1` | Target duration. Source-locked routes use source duration. |
 | `--language` | language code | `en` | Vocal language for lyrics. |
 | `--track-name` | text | empty string | Track name used by `lego` and `extract` instructions. |
-| `--request-option complete_track_classes=a,b` | comma-separated text | empty list | Track classes for `complete`. |
 | `--repaint-start` | seconds | required for `repaint` | Start time for repaint. |
 | `--repaint-end` | seconds | required for `repaint` | End time for repaint. |
 | `--repaint-mode` | `balanced`, `conservative`, `aggressive` | `balanced` | Preset repaint blending policy. |
@@ -162,32 +161,43 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `--num-inference-steps` | integer | `8` | Diffusion denoising steps. |
 | `--guidance-scale` | float | `1.0`; `7.0` for `extract` unless overridden | Diffusion guidance scale. |
 | `--seed` | integer | random if omitted | Generation seed. |
-| `--request-option bpm=<n>` | integer | not set | Force BPM metadata; otherwise the planner chooses it when used. |
-| `--request-option keyscale=<text>` | text | not set | Force key metadata; otherwise the planner chooses it when used. |
-| `--request-option timesignature=<text>` | text | not set | Force time signature metadata; otherwise the planner chooses it when used. |
-| `--request-option negative_prompt=<text>` | text | `NO USER INPUT` | Negative prompt. |
-| `--request-option audio_codes=<text>` | ACE semantic code text | not set | Skip planner token generation and use supplied audio codes. |
-| `--request-option audio_cover_strength=<float>` | float | `1.0` | Cover strength for cover/edit-style conditioning. |
-| `--request-option cover_noise_strength=<float>` | float | `0.0` | Noise strength for cover conditioning. |
-| `--request-option lm_temperature=<float>` | float | `0.85` | Planner sampling temperature. |
-| `--request-option lm_cfg_scale=<float>` | float | `2.0` | Planner CFG scale. |
-| `--request-option lm_top_k=<n>` | integer | `0` | Planner top-k; `0` disables top-k. |
-| `--request-option lm_top_p=<float>` | float | `0.9` | Planner top-p. |
-| `--request-option lm_repetition_penalty=<float>` | float | `1.0` | Planner repetition penalty. |
-| `--request-option sampler_mode=<name>` | `euler`, `heun` | `euler` | Diffusion sampler mode. |
-| `--request-option retake_seed=<n>` | integer, `-1` to clear | not set | Optional retake noise seed. |
-| `--request-option retake_variance=<float>` | float | `0.0` | Retake noise mixing strength. |
-| `--request-option flow_edit_morph=true\|false` | bool | `false` | Status: parsed for text2music, but not usable because the flow-edit diffusion overlay is not implemented. |
-| `--request-option dcw_enabled=true\|false` | bool | `false` | Status: experimental dynamic-cfg wavelet path. Keep disabled unless validating that path. |
 
-## Model Selection
+## Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--load-option ace_step.dit_model_path=<dir>` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
-| `--session-option ace_step.dit_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | DiT weight type. |
-| `--session-option ace_step.planner_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Planner LM weight type. |
-| `--session-option ace_step.mem_saver=true\|false` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `complete_track_classes` | comma-separated text | empty list | Track classes for `complete`. |
+| `bpm` | integer | not set | Force BPM metadata; otherwise the planner chooses it when used. |
+| `keyscale` | text | not set | Force key metadata; otherwise the planner chooses it when used. |
+| `timesignature` | text | not set | Force time signature metadata; otherwise the planner chooses it when used. |
+| `negative_prompt` | text | `NO USER INPUT` | Negative prompt. |
+| `audio_codes` | ACE semantic code text | not set | Skip planner token generation and use supplied audio codes. |
+| `audio_cover_strength` | float | `1.0` | Cover strength for cover/edit-style conditioning. |
+| `cover_noise_strength` | float | `0.0` | Noise strength for cover conditioning. |
+| `lm_temperature` | float | `0.85` | Planner sampling temperature. |
+| `lm_cfg_scale` | float | `2.0` | Planner CFG scale. |
+| `lm_top_k` | integer | `0` | Planner top-k; `0` disables top-k. |
+| `lm_top_p` | float | `0.9` | Planner top-p. |
+| `lm_repetition_penalty` | float | `1.0` | Planner repetition penalty. |
+| `sampler_mode` | `euler`, `heun` | `euler` | Diffusion sampler mode. |
+| `retake_seed` | integer, `-1` to clear | not set | Optional retake noise seed. |
+| `retake_variance` | float | `0.0` | Retake noise mixing strength. |
+| `flow_edit_morph` | bool | `false` | Status: parsed for text2music, but not usable because the flow-edit diffusion overlay is not implemented. |
+| `dcw_enabled` | bool | `false` | Status: experimental dynamic-cfg wavelet path. Keep disabled unless validating that path. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `ace_step.dit_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | DiT weight type. |
+| `ace_step.planner_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Planner LM weight type. |
+| `ace_step.mem_saver` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+
+## Load Options (use with `--load-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `ace_step.dit_model_path` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
 
 ACE-Step GGUF packages are variant-specific. Use the Turbo GGUF for the default
 `acestep-v15-turbo` path, and pass `--load-option ace_step.dit_model_path=acestep-v15-base`

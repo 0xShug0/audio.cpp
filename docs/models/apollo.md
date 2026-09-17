@@ -26,15 +26,20 @@ audiocpp_cli \
 | Input | 44.1 kHz WAV through `--audio` |
 | Output | Restored 44.1 kHz waveform, preserving input channels |
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | 44.1 kHz WAV path | required | Music to restore. |
 | `--out` | WAV path | not set | Save the restored waveform. |
-| `--request-option audio_chunk_duration_sec=<seconds>` | seconds >= 0 | `0` | Chunk duration; `0` processes the whole recording. |
-| `--request-option audio_chunk_overlap_sec=<seconds>` | seconds >= 0 | `1` | Crossfade overlap, at most half the chunk duration. |
-| `--request-option edge_pad_duration_sec=<seconds>` | seconds >= 0 | `0` | Extra context processed and discarded on each side of a chunk. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `audio_chunk_duration_sec` | seconds >= 0 | `0` | Chunk duration; `0` processes the whole recording. |
+| `audio_chunk_overlap_sec` | seconds >= 0 | `1` | Crossfade overlap, at most half the chunk duration. |
+| `edge_pad_duration_sec` | seconds >= 0 | `0` | Extra context processed and discarded on each side of a chunk. |
 
 For long recordings, add these options to limit per-chunk memory use:
 
@@ -44,14 +49,11 @@ For long recordings, add these options to limit per-chunk memory use:
 --request-option edge_pad_duration_sec=1
 ```
 
-## Session Options
+## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--session-option apollo.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, `q6_k` | `native` | Weight storage override at session creation. |
-
-Leave this at `native` to preserve the packaged F32 weights. Other storage
-types are accepted but have not been validated for output quality.
+| `apollo.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, `q6_k` | `native` | Weight storage override at session creation. |
 
 ## Convert Weights
 

@@ -32,18 +32,23 @@ audiocpp_cli \
 For speech, replace the model filename with `universr-speech-orig.gguf`.
 Both weights use the same family and options.
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Source audio to super-resolve. |
 | `--out` | WAV path | not set | Save the restored waveform. |
-| `--request-option input_sample_rate=<Hz>` | `8000`, `12000`, `16000`, `24000` | input file rate | Effective input bandwidth, expressed as a sample rate. |
-| `--request-option sampler_mode=<method>` | `euler`, `midpoint`, `rk4` | `midpoint` | Integration method. |
-| `--request-option num_inference_steps=<n>` | integer > 0 | `4` | Integration steps. |
-| `--request-option guidance_scale=<f>` | float >= 0 | `1.5` | Guidance strength; `0` disables guidance. |
-| `--request-option seed=<n>` | integer >= 0 | `42` | Initial noise seed. |
-| `--request-option audio_chunk_duration_sec=<seconds>` | seconds >= 0 | `0` | Chunk duration; `0` processes the whole recording. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `input_sample_rate` | `8000`, `12000`, `16000`, `24000` | input file rate | Effective input bandwidth, expressed as a sample rate. |
+| `sampler_mode` | `euler`, `midpoint`, `rk4` | `midpoint` | Integration method. |
+| `num_inference_steps` | integer > 0 | `4` | Integration steps. |
+| `guidance_scale` | float >= 0 | `1.5` | Guidance strength; `0` disables guidance. |
+| `seed` | integer >= 0 | `42` | Initial noise seed. |
+| `audio_chunk_duration_sec` | seconds >= 0 | `0` | Chunk duration; `0` processes the whole recording. |
 
 Set `input_sample_rate` to the source's effective bandwidth rate, even if the
 WAV was previously resampled to a higher rate. Omit it only when the file rate
@@ -53,14 +58,11 @@ For long recordings, add `--request-option audio_chunk_duration_sec=6`.
 Chunks are processed independently and concatenated without overlap; this can
 change the output compared with whole-recording processing.
 
-## Session Options
+## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--session-option universr.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, `q6_k` | `native` | Weight storage override at session creation. |
-
-Leave this at `native` to preserve the packaged F32 weights. Other storage
-types are accepted but have not been validated for output quality.
+| `universr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, `q6_k` | `native` | Weight storage override at session creation. |
 
 ## Convert Weights
 

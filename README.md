@@ -14,7 +14,7 @@ ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gg
 
 > [!IMPORTANT]
 >
-> **2026-09-15 - Release v0.8.0: YuE2 and SheetSage2:** YuE2 native song generation and SheetSage2 audio-to-ABC score transcription are now on [main](https://github.com/0xShug0/audio.cpp/tree/main) and included in release v0.8.0.
+> **2026-09-15 - Release v0.8.1:** YuE2 now supports independent AR and NAR LoRA adapters through the CLI and server, with AR LoRA selection available in the WebUI. This release also adds six new model families: Apollo, UniverSR, PulseVAD, Canary 180M Flash, Cohere Transcribe, and MOSS-Transcribe-Diarize.
 >
 > **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
@@ -88,7 +88,7 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 | **fireredtts3** | TTS, Clone, Design, Ctrl | 24 langs + 21 zh dialects | FireRedTTS3 Base<br>FireRedTTS3 Instruct/Voicedesign | GGUF original/Q8 |
 | **higgs_audio_tts** | TTS, Clone, Ctrl | auto | Higgs Audio v3 TTS 4B | GGUF 16/Q8 |
 | **index_tts2** | TTS, Clone, Ctrl | zh, en, ja, es, ar | IndexTTS-2<br>IndexTTS-2.5 | GGUF 16/Q8 |
-| **kokoro_tts** | TTS | en-us, en-gb, es, fr, hi, it, ja, pt-br, zh | [Kokoro 82M](tests/kokoro_tts/MULTILINGUAL_GGUF.md), 54 preset voices | Safetensors, local GGUF BF16/Q8 |
+| **kokoro_tts** | TTS | en-us, en-gb, es, fr, hi, it, ja, pt-br, zh | Kokoro 82M, 54 preset voices | Safetensors, local GGUF BF16/Q8 |
 | **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-v4.1-Small<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
 | **magpie_tts** | TTS | ar-AE, ar-MSA, ar-SA, de, en, es, fr, hi, it, ko, pt-BR, vi, zh | NVIDIA MagpieTTS Multilingual 357M (v2607) with baked speaker prompts and NanoCodec decode | GGUF original/Q8 |
 | **miotts** | TTS, Clone | en, ja | MioTTS-1.7B | GGUF 16/Q8 |
@@ -823,10 +823,12 @@ The Python-reference side of these tests usually requires more time-consuming se
 
 ## Projects
 
-Last update: 2026-08-17
+Last update: 2026-09-17
 
 Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy to add it here.
 
+- [AIRI Audio Server](https://github.com/dasilva333/airi-audio-server): A lightweight, zero-Python Node.js microservice wrapper providing OpenAI-compatible `/v1/audio/speech` (with real-time SSE streaming), `/v1/audio/transcriptions` (Citrinet/Whisper), dynamic voice catalog discovery, and serialized GPU queueing for `audio.cpp`.
+- [Project AIRI](https://github.com/moeru-ai/airi): An open-source, next-generation AI companion and desktop frontend featuring interactive Voice Studio curation, zero-shot voice cloning dropzones, and real-time audio pipeline integration powered by `airi-audio-server` and `audio.cpp`.
 - [TranscrIA](https://github.com/Martossien/transcria) is a self-hosted meeting transcription platform with diarization and local LLM correction. audio.cpp is integrated as a first-class STT engine in the product.
 - [Pocket TTS Browser Engine](https://github.com/jjmlovesgit/pocket-tts-browser-engine) uses audio.cpp to bring fully local PocketTTS voices into Chrome and Edge through the browser TTS API.
 - [GuideAnts](https://github.com/Elumenotion/GuideAnts) uses audio.cpp as the default local AI stack path for basic ASR and TTS, with planned reusable skills for audio.cpp scenarios and model configurations.
@@ -934,10 +936,6 @@ In practice, lower precision and quantized modes should be treated as model- and
 
 - **Memory Benefit.** Lower precision and quantized weights can still be useful for reducing weight memory footprint and making larger models easier to fit within device limits. For example, in our Qwen3-TTS checks, switching from the default setting to `q8_0` reduced peak RAM by about 3.7% and peak VRAM by about 25.0%. That benefit is real, but it should be evaluated together with runtime stability, output quality, and end-to-end speed rather than assumed from precision alone.
 
-## Ecosystem & Community Integrations
-
-- **[AIRI Audio Server](https://github.com/dasilva333/airi-audio-server)**: A lightweight, zero-Python Node.js microservice wrapper providing OpenAI-compatible `/v1/audio/speech` (with real-time SSE streaming), `/v1/audio/transcriptions` (Citrinet/Whisper), dynamic voice catalog discovery, and serialized GPU queueing for `audio.cpp`.
-- **[Project AIRI](https://github.com/moeru-ai/airi)**: An open-source, next-generation AI companion and desktop frontend featuring interactive Voice Studio curation, zero-shot voice cloning dropzones, and real-time audio pipeline integration powered by `airi-audio-server` and `audio.cpp`.
 
 ## Notes
 

@@ -172,57 +172,63 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 # -> yue2_out/score.abc
 ```
 
-## Request Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--lyrics` | text | required | Song lyrics. |
 | `--text` | text | empty | Fallback lyrics source when `--lyrics` is not supplied. |
-| `--request-option style=<text>` | text | required | Music style prompt. |
-| `--request-option cot=<mode>` | `off`, `melody`, `full` | `full` | Symbolic planning route. |
-| `--request-option abc=<text>` | ABC text | empty | Inline ABC score; requires `cot=melody` or `cot=full`. |
-| `--request-option abc_file=<path>` | path | empty | ABC score file; requires `cot=melody` or `cot=full`. |
-| `--request-option nar_noise_file=<path>` | raw float32 file | empty | Provide a noise file for NAR generation, shaped `[frames,64]`. |
-| `--request-option guidance_scale=<f>` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. Legacy alias: `cfg_scale`. |
-| `--request-option num_inference_steps=<n>` | integer > 0 | `8` | NAR midpoint ODE steps. |
-| `--seed <n>` | integer in `[0, 2^63)` | `1234` | Generation seed. Equivalent to `--request-option seed=<n>`. |
+| `--seed` | integer in `[0, 2^63)` | `1234` | Generation seed. |
 
-## Sampling Options
+## Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--request-option abc_temperature=<f>` | `0..5` | `0.7` | ABC planner sampling temperature. |
-| `--request-option abc_top_p=<f>` | `0..1` | `0.9` | ABC planner nucleus sampling probability. |
-| `--request-option abc_top_k=<n>` | integer >= 1 | `30` | ABC planner top-k limit. |
-| `--request-option abc_repetition_penalty=<f>` | float > 0 | `1.005` | ABC planner repetition penalty. |
-| `--request-option abc_penalty_window=<n>` | integer >= 1 | `100` | ABC planner repetition penalty window. |
-| `--request-option abc_min_tokens=<n>` | integer >= 0 | `32` | Minimum ABC planner tokens before EOS is accepted. |
-| `--request-option abc_max_tokens=<n>` | integer >= `abc_min_tokens` | `4096` | Maximum ABC planner tokens. |
-| `--request-option semantic_temperature=<f>` | `0..5` | `1.0` | Semantic codec sampling temperature. |
-| `--request-option semantic_top_p=<f>` | `0..1` | `0.95` | Semantic codec nucleus sampling probability. |
-| `--request-option semantic_top_k=<n>` | integer >= 1 | `100` | Semantic codec top-k limit. |
-| `--request-option semantic_repetition_penalty=<f>` | float > 0 | `1.2` | Semantic codec repetition penalty. |
-| `--request-option semantic_penalty_window=<n>` | integer >= 1 | `50` | Semantic codec repetition penalty window. |
-| `--request-option semantic_min_tokens=<n>` | integer >= 0 | `200` | Minimum semantic tokens before EOS is accepted. |
-| `--request-option semantic_max_tokens=<n>` | integer >= `semantic_min_tokens` | `9000` | Maximum semantic codec tokens. |
+| `style` | text | required | Music style prompt. |
+| `cot` | `off`, `melody`, `full` | `full` | Symbolic planning route. |
+| `abc` | ABC text | empty | Inline ABC score; requires `cot=melody` or `cot=full`. |
+| `abc_file` | path | empty | ABC score file; requires `cot=melody` or `cot=full`. |
+| `nar_noise_file` | raw float32 file | empty | Provide a noise file for NAR generation, shaped `[frames,64]`. |
+| `guidance_scale` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. Legacy alias: `cfg_scale`. |
+| `num_inference_steps` | integer > 0 | `8` | NAR midpoint ODE steps. |
+| `seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Equivalent to `--seed <n>`. |
 
-## Session Options
+## Sampling Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--session-option yue2.model_gguf=<file>` | relative GGUF path | `yue2-3b-q8_0.gguf` | Main AR/NAR component. |
-| `--session-option yue2.vae_gguf=<file>` | relative GGUF path | `yue2-vae-f16.gguf` | VAE component. |
-| `--session-option yue2.ar_lora=<file>` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
-| `--session-option yue2.ar_lora_scale=<float>` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
-| `--session-option yue2.nar_lora=<file>` | safetensors path | none | Unfused NAR adapter; relative paths use the model root. |
-| `--session-option yue2.nar_lora_scale=<float>` | finite float | `1.0` | NAR delta scale; replacements stay at full strength. `0` disables the entire adapter. |
-| `--session-option yue2.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
-| `--session-option yue2.model_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Main model weight storage override. |
-| `--session-option yue2.vae_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | VAE weight storage override. |
-| `--session-option yue2.model_weight_context_mb=<n>` | MiB integer >= 1 | `6144` | Main model weight context size. |
-| `--session-option yue2.vae_weight_context_mb=<n>` | MiB integer >= 1 | `1536` | VAE weight context size. |
-| `--session-option yue2.ar_prefill_graph_arena_mb=<n>` | MiB integer >= 1 | `4096` | AR prefill graph arena size. |
-| `--session-option yue2.ar_decode_graph_arena_mb=<n>` | MiB integer >= 1 | `1536` | AR one-token decode graph arena size. |
-| `--session-option yue2.nar_graph_arena_mb=<n>` | MiB integer >= 1 | `6144` | NAR acoustic flow graph arena size. |
-| `--session-option yue2.vae_graph_arena_mb=<n>` | MiB integer >= 1 | `1536` | VAE decode graph arena size. |
-| `--session-option yue2.attention=<mode>` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |
+| `abc_temperature` | `0..5` | `0.7` | ABC planner sampling temperature. |
+| `abc_top_p` | `0..1` | `0.9` | ABC planner nucleus sampling probability. |
+| `abc_top_k` | integer >= 1 | `30` | ABC planner top-k limit. |
+| `abc_repetition_penalty` | float > 0 | `1.005` | ABC planner repetition penalty. |
+| `abc_penalty_window` | integer >= 1 | `100` | ABC planner repetition penalty window. |
+| `abc_min_tokens` | integer >= 0 | `32` | Minimum ABC planner tokens before EOS is accepted. |
+| `abc_max_tokens` | integer >= `abc_min_tokens` | `4096` | Maximum ABC planner tokens. |
+| `semantic_temperature` | `0..5` | `1.0` | Semantic codec sampling temperature. |
+| `semantic_top_p` | `0..1` | `0.95` | Semantic codec nucleus sampling probability. |
+| `semantic_top_k` | integer >= 1 | `100` | Semantic codec top-k limit. |
+| `semantic_repetition_penalty` | float > 0 | `1.2` | Semantic codec repetition penalty. |
+| `semantic_penalty_window` | integer >= 1 | `50` | Semantic codec repetition penalty window. |
+| `semantic_min_tokens` | integer >= 0 | `200` | Minimum semantic tokens before EOS is accepted. |
+| `semantic_max_tokens` | integer >= `semantic_min_tokens` | `9000` | Maximum semantic codec tokens. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `yue2.model_gguf` | relative GGUF path | `yue2-3b-q8_0.gguf` | Main AR/NAR component. |
+| `yue2.vae_gguf` | relative GGUF path | `yue2-vae-f16.gguf` | VAE component. |
+| `yue2.ar_lora` | safetensors path | none | Unfused AR adapter; relative paths use the model root. |
+| `yue2.ar_lora_scale` | finite float | `1.0` | Adapter delta scale; `0` disables it. |
+| `yue2.nar_lora` | safetensors path | none | Unfused NAR adapter; relative paths use the model root. |
+| `yue2.nar_lora_scale` | finite float | `1.0` | NAR delta scale; replacements stay at full strength. `0` disables the entire adapter. |
+| `yue2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
+| `yue2.model_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Main model weight storage override. |
+| `yue2.vae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | VAE weight storage override. |
+| `yue2.model_weight_context_mb` | MiB integer >= 1 | `6144` | Main model weight context size. |
+| `yue2.vae_weight_context_mb` | MiB integer >= 1 | `1536` | VAE weight context size. |
+| `yue2.ar_prefill_graph_arena_mb` | MiB integer >= 1 | `4096` | AR prefill graph arena size. |
+| `yue2.ar_decode_graph_arena_mb` | MiB integer >= 1 | `1536` | AR one-token decode graph arena size. |
+| `yue2.nar_graph_arena_mb` | MiB integer >= 1 | `6144` | NAR acoustic flow graph arena size. |
+| `yue2.vae_graph_arena_mb` | MiB integer >= 1 | `1536` | VAE decode graph arena size. |
+| `yue2.attention` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |

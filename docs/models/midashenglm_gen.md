@@ -36,14 +36,24 @@ Useful prompt fields include `<|caption|>`, `<|asr|>`, `<|speech|>`,
 `<|music|>`, `<|sfx|>`, and `<|env|>`. Use `<|unknown|>` for an empty branch
 when you want the model to keep the tag structure but omit that content.
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--text` | structured prompt | required | Prompt with MiDashengLM tags. |
-| `--request-option duration_sec=<seconds>` | float | model budget | Target audio duration budget. |
-| `--request-option guidance_scale=<f>` | float | `2.0` | Classifier-free guidance scale; `1.0` disables CFG. |
-| `--request-option stop_threshold=<f>` | `0..1` | `0.5` | Stop probability threshold. |
-| `--request-option min_stop_step=<n>` | integer >= 0 | `5` | Minimum generated steps before accepting stop. |
-| `--request-option seed=<n>` | integer, `-1` for random | `0` | Generation seed. |
-| `--session-option midashenglm_gen.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `duration_sec` | float | model budget | Target audio duration budget. |
+| `guidance_scale` | float | `2.0` | Classifier-free guidance scale; `1.0` disables CFG. |
+| `stop_threshold` | `0..1` | `0.5` | Stop probability threshold. |
+| `min_stop_step` | integer >= 0 | `5` | Minimum generated steps before accepting stop. |
+| `seed` | integer, `-1` for random | `0` | Generation seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `midashenglm_gen.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
