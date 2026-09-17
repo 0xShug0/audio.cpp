@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -16,6 +17,30 @@ namespace engine::models::yue2 {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
+void write_f32_file(const std::string & path, const std::vector<float> & values) {
+    std::ofstream file(path.c_str(), std::ios::binary | std::ios::trunc);
+    if (!file) {
+        throw std::runtime_error("Yue2 could not open output file: " + path);
+    }
+    file.write(reinterpret_cast<const char *>(values.data()),
+               static_cast<std::streamsize>(values.size() * sizeof(float)));
+    if (!file) {
+        throw std::runtime_error("Yue2 failed writing output file: " + path);
+    }
+}
+
+void write_i32_file(const std::string & path, const std::vector<int32_t> & values) {
+    std::ofstream file(path.c_str(), std::ios::binary | std::ios::trunc);
+    if (!file) {
+        throw std::runtime_error("Yue2 could not open output file: " + path);
+    }
+    file.write(reinterpret_cast<const char *>(values.data()),
+               static_cast<std::streamsize>(values.size() * sizeof(int32_t)));
+    if (!file) {
+        throw std::runtime_error("Yue2 failed writing output file: " + path);
+    }
+}
 
 std::string request_text(const Yue2Request & request) {
     std::string text;
@@ -43,7 +68,10 @@ std::vector<int32_t> token_prefixes(
         return out;
     }
     out.insert(out.end(), abc_ids.begin(), abc_ids.end());
-    if (!request.abc.empty()) {
+    // Close the symbolic block whenever the plan already carries ABC tokens.
+    // The ABC text is not required: injected `abc_ids_file` plans must produce
+    // the same prefix as generated or `abc_file` plans.
+    if (!abc_ids.empty()) {
         out.push_back(kAbcEndToken);
         out.push_back(kMusicStartToken);
     }
@@ -154,6 +182,9 @@ public:
             out.abc = request.abc;
             out.abc_ids = tokenizer.encode(request.abc);
         }
+        if (!request.abc_ids.empty()) {
+            out.abc_ids = request.abc_ids;
+        }
         out.prefix = token_prefixes(request, tokenizer, out.abc_ids);
         return out;
     }
@@ -161,7 +192,39 @@ public:
     Yue2SemanticResult generate_semantic(const Yue2Request & request, Yue2Plan plan) {
         Yue2SemanticResult out;
         out.plan = std::move(plan);
-        if (request.cot != Yue2CotMode::Off && request.abc.empty()) {
+        const auto dump_abc_ids = [&]() {
+            if (!request.abc_ids_out_file.empty()) {
+                write_i32_file(request.abc_ids_out_file, out.plan.abc_ids);
+            }
+        };
+        const auto dump_semantic_tokens = [&]() {
+            if (!request.semantic_tokens_out_file.empty()) {
+                std::vector<int32_t> codec;
+                codec.reserve(out.tokens.size());
+                for (const int32_t token : out.tokens) {
+                    codec.push_back(token - kCodecOffset);
+                }
+                write_i32_file(request.semantic_tokens_out_file, codec);
+            }
+        };
+        if (!request.semantic_tokens.empty()) {
+            // Externally supplied codec tokens bypass the AR sampler entirely;
+            // the plan prefix still conditions the NAR stage.
+            out.tokens.reserve(request.semantic_tokens.size());
+            for (const int32_t codec : request.semantic_tokens) {
+                if (codec < 0 || codec >= kCodecSize) {
+                    throw std::runtime_error("Yue2 semantic_tokens_file token is outside the codec vocabulary");
+                }
+                out.tokens.push_back(codec + kCodecOffset);
+            }
+            out.truncated = false;
+            engine::debug::timing_log_scalar("yue2.semantic.tokens", static_cast<int64_t>(out.tokens.size()));
+            engine::debug::timing_log_scalar("yue2.semantic.injected", 1);
+            dump_abc_ids();
+            dump_semantic_tokens();
+            return out;
+        }
+        if (request.cot != Yue2CotMode::Off && request.abc.empty() && request.abc_ids.empty()) {
             ensure_ar();
             const auto abc_start = Clock::now();
             out.plan.abc_ids = ar->generate(out.plan.prefix, abc_window(request.generation), request.seed);
@@ -186,6 +249,8 @@ public:
         engine::debug::timing_log_scalar("yue2.semantic.tokens", out.tokens.size());
         engine::debug::timing_log_scalar("yue2.semantic.truncated", out.truncated);
         ar->release_runtime_graphs();
+        dump_abc_ids();
+        dump_semantic_tokens();
         return out;
     }
 
@@ -193,7 +258,8 @@ public:
         const Yue2SemanticResult & semantic,
         const Yue2GenerationConfig & generation,
         const std::vector<float> & noise,
-        uint64_t seed) {
+        uint64_t seed,
+        const Yue2NarDiagnostics & diagnostics = {}) {
         const auto codec = codec_from_semantic_tokens(semantic.tokens);
         if (codec.empty()) {
             throw std::runtime_error("Yue2 semantic generation produced no codec tokens");
@@ -209,7 +275,8 @@ public:
             noise,
             seed,
             generation.ode_steps,
-            generation.context);
+            generation.context,
+            diagnostics);
     }
 
     runtime::AudioBuffer decode_audio(const std::vector<float> & latents, int64_t frames) {
@@ -297,7 +364,10 @@ public:
                      << " context=" << request.generation.context
                      << " abc=" << (request.abc.empty() ?
                          (request.cot == Yue2CotMode::Off ? "none" : "generated") : "provided")
-                     << " nar_noise=" << (request.nar_noise.empty() ? "generated" : "provided");
+                     << " nar_noise=" << (request.nar_noise.empty() ? "generated" : "provided")
+                     << " abc_ids=" << (request.abc_ids.empty() ? "none" : "provided")
+                     << " semantic_tokens=" << (request.semantic_tokens.empty() ? "generated" : "provided")
+                     << " latents=" << (request.nar_latents.empty() ? "generated" : "provided");
             engine::debug::trace_log_scalar("yue2.request", settings.str());
             for (const bool abc : {true, false}) {
                 if (abc && (request.cot == Yue2CotMode::Off || !request.abc.empty())) {
@@ -315,15 +385,28 @@ public:
                 engine::debug::trace_log_scalar(abc ? "yue2.sampling.abc" : "yue2.sampling.semantic", config.str());
             }
         }
-        const auto plan_start = Clock::now();
-        auto planned = plan(request);
-        engine::debug::timing_log_scalar("yue2.plan_ms", engine::debug::elapsed_ms(plan_start, Clock::now()));
-        const auto semantic_start = Clock::now();
-        auto semantic = generate_semantic(request, std::move(planned));
-        engine::debug::timing_log_scalar("yue2.semantic_ms", engine::debug::elapsed_ms(semantic_start, Clock::now()));
-        const auto nar_start = Clock::now();
-        auto latents = synthesize_latents(semantic, request.generation, request.nar_noise, request.seed);
-        engine::debug::timing_log_scalar("yue2.nar_ms", engine::debug::elapsed_ms(nar_start, Clock::now()));
+        std::vector<float> latents;
+        Yue2SemanticResult semantic;
+        if (!request.nar_latents.empty()) {
+            // Precomputed latents isolate the VAE decode from the AR/NAR stages.
+            latents = request.nar_latents;
+            engine::debug::timing_log_scalar("yue2.nar.latents_injected", 1);
+        } else {
+            const auto plan_start = Clock::now();
+            auto planned = plan(request);
+            engine::debug::timing_log_scalar("yue2.plan_ms", engine::debug::elapsed_ms(plan_start, Clock::now()));
+            const auto semantic_start = Clock::now();
+            semantic = generate_semantic(request, std::move(planned));
+            engine::debug::timing_log_scalar("yue2.semantic_ms", engine::debug::elapsed_ms(semantic_start, Clock::now()));
+            const auto nar_start = Clock::now();
+            latents = synthesize_latents(semantic, request.generation, request.nar_noise,
+                                         request.seed, request.diagnostics);
+            engine::debug::timing_log_scalar("yue2.nar_ms", engine::debug::elapsed_ms(nar_start, Clock::now()));
+        }
+        if (!request.latent_out_file.empty()) {
+            write_f32_file(request.latent_out_file, latents);
+            engine::debug::timing_log_scalar("yue2.nar.latents_dumped", static_cast<int64_t>(latents.size()));
+        }
         const int64_t frames = static_cast<int64_t>(latents.size()) / assets->config.model.latent_dim;
         ar.reset();
         nar.reset();

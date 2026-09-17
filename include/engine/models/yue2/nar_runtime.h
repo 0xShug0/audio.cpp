@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace engine::models::yue2 {
@@ -33,7 +34,8 @@ public:
         const std::vector<float> & noise,
         uint64_t seed,
         int64_t ode_steps,
-        int64_t context);
+        int64_t context,
+        const Yue2NarDiagnostics & diagnostics = {});
 
     void release_runtime_graphs();
 

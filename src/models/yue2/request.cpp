@@ -130,6 +130,75 @@ void apply_options(
             throw std::runtime_error("Yue2 nar_noise_file must contain raw float32 acoustic noise rows with 64 columns");
         }
     }
+    if (const auto abc_ids_file = runtime::find_option(options, {"abc_ids_file"})) {
+        const std::filesystem::path path(*abc_ids_file);
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("Yue2 abc_ids_file does not exist: " + path.string());
+        }
+        out.abc_ids = engine::io::read_i32_file(path);
+        if (out.abc_ids.empty()) {
+            throw std::runtime_error("Yue2 abc_ids_file is empty: " + path.string());
+        }
+    }
+    if (const auto semantic_tokens_file = runtime::find_option(options, {"semantic_tokens_file"})) {
+        const std::filesystem::path path(*semantic_tokens_file);
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("Yue2 semantic_tokens_file does not exist: " + path.string());
+        }
+        out.semantic_tokens = engine::io::read_i32_file(path);
+        if (out.semantic_tokens.empty()) {
+            throw std::runtime_error("Yue2 semantic_tokens_file is empty: " + path.string());
+        }
+    }
+    if (const auto latent_in_file = runtime::find_option(options, {"latent_in_file"})) {
+        const std::filesystem::path path(*latent_in_file);
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("Yue2 latent_in_file does not exist: " + path.string());
+        }
+        out.nar_latents = engine::io::read_f32_file(path);
+        if (out.nar_latents.empty()) {
+            throw std::runtime_error("Yue2 latent_in_file is empty: " + path.string());
+        }
+        if (out.nar_latents.size() % static_cast<size_t>(Yue2ModelConfig{}.latent_dim) != 0) {
+            throw std::runtime_error("Yue2 latent_in_file must contain raw float32 latent rows with 64 columns");
+        }
+    }
+    if (const auto latent_out_file = runtime::find_option(options, {"latent_out_file"})) {
+        out.latent_out_file = *latent_out_file;
+    }
+    if (const auto abc_ids_out_file = runtime::find_option(options, {"abc_ids_out_file"})) {
+        out.abc_ids_out_file = *abc_ids_out_file;
+    }
+    if (const auto semantic_tokens_out_file = runtime::find_option(options, {"semantic_tokens_out_file"})) {
+        out.semantic_tokens_out_file = *semantic_tokens_out_file;
+    }
+    if (const auto noise_out_file = runtime::find_option(options, {"nar_noise_out_file"})) {
+        out.diagnostics.noise_out_file = *noise_out_file;
+    }
+    if (const auto velocity_out_file = runtime::find_option(options, {"nar_velocity_out_file"})) {
+        out.diagnostics.velocity_out_file = *velocity_out_file;
+    }
+    if (const auto tap_out_file = runtime::find_option(options, {"nar_tap_out_file"})) {
+        out.diagnostics.tap_out_file = *tap_out_file;
+    }
+    if (const auto tap_stage = runtime::find_option(options, {"nar_tap_stage"})) {
+        const std::string stage = *tap_stage;
+        const auto dot = stage.find('.');
+        const std::string base = dot == std::string::npos ? stage : stage.substr(0, dot);
+        const std::string part = dot == std::string::npos ? std::string() : stage.substr(dot + 1);
+        const bool simple = (base == "embed" || base == "prehead") && part.empty();
+        const bool layer = base.rfind("layer", 0) == 0 && base.size() > 5 &&
+                           base.find_first_not_of("0123456789", 5) == std::string::npos &&
+                           (part.empty() || part == "norm" || part == "attn" || part == "mlp");
+        if (!simple && !layer) {
+            throw std::runtime_error(
+                "Yue2 nar_tap_stage must be 'embed', 'prehead', 'layer<N>', or 'layer<N>.norm|attn|mlp'");
+        }
+        out.diagnostics.tap_stage = stage;
+    }
+    if (!out.diagnostics.tap_out_file.empty() && out.diagnostics.tap_stage.empty()) {
+        throw std::runtime_error("Yue2 nar_tap_out_file requires nar_tap_stage=embed|prehead");
+    }
 }
 
 Yue2Request normalize_request(Yue2Request out) {

@@ -189,6 +189,16 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 | `abc` | ABC text | empty | Inline ABC score; requires `cot=melody` or `cot=full`. |
 | `abc_file` | path | empty | ABC score file; requires `cot=melody` or `cot=full`. |
 | `nar_noise_file` | raw float32 file | empty | Provide a noise file for NAR generation, shaped `[frames,64]`. |
+| `abc_ids_file` | raw int32 file | empty | Inject exact ABC token IDs, bypassing tokenization. Requires `cot=melody` or `cot=full`. |
+| `semantic_tokens_file` | raw int32 file | empty | Inject exact semantic codec token IDs (values `0..32767`), bypassing AR sampling. |
+| `latent_in_file` | raw float32 file | empty | Decode precomputed NAR latents, bypassing the AR/NAR stages. Shaped `[frames,64]`. |
+| `abc_ids_out_file` | path | empty | Dump the ABC token IDs used by this run. |
+| `semantic_tokens_out_file` | path | empty | Dump the generated semantic codec token IDs used by this run. |
+| `latent_out_file` | path | empty | Dump the NAR latents (`[frames,64]`) before VAE decode, for parity debugging. |
+| `nar_noise_out_file` | path | empty | Dump the resolved NAR noise (`[frames,64]` float32). |
+| `nar_velocity_out_file` | path | empty | Dump the first NAR velocity `v_theta(x, t)` of the solve (`[frames,64]` float32). |
+| `nar_tap_out_file` | path | empty | Dump an intermediate NAR activation; requires `nar_tap_stage`. |
+| `nar_tap_stage` | `embed`, `prehead`, `layer<N>`, `layer<N>.norm\|attn\|mlp` | empty | `embed` = post `vae2llm`+time+pos; `prehead` = post transformer stack, pre final-norm; `layer<N>` = after the Nth transformer layer. |
 | `guidance_scale` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. Legacy alias: `cfg_scale`. |
 | `num_inference_steps` | integer > 0 | `8` | NAR midpoint ODE steps. |
 | `seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Equivalent to `--seed <n>`. |

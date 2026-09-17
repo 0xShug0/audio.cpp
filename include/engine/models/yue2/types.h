@@ -71,12 +71,31 @@ enum class Yue2CotMode {
     Full,
 };
 
+// Optional dumps for NAR parity debugging. Empty fields disable the tap.
+struct Yue2NarDiagnostics {
+    std::string noise_out_file;     // resolved NAR noise ([frames,64] float32)
+    std::string velocity_out_file;  // first v_theta(state, t) of the whole solve
+    std::string tap_out_file;       // intermediate NAR activation
+    std::string tap_stage;          // "embed" (post vae2llm+time+pos) or "prehead" (post stack)
+};
+
 struct Yue2Request {
     std::string style;
     std::string lyrics;
     Yue2CotMode cot = Yue2CotMode::Full;
     std::string abc;
+    // Optional external planner/codec tokens for parity testing: when set they
+    // bypass ABC planning and semantic sampling respectively.
+    std::vector<int32_t> abc_ids;
+    std::vector<int32_t> semantic_tokens;
     std::vector<float> nar_noise;
+    // Diagnostics: inject precomputed NAR latents to bypass the AR/NAR stages,
+    // and dump the intermediate tokens/latents produced by this run.
+    std::vector<float> nar_latents;
+    Yue2NarDiagnostics diagnostics;
+    std::string latent_out_file;
+    std::string abc_ids_out_file;
+    std::string semantic_tokens_out_file;
     uint64_t seed = 1234;
     float cfg_scale = -1.0F;
     Yue2GenerationConfig generation;

@@ -17,10 +17,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <limits>
 #include <numeric>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace engine::models::yue2 {
@@ -28,6 +30,18 @@ namespace {
 
 namespace binding = engine::modules::binding;
 using Clock = std::chrono::steady_clock;
+
+void write_debug_f32(const std::string & path, const std::vector<float> & values) {
+    std::ofstream file(path.c_str(), std::ios::binary | std::ios::trunc);
+    if (!file) {
+        throw std::runtime_error("Yue2 could not open debug output file: " + path);
+    }
+    file.write(reinterpret_cast<const char *>(values.data()),
+               static_cast<std::streamsize>(values.size() * sizeof(float)));
+    if (!file) {
+        throw std::runtime_error("Yue2 failed writing debug output file: " + path);
+    }
+}
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
@@ -361,9 +375,14 @@ core::TensorValue build_cached_nar_layer(
     const core::TensorValue & ar_value,
     const Yue2ModelConfig & config,
     core::BackendType backend_type,
-    bool allow_flash_attention) {
+    bool allow_flash_attention,
+    core::TensorValue * norm_out = nullptr,
+    core::TensorValue * attn_out = nullptr) {
     auto norm = engine::modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                     .build(ctx, input, nar_weights.input_norm);
+    if (norm_out != nullptr) {
+        *norm_out = norm;
+    }
     auto qkv = build_qkv_part(ctx, norm, nar_weights, config);
     qkv.q = engine::modules::RoPEModule({config.head_dim, GGML_ROPE_TYPE_NEOX, config.rope_theta})
                 .build(ctx, qkv.q, positions);
@@ -384,6 +403,9 @@ core::TensorValue build_cached_nar_layer(
     auto attn = engine::modules::LinearModule({config.attention_heads * config.head_dim, config.hidden_size, false})
                     .build(ctx, context, {nar_weights.self_attention.out_weight, std::nullopt});
     auto x = engine::modules::AddModule{}.build(ctx, input, attn);
+    if (attn_out != nullptr) {
+        *attn_out = x;
+    }
     norm = engine::modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                .build(ctx, x, nar_weights.post_norm);
     return engine::modules::AddModule{}.build(ctx, x, build_mlp_part(ctx, norm, nar_weights.mlp, config));
@@ -413,10 +435,14 @@ struct Yue2NarRuntime::Impl {
         Graph(
             Impl & owner,
             int64_t frames,
-            const Yue2ArDevicePrefixState & ar_state)
+            const Yue2ArDevicePrefixState & ar_state,
+            const Yue2NarDiagnostics & diagnostics)
             : owner(&owner),
               frames(frames),
-              ar_length(ar_state.current_end) {
+              ar_length(ar_state.current_end),
+              tap_stage(diagnostics.tap_stage),
+              tap_after(parse_tap_after(diagnostics.tap_stage)),
+              tap_part(parse_tap_part(diagnostics.tap_stage)) {
             const auto & config = owner.assets->config.model;
             if (frames <= 0 || ar_length <= 0) {
                 throw std::runtime_error("Yue2 NAR graph requires positive shapes");
@@ -481,8 +507,18 @@ struct Yue2NarRuntime::Impl {
             nar_hidden = engine::modules::AddModule{}.build(build, nar_hidden, time_hidden);
             nar_hidden = engine::modules::AddModule{}.build(build, nar_hidden, pos);
             auto hidden = nar_hidden;
+            const auto mark_tap = [&](const core::TensorValue & value) {
+                tap = core::ensure_backend_addressable_layout(build, value);
+                ggml_set_output(tap.tensor);
+                has_tap = true;
+            };
+            if (tap_after == 0) {
+                mark_tap(nar_hidden);
+            }
 
             for (int64_t layer = 0; layer < config.layers; ++layer) {
+                core::TensorValue layer_norm;
+                core::TensorValue layer_attn;
                 hidden = build_cached_nar_layer(
                     build,
                     hidden,
@@ -492,7 +528,21 @@ struct Yue2NarRuntime::Impl {
                     ar_values[static_cast<size_t>(layer)],
                     config,
                     owner.execution.backend_type(),
-                    owner.allow_flash_attention);
+                    owner.allow_flash_attention,
+                    &layer_norm,
+                    &layer_attn);
+                if (tap_after == layer + 1) {
+                    if (tap_part == "norm") {
+                        mark_tap(layer_norm);
+                    } else if (tap_part == "attn") {
+                        mark_tap(layer_attn);
+                    } else {
+                        mark_tap(hidden);
+                    }
+                }
+            }
+            if (tap_after == -1) {
+                mark_tap(hidden);
             }
             hidden = engine::modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
                          .build(build, hidden, owner.weights->final_norm);
@@ -503,6 +553,9 @@ struct Yue2NarRuntime::Impl {
             ggml_set_output(output.tensor);
             graph = ggml_new_graph_custom(ctx.get(), 262144, false);
             ggml_build_forward_expand(graph, output.tensor);
+            if (has_tap) {
+                ggml_build_forward_expand(graph, tap.tensor);
+            }
             engine::debug::timing_log_scalar("yue2.nar.graph.build_ms", engine::debug::elapsed_ms(build_start));
             const auto alloc_start = Clock::now();
             input_buffer = ggml_backend_alloc_ctx_tensors(input_ctx.get(), owner.execution.backend());
@@ -537,7 +590,8 @@ struct Yue2NarRuntime::Impl {
 
         std::vector<float> run(
             const std::vector<float> & padded_state,
-            const std::vector<float> & time_features) {
+            const std::vector<float> & time_features,
+            std::vector<float> * tap_out) {
             const auto & config = owner->assets->config.model;
             if (static_cast<int64_t>(padded_state.size()) != nar_length * config.latent_dim ||
                 static_cast<int64_t>(time_features.size()) != 256) {
@@ -552,6 +606,9 @@ struct Yue2NarRuntime::Impl {
             }
             std::vector<float> out;
             core::read_tensor_f32_into(output.tensor, out);
+            if (has_tap && tap_out != nullptr) {
+                core::read_tensor_f32_into(tap.tensor, *tap_out);
+            }
             return out;
         }
 
@@ -571,13 +628,47 @@ struct Yue2NarRuntime::Impl {
         std::vector<core::TensorValue> ar_keys;
         std::vector<core::TensorValue> ar_values;
         core::TensorValue output;
+        core::TensorValue tap;
+        bool has_tap = false;
+        std::string tap_stage;
+        std::string tap_part;    // "", "norm", "attn"
+        int64_t tap_after = -2;  // -2 disabled, -1 prehead, 0 embed, N after N layers
+
+        static std::string tap_base(const std::string & stage) {
+            const auto dot = stage.find('.');
+            return dot == std::string::npos ? stage : stage.substr(0, dot);
+        }
+
+        static std::string parse_tap_part(const std::string & stage) {
+            const auto dot = stage.find('.');
+            return dot == std::string::npos ? std::string() : stage.substr(dot + 1);
+        }
+
+        static int64_t parse_tap_after(const std::string & stage) {
+            const std::string base = tap_base(stage);
+            if (base == "embed") {
+                return 0;
+            }
+            if (base == "prehead") {
+                return -1;
+            }
+            if (base.rfind("layer", 0) == 0) {
+                const int64_t layer = std::stoll(base.substr(5));
+                if (layer < 1) {
+                    throw std::runtime_error("Yue2 nar_tap_stage layer index must be >= 1");
+                }
+                return layer;
+            }
+            return -2;
+        }
     };
 
     std::vector<float> velocity(
         Graph & graph,
         const Yue2ArDevicePrefixState & ar_state,
         const std::vector<float> & state,
-        float raw_t) {
+        float raw_t,
+        std::vector<float> * tap_out = nullptr) {
         const auto & config = assets->config.model;
         const int64_t frames = static_cast<int64_t>(state.size()) / config.latent_dim;
         if (frames <= 0 || frames * config.latent_dim != static_cast<int64_t>(state.size())) {
@@ -590,22 +681,34 @@ struct Yue2NarRuntime::Impl {
         std::copy(state.begin(), state.end(), padded.begin() + static_cast<std::ptrdiff_t>(config.latent_dim));
         const auto shifted = shifted_t_value(raw_t, config.timestep_shift);
         auto features = timestep_features(shifted, 1);
-        return graph.run(padded, features);
+        return graph.run(padded, features, tap_out);
     }
 
     std::vector<float> solve_chunk(
         const Yue2ArDevicePrefixState & ar_state,
         const std::vector<float> & noise,
-        int64_t ode_steps) {
+        int64_t ode_steps,
+        const Yue2NarDiagnostics & diagnostics) {
         auto state = noise;
         const auto & config = assets->config.model;
         const int64_t frames = static_cast<int64_t>(state.size()) / config.latent_dim;
-        graph = std::make_unique<Graph>(*this, frames, ar_state);
+        graph = std::make_unique<Graph>(*this, frames, ar_state, diagnostics);
         auto & chunk_graph = *graph;
         const float dt = 1.0F / static_cast<float>(ode_steps);
         for (int64_t step = 0; step < ode_steps; ++step) {
             const float t = 1.0F - static_cast<float>(step) * dt;
-            const auto first = velocity(chunk_graph, ar_state, state, logit_clamped(t));
+            std::vector<float> tap;
+            const bool keep_tap = step == 0 && !diagnostics.tap_out_file.empty();
+            const auto first = velocity(chunk_graph, ar_state, state, logit_clamped(t),
+                                        keep_tap ? &tap : nullptr);
+            if (step == 0) {
+                if (!diagnostics.velocity_out_file.empty()) {
+                    write_debug_f32(diagnostics.velocity_out_file, first);
+                }
+                if (keep_tap) {
+                    write_debug_f32(diagnostics.tap_out_file, tap);
+                }
+            }
             std::vector<float> mid(state.size(), 0.0F);
             for (size_t i = 0; i < state.size(); ++i) {
                 mid[i] = state[i] - first[i] * (dt / 2.0F);
@@ -625,7 +728,8 @@ struct Yue2NarRuntime::Impl {
         const std::vector<float> & noise,
         uint64_t seed,
         int64_t ode_steps,
-        int64_t context) {
+        int64_t context,
+        const Yue2NarDiagnostics & diagnostics) {
         const auto total_start = Clock::now();
         const auto & config = assets->config.model;
         const auto ranges = chunk_ranges(static_cast<int64_t>(codec.size()), static_cast<int64_t>(prefix.size()), context);
@@ -644,6 +748,9 @@ struct Yue2NarRuntime::Impl {
                 throw std::runtime_error("Yue2 nar_noise_file frame count does not match semantic codec count");
             }
             full_noise = noise;
+        }
+        if (!diagnostics.noise_out_file.empty()) {
+            write_debug_f32(diagnostics.noise_out_file, full_noise);
         }
         std::vector<float> out;
         out.reserve(full_noise.size());
@@ -666,7 +773,7 @@ struct Yue2NarRuntime::Impl {
             auto ar_state = prefill_state(ar_tokens);
             prefill_ms += engine::debug::elapsed_ms(prefill_start);
             const auto solve_start = Clock::now();
-            auto chunk = solve_chunk(ar_state, noise, ode_steps);
+            auto chunk = solve_chunk(ar_state, noise, ode_steps, diagnostics);
             solve_ms += engine::debug::elapsed_ms(solve_start);
             out.insert(out.end(), chunk.begin(), chunk.end());
         }
@@ -708,8 +815,9 @@ std::vector<float> Yue2NarRuntime::synthesize(
     const std::vector<float> & noise,
     uint64_t seed,
     int64_t ode_steps,
-    int64_t context) {
-    return impl_->synthesize(prefix, codec, prefill_state, noise, seed, ode_steps, context);
+    int64_t context,
+    const Yue2NarDiagnostics & diagnostics) {
+    return impl_->synthesize(prefix, codec, prefill_state, noise, seed, ode_steps, context, diagnostics);
 }
 
 void Yue2NarRuntime::release_runtime_graphs() {
