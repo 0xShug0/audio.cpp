@@ -3884,7 +3884,71 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
         }
     }
 
-    if (!ggml_can_fuse(cgraph, node_idx, ops)) {
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if (is_equal({ GGML_OP_ADD, GGML_OP_RESHAPE, GGML_OP_VIEW, GGML_OP_VIEW,
+                   GGML_OP_SSM_SCAN, GGML_OP_VIEW, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU, GGML_OP_CPY }, ops) &&
+        node_idx + 9 < cgraph->n_nodes) {
+        const auto * add = cgraph->nodes[node_idx];
+        const auto * dt = cgraph->nodes[node_idx + 1];
+        const auto * scan = cgraph->nodes[node_idx + 4];
+        if (add->op != GGML_OP_ADD || dt->op != GGML_OP_RESHAPE || dt->src[0] != add ||
+            scan->op != GGML_OP_SSM_SCAN || scan->src[2] != dt ||
+            cgraph->nodes[node_idx + 2]->op != GGML_OP_VIEW ||
+            cgraph->nodes[node_idx + 3]->op != GGML_OP_VIEW ||
+            scan->src[4] != cgraph->nodes[node_idx + 2] || scan->src[5] != cgraph->nodes[node_idx + 3] ||
+            ggml_node_get_use_count(cgraph, node_idx) != 1 ||
+            ggml_node_get_use_count(cgraph, node_idx + 1) != 1 ||
+            (add->flags & GGML_TENSOR_FLAG_OUTPUT) || (dt->flags & GGML_TENSOR_FLAG_OUTPUT) ||
+            add->src[0]->type != GGML_TYPE_F32 || add->src[1]->type != GGML_TYPE_F32 ||
+            !ggml_is_contiguous(add->src[0]) || !ggml_is_contiguous(add->src[1]) ||
+            !ggml_is_contiguous(dt) || !ggml_are_same_shape(add, add->src[0]) ||
+            dt->ne[0] != 256 || add->src[0]->ne[0] != 256 || ggml_nelements(add->src[1]) != 256 ||
+            add->src[1]->ne[0] != 256 ||
+            !ggml_cuda_can_fuse(cgraph, node_idx + 4,
+                { GGML_OP_SSM_SCAN, GGML_OP_VIEW, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU, GGML_OP_CPY }, {})) {
+            return false;
+        }
+        // The raw projection remains live until the scan finishes, not merely until ADD.
+        const int outputs[] = { node_idx + 9 };
+        return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, 10, outputs, 1);
+    }
+    if (is_equal({ GGML_OP_SSM_SCAN, GGML_OP_VIEW, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU, GGML_OP_CPY }, ops) &&
+        node_idx + 5 < cgraph->n_nodes) {
+        const auto * scan = cgraph->nodes[node_idx];
+        const auto * view = cgraph->nodes[node_idx + 1];
+        const auto * mul = cgraph->nodes[node_idx + 2];
+        const auto * add = cgraph->nodes[node_idx + 3];
+        const auto * glu = cgraph->nodes[node_idx + 4];
+        const auto * copy = cgraph->nodes[node_idx + 5];
+        // VIEW is metadata-only, so validate its ownership outside the compute-node matcher.
+        if (scan->op != GGML_OP_SSM_SCAN || view->op != GGML_OP_VIEW ||
+            ggml_node_get_use_count(cgraph, node_idx) != 1 ||
+            ggml_node_get_use_count(cgraph, node_idx + 1) != 2 ||
+            ggml_node_get_use_count(cgraph, node_idx + 4) != 1 ||
+            (scan->flags & GGML_TENSOR_FLAG_OUTPUT) || (view->flags & GGML_TENSOR_FLAG_OUTPUT) ||
+            (glu->flags & GGML_TENSOR_FLAG_OUTPUT) || copy->op != GGML_OP_CPY ||
+            copy->src[0] != glu || copy->src[1] != view || copy->data != scan->data) {
+            return false;
+        }
+        const auto * x = scan->src[1];
+        if (!ggml_cuda_can_fuse(cgraph, node_idx + 2, { GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU }, {}) ||
+            view->src[0] != scan || view->view_offs != 0 || add->src[0] != view || add->src[1] != mul ||
+            x->ne[0] != 1 || x->ne[1] != 256 || !ggml_is_contiguous(x) ||
+            scan->src[0]->ne[0] != 16 || scan->src[0]->ne[1] != 1 ||
+            !ggml_is_contiguous(scan->src[0]) || !ggml_is_contiguous(scan->src[3]) ||
+            scan->src[3]->ne[0] != 16 || scan->src[4]->ne[1] != 1 ||
+            mul->src[0]->data != x->data || mul->src[0]->ne[1] != x->ne[2] ||
+            mul->src[0]->ne[2] != x->ne[3]) {
+            return false;
+        }
+        const int outputs[] = { node_idx + 5 };
+        return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, 6, outputs, 1);
+    }
+#endif
+
+    const bool padded_conv = is_equal({ GGML_OP_PAD, GGML_OP_SSM_CONV, GGML_OP_ADD, GGML_OP_UNARY }, ops);
+    if (!(padded_conv ? ggml_can_fuse_subgraph(cgraph, node_idx, ops, { node_idx + 3 })
+                     : ggml_can_fuse(cgraph, node_idx, ops))) {
         return false;
     }
 
@@ -3928,6 +3992,57 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
         }
 
         return true;
+    }
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if (is_equal({ GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU }, ops)) {
+        const auto * mul = cgraph->nodes[node_idx];
+        const auto * add = cgraph->nodes[node_idx + 1];
+        const auto * glu = cgraph->nodes[node_idx + 2];
+        const auto * residual = add->src[0] == mul ? add->src[1] : add->src[0];
+        const auto * gate = glu->src[0];
+        if (glu->src[1] != add || ggml_get_glu_op(glu) != GGML_GLU_OP_SWIGLU ||
+            ggml_get_op_params_i32(glu, 1) != 0 || glu->type != GGML_TYPE_F32 ||
+            mul->src[0]->type != GGML_TYPE_F32 || mul->src[1]->type != GGML_TYPE_F32 ||
+            residual->type != GGML_TYPE_F32 || gate->type != GGML_TYPE_F32 ||
+            !ggml_is_contiguous(mul->src[0]) || !ggml_is_contiguous(mul->src[1]) ||
+            !ggml_is_contiguous(residual) || !ggml_is_contiguous(glu) ||
+            !ggml_are_same_shape(mul->src[0], glu) || !ggml_are_same_shape(residual, glu) ||
+            !ggml_are_same_shape(gate, glu) || ggml_nelements(mul->src[1]) != glu->ne[0] ||
+            mul->src[1]->ne[0] != glu->ne[0] || gate->nb[0] != sizeof(float) || gate->ne[3] != 1 ||
+            gate->nb[2] != gate->nb[1] * gate->ne[1]) {
+            return false;
+        }
+        const int outputs[] = { node_idx + 2 };
+        return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, 3, outputs, 1);
+    }
+#endif
+
+    if (padded_conv) {
+        const auto * pad = cgraph->nodes[node_idx];
+        const auto * conv = cgraph->nodes[node_idx + 1];
+        const auto * add = cgraph->nodes[node_idx + 2];
+        const auto * silu = cgraph->nodes[node_idx + 3];
+        const auto * input = pad->src[0];
+        const auto * weight = conv->src[1];
+        const auto * bias = add->src[0] == conv ? add->src[1] : add->src[0];
+        if (conv->src[0] != pad || (add->src[0] != conv && add->src[1] != conv) ||
+            silu->src[0] != add || ggml_get_unary_op(silu) != GGML_UNARY_OP_SILU ||
+            input->type != GGML_TYPE_F32 || weight->type != GGML_TYPE_F32 || bias->type != GGML_TYPE_F32 ||
+            silu->type != GGML_TYPE_F32 || input->nb[1] != sizeof(float) || input->ne[3] != 1 ||
+            input->ne[0] > 4LL * 65535 || input->ne[2] > 65535 ||
+            weight->ne[0] != 4 || !ggml_is_contiguous(weight) || !ggml_is_contiguous(bias) ||
+            !ggml_is_contiguous(silu) || bias->ne[0] != conv->ne[0] || ggml_nelements(bias) != conv->ne[0] ||
+            ggml_get_op_params_i32(pad, 0) != 3) {
+            return false;
+        }
+        for (int p = 1; p < 9; ++p) {
+            if (ggml_get_op_params_i32(pad, p) != 0) {
+                return false;
+            }
+        }
+        const int outputs[] = { node_idx + 3 };
+        return ggml_cuda_check_fusion_memory_ranges(cgraph, node_idx, 4, outputs, 1);
     }
 
     if (ops.size() == 2 && ops.begin()[0] == GGML_OP_SSM_CONV && ops.begin()[1] == GGML_OP_UNARY
@@ -4422,6 +4537,29 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL }, {})) {
         ggml_cuda_op_rms_norm_fused(*cuda_ctx, node, cgraph->nodes[i + 1]);
         return 1;
+    }
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if (ggml_cuda_can_fuse(cgraph, i,
+            { GGML_OP_ADD, GGML_OP_RESHAPE, GGML_OP_VIEW, GGML_OP_VIEW, GGML_OP_SSM_SCAN,
+              GGML_OP_VIEW, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU, GGML_OP_CPY }, {})) {
+        ggml_cuda_op_ssm_scan_gated(*cuda_ctx, cgraph->nodes[i + 4], cgraph->nodes[i + 6]->src[1],
+                                  cgraph->nodes[i + 8], node);
+        return 9;
+    }
+    if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_SSM_SCAN, GGML_OP_VIEW, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU, GGML_OP_CPY }, {})) {
+        ggml_cuda_op_ssm_scan_gated(*cuda_ctx, node, cgraph->nodes[i + 2]->src[1], cgraph->nodes[i + 4]);
+        return 5;
+    }
+    if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU }, {})) {
+        ggml_cuda_op_mul_add_swiglu(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2]);
+        return 2;
+    }
+#endif
+
+    if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_PAD, GGML_OP_SSM_CONV, GGML_OP_ADD, GGML_OP_UNARY }, { GGML_UNARY_OP_SILU })) {
+        ggml_cuda_op_ssm_conv_padded(*cuda_ctx, cgraph->nodes[i + 1], cgraph->nodes[i + 2], cgraph->nodes[i + 3]);
+        return 3;
     }
 
     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_SSM_CONV, GGML_OP_ADD, GGML_OP_UNARY }, { GGML_UNARY_OP_SILU })) {

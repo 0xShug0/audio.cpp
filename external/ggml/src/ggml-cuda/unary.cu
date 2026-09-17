@@ -355,6 +355,33 @@ void ggml_cuda_op_softplus(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 }
 /* gated ops */
 
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+static __global__ void mul_add_swiglu_f32(const float * input, const float * scale, const float * residual,
+                                         const float * gate, float * output, int64_t count,
+                                         int64_t channels, int64_t gate_stride) {
+    const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= count) {
+        return;
+    }
+    const int64_t channel = i % channels;
+    // Match the two separate graph operations rather than contracting to FMA.
+    const float product = __fmul_rn(input[i], scale[channel]);
+    const float sum = __fadd_rn(residual[i], product);
+    const float activated = ggml_cuda_op_silu_single(gate[(i / channels) * gate_stride + channel]);
+    output[i] = activated * sum;
+}
+
+void ggml_cuda_op_mul_add_swiglu(ggml_backend_cuda_context & ctx, ggml_tensor * mul, ggml_tensor * add, ggml_tensor * glu) {
+    const auto * residual = add->src[0] == mul ? add->src[1] : add->src[0];
+    const auto * gate = glu->src[0];
+    const int64_t count = ggml_nelements(glu);
+    mul_add_swiglu_f32<<<(count + 255) / 256, 256, 0, ctx.stream()>>>(
+        static_cast<const float *>(mul->src[0]->data), static_cast<const float *>(mul->src[1]->data),
+        static_cast<const float *>(residual->data), static_cast<const float *>(gate->data),
+        static_cast<float *>(glu->data), count, glu->ne[0], gate->nb[1] / sizeof(float));
+}
+#endif
+
 template <float (*op)(float), typename T>
 static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst, const int64_t k, const int64_t n, const int64_t o0, const int64_t o1) {
     const int64_t i = int64_t(blockDim.x)*blockIdx.x + threadIdx.x;

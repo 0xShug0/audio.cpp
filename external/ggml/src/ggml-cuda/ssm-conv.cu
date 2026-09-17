@@ -1,6 +1,37 @@
 #include "ssm-conv.cuh"
 #include "unary.cuh"
 
+static __global__ void ssm_conv_padded_f32(const float * input, const float * weight, const float * bias,
+                                          float * output, int64_t channels, int64_t tokens,
+                                          size_t token_stride, size_t batch_stride) {
+    const int64_t channel = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    const int64_t token = int64_t(blockIdx.y) * blockDim.y + threadIdx.y;
+    if (channel >= channels || token >= tokens) {
+        return;
+    }
+    float value = 0.0f;
+#pragma unroll
+    for (int tap = 0; tap < 4; ++tap) {
+        const int64_t position = token + tap - 3;
+        const float sample = position < 0 ? 0.0f : input[blockIdx.z * batch_stride + position * token_stride + channel];
+        value += sample * weight[channel * 4 + tap];
+    }
+    value += bias[channel];
+    output[(int64_t(blockIdx.z) * tokens + token) * channels + channel] = ggml_cuda_op_silu_single(value);
+}
+
+void ggml_cuda_op_ssm_conv_padded(ggml_backend_cuda_context & ctx, ggml_tensor * conv, ggml_tensor * add, ggml_tensor * silu) {
+    const auto * input = conv->src[0]->src[0];
+    const auto * weight = conv->src[1];
+    const auto * bias = add->src[0] == conv ? add->src[1] : add->src[0];
+    const dim3 threads(128, 4);
+    const dim3 blocks((silu->ne[0] + 127) / 128, (silu->ne[1] + 3) / 4, silu->ne[2]);
+    ssm_conv_padded_f32<<<blocks, threads, 0, ctx.stream()>>>(
+        static_cast<const float *>(input->data), static_cast<const float *>(weight->data),
+        static_cast<const float *>(bias->data), static_cast<float *>(silu->data),
+        silu->ne[0], silu->ne[1], input->nb[0] / sizeof(float), input->nb[2] / sizeof(float));
+}
+
 template <bool apply_silu, size_t split_d_inner, size_t d_conv>
 static __global__ void ssm_conv_f32(const float * __restrict__ src0, const float * __restrict__ src1,
                                     const float * __restrict__ bias,
