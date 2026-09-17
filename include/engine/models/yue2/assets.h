@@ -20,6 +20,7 @@ std::shared_ptr<const Yue2Assets> load_yue2_assets(const std::filesystem::path &
 
 std::shared_ptr<const assets::TensorSource> make_yue2_lora_source(
     std::shared_ptr<const assets::TensorSource> base,
-    const std::filesystem::path & adapter_path, float scale, int64_t layer_count);
+    const std::filesystem::path & adapter_path, float scale, int64_t layer_count,
+    const std::filesystem::path & nar_adapter_path = {}, float nar_scale = 1.0F);
 
 }  // namespace engine::models::yue2

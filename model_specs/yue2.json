@@ -224,6 +224,19 @@
         "default": 1.0
       },
       {
+        "name": "nar_lora",
+        "type": "string",
+        "description": "Unfused NAR adapter safetensors file. Absolute path or relative to the model root. Requires session reload.",
+        "required": false
+      },
+      {
+        "name": "nar_lora_scale",
+        "type": "float",
+        "description": "NAR LoRA delta scale; full vae2llm/llm2vae replacements are unscaled. Zero disables the entire adapter. Requires session reload.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "weight_type",
         "type": "enum",
         "values": [
