@@ -17,6 +17,9 @@ The default package installs:
 models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf
 ```
 
+> [!TIP]
+> **Quantization:** Need to run on 6 GB or 8 GB consumer GPUs? See the [Fish Audio S2 Pro GGUF Quantization Recipe (Q6_K & Q4_K)](fish_audio_quantization_recipe.md) to save up to **1.82 GB VRAM** while maintaining crystal clear speech synthesis.
+
 ## Quick Start
 
 Text-to-speech:

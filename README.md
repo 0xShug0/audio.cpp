@@ -934,6 +934,11 @@ In practice, lower precision and quantized modes should be treated as model- and
 
 - **Memory Benefit.** Lower precision and quantized weights can still be useful for reducing weight memory footprint and making larger models easier to fit within device limits. For example, in our Qwen3-TTS checks, switching from the default setting to `q8_0` reduced peak RAM by about 3.7% and peak VRAM by about 25.0%. That benefit is real, but it should be evaluated together with runtime stability, output quality, and end-to-end speed rather than assumed from precision alone.
 
+## Ecosystem & Community Integrations
+
+- **[AIRI Audio Server](https://github.com/dasilva333/airi-audio-server)**: A lightweight, zero-Python Node.js microservice wrapper providing OpenAI-compatible `/v1/audio/speech` (with real-time SSE streaming), `/v1/audio/transcriptions` (Citrinet/Whisper), dynamic voice catalog discovery, and serialized GPU queueing for `audio.cpp`.
+- **[Project AIRI](https://github.com/moeru-ai/airi)**: An open-source, next-generation AI companion and desktop frontend featuring interactive Voice Studio curation, zero-shot voice cloning dropzones, and real-time audio pipeline integration powered by `airi-audio-server` and `audio.cpp`.
+
 ## Notes
 
 - The repo supports multiple backends, but backend and model coverage are model-dependent.
