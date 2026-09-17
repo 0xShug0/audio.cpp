@@ -1131,9 +1131,14 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "MUL_MAT_ADD",
     "MUL_MAT_ADD_RELU",
     "IM2COL_ASYM",
+    "CONV_3D_CONCAT_PAD_SPATIAL_GEMM",
+    "RMS_NORM_CHANNELS",
+    "RMS_NORM_CHANNELS_SILU",
+    "RMS_NORM_CHANNELS_ADD_BIAS_SILU",
+    "ROPE_INTERLEAVED_PAIRS",
 };
 
-static_assert(GGML_OP_COUNT == 107, "GGML_OP_COUNT != 107");
+static_assert(GGML_OP_COUNT == 112, "GGML_OP_COUNT != 112");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1253,9 +1258,14 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "a*b+bias",
     "relu(a*b+bias)",
     "im2col_asym(x)",
+    "conv_3d_concat_pad_spatial_gemm(x)",
+    "rms_norm_channels(x)",
+    "rms_norm_channels_silu(x)",
+    "rms_norm_channels_add_bias_silu(x)",
+    "rope_interleaved_pairs(even, odd, cos, sin)",
 };
 
-static_assert(GGML_OP_COUNT == 107, "GGML_OP_COUNT != 107");
+static_assert(GGML_OP_COUNT == 112, "GGML_OP_COUNT != 112");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -2120,9 +2130,7 @@ static struct ggml_tensor * ggml_add_cast_impl(
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         enum   ggml_type      type) {
-    // TODO: support less-strict constraint
-    //       GGML_ASSERT(ggml_can_repeat(b, a));
-    GGML_ASSERT(ggml_can_repeat_rows(b, a));
+    GGML_ASSERT(ggml_can_repeat(b, a));
 
     // currently only supported for quantized input and f16
     GGML_ASSERT(ggml_is_quantized(a->type) ||
@@ -2674,6 +2682,105 @@ struct ggml_tensor * ggml_concat(
     result->src[1] = b;
 
     return result;
+}
+
+struct ggml_tensor * ggml_rope_interleaved_pairs(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * even,
+        struct ggml_tensor  * odd,
+        struct ggml_tensor  * cos,
+        struct ggml_tensor  * sin) {
+    GGML_ASSERT(even->type == odd->type);
+    GGML_ASSERT(cos->type == GGML_TYPE_F32 && sin->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_nelements(even) == ggml_nelements(odd));
+    GGML_ASSERT(ggml_nelements(even) == ggml_nelements(cos));
+    GGML_ASSERT(ggml_nelements(even) == ggml_nelements(sin));
+
+    int64_t ne[GGML_MAX_DIMS] = { even->ne[0], even->ne[1], even->ne[2], even->ne[3] };
+    ne[0] = 2;
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, even->type, GGML_MAX_DIMS, ne);
+
+    result->op     = GGML_OP_ROPE_INTERLEAVED_PAIRS;
+    result->src[0] = even;
+    result->src[1] = odd;
+    result->src[2] = cos;
+    result->src[3] = sin;
+
+    return result;
+}
+
+void ggml_concat_set_lowering(struct ggml_tensor * tensor, enum ggml_concat_lowering lowering) {
+    GGML_ASSERT(tensor->op == GGML_OP_CONCAT);
+    ggml_set_op_params_i32(tensor, 1, (int32_t) lowering);
+}
+
+struct ggml_tensor * ggml_conv_3d_concat_pad_spatial_gemm_ex(
+    struct ggml_context * ctx,
+    struct ggml_tensor  * a,
+    struct ggml_tensor  * b,
+    struct ggml_tensor  * w,
+    int                  lp0,
+    int                  rp0,
+    int                  lp1,
+    int                  rp1,
+    int                  lp2,
+    int                  rp2,
+    enum ggml_type       dst_type) {
+    GGML_ASSERT(a->type == GGML_TYPE_F32 || a->type == GGML_TYPE_F16);
+    GGML_ASSERT(b->type == GGML_TYPE_F32 || b->type == GGML_TYPE_F16);
+    GGML_ASSERT(w->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst_type == GGML_TYPE_F16 || dst_type == GGML_TYPE_F32);
+    GGML_ASSERT(a->ne[0] == b->ne[0]);
+    GGML_ASSERT(a->ne[1] == b->ne[1]);
+    GGML_ASSERT(a->ne[3] == b->ne[3]);
+    GGML_ASSERT(w->ne[0] == 3 && w->ne[1] == 3 && w->ne[2] == 3);
+    GGML_ASSERT(lp0 >= 0 && rp0 >= 0 && lp1 >= 0 && rp1 >= 0 && lp2 >= 0 && rp2 >= 0);
+
+    const int64_t ic = a->ne[3];
+    GGML_ASSERT(w->ne[3] % ic == 0);
+    const int64_t oc = w->ne[3] / ic;
+    const int64_t ow = a->ne[0] + lp0 + rp0 - 2;
+    const int64_t oh = a->ne[1] + lp1 + rp1 - 2;
+    const int64_t od = a->ne[2] + b->ne[2] + lp2 + rp2 - 2;
+    GGML_ASSERT(ow > 0 && oh > 0 && od > 0);
+
+    struct ggml_tensor * result = ggml_new_tensor_4d(ctx, dst_type, ow, oh, od, oc);
+
+    ggml_set_op_params_i32(result, 0, lp0);
+    ggml_set_op_params_i32(result, 1, rp0);
+    ggml_set_op_params_i32(result, 2, lp1);
+    ggml_set_op_params_i32(result, 3, rp1);
+    ggml_set_op_params_i32(result, 4, lp2);
+    ggml_set_op_params_i32(result, 5, rp2);
+
+    result->op     = GGML_OP_CONV_3D_CONCAT_PAD_SPATIAL_GEMM;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = w;
+
+    return result;
+}
+
+void ggml_conv_3d_concat_pad_spatial_gemm_set_lowering(
+        struct ggml_tensor * tensor,
+        enum ggml_conv_3d_concat_pad_spatial_gemm_lowering lowering) {
+    GGML_ASSERT(tensor->op == GGML_OP_CONV_3D_CONCAT_PAD_SPATIAL_GEMM);
+    ggml_set_op_params_i32(tensor, 6, (int32_t) lowering);
+}
+
+struct ggml_tensor * ggml_conv_3d_concat_pad_spatial_gemm(
+    struct ggml_context * ctx,
+    struct ggml_tensor  * a,
+    struct ggml_tensor  * b,
+    struct ggml_tensor  * w,
+    int                  lp0,
+    int                  rp0,
+    int                  lp1,
+    int                  rp1,
+    int                  lp2,
+    int                  rp2) {
+    return ggml_conv_3d_concat_pad_spatial_gemm_ex(ctx, a, b, w, lp0, rp0, lp1, rp1, lp2, rp2, GGML_TYPE_F32);
 }
 
 // ggml_abs
@@ -3230,6 +3337,70 @@ struct ggml_tensor * ggml_rms_norm_inplace(
     return ggml_rms_norm_impl(ctx, a, eps, true);
 }
 
+struct ggml_tensor * ggml_rms_norm_channels(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * gamma,
+        float                 eps) {
+    GGML_ASSERT(gamma->ne[0] == a->ne[3]);
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne);
+
+    ggml_set_op_params(result, &eps, sizeof(eps));
+
+    result->op     = GGML_OP_RMS_NORM_CHANNELS;
+    result->src[0] = a;
+    result->src[1] = gamma;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_rms_norm_channels_silu(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * gamma,
+        float                 eps) {
+    GGML_ASSERT(gamma->ne[0] == a->ne[3]);
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne);
+
+    ggml_set_op_params(result, &eps, sizeof(eps));
+
+    result->op     = GGML_OP_RMS_NORM_CHANNELS_SILU;
+    result->src[0] = a;
+    result->src[1] = gamma;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_rms_norm_channels_add_bias_silu(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * bias,
+        struct ggml_tensor  * gamma,
+        float                 eps) {
+    GGML_ASSERT(bias->ne[0] == a->ne[3]);
+    GGML_ASSERT(gamma->ne[0] == a->ne[3]);
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, a->ne);
+
+    ggml_set_op_params(result, &eps, sizeof(eps));
+
+    result->op     = GGML_OP_RMS_NORM_CHANNELS_ADD_BIAS_SILU;
+    result->src[0] = a;
+    result->src[1] = bias;
+    result->src[2] = gamma;
+
+    return result;
+}
+
+void ggml_rms_norm_channels_set_lowering(
+        struct ggml_tensor * tensor,
+        enum ggml_rms_norm_channels_lowering lowering) {
+    GGML_ASSERT(
+            tensor->op == GGML_OP_RMS_NORM_CHANNELS ||
+            tensor->op == GGML_OP_RMS_NORM_CHANNELS_SILU ||
+            tensor->op == GGML_OP_RMS_NORM_CHANNELS_ADD_BIAS_SILU);
+    ggml_set_op_params_i32(tensor, 1, (int32_t) lowering);
+}
+
 // ggml_rms_norm_back
 
 struct ggml_tensor * ggml_rms_norm_back(
@@ -3377,6 +3548,16 @@ void ggml_mul_mat_set_hint(
     const int32_t hint_i32 = (int32_t) hint;
 
     ggml_set_op_params_i32(a, 1, hint_i32);
+}
+
+void ggml_mul_mat_set_lowering(
+        struct ggml_tensor * a,
+        enum ggml_mul_mat_lowering lowering) {
+    GGML_ASSERT(a->op == GGML_OP_MUL_MAT || a->op == GGML_OP_MUL_MAT_PACK4);
+
+    const int32_t lowering_i32 = (int32_t) lowering;
+
+    ggml_set_op_params_i32(a, 1, lowering_i32);
 }
 
 // ggml_mul_mat_id
@@ -4560,6 +4741,14 @@ struct ggml_tensor * ggml_im2col(
     return result;
 }
 
+void ggml_im2col_2d_set_lowering(
+        struct ggml_tensor * tensor,
+        enum ggml_im2col_2d_lowering lowering) {
+    GGML_ASSERT(tensor->op == GGML_OP_IM2COL || tensor->op == GGML_OP_IM2COL_FAST_1D);
+    GGML_ASSERT(ggml_get_op_params_i32(tensor, 6) == 1);
+    ggml_set_op_params_i32(tensor, 7, (int32_t) lowering);
+}
+
 struct ggml_tensor * ggml_im2col_back(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
@@ -4825,6 +5014,13 @@ struct ggml_tensor * ggml_im2col_3d(
     result->src[1] = b;
 
     return result;
+}
+
+void ggml_im2col_3d_set_lowering(
+        struct ggml_tensor * tensor,
+        enum ggml_im2col_3d_lowering lowering) {
+    GGML_ASSERT(tensor->op == GGML_OP_IM2COL_3D);
+    ggml_set_op_params_i32(tensor, 10, (int32_t) lowering);
 }
 
 // a: [OC*IC, KD, KH, KW]

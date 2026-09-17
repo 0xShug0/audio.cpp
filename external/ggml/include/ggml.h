@@ -448,8 +448,14 @@ extern "C" {
 
     // op hint
     enum ggml_op_hint {
-        GGML_HINT_NONE             = 0,
-        GGML_HINT_SRC0_IS_HADAMARD = 1,
+        GGML_HINT_NONE                         = 0,
+        GGML_HINT_SRC0_IS_HADAMARD             = 1,
+    };
+
+    enum ggml_mul_mat_lowering {
+        GGML_MUL_MAT_LOWERING_DEFAULT                    = 0,
+        GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION  = 2,
+        GGML_MUL_MAT_LOWERING_CUDA_TILE_F16_ACCUM_OUTPUT = 3,
     };
 
     // model file types
@@ -604,6 +610,11 @@ extern "C" {
         GGML_OP_MUL_MAT_ADD,
         GGML_OP_MUL_MAT_ADD_RELU,
         GGML_OP_IM2COL_ASYM,
+        GGML_OP_CONV_3D_CONCAT_PAD_SPATIAL_GEMM,
+        GGML_OP_RMS_NORM_CHANNELS,
+        GGML_OP_RMS_NORM_CHANNELS_SILU,
+        GGML_OP_RMS_NORM_CHANNELS_ADD_BIAS_SILU,
+        GGML_OP_ROPE_INTERLEAVED_PAIRS,
 
         GGML_OP_COUNT,
     };
@@ -676,6 +687,33 @@ extern "C" {
         GGML_TRI_TYPE_UPPER      = 1,
         GGML_TRI_TYPE_LOWER_DIAG = 2,
         GGML_TRI_TYPE_LOWER      = 3
+    };
+
+    enum ggml_concat_lowering {
+        GGML_CONCAT_LOWERING_DEFAULT = 0,
+        GGML_CONCAT_LOWERING_CUDA_CONTIGUOUS_4D = 1,
+    };
+
+    enum ggml_im2col_2d_lowering {
+        GGML_IM2COL_2D_LOWERING_DEFAULT = 0,
+        GGML_IM2COL_2D_LOWERING_CUDA_N_K3_PAD1_X8 = 1,
+        GGML_IM2COL_2D_LOWERING_CUDA_N_K3_NOPAD_X8 = 2,
+    };
+
+    enum ggml_im2col_3d_lowering {
+        GGML_IM2COL_3D_LOWERING_DEFAULT = 0,
+        GGML_IM2COL_3D_LOWERING_CUDA_N1_K3_NOPAD_X8 = 1,
+    };
+
+    enum ggml_rms_norm_channels_lowering {
+        GGML_RMS_NORM_CHANNELS_LOWERING_DEFAULT = 0,
+        GGML_RMS_NORM_CHANNELS_LOWERING_CUDA_COALESCED = 1,
+    };
+
+    enum ggml_conv_3d_concat_pad_spatial_gemm_lowering {
+        GGML_CONV_3D_CONCAT_PAD_SPATIAL_GEMM_LOWERING_DEFAULT = 0,
+        GGML_CONV_3D_CONCAT_PAD_SPATIAL_GEMM_LOWERING_CUDA_C48 = 1,
+        GGML_CONV_3D_CONCAT_PAD_SPATIAL_GEMM_LOWERING_CUDA_TILED_C48 = 2,
     };
 
     struct ggml_init_params {
@@ -1110,6 +1148,46 @@ extern "C" {
             struct ggml_tensor  * b,
             int                   dim);
 
+    GGML_API struct ggml_tensor * ggml_rope_interleaved_pairs(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * even,
+            struct ggml_tensor  * odd,
+            struct ggml_tensor  * cos,
+            struct ggml_tensor  * sin);
+
+    GGML_API void ggml_concat_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_concat_lowering lowering);
+
+    GGML_API struct ggml_tensor * ggml_conv_3d_concat_pad_spatial_gemm(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * w,
+            int                  lp0,
+            int                  rp0,
+            int                  lp1,
+            int                  rp1,
+            int                  lp2,
+            int                  rp2);
+
+    GGML_API struct ggml_tensor * ggml_conv_3d_concat_pad_spatial_gemm_ex(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * w,
+            int                  lp0,
+            int                  rp0,
+            int                  lp1,
+            int                  rp1,
+            int                  lp2,
+            int                  rp2,
+            enum ggml_type       dst_type);
+
+    GGML_API void ggml_conv_3d_concat_pad_spatial_gemm_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_conv_3d_concat_pad_spatial_gemm_lowering lowering);
+
     GGML_API struct ggml_tensor * ggml_abs(
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
@@ -1406,6 +1484,29 @@ extern "C" {
             struct ggml_tensor  * a,
             float                 eps);
 
+    GGML_API struct ggml_tensor * ggml_rms_norm_channels(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * gamma,
+            float                 eps);
+
+    GGML_API struct ggml_tensor * ggml_rms_norm_channels_silu(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * gamma,
+            float                 eps);
+
+    GGML_API struct ggml_tensor * ggml_rms_norm_channels_add_bias_silu(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * bias,
+            struct ggml_tensor  * gamma,
+            float                 eps);
+
+    GGML_API void ggml_rms_norm_channels_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_rms_norm_channels_lowering lowering);
+
     // group normalize along ne0*ne1*n_groups
     // used in stable-diffusion
     GGML_API struct ggml_tensor * ggml_group_norm(
@@ -1463,6 +1564,10 @@ extern "C" {
     GGML_API void ggml_mul_mat_set_hint(
             struct ggml_tensor * a,
             enum ggml_op_hint    hint);
+
+    GGML_API void ggml_mul_mat_set_lowering(
+            struct ggml_tensor * a,
+            enum ggml_mul_mat_lowering lowering);
 
     // indirect matrix multiplication
     GGML_API struct ggml_tensor * ggml_mul_mat_id(
@@ -2028,6 +2133,10 @@ extern "C" {
             bool                  is_2D,
             enum ggml_type        dst_type);
 
+    GGML_API void ggml_im2col_2d_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_im2col_2d_lowering lowering);
+
     GGML_API struct ggml_tensor * ggml_im2col_back(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,  // convolution kernel
@@ -2124,6 +2233,10 @@ extern "C" {
             int                   d1, // dilation height
             int                   d2, // dilation depth
             enum ggml_type        dst_type);
+
+    GGML_API void ggml_im2col_3d_set_lowering(
+            struct ggml_tensor * tensor,
+            enum ggml_im2col_3d_lowering lowering);
 
     // a: [OC*IC, KD, KH, KW]
     // b: [N*IC, ID, IH, IW]
