@@ -397,41 +397,37 @@ inline void conv1d_direct(
     float * out) {
     (void)pad;
     constexpr int C = kFlashSrChannels;
-    constexpr int kMaxTaps = 11;
     const int c = (kernel - 1) / 2;
     #pragma omp parallel for schedule(static)
     for (int64_t p0 = 0; p0 < n; p0 += 256) {
         const int64_t p1 = std::min<int64_t>(p0 + 256, n);
-        for (int64_t p = p0; p < p1; ++p) {
-            int taps[kMaxTaps];
-            int64_t src[kMaxTaps];
-            int ns = 0;
-            for (int k = 0; k < kernel; ++k) {
-                const int64_t s = p + static_cast<int64_t>(dilation) * (k - c);
-                if (s < 0 || s >= n) {
-                    continue;
-                }
-                taps[ns] = k;
-                src[ns] = s;
-                ++ns;
-            }
-            float window[C][kMaxTaps];
+        // Vectorize across independent output positions, retaining the same
+        // input-channel/tap accumulation order for every individual sample.
+        for (int oc = 0; oc < C; ++oc) {
+            float * dst = out + static_cast<size_t>(oc) * n;
+            alignas(64) float acc[256];
+            std::fill_n(acc, p1 - p0, bias != nullptr ? bias[oc] : 0.0f);
             for (int ic = 0; ic < C; ++ic) {
                 const float * row = in + static_cast<size_t>(ic) * n;
-                for (int j = 0; j < ns; ++j) {
-                    window[ic][j] = row[src[j]];
-                }
-            }
-            for (int oc = 0; oc < C; ++oc) {
-                float acc = bias != nullptr ? bias[oc] : 0.0f;
-                for (int ic = 0; ic < C; ++ic) {
-                    const float * wr = w + (static_cast<size_t>(oc) * C + ic) * kernel;
-                    for (int j = 0; j < ns; ++j) {
-                        acc += wr[taps[j]] * window[ic][j];
+                const float * wr = w + (static_cast<size_t>(oc) * C + ic) * kernel;
+                for (int k = 0; k < kernel; ++k) {
+                    const int64_t shift = static_cast<int64_t>(dilation) * (k - c);
+                    const int64_t begin = std::max<int64_t>(p0, -shift);
+                    const int64_t end = std::min<int64_t>(p1, n - shift);
+                    const float weight = wr[k];
+                    if (begin >= end) {
+                        continue;
+                    }
+                    // Local tile + simple pointer walks allow MSVC to vectorize
+                    // without aliasing the input or changing the reduction order.
+                    float * ap = acc + (begin - p0);
+                    const float * xp = row + begin + shift;
+                    for (int64_t i = 0; i < end - begin; ++i) {
+                        ap[i] += weight * xp[i];
                     }
                 }
-                out[static_cast<size_t>(oc) * n + p] = acc;
             }
+            std::copy_n(acc, p1 - p0, dst + p0);
         }
     }
 }
@@ -611,18 +607,29 @@ public:
 
         // conv_post: [C][l] -> [l], kernel 7, zero pad 3, no bias, then tanh.
         #pragma omp parallel for schedule(static)
-        for (int64_t p = 0; p < l; ++p) {
-            float acc = 0.0f;
+        for (int64_t p0 = 0; p0 < l; p0 += 256) {
+            const int64_t p1 = std::min<int64_t>(p0 + 256, l);
+            alignas(64) float acc[256] = {};
             for (int c = 0; c < kFlashSrChannels; ++c) {
                 const float * row = za.data() + static_cast<size_t>(c) * l;
                 for (int k = 0; k < 7; ++k) {
-                    const int64_t idx = p - 3 + k;
-                    if (idx >= 0 && idx < l) {
-                        acc += weights_.conv_post_w[static_cast<size_t>(c) * 7 + k] * row[idx];
+                    const int64_t shift = k - 3;
+                    const int64_t begin = std::max<int64_t>(p0, -shift);
+                    const int64_t end = std::min<int64_t>(p1, l - shift);
+                    const float w = weights_.conv_post_w[static_cast<size_t>(c) * 7 + k];
+                    if (begin >= end) {
+                        continue;
+                    }
+                    float * ap = acc + (begin - p0);
+                    const float * xp = row + begin + shift;
+                    for (int64_t i = 0; i < end - begin; ++i) {
+                        ap[i] += w * xp[i];
                     }
                 }
             }
-            out[static_cast<size_t>(p)] = tanhf(acc);
+            for (int64_t p = p0; p < p1; ++p) {
+                out[static_cast<size_t>(p)] = tanhf(acc[p - p0]);
+            }
         }
         return out;
     }

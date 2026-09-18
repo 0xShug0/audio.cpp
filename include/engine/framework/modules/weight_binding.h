@@ -20,6 +20,28 @@
 
 namespace engine::modules::binding {
 
+template <typename Store>
+ChannelAffineWeights batch_norm_eval_from_source(
+    Store & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    int64_t channels,
+    float eps,
+    assets::TensorStorageType storage_type = assets::TensorStorageType::F32) {
+    const auto gamma = source.require_f32(prefix + ".weight", {channels});
+    const auto beta = source.require_f32(prefix + ".bias", {channels});
+    const auto mean = source.require_f32(prefix + ".running_mean", {channels});
+    const auto variance = source.require_f32(prefix + ".running_var", {channels});
+    std::vector<float> scale(static_cast<size_t>(channels)), bias(static_cast<size_t>(channels));
+    for (size_t i = 0; i < scale.size(); ++i) {
+        scale[i] = gamma[i] / std::sqrt(variance[i] + eps);
+        bias[i] = beta[i] - mean[i] * scale[i];
+    }
+    const auto shape = core::TensorShape::from_dims({channels});
+    return {store.make_from_f32(shape, storage_type, std::move(scale)),
+        store.make_from_f32(shape, storage_type, std::move(bias))};
+}
+
 inline LinearConfig linear_config(
     int64_t in_features,
     int64_t out_features,
@@ -359,6 +381,16 @@ LinearWeights linear_from_source(
 }
 
 template <typename Store>
+LinearWeights linear_from_transposed_named_source(
+    Store & store,
+    const assets::TensorSource & source,
+    const std::string & weight_name,
+    const std::optional<std::string> & bias_name,
+    assets::TensorStorageType storage_type,
+    int64_t in_features,
+    int64_t out_features);
+
+template <typename Store>
 LinearWeights hf_conv1d_linear_from_source(
     Store & store,
     const assets::TensorSource & source,
@@ -367,7 +399,26 @@ LinearWeights hf_conv1d_linear_from_source(
     int64_t in_features,
     int64_t out_features,
     bool use_bias) {
-    const auto source_weight = source.require_f32(prefix + ".weight", {in_features, out_features});
+    return linear_from_transposed_named_source(
+        store,
+        source,
+        prefix + ".weight",
+        use_bias ? std::optional<std::string>{prefix + ".bias"} : std::nullopt,
+        storage_type,
+        in_features,
+        out_features);
+}
+
+template <typename Store>
+LinearWeights linear_from_transposed_named_source(
+    Store & store,
+    const assets::TensorSource & source,
+    const std::string & weight_name,
+    const std::optional<std::string> & bias_name,
+    assets::TensorStorageType storage_type,
+    int64_t in_features,
+    int64_t out_features) {
+    const auto source_weight = source.require_f32(weight_name, {in_features, out_features});
     std::vector<float> transposed(static_cast<std::size_t>(out_features * in_features));
     for (int64_t in = 0; in < in_features; ++in) {
         for (int64_t out = 0; out < out_features; ++out) {
@@ -380,8 +431,8 @@ LinearWeights hf_conv1d_linear_from_source(
         core::TensorShape::from_dims({out_features, in_features}),
         storage_type,
         std::move(transposed));
-    if (use_bias) {
-        weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_features});
+    if (bias_name.has_value()) {
+        weights.bias = store.load_f32_tensor(source, *bias_name, {out_features});
     }
     return weights;
 }

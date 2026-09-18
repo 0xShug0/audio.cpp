@@ -15,7 +15,12 @@ the official ONNX exports for manual testing.
 
 ## Install
 
-Install eSpeak-ng and its English voice data first. On Debian or Ubuntu:
+Inflect v2 uses the [shared eSpeak-ng phonemizer](../espeak_phonemizer.md),
+including shared synchronization with other model frontends.
+
+With `AUDIOCPP_STATIC_ESPEAK=ON`, the build includes eSpeak code and stages its
+data beside the CLI/server; no separate installation is needed.
+Otherwise install eSpeak-ng and its English voice data first. On Debian or Ubuntu:
 
 ```bash
 sudo apt install espeak-ng libespeak-ng1

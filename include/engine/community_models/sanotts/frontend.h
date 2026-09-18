@@ -29,8 +29,8 @@ struct SanoTtsEncoded {
  * the project's own JavaScript and Python front ends so the three agree
  * symbol for symbol.
  *
- * eSpeak-ng is opened at runtime and never linked, matching how inflect_v2
- * treats it: it is GPL-3.0 and must not be embedded in this project.
+ * The shared adapter uses an external library by default. Opt-in static
+ * builds link eSpeak-ng (GPL-3.0-or-later); its data remains separate.
  */
 class SanoTtsFrontend {
 public:

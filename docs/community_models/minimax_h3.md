@@ -119,7 +119,7 @@ DiT script for that component.
 ### DiT
 
 ```bash
-python scripts/minimax_h3/convert_dit_gguf.py \
+python tools/community_models/minimax_h3/convert_dit_gguf.py \
   --input /path/to/MiniMax-H3-NF4/minimax-h3-fl2va-nf4.safetensors \
   --output models/MiniMax-H3-Q4-GGUF/dit.gguf \
   --overwrite \
@@ -161,7 +161,7 @@ projections. It is CUDA-only and currently experimental. Keep the normal `dit.gg
 default package DiT unless you explicitly want to test the INT8 path.
 
 ```bash
-python scripts/minimax_h3/convert_dit_gguf.py \
+python tools/community_models/minimax_h3/convert_dit_gguf.py \
   --input /path/to/MiniMax-H3-NF4/minimax-h3-fl2va-nf4.safetensors \
   --output models/MiniMax-H3-Q4-GGUF/dit_int8.gguf \
   --overwrite \
@@ -218,7 +218,7 @@ build/debug/bin/audiocpp_gguf \
 Then create the folded runtime Audio VAE GGUF:
 
 ```bash
-python scripts/minimax_h3/convert_fold_audio_vae_gguf.py \
+python tools/community_models/minimax_h3/convert_fold_audio_vae_gguf.py \
   --input models/MiniMax-H3-Q4-GGUF/audio_vae.gguf \
   --output models/MiniMax-H3-Q4-GGUF/audio_vae_folded_f16.gguf \
   --folded-type f16 \

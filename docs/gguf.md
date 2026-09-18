@@ -58,9 +58,12 @@ Status labels:
 | Family | Package-spec refactor | Safetensors tested after refactor | `orig` GGUF tested | 16-bit GGUF tested | `q8_0` GGUF tested |
 |---|---|---|---|---|---|
 | `ace_step` | Done | Pass | --- | Pass (drift) | No (planner sampling can fail) |
+| `apollo` | Done | --- | Pass (drift) | --- | --- |
 | `bs_roformer` | Done | Pass | --- | --- | Pass |
+| `canary_asr` | Done | Pass | Pass | --- | Pass |
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `citrinet_asr` | Done | Pass | --- | --- | Pass |
+| `cohere_asr` | Done | Pass | Pass | --- | Pass (drift) |
 | `fish_audio` | Done | Pass | --- | Pass | Pass |
 | `fun_asr_nano` | Done | Pass | --- | Pass | Pass |
 | `glm_tts` | Done | Pass (TTS + clone) | --- | --- | Pass (ASR match, drift) |
@@ -80,8 +83,10 @@ Status labels:
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
 | `miotts` | Done | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `mms_forced_aligner` | Done | Pass | --- | Pass | Pass (bit-identical) |
+| `moonshine_asr` | Done | Pass | --- | --- | Pass |
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
+| `moss_transcribe_diarize` | Done | --- | Pass | --- | Pass |
 | `muscriptor` | Done | Pass | Pass | --- | --- |
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |
 | `neutts` | Done | Pass | --- | Pass | --- |
@@ -90,6 +95,7 @@ Status labels:
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
 | `personaplex` | Done | --- | --- | --- | Pass |
 | `pocket_tts` | Done | Pass | --- | Pass | Pass (drift) |
+| `pulsevad` | Done | Pass | Pass | --- | --- |
 | `qwen3_asr` | Done | Pass | --- | Pass | Pass |
 | `qwen3_forced_aligner` | Done | Pass | --- | Pass | Pass |
 | `qwen3_tts` base | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
@@ -101,11 +107,14 @@ Status labels:
 | `soprano_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
 | `sortformer_diar` | Done | Pass | --- | Pass | Pass |
+| `sortformer_diar_v2` | Done | Pass | Pass | Pass (mixed; output-turn criteria) | No (speaker drift) |
 | `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `supertonic` | Done | Pass | Pass | Pass | No (Q8 blockers unresolved) |
+| `universr` | Done | --- | Pass | --- | --- |
 | `vevo2` | Done | Pass | Pass | Pass (drift) | No (mixed route drift; speech ASR match) |
 | `vibevoice` | Done | Pass | --- | Pass | Pass (drift) |
 | `vibevoice_asr` | Done | Pass | --- | Pass | Pass |
+| `vibevoice_asr_streaming` | Done | --- | --- | Pass | Pass |
 | `voxcpm2` | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `voxtral_realtime` | Done | Pass | --- | Pass | Pass |
 
@@ -113,12 +122,17 @@ Additional lower-bit checks:
 
 | Family | Format | Tested |
 |---|---|---|
+| `cohere_asr` | `q4_0` | Pass (drift) |
 | `meanvc2` | `q4_k` | Pass |
+| `moss_transcribe_diarize` | `q4_k` | No (long-audio segmentation/timestamp drift) |
 | `personaplex` | `q4_k` | Pass |
+| `vibevoice_asr_streaming` | `q4_k` | Pass (quick CUDA check; transcript stays usable and matches the BF16 wording class) |
 | `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
 
 Q8 packaging notes:
 
+- Apollo and UniverSR `orig` packages preserve F32 weights. See the
+  [Apollo](models/apollo.md) and [UniverSR](models/universr.md) usage guides.
 - `chatterbox` Q8 is intentionally mixed type. Graph-sensitive scalar, norm,
   bias, and side tensors stay in non-Q8 types while matmul-compatible weights
   are quantized.
@@ -145,6 +159,9 @@ Q8 packaging notes:
 - `voxtral_realtime` also has a tested `q4_k` package. In a quick CUDA path
   check it was smaller and faster than Q8_0, while transcript output matched
   Q8_0 except for one capitalization-only difference.
+- `vibevoice_asr_streaming` also has a tested `q4_k` package. In a quick CUDA
+  check, BF16 and Q4_K produced the same transcript wording on the validation
+  clip; Q8_0 produced the same sentence with minor wording drift.
 
 ## Build The Converter
 

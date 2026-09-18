@@ -627,6 +627,7 @@ void KrokoASRSession::reset() {
     endpoint_segments_.clear();
     processed_feature_offset_ = 0;
     streaming_total_samples_ = 0;
+    streaming_partials_.reset();
     streaming_source_offset_ = 0;
     streaming_source_frames_ = 0;
     streaming_next_output_sample_ = 0;
@@ -903,7 +904,21 @@ runtime::StreamEvent KrokoASRSession::process_streaming_audio(
             decoded,
             streaming_total_samples_,
             streaming_language_);
-        event.partial_text = result.text_output;
+        // A partial is the text decoded since the last one, not the whole
+        // transcript re-rendered: combined_decoded() restates everything
+        // decoded so far, so an appending consumer built it up quadratically.
+        // word_timestamps stays cumulative -- it is the finalized set, not a
+        // delta -- so the two fields differ on purpose.
+        if (result.text_output.has_value()) {
+            std::string delta =
+                streaming_partials_.publish(
+                    result.text_output->text);
+            if (!delta.empty()) {
+                event.partial_text = runtime::Transcript{
+                    std::move(delta),
+                    result.text_output->language};
+            }
+        }
         event.word_timestamps = result.word_timestamps;
     }
     return event;
@@ -940,10 +955,14 @@ runtime::TaskResult KrokoASRSession::finalize() {
     if (stream_event_sink_) {
         stream_event_sink_(event);
     }
-    runtime::TaskResult result;
-    result.text_output = event.partial_text;
-    result.speech_segments = endpoint_segments_;
-    result.word_timestamps = std::move(event.word_timestamps);
+    // Built from the combined decode, not from event.partial_text. The partial
+    // is the increment since the last one now, so reusing it here would report
+    // only the final window as the transcript -- this read the whole transcript
+    // out of the partial only because the partial restated it every time.
+    runtime::TaskResult result = make_result(
+        combined_decoded(),
+        streaming_total_samples_,
+        streaming_language_);
     engine::debug::timing_log_scalar(
         "kroko_asr.session_ms",
         engine::debug::elapsed_ms(stream_start_, Clock::now()));

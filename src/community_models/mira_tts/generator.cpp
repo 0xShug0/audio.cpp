@@ -124,11 +124,16 @@ modules::QwenCausalDecoderConfig decoder_config(
         modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     if (backend_type == core::BackendType::Vulkan) {
         // Mira's projections are sensitive to Vulkan's default reduced
-        // precision. Materialize grouped K/V heads for attention as well:
-        // the strided-view path diverges during prompt evaluation.
+        // precision. Prompt evaluation still needs materialized grouped K/V:
+        // the strided-view prefill path diverges. Single-token decoding can
+        // use the cached views without copying the grouped heads each step.
         out.stack.projection_precision = GGML_PREC_F32;
         out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
         out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
+        const char * view_decode = std::getenv("AUDIOCPP_MIRA_TTS_VULKAN_VIEW_DECODE");
+        if (view_decode == nullptr || view_decode[0] != '0') {
+            out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+        }
     }
     out.logits_size = config.vocab_size;
     out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
@@ -181,7 +186,9 @@ std::shared_ptr<MiraQwenWeights> load_weights(
     out->store->upload();
     out->lm_head = out->token_embedding;
     const char * sparse_head = std::getenv("AUDIOCPP_MIRA_TTS_SPARSE_HEAD");
-    if (backend_type == core::BackendType::Cpu &&
+    // Vulkan can project the same speech/EOS window as CPU without lowering
+    // precision. Keep the full-head diagnostic available on both backends.
+    if ((backend_type == core::BackendType::Cpu || backend_type == core::BackendType::Vulkan) &&
         !(sparse_head != nullptr && sparse_head[0] == '0')) {
         // Only MiraTTS knows its speech/EOS alphabet. Keep its weight window
         // here, presenting an ordinary, correctly sized head to shared Qwen.

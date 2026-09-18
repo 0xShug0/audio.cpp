@@ -905,18 +905,20 @@ public:
             release_partial_graph_runtime(galloc_, params_buffer_, ggml_ctx_);
             throw std::runtime_error("Mimi transformer graph allocation failed");
         }
-        for (size_t keep = 0; keep < carry_key_sources_.size(); ++keep) {
-            for (size_t layer = 0; layer < carry_key_sources_[keep].size(); ++layer) {
-                if (carry_key_sources_[keep][layer] != nullptr) {
-                    ggml_backend_view_init(carry_key_sources_[keep][layer]);
-                    ggml_backend_view_init(carry_value_sources_[keep][layer]);
-                    ggml_backend_view_init(carry_key_destinations_[keep][layer]);
-                    ggml_backend_view_init(carry_value_destinations_[keep][layer]);
+        if (!core::is_host_backend(backend_)) {
+            for (size_t keep = 0; keep < carry_key_sources_.size(); ++keep) {
+                for (size_t layer = 0; layer < carry_key_sources_[keep].size(); ++layer) {
+                    if (carry_key_sources_[keep][layer] != nullptr) {
+                        ggml_backend_view_init(carry_key_sources_[keep][layer]);
+                        ggml_backend_view_init(carry_value_sources_[keep][layer]);
+                        ggml_backend_view_init(carry_key_destinations_[keep][layer]);
+                        ggml_backend_view_init(carry_value_destinations_[keep][layer]);
+                    }
+                    ggml_backend_view_init(append_key_sources_[keep][layer]);
+                    ggml_backend_view_init(append_value_sources_[keep][layer]);
+                    ggml_backend_view_init(append_key_destinations_[keep][layer]);
+                    ggml_backend_view_init(append_value_destinations_[keep][layer]);
                 }
-                ggml_backend_view_init(append_key_sources_[keep][layer]);
-                ggml_backend_view_init(append_value_sources_[keep][layer]);
-                ggml_backend_view_init(append_key_destinations_[keep][layer]);
-                ggml_backend_view_init(append_value_destinations_[keep][layer]);
             }
         }
         core::write_tensor_f32(input_bct_, std::vector<float>(static_cast<size_t>(config_.hidden_size * frames_), 0.0F));

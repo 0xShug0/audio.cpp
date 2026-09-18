@@ -29,6 +29,11 @@ struct BreezeGenerationRequest {
     uint64_t seed = 0;
 };
 
+struct BreezeStreamEvent {
+    engine::runtime::AudioBuffer audio;
+    bool done = false;
+};
+
 class BreezeGeneratorRuntime {
 public:
     BreezeGeneratorRuntime(
@@ -42,6 +47,9 @@ public:
 
     engine::runtime::AudioBuffer generate(const BreezeGenerationRequest & request);
     BreezeSpeechCodes encode_reference(const engine::runtime::AudioBuffer & audio) const;
+    void begin_stream(const BreezeGenerationRequest & request);
+    BreezeStreamEvent next_stream_audio(size_t max_new_frames, int64_t lookahead_margin);
+    void end_stream();
 
 private:
     struct Impl;

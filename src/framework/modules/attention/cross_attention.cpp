@@ -1,4 +1,5 @@
 #include "attention_internal.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 
 namespace engine::modules {
 
@@ -46,7 +47,7 @@ void validate_cross_memory(const core::TensorValue & memory, const AttentionConf
 void validate_cross_cache(
     const CrossAttentionKeyValue & key_value,
     const core::TensorValue & query,
-    const core::TensorValue & memory_mask,
+    int64_t memory_frames,
     const AttentionConfig & config) {
     const int64_t head_dim = cross_head_dim(config);
     if (key_value.key.shape.rank != 4 || key_value.value.shape.rank != 4 ||
@@ -54,8 +55,8 @@ void validate_cross_cache(
         key_value.value.shape.dims[0] != query.shape.dims[0] ||
         key_value.key.shape.dims[1] != config.num_heads ||
         key_value.value.shape.dims[1] != config.num_heads ||
-        key_value.key.shape.dims[2] != memory_mask.shape.dims[1] ||
-        key_value.value.shape.dims[2] != memory_mask.shape.dims[1] ||
+        key_value.key.shape.dims[2] != memory_frames ||
+        key_value.value.shape.dims[2] != memory_frames ||
         key_value.key.shape.dims[3] != head_dim ||
         key_value.value.shape.dims[3] != head_dim) {
         throw std::runtime_error("CrossAttentionModule cached KV shape is invalid");
@@ -200,7 +201,7 @@ core::TensorValue CrossAttentionModule::build_cached(
         throw std::runtime_error("CrossAttentionModule cached path requires packed KV");
     }
     validate_cross_query(query, config_);
-    validate_cross_cache(key_value, query, memory_mask, config_);
+    validate_cross_cache(key_value, query, memory_mask.shape.dims[1], config_);
     auto query_heads = build_cross_query(ctx, query, config_, weights);
     auto probs = build_cross_probabilities(
         ctx,
@@ -211,6 +212,38 @@ core::TensorValue CrossAttentionModule::build_cached(
         attention_prior,
         last_attention);
     return build_cross_output(ctx, query, probs, key_value.value, config_, weights);
+}
+
+core::TensorValue CrossAttentionModule::build_cached_flash(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & query,
+    const CrossAttentionKeyValue & key_value,
+    const AttentionWeights & weights,
+    const core::TensorValue & attention_mask) const {
+    if (!config_.use_packed_kv) {
+        throw std::runtime_error("CrossAttentionModule cached flash path requires packed KV");
+    }
+    validate_cross_query(query, config_);
+    core::validate_rank_between(attention_mask, 4, 4, "cross_attention.flash_mask");
+    const auto & shape = attention_mask.shape;
+    if (attention_mask.type != GGML_TYPE_F16 || !ggml_is_contiguous(attention_mask.tensor) ||
+        (shape.dims[0] != 1 && shape.dims[0] != query.shape.dims[0]) ||
+        (shape.dims[1] != 1 && shape.dims[1] != config_.num_heads) ||
+        shape.dims[2] != query.shape.dims[1]) {
+        throw std::runtime_error("CrossAttentionModule flash mask must be contiguous F16 [B|1,H|1,Q,K]");
+    }
+    validate_cross_cache(key_value, query, shape.dims[3], config_);
+    const auto query_heads = build_cross_query(ctx, query, config_, weights);
+    const auto precision = config_.attention_precision == GGML_PREC_DEFAULT
+        ? GGML_PREC_F32 : config_.attention_precision;
+    auto context = ScaledDotProductAttentionModule({cross_head_dim(config_),
+        ScaledDotProductAttentionLowering::Flash, precision})
+        .build(ctx, query_heads, key_value.key, key_value.value, attention_mask);
+    context = core::reshape_tensor(ctx, context,
+        core::TensorShape::from_dims({query.shape.dims[0], query.shape.dims[1], cross_attention_size(config_)}));
+    return LinearModule({cross_attention_size(config_), config_.hidden_size,
+        config_.use_bias, config_.projection_precision})
+        .build(ctx, context, make_linear_weights(weights.out_weight, weights.out_bias));
 }
 
 CrossAttentionKeyValue CrossAttentionModule::build_key_value(

@@ -2,6 +2,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/safetensors.h"
+#include "gguf.h"
 #include "test_assert.h"
 
 #include <cstring>
@@ -375,6 +376,54 @@ void test_package_spec_errors_name_selected_spec() {
     std::filesystem::remove_all(root);
 }
 
+// The name reader is a shortcut past the content copy, not past the validation: a
+// package whose byte ranges do not fit its blob is malformed whether the caller
+// wants the names or the bytes. --inspect reads the names, and used to report a
+// count for a package no loader could ever read (PR #579 review).
+void test_malformed_embedded_sidecars_are_rejected_by_the_name_reader() {
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_malformed_sidecar_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    const auto safetensors = root / "model.safetensors";
+    const auto gguf = root / "model.gguf";
+    engine::io::write_safetensors_file(safetensors, {
+                                                        {"weight", "F32", {1}, bytes_for(std::vector<float>{1.0F})},
+                                                    });
+    {
+        std::ofstream output(root / "config.json", std::ios::binary);
+        output << "{}";
+    }
+    engine::assets::convert_tensor_sources_to_gguf({{safetensors, ""}}, gguf, engine::assets::TensorStorageType::F16,
+                                                   false, true, root, {{root / "config.json", "config.json"}});
+    engine::test::require_eq(engine::assets::gguf_embedded_sidecar_names(gguf).size(), size_t{1},
+                             "intact package sidecar names");
+
+    auto * ctx = gguf_init_from_file(gguf.string().c_str(), {true, nullptr});
+    engine::test::require(ctx != nullptr, "open fixture GGUF");
+    const uint64_t offsets[] = {0, 999};
+    gguf_set_arr_data(ctx, "audiocpp.embedded_files.offsets", GGUF_TYPE_UINT64, offsets, 2);
+    engine::test::require(gguf_write_to_file(ctx, gguf.string().c_str(), true), "write malformed fixture");
+    gguf_free(ctx);
+
+    bool names_rejected = false;
+    try {
+        (void)engine::assets::gguf_embedded_sidecar_names(gguf);
+    } catch (const std::runtime_error &) {
+        names_rejected = true;
+    }
+    engine::test::require(names_rejected, "name reader accepted an out-of-range sidecar byte range");
+
+    bool presence_rejected = false;
+    try {
+        (void)engine::assets::gguf_has_embedded_sidecars(gguf);
+    } catch (const std::runtime_error &) {
+        presence_rejected = true;
+    }
+    engine::test::require(presence_rejected, "presence check accepted an out-of-range sidecar byte range");
+
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
@@ -385,6 +434,7 @@ int main() {
         test_embedded_model_spec_roundtrip_and_precedence();
         test_release_named_gguf_directory_selects_the_gguf_source();
         test_package_spec_errors_name_selected_spec();
+        test_malformed_embedded_sidecars_are_rejected_by_the_name_reader();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

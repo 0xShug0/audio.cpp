@@ -1,4 +1,5 @@
 #include "engine/framework/model_spec/schema.h"
+#include "engine/framework/runtime/task_vocabulary.h"
 #include "engine/framework/model_spec/options.h"
 
 #include <algorithm>
@@ -65,10 +66,20 @@ void require_spec_number(const json::Value & value, std::string_view path) {
 }
 
 const std::unordered_set<std::string> & tasks() {
-    static const std::unordered_set<std::string> values = {
-        "vad", "asr", "diar", "sep", "music", "sfx", "edit", "tts", "clone", "vc",
-        "s2s", "align", "design", "speaker", "svc", "codec", "midi",
-    };
+    // Built from the one vocabulary rather than typed out again. The hand-kept
+    // copy had drifted both ways: it allowed "codec", which no parser maps to a
+    // task kind, and omitted "audio_generation", which the parser accepts.
+    static const std::unordered_set<std::string> values = [] {
+        std::unordered_set<std::string> names;
+        std::size_t count = 0;
+        const auto * entries = engine::runtime::task_vocabulary(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            for (std::size_t alias = 0; alias < entries[i].alias_count; ++alias) {
+                names.emplace(entries[i].aliases[alias]);
+            }
+        }
+        return names;
+    }();
     return values;
 }
 

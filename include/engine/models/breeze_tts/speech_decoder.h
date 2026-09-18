@@ -42,12 +42,22 @@ public:
     ~BreezeSpeechDecoderRuntime();
 
     runtime::AudioBuffer decode(const BreezeSpeechCodes & codec_codes) const;
+    void reset_streaming_state() const;
+    runtime::AudioBuffer decode_streaming_step(
+        const BreezeSpeechCodes & codec_codes,
+        int64_t lookahead_margin,
+        bool final) const;
     runtime::AudioBuffer decode_and_trim_reference(
         const BreezeSpeechCodes & reference_codes,
         const BreezeSpeechCodes & generated_codes) const;
     void release_runtime_graphs() const;
 
 private:
+    std::vector<float> decode_window_samples(
+        const std::vector<int32_t> & chunk,
+        int64_t chunk_frames,
+        int64_t context_frames) const;
+
     std::shared_ptr<const BreezeTTSAssets> assets_;
     core::ExecutionContext * execution_context_ = nullptr;
     std::shared_ptr<const BreezeSpeechDecoderWeights> weights_;
@@ -55,6 +65,8 @@ private:
     bool allow_flash_attention_ = true;
     std::unique_ptr<core::ConstantTensorCache> constants_;
     mutable std::unique_ptr<BreezeSpeechDecoderGraph> graph_;
+    struct StreamingState;
+    mutable std::unique_ptr<StreamingState> streaming_state_;
     // Always present to keep this public class layout identical when the private
     // Strix Halo compile definition differs between translation units.
     mutable std::array<std::unique_ptr<BreezeSpeechDecoderGraph>, 2> optimized_graphs_;

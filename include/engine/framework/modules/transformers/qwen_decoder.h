@@ -167,6 +167,17 @@ public:
         const std::optional<core::TensorValue> & cache_slot,
         const core::TensorValue & attention_mask) const;
 
+    QwenDecoderLayerOutputs build_with_static_cache_block(
+        core::ModuleBuildContext & ctx,
+        ggml_cgraph * graph,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenDecoderLayerWeights & weights,
+        const core::TensorValue & cache_key,
+        const core::TensorValue & cache_value,
+        const std::optional<core::TensorValue> & cache_slot,
+        const core::TensorValue & attention_mask) const;
+
     QwenDecoderLayerOutputs build_with_static_cache_tail_batched(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
@@ -181,6 +192,17 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 
 private:
+    QwenDecoderLayerOutputs build_static_cache_impl(
+        core::ModuleBuildContext & ctx,
+        ggml_cgraph * graph,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenDecoderLayerWeights & weights,
+        const core::TensorValue & cache_key,
+        const core::TensorValue & cache_value,
+        const std::optional<core::TensorValue> & cache_slot,
+        const core::TensorValue & attention_mask,
+        bool block) const;
     QwenDecoderLayerConfig config_;
 };
 

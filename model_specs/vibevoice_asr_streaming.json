@@ -1,0 +1,226 @@
+{
+  "family": "vibevoice_asr_streaming",
+  "display_name": "VibeVoice ASR Streaming 7B",
+  "description": "Microsoft VibeVoice ASR Streaming 7B model for chunked streaming speech-to-text with persistent decoder state.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en",
+    "zh",
+    "es",
+    "pt",
+    "de",
+    "ja",
+    "ko",
+    "fr",
+    "ru",
+    "it"
+  ],
+  "capabilities": {
+    "asr": [
+      "speaker_turns",
+      "vad_chunking"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "ASR language label.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "context",
+        "type": "string",
+        "description": "Extra context or hotwords injected into the streaming prompt.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated transcript tokens per chunk.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; 0 uses deterministic decoding.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling probability.",
+        "required": false,
+        "min": 0.001,
+        "max": 1,
+        "default": 1
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit; 0 disables top-k filtering.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Beam count for deterministic beam search.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Generation repetition penalty.",
+        "required": false,
+        "min": 0.001,
+        "default": 1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Acoustic latent sampling seed.",
+        "required": false,
+        "default": 42
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Offline audio chunking mode: auto, fixed, vad, or none.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Audio chunk duration in seconds for fixed and VAD chunking.",
+        "required": false,
+        "min": 0.001,
+        "default": 1200
+      }
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "vibevoice_asr_streaming_7b_q8_0",
+    "tags": [
+      "ASR",
+      "Streaming",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/asr.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/VibeVoice-ASR-Streaming-7B-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "vibevoice_asr_streaming_7b_q8_0",
+      "display_name": "VibeVoice ASR Streaming 7B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-ASR-Streaming-7B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-7b-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "vibevoice_asr_streaming_7b_bf16",
+      "display_name": "VibeVoice ASR Streaming 7B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VibeVoice-ASR-Streaming-7B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-7b-bf16.gguf"
+      ]
+    },
+    {
+      "id": "vibevoice_asr_streaming_7b_q4_k",
+      "display_name": "VibeVoice ASR Streaming 7B Q4_K GGUF",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "VibeVoice-ASR-Streaming-7B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-7b-q4_k.gguf"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "model_weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_vocab": "model:vocab.json",
+        "tokenizer_merges": "model:merges.txt"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors.index.json"
+      }
+    }
+  ]
+}

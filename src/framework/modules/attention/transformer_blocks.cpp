@@ -333,12 +333,17 @@ core::TensorValue TransformerDecoderBlockModule::build(
     validate_sequence_input(memory, config_.hidden_size, "memory");
 
     const LayerNormModule norm1(make_norm_config(config_.hidden_size, config_.eps));
-    const SelfAttentionModule self_attention({config_.hidden_size, config_.num_heads, config_.use_bias});
+    AttentionConfig self_config{config_.hidden_size, config_.num_heads, config_.use_bias};
+    self_config.use_packed_qkv = config_.use_packed_qkv;
+    const SelfAttentionModule self_attention(self_config);
     const LayerNormModule norm2(make_norm_config(config_.hidden_size, config_.eps));
-    const CrossAttentionModule cross_attention({config_.hidden_size, config_.num_heads, config_.use_bias});
+    AttentionConfig cross_config{config_.hidden_size, config_.num_heads, config_.use_bias};
+    cross_config.use_packed_kv = config_.use_packed_kv;
+    const CrossAttentionModule cross_attention(cross_config);
     const LayerNormModule norm3(make_norm_config(config_.hidden_size, config_.eps));
     const FeedForwardModule feed_forward(
-        {config_.hidden_size, config_.intermediate_size, config_.use_bias, GeluApproximation::ExactErf});
+        {config_.hidden_size, config_.intermediate_size, config_.use_bias, GeluApproximation::ExactErf,
+            GGML_PREC_DEFAULT, config_.activation});
     const ResidualAddModule add;
 
     auto cur = norm1.build(ctx, input, weights.norm1);
@@ -352,6 +357,39 @@ core::TensorValue TransformerDecoderBlockModule::build(
     auto ff_in = norm3.build(ctx, cur, weights.norm3);
     auto ff_out = feed_forward.build(ctx, ff_in, weights.feed_forward);
     return add.build(ctx, cur, ff_out);
+}
+
+core::TensorValue TransformerDecoderBlockModule::build_cached_tail(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const TransformerDecoderBlockWeights & weights,
+    const core::TensorValue & self_key_cache,
+    const core::TensorValue & self_value_cache,
+    const core::TensorValue & cache_slot,
+    const core::TensorValue & causal_mask,
+    const CrossAttentionKeyValue & memory_key_value,
+    const core::TensorValue & memory_mask) const {
+    validate_sequence_input(input, config_.hidden_size, "input");
+    AttentionConfig self_config{config_.hidden_size, config_.num_heads, config_.use_bias};
+    self_config.use_packed_qkv = config_.use_packed_qkv;
+    self_config.causal = true;
+    AttentionConfig cross_config{config_.hidden_size, config_.num_heads, config_.use_bias};
+    cross_config.use_packed_kv = config_.use_packed_kv;
+    const LayerNormModule norm(make_norm_config(config_.hidden_size, config_.eps));
+    const ResidualAddModule add;
+    auto x = norm.build(ctx, input, weights.norm1);
+    x = SelfAttentionModule(self_config).build_cached_tail(ctx, x, weights.self_attention,
+        self_key_cache, self_value_cache, cache_slot, causal_mask).output;
+    auto cur = add.build(ctx, input, x);
+    x = norm.build(ctx, cur, weights.norm2);
+    x = config_.use_flash_cross_attention
+        ? CrossAttentionModule(cross_config).build_cached_flash(ctx, x, memory_key_value, weights.cross_attention, memory_mask)
+        : CrossAttentionModule(cross_config).build_cached(ctx, x, memory_key_value, weights.cross_attention, memory_mask);
+    cur = add.build(ctx, cur, x);
+    x = norm.build(ctx, cur, weights.norm3);
+    x = FeedForwardModule({config_.hidden_size, config_.intermediate_size, config_.use_bias,
+        GeluApproximation::ExactErf, GGML_PREC_DEFAULT, config_.activation}).build(ctx, x, weights.feed_forward);
+    return add.build(ctx, cur, x);
 }
 
 const core::ModuleSchema & TransformerDecoderBlockModule::static_schema() noexcept {

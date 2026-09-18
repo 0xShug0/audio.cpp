@@ -93,7 +93,7 @@ curl -N http://127.0.0.1:8080/v1/audio/speech \
 
 The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`.
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
@@ -105,13 +105,23 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode when `--text-chunk-size` is set. |
 | `--num-inference-steps` | integer | `32` | Decoder diffusion steps. |
 | `--guidance-scale` | float | `2.0` | Decoder CFG strength. |
-| `--request-option speed=<float>` | float | `1.0` | Speech speed multiplier. |
-| `--request-option audio_chunk_duration=<float>` | seconds | `15.0` | Model-side automatic chunk duration when framework chunking is not explicitly enabled. |
-| `--request-option audio_chunk_threshold=<float>` | seconds | `30.0` | Estimated audio length threshold before model-side chunking is used. |
-| `--session-option omnivoice.mem_saver=true\|false` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
-| `--session-option omnivoice.perf_mode=off\|flash_attention` | enum | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
-| `--session-option omnivoice.generator_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for generator weights. Also accepted as `omnivoice.weight_type`. |
-| `--session-option omnivoice.audio_tokenizer_weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `speed` | float | `1.0` | Speech speed multiplier. |
+| `audio_chunk_duration` | seconds | `15.0` | Model-side automatic chunk duration when framework chunking is not explicitly enabled. |
+| `audio_chunk_threshold` | seconds | `30.0` | Estimated audio length threshold before model-side chunking is used. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `omnivoice.mem_saver` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
+| `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for generator weights. Also accepted as `omnivoice.weight_type`. |
+| `omnivoice.audio_tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |
 
 `omnivoice.perf_mode=flash_attention` is only available on the normal graph path and cannot be combined with `omnivoice.mem_saver=true`.
 

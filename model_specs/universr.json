@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "family": "universr",
+  "display_name": "UniverSR",
+  "description": "Complex-STFT flow-matching audio super-resolution to 48 kHz.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "s2s": [
+      "audio_enhancement"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Independent audio segments concatenated after inference; zero processes the whole file. Chunking changes global normalization context.",
+        "min": 0,
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "input_sample_rate",
+        "type": "int",
+        "description": "Effective input bandwidth sample rate: 8000, 12000, 16000, or 24000 Hz.",
+        "required": false
+      },
+      {
+        "name": "sampler_mode",
+        "type": "enum",
+        "description": "Fixed-step ODE integration method.",
+        "values": [
+          "euler",
+          "midpoint",
+          "rk4"
+        ],
+        "default": "midpoint",
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "ODE integration steps.",
+        "min": 1,
+        "default": 4,
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale; zero disables guidance.",
+        "min": 0,
+        "default": 1.5,
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Initial flow noise seed.",
+        "min": 0,
+        "default": 42,
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; native preserves the GGUF tensor types.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "universr_audio_orig",
+      "display_name": "UniverSR Audio GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "UniverSR-GGUF",
+      "files": [
+        "UniverSR-GGUF/universr-audio-orig.gguf"
+      ],
+      "strip_prefix": "UniverSR-GGUF"
+    },
+    {
+      "id": "universr_speech_orig",
+      "display_name": "UniverSR Speech GGUF F32",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "UniverSR-GGUF",
+      "files": [
+        "UniverSR-GGUF/universr-speech-orig.gguf"
+      ],
+      "strip_prefix": "UniverSR-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [],
+    "recommended_package": "universr_audio_orig"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "frontend": {
+          "source": "weights:",
+          "prefix": "frontend"
+        }
+      }
+    }
+  ]
+}

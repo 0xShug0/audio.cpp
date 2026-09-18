@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -819,9 +820,21 @@ class BackendRunner {
 public:
     BackendRunner(const HiftVocoderWeights & weights, int64_t frames, int64_t stft_frames)
         : weights_(&weights), capacity_frames_(frames), capacity_stft_frames_(stft_frames) {
+        constexpr uint64_t kBaseBytes = 512ull * 1024ull * 1024ull;
+        constexpr uint64_t kPerFrameBytes = 4ull * 1024ull * 1024ull;
+        constexpr uint64_t kMaxSizeT = static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+
+        const uint64_t clamped_frames = static_cast<uint64_t>(std::max<int64_t>(frames, 1));
+        if (kBaseBytes > kMaxSizeT || clamped_frames > (kMaxSizeT - kBaseBytes) / kPerFrameBytes) {
+            const uint64_t requested_mib = (kBaseBytes + clamped_frames * kPerFrameBytes) / (1024ull * 1024ull);
+            throw std::runtime_error(
+                "HiFT vocoder requested context size (" + std::to_string(requested_mib) +
+                " MiB for " + std::to_string(clamped_frames) +
+                " frames) exceeds size_t addressable memory limit");
+        }
+        const size_t context_size = static_cast<size_t>(kBaseBytes + clamped_frames * kPerFrameBytes);
         ggml_init_params params{
-            512ull * 1024ull * 1024ull +
-                static_cast<size_t>(std::max<int64_t>(frames, 1)) * 4ull * 1024ull * 1024ull,
+            context_size,
             nullptr,
             true,
         };

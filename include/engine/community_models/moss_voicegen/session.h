@@ -55,11 +55,19 @@ private:
     std::shared_ptr<const MossVoiceGenAssets> assets_;
     engine::assets::TensorStorageType weight_storage_type_ = engine::assets::TensorStorageType::BF16;
     size_t backbone_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+    size_t backbone_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+    size_t heads_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
+    size_t heads_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+    size_t codec_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
+    size_t codec_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+#else
     size_t backbone_weight_context_bytes_ = 8192ull * 1024ull * 1024ull;
     size_t heads_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
     size_t heads_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
     size_t codec_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
     size_t codec_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
+#endif
 
     // The execution context comes from RuntimeSessionBase; the runtimes below borrow it.
     std::unique_ptr<MossVoiceGenTextProcessor> text_processor_;

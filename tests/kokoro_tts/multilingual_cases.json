@@ -1,0 +1,14 @@
+[
+  {"language":"e", "voice":"ef_dora", "text":"Hola, esta es una prueba de síntesis de voz. Buenos días a todos."},
+  {"language":"f", "voice":"ff_siwis", "text":"Bonjour, ceci est un test de synthèse vocale. Comment allez-vous aujourd'hui ?"},
+  {"language":"h", "voice":"hf_alpha", "text":"नमस्ते, यह आवाज़ का एक परीक्षण है। आपका दिन शुभ हो।"},
+  {"language":"i", "voice":"if_sara", "text":"Ciao, questa è una prova di sintesi vocale. Buongiorno a tutti."},
+  {"language":"p", "voice":"pf_dora", "text":"Olá, este é um teste de síntese de voz. Bom dia a todos."},
+  {"language":"j", "voice":"jf_alpha", "text":"こんにちは。これは音声合成のテストです。今日はいい天気ですね。"},
+  {"language":"z", "voice":"zf_xiaobei", "text":"你好，这是一个语音合成测试。今天天气很好，祝你有愉快的一天。"},
+  {"language":"j", "voice":"jf_alpha", "text":"東京から大阪まで電車で行きます。明日は学校で日本語を勉強します。"},
+  {"language":"z", "voice":"zf_xiaobei", "text":"银行今天开门了吗？重庆是一个美丽的城市。我们正在学习中文。"},
+  {"language":"e", "voice":"ef_dora", "text":"¿Cómo estás? Tengo 25 años y me gusta la música."},
+  {"language":"j", "voice":"jf_alpha", "text":"私は25歳です。学校には100人の学生がいます。"},
+  {"language":"z", "voice":"zf_xiaobei", "text":"我今年25岁，买了12个苹果。"}
+]

@@ -1,3 +1,4 @@
+#include "../../app/cli/args.h"
 #include "../../app/cli/request.h"
 
 #include "engine/framework/io/json.h"
@@ -77,6 +78,33 @@ void test_audio_only_language_is_request_option() {
     engine::test::require_eq(request.options.at("language"), std::string("en"), "audio-only language request option");
 }
 
+void test_out_format_selects_wav_sample_format() {
+    const char * no_flag[] = {"audiocpp_cli", "--task", "gen"};
+    const auto defaults = minitts::cli::wav_write_options_from_cli(3, const_cast<char **>(no_flag));
+    engine::test::require(
+        defaults.format == engine::audio::WavSampleFormat::Pcm16,
+        "no --out-format keeps pcm16");
+    engine::test::require(
+        defaults.peak_policy == engine::audio::WavPeakPolicy::HardClip,
+        "no --out-format keeps hard clip");
+
+    const char * float_flag[] = {"audiocpp_cli", "--out", "a.wav", "--out-format", "float32"};
+    engine::test::require(
+        minitts::cli::wav_write_options_from_cli(5, const_cast<char **>(float_flag)).format ==
+            engine::audio::WavSampleFormat::Float32,
+        "--out-format float32");
+    engine::test::require(
+        minitts::cli::parse_wav_sample_format("pcm24") == engine::audio::WavSampleFormat::Pcm24,
+        "--out-format pcm24");
+
+    try {
+        (void) minitts::cli::parse_wav_sample_format("wav");
+    } catch (const std::runtime_error &) {
+        return;
+    }
+    throw std::runtime_error("unknown --out-format value was accepted");
+}
+
 }  // namespace
 
 int main() {
@@ -84,6 +112,7 @@ int main() {
     test_float_numbers_keep_json_formatting();
     test_unsafe_integer_numbers_are_not_silently_rounded();
     test_audio_only_language_is_request_option();
+    test_out_format_selects_wav_sample_format();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }

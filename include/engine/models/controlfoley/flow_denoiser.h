@@ -40,7 +40,11 @@ struct ControlFoleyFlowConfig {
 
 struct ControlFoleyFlowRuntimeOptions {
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+    size_t weight_context_bytes = 1024ull * 1024ull * 1024ull;
+#else
     size_t weight_context_bytes = 6144ull * 1024ull * 1024ull;
+#endif
     size_t condition_graph_arena_bytes = 512ull * 1024ull * 1024ull;
     size_t flow_graph_arena_bytes = 2048ull * 1024ull * 1024ull;
     size_t graph_nodes = 1048576;

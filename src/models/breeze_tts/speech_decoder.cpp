@@ -1079,6 +1079,57 @@ BreezeSpeechDecoderRuntime::BreezeSpeechDecoderRuntime(
 
 BreezeSpeechDecoderRuntime::~BreezeSpeechDecoderRuntime() = default;
 
+std::vector<float> BreezeSpeechDecoderRuntime::decode_window_samples(
+    const std::vector<int32_t> & chunk,
+    int64_t chunk_frames,
+    int64_t context_frames) const {
+    if (chunk_frames <= 0 || context_frames < 0 || context_frames > chunk_frames) {
+        throw std::runtime_error("Breeze speech decoder received invalid chunk shape");
+    }
+    if (static_cast<int64_t>(chunk.size()) != chunk_frames * weights_->config.num_quantizers) {
+        throw std::runtime_error("Breeze speech decoder chunk payload size mismatch");
+    }
+    const int threads = std::max(1, execution_context_->config().threads);
+    auto * graph_slot = &graph_;
+#if defined(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
+    const bool optimized_cache_enabled =
+        kStrixHaloGraphCacheEnabled && execution_context_->backend_type() == core::BackendType::Hip;
+    if (optimized_cache_enabled) {
+        for (size_t index = 0; index < kStrixHaloCachedChunkFrames.size(); ++index) {
+            if (chunk_frames == kStrixHaloCachedChunkFrames[index]) {
+                graph_slot = &optimized_graphs_[index];
+                break;
+            }
+        }
+    }
+#endif
+    auto & graph = *graph_slot;
+    const bool graph_rebuilt =
+        graph == nullptr || !graph->matches(*weights_, chunk_frames, execution_context_->backend(), threads);
+    if (graph_rebuilt) {
+        graph.reset();
+        graph = std::make_unique<BreezeSpeechDecoderGraph>(
+            weights_,
+            chunk_frames,
+            *execution_context_,
+            *constants_,
+            graph_arena_bytes_,
+            allow_flash_attention_);
+    }
+    auto decoded = graph->run(chunk.data(), chunk.size());
+    const int64_t drop = context_frames * kDecodeSamplesPerCode;
+    if (drop > static_cast<int64_t>(decoded.size())) {
+        throw std::runtime_error("Breeze speech decoder chunk context exceeds decoded waveform");
+    }
+    const int64_t valid_samples = chunk_frames * kDecodeSamplesPerCode;
+    if (valid_samples < drop || valid_samples > static_cast<int64_t>(decoded.size())) {
+        throw std::runtime_error("Breeze speech decoder valid sample range exceeds decoded waveform");
+    }
+    return std::vector<float>(
+        decoded.begin() + static_cast<std::ptrdiff_t>(drop),
+        decoded.begin() + static_cast<std::ptrdiff_t>(valid_samples));
+}
+
 runtime::AudioBuffer BreezeSpeechDecoderRuntime::decode(const BreezeSpeechCodes & codec_codes) const {
     const auto total_start = Clock::now();
     if (codec_codes.frames <= 0 || codec_codes.code_groups != weights_->config.num_quantizers) {
@@ -1101,48 +1152,80 @@ runtime::AudioBuffer BreezeSpeechDecoderRuntime::decode(const BreezeSpeechCodes 
             const auto dst = chunk.begin() + static_cast<std::ptrdiff_t>(frame * codec_codes.code_groups);
             std::copy(src, src + codec_codes.code_groups, dst);
         }
-        const int threads = std::max(1, execution_context_->config().threads);
-        auto * graph_slot = &graph_;
-#if defined(ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
-        const bool optimized_cache_enabled =
-            kStrixHaloGraphCacheEnabled && execution_context_->backend_type() == core::BackendType::Hip;
-        if (optimized_cache_enabled) {
-            for (size_t index = 0; index < kStrixHaloCachedChunkFrames.size(); ++index) {
-                if (chunk_frames == kStrixHaloCachedChunkFrames[index]) {
-                    graph_slot = &optimized_graphs_[index];
-                    break;
-                }
-            }
-        }
-#endif
-        auto & graph = *graph_slot;
-        const bool graph_rebuilt =
-            graph == nullptr || !graph->matches(*weights_, chunk_frames, execution_context_->backend(), threads);
-        if (graph_rebuilt) {
-            auto replacement = std::make_unique<BreezeSpeechDecoderGraph>(
-                weights_,
-                chunk_frames,
-                *execution_context_,
-                *constants_,
-                graph_arena_bytes_,
-                allow_flash_attention_);
-            graph = std::move(replacement);
-        }
-        auto decoded = graph->run(chunk.data(), chunk.size());
-        const int64_t drop = context * kDecodeSamplesPerCode;
-        if (drop > static_cast<int64_t>(decoded.size())) {
-            throw std::runtime_error("Breeze speech decoder chunk context exceeds decoded waveform");
-        }
-        const int64_t valid_samples = chunk_frames * kDecodeSamplesPerCode;
-        if (valid_samples < drop || valid_samples > static_cast<int64_t>(decoded.size())) {
-            throw std::runtime_error("Breeze speech decoder valid sample range exceeds decoded waveform");
-        }
-        samples.insert(
-            samples.end(),
-            decoded.begin() + static_cast<std::ptrdiff_t>(drop),
-            decoded.begin() + static_cast<std::ptrdiff_t>(valid_samples));
+        auto decoded = decode_window_samples(chunk, chunk_frames, context);
+        samples.insert(samples.end(), decoded.begin(), decoded.end());
     }
     debug::timing_log_scalar("breeze_tts.speech_decoder.total_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
+    return runtime::AudioBuffer{kSampleRate, 1, std::move(samples)};
+}
+
+struct BreezeSpeechDecoderRuntime::StreamingState {
+    std::vector<int32_t> left_context_codes;
+    std::vector<int32_t> pending_codes;
+};
+
+void BreezeSpeechDecoderRuntime::reset_streaming_state() const {
+    streaming_state_ = std::make_unique<StreamingState>();
+}
+
+runtime::AudioBuffer BreezeSpeechDecoderRuntime::decode_streaming_step(
+    const BreezeSpeechCodes & codec_codes,
+    int64_t lookahead_margin,
+    bool final) const {
+    const auto total_start = Clock::now();
+    if (lookahead_margin < 0) {
+        throw std::runtime_error("Breeze speech decoder streaming lookahead must be non-negative");
+    }
+    if (codec_codes.frames < 0 || codec_codes.code_groups != weights_->config.num_quantizers) {
+        throw std::runtime_error("Breeze speech decoder received invalid streaming codec shape");
+    }
+    if (static_cast<int64_t>(codec_codes.codes.size()) != codec_codes.frames * codec_codes.code_groups) {
+        throw std::runtime_error("Breeze speech decoder streaming codec payload size mismatch");
+    }
+    if (!streaming_state_) {
+        reset_streaming_state();
+    }
+    auto & state = *streaming_state_;
+    state.pending_codes.insert(state.pending_codes.end(), codec_codes.codes.begin(), codec_codes.codes.end());
+    const int64_t groups = weights_->config.num_quantizers;
+    int64_t pending_frames = static_cast<int64_t>(state.pending_codes.size()) / groups;
+    int64_t frames_to_emit = final ? pending_frames : pending_frames - lookahead_margin;
+    if (frames_to_emit <= 0) {
+        return runtime::AudioBuffer{kSampleRate, 1, {}};
+    }
+    std::vector<float> samples;
+    while (frames_to_emit > 0) {
+        const int64_t emit_frames = std::min<int64_t>(frames_to_emit, kChunkCodes);
+        const int64_t context_frames = static_cast<int64_t>(state.left_context_codes.size()) / groups;
+        const int64_t chunk_frames = context_frames + emit_frames;
+        std::vector<int32_t> chunk;
+        chunk.reserve(static_cast<size_t>(chunk_frames * groups));
+        chunk.insert(chunk.end(), state.left_context_codes.begin(), state.left_context_codes.end());
+        chunk.insert(
+            chunk.end(),
+            state.pending_codes.begin(),
+            state.pending_codes.begin() + static_cast<std::ptrdiff_t>(emit_frames * groups));
+        auto decoded = decode_window_samples(chunk, chunk_frames, context_frames);
+        samples.insert(samples.end(), decoded.begin(), decoded.end());
+
+        std::vector<int32_t> next_context;
+        const int64_t available_context_frames = context_frames + emit_frames;
+        const int64_t keep_context_frames = std::min<int64_t>(available_context_frames, kLeftContextCodes);
+        next_context.reserve(static_cast<size_t>(keep_context_frames * groups));
+        const int64_t skip_frames = available_context_frames - keep_context_frames;
+        next_context.insert(
+            next_context.end(),
+            chunk.begin() + static_cast<std::ptrdiff_t>(skip_frames * groups),
+            chunk.end());
+        state.left_context_codes = std::move(next_context);
+        state.pending_codes.erase(
+            state.pending_codes.begin(),
+            state.pending_codes.begin() + static_cast<std::ptrdiff_t>(emit_frames * groups));
+        pending_frames -= emit_frames;
+        frames_to_emit -= emit_frames;
+    }
+    engine::debug::trace_log_scalar("breeze_tts.speech_decoder.streaming.pending_frames", pending_frames);
+    engine::debug::timing_log_scalar("breeze_tts.speech_decoder.streaming_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
     return runtime::AudioBuffer{kSampleRate, 1, std::move(samples)};
 }
 

@@ -3947,7 +3947,7 @@ def build_catalog_asr_commands(
     elif family == "voxtral_realtime":
         common.extend([
             "--streaming",
-            "true" if mode == "streaming" else "false",
+            "true" if bool(warmup_case.get("streaming", False)) else "false",
             "--do-sample",
             "true" if bool(warmup_case.get("do_sample", False)) else "false",
             "--do-sample-sequence",

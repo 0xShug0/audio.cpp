@@ -151,6 +151,37 @@ jobs:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu
           path: build/bin/*
 
+  linux-cpu-portable:
+    name: Ubuntu x64 (CPU portable)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF \
+            -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
+            -DAUDIOCPP_VERSION=${{ needs.get-version.outputs.version }} \
+            ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Stage bundle
+        run: |
+          cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cpu-portable
+          path: build/bin/*
+
   linux-vulkan:
     name: Ubuntu x64 (Vulkan)
     needs: [check-release, get-version]
@@ -179,6 +210,106 @@ jobs:
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan
           path: build/bin/*
+
+  linux-vulkan-portable:
+    name: Ubuntu x64 (Vulkan portable)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake make glslc libvulkan-dev spirv-headers
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF \
+            -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \
+            -DAUDIOCPP_VERSION=${{ needs.get-version.outputs.version }} \
+            ${{ env.CMAKE_ARGS }}
+      - name: Build
+        run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Stage bundle
+        run: |
+          cp LICENSE build/bin/ 2>/dev/null || true
+          cp -r tools build/bin/tools 2>/dev/null || true
+          cp -r model_specs build/bin/model_specs 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan-portable
+          path: build/bin/*
+
+  linux-cuda-colab:
+    name: Ubuntu x64 (CUDA 12.8, Colab T4)
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    env:
+      CC: gcc-13
+      CXX: g++-13
+      CUDAHOSTCXX: g++-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq software-properties-common
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc-13 g++-13 cmake ninja-build libssl-dev
+      - name: Configure
+        run: |
+          cmake -S . -B build/colab-cuda -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CUDA_ARCHITECTURES=75 \
+            -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc' \
+            -DENGINE_ENABLE_CUDA=ON \
+            -DENGINE_ENABLE_VULKAN=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF \
+            -DENGINE_BUILD_TESTS=OFF \
+            -DAUDIOCPP_VERSION=${{ needs.get-version.outputs.version }} \
+            -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
+            -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
+            -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON \
+            -DENGINE_ENABLE_LLAMAFILE=ON \
+            -DENGINE_ENABLE_CUDA_GRAPHS=ON
+      - name: Build server
+        run: cmake --build build/colab-cuda --parallel "$(nproc)" --target audiocpp_server
+      - name: Verify portable executable
+        run: |
+          ldd build/colab-cuda/bin/audiocpp_server | tee /tmp/audiocpp_server.ldd
+          if awk '/libcuda\.so\.1/ && /not found/ { next } /not found/ { print; bad=1 } END { exit bad ? 1 : 0 }' /tmp/audiocpp_server.ldd > /tmp/audiocpp_server.bad; then
+            true
+          else
+            echo "::error::The Colab executable has missing runtime dependencies."
+            cat /tmp/audiocpp_server.bad
+            exit 1
+          fi
+          readelf -d build/colab-cuda/bin/audiocpp_server | tee /tmp/audiocpp_server.needed
+          if grep -E 'Shared library: \[(libstdc\+\+|libgcc_s)\.so' /tmp/audiocpp_server.needed > /tmp/audiocpp_server.direct_bad; then
+            echo "::error::The Colab executable directly depends on non-portable C++ runtime libraries."
+            cat /tmp/audiocpp_server.direct_bad
+            exit 1
+          fi
+      - name: Stage bundle
+        run: |
+          mkdir -p dist/models
+          install -m 0755 build/colab-cuda/bin/audiocpp_server dist/audiocpp_server
+          install -m 0644 LICENSE dist/LICENSE
+          cp -r tools dist/tools
+          cp -r model_specs dist/model_specs
+          sha256sum dist/audiocpp_server > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-cuda12.8-colab
+          path: dist/*
 
   windows-cpu:
     name: Windows x64 (CPU)
@@ -458,12 +589,30 @@ jobs:
       - get-version
       - macos-metal
       - linux-cpu
+      - linux-cpu-portable
       - linux-vulkan
+      - linux-vulkan-portable
       - windows-cpu
       - windows-cpu-portable
       - windows-vulkan
       - windows-cuda
-    if: ${{ needs.check-release.outputs.should_release == 'true' && (github.ref_type == 'tag' || inputs.publish) }}
+      - linux-cuda-colab
+    if: >-
+      ${{
+        always() &&
+        needs.check-release.outputs.should_release == 'true' &&
+        (github.ref_type == 'tag' || inputs.publish) &&
+        needs.get-version.result == 'success' &&
+        needs.macos-metal.result == 'success' &&
+        needs.linux-cpu.result == 'success' &&
+        needs.linux-cpu-portable.result == 'success' &&
+        needs.linux-vulkan.result == 'success' &&
+        needs.linux-vulkan-portable.result == 'success' &&
+        needs.windows-cpu.result == 'success' &&
+        needs.windows-cpu-portable.result == 'success' &&
+        needs.windows-vulkan.result == 'success' &&
+        needs.windows-cuda.result == 'success'
+      }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

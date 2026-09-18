@@ -11,6 +11,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -61,6 +62,22 @@ inline void validate_spec_backed_request_options(
     const engine::model_spec::ModelContract & contract,
     std::string_view model_name) {
     for (const auto & [key, _] : options) {
+        if (contract.request_option_keys.find(key) == contract.request_option_keys.end()) {
+            throw std::runtime_error("unknown " + std::string(model_name) + " request option: " + key);
+        }
+    }
+}
+
+/// The same check for list-valued options. An overload rather than a second
+/// name: a family that gained a list option should not have to remember to call
+/// something different, and every existing call site keeps working untouched.
+inline void validate_spec_backed_request_options(
+    const std::unordered_map<std::string, std::string> & options,
+    const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
+    const engine::model_spec::ModelContract & contract,
+    std::string_view model_name) {
+    validate_spec_backed_request_options(options, contract, model_name);
+    for (const auto & [key, _] : option_arrays) {
         if (contract.request_option_keys.find(key) == contract.request_option_keys.end()) {
             throw std::runtime_error("unknown " + std::string(model_name) + " request option: " + key);
         }

@@ -57,6 +57,30 @@ private:
     std::vector<AudioChunkPlan> audio_chunk_plan(const runtime::TaskRequest & request);
     runtime::IOfflineVoiceTaskSession & vad_session();
     runtime::TaskResult run_single(const VibeVoiceASRRequest & request);
+    runtime::TaskResult run_streaming_model(const VibeVoiceASRRequest & request);
+    runtime::StreamEvent process_streaming_model_normalized_chunk(
+        const VibeVoiceASRRequest & request,
+        const runtime::AudioBuffer & audio,
+        int64_t start_sample);
+    void ensure_streaming_decoder_state(const VibeVoiceASRRequest & request);
+    VibeVoiceASRSpeechFeatures encode_streaming_chunk(
+        const runtime::AudioBuffer & audio,
+        const VibeVoiceASRRequest & request);
+    VibeVoiceDecoderResult append_stream_embedding(
+        const std::vector<float> & embedding,
+        VibeVoiceDecoderCachedState & state,
+        int64_t & steps);
+    VibeVoiceDecoderResult append_stream_suffix(
+        const std::vector<float> & embeddings,
+        int64_t steps_to_append,
+        VibeVoiceDecoderCachedState & state,
+        int64_t & steps);
+    std::string generate_streaming_text_chunk(
+        const VibeVoiceASRRequest & request,
+        VibeVoiceDecoderResult next_logits,
+        VibeVoiceDecoderCachedState & state,
+        int64_t & steps);
+    std::vector<AudioChunkPlan> streaming_audio_chunk_plan(const runtime::AudioBuffer & audio) const;
     std::vector<int32_t> generate_tokens(
         const VibeVoiceASRRequest & request,
         const VibeVoiceASRPrompt & prompt,
@@ -79,7 +103,12 @@ private:
     std::shared_ptr<const VibeVoiceASRAssets> assets_;
     size_t tokenizer_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
     size_t connector_weight_context_bytes_ = 128ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+    size_t decoder_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+#else
     size_t decoder_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
+#endif
+    int64_t max_history_steps_ = 0;
     assets::TensorStorageType tokenizer_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType connector_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType decoder_weight_storage_type_ = assets::TensorStorageType::Native;
@@ -93,11 +122,17 @@ private:
     std::filesystem::path vad_model_path_;
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
     std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
+    std::unique_ptr<VibeVoiceDecoderCachedState> streaming_decoder_state_;
+    runtime::AudioBuffer streaming_audio_buffer_;
     runtime::TaskRequest streaming_request_;
     runtime::TaskResult streaming_result_;
     runtime::StreamEventCallback stream_event_sink_;
     bool stream_started_ = false;
     int64_t streaming_chunks_processed_ = 0;
+    int64_t streaming_decoder_steps_ = 0;
+    int64_t streaming_history_steps_ = 0;
+    int64_t streaming_buffer_start_sample_ = 0;
+    uint64_t streaming_rng_offset_ = 0;
 };
 
 }  // namespace engine::models::vibevoice_asr

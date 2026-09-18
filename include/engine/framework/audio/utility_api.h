@@ -3,11 +3,24 @@
 #include "engine/framework/core/backend.h"
 
 #include <filesystem>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace engine::audio {
+
+enum class BuiltinAudioUtilityKind {
+    Denoise,
+    SuperResolve,
+};
+
+struct BuiltinAudioUtilityInfo {
+    std::string_view id;
+    BuiltinAudioUtilityKind kind = BuiltinAudioUtilityKind::Denoise;
+    int input_sample_rate = 0;
+    int output_sample_rate = 0;
+};
 
 struct AudioUtilityPaths {
     AudioUtilityPaths() = default;
@@ -24,6 +37,14 @@ struct AudioUtilityPaths {
 struct AudioUtilityBatchResult {
     std::vector<std::filesystem::path> outputs;
 };
+
+std::filesystem::path default_audio_utility_assets_root();
+std::vector<BuiltinAudioUtilityInfo> list_builtin_audio_utilities();
+std::optional<BuiltinAudioUtilityInfo> find_builtin_audio_utility(std::string_view model);
+BuiltinAudioUtilityInfo require_builtin_audio_utility(std::string_view model);
+std::filesystem::path resolve_builtin_audio_utility_asset(
+    const AudioUtilityPaths & paths,
+    std::string_view model);
 
 void denoise_file(
     const std::filesystem::path & input_wav,

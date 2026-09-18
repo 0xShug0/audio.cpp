@@ -78,24 +78,36 @@ audiocpp_cli \
 | `semantic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
 | `acoustic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--language` / `--request-option language=<name>` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
+| `--language` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
 | `--voice-ref` | WAV path | required for clone | Prompt/reference voice. |
-| `--reference-text` / `--request-option reference_text=<text>` | text | empty | Transcript for the prompt audio. |
-| `--request-option template_name=<name>` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Instruct request template. |
-| `--request-option instruction=<text>` | text | required for design/edit | Voice design or edit instruction. |
-| `--request-option text_chunk_size=<n>` | integer > 0 | `600` | Long-form text chunk size. |
-| `--request-option text_chunk_mode=<mode>` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
-| `--request-option num_inference_steps=<n>` | integer > 0 | `10` | FireRed DiT flow steps per latent patch. |
-| `--request-option guidance_scale=<f>` | float >= 0 | `2.0` | FireRed DiT CFG scale. |
-| `--request-option stop_threshold=<f>` | `0..1` | `0.5` | AR stop probability threshold. |
-| `--request-option seed=<n>` | integer >= 0 | `1234` | Generation seed. |
-| `--session-option fireredtts3.reference_cache_slots=<n>` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
-| `--session-option fireredtts3.mem_saver=true\|false` | bool | `false` | Release runtime graphs after request phases. |
-| `--session-option fireredtts3.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+| `--reference-text` | text | empty | Transcript for the prompt audio. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `language` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
+| `reference_text` | text | empty | Transcript for the prompt audio. |
+| `template_name` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Instruct request template. |
+| `instruction` | text | required for design/edit | Voice design or edit instruction. |
+| `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
+| `num_inference_steps` | integer > 0 | `10` | FireRed DiT flow steps per latent patch. |
+| `guidance_scale` | float >= 0 | `2.0` | FireRed DiT CFG scale. |
+| `stop_threshold` | `0..1` | `0.5` | AR stop probability threshold. |
+| `seed` | integer >= 0 | `1234` | Generation seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `fireredtts3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
+| `fireredtts3.mem_saver` | bool | `false` | Release runtime graphs after request phases. |
+| `fireredtts3.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
 
 Language tags accepted by FireRedTTS3 Base match the official tokenizer:
 `Arabic`, `Cantonese`, `Chinese`, `Czech`, `Dutch`, `English`, `Finnish`,

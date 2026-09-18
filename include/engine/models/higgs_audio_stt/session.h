@@ -62,7 +62,11 @@ private:
     size_t audio_encoder_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t text_decoder_prefill_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t text_decoder_decode_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+    size_t text_decoder_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+#else
     size_t text_decoder_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
+#endif
     engine::assets::TensorStorageType audio_encoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType text_decoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     HiggsAudioSTTTextTokenizer tokenizer_;

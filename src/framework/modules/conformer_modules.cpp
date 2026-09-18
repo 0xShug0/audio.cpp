@@ -2,6 +2,7 @@
 
 #include "tensor_layout_utils.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
 #include <stdexcept>
@@ -177,6 +178,53 @@ ConvSubsamplingOutputs ConvSubsamplingModule::build(
     };
 }
 
+DepthwiseConvSubsamplingModule::DepthwiseConvSubsamplingModule(DepthwiseConvSubsamplingConfig config)
+    : config_(config) {
+    if (config.input_features <= 0 || config.output_features <= 0 || config.conv_channels <= 0 ||
+        config.kernel_size <= 0 || config.stride <= 0 || config.padding < 0) {
+        throw std::runtime_error("DepthwiseConvSubsampling requires positive dimensions and nonnegative padding");
+    }
+}
+
+core::TensorValue DepthwiseConvSubsamplingModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const DepthwiseConvSubsamplingWeights & weights,
+    const std::vector<core::TensorValue> & stage_keep_masks) const {
+    core::validate_rank_between(input, 3, 3, "subsampling.input");
+    core::validate_last_dim(input, config_.input_features, "subsampling.input");
+    if (!stage_keep_masks.empty() && stage_keep_masks.size() != weights.stages.size() + 1) {
+        throw std::runtime_error("DepthwiseConvSubsampling requires one keep mask per downsampling stage");
+    }
+    const auto channels = config_.conv_channels;
+    const int k = config_.kernel_size, s = config_.stride, p = config_.padding;
+    auto x = core::reshape_tensor(ctx, input,
+        core::TensorShape::from_dims({input.shape.dims[0], 1, input.shape.dims[1], input.shape.dims[2]}));
+    x = Conv2dModule({1, channels, k, k, s, s, p, p, 1, 1, config_.use_bias}).build(ctx, x, weights.input_conv);
+    x = ReluModule().build(ctx, x);
+    if (!stage_keep_masks.empty()) {
+        x = TimeMask4dModule().build(ctx, x, stage_keep_masks[0]);
+    }
+    for (size_t i = 0; i < weights.stages.size(); ++i) {
+        x = DepthwiseConv2dModule({channels, k, k, s, s, p, p, 1, 1, config_.use_bias})
+            .build(ctx, x, weights.stages[i].depthwise);
+        if (!stage_keep_masks.empty()) {
+            x = TimeMask4dModule().build(ctx, x, stage_keep_masks[i + 1]);
+        }
+        x = Conv2dModule({channels, channels, 1, 1, 1, 1, 0, 0, 1, 1, config_.use_bias})
+            .build(ctx, x, weights.stages[i].pointwise);
+        x = ReluModule().build(ctx, x);
+        if (!stage_keep_masks.empty()) {
+            x = TimeMask4dModule().build(ctx, x, stage_keep_masks[i + 1]);
+        }
+    }
+    x = tensor_layout::swap_channel_time_axes_4d(ctx, x);
+    x = core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, x.type);
+    const int64_t flat_features = x.shape.dims[2] * x.shape.dims[3];
+    x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1], flat_features}));
+    return LinearModule({flat_features, config_.output_features, config_.use_bias}).build(ctx, x, weights.projection);
+}
+
 ConformerConvModule::ConformerConvModule(ConformerConvModuleConfig config) : config_(config) {}
 
 core::TensorValue ConformerConvModule::build(
@@ -186,7 +234,7 @@ core::TensorValue ConformerConvModule::build(
     const std::optional<core::TensorValue> & keep_mask) const {
     auto x = LayerNormModule({config_.hidden_size, config_.eps, true, true}).build(ctx, input, weights.norm);
     x = LinearModule({config_.hidden_size, config_.hidden_size * 2, config_.use_bias}).build(ctx, x, weights.pointwise_in);
-    x = GLUModule().build(ctx, x);
+    x = GLUModule({config_.contiguous_glu_gate}).build(ctx, x);
     if (keep_mask.has_value()) {
         x = MaskingModule().build(ctx, x, *keep_mask);
     }
@@ -209,7 +257,7 @@ StreamingConformerConvOutputs StreamingConformerConvModule::build(
     const std::optional<core::TensorValue> & keep_mask) const {
     auto x = LayerNormModule({config_.hidden_size, config_.eps, true, true}).build(ctx, input, weights.norm);
     x = LinearModule({config_.hidden_size, config_.hidden_size * 2, config_.use_bias}).build(ctx, x, weights.pointwise_in);
-    x = GLUModule().build(ctx, x);
+    x = GLUModule({config_.contiguous_glu_gate}).build(ctx, x);
     if (keep_mask.has_value()) {
         x = MaskingModule().build(ctx, x, *keep_mask);
     }
@@ -272,7 +320,7 @@ core::TensorValue ConformerBlockModule::build(
     y = SelfAttentionModule({config_.hidden_size, config_.num_heads, config_.use_bias}).build(ctx, y, weights.self_attention);
     x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, y.tensor), x.shape, GGML_TYPE_F32);
 
-    y = ConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, 0}).build(ctx, x, weights.conv);
+    y = ConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, 0, config_.contiguous_glu_gate}).build(ctx, x, weights.conv);
     x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, y.tensor), x.shape, GGML_TYPE_F32);
 
     y = LayerNormModule({config_.hidden_size, config_.eps, true, true}).build(ctx, x, weights.norm2);
@@ -315,7 +363,7 @@ core::TensorValue RelativeConformerBlockModule::build(
     }).build(ctx, y, pos_emb, weights.self_attention, attention_mask, query_keep_mask, projected_pos_emb);
     x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, y.tensor), x.shape, GGML_TYPE_F32);
 
-    y = ConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, 0}).build(ctx, x, weights.conv, keep_mask);
+    y = ConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, 0, config_.contiguous_glu_gate}).build(ctx, x, weights.conv, keep_mask);
     x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, y.tensor), x.shape, GGML_TYPE_F32);
 
     y = LayerNormModule({config_.hidden_size, config_.eps, true, true}).build(ctx, x, weights.norm2);
@@ -350,7 +398,7 @@ StreamingConformerBlockOutputs StreamingConformerBlockModule::build(
     y = SelfAttentionModule({config_.hidden_size, config_.num_heads, config_.use_bias}).build(ctx, y, weights.self_attention);
     x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, y.tensor), x.shape, GGML_TYPE_F32);
 
-    auto conv = StreamingConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, config_.cache_drop_size}).build(
+    auto conv = StreamingConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, config_.cache_drop_size, config_.contiguous_glu_gate}).build(
         ctx,
         x,
         weights.conv,
@@ -403,7 +451,7 @@ StreamingConformerBlockOutputs StreamingRelativeConformerBlockModule::build(
         attention_mask);
     x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, attn.output.tensor), x.shape, GGML_TYPE_F32);
 
-    auto conv = StreamingConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, config_.cache_drop_size}).build(
+    auto conv = StreamingConformerConvModule({config_.hidden_size, config_.kernel_size, config_.use_bias, config_.eps, config_.cache_drop_size, config_.contiguous_glu_gate}).build(
         ctx,
         x,
         weights.conv,

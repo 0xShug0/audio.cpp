@@ -2,6 +2,7 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -935,7 +936,7 @@ public:
     }
 
     ~VibeVoiceTokenizerEncoderGraph() {
-        engine::core::release_backend_graph_resources(backend_, graph_);
+        engine::core::release_backend_graph_resources(backend_, graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
@@ -1066,7 +1067,7 @@ public:
     }
 
     ~VibeVoiceTokenizerDecoderGraph() {
-        engine::core::release_backend_graph_resources(backend_, graph_);
+        engine::core::release_backend_graph_resources(backend_, graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
@@ -1229,7 +1230,7 @@ public:
     }
 
     ~VibeVoiceTokenizerStreamingGraph() {
-        engine::core::release_backend_graph_resources(backend_, graph_);
+        engine::core::release_backend_graph_resources(backend_, graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
@@ -1776,6 +1777,15 @@ VibeVoiceTokenizerWeightsRuntime::~VibeVoiceTokenizerWeightsRuntime() {
     if (backend_ != nullptr) {
         ggml_backend_free(backend_);
     }
+}
+
+void VibeVoiceTokenizerWeightsRuntime::release_cached_graphs() const {
+    acoustic_streaming_graph_.reset();
+    semantic_streaming_graph_.reset();
+    acoustic_decoder_graph_.reset();
+    semantic_encoder_graph_.reset();
+    acoustic_encoder_graph_.reset();
+    core::trim_backend_pools(backend_);
 }
 
 void VibeVoiceTokenizerStreamingState::reset() {

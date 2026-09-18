@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -25,7 +26,11 @@
 namespace engine::models::echo_tts {
 namespace {
 
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kWeightContextBytes = 1024ull * 1024ull * 1024ull;
+#else
 constexpr size_t kWeightContextBytes = 6144ull * 1024ull * 1024ull;
+#endif
 constexpr size_t kGraphArenaBytes = 512ull * 1024ull * 1024ull;
 constexpr float kRopeTheta = 10000.0F;
 

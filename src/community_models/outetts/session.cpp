@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -31,6 +32,11 @@ constexpr std::string_view kFamily = "outetts";
 constexpr int64_t kDefaultTextChunkSize = 256;
 constexpr int64_t kAutomaticChunkTokenBudget = 4096;
 constexpr size_t kDefaultReferenceCacheSlots = 1;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+constexpr size_t kDefaultLlamaWeightContextBytes = 1024ull * 1024ull * 1024ull;
+#else
+constexpr size_t kDefaultLlamaWeightContextBytes = 4096ull * 1024ull * 1024ull;
+#endif
 
 std::shared_ptr<const OuteTTSAssets> require_assets(
     std::shared_ptr<const OuteTTSAssets> assets) {
@@ -563,7 +569,7 @@ OuteTTSLlamaRuntime &OuteTTSSession::llama(bool voice_cloning) {
         std::max(1, options().backend.threads),
         runtime::parse_size_mb_option(options().options,
                                       {"outetts.llama_weight_context_mb"},
-                                      4096ull * 1024ull * 1024ull),
+                                      kDefaultLlamaWeightContextBytes),
         runtime::parse_size_mb_option(options().options,
                                       {"outetts.constant_context_mb"},
                                       256ull * 1024ull * 1024ull),

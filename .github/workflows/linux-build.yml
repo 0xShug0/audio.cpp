@@ -58,3 +58,8 @@ jobs:
       - name: Build
         run: |
           cmake --build "$BUILD_DIR" --parallel "$(nproc)" --target audiocpp_cli audiocpp_server audiocpp_gguf
+
+      - name: Build and run unit tests
+        run: |
+          cmake --build "$BUILD_DIR" --parallel "$(nproc)"
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel 4

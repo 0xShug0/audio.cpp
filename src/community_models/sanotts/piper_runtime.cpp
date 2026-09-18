@@ -45,8 +45,17 @@ constexpr int32_t kSchwaFallbackId = 59;
 
 size_t expected_tensor_count(const SanoTtsPiperConfig & config) {
     const auto duration = 5 + 5 * config.duration_depth;
-    const auto acoustic =
+    auto acoustic =
         7 + 5 * (config.acoustic_token_depth + config.acoustic_depth);
+    if (config.adapter_mode != SanoTtsPiperConfig::AdapterMode::None) {
+        acoustic += 2;  // adapter scale + bias
+        if (config.adapter_has_depthwise()) {
+            acoustic += 1;  // depthwise weight, no bias
+        }
+        if (config.adapter_has_lowrank()) {
+            acoustic += 4;  // lowrank down/up, weight + bias each
+        }
+    }
     int64_t decoder = 4;   // pre + post
     for (const auto & branches : config.stage_branches) {
         decoder += 2 + 4 * static_cast<int64_t>(branches.size());
@@ -114,6 +123,60 @@ core::TensorValue conv1d_same(
         kernel,
         dilation * static_cast<int>(kernel / 2),
         dilation);
+}
+
+/** The acoustic student's output adapter, over the full 192-channel latent.
+ *
+ *  A `calibrated` student is a finished token_context body with this layer
+ *  trained onto its output, so it runs between the acoustic stage and the
+ *  decoder: an optional bias-free depthwise conv, an optional low-rank
+ *  residual `x + up(tanh(down(x)))`, then a per-channel scale and bias.
+ *  Voices without one never reach here -- `adapter_mode` stays None and the
+ *  latent goes straight to `decoder.pre`. */
+core::TensorValue acoustic_output_adapter(
+    core::ModuleBuildContext & ctx,
+    const SanoTtsBackendWeights & weights,
+    const SanoTtsPiperConfig & config,
+    const core::TensorValue & latent) {
+    const int64_t channels = config.acoustic_out_channels;
+    auto value = latent;
+
+    if (config.adapter_has_depthwise()) {
+        const auto source = contiguous(ctx, value);
+        value = core::wrap_tensor(
+            ggml_conv_1d_dw(
+                ctx.ggml,
+                contiguous(ctx, weight(weights, "acoustic.adapter.depthwise.weight")).tensor,
+                source.tensor,
+                1,
+                static_cast<int>(config.adapter_kernel / 2),
+                1),
+            latent.shape,
+            GGML_TYPE_F32);
+    }
+
+    if (config.adapter_has_lowrank()) {
+        auto down = conv1d(
+            ctx, weights, value, "acoustic.adapter.lowrank_down", config.adapter_rank, 1, 0);
+        const auto down_source = contiguous(ctx, down);
+        down = core::wrap_tensor(
+            ggml_tanh(ctx.ggml, down_source.tensor), down.shape, GGML_TYPE_F32);
+        const auto up = conv1d(
+            ctx, weights, down, "acoustic.adapter.lowrank_up", channels, 1, 0);
+        value = add(ctx, value, up);
+    }
+
+    // Per-channel affine. The stored vectors are [C]; reshaping to [1, C, 1]
+    // is what makes ggml broadcast them along frames rather than channels.
+    const auto value_source = contiguous(ctx, value);
+    auto * scale = ggml_reshape_3d(
+        ctx.ggml, weight(weights, "acoustic.adapter.scale").tensor, 1, channels, 1);
+    auto * bias = ggml_reshape_3d(
+        ctx.ggml, weight(weights, "acoustic.adapter.bias").tensor, 1, channels, 1);
+    return core::wrap_tensor(
+        ggml_add(ctx.ggml, ggml_mul(ctx.ggml, value_source.tensor, scale), bias),
+        value.shape,
+        GGML_TYPE_F32);
 }
 
 /** ConvTranspose1d producing stride * input_frames samples, PyTorch padding
@@ -332,6 +395,10 @@ std::unique_ptr<DecoderGraph> build_decoder_graph(
         config.acoustic_depth,
         config.acoustic_kernel,
         config.acoustic_out_channels);
+
+    if (config.adapter_mode != SanoTtsPiperConfig::AdapterMode::None) {
+        latent = acoustic_output_adapter(ctx, weights, config, latent);
+    }
 
     auto value = conv1d_same(
         ctx,
