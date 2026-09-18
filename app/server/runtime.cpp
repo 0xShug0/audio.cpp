@@ -2992,6 +2992,26 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
             task_request.options["language"] = language;
             task_request.text_input = engine::runtime::Transcript{std::string(), language};
         }
+        // Streaming latency knobs. lookahead_tokens picks the model's right-context
+        // (chunk duration = (lookahead + 1) x 80 ms on nemotron; the session validates
+        // the value against the model's supported set). stream_chunk_ms bounds how much
+        // audio the ingest layer assembles before handing it to the session — the
+        // policy default batches a full second, which delays every partial by that
+        // much regardless of the model window.
+        // lookahead 0 (80 ms chunks) is rejected even though the GGUF declares it
+        // supported: a single-frame first window is not covered by the reference
+        // chunking validation and decodes garbage — fail loudly instead.
+        if (!query_param(request.query, "lookahead_tokens").empty()) {
+            const int64_t lookahead = parse_bounded_int("lookahead_tokens", 3, 0, 13);
+            if (lookahead < 1) {
+                throw std::runtime_error("live transcription lookahead_tokens values below 1 are not supported by this runtime");
+            }
+            task_request.options["lookahead_tokens"] = std::to_string(lookahead);
+        }
+        if (!query_param(request.query, "stream_chunk_ms").empty()) {
+            task_request.options["stream_chunk_ms"] = std::to_string(
+                parse_bounded_int("stream_chunk_ms", 1000, 10, 4000));
+        }
         task_request = apply_default_request_options(model, std::move(task_request));
     } catch (const std::runtime_error & ex) {
         // Deliberately runtime_error and not exception: every rejection above is

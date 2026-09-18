@@ -35,7 +35,8 @@ public:
         std::shared_ptr<const NemotronASRAssets> assets,
         std::shared_ptr<const NemotronWeights> weights,
         engine::core::ExecutionContext & execution_context,
-        size_t graph_arena_bytes);
+        size_t graph_arena_bytes,
+        size_t stream_graph_arena_bytes = 0);
     ~NemotronEncoderRuntime();
 
     void prepare_capacity(int64_t input_frames, int64_t feature_dim, int64_t lookahead_tokens);
@@ -65,6 +66,7 @@ private:
     std::shared_ptr<const NemotronWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;
+    size_t stream_graph_arena_bytes_ = 0;
     std::unique_ptr<Graph> graph_;
     std::vector<std::unique_ptr<Graph>> stream_graphs_;
     std::vector<float> input_scratch_;
@@ -72,6 +74,8 @@ private:
     std::vector<float> prompt_scratch_;
     std::vector<int32_t> mask_scratch_;
     std::vector<float> attention_mask_scratch_;
+    std::vector<float> attention_key_scratch_;
+    std::vector<float> attention_value_scratch_;
     std::unordered_map<int64_t, std::vector<float>> relative_positional_encoding_cache_;
 };
 

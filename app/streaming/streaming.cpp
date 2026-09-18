@@ -1,9 +1,12 @@
 #include "streaming.h"
 
+#include "engine/framework/runtime/options.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -35,6 +38,31 @@ int64_t resolve_chunk_samples(
             static_cast<int64_t>(format.channels);
     }
     return policy.preferred_audio_chunk_samples;
+}
+
+// Request-level override for the ingest batching granularity ("stream_chunk_ms",
+// milliseconds of audio per process_audio_chunk call). The session policy's
+// preferred chunk is sized for throughput (nemotron batches a full second), which
+// delays every partial by that much; low-latency clients ask for smaller reads so
+// the model window fills as soon as enough bytes have arrived. Ignored when the
+// option is absent or malformed beyond recognition — a numeric parse failure is
+// the caller's bug and throws.
+int64_t chunk_samples_for_request(
+    const engine::runtime::TaskRequest & request,
+    const engine::runtime::StreamingPolicy & policy,
+    const AudioStreamFormat & format) {
+    const auto override_ms = engine::runtime::find_option(request.options, {"stream_chunk_ms"});
+    if (!override_ms || override_ms->empty()) {
+        return resolve_chunk_samples(policy, format);
+    }
+    size_t consumed = 0;
+    const long long ms = std::stoll(*override_ms, &consumed);
+    if (consumed != override_ms->size() || ms <= 0) {
+        throw std::runtime_error("stream_chunk_ms must be a positive integer (milliseconds)");
+    }
+    const auto samples = static_cast<int64_t>(std::llround(
+        static_cast<double>(ms) * static_cast<double>(format.sample_rate) / 1000.0));
+    return std::max<int64_t>(samples, 1) * static_cast<int64_t>(format.channels);
 }
 
 void feed_audio_stream(
@@ -128,7 +156,8 @@ engine::runtime::TaskResult run_stream(
                     "streaming audio input mode requires samples in audio_input, or an "
                     "AudioChunkStream for a live source");
             }
-            feed_audio_stream(session, *stream, resolve_chunk_samples(policy, stream->format), sink);
+            feed_audio_stream(
+                session, *stream, chunk_samples_for_request(request, policy, stream->format), sink);
         }
 		if (policy.output == engine::runtime::StreamingOutputKind::PullEvents) {
 			pull_stream_events(session, sink);

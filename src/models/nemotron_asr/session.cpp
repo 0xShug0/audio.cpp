@@ -153,11 +153,20 @@ NemotronASRSessionBase::NemotronASRSessionBase(
         matmul_weight_storage_type_,
         conv_weight_storage_type_,
         weight_context_bytes_);
+    // Streaming encoder graphs are metadata-only arenas but the prefix ladder
+    // multiplies them (up to ~56 variants at lookahead 0), so they default to a
+    // fraction of the offline graph's arena. An explicit
+    // nemotron_asr.encoder_graph_arena_mb option is honored as-is for both.
+    constexpr size_t kDefaultStreamEncoderGraphArenaBytes = 256ull * 1024ull * 1024ull;
+    const size_t stream_arena_bytes = encoder_graph_arena_bytes_ == kDefaultEncoderGraphArenaBytes
+        ? kDefaultStreamEncoderGraphArenaBytes
+        : encoder_graph_arena_bytes_;
     encoder_ = std::make_unique<NemotronEncoderRuntime>(
         assets_,
         weights_,
         execution_context(),
-        encoder_graph_arena_bytes_);
+        encoder_graph_arena_bytes_,
+        stream_arena_bytes);
     decoder_ = std::make_unique<NemotronDecoderRuntime>(
         assets_,
         weights_,
@@ -334,6 +343,24 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
     int64_t chunk_count = 0;
     int64_t mel_frame_idx = first_mel_frames;
     int64_t start_idx = mel_frame_idx * fc.hop_length - fc.n_fft / 2;
+    // Window [start_idx, start_idx + samples_per_chunk) centered on the chunk's
+    // mel frames. start_idx goes negative when the window precedes the signal
+    // start (lookahead 0: the second window begins at 1*hop - n_fft/2 = -96);
+    // the left context is silence then, exactly like the first chunk's center
+    // pad — so build the window zero-padded instead of indexing before begin().
+    auto window_at = [&](int64_t from) -> std::vector<float> {
+        std::vector<float> window(static_cast<size_t>(samples_per_chunk), 0.0f);
+        const int64_t copy_from = std::max<int64_t>(from, 0);
+        const int64_t copy_to = std::min<int64_t>(
+            from + samples_per_chunk, static_cast<int64_t>(waveform.size()));
+        if (copy_to > copy_from) {
+            std::copy(
+                waveform.begin() + static_cast<std::ptrdiff_t>(copy_from),
+                waveform.begin() + static_cast<std::ptrdiff_t>(copy_to),
+                window.begin() + static_cast<std::ptrdiff_t>(copy_from - from));
+        }
+        return window;
+    };
     auto next_chunk = [&](NemotronEncodedAudio & out) -> bool {
         if (first_chunk) {
             first_chunk = false;
@@ -362,11 +389,7 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
             }
             flushed = true;
             ++chunk_count;
-            std::vector<float> chunk_waveform(static_cast<size_t>(samples_per_chunk), 0.0f);
-            std::copy(
-                waveform.begin() + static_cast<std::ptrdiff_t>(start_idx),
-                waveform.end(),
-                chunk_waveform.begin());
+            auto chunk_waveform = window_at(start_idx);
             auto features = frontend_.extract_waveform(chunk_waveform, false);
             if (features.frames != mel_frames_per_chunk) {
                 throw std::runtime_error("Nemotron ASR streaming frontend produced unexpected flush chunk frame count");
@@ -374,9 +397,7 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
             out = encoder_->encode_stream_chunk(features, prompt_id, lookahead, stream_state);
             return true;
         }
-        std::vector<float> chunk_waveform(
-            waveform.begin() + static_cast<std::ptrdiff_t>(start_idx),
-            waveform.begin() + static_cast<std::ptrdiff_t>(start_idx + samples_per_chunk));
+        auto chunk_waveform = window_at(start_idx);
         auto features = frontend_.extract_waveform(chunk_waveform, false);
         if (features.frames != mel_frames_per_chunk) {
             throw std::runtime_error("Nemotron ASR streaming frontend produced unexpected chunk frame count");
@@ -499,15 +520,28 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
             streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(stream_first_samples_));
         center = true;
     } else if (stream_next_chunk_start_ + stream_samples_per_chunk_ < total) {
+        // start_idx goes negative when the window precedes the signal start
+        // (lookahead 0: the second window begins at 1*hop - n_fft/2 = -96); the
+        // left context is silence then, exactly like the first chunk's center
+        // pad — zero-pad instead of indexing before begin().
+        const int64_t copy_from = std::max<int64_t>(stream_next_chunk_start_, 0);
         window.assign(
-            streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(stream_next_chunk_start_),
+            streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(copy_from),
             streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(stream_next_chunk_start_ + stream_samples_per_chunk_));
+        window.insert(
+            window.begin(),
+            static_cast<size_t>(std::max<int64_t>(0, -stream_next_chunk_start_)),
+            0.0f);
     } else if (flush_tail && stream_next_chunk_start_ < total) {
         // The tail never fills a whole native chunk: zero-pad it so the final
         // audio is encoded too (the padding decodes to blank tokens).
+        const int64_t copy_from = std::max<int64_t>(stream_next_chunk_start_, 0);
         window.assign(
-            streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(stream_next_chunk_start_),
+            streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(copy_from),
             streaming_audio_.samples.end());
+        if (stream_next_chunk_start_ < 0) {
+            window.insert(window.begin(), static_cast<size_t>(-stream_next_chunk_start_), 0.0f);
+        }
         window.resize(static_cast<size_t>(stream_samples_per_chunk_), 0.0f);
         stream_tail_encoded_ = true;
     } else {
