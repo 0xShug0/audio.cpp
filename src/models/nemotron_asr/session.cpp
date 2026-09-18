@@ -620,6 +620,40 @@ runtime::TaskResult NemotronASRStreamingSession::finalize() {
         throw std::runtime_error("Nemotron ASR streaming request is shorter than the first required chunk");
     }
     const auto decoded = decoder_->finish_stream_decode();
+    // The incremental schedule emits every encoded frame the moment its chunk is
+    // done, so frames at each chunk's end are encoded without their lookahead
+    // right-context (the reference avoids this by re-encoding the right context
+    // every step — ~1.8-4x encoder compute, not viable on CPU). Measured
+    // 2026-09-18: a 0.55 s "Okay" turn decodes '' on the incremental path while
+    // the whole-buffer path decodes the identical audio to 'Okay.' — and even a
+    // 0.73 s "Hello" came back 'Hel' on lookahead 1. Short turns are exactly
+    // where most speech frames sit at chunk ends, so re-decode them (and any
+    // blank final) through the full-context path at finalize: the cost is
+    // bounded by the turn length, and long turns — whose frames sit mid-chunk
+    // and which decode correctly — keep the fast path.
+    constexpr int64_t kShortTurnSamples = 16000;  // 1 s of audio
+    const bool short_turn =
+        static_cast<int64_t>(streaming_audio_.samples.size()) <= kShortTurnSamples;
+    const auto is_blank = [](const std::string & text) {
+        return text.find_first_not_of(" \t\n\r") == std::string::npos;
+    };
+    if (short_turn || is_blank(decoded.text)) {
+        // The full-context path is the OFFLINE encoder — one pass over the whole
+        // turn with full attention and no chunk windows. (run_streaming_audio
+        // shares the chunked streaming graph and its chunk-end truncation, so it
+        // does not help here.)
+        const auto frontend = frontend_.extract(streaming_audio_, true);
+        const auto encoded = encoder_->encode(frontend, stream_prompt_id_, stream_lookahead_);
+        const auto full = decoder_->decode(encoded, stream_decode_options_);
+        debug::trace_log_scalar(
+            "nemotron_asr.streaming.empty_final_rerun",
+            full.text.empty() ? 0 : 1);
+        runtime::TaskResult result;
+        result.text_output = runtime::Transcript{full.text, streaming_language_};
+        result.word_timestamps = full.token_timestamps;
+        debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
+        return result;
+    }
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{decoded.text, streaming_language_};
     result.word_timestamps = decoded.token_timestamps;
