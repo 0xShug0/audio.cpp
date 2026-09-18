@@ -698,11 +698,17 @@ extern "C" {
         GGML_IM2COL_2D_LOWERING_DEFAULT = 0,
         GGML_IM2COL_2D_LOWERING_CUDA_N_K3_PAD1_X8 = 1,
         GGML_IM2COL_2D_LOWERING_CUDA_N_K3_NOPAD_X8 = 2,
+        GGML_IM2COL_2D_LOWERING_CUDA_F32_K3_TILED = 3,
     };
 
     enum ggml_im2col_3d_lowering {
         GGML_IM2COL_3D_LOWERING_DEFAULT = 0,
         GGML_IM2COL_3D_LOWERING_CUDA_N1_K3_NOPAD_X8 = 1,
+    };
+
+    enum ggml_ssm_scan_fusion {
+        GGML_SSM_SCAN_FUSION_NONE = 0,
+        GGML_SSM_SCAN_FUSION_GATE = 1,
     };
 
     enum ggml_rms_norm_channels_lowering {
@@ -2730,6 +2736,10 @@ extern "C" {
             struct ggml_tensor  * B,
             struct ggml_tensor  * C,
             struct ggml_tensor  * ids);
+
+    GGML_API void ggml_ssm_scan_set_fusion(
+            struct ggml_tensor         * tensor,
+            enum ggml_ssm_scan_fusion   fusion);
 
     // partition into non-overlapping windows with padding if needed
     // example:
