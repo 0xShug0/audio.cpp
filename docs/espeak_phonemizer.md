@@ -5,7 +5,11 @@ eSpeak-ng. SanoTTS (E2M and Piper frontends) and Inflect v2 use it. Other models
 including the separate Kokoro preview, can use the same adapter without copying
 dynamic-library loading or process-global state management.
 
-By default users provide an installed shared library and its matching data.
+By default users provide an installed shared library and its matching data. With no explicit
+session paths, the adapter first tries common install locations (Homebrew
+`/opt/homebrew/lib` and `/usr/local/lib` on macOS, multiarch lib directories on Linux) by
+soname, and eSpeak then falls back to its build-time data path; pass
+`espeak_library_path` / `espeak_data_path` when the install lives elsewhere.
 Alternatively, `AUDIOCPP_STATIC_ESPEAK=ON` builds the pinned eSpeak-ng 1.52.0 source
 and statically links its code into both CLI and server. No eSpeak DLL or `.so` is
 required in that mode. Existing explicit library/data session options still work.
