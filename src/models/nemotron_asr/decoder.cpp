@@ -540,6 +540,14 @@ NemotronDecodedText NemotronDecoderRuntime::finish_stream_decode() {
     out.durations = stream_durations_;
     out.text = decode_text(out.token_ids, stream_decode_options_.keep_language_tags);
     out.token_timestamps = build_token_timestamps(*assets_, out.token_ids, out.durations);
+    if (debug::trace_log_enabled()) {
+        std::string ids;
+        for (const int32_t id : out.token_ids) {
+            ids += std::to_string(id);
+            ids.push_back(',');
+        }
+        debug::trace_log_scalar("nemotron_asr.decoder.token_ids", ids);
+    }
     stream_decode_active_ = false;
     return out;
 }

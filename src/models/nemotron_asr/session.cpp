@@ -324,10 +324,13 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
     const int64_t samples_per_chunk = mel_frames_per_chunk * fc.hop_length + fc.win_length;
     auto waveform = frontend_.prepare_waveform(audio);
     if (static_cast<int64_t>(waveform.size()) < first_samples) {
-        throw std::runtime_error("Nemotron ASR streaming request is shorter than the first required chunk");
+        // Ultra-short turn: silence-pad to the first required chunk rather than
+        // failing the whole request — the flush below keeps the stream well-formed.
+        waveform.resize(static_cast<size_t>(first_samples), 0.0f);
     }
     NemotronEncoderStreamState stream_state = encoder_->make_stream_state();
     bool first_chunk = true;
+    bool flushed = false;
     int64_t chunk_count = 0;
     int64_t mel_frame_idx = first_mel_frames;
     int64_t start_idx = mel_frame_idx * fc.hop_length - fc.n_fft / 2;
@@ -346,7 +349,30 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
             return true;
         }
         if (start_idx + samples_per_chunk >= static_cast<int64_t>(waveform.size())) {
-            return false;
+            // End of stream: the tail no longer fills a full window. Zero-pad it to
+            // the full window (the reference processor right-pads the final chunk)
+            // and encode one last chunk. Dropping the tail loses the last word(s)
+            // of every turn whose audio does not align with the window stride —
+            // and entire short utterances ("Hello"), whose transcript came back
+            // empty because nothing beyond the first chunk was ever encoded.
+            if (flushed || start_idx + fc.n_fft > static_cast<int64_t>(waveform.size())) {
+                // Already flushed, or the leftover is too short to contribute even
+                // one full mel frame (it is inside the previous window's right pad).
+                return false;
+            }
+            flushed = true;
+            ++chunk_count;
+            std::vector<float> chunk_waveform(static_cast<size_t>(samples_per_chunk), 0.0f);
+            std::copy(
+                waveform.begin() + static_cast<std::ptrdiff_t>(start_idx),
+                waveform.end(),
+                chunk_waveform.begin());
+            auto features = frontend_.extract_waveform(chunk_waveform, false);
+            if (features.frames != mel_frames_per_chunk) {
+                throw std::runtime_error("Nemotron ASR streaming frontend produced unexpected flush chunk frame count");
+            }
+            out = encoder_->encode_stream_chunk(features, prompt_id, lookahead, stream_state);
+            return true;
         }
         std::vector<float> chunk_waveform(
             waveform.begin() + static_cast<std::ptrdiff_t>(start_idx),
