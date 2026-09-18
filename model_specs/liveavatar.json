@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "family": "liveavatar",
+  "display_name": "LiveAvatar",
+  "description": "LiveAvatar audio-driven avatar video generation using the Wan2.2 S2V architecture.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "sfx"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "cuda",
+      "gguf",
+      "stream"
+    ]
+  },
+  "capabilities": {
+    "sfx": [
+      "prompt_generation"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_image_path",
+        "type": "string",
+        "description": "Reference image path used as the identity/appearance condition.",
+        "required": true
+      },
+      {
+        "name": "generation_mode",
+        "type": "enum",
+        "values": [
+          "offline",
+          "liveavatar"
+        ],
+        "description": "Use whole-clip generation or LiveAvatar blockwise generation.",
+        "required": false,
+        "default": "offline"
+      },
+      {
+        "name": "height",
+        "type": "int",
+        "description": "Generated frame height.",
+        "required": false,
+        "min": 16,
+        "default": 704
+      },
+      {
+        "name": "width",
+        "type": "int",
+        "description": "Generated frame width.",
+        "required": false,
+        "min": 16,
+        "default": 1024
+      },
+      {
+        "name": "num_frames",
+        "type": "int",
+        "description": "Frames generated per LiveAvatar segment.",
+        "required": false,
+        "min": 1,
+        "default": 48
+      },
+      {
+        "name": "num_clips",
+        "type": "int",
+        "description": "Maximum LiveAvatar clips to generate from the input audio.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Euler denoising steps; the LiveAvatar DMD adapter is designed for 4 steps.",
+        "required": false,
+        "min": 1,
+        "default": 4
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale; LiveAvatar blockwise generation requires 0.",
+        "required": false,
+        "min": 0.0,
+        "default": 0.0
+      },
+      {
+        "name": "fused_cfg",
+        "type": "bool",
+        "description": "Run classifier-free guidance in one denoiser graph.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "sage_attention",
+        "type": "bool",
+        "description": "Use CUDA SageAttention when the backend supports it.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "memory_saver",
+        "type": "bool",
+        "description": "Reuse immutable condition data and temporary denoiser graph storage across sequential blocks.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "denoiser_layerwise",
+        "type": "bool",
+        "description": "Run the denoiser in layerwise mode.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "denoiser_layerwise_batch",
+        "type": "int",
+        "description": "Layer group size used by layerwise denoising.",
+        "required": false,
+        "min": 1,
+        "default": 16
+      },
+      {
+        "name": "vae_encoder_chunk_size",
+        "type": "int",
+        "description": "Cached VAE encoder chunk size.",
+        "required": false,
+        "min": 1,
+        "default": 16
+      },
+      {
+        "name": "vae_decoder_tile_size",
+        "type": "int",
+        "description": "VAE decoder spatial tile size; 0 disables tiling.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "target_cache_blocks",
+        "type": "int",
+        "description": "Target KV cache window in block units; 0 keeps the full clip cache.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "vae_cache_f16",
+        "type": "bool",
+        "description": "Store cached VAE encoder state in F16.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "shift",
+        "type": "float",
+        "description": "Euler flow scheduler shift.",
+        "required": false,
+        "min": 0.0,
+        "default": 3.0
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "description": "Negative prompt for classifier-free guidance.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "required": false,
+        "min": 0,
+        "default": 420
+      }
+    ],
+    "session": [
+      {
+        "name": "denoiser_weight_streaming",
+        "type": "bool",
+        "description": "Keep denoiser transformer blocks in host memory and stage layer groups on the accelerator.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "support_gguf",
+        "type": "string",
+        "description": "Support GGUF containing text_encoder/audio_encoder tensors and the embedded tokenizer sidecar.",
+        "required": false,
+        "default": "Wan2.2-S2V-Support-Q4_K_S-F16.gguf"
+      },
+      {
+        "name": "vae_gguf",
+        "type": "string",
+        "description": "Wan video VAE component GGUF file relative to the model root.",
+        "required": false,
+        "default": "Wan2.2-S2V-VAE-F16.gguf"
+      },
+      {
+        "name": "denoiser_gguf",
+        "type": "string",
+        "description": "Denoiser DiT GGUF file relative to the model root.",
+        "required": false,
+        "default": "Wan2.2-S2V-14B-NVFP4-LORA.gguf"
+      }
+    ],
+    "load": [
+      {
+        "name": "support_gguf",
+        "type": "string",
+        "description": "Support GGUF containing text_encoder/audio_encoder tensors and the embedded tokenizer sidecar.",
+        "required": false,
+        "default": "Wan2.2-S2V-Support-Q4_K_S-F16.gguf"
+      },
+      {
+        "name": "vae_gguf",
+        "type": "string",
+        "description": "Wan video VAE component GGUF file relative to the model root.",
+        "required": false,
+        "default": "Wan2.2-S2V-VAE-F16.gguf"
+      },
+      {
+        "name": "denoiser_gguf",
+        "type": "string",
+        "description": "Denoiser DiT GGUF file relative to the model root.",
+        "required": false,
+        "default": "Wan2.2-S2V-14B-NVFP4-LORA.gguf"
+      }
+    ]
+  },
+  "dependencies": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/LiveAvatar-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "liveavatar_nvfp4_lora",
+      "display_name": "LiveAvatar NVFP4 LoRA GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "native",
+      "target_directory": "LiveAvatar-GGUF",
+      "files": [
+        "Wan2.2-S2V-Support-Q4_K_S-F16.gguf",
+        "Wan2.2-S2V-VAE-F16.gguf",
+        "Wan2.2-S2V-14B-NVFP4-LORA.gguf"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "tokenizer_model": "model:tokenizer/spiece.model"
+      },
+      "tensors": {
+        "text_encoder_weights": {
+          "source": "model:Wan2.2-S2V-Support-Q4_K_S-F16.gguf",
+          "prefix": "text_encoder"
+        },
+        "audio_encoder_weights": {
+          "source": "model:Wan2.2-S2V-Support-Q4_K_S-F16.gguf",
+          "prefix": "audio_encoder"
+        }
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "tensors": {
+        "vae_weights": {
+          "source": "model:Wan2.2-S2V-VAE-F16.gguf",
+          "prefix": "vae"
+        }
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "tensors": {
+        "denoiser_weights": {
+          "source": "model:Wan2.2-S2V-14B-NVFP4-LORA.gguf"
+        }
+      }
+    }
+  ],
+  "ui": {
+    "recommended_package": "liveavatar_nvfp4_lora",
+    "tags": [
+      "SFX",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": []
+  }
+}

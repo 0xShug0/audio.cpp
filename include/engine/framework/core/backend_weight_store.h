@@ -21,10 +21,16 @@ namespace engine::core {
 
 class BackendWeightStore {
 public:
-    BackendWeightStore(ggml_backend_t backend, BackendType backend_type, std::string name, size_t context_bytes)
+    BackendWeightStore(
+        ggml_backend_t backend,
+        BackendType backend_type,
+        std::string name,
+        size_t context_bytes,
+        ggml_backend_buffer_type_t buffer_type = nullptr)
         : backend_(backend),
           backend_type_(backend_type),
-          name_(std::move(name)) {
+          name_(std::move(name)),
+          buffer_type_(buffer_type) {
         if (backend_ == nullptr) {
             throw std::runtime_error(name_ + " backend is not initialized");
         }
@@ -151,7 +157,9 @@ public:
         if (buffer_ != nullptr) {
             throw std::runtime_error(name_ + " weights were already uploaded");
         }
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
+        buffer_ = buffer_type_ != nullptr
+            ? ggml_backend_alloc_ctx_tensors_from_buft(ctx_.get(), buffer_type_)
+            : ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
         if (buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate " + name_ + " backend weight buffer");
         }
@@ -431,6 +439,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     BackendType backend_type_ = BackendType::Cpu;
     std::string name_;
+    ggml_backend_buffer_type_t buffer_type_ = nullptr;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_backend_buffer_t buffer_ = nullptr;
     std::vector<PendingUpload> pending_;
