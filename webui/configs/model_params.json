@@ -111,6 +111,14 @@
     {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "default": 30, "minimum": 0.001, "step": 1}
   ],
 
+  "r2t2_asr": [
+    {"name": "chunk_size_ms", "type": "slider", "scope": "session", "session_option": "r2t2_asr.chunk_size_ms", "label": "chunk_size_ms（流式分块毫秒）", "label_en": "chunk_size_ms (streaming chunk, ms)", "default": 320, "minimum": 80, "maximum": 2000, "step": 10, "precision": 0, "info": "80-2000ms：越小延迟越低；320ms 在 Apple Silicon 上延迟与速度较均衡。", "info_en": "80-2000 ms. Lower means lower latency; 320 ms balances latency and speed on Apple Silicon."},
+    {"name": "unfixed_chunk_num", "type": "number", "scope": "session", "session_option": "r2t2_asr.unfixed_chunk_num", "label": "unfixed_chunk_num（前 N 块不用稳定前缀）", "label_en": "unfixed_chunk_num (leading chunks without prefix)", "default": 2, "minimum": 0, "maximum": 10, "step": 1, "precision": 0, "info": "开头若干块不使用已识别文本作为前缀提示。", "info_en": "Leading chunks that decode without a stable-prefix prompt."},
+    {"name": "unfixed_token_num", "type": "number", "scope": "session", "session_option": "r2t2_asr.unfixed_token_num", "label": "unfixed_token_num（回滚 token 数）", "label_en": "unfixed_token_num (rollback tokens)", "default": 5, "minimum": 0, "maximum": 20, "step": 1, "precision": 0, "info": "作为前缀前从累积文本回滚的 token 数，用于降低边界抖动。", "info_en": "Tokens rolled back from the accumulated text before it is used as the prefix prompt."},
+    {"name": "rollback_punctuation", "type": "bool", "scope": "session", "session_option": "r2t2_asr.rollback_punctuation", "label": "rollback_punctuation（句末标点不回滚）", "label_en": "rollback_punctuation (keep trailing punctuation)", "default": false, "info": "输出已以标点结尾时不再回滚 token。", "info_en": "Do not roll back tokens when the output already ends with punctuation."},
+    {"name": "max_new_tokens", "type": "number", "scope": "session", "session_option": "r2t2_asr.max_tokens", "label": "max_new_tokens（每分块解码上限）", "label_en": "max_new_tokens (per-chunk decode budget)", "default": 32, "minimum": 1, "maximum": 256, "step": 1, "precision": 0, "info": "每个流式分块的贪婪解码上限（会话级，区别于离线 max_tokens）。", "info_en": "Greedy decode budget per streaming chunk (session-scoped; distinct from offline max_tokens)."}
+  ],
+
   "pocket_tts": [
     {"name": "frames_after_eos", "type": "number", "label": "frames_after_eos（-1=自动）", "default": -1, "minimum": -1, "step": 1, "precision": 0}
   ],

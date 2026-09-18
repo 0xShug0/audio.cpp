@@ -1469,6 +1469,22 @@ audiocpp_add_model(qwen3_asr
         qwen3_forced_aligner
 )
 
+audiocpp_add_model(r2t2_asr
+    SOURCES
+        src/community_models/r2t2_asr/assets.cpp
+        src/community_models/r2t2_asr/text_postprocess.cpp
+        src/community_models/r2t2_asr/tokenizer_text.cpp
+        src/community_models/r2t2_asr/frontend_whisper.cpp
+        src/community_models/r2t2_asr/audio_encoder.cpp
+        src/community_models/r2t2_asr/thinker.cpp
+        src/community_models/r2t2_asr/prompt_asr.cpp
+        src/community_models/r2t2_asr/session.cpp
+    INCLUDES
+        engine/community_models/r2t2_asr/session.h
+    LOADERS
+        engine::community_models::r2t2_asr::make_r2t2_asr_loader
+)
+
 audiocpp_add_model(qwen3_forced_aligner
     SOURCES
         src/models/qwen3_forced_aligner/processor.cpp
@@ -2969,6 +2985,20 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(test_granite5asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        if (r2t2_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_r2t2_asr_transcription
+                tests/r2t2_asr/test_r2t2_asr_transcription.cpp
+            )
+            target_compile_definitions(test_r2t2_asr_transcription PRIVATE
+                ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            )
+            target_link_libraries(test_r2t2_asr_transcription PRIVATE engine_runtime ggml)
+            target_include_directories(test_r2t2_asr_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_r2t2_asr_transcription PRIVATE OpenMP::OpenMP_CXX)
+            endif()
         endif()
 
         if (vibeasr IN_LIST AUDIOCPP_LINKED_MODELS)

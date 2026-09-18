@@ -43,6 +43,7 @@ const exposeAllGgufPackageFamilies = new Set([
   'canary_asr',
   'cohere_asr',
   'moss_transcribe_diarize',
+  'r2t2_asr',
   'audiosr',
   'controlfoley',
   'breeze_tts',
