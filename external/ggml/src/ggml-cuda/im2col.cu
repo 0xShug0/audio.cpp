@@ -1,5 +1,47 @@
 #include "im2col.cuh"
 
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+static __global__ void im2col_f32_tiled_3x3(
+        const float * x, float * dst, int64_t IW, int64_t IH, int64_t OW, int64_t OH,
+        int64_t K, int64_t positions,
+        int64_t channel_stride, int64_t batch_stride,
+        int s0, int s1, int p0, int p1, int d0, int d1) {
+    __shared__ float tile[32][33];
+    const int64_t k_base = int64_t(blockIdx.x) * 32;
+    for (int64_t base = int64_t(blockIdx.y) * 32; base < positions; base += int64_t(gridDim.y) * 32) {
+        const int64_t pos = base + threadIdx.x;
+        const int64_t ow = pos % OW;
+        const int64_t row = pos / OW;
+        const int64_t oh = row % OH;
+        const int64_t batch = row / OH;
+#pragma unroll
+        for (int j = 0; j < 32; j += 8) {
+            const int64_t k = k_base + threadIdx.y + j;
+            const int64_t kw = k % 3;
+            const int64_t kh = (k / 3) % 3;
+            const int64_t channel = k / 9;
+            const int64_t iw = ow * s0 + kw * d0 - p0;
+            const int64_t ih = oh * s1 + kh * d1 - p1;
+            float value = 0;
+            if (pos < positions && k < K && iw >= 0 && iw < IW && ih >= 0 && ih < IH) {
+                value = x[batch * batch_stride + channel * channel_stride + ih * IW + iw];
+            }
+            tile[threadIdx.y + j][threadIdx.x] = value;
+        }
+        __syncthreads();
+#pragma unroll
+        for (int j = 0; j < 32; j += 8) {
+            const int64_t out_pos = base + threadIdx.y + j;
+            const int64_t out_k = k_base + threadIdx.x;
+            if (out_pos < positions && out_k < K) {
+                dst[out_pos * K + out_k] = tile[threadIdx.x][threadIdx.y + j];
+            }
+        }
+        __syncthreads();
+    }
+}
+#endif
+
 #define MAX_GRIDDIM_Y 65535
 #define MAX_GRIDDIM_Z 65535
 
@@ -240,7 +282,19 @@ static void im2col_cuda_f32(const float * x, float * dst,
     int64_t N, int64_t IC_IH_IW, int64_t IH_IW,
     int s0,int s1,int p0,int p1,int d0,int d1, int32_t lowering, cudaStream_t stream) {
 
-    im2col_cuda<float>(x, dst, IW, IH, OW, OH, KW, KH, IC, N, IC_IH_IW, IH_IW, s0, s1, p0, p1, d0, d1, lowering, stream);
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if (lowering == GGML_IM2COL_2D_LOWERING_CUDA_F32_K3_TILED) {
+        GGML_ASSERT(IC >= 32 && OW >= 32 && KW == 3 && KH == 3);
+        const int64_t k = IC * KH * KW;
+        const int64_t positions = N * OH * OW;
+        const dim3 grid((k + 31) / 32, MIN((positions + 31) / 32, MAX_GRIDDIM_Y));
+        im2col_f32_tiled_3x3<<<grid, dim3(32, 8), 0, stream>>>(x, dst, IW, IH, OW, OH,
+            k, positions, IC_IH_IW, IH_IW, s0, s1, p0, p1, d0, d1);
+        return;
+    }
+#endif
+    im2col_cuda<float>(x, dst, IW, IH, OW, OH, KW, KH, IC, N, IC_IH_IW, IH_IW,
+                      s0, s1, p0, p1, d0, d1, lowering, stream);
 }
 
 void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
