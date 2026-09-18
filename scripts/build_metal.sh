@@ -319,7 +319,10 @@ fi
 "${CMAKE_CMD[@]}"
 
 BUILD_CMD=(cmake --build "$BUILD_DIR" --parallel "$JOBS")
-for target in "${TARGETS[@]}"; do
+# --target is optional, so TARGETS is usually empty. bash 3.2 (stock macOS
+# /bin/bash) and bash < 4.4 report an empty array as unbound under `set -u`;
+# the ${arr[@]+"${arr[@]}"} form expands to nothing instead of failing.
+for target in ${TARGETS[@]+"${TARGETS[@]}"}; do
     BUILD_CMD+=(--target "$target")
 done
 

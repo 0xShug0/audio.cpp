@@ -448,10 +448,14 @@ if [[ "$ENGINE_ENABLE_CUDA" == "ON" && -n "$CUDA_ARCH" ]]; then
     )
 fi
 
-"${RUNNER[@]}" cmake "${CMAKE_ARGS[@]}"
+# RUNNER is empty unless --conda-env is used, and TARGETS is empty unless
+# --target is used. bash 3.2 (stock macOS /bin/bash) and bash < 4.4 report an
+# empty array as unbound under `set -u`; the ${arr[@]+"${arr[@]}"} form expands
+# to nothing instead of failing.
+${RUNNER[@]+"${RUNNER[@]}"} cmake "${CMAKE_ARGS[@]}"
 
-BUILD_CMD=("${RUNNER[@]}" cmake --build "$BUILD_DIR" --parallel "$JOBS")
-for target in "${TARGETS[@]}"; do
+BUILD_CMD=(${RUNNER[@]+"${RUNNER[@]}"} cmake --build "$BUILD_DIR" --parallel "$JOBS")
+for target in ${TARGETS[@]+"${TARGETS[@]}"}; do
     BUILD_CMD+=(--target "$target")
 done
 
