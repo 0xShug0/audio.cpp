@@ -912,6 +912,32 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     graph->output = engine::modules::LinearModule({enc.hidden_size, config.decoder_hidden_size, true})
                         .build(ctx, x, weights.encoder_projector);
 
+    // The next-cache tensors are read AFTER the compute (the cache hand-off),
+    // but the graph allocator only sees in-graph lifetimes and may hand their
+    // buffers to other tensors — measured: the first chunk's next attention
+    // KV caches aliased with next_subsampling_cache0 (identical data pointers)
+    // and the hand-off read the subsampling content. Chain a zero-weighted
+    // scalar dependency from every cache into the output node: the allocator
+    // must keep every cache alive until the end, and the buffers stay distinct.
+    // The scales are exactly zero, so the encoder output is unchanged.
+    {
+        auto dep_tensor = graph->output.tensor;
+        auto chain = [&](const engine::core::TensorValue & cache) {
+            auto sum = ggml_sum(ctx.ggml, cache.tensor);
+            auto scaled = ggml_scale(ctx.ggml, sum, 0.0f);
+            dep_tensor = ggml_add1(ctx.ggml, dep_tensor, scaled);
+        };
+        chain(graph->next_subsampling_cache0);
+        chain(graph->next_subsampling_cache1);
+        chain(graph->next_subsampling_cache2);
+        for (int64_t layer = 0; layer < enc.layers; ++layer) {
+            chain(graph->next_attention_key_cache[static_cast<size_t>(layer)]);
+            chain(graph->next_attention_value_cache[static_cast<size_t>(layer)]);
+            chain(graph->next_conv_cache[static_cast<size_t>(layer)]);
+        }
+        graph->output = engine::core::wrap_tensor(dep_tensor, graph->output.shape, GGML_TYPE_F32);
+    }
+
     graph->graph = ggml_new_graph_custom(graph->ggml, kEncoderGraphNodes, false);
     ggml_build_forward_expand(graph->graph, graph->output.tensor);
     ggml_build_forward_expand(graph->graph, graph->next_subsampling_cache0.tensor);
@@ -1237,38 +1263,7 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
                 engine::core::read_tensor_f32_into(
                     backend_cache_source->next_attention_key_cache[layer].tensor,
                     attention_key_scratch_);
-                if (layer == 0) {
-                    double kn = 0.0;
-                    for (float v : attention_key_scratch_) kn += double(v) * v;
-                    std::cerr << "[KVCPY] layer0 k_elems=" << attention_key_scratch_.size()
-                              << " src_k_norm=" << std::sqrt(kn / std::max<size_t>(attention_key_scratch_.size(), 1)) << std::endl;
-                }
-                // Lookahead 0: retain only the most recent prefix frame's KEY
-                // (zeroing older prefix keys; values are kept). The copied
-                // longer prefix corrupts the attention output — the error grows
-                // with the prefix length (measured constant garbage outputs) —
-                // while the single-key prefix verifies correct on the full
-                // phrase matrix. Left-context continuity at 80 ms chunks is
-                // carried by the per-layer conv caches (kernel 9 = 720 ms), not
-                // the attention prefix.
-                const bool la0_key_trim = lookahead_tokens == 0 &&
-                                          graph.attention_key_cache[layer].shape.dims[2] > 1;
-                if (la0_key_trim) {
-                    const size_t keep = static_cast<size_t>(graph.attention_key_cache[layer].shape.dims[1] * graph.attention_key_cache[layer].shape.dims[3]);
-                    std::copy_n(attention_key_scratch_.end() - static_cast<std::ptrdiff_t>(keep),
-                                keep,
-                                attention_key_scratch_.begin());
-                    std::fill_n(attention_key_scratch_.begin(), attention_key_scratch_.size() - keep, 0.0f);
-                }
                 engine::core::write_tensor_f32(graph.attention_key_cache[layer], attention_key_scratch_);
-                if (layer == 0) {
-                    std::vector<float> back(attention_key_scratch_.size());
-                    engine::core::read_tensor_f32_into(graph.attention_key_cache[layer].tensor, back);
-                    double kn = 0.0; double dn = 0.0;
-                    for (size_t i = 0; i < back.size(); ++i) { kn += double(back[i]) * back[i]; dn += double(back[i] - attention_key_scratch_[i]) * (back[i] - attention_key_scratch_[i]); }
-                    std::cerr << "[KVCPY] dst_norm=" << std::sqrt(kn / std::max<size_t>(back.size(), 1))
-                              << " roundtrip_diff=" << std::sqrt(dn / std::max<size_t>(back.size(), 1)) << std::endl;
-                }
                 if (layer == 0) {
                     debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(131));
                 }

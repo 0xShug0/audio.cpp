@@ -438,7 +438,12 @@ NemotronDecodedText NemotronDecoderRuntime::decode(
     bool decoder_cache_initialized = false;
     while (frame_index < encoded.valid_frames && static_cast<int64_t>(out.token_ids.size()) - 1 < max_tokens) {
         const float * frame = encoded.values.data() + static_cast<std::ptrdiff_t>(frame_index * encoded.hidden_size);
+        double nrm = 0.0;
+        for (int64_t d = 0; d < encoded.hidden_size; ++d) nrm += double(frame[d]) * frame[d];
         const int32_t token = run_step(input_token, frame, decoder_cache_initialized);
+        std::cerr << "[OFF] f=" << frame_index << " norm=" << std::sqrt(nrm / encoded.hidden_size)
+                  << " v=" << frame[0] << "," << frame[1] << "," << frame[2] << "," << frame[3]
+                  << " tok=" << token << std::endl;
         decoder_cache_initialized = true;
         out.token_ids.push_back(token);
         const bool blank = token == static_cast<int32_t>(config.blank_token_id);
@@ -506,6 +511,7 @@ void NemotronDecoderRuntime::decode_stream_chunk(
         for (int64_t d = 0; d < chunk.hidden_size; ++d) nrm += double(frame[d]) * frame[d];
         const int32_t token = run_step(stream_input_token_, frame, stream_decoder_cache_initialized_);
         std::cerr << "[INC] f=" << stream_frame_index_ << " norm=" << std::sqrt(nrm / chunk.hidden_size)
+                  << " v=" << frame[0] << "," << frame[1] << "," << frame[2] << "," << frame[3]
                   << " tok=" << token << std::endl;
         stream_decoder_cache_initialized_ = true;
         stream_token_ids_.push_back(token);
