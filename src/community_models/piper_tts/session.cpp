@@ -99,7 +99,7 @@ PiperTtsSession::PiperTtsSession(
         assets_->config.espeak_voice,
         assets_->config.phoneme_id_map,
         1000);
-    runtime_ = std::make_unique<PiperTtsNativeRuntime>(
+    runtime_ = std::make_unique<PiperVitsRuntime>(
         assets_,
         options.backend);
 }
@@ -118,12 +118,16 @@ void PiperTtsSession::prepare(const runtime::SessionPreparationRequest & request
 PiperTtsGenerationOptions PiperTtsSession::generation_options(
     const runtime::TaskRequest & request) const {
     PiperTtsGenerationOptions out;
-    if (const auto value = runtime::parse_finite_float_option(
+    if (const auto value = runtime::parse_positive_finite_float_option(
             request.options,
-            {"speaking_rate"})) {
+            {"speed"})) {
         out.speaking_rate = *value;
     }
-    if (out.speaking_rate < 0.5F || out.speaking_rate > 2.0F) {
+    if (request.voice.has_value() && request.voice->style.has_value() &&
+        request.voice->style->speaking_rate.has_value()) {
+        out.speaking_rate = *request.voice->style->speaking_rate;
+    }
+    if (!std::isfinite(out.speaking_rate) || out.speaking_rate < 0.5F || out.speaking_rate > 2.0F) {
         throw std::runtime_error("Piper TTS speaking_rate must be between 0.5 and 2.0");
     }
     if (const auto value = runtime::parse_finite_float_option(

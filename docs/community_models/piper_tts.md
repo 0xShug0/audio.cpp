@@ -26,7 +26,7 @@ audiocpp_cli --task tts --family piper_tts \
 
 | Option | Range | Default | Description |
 |---|---:|---:|---|
-| `speaking_rate` | `0.5`-`2.0` | `1.0` | Speech speed multiplier; larger values are faster. |
+| `speed` | `0.5`-`2.0` | `1.0` | Speech speed multiplier; larger values are faster. |
 | `variation` | `0.0`-`1.0` | `0.667` | Acoustic latent noise scale. |
 | `duration_variation` | `0.0`-`2.0` | `0.8` | Stochastic duration noise scale. |
 | `seed` | non-negative integer | `1234` | Generation seed. |

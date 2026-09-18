@@ -2,7 +2,7 @@
 
 #include "engine/community_models/piper_tts/assets.h"
 #include "engine/community_models/piper_tts/frontend.h"
-#include "engine/community_models/piper_tts/runtime.h"
+#include "engine/community_models/piper_tts/vits_runtime.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 
@@ -37,7 +37,7 @@ private:
     std::shared_ptr<const PiperTtsAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<PiperTtsFrontend> frontend_;
-    std::unique_ptr<PiperTtsNativeRuntime> runtime_;
+    std::unique_ptr<PiperVitsRuntime> runtime_;
 };
 
 }  // namespace engine::models::piper_tts

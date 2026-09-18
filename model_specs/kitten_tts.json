@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "family": "piper_tts",
-  "display_name": "Piper TTS",
-  "description": "Native VITS inference for Piper text-to-speech voices using the shared eSpeak-ng frontend.",
+  "family": "kitten_tts",
+  "display_name": "KittenTTS Mini 0.8",
+  "description": "Native KittenTTS Mini 0.8 English text-to-speech with eight built-in voices and shared eSpeak-ng phonemization.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -21,6 +21,7 @@
   },
   "capabilities": {
     "tts": [
+      "built_in_voices",
       "long_form"
     ]
   },
@@ -31,35 +32,15 @@
         "type": "float",
         "description": "Speech speed multiplier; larger values produce faster speech.",
         "required": false,
-        "min": 0.5,
-        "max": 2.0,
+        "min": 0.01,
         "default": 1.0
-      },
-      {
-        "name": "variation",
-        "type": "float",
-        "description": "Acoustic latent noise scale.",
-        "required": false,
-        "min": 0.0,
-        "max": 1.0,
-        "default": 0.667
-      },
-      {
-        "name": "duration_variation",
-        "type": "float",
-        "description": "Stochastic duration noise scale.",
-        "required": false,
-        "min": 0.0,
-        "max": 2.0,
-        "default": 0.8
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Non-negative generation seed.",
+        "description": "Decoder noise seed; omitted requests choose a random seed.",
         "required": false,
-        "min": 0,
-        "default": 1234
+        "min": 0
       },
       {
         "name": "text_chunk_mode",
@@ -79,11 +60,58 @@
         "type": "int",
         "description": "Maximum Unicode codepoints per long-form chunk.",
         "required": false,
-        "min": 1,
-        "default": 280
+        "min": 32,
+        "default": 400
       }
     ],
     "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Storage type for matrix multiplication weights.",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "preset": "weight_type_conv",
+        "description": "Storage type for convolution weights.",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy.",
+        "values": [
+          "fixed",
+          "tiered",
+          "grow",
+          "double"
+        ],
+        "required": false,
+        "default": "fixed"
+      },
+      {
+        "name": "max_input_tokens",
+        "type": "int",
+        "description": "Maximum predictor input token capacity.",
+        "required": false,
+        "min": 1,
+        "max": 512,
+        "default": 512
+      },
+      {
+        "name": "pre_tail_tokens",
+        "type": "int",
+        "description": "Optional prebuilt predictor tail token capacity.",
+        "required": false,
+        "min": 0,
+        "max": 512,
+        "default": 0
+      },
       {
         "name": "espeak_library_path",
         "type": "path",
@@ -109,28 +137,39 @@
   },
   "packages": [
     {
-      "id": "piper_lessac_medium_orig",
-      "display_name": "Piper Lessac Medium Original-Dtype GGUF",
+      "id": "kitten_tts_mini_0_8_orig",
+      "display_name": "KittenTTS Mini 0.8 Original-Dtype GGUF",
       "default": true,
       "format": "gguf",
       "precision": "orig",
-      "target_directory": "Piper-TTS-GGUF",
+      "target_directory": "KittenTTS-GGUF",
       "files": [
-        "Piper-TTS-GGUF/piper-en-us-lessac-medium-orig.gguf"
+        "KittenTTS-GGUF/kitten-tts-mini-0.8-orig.gguf"
       ],
-      "strip_prefix": "Piper-TTS-GGUF"
+      "strip_prefix": "KittenTTS-GGUF"
     }
   ],
   "dependencies": [],
   "ui": {
-    "recommended_package": "piper_lessac_medium_orig",
+    "recommended_package": "kitten_tts_mini_0_8_orig",
     "tags": [
       "TTS",
       "GGUF"
     ],
+    "builtin_voices": [
+      "Bella",
+      "Jasper",
+      "Luna",
+      "Bruno",
+      "Rosie",
+      "Hugo",
+      "Kiki",
+      "Leo"
+    ],
+    "default_voice": "Leo",
     "docs": [
+      "docs/community_models/kitten_tts.md",
       "docs/tts.md",
-      "docs/community_models/piper_tts.md",
       "docs/gguf.md"
     ]
   },
@@ -147,7 +186,7 @@
       "tensors": {
         "weights": {
           "source": "weights:",
-          "prefix": "weights"
+          "prefix": "kitten"
         }
       }
     },
@@ -160,7 +199,7 @@
         "config": "model:config.json"
       },
       "tensors": {
-        "weights": "model:model.safetensors"
+        "weights": "model:ggml/kitten_tts.safetensors"
       }
     }
   ]

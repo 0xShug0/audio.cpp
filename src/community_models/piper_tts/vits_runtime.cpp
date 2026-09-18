@@ -1,4 +1,4 @@
-#include "engine/community_models/piper_tts/runtime.h"
+#include "engine/community_models/piper_tts/vits_runtime.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
@@ -1246,7 +1246,7 @@ ExpandedPrior expand_prior(
 
 }  // namespace
 
-struct PiperTtsNativeRuntime::State {
+struct PiperVitsRuntime::State {
     struct BackendOwner {
         ggml_backend_t value = nullptr;
         ~BackendOwner() {
@@ -1381,14 +1381,14 @@ struct PiperTtsNativeRuntime::State {
     runtime::CacheSlots<int64_t, std::unique_ptr<DecoderGraph>> decoder_graphs{2};
 };
 
-PiperTtsNativeRuntime::PiperTtsNativeRuntime(
+PiperVitsRuntime::PiperVitsRuntime(
     std::shared_ptr<const PiperTtsAssets> assets,
     core::BackendConfig backend_config)
     : state_(std::make_unique<State>(std::move(assets), backend_config)) {}
 
-PiperTtsNativeRuntime::~PiperTtsNativeRuntime() = default;
+PiperVitsRuntime::~PiperVitsRuntime() = default;
 
-runtime::AudioBuffer PiperTtsNativeRuntime::synthesize(
+runtime::AudioBuffer PiperVitsRuntime::synthesize(
     const std::vector<int32_t> & token_ids,
     const PiperTtsGenerationOptions & options) {
     if (token_ids.empty()) {

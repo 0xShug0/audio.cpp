@@ -81,6 +81,7 @@ Status labels:
 | `index_tts2` | Done (v2 + v2.5 variant) | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
+| `kitten_tts` | Done | --- | Pass (drift) | --- | --- |
 | `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
 | `meanvc2` | Done | --- | --- | Pass | --- |

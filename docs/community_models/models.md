@@ -26,6 +26,7 @@ Practical expectations:
 | **granite5asr** | ASR | en | Community | [IBM Granite Speech 5.0 470M TurboCTC](granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
 | **inflect_v2** | TTS | en | Community | [Inflect Micro v2 and Nano v2](inflect_v2.md) native FP32 offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
+| **kitten_tts** | TTS | en | Community | [KittenTTS Mini 0.8](kitten_tts.md) native 80M-parameter synthesis with eight built-in voices and the shared eSpeak-ng frontend |
 | **liveavatar** | Audio-to-video | auto | [@0xShug0](https://github.com/0xShug0) | [LiveAvatar](liveavatar.md) audio-to-video avatar generation with Wan2.2 S2V and an optional low-VRAM denoiser path |
 | **mms_forced_aligner** | Align | nl (nld), en (eng); pre-romanized Latin | Community | [MMS-300M-1130 Forced Aligner](mms_forced_aligner.md) word-timestamp alignment from a wav2vec2 CTC checkpoint (safetensors or local GGUF) |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |

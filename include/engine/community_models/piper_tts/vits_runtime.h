@@ -15,12 +15,12 @@ struct PiperTtsGenerationOptions {
     uint32_t seed = 1234;
 };
 
-class PiperTtsNativeRuntime {
+class PiperVitsRuntime {
 public:
-    PiperTtsNativeRuntime(
+    PiperVitsRuntime(
         std::shared_ptr<const PiperTtsAssets> assets,
         core::BackendConfig backend_config);
-    ~PiperTtsNativeRuntime();
+    ~PiperVitsRuntime();
 
     runtime::AudioBuffer synthesize(
         const std::vector<int32_t> & token_ids,
