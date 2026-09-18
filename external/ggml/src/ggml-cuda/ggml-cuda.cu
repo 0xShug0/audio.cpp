@@ -3955,7 +3955,10 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
         const auto * add = cgraph->nodes[node_idx + 3];
         const auto * glu = cgraph->nodes[node_idx + 4];
         const auto * copy = cgraph->nodes[node_idx + 5];
-        if (ggml_get_op_params_i32(scan, 0) != GGML_SSM_SCAN_FUSION_GATE ||
+        if (!ggml_can_fuse_subgraph(cgraph, node_idx,
+                { GGML_OP_SSM_SCAN, GGML_OP_VIEW, GGML_OP_MUL, GGML_OP_ADD, GGML_OP_GLU, GGML_OP_CPY },
+                { node_idx + 5 }) ||
+            ggml_get_op_params_i32(scan, 0) != GGML_SSM_SCAN_FUSION_GATE ||
             view->op != GGML_OP_VIEW || copy->op != GGML_OP_CPY ||
             ggml_node_get_use_count(cgraph, node_idx) != 1 ||
             ggml_node_get_use_count(cgraph, node_idx + 1) != 2 ||
