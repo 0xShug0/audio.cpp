@@ -13,6 +13,13 @@ const core::ModulePortSpec kBinaryInputs[] = {
     {"rhs", core::PortKind::Activation, false},
 };
 
+const core::ModulePortSpec kRopeInterleavedPairsInputs[] = {
+    {"even", core::PortKind::Activation, false},
+    {"odd", core::PortKind::Activation, false},
+    {"cos", core::PortKind::Activation, false},
+    {"sin", core::PortKind::Activation, false},
+};
+
 const core::ModulePortSpec kSingleInput[] = {
     {"input", core::PortKind::Activation, false},
 };
@@ -65,6 +72,16 @@ const core::ModuleSchema kMulSchema = {
 const core::ModulePortSpec kTimeMask4dInputs[] = {
     {"input", core::PortKind::Activation, false},
     {"mask", core::PortKind::Activation, false},
+};
+
+const core::ModuleSchema kRopeInterleavedPairsSchema = {
+    "RopeInterleavedPairs",
+    "tensor.position",
+    kRopeInterleavedPairsInputs,
+    4,
+    kSingleOutput,
+    1,
+    "Applies rotary position embedding to split even/odd pairs and returns interleaved pairs.",
 };
 
 const core::ModuleSchema kTimeMask4dSchema = {
@@ -281,6 +298,38 @@ core::TensorValue MulModule::build(
 
 const core::ModuleSchema & MulModule::static_schema() noexcept {
     return kMulSchema;
+}
+
+const core::ModuleSchema & RopeInterleavedPairsModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue RopeInterleavedPairsModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & even,
+    const core::TensorValue & odd,
+    const core::TensorValue & cos,
+    const core::TensorValue & sin) const {
+    if (ctx.ggml == nullptr) {
+        throw std::runtime_error("ModuleBuildContext.ggml is null");
+    }
+    validate_same_shape(even, odd, "RopeInterleavedPairs");
+    validate_same_shape(even, cos, "RopeInterleavedPairs");
+    validate_same_shape(even, sin, "RopeInterleavedPairs");
+    if (even.type != odd.type || cos.type != GGML_TYPE_F32 || sin.type != GGML_TYPE_F32) {
+        throw std::runtime_error("RopeInterleavedPairs expects matching even/odd type and F32 cos/sin");
+    }
+
+    core::TensorShape output_shape = even.shape;
+    output_shape.dims[output_shape.rank - 1] = 2;
+    return core::wrap_tensor(
+        ggml_rope_interleaved_pairs(ctx.ggml, even.tensor, odd.tensor, cos.tensor, sin.tensor),
+        output_shape,
+        even.type);
+}
+
+const core::ModuleSchema & RopeInterleavedPairsModule::static_schema() noexcept {
+    return kRopeInterleavedPairsSchema;
 }
 
 const core::ModuleSchema & TimeMask4dModule::schema() const noexcept {

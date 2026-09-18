@@ -336,7 +336,11 @@ core::TensorValue ConcatModule::build(
     core::TensorShape output_shape = lhs.shape;
     output_shape.dims[config_.axis] += rhs.shape.dims[config_.axis];
     const int ggml_axis = core::logical_axis_to_ggml_axis(lhs.shape.rank, config_.axis);
-    return core::wrap_tensor(ggml_concat(ctx.ggml, lhs.tensor, rhs.tensor, ggml_axis), output_shape, lhs.type);
+    auto * raw = ggml_concat(ctx.ggml, lhs.tensor, rhs.tensor, ggml_axis);
+    if (config_.cuda_contiguous_4d_lowering) {
+        ggml_concat_set_lowering(raw, GGML_CONCAT_LOWERING_CUDA_CONTIGUOUS_4D);
+    }
+    return core::wrap_tensor(raw, output_shape, lhs.type);
 }
 
 const core::ModuleSchema & ConcatModule::static_schema() noexcept {
