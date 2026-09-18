@@ -100,7 +100,8 @@ bool raw_dtype_matches_ggml_type(std::string_view dtype, ggml_type type) {
            (normalized == "q4_k" && type == GGML_TYPE_Q4_K) ||
            (normalized == "q5_k" && type == GGML_TYPE_Q5_K) ||
            (normalized == "q6_k" && type == GGML_TYPE_Q6_K) ||
-           (normalized == "q8_0" && type == GGML_TYPE_Q8_0);
+           (normalized == "q8_0" && type == GGML_TYPE_Q8_0) ||
+           (normalized == "nvfp4" && type == GGML_TYPE_NVFP4);
 }
 
 ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
@@ -123,6 +124,7 @@ ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
     if (normalized == "q4_k") return GGML_TYPE_Q4_K;
     if (normalized == "q5_k") return GGML_TYPE_Q5_K;
     if (normalized == "q6_k") return GGML_TYPE_Q6_K;
+    if (normalized == "nvfp4") return GGML_TYPE_NVFP4;
     throw std::runtime_error("unsupported tensor dtype for GGUF: " + std::string(dtype));
 }
 
@@ -1405,6 +1407,9 @@ TensorStorageType parse_tensor_storage_type(std::string_view value) {
     if (normalized == "q8_0") {
         return TensorStorageType::Q8_0;
     }
+    if (normalized == "nvfp4") {
+        return TensorStorageType::NVFP4;
+    }
     throw std::runtime_error("unsupported tensor storage type: " + std::string(value));
 }
 
@@ -1440,6 +1445,8 @@ ggml_type ggml_type_for_tensor_storage(TensorStorageType storage_type) {
             return GGML_TYPE_Q6_K;
         case TensorStorageType::Q8_0:
             return GGML_TYPE_Q8_0;
+        case TensorStorageType::NVFP4:
+            return GGML_TYPE_NVFP4;
     }
     throw std::runtime_error("unknown tensor storage type");
 }
@@ -1487,6 +1494,9 @@ TensorStorageType tensor_storage_type_for_dtype(std::string_view dtype) {
     }
     if (normalized == "q8_0") {
         return TensorStorageType::Q8_0;
+    }
+    if (normalized == "nvfp4") {
+        return TensorStorageType::NVFP4;
     }
     throw std::runtime_error("unsupported native tensor dtype: " + std::string(dtype));
 }

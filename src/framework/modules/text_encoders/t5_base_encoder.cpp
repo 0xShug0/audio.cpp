@@ -90,11 +90,11 @@ core::TensorValue reshape_heads(
 core::TensorValue relative_position_bias(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & relative_position_buckets,
-    const T5BaseEncoderWeights & weights,
+    const core::TensorValue & relative_attention_bias,
     const T5BaseEncoderConfig & config,
     int64_t batch) {
     auto bias = EmbeddingModule({config.relative_attention_num_buckets, config.attention_heads})
-                    .build(ctx, relative_position_buckets, weights.relative_attention_bias);
+                    .build(ctx, relative_position_buckets, relative_attention_bias);
     bias = core::reshape_tensor(
         ctx,
         contiguous(ctx, bias),
@@ -149,7 +149,19 @@ core::TensorValue feed_forward(
     const T5BaseEncoderConfig & config) {
     auto hidden = LinearModule({config.hidden_size, config.intermediate_size, false, GGML_PREC_F32})
                       .build(ctx, input, weights.wi_proj);
-    hidden = ReluModule{}.build(ctx, hidden);
+    if (config.feed_forward_kind == T5BaseFeedForwardKind::Relu) {
+        hidden = ReluModule{}.build(ctx, hidden);
+    } else if (config.feed_forward_kind == T5BaseFeedForwardKind::GatedGeluTanh) {
+        if (!weights.gate_proj.weight.valid()) {
+            throw std::runtime_error("T5BaseEncoder gated GELU feed-forward requires gate_proj.weight");
+        }
+        auto gate = LinearModule({config.hidden_size, config.intermediate_size, false, GGML_PREC_F32})
+                        .build(ctx, input, weights.gate_proj);
+        gate = GeluModule({GeluApproximation::Tanh}).build(ctx, gate);
+        hidden = MulModule{}.build(ctx, hidden, gate);
+    } else {
+        throw std::runtime_error("Unsupported T5BaseEncoder feed-forward kind");
+    }
     return LinearModule({config.intermediate_size, config.hidden_size, false, GGML_PREC_F32})
         .build(ctx, hidden, weights.wo_proj);
 }
@@ -232,14 +244,30 @@ core::TensorValue T5BaseEncoderModule::build(
         additive_attention_mask,
         core::TensorShape::from_dims({batch, config_.attention_heads, tokens, tokens}),
         "T5BaseEncoder additive_attention_mask");
-    core::validate_shape(weights.relative_attention_bias, core::TensorShape::from_dims(
-        {config_.relative_attention_num_buckets, config_.attention_heads}), "T5BaseEncoder relative_attention_bias");
     if (static_cast<int64_t>(weights.layers.size()) != config_.layers) {
         throw std::runtime_error("T5BaseEncoder layer count mismatch");
     }
     auto hidden = EmbeddingModule({config_.vocab_size, config_.hidden_size}).build(ctx, input_ids, weights.embed_tokens);
-    const auto position_bias = relative_position_bias(ctx, relative_position_buckets, weights, config_, batch);
+    core::TensorValue shared_position_bias;
+    if (config_.shared_relative_position_bias) {
+        core::validate_shape(weights.relative_attention_bias, core::TensorShape::from_dims(
+            {config_.relative_attention_num_buckets, config_.attention_heads}), "T5BaseEncoder relative_attention_bias");
+        shared_position_bias = relative_position_bias(
+            ctx, relative_position_buckets, weights.relative_attention_bias, config_, batch);
+    }
     for (int64_t i = 0; i < config_.layers; ++i) {
+        auto position_bias = shared_position_bias;
+        if (!config_.shared_relative_position_bias) {
+            const auto & layer = weights.layers[static_cast<size_t>(i)];
+            if (!layer.relative_attention_bias.has_value()) {
+                throw std::runtime_error("T5BaseEncoder layer relative position bias is missing");
+            }
+            core::validate_shape(*layer.relative_attention_bias, core::TensorShape::from_dims(
+                {config_.relative_attention_num_buckets, config_.attention_heads}),
+                "T5BaseEncoder layer relative_attention_bias");
+            position_bias = relative_position_bias(
+                ctx, relative_position_buckets, *layer.relative_attention_bias, config_, batch);
+        }
         hidden = encoder_layer(ctx, hidden, position_bias, additive_attention_mask, weights.layers[static_cast<size_t>(i)], config_);
     }
     return t5_layer_norm(ctx, hidden, weights.final_layer_norm, config_);

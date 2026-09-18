@@ -52,6 +52,9 @@ struct Conv2dConfig {
     int dilation_height = 1;
     int dilation_width = 1;
     bool use_bias = true;
+    bool cuda_fast_lowering = false;
+    bool cuda_large_shape_lowering = false;
+    bool cuda_tile_f16_accum_output_lowering = false;
 };
 
 struct Conv2dWeights {
@@ -93,6 +96,9 @@ struct Conv3dConfig {
     int dilation_height = 1;
     int dilation_width = 1;
     bool use_bias = true;
+    bool cuda_fast_lowering = false;
+    bool cuda_large_shape_lowering = false;
+    bool cuda_tile_f16_accum_output_lowering = false;
 };
 
 struct Conv3dWeights {
