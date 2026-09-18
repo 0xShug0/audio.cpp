@@ -4,7 +4,7 @@ Audio8 TTS Preview 0.6B (Qwen backbone) and 0.1B (Falcon-H1 hybrid Mamba2+attent
 S2 Pro: a slow semantic transformer generates speech semantics, a fast codebook transformer expands each semantic step into a full codec frame, and a neural codec renders 44.1 kHz audio. The native path executes all three
 stages directly on ggml with no Python dependency.
 
-> **Status 2026-08-29:** `0.6B` Qwen is fully native, CPU-validated via SenseVoice ASR round-trip (`The quick brown fox…`, `你好，欢迎使用audio8。`, `Artificial intelligence…`). `0.1B` Falcon-H1 is weight-complete and builds natively (GGUF `slow.embed_tokens` + `24× mamba/attention` + `semantic_output`), but the slow AR forward is a documented stub pending the Mamba2 port — see `docs/FALCON_H1_0.1B_PORT_PLAN.md` and `src/community_models/audio8_tts/ar.cpp:861` `TODO(Falcon-H1)`.
+> **Status 2026-09-01:** `0.6B` Qwen is fully native, CPU-validated via SenseVoice ASR round-trip (`The quick brown fox…`, `你好，欢迎使用audio8。`, `Artificial intelligence…`). `0.1B` Falcon-H1 now has a **stateful native slow-AR forward** (Mamba2 + hybrid GQA attention, branch `feat/audio8-tts-falcon-h1-mamba2`), but it is **not yet correct for synthesis** — two open issues (logits argmax mismatch vs transformers reference, and recurrent SSM state blow-up on long sequences). See [audio8_tts_falcon_h1_status.md](audio8_tts_falcon_h1_status.md) for details and next steps.
 
 | Field | Value |
 |---|---|

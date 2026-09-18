@@ -1,9 +1,12 @@
+#include <cstdlib>
+
 #include "engine/community_models/audio8_tts/codec.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -463,6 +466,131 @@ core::TensorValue build_window_transformer(
     return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
 }
 
+// ---- Channel-fast decoder region (Metal only) --------------------------------------
+// The decoder's residual units are back-to-back stride-1 convolutions separated only by
+// snake activations and residual adds -- all elementwise, hence layout-agnostic. Running
+// a whole block (snake -> convT upsample -> 3 residual units) in channel-fast
+// [channels, frames] layout avoids the two transposes per conv that the module-level
+// fast path pays at every boundary, and the convT's own internal transpose. Numerics
+// are unchanged: identical GEMMs, identical elementwise ops, same accumulation order.
+
+bool codec_channel_fast_decoder_enabled() {
+    static const bool enabled = [] {
+        const char * value = std::getenv("AUDIO8_TTS_CODEC_CHANNEL_FAST");
+        return value == nullptr || value[0] != '0';
+    }();
+    return enabled;
+}
+
+ggml_tensor * channel_fast_in(core::ModuleBuildContext & ctx, const core::TensorValue & x) {
+    const auto contiguous = core::ensure_backend_addressable_layout(ctx, x);
+    return ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, contiguous.tensor));
+}
+
+core::TensorValue channel_fast_out(core::ModuleBuildContext & ctx, ggml_tensor * x_cf, int64_t channels) {
+    return core::wrap_tensor(
+        ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, x_cf)),
+        core::TensorShape::from_dims({1, channels, x_cf->ne[1]}),
+        GGML_TYPE_F32);
+}
+
+// snake(x)[c, t] = x + sin^2(alpha_c * x) / alpha_c, alpha broadcast along frames.
+ggml_tensor * snake1d_channel_fast(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * x_cf,
+    const core::TensorValue & alpha) {
+    auto * alpha_cf = ggml_reshape_2d(ctx.ggml, alpha.tensor, alpha.tensor->ne[0], 1);
+    // Fused snake op: one elementwise pass instead of a 5-kernel chain (mul -> sin ->
+    // mul -> div -> add) over the largest decoder tensors. Per-element op order matches
+    // the chain; residual differences are metal sin ulp-level only (max int16 delta 12
+    // over a full utterance vs the chain). Set AUDIO8_TTS_CODEC_SNAKE_FUSED=0 to fall
+    // back to the explicit chain.
+    static const bool fused_disabled = [] {
+        const char * e = std::getenv("AUDIO8_TTS_CODEC_SNAKE_FUSED");
+        return e && e[0] == '0' && e[1] == '\0';
+    }();
+    if (!fused_disabled) {
+        ggml_tensor * alpha_f32 = alpha_cf;
+        if (alpha_f32->type != GGML_TYPE_F32) {
+            alpha_f32 = ggml_cast(ctx.ggml, alpha_f32, GGML_TYPE_F32);
+        }
+        return ggml_snake_1d(ctx.ggml, x_cf, alpha_f32);
+    }
+    auto * ax = ggml_mul(ctx.ggml, x_cf, alpha_cf);
+    auto * s = ggml_sin(ctx.ggml, ax);
+    auto * s2 = ggml_mul(ctx.ggml, s, s);
+    return ggml_add(ctx.ggml, x_cf, ggml_div(ctx.ggml, s2, alpha_cf));
+}
+
+// Causal left pad built from scaled-to-zero columns of the input itself: activations are
+// finite so x * 0 is a bitwise zero, and snake(+-0) = +0 keeps the pad region exact.
+ggml_tensor * channel_fast_causal_pad(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * x_cf,
+    int64_t channels,
+    int64_t left_pad) {
+    if (left_pad <= 0) {
+        return x_cf;
+    }
+    auto * head = ggml_view_2d(ctx.ggml, x_cf, channels, left_pad, x_cf->nb[1], 0);
+    auto * zeros = ggml_scale(ctx.ggml, head, 0.0f);
+    return ggml_concat(ctx.ggml, zeros, x_cf, 1);
+}
+
+ggml_tensor * causal_conv1d_channel_fast(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * x_cf,
+    const modules::Conv1dWeights & weights,
+    int64_t channels,
+    int64_t kernel,
+    int dilation) {
+    const int64_t left_pad = (kernel - 1) * dilation;  // stride == 1
+    auto * padded = channel_fast_causal_pad(ctx, x_cf, channels, left_pad);
+    return modules::conv1d_pertap_channel_fast(
+        ctx,
+        weights,
+        padded,
+        modules::Conv1dConfig{channels, channels, kernel, 1, 0, dilation, true});
+}
+
+ggml_tensor * residual_unit_channel_fast(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * x_cf,
+    const ResidualUnitWeights & weights,
+    int64_t channels,
+    int dilation) {
+    const int64_t frames = x_cf->ne[1];
+    auto * y = snake1d_channel_fast(ctx, x_cf, weights.snake1.alpha);
+    y = causal_conv1d_channel_fast(ctx, y, weights.conv1, channels, 7, dilation);
+    y = snake1d_channel_fast(ctx, y, weights.snake2.alpha);
+    y = causal_conv1d_channel_fast(ctx, y, weights.conv2, channels, 1, 1);
+    ggml_tensor * residual = x_cf;
+    if (y->ne[1] != frames) {
+        residual = ggml_view_2d(ctx.ggml, x_cf, channels, y->ne[1], x_cf->nb[1], 0);
+    }
+    return ggml_add(ctx.ggml, residual, y);
+}
+
+// Transposed-conv upsample on channel-fast input; the col2im output is time-fast, so
+// the causal trim and the transpose back happen here.
+ggml_tensor * causal_conv_transpose1d_channel_fast(
+    core::ModuleBuildContext & ctx,
+    ggml_tensor * x_cf,
+    const modules::ConvTranspose1dWeights & weights,
+    int64_t in_channels,
+    int64_t out_channels,
+    int64_t kernel,
+    int stride) {
+    auto * out_tf = modules::conv_transpose1d_col2im_channel_fast(
+        ctx,
+        weights,
+        x_cf,
+        modules::ConvTranspose1dConfig{in_channels, out_channels, kernel, stride, 0, 1, true});
+    const int64_t pad = kernel - stride;  // padding_left == 0; drop the trailing frames
+    auto * trimmed = ggml_view_2d(ctx.ggml, out_tf, out_tf->ne[0] - pad, out_channels, out_tf->nb[1], 0);
+    return ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, trimmed));
+}
+
 core::TensorValue build_residual_unit(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -531,14 +659,29 @@ core::TensorValue build_decoder(
     auto x = causal_conv1d(ctx, input, weights.decoder_first, kCodecDim, 1536, 7, 1, 1, true);
     int64_t channels = 1536;
     const int strides[] = {8, 8, 4, 2};
-    for (size_t index = 0; index < weights.decoder_blocks.size(); ++index) {
-        const auto & block = weights.decoder_blocks[index];
-        x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
-        x = causal_conv_transpose1d(ctx, x, block.conv, channels, channels / 2, 2 * strides[index], strides[index], true);
-        channels /= 2;
-        x = build_residual_unit(ctx, x, block.residual1, channels, 1);
-        x = build_residual_unit(ctx, x, block.residual3, channels, 3);
-        x = build_residual_unit(ctx, x, block.residual9, channels, 9);
+    if (ctx.backend_type == core::BackendType::Metal && codec_channel_fast_decoder_enabled()) {
+        ggml_tensor * x_cf = channel_fast_in(ctx, x);
+        for (size_t index = 0; index < weights.decoder_blocks.size(); ++index) {
+            const auto & block = weights.decoder_blocks[index];
+            x_cf = snake1d_channel_fast(ctx, x_cf, block.snake.alpha);
+            x_cf = causal_conv_transpose1d_channel_fast(
+                ctx, x_cf, block.conv, channels, channels / 2, 2 * strides[index], strides[index]);
+            channels /= 2;
+            x_cf = residual_unit_channel_fast(ctx, x_cf, block.residual1, channels, 1);
+            x_cf = residual_unit_channel_fast(ctx, x_cf, block.residual3, channels, 3);
+            x_cf = residual_unit_channel_fast(ctx, x_cf, block.residual9, channels, 9);
+        }
+        x = channel_fast_out(ctx, x_cf, channels);
+    } else {
+        for (size_t index = 0; index < weights.decoder_blocks.size(); ++index) {
+            const auto & block = weights.decoder_blocks[index];
+            x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
+            x = causal_conv_transpose1d(ctx, x, block.conv, channels, channels / 2, 2 * strides[index], strides[index], true);
+            channels /= 2;
+            x = build_residual_unit(ctx, x, block.residual1, channels, 1);
+            x = build_residual_unit(ctx, x, block.residual3, channels, 3);
+            x = build_residual_unit(ctx, x, block.residual9, channels, 9);
+        }
     }
     x = modules::Snake1dModule({channels}).build(ctx, x, weights.decoder_final_snake);
     x = causal_conv1d(ctx, x, weights.decoder_final, channels, 1, 7, 1, 1, true);
@@ -884,6 +1027,7 @@ struct DecodeGraph {
             throw std::runtime_error("failed to initialize Audio8 TTS codec decode graph context");
         }
         core::ModuleBuildContext ctx{ctx_.get(), "audio8_tts.codec.decode", backend_type_};
+        const auto build_start = std::chrono::steady_clock::now();
         constants_.begin_graph();
         for (int64_t codebook = 0; codebook < assets_->config.codec.total_codebooks; ++codebook) {
             auto ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, frame_capacity_}));
@@ -902,6 +1046,10 @@ struct DecodeGraph {
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Audio8 TTS codec decode graph");
         }
+        engine::debug::timing_log_scalar(
+            "audio8_tts.codec.graph_build_ms",
+            engine::debug::elapsed_ms(build_start, std::chrono::steady_clock::now()));
+        engine::debug::trace_log_scalar("audio8_tts.codec.graph_nodes", static_cast<int64_t>(ggml_graph_n_nodes(graph_)));
     }
 
     ~DecodeGraph() {
@@ -941,8 +1089,12 @@ struct DecodeGraph {
             core::write_tensor_i32(code_inputs_[static_cast<size_t>(codebook)], padded);
         }
         core::set_backend_threads(backend_, threads_);
+        const auto compute_start = std::chrono::steady_clock::now();
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
+        engine::debug::timing_log_scalar(
+            "audio8_tts.codec.graph_compute_ms",
+            engine::debug::elapsed_ms(compute_start, std::chrono::steady_clock::now()));
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Audio8 TTS codec decode graph compute failed");
         }
