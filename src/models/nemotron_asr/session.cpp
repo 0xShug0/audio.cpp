@@ -251,10 +251,13 @@ int64_t NemotronASRSessionBase::lookahead_for_options(const std::unordered_map<s
     if (const auto value = runtime::parse_i64_option(options, {"lookahead_tokens"})) {
         lookahead = *value;
     }
-    if (std::find(
-            assets_->config.encoder.supported_lookahead_tokens.begin(),
-            assets_->config.encoder.supported_lookahead_tokens.end(),
-            lookahead) == assets_->config.encoder.supported_lookahead_tokens.end()) {
+    // The GGUF embeds supported {0,3,6,13}, but the model card declares chunk
+    // durations 80-1120 ms (lookahead 0..13) as pure runtime knobs. Accept 1
+    // (160 ms chunks) on that basis; its geometry (9-frame first window) is
+    // well-formed, unlike lookahead 0's degenerate single-frame first window.
+    const auto supported = assets_->config.encoder.supported_lookahead_tokens;
+    if (lookahead != 1 &&
+        std::find(supported.begin(), supported.end(), lookahead) == supported.end()) {
         throw std::runtime_error("Nemotron ASR unsupported lookahead_tokens value");
     }
     return lookahead;
