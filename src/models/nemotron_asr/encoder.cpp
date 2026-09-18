@@ -1,3 +1,4 @@
+#include <iostream>
 #include "engine/models/nemotron_asr/encoder.h"
 
 #include "engine/framework/core/backend.h"
@@ -720,12 +721,23 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     const bool streaming_graph = true;
     const int64_t k = enc.subsampling_kernel;
     const int64_t s = enc.subsampling_stride;
-    const bool first_chunk_time = first_chunk ? false : streaming_graph;
-    const int64_t stage1_frames = causal_conv_output_dim(input_frames, k, s, first_chunk_time);
+    // First chunk: the subsampling convs prepend a zero frame + the (zero) cache
+    // — 2 frames of left context, no right pad. The centered formula
+    // (causal_conv_output_dim(..., false)) assumes a right pad that does not
+    // exist here and overcounts for even mel counts (la0's 8-mel first window:
+    // mask 5 vs conv 4). Size the first chunk from the actual prepend instead;
+    // for odd mel counts (la3's 25-mel first window) the results are identical.
+    const int64_t stage1_frames = first_chunk
+        ? (input_frames + 2 - k) / s + 1
+        : causal_conv_output_dim(input_frames, k, s, streaming_graph);
     const int64_t stage1_features = causal_conv_output_dim(feature_dim, k, s, false);
-    const int64_t stage2_frames = causal_conv_output_dim(stage1_frames, k, s, first_chunk_time);
+    const int64_t stage2_frames = first_chunk
+        ? (stage1_frames + 2 - k) / s + 1
+        : causal_conv_output_dim(stage1_frames, k, s, streaming_graph);
     const int64_t stage2_features = causal_conv_output_dim(stage1_features, k, s, false);
-    const int64_t stage3_frames = causal_conv_output_dim(stage2_frames, k, s, first_chunk_time);
+    const int64_t stage3_frames = first_chunk
+        ? (stage2_frames + 2 - k) / s + 1
+        : causal_conv_output_dim(stage2_frames, k, s, streaming_graph);
     const int64_t stage3_features = causal_conv_output_dim(stage2_features, k, s, false);
     if (stage3_features * enc.subsampling_channels != 4352) {
         throw std::runtime_error("Nemotron ASR streaming subsampling feature shape mismatch");
@@ -960,7 +972,6 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     debug::timing_log_scalar("nemotron_asr.encoder.stream.graph_build_ms", build_ms);
     debug::timing_log_scalar("nemotron_asr.encoder.stream.graph_rebuild_ms", build_ms);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_cache_hit", false);
-    debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_input_frames", input_frames);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_encoded_frames", stage3_frames);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_prefix_frames", prefix_frames);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_prefix_capacity", prefix_capacity);
@@ -977,7 +988,11 @@ void NemotronEncoderRuntime::release_offline_graph() {
 
 void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int64_t lookahead_tokens) {
     const auto & enc = assets_->config.encoder;
-    const int64_t first_frames = 1 + enc.subsampling_factor * lookahead_tokens;
+    // Must match the session's first-window size: at least one full encoded
+    // frame of mel input, or the first chunk misses the prebuilt graph.
+    const int64_t first_frames = std::max<int64_t>(
+        enc.subsampling_factor,
+        1 + enc.subsampling_factor * lookahead_tokens);
     const int64_t next_frames = enc.subsampling_factor * (lookahead_tokens + 1);
     (void) ensure_stream_graph(first_frames, feature_dim, lookahead_tokens, 0, true);
     const int64_t k = enc.subsampling_kernel;
@@ -985,14 +1000,20 @@ void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int
     const int64_t stage1_frames = causal_conv_output_dim(next_frames, k, s, true);
     const int64_t stage2_frames = causal_conv_output_dim(stage1_frames, k, s, true);
     const int64_t stage3_frames = causal_conv_output_dim(stage2_frames, k, s, true);
-    // Warm the prefix ladder only up to a bound: a small lookahead yields one
-    // graph variant per prefix step (lookahead 0 -> 56 variants), and building
-    // them all at prepare time costs seconds of startup and gigabytes of graph
-    // arenas. The rest build lazily in encode_stream_chunk (~100 ms each) as the
-    // stream reaches those prefix sizes.
-    constexpr int64_t kMaxPrebuiltPrefixGraphs = 16;
+    // Warm the prefix ladder: one graph variant per prefix step up to
+    // sliding_window - 1. A small lookahead yields many variants (lookahead 0 ->
+    // 56), so the prebuild is bounded by a graph-arena commit budget instead of
+    // a variant count; variants beyond the budget build lazily in
+    // encode_stream_chunk (~100 ms each) as the stream reaches them. The
+    // streaming-graph arena is metadata-only, so 64 MB per variant keeps the
+    // whole ladder affordable and the stream stall-free.
+    constexpr size_t kMaxPrebuildArenaCommit = 6ull << 30;  // 6 GB
+    const size_t per_variant = stream_graph_arena_bytes_;
+    const int64_t kMaxPrebuiltPrefixGraphs =
+        static_cast<int64_t>(kMaxPrebuildArenaCommit / std::max<size_t>(per_variant, 1));
     int64_t prebuilt = 0;
-    for (int64_t prefix = stage3_frames; prefix < enc.sliding_window && prebuilt < kMaxPrebuiltPrefixGraphs;
+    for (int64_t prefix = stage3_frames;
+         prefix < enc.sliding_window && prebuilt < kMaxPrebuiltPrefixGraphs;
          prefix += stage3_frames, ++prebuilt) {
         (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, std::min<int64_t>(prefix, enc.sliding_window - 1), false);
     }

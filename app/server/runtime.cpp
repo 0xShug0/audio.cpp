@@ -3003,9 +3003,10 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         // chunking validation and decodes garbage — fail loudly instead.
         if (!query_param(request.query, "lookahead_tokens").empty()) {
             const int64_t lookahead = parse_bounded_int("lookahead_tokens", 3, 0, 13);
-            // Lookahead 0 (80 ms chunks) decodes garbage in this runtime: the
-            // single-frame first window is not covered by the reference chunking
-            // validation. Measured 2026-09-18: wrong text AND no speed benefit.
+            // lookahead 0 (80 ms chunks): the encoder geometry is fixed and the
+            // offline-quality finals work, but the incremental transducer still
+            // under-emits at 1-frame chunks (measured 'Hel'/'' finals) — reject
+            // until the per-chunk emission is debugged.
             if (lookahead < 1) {
                 throw std::runtime_error(
                     "live transcription lookahead_tokens values below 1 are not supported by this runtime");

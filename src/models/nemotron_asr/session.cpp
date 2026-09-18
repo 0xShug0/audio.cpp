@@ -1,3 +1,4 @@
+#include <iostream>
 #include "engine/models/nemotron_asr/session.h"
 
 #include "engine/framework/debug/profiler.h"
@@ -90,7 +91,9 @@ int64_t frontend_frames_for_samples(
 
 NemotronFrontendFeatures slice_features(const NemotronFrontendFeatures & in, int64_t start_frame, int64_t frames) {
     if (start_frame < 0 || frames <= 0 || start_frame + frames > in.frames) {
-        throw std::runtime_error("Nemotron ASR streaming feature slice is out of range");
+        throw std::runtime_error("Nemotron ASR streaming feature slice is out of range (start=" +
+                                 std::to_string(start_frame) + ", frames=" + std::to_string(frames) +
+                                 ", in.frames=" + std::to_string(in.frames) + ")");
     }
     NemotronFrontendFeatures out;
     out.frames = frames;
@@ -157,7 +160,7 @@ NemotronASRSessionBase::NemotronASRSessionBase(
     // multiplies them (up to ~56 variants at lookahead 0), so they default to a
     // fraction of the offline graph's arena. An explicit
     // nemotron_asr.encoder_graph_arena_mb option is honored as-is for both.
-    constexpr size_t kDefaultStreamEncoderGraphArenaBytes = 256ull * 1024ull * 1024ull;
+    constexpr size_t kDefaultStreamEncoderGraphArenaBytes = 96ull * 1024ull * 1024ull;
     const size_t stream_arena_bytes = encoder_graph_arena_bytes_ == kDefaultEncoderGraphArenaBytes
         ? kDefaultStreamEncoderGraphArenaBytes
         : encoder_graph_arena_bytes_;
@@ -330,7 +333,12 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
     const NemotronDecodeOptions & decode_options,
     const NemotronTextDeltaCallback & on_text_delta) {
     const auto & fc = assets_->config.frontend;
-    const int64_t first_mel_frames = 1 + assets_->config.encoder.subsampling_factor * lookahead;
+    // The first chunk must cover at least one full encoded frame (subsampling
+    // factor mel frames — the subsampling conv cannot produce output from less),
+    // otherwise encoded frame 0 is computed from zero-padded cache frames.
+    const int64_t first_mel_frames = std::max<int64_t>(
+        assets_->config.encoder.subsampling_factor,
+        1 + assets_->config.encoder.subsampling_factor * lookahead);
     const int64_t mel_frames_per_chunk = assets_->config.encoder.subsampling_factor * (lookahead + 1);
     const int64_t first_samples = (first_mel_frames - 1) * fc.hop_length + fc.win_length / 2;
     const int64_t samples_per_chunk = mel_frames_per_chunk * fc.hop_length + fc.win_length;
@@ -373,7 +381,7 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
                 waveform.begin() + static_cast<std::ptrdiff_t>(first_samples));
             auto features = frontend_.extract_waveform(chunk_waveform, true);
             if (features.frames > first_mel_frames) {
-                features = slice_features(features, 0, first_mel_frames);
+                features = slice_features(features, 0, first_mel_frames);  // whole-buffer first chunk
             }
             out = encoder_->encode_stream_chunk(features, prompt_id, lookahead, stream_state);
             return true;
@@ -479,7 +487,9 @@ void NemotronASRStreamingSession::start_stream(const runtime::TaskRequest & requ
 
     const auto & fc = assets_->config.frontend;
     const auto & enc = assets_->config.encoder;
-    stream_first_mel_frames_ = 1 + enc.subsampling_factor * stream_lookahead_;
+    stream_first_mel_frames_ = std::max<int64_t>(
+        enc.subsampling_factor,
+        1 + enc.subsampling_factor * stream_lookahead_);
     stream_mel_frames_per_chunk_ = enc.subsampling_factor * (stream_lookahead_ + 1);
     stream_first_samples_ = (stream_first_mel_frames_ - 1) * fc.hop_length + fc.win_length / 2;
     stream_samples_per_chunk_ = stream_mel_frames_per_chunk_ * fc.hop_length + fc.win_length;
@@ -553,7 +563,7 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
 
     auto features = frontend_.extract_waveform(window, center);
     if (center && features.frames > stream_first_mel_frames_) {
-        features = slice_features(features, 0, stream_first_mel_frames_);
+            features = slice_features(features, 0, stream_first_mel_frames_);
     }
     auto encoded = encoder_->encode_stream_chunk(
         features,
