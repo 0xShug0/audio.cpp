@@ -844,6 +844,24 @@ audiocpp_add_model(minimax_h3
         engine::models::minimax_h3::make_minimax_h3_loader
 )
 
+audiocpp_add_model(liveavatar
+    SOURCES
+        src/community_models/liveavatar/assets.cpp
+        src/community_models/liveavatar/pipeline.cpp
+        src/community_models/liveavatar/pipeline_state.cpp
+        src/community_models/liveavatar/pipeline_text_encoder.cpp
+        src/community_models/liveavatar/pipeline_vae.cpp
+        src/community_models/liveavatar/pipeline_denoiser.cpp
+        src/community_models/liveavatar/pipeline_liveavatar.cpp
+        src/community_models/liveavatar/pipeline_offline.cpp
+        src/community_models/liveavatar/wan_s2v_audio_conditioner.cpp
+        src/community_models/liveavatar/session.cpp
+    INCLUDES
+        engine/community_models/liveavatar/session.h
+    LOADERS
+        engine::community_models::liveavatar::make_liveavatar_loader
+)
+
 audiocpp_add_model(minimax_music3
     SOURCES
         src/community_models/minimax_music3/assets.cpp
