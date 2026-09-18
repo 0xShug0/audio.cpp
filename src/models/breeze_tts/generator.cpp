@@ -60,8 +60,8 @@ modules::QwenDecoderActivationCastPolicy breeze_bf16_activation_policy(core::Bac
     }
     policy.enabled = true;
     policy.type = GGML_TYPE_BF16;
-    // CUDA/HIP/Vulkan implement the fused round-to-bf16 unary op.
-    policy.fused_round = backend_type != core::BackendType::Metal;
+    // CUDA/HIP/Vulkan/Metal all implement the fused round-to-bf16 unary op.
+    policy.fused_round = true;
     policy.after_input_norm = true;
     policy.after_qkv_projection = true;
     policy.after_qk_norm = true;

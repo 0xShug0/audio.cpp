@@ -141,6 +141,7 @@
 #define OP_UNARY_NUM_ROUND       119
 #define OP_UNARY_NUM_TRUNC       120
 #define OP_UNARY_NUM_XIELU       121
+#define OP_UNARY_NUM_ROUND_BF16  122
 
 #define OP_SUM_ROWS_NUM_SUM_ROWS 10
 #define OP_SUM_ROWS_NUM_MEAN     11
