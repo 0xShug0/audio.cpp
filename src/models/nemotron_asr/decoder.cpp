@@ -1,3 +1,5 @@
+#include <iostream>
+#include <cmath>
 #include "engine/models/nemotron_asr/decoder.h"
 
 #include "engine/framework/core/backend.h"
@@ -500,7 +502,11 @@ void NemotronDecoderRuntime::decode_stream_chunk(
     while (local_frame < chunk.valid_frames &&
            static_cast<int64_t>(stream_token_ids_.size()) - 1 < max_tokens) {
         const float * frame = chunk.values.data() + static_cast<std::ptrdiff_t>(local_frame * chunk.hidden_size);
+        double nrm = 0.0;
+        for (int64_t d = 0; d < chunk.hidden_size; ++d) nrm += double(frame[d]) * frame[d];
         const int32_t token = run_step(stream_input_token_, frame, stream_decoder_cache_initialized_);
+        std::cerr << "[INC] f=" << stream_frame_index_ << " norm=" << std::sqrt(nrm / chunk.hidden_size)
+                  << " tok=" << token << std::endl;
         stream_decoder_cache_initialized_ = true;
         stream_token_ids_.push_back(token);
         const bool blank = token == static_cast<int32_t>(config.blank_token_id);
