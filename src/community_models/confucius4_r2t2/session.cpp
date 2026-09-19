@@ -274,6 +274,7 @@ std::string R2T2ASRSession::generate_text(
     const R2T2ASRAudioEmbeddings & embeddings) {
     R2T2ASRGenerationOptions options;
     options.max_new_tokens = stream_config_.max_new_tokens;
+    options.reuse_graphs = true;
     const auto tokens = thinker_.generate(prompt, embeddings, options);
     return tokenizer_.decode(tokens.token_ids);
 }
@@ -329,7 +330,7 @@ R2T2ASRSession::StreamOutcome R2T2ASRSession::decode_stream_chunk(bool final_flu
     accum.samples = audio_accum_;
     const auto features = frontend_.extract(accum);
     const auto prompt = tokenizer_.build_raw_audio_prompt(prompt_raw_ + prefix, features.encoder_tokens);
-    const auto embeddings = audio_encoder_.encode(features);
+    const auto embeddings = audio_encoder_.encode(features, /*reuse_graph=*/true);
     std::string generated = generate_text(prompt, embeddings);
     generated = normalize_punct_by_context(generated);
     generated = sanitize_utf8_lossy(generated);

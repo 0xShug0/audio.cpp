@@ -353,13 +353,15 @@ public:
         std::shared_ptr<const R2T2ASRAudioEncoderWeights> weights,
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
-        int64_t frames)
+        int64_t frames,
+        bool reusable)
         : assets_(std::move(assets)),
           weights_(std::move(weights)),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           compute_threads_(std::max(1, execution.config().threads)),
-          frames_(frames) {
+          frames_(frames),
+          reusable_(reusable) {
         if (assets_ == nullptr || weights_ == nullptr) {
             throw std::runtime_error("R2T2 ASR audio encoder graph requires assets and weights");
         }
@@ -382,7 +384,7 @@ public:
         output_tokens_ = sum_values(chunk_token_lengths_);
         const int64_t max_chunk_tokens = max_value(chunk_token_lengths_);
         attention_window_tokens_ = max_chunk_tokens * (config.n_window_infer / chunk_frame_limit_);
-        if (output_tokens_ > config.max_source_positions) {
+        if (!reusable_ && output_tokens_ > config.max_source_positions) {
             throw std::runtime_error("R2T2 ASR audio encoder token count exceeds max_source_positions");
         }
         attention_window_lengths_ = audio_attention_window_lengths(output_tokens_, attention_window_tokens_);
@@ -493,31 +495,49 @@ public:
         engine::core::release_backend_graph_resources(backend_, graph_, true);
     }
 
-    bool matches(const R2T2ASRAudioEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
-        return weights_.get() == &weights && frames_ == frames && backend_ == backend && compute_threads_ == std::max(1, threads);
+    bool matches(const R2T2ASRAudioEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads, bool reusable) const {
+        // Short inputs keep their exact convolution width. Once a full chunk
+        // exists, the reference already pads the final chunk to this width.
+        const bool shape_matches = reusable_ && reusable
+            ? frames >= chunk_frame_limit_ && frames <= frames_
+            : !reusable_ && !reusable && frames_ == frames;
+        return weights_.get() == &weights && shape_matches && backend_ == backend && compute_threads_ == std::max(1, threads);
     }
 
     R2T2ASRAudioEmbeddings run(const R2T2ASRAudioFeatures & features) {
         const auto & config = assets_->config.audio_encoder;
-        if (features.mel_bins != config.num_mel_bins || features.frames != frames_) {
+        if (features.mel_bins != config.num_mel_bins || (reusable_ ? features.frames > frames_ || features.frames < chunk_frame_limit_ : features.frames != frames_)) {
             throw std::runtime_error("R2T2 ASR audio encoder feature shape mismatch");
         }
-        if (static_cast<int64_t>(features.values.size()) != config.num_mel_bins * frames_) {
+        if (static_cast<int64_t>(features.values.size()) != config.num_mel_bins * features.frames) {
             throw std::runtime_error("R2T2 ASR audio encoder feature value count mismatch");
         }
         std::vector<float> padded_features(static_cast<size_t>(chunk_count_ * config.num_mel_bins * chunk_frames_), 0.0F);
+        const auto lengths = audio_chunk_lengths(features.frames, chunk_frame_limit_);
         int64_t source_frame = 0;
-        for (int64_t chunk = 0; chunk < chunk_count_; ++chunk) {
-            const int64_t chunk_length = chunk_lengths_[static_cast<size_t>(chunk)];
+        for (int64_t chunk = 0; chunk < static_cast<int64_t>(lengths.size()); ++chunk) {
+            const int64_t chunk_length = lengths[static_cast<size_t>(chunk)];
             for (int64_t mel = 0; mel < config.num_mel_bins; ++mel) {
                 const size_t dst = static_cast<size_t>((chunk * config.num_mel_bins + mel) * chunk_frames_);
-                const size_t src = static_cast<size_t>(mel * frames_ + source_frame);
+                const size_t src = static_cast<size_t>(mel * features.frames + source_frame);
                 std::copy_n(
                     features.values.begin() + static_cast<std::ptrdiff_t>(src),
                     static_cast<size_t>(chunk_length),
                     padded_features.begin() + static_cast<std::ptrdiff_t>(dst));
             }
             source_frame += chunk_length;
+        }
+        if (reusable_) {
+            // Real queries see exactly the reference attention window. Padded
+            // queries attend only themselves, avoiding all-masked softmax rows.
+            std::fill(attention_mask_values_.begin(), attention_mask_values_.end(), -INFINITY);
+            const int64_t valid = features.encoder_tokens;
+            for (int64_t row = 0; row < output_tokens_; ++row) {
+                const int64_t begin = row < valid ? row / attention_window_tokens_ * attention_window_tokens_ : row;
+                const int64_t end = row < valid ? std::min(valid, begin + attention_window_tokens_) : row + 1;
+                std::fill(attention_mask_values_.begin() + row * output_tokens_ + begin,
+                          attention_mask_values_.begin() + row * output_tokens_ + end, 0.0F);
+            }
         }
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(input_, padded_features.data(), 0, padded_features.size() * sizeof(float));
@@ -532,7 +552,7 @@ public:
             throw std::runtime_error("R2T2 ASR audio encoder graph compute failed");
         }
         R2T2ASRAudioEmbeddings out;
-        out.tokens = output_tokens_;
+        out.tokens = features.encoder_tokens;
         out.hidden_size = output_dim_;
         out.values.resize(static_cast<size_t>(out.tokens * out.hidden_size));
         timing_start = Clock::now();
@@ -548,6 +568,7 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int compute_threads_ = 1;
     int64_t frames_ = 0;
+    bool reusable_ = false;
     int64_t chunk_frame_limit_ = 0;
     int64_t chunk_frames_ = 0;
     int64_t chunk_count_ = 0;
@@ -585,26 +606,41 @@ R2T2ASRAudioEncoderRuntime::R2T2ASRAudioEncoderRuntime(
 
 R2T2ASRAudioEncoderRuntime::~R2T2ASRAudioEncoderRuntime() = default;
 
-R2T2ASRAudioEmbeddings R2T2ASRAudioEncoderRuntime::encode(const R2T2ASRAudioFeatures & features) {
+R2T2ASRAudioEmbeddings R2T2ASRAudioEncoderRuntime::encode(const R2T2ASRAudioFeatures & features, bool reuse_graph) {
     if (execution_ == nullptr) {
         throw std::runtime_error("R2T2 ASR audio encoder execution context is null");
     }
     if (features.encoder_tokens != confucius4_r2t2_audio_encoder_token_count(features.frames)) {
         throw std::runtime_error("R2T2 ASR audio encoder token count mismatch");
     }
+    const auto & config = assets_->config.audio_encoder;
+    if (features.encoder_tokens > config.max_source_positions) {
+        throw std::runtime_error("R2T2 ASR audio encoder token count exceeds max_source_positions");
+    }
+    const int64_t chunk_frames = config.n_window * 2;
+    const bool reusable = reuse_graph && features.frames >= chunk_frames;
     const int threads = std::max(1, execution_->config().threads);
-    if (graph_ == nullptr || !graph_->matches(*weights_, features.frames, execution_->backend(), threads)) {
+    if (graph_ == nullptr || !graph_->matches(*weights_, features.frames, execution_->backend(), threads, reusable)) {
+        int64_t capacity = features.frames;
+        if (reusable) {
+            const int64_t chunks = (features.frames + chunk_frames - 1) / chunk_frames;
+            // At most one graph is retained. Grow in four-chunk buckets after
+            // the first two chunks, bounding padding overhead and memory.
+            capacity = (chunks <= 2 ? chunks : (chunks + 3) / 4 * 4) * chunk_frames;
+        }
         graph_.reset();
         graph_ = std::make_unique<R2T2ASRAudioEncoderGraph>(
             assets_,
             weights_,
             *execution_,
             graph_arena_bytes_,
-            features.frames);
+            capacity,
+            reusable);
     } else {
         debug::timing_log_scalar("confucius4_r2t2.audio_encoder.graph.build_ms", 0.0);
-        debug::trace_log_scalar("confucius4_r2t2.audio_encoder.frames", features.frames);
+
     }
+    debug::trace_log_scalar("confucius4_r2t2.audio_encoder.input_frames", features.frames);
     auto out = graph_->run(features);
     if (out.tokens != features.encoder_tokens) {
         throw std::runtime_error("R2T2 ASR audio encoder output token count mismatch");

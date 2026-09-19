@@ -9,6 +9,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/kv_cache.h"
+#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
 #include "engine/framework/sampling/decode_modules.h"
 
 #include <ggml-backend.h>
@@ -295,6 +296,59 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     std::shared_ptr<const DecoderWeights> weights_;
+};
+
+// A small fixed-width lookup graph also works for quantized embedding weights.
+// Padding is read back only for the last block, then discarded before injection.
+class PromptEmbeddingGraph {
+public:
+    static constexpr int64_t kSteps = 64;
+    explicit PromptEmbeddingGraph(std::shared_ptr<ThinkerWeightsRuntime> runtime)
+        : runtime_(std::move(runtime)) {
+        ctx_.reset(ggml_init({1024 * 1024, nullptr, true}));
+        if (!ctx_) { throw std::runtime_error("failed to initialize prompt embedding graph"); }
+        core::ModuleBuildContext ctx{ctx_.get(), "greedy_qwen_decoder.embedding", runtime_->backend_type()};
+        ids_ = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, kSteps);
+        auto ids = core::wrap_tensor(ids_, core::TensorShape::from_dims({kSteps}), GGML_TYPE_I32);
+        const auto & spec = runtime_->spec();
+        output_ = modules::EmbeddingModule({spec.vocab_size, spec.decoder.stack.hidden_size})
+                      .build(ctx, ids, runtime_->weights().token_embedding).tensor;
+        ggml_set_output(output_);
+        graph_ = ggml_new_graph_custom(ctx.ggml, 64, false);
+        ggml_build_forward_expand(graph_, output_);
+        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) {
+            throw std::runtime_error("failed to allocate prompt embedding graph");
+        }
+    }
+    ~PromptEmbeddingGraph() {
+        core::release_backend_graph_resources(runtime_->backend(), graph_, true);
+    }
+    std::vector<float> run(const std::vector<int32_t> & ids) {
+        const int64_t width = runtime_->spec().decoder.stack.hidden_size;
+        std::vector<float> result(ids.size() * static_cast<size_t>(width));
+        std::vector<int32_t> block(kSteps, 0);
+        core::set_backend_threads(runtime_->backend(), runtime_->threads());
+        for (size_t offset = 0; offset < ids.size(); offset += kSteps) {
+            const size_t count = std::min<size_t>(kSteps, ids.size() - offset);
+            std::fill(block.begin(), block.end(), 0);
+            std::copy_n(ids.begin() + offset, count, block.begin());
+            ggml_backend_tensor_set(ids_, block.data(), 0, block.size() * sizeof(int32_t));
+            if (core::compute_backend_graph(runtime_->backend(), graph_) != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("prompt embedding graph compute failed");
+            }
+            ggml_backend_synchronize(runtime_->backend());
+            ggml_backend_tensor_get(output_, result.data() + offset * width, 0, count * width * sizeof(float));
+        }
+        return result;
+    }
+private:
+    std::shared_ptr<ThinkerWeightsRuntime> runtime_;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    ggml_tensor * ids_ = nullptr;
+    ggml_tensor * output_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator_;
 };
 
 class PrefillGraph {
@@ -605,13 +659,66 @@ struct GreedyQwenDecoderRuntime::Impl {
               weight_context_bytes,
               storage_type)),
           prefill_graph_arena_bytes(prefill_graph_arena_bytes),
-          decode_graph_arena_bytes(decode_graph_arena_bytes) {}
+          decode_graph_arena_bytes(decode_graph_arena_bytes),
+          execution(&execution) {}
 
     std::shared_ptr<ThinkerWeightsRuntime> weights;
     size_t prefill_graph_arena_bytes = 0;
     size_t decode_graph_arena_bytes = 0;
     std::unique_ptr<PrefillGraph> prefill_graph;
     std::unique_ptr<DecodeGraph> decode_graph;
+    core::ExecutionContext * execution;
+    std::unique_ptr<PromptEmbeddingGraph> embedding_graph;
+    std::unique_ptr<modules::QwenCausalDecodeRuntime> reusable_decoder;
+
+    std::vector<int32_t> generate_reusing_graphs(const GreedyQwenDecoderRuntime::Prompt & prompt, int64_t max_new_tokens) {
+        const auto & spec = weights->spec();
+        if (!reusable_decoder) {
+            modules::QwenCausalDecodeRuntimeConfig config;
+            config.trace_name = "greedy_qwen_decoder.reusable";
+            config.decoder = spec.decoder;
+            config.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
+            config.decode_graph_arena_bytes = decode_graph_arena_bytes;
+            config.evict_cuda_graph_cache_on_release = true;
+            const auto bound = bind_decoder_weights(weights->weights(), spec);
+            modules::QwenCausalDecodeRuntimeWeights bound_weights;
+            bound_weights.token_embedding = weights->weights().token_embedding;
+            bound_weights.stack = bound.stack;
+            bound_weights.final_norm = bound.final_norm;
+            bound_weights.lm_head = bound.lm_head;
+            reusable_decoder = std::make_unique<modules::QwenCausalDecodeRuntime>(
+                *execution, config, bound_weights);
+        }
+        if (!embedding_graph) {
+            embedding_graph = std::make_unique<PromptEmbeddingGraph>(weights);
+        }
+        auto embeddings = embedding_graph->run(prompt.input_ids);
+        const int64_t width = spec.decoder.stack.hidden_size;
+        for (size_t i = 0; i < prompt.injection.positions.size(); ++i) {
+            std::copy_n(prompt.injection.values.data() + i * width, width,
+                        embeddings.data() + prompt.injection.positions[i] * width);
+        }
+        const int64_t steps = static_cast<int64_t>(prompt.input_ids.size());
+        const int64_t required = steps + max_new_tokens;
+        // Grow in bounded capacity buckets, keeping only one decode and one
+        // block-prefill graph. A new prompt clears KV on device, not via a
+        // host export/import of every layer.
+        const int64_t capacity = std::min(spec.max_position_embeddings, (required + 127) / 128 * 128);
+        const auto start = Clock::now();
+        auto logits = reusable_decoder->prefill_embeddings_into_cache(embeddings, steps, capacity, 64).logits;
+        debug::timing_log_scalar("greedy_qwen_decoder.reusable.prefill_ms", engine::debug::elapsed_ms(start));
+        std::vector<int32_t> out;
+        for (int64_t step = 0; step < max_new_tokens; ++step) {
+            const int32_t token = argmax_index(logits);
+            if (is_eos(spec, token)) { break; }
+            out.push_back(token);
+            if (step + 1 < max_new_tokens) {
+                logits = reusable_decoder->decode_token(token).logits;
+            }
+        }
+        return out;
+    }
+
 };
 
 GreedyQwenDecoderRuntime::GreedyQwenDecoderRuntime(
@@ -633,7 +740,7 @@ GreedyQwenDecoderRuntime::GreedyQwenDecoderRuntime(
 
 GreedyQwenDecoderRuntime::~GreedyQwenDecoderRuntime() = default;
 
-std::vector<int32_t> GreedyQwenDecoderRuntime::generate(const Prompt & prompt, int64_t max_new_tokens) {
+std::vector<int32_t> GreedyQwenDecoderRuntime::generate(const Prompt & prompt, int64_t max_new_tokens, bool reuse_graphs) {
     const auto & spec = impl_->weights->spec();
     if (prompt.input_ids.empty()) {
         throw std::runtime_error("greedy Qwen decoder prompt is empty");
@@ -650,6 +757,14 @@ std::vector<int32_t> GreedyQwenDecoderRuntime::generate(const Prompt & prompt, i
         static_cast<int64_t>(injection.positions.size()) != injection.tokens ||
         static_cast<int64_t>(injection.values.size()) != injection.tokens * spec.decoder.stack.hidden_size) {
         throw std::runtime_error("greedy Qwen decoder injection shape does not match the prompt");
+    }
+    for (const auto position : injection.positions) {
+        if (position < 0 || position >= prompt_steps) {
+            throw std::runtime_error("greedy Qwen decoder injection position is out of range");
+        }
+    }
+    if (reuse_graphs) {
+        return impl_->generate_reusing_graphs(prompt, max_new_tokens);
     }
     if (impl_->prefill_graph == nullptr || !impl_->prefill_graph->matches(prompt_steps, injection.tokens)) {
         impl_->prefill_graph.reset();

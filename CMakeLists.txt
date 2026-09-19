@@ -2988,6 +2988,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
 
         if (confucius4_r2t2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_confucius4_r2t2_graph_reuse tests/confucius4_r2t2/test_graph_reuse.cpp)
+            target_compile_definitions(test_confucius4_r2t2_graph_reuse PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+            target_link_libraries(test_confucius4_r2t2_graph_reuse PRIVATE engine_runtime ggml)
             add_executable(test_confucius4_r2t2_transcription
                 tests/confucius4_r2t2/test_confucius4_r2t2_transcription.cpp
             )

@@ -11,6 +11,7 @@ namespace engine::community_models::confucius4_r2t2 {
 
 struct R2T2ASRGenerationOptions {
     int64_t max_new_tokens = 512;
+    bool reuse_graphs = false;
     bool return_timestamps = false;
     bool clamp_timestamps_to_audio = false;
 };

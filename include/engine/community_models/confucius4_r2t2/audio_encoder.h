@@ -22,7 +22,7 @@ public:
         assets::TensorStorageType weight_storage_type);
     ~R2T2ASRAudioEncoderRuntime();
 
-    R2T2ASRAudioEmbeddings encode(const R2T2ASRAudioFeatures & features);
+    R2T2ASRAudioEmbeddings encode(const R2T2ASRAudioFeatures & features, bool reuse_graph = false);
 
 private:
     std::shared_ptr<const R2T2ASRAssets> assets_;
