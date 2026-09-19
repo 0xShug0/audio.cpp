@@ -27,6 +27,7 @@ struct NemotronEncoderStreamState {
     bool first_chunk = true;
     bool backend_cache_valid = false;
     const void * backend_cache_owner = nullptr;
+    int64_t dump_seq = 0;
 };
 
 class NemotronEncoderRuntime {
