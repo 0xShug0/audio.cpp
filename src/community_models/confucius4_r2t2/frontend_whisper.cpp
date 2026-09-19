@@ -1,4 +1,4 @@
-#include "engine/community_models/r2t2_asr/frontend_whisper.h"
+#include "engine/community_models/confucius4_r2t2/frontend_whisper.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 namespace {
 
 constexpr int kMinInputSamples = 8000;
@@ -84,10 +84,10 @@ R2T2ASRAudioFeatures R2T2ASRWhisperFrontend::extract(const runtime::AudioBuffer 
     out.attention_mask.assign(static_cast<size_t>(features.frames), 1);
     out.mel_bins = features.mel_bins;
     out.frames = features.frames;
-    out.encoder_tokens = r2t2_asr_audio_encoder_token_count(out.frames);
-    debug::timing_log_scalar("r2t2_asr.frontend.normalize_ms", engine::debug::elapsed_ms(normalize_start, normalize_end));
-    debug::timing_log_scalar("r2t2_asr.frontend.log_mel_ms", engine::debug::elapsed_ms(feature_start, feature_end));
+    out.encoder_tokens = confucius4_r2t2_audio_encoder_token_count(out.frames);
+    debug::timing_log_scalar("confucius4_r2t2.frontend.normalize_ms", engine::debug::elapsed_ms(normalize_start, normalize_end));
+    debug::timing_log_scalar("confucius4_r2t2.frontend.log_mel_ms", engine::debug::elapsed_ms(feature_start, feature_end));
     return out;
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

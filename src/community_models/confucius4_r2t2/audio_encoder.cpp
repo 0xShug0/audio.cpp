@@ -1,4 +1,4 @@
-#include "engine/community_models/r2t2_asr/audio_encoder.h"
+#include "engine/community_models/confucius4_r2t2/audio_encoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
@@ -21,7 +21,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 namespace assets = engine::assets;
 namespace modules = engine::modules;
@@ -244,7 +244,7 @@ std::shared_ptr<const R2T2ASRAudioEncoderWeights> load_weights(
     auto store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "r2t2_asr.audio_encoder.weights",
+        "confucius4_r2t2.audio_encoder.weights",
         kDefaultAudioWeightContextBytes);
     weights->store = store;
     weights->conv1 = load_conv2d(
@@ -377,7 +377,7 @@ public:
         chunk_count_ = static_cast<int64_t>(chunk_lengths_.size());
         chunk_token_lengths_.reserve(chunk_lengths_.size());
         for (const int64_t chunk_length : chunk_lengths_) {
-            chunk_token_lengths_.push_back(r2t2_asr_audio_encoder_token_count(chunk_length));
+            chunk_token_lengths_.push_back(confucius4_r2t2_audio_encoder_token_count(chunk_length));
         }
         output_tokens_ = sum_values(chunk_token_lengths_);
         const int64_t max_chunk_tokens = max_value(chunk_token_lengths_);
@@ -392,7 +392,7 @@ public:
             throw std::runtime_error("failed to initialize R2T2 ASR audio encoder graph context");
         }
 
-        core::ModuleBuildContext ctx{ctx_.get(), "r2t2_asr.audio_encoder", backend_type_};
+        core::ModuleBuildContext ctx{ctx_.get(), "confucius4_r2t2.audio_encoder", backend_type_};
         auto input = core::make_tensor(
             ctx,
             GGML_TYPE_F32,
@@ -485,8 +485,8 @@ public:
             throw std::runtime_error("failed to allocate R2T2 ASR audio encoder graph");
         }
         ggml_backend_tensor_set(attention_mask_, attention_mask_values_.data(), 0, attention_mask_values_.size() * sizeof(float));
-        debug::timing_log_scalar("r2t2_asr.audio_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
-        debug::trace_log_scalar("r2t2_asr.audio_encoder.frames", frames_);
+        debug::timing_log_scalar("confucius4_r2t2.audio_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::trace_log_scalar("confucius4_r2t2.audio_encoder.frames", frames_);
     }
 
     ~R2T2ASRAudioEncoderGraph() {
@@ -522,12 +522,12 @@ public:
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(input_, padded_features.data(), 0, padded_features.size() * sizeof(float));
         ggml_backend_tensor_set(attention_mask_, attention_mask_values_.data(), 0, attention_mask_values_.size() * sizeof(float));
-        debug::timing_log_scalar("r2t2_asr.audio_encoder.input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar("confucius4_r2t2.audio_encoder.input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         core::set_backend_threads(backend_, compute_threads_);
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
-        debug::timing_log_scalar("r2t2_asr.audio_encoder.graph.compute_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar("confucius4_r2t2.audio_encoder.graph.compute_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("R2T2 ASR audio encoder graph compute failed");
         }
@@ -537,7 +537,7 @@ public:
         out.values.resize(static_cast<size_t>(out.tokens * out.hidden_size));
         timing_start = Clock::now();
         ggml_backend_tensor_get(output_, out.values.data(), 0, out.values.size() * sizeof(float));
-        debug::timing_log_scalar("r2t2_asr.audio_encoder.output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar("confucius4_r2t2.audio_encoder.output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         return out;
     }
 
@@ -589,7 +589,7 @@ R2T2ASRAudioEmbeddings R2T2ASRAudioEncoderRuntime::encode(const R2T2ASRAudioFeat
     if (execution_ == nullptr) {
         throw std::runtime_error("R2T2 ASR audio encoder execution context is null");
     }
-    if (features.encoder_tokens != r2t2_asr_audio_encoder_token_count(features.frames)) {
+    if (features.encoder_tokens != confucius4_r2t2_audio_encoder_token_count(features.frames)) {
         throw std::runtime_error("R2T2 ASR audio encoder token count mismatch");
     }
     const int threads = std::max(1, execution_->config().threads);
@@ -602,8 +602,8 @@ R2T2ASRAudioEmbeddings R2T2ASRAudioEncoderRuntime::encode(const R2T2ASRAudioFeat
             graph_arena_bytes_,
             features.frames);
     } else {
-        debug::timing_log_scalar("r2t2_asr.audio_encoder.graph.build_ms", 0.0);
-        debug::trace_log_scalar("r2t2_asr.audio_encoder.frames", features.frames);
+        debug::timing_log_scalar("confucius4_r2t2.audio_encoder.graph.build_ms", 0.0);
+        debug::trace_log_scalar("confucius4_r2t2.audio_encoder.frames", features.frames);
     }
     auto out = graph_->run(features);
     if (out.tokens != features.encoder_tokens) {
@@ -612,4 +612,4 @@ R2T2ASRAudioEmbeddings R2T2ASRAudioEncoderRuntime::encode(const R2T2ASRAudioFeat
     return out;
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

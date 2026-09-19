@@ -2,13 +2,13 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/community_models/r2t2_asr/assets.h"
-#include "engine/community_models/r2t2_asr/types.h"
+#include "engine/community_models/confucius4_r2t2/assets.h"
+#include "engine/community_models/confucius4_r2t2/types.h"
 
 #include <cstddef>
 #include <memory>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 class R2T2ASRAudioEncoderGraph;
 struct R2T2ASRAudioEncoderWeights;
@@ -32,4 +32,4 @@ private:
     std::unique_ptr<R2T2ASRAudioEncoderGraph> graph_;
 };
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

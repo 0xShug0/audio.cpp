@@ -1,13 +1,13 @@
 #pragma once
 
-#include "engine/community_models/r2t2_asr/assets.h"
-#include "engine/community_models/r2t2_asr/types.h"
+#include "engine/community_models/confucius4_r2t2/assets.h"
+#include "engine/community_models/confucius4_r2t2/types.h"
 
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 class R2T2ASRTextTokenizer {
 public:
@@ -40,4 +40,4 @@ private:
     std::shared_ptr<const Impl> impl_;
 };
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

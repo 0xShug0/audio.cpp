@@ -1,10 +1,10 @@
-#include "engine/community_models/r2t2_asr/session.h"
+#include "engine/community_models/confucius4_r2t2/session.h"
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
-#include "engine/community_models/r2t2_asr/text_postprocess.h"
+#include "engine/community_models/confucius4_r2t2/text_postprocess.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,7 +13,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -44,7 +44,7 @@ void validate_audio_encoder_weight_storage(engine::assets::TensorStorageType sto
         storage_type == engine::assets::TensorStorageType::F16) {
         return;
     }
-    throw std::runtime_error("r2t2_asr.audio_encoder_weight_type currently supports only native, f32, and f16");
+    throw std::runtime_error("confucius4_r2t2.audio_encoder_weight_type currently supports only native, f32, and f16");
 }
 
 engine::assets::TensorStorageType option_weight_type(
@@ -82,15 +82,15 @@ R2T2ASRSession::R2T2ASRSession(
     : RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))),
-      audio_encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"r2t2_asr.audio_encoder_graph_arena_mb"}, 128ull * 1024ull * 1024ull)),
-      thinker_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"r2t2_asr.thinker_prefill_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
-      thinker_decode_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"r2t2_asr.thinker_decode_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
-      thinker_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"r2t2_asr.thinker_weight_context_mb"}, 64ull * 1024ull * 1024ull)),
-      audio_encoder_weight_storage_type_(option_weight_type(options, "r2t2_asr.audio_encoder_weight_type", engine::assets::TensorStorageType::Native)),
+      audio_encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"confucius4_r2t2.audio_encoder_graph_arena_mb"}, 128ull * 1024ull * 1024ull)),
+      thinker_prefill_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"confucius4_r2t2.thinker_prefill_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
+      thinker_decode_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"confucius4_r2t2.thinker_decode_graph_arena_mb"}, 256ull * 1024ull * 1024ull)),
+      thinker_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"confucius4_r2t2.thinker_weight_context_mb"}, 64ull * 1024ull * 1024ull)),
+      audio_encoder_weight_storage_type_(option_weight_type(options, "confucius4_r2t2.audio_encoder_weight_type", engine::assets::TensorStorageType::Native)),
       thinker_weight_storage_type_(option_weight_type(
           options,
-          "r2t2_asr.thinker_weight_type",
-          option_weight_type(options, "r2t2_asr.weight_type", engine::assets::TensorStorageType::Native))),
+          "confucius4_r2t2.thinker_weight_type",
+          option_weight_type(options, "confucius4_r2t2.weight_type", engine::assets::TensorStorageType::Native))),
       tokenizer_(assets_),
       frontend_(assets_),
       audio_encoder_(assets_, execution_context(), audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_),
@@ -108,47 +108,47 @@ R2T2ASRSession::R2T2ASRSession(
         throw std::runtime_error("R2T2 ASR supports offline and streaming sessions");
     }
     validate_audio_encoder_weight_storage(audio_encoder_weight_storage_type_);
-    validate_matmul_weight_storage(thinker_weight_storage_type_, "r2t2_asr.thinker_weight_type");
+    validate_matmul_weight_storage(thinker_weight_storage_type_, "confucius4_r2t2.thinker_weight_type");
 
-    if (const auto value = runtime::parse_float_option(options.options, {"r2t2_asr.chunk_size_ms"})) {
+    if (const auto value = runtime::parse_float_option(options.options, {"confucius4_r2t2.chunk_size_ms"})) {
         stream_config_.chunk_seconds = static_cast<double>(*value) / 1000.0;
     }
-    if (const auto value = runtime::parse_int_option(options.options, {"r2t2_asr.unfixed_chunk_num"})) {
+    if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.unfixed_chunk_num"})) {
         stream_config_.unfixed_chunk_num = *value;
     }
-    if (const auto value = runtime::parse_int_option(options.options, {"r2t2_asr.unfixed_token_num"})) {
+    if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.unfixed_token_num"})) {
         stream_config_.unfixed_token_num = *value;
     }
-    if (const auto value = runtime::find_option(options.options, {"r2t2_asr.rollback_punctuation"})) {
-        stream_config_.rollback_punctuation = runtime::parse_bool_option(*value, "r2t2_asr.rollback_punctuation");
+    if (const auto value = runtime::find_option(options.options, {"confucius4_r2t2.rollback_punctuation"})) {
+        stream_config_.rollback_punctuation = runtime::parse_bool_option(*value, "confucius4_r2t2.rollback_punctuation");
     }
-    if (const auto value = runtime::parse_int_option(options.options, {"r2t2_asr.max_tokens"})) {
+    if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.max_tokens"})) {
         stream_config_.max_new_tokens = *value;
     }
     if (stream_config_.chunk_seconds <= 0.0) {
-        throw std::runtime_error("r2t2_asr.chunk_size_ms must be positive");
+        throw std::runtime_error("confucius4_r2t2.chunk_size_ms must be positive");
     }
     if (stream_config_.unfixed_chunk_num < 0 || stream_config_.unfixed_token_num < 0) {
-        throw std::runtime_error("r2t2_asr.unfixed_chunk_num and r2t2_asr.unfixed_token_num must be non-negative");
+        throw std::runtime_error("confucius4_r2t2.unfixed_chunk_num and confucius4_r2t2.unfixed_token_num must be non-negative");
     }
     if (stream_config_.max_new_tokens <= 0) {
-        throw std::runtime_error("r2t2_asr.max_tokens must be positive");
+        throw std::runtime_error("confucius4_r2t2.max_tokens must be positive");
     }
     for (const auto & [key, value] : options.options) {
         (void) value;
-        if (key.rfind("r2t2_asr.", 0) == 0 &&
-            key != "r2t2_asr.audio_encoder_graph_arena_mb" &&
-            key != "r2t2_asr.thinker_prefill_graph_arena_mb" &&
-            key != "r2t2_asr.thinker_decode_graph_arena_mb" &&
-            key != "r2t2_asr.thinker_weight_context_mb" &&
-            key != "r2t2_asr.audio_encoder_weight_type" &&
-            key != "r2t2_asr.thinker_weight_type" &&
-            key != "r2t2_asr.weight_type" &&
-            key != "r2t2_asr.chunk_size_ms" &&
-            key != "r2t2_asr.unfixed_chunk_num" &&
-            key != "r2t2_asr.unfixed_token_num" &&
-            key != "r2t2_asr.rollback_punctuation" &&
-            key != "r2t2_asr.max_tokens") {
+        if (key.rfind("confucius4_r2t2.", 0) == 0 &&
+            key != "confucius4_r2t2.audio_encoder_graph_arena_mb" &&
+            key != "confucius4_r2t2.thinker_prefill_graph_arena_mb" &&
+            key != "confucius4_r2t2.thinker_decode_graph_arena_mb" &&
+            key != "confucius4_r2t2.thinker_weight_context_mb" &&
+            key != "confucius4_r2t2.audio_encoder_weight_type" &&
+            key != "confucius4_r2t2.thinker_weight_type" &&
+            key != "confucius4_r2t2.weight_type" &&
+            key != "confucius4_r2t2.chunk_size_ms" &&
+            key != "confucius4_r2t2.unfixed_chunk_num" &&
+            key != "confucius4_r2t2.unfixed_token_num" &&
+            key != "confucius4_r2t2.rollback_punctuation" &&
+            key != "confucius4_r2t2.max_tokens") {
             throw std::runtime_error("unknown R2T2 ASR session option: " + key);
         }
     }
@@ -158,7 +158,7 @@ R2T2ASRSession::R2T2ASRSession(
 R2T2ASRSession::~R2T2ASRSession() = default;
 
 std::string R2T2ASRSession::family() const {
-    return "r2t2_asr";
+    return "confucius4_r2t2";
 }
 
 runtime::VoiceTaskKind R2T2ASRSession::task_kind() const {
@@ -215,8 +215,8 @@ R2T2ASRResult R2T2ASRSession::run_single(const R2T2ASRRequest & request) {
     const auto parsed = parse_asr_output(raw, request.language);
     result.language = parsed.language.empty() ? request.language : parsed.language;
     result.text = truncate_at_pipe(parsed.text);
-    debug::timing_log_scalar("r2t2_asr.single_ms", engine::debug::elapsed_ms(wall_start));
-    debug::trace_log_scalar("r2t2_asr.audio_frames", features.frames);
+    debug::timing_log_scalar("confucius4_r2t2.single_ms", engine::debug::elapsed_ms(wall_start));
+    debug::trace_log_scalar("confucius4_r2t2.audio_frames", features.frames);
     return result;
 }
 
@@ -376,11 +376,11 @@ R2T2ASRSession::StreamOutcome R2T2ASRSession::decode_stream_chunk(bool final_flu
     if (!contains_asr_text_tag(raw_decoded_) && force_language_.empty()) {
         // The model has not emitted the language tag yet: nothing to commit.
         text_.clear();
-        debug::trace_log_scalar("r2t2_asr.stream.final_flush", final_flush ? 1 : 0);
-        debug::trace_log_scalar("r2t2_asr.stream.chunk_id", chunk_id_);
-        debug::trace_log_scalar("r2t2_asr.stream.raw_decoded", raw_decoded_);
-        debug::trace_log_scalar("r2t2_asr.stream.fixed_text", std::string_view{});
-        debug::trace_log_scalar("r2t2_asr.stream.text", std::string_view{});
+        debug::trace_log_scalar("confucius4_r2t2.stream.final_flush", final_flush ? 1 : 0);
+        debug::trace_log_scalar("confucius4_r2t2.stream.chunk_id", chunk_id_);
+        debug::trace_log_scalar("confucius4_r2t2.stream.raw_decoded", raw_decoded_);
+        debug::trace_log_scalar("confucius4_r2t2.stream.fixed_text", std::string_view{});
+        debug::trace_log_scalar("confucius4_r2t2.stream.text", std::string_view{});
         return outcome;
     }
 
@@ -389,11 +389,11 @@ R2T2ASRSession::StreamOutcome R2T2ASRSession::decode_stream_chunk(bool final_flu
     ++chunk_id_;
     outcome.text = text_;
     outcome.fixed_text = fixed_text;
-    debug::trace_log_scalar("r2t2_asr.stream.final_flush", final_flush ? 1 : 0);
-    debug::trace_log_scalar("r2t2_asr.stream.chunk_id", chunk_id_);
-    debug::trace_log_scalar("r2t2_asr.stream.raw_decoded", raw_decoded_);
-    debug::trace_log_scalar("r2t2_asr.stream.fixed_text", fixed_text);
-    debug::trace_log_scalar("r2t2_asr.stream.text", text_);
+    debug::trace_log_scalar("confucius4_r2t2.stream.final_flush", final_flush ? 1 : 0);
+    debug::trace_log_scalar("confucius4_r2t2.stream.chunk_id", chunk_id_);
+    debug::trace_log_scalar("confucius4_r2t2.stream.raw_decoded", raw_decoded_);
+    debug::trace_log_scalar("confucius4_r2t2.stream.fixed_text", fixed_text);
+    debug::trace_log_scalar("confucius4_r2t2.stream.text", text_);
     return outcome;
 }
 
@@ -569,22 +569,22 @@ runtime::TaskResult R2T2ASRSession::finalize() {
         stream_event_sink_(event);
     }
     stream_started_ = false;
-    debug::timing_log_scalar("r2t2_asr.session.stream.chunks", chunk_id_);
-    debug::timing_log_scalar("r2t2_asr.session.stream.finalize_ms", engine::debug::elapsed_ms(finalize_start));
+    debug::timing_log_scalar("confucius4_r2t2.session.stream.chunks", chunk_id_);
+    debug::timing_log_scalar("confucius4_r2t2.session.stream.finalize_ms", engine::debug::elapsed_ms(finalize_start));
     if (stream_wall_start_ != std::chrono::steady_clock::time_point{}) {
-        debug::timing_log_scalar("r2t2_asr.session.stream.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
+        debug::timing_log_scalar("confucius4_r2t2.session.stream.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
         debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     }
     return streaming_result_;
 }
 
-// Loading adapter: r2t2_asr uses the schema-v1 spec-backed loader, so the loader
+// Loading adapter: confucius4_r2t2 uses the schema-v1 spec-backed loader, so the loader
 // wiring stays beside the session it constructs (no per-model loader.{h,cpp}).
-std::shared_ptr<runtime::IVoiceModelLoader> make_r2t2_asr_loader() {
+std::shared_ptr<runtime::IVoiceModelLoader> make_confucius4_r2t2_loader() {
     runtime::SpecBackedVoiceModelConfig<R2T2ASRAssets> config;
-    config.family = "r2t2_asr";
+    config.family = "confucius4_r2t2";
     config.load_assets = [](const std::filesystem::path & model_path) {
-        return load_r2t2_asr_assets(model_path);
+        return load_confucius4_r2t2_assets(model_path);
     };
     config.create_session = [](const runtime::TaskSpec & task,
                                const runtime::SessionOptions & options,
@@ -596,4 +596,4 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_r2t2_asr_loader() {
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

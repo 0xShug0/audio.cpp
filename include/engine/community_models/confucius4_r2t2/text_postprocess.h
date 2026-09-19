@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 // Faithful C++ ports of the R2T2 text post-processing pipeline
 // (r2t2/r2t2_asr.py and qwen_asr/inference/utils.py). All functions operate
@@ -74,4 +74,4 @@ std::size_t utf8_codepoint_count(const std::string & text);
 /// integrator's `fixed_text[len(last_fixed_text):]` slice.
 std::string utf8_slice_from_codepoint(const std::string & text, std::size_t start_codepoint);
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

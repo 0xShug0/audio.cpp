@@ -13,7 +13,7 @@ namespace engine::assets {
 class TensorSource;
 }
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 struct R2T2ASRAudioEncoderConfig {
     int64_t num_mel_bins = 128;
@@ -81,11 +81,11 @@ struct R2T2ASRAssets {
     std::shared_ptr<const assets::TensorSource> model_weights;
 };
 
-std::shared_ptr<const R2T2ASRAssets> load_r2t2_asr_assets(const std::filesystem::path & model_path);
-std::shared_ptr<const R2T2ASRAssets> load_r2t2_asr_assets(
+std::shared_ptr<const R2T2ASRAssets> load_confucius4_r2t2_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const R2T2ASRAssets> load_confucius4_r2t2_assets(
     const std::filesystem::path & model_path,
     std::string_view package_family);
-std::shared_ptr<const R2T2ASRAssets> load_r2t2_asr_assets(
+std::shared_ptr<const R2T2ASRAssets> load_confucius4_r2t2_assets(
     assets::ResourceBundle resources);
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

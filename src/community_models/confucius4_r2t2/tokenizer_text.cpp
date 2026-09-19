@@ -1,4 +1,4 @@
-#include "engine/community_models/r2t2_asr/tokenizer_text.h"
+#include "engine/community_models/confucius4_r2t2/tokenizer_text.h"
 
 #include "engine/framework/tokenizers/llama_bpe.h"
 
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 struct R2T2ASRTextTokenizer::Impl {
     std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> tokenizer;
@@ -112,4 +112,4 @@ std::string R2T2ASRTextTokenizer::decode(const std::vector<int32_t> & token_ids)
     return impl_->tokenizer->decode(filtered);
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

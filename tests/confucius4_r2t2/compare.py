@@ -2,11 +2,11 @@
 """Compare audiocpp R2T2 output against the macOS MPS golden reference.
 
 Usage:
-    python3 tests/r2t2_asr/compare.py \
+    python3 tests/confucius4_r2t2/compare.py \
         --cli build/macos-metal-release/bin/audiocpp_cli \
         --model models/Confucius4-R2T2 \
         --audio <test.wav> \
-        --golden tests/r2t2_asr/golden.json \
+        --golden tests/confucius4_r2t2/golden.json \
         [--backend metal] [--chunk-ms 320]
 
 Runs the offline CLI, then the streaming CLI with trace logging enabled, and
@@ -42,17 +42,17 @@ def parse_trace(path):
             continue
         name = m.group("name")
         value = m.group("value")
-        if name == "r2t2_asr.stream.chunk_id":
+        if name == "confucius4_r2t2.stream.chunk_id":
             if pending:
                 chunks.append(pending)
             pending = {"chunk_id": int(value), "final_flush": 0, "fixed_text": None, "text": None, "raw_decoded": None}
-        elif name == "r2t2_asr.stream.final_flush" and pending:
+        elif name == "confucius4_r2t2.stream.final_flush" and pending:
             pending["final_flush"] = int(value)
-        elif name == "r2t2_asr.stream.fixed_text" and pending:
+        elif name == "confucius4_r2t2.stream.fixed_text" and pending:
             pending["fixed_text"] = value
-        elif name == "r2t2_asr.stream.raw_decoded" and pending:
+        elif name == "confucius4_r2t2.stream.raw_decoded" and pending:
             pending["raw_decoded"] = value
-        elif name == "r2t2_asr.stream.text" and pending:
+        elif name == "confucius4_r2t2.stream.text" and pending:
             pending["text"] = value
     if pending:
         chunks.append(pending)
@@ -105,7 +105,7 @@ def main():
 
     # --- offline -----------------------------------------------------------
     offline_cmd = [
-        args.cli, "--task", "asr", "--family", "r2t2_asr", "--model", args.model,
+        args.cli, "--task", "asr", "--family", "confucius4_r2t2", "--model", args.model,
         "--backend", args.backend, "--audio", args.audio,
     ]
     offline = run(offline_cmd)
@@ -126,12 +126,12 @@ def main():
     with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as tmp:
         trace_path = tmp.name
     stream_cmd = [
-        args.cli, "--task", "asr", "--mode", "streaming", "--family", "r2t2_asr",
+        args.cli, "--task", "asr", "--mode", "streaming", "--family", "confucius4_r2t2",
         "--model", args.model, "--backend", args.backend, "--audio", args.audio,
-        "--session-option", f"r2t2_asr.chunk_size_ms={chunk_ms}",
-        "--session-option", f"r2t2_asr.max_tokens={max_new_tokens}",
-        "--session-option", f"r2t2_asr.unfixed_chunk_num={golden['unfixed_chunk_num']}",
-        "--session-option", f"r2t2_asr.unfixed_token_num={golden['unfixed_token_num']}",
+        "--session-option", f"confucius4_r2t2.chunk_size_ms={chunk_ms}",
+        "--session-option", f"confucius4_r2t2.max_tokens={max_new_tokens}",
+        "--session-option", f"confucius4_r2t2.unfixed_chunk_num={golden['unfixed_chunk_num']}",
+        "--session-option", f"confucius4_r2t2.unfixed_token_num={golden['unfixed_token_num']}",
         "--log-file", trace_path,
     ]
     if golden.get("language"):

@@ -2,12 +2,12 @@
 
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/model.h"
-#include "engine/community_models/r2t2_asr/assets.h"
-#include "engine/community_models/r2t2_asr/audio_encoder.h"
-#include "engine/community_models/r2t2_asr/frontend_whisper.h"
-#include "engine/community_models/r2t2_asr/thinker.h"
-#include "engine/community_models/r2t2_asr/tokenizer_text.h"
-#include "engine/community_models/r2t2_asr/types.h"
+#include "engine/community_models/confucius4_r2t2/assets.h"
+#include "engine/community_models/confucius4_r2t2/audio_encoder.h"
+#include "engine/community_models/confucius4_r2t2/frontend_whisper.h"
+#include "engine/community_models/confucius4_r2t2/thinker.h"
+#include "engine/community_models/confucius4_r2t2/tokenizer_text.h"
+#include "engine/community_models/confucius4_r2t2/types.h"
 
 #include <chrono>
 #include <cstdint>
@@ -15,12 +15,12 @@
 #include <string>
 #include <vector>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 /// Spec-backed loader factory (schema-v1 contract): the framework derives
-/// metadata, capabilities and option validation from model_specs/r2t2_asr.json,
+/// metadata, capabilities and option validation from model_specs/confucius4_r2t2.json,
 /// so this family ships no per-model loader.{h,cpp}.
-std::shared_ptr<runtime::IVoiceModelLoader> make_r2t2_asr_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_confucius4_r2t2_loader();
 
 /// Streaming decode configuration; defaults mirror
 /// R2T2ASRModel.init_streaming_state() in the reference implementation.
@@ -120,4 +120,4 @@ private:
     std::chrono::steady_clock::time_point stream_wall_start_{};
 };
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

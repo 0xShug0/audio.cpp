@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 struct R2T2ASRGenerationOptions {
     int64_t max_new_tokens = 512;
@@ -52,7 +52,7 @@ struct R2T2ASRGeneratedTokens {
     std::vector<int32_t> token_ids;
 };
 
-inline int64_t r2t2_asr_floor_div(int64_t numerator, int64_t denominator) {
+inline int64_t confucius4_r2t2_floor_div(int64_t numerator, int64_t denominator) {
     int64_t quotient = numerator / denominator;
     const int64_t remainder = numerator % denominator;
     if (remainder != 0 && ((remainder < 0) != (denominator < 0))) {
@@ -61,14 +61,14 @@ inline int64_t r2t2_asr_floor_div(int64_t numerator, int64_t denominator) {
     return quotient;
 }
 
-inline int64_t r2t2_asr_audio_encoder_token_count(int64_t input_frames) {
+inline int64_t confucius4_r2t2_audio_encoder_token_count(int64_t input_frames) {
     if (input_frames <= 0) {
         throw std::runtime_error("R2T2 ASR requires positive feature frame count");
     }
     const int64_t input_lengths_leave = input_frames % 100;
-    const int64_t feat_lengths = r2t2_asr_floor_div(input_lengths_leave - 1, 2) + 1;
-    return r2t2_asr_floor_div(r2t2_asr_floor_div(feat_lengths - 1, 2) + 1 - 1, 2) + 1 +
+    const int64_t feat_lengths = confucius4_r2t2_floor_div(input_lengths_leave - 1, 2) + 1;
+    return confucius4_r2t2_floor_div(confucius4_r2t2_floor_div(feat_lengths - 1, 2) + 1 - 1, 2) + 1 +
         (input_frames / 100) * 13;
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

@@ -7,7 +7,7 @@
 | Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
 | Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](community_models/granite5asr.md) |
 | Qwen3 ASR | `qwen3_asr` | offline, streaming | [Qwen3 ASR](#qwen3-asr) |
-| Confucius4-R2T2 | `r2t2_asr` | offline, streaming | [Confucius4-R2T2](community_models/r2t2.md) |
+| Confucius4-R2T2 | `confucius4_r2t2` | offline, streaming | [Confucius4-R2T2](community_models/r2t2.md) |
 | Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](models/higgs_audio_stt.md) |
@@ -70,14 +70,14 @@ never revised, and chunk sizes from 80 ms to 2 s are supported. It runs the
 same audio tower as Qwen3 ASR, so only the streaming state machine differs.
 
 ```bash
-audiocpp_cli --task asr --family r2t2_asr --model models/Confucius4-R2T2 \
+audiocpp_cli --task asr --family confucius4_r2t2 --model models/Confucius4-R2T2 \
   --backend metal --audio speech_16k.wav --text-out transcript.txt
 ```
 
 ```bash
-audiocpp_cli --task asr --mode streaming --family r2t2_asr \
+audiocpp_cli --task asr --mode streaming --family confucius4_r2t2 \
   --model models/Confucius4-R2T2 --backend metal --audio speech_16k.wav \
-  --session-option r2t2_asr.chunk_size_ms=320 --text-out transcript.txt
+  --session-option confucius4_r2t2.chunk_size_ms=320 --text-out transcript.txt
 ```
 
 Streaming emits append-only partial text; the final transcript is returned when

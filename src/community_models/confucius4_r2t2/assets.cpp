@@ -1,4 +1,4 @@
-#include "engine/community_models/r2t2_asr/assets.h"
+#include "engine/community_models/confucius4_r2t2/assets.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/filesystem.h"
@@ -12,7 +12,7 @@
 #include <string_view>
 #include <utility>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 namespace json = engine::io::json;
 namespace {
 
@@ -262,19 +262,19 @@ std::shared_ptr<const R2T2ASRAssets> make_assets(
 
 }  // namespace
 
-std::shared_ptr<const R2T2ASRAssets> load_r2t2_asr_assets(const std::filesystem::path & model_path) {
-    return load_r2t2_asr_assets(model_path, "r2t2_asr");
+std::shared_ptr<const R2T2ASRAssets> load_confucius4_r2t2_assets(const std::filesystem::path & model_path) {
+    return load_confucius4_r2t2_assets(model_path, "confucius4_r2t2");
 }
 
-std::shared_ptr<const R2T2ASRAssets> load_r2t2_asr_assets(
+std::shared_ptr<const R2T2ASRAssets> load_confucius4_r2t2_assets(
     const std::filesystem::path & model_path,
     std::string_view package_family) {
     return make_assets(make_resource_bundle(model_path, package_family));
 }
 
-std::shared_ptr<const R2T2ASRAssets> load_r2t2_asr_assets(
+std::shared_ptr<const R2T2ASRAssets> load_confucius4_r2t2_assets(
     assets::ResourceBundle resources) {
     return make_assets(std::move(resources));
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

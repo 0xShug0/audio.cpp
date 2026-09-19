@@ -1,11 +1,11 @@
-#include "engine/community_models/r2t2_asr/thinker.h"
+#include "engine/community_models/confucius4_r2t2/thinker.h"
 
 #include "engine/framework/runtime/greedy_qwen_decoder.h"
 
 #include <stdexcept>
 #include <utility>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 namespace {
 
 namespace modules = engine::modules;
@@ -116,4 +116,4 @@ R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
     return out;
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

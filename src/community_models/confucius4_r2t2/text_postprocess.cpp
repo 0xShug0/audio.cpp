@@ -1,4 +1,4 @@
-#include "engine/community_models/r2t2_asr/text_postprocess.h"
+#include "engine/community_models/confucius4_r2t2/text_postprocess.h"
 
 #include <algorithm>
 #include <array>
@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 namespace {
 
 std::vector<uint32_t> utf8_to_codepoints(const std::string & text) {
@@ -602,4 +602,4 @@ bool ends_with_rollback_punctuation(const std::string & trimmed_text) {
     return last == ':' || last == ';';
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

@@ -4,9 +4,9 @@
 Run from the Confucius4-R2T2 repo (uv environment):
 
     cd /Users/david/github/voice/Confucius4-R2T2
-    PYTHONPATH=. uv run python /Users/david/github/voice/audio.cpp/tests/r2t2_asr/make_golden.py \
+    PYTHONPATH=. uv run python /Users/david/github/voice/audio.cpp/tests/confucius4_r2t2/make_golden.py \
         --model_path checkpoints/r2t2 --audio resources/test.wav \
-        --out /Users/david/github/voice/audio.cpp/tests/r2t2_asr/golden.json
+        --out /Users/david/github/voice/audio.cpp/tests/confucius4_r2t2/golden.json
 
 Produces offline transcript plus the per-chunk (text, fixed_text) streaming
 sequence used to verify the C++ LSP streaming port step by step.

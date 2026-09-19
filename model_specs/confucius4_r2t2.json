@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "family": "r2t2_asr",
+  "family": "confucius4_r2t2",
   "display_name": "Confucius4-R2T2",
   "description": "NetEase Youdao Confucius4-R2T2 real-time ASR: a Qwen3-ASR fine-tune with Longest Stable Prefix (LSP) streaming. Low-latency append-only streaming from 80 ms to 2 s chunks, context and hotword prompts, 30 languages.",
   "category": "asr",
@@ -56,7 +56,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "r2t2_asr_q8_0",
+    "recommended_package": "confucius4_r2t2_q8_0",
     "tags": [
       "ASR",
       "Stream"
@@ -76,7 +76,7 @@
   },
   "packages": [
     {
-      "id": "r2t2_asr_q8_0",
+      "id": "confucius4_r2t2_q8_0",
       "display_name": "Confucius4-R2T2 Q8_0 GGUF",
       "default": true,
       "format": "gguf",
@@ -91,7 +91,7 @@
       }
     },
     {
-      "id": "r2t2_asr_f16",
+      "id": "confucius4_r2t2_f16",
       "display_name": "Confucius4-R2T2 F16 GGUF",
       "format": "gguf",
       "precision": "f16",
@@ -105,7 +105,7 @@
       }
     },
     {
-      "id": "r2t2_asr_safetensors",
+      "id": "confucius4_r2t2_safetensors",
       "display_name": "Confucius4-R2T2 (HF safetensors)",
       "format": "safetensors",
       "precision": "native",

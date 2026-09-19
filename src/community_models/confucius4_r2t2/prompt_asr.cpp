@@ -1,6 +1,6 @@
-#include "engine/community_models/r2t2_asr/prompt_asr.h"
+#include "engine/community_models/confucius4_r2t2/prompt_asr.h"
 
-namespace engine::community_models::r2t2_asr {
+namespace engine::community_models::confucius4_r2t2 {
 
 R2T2ASRPromptBuilder::R2T2ASRPromptBuilder(const R2T2ASRTextTokenizer & tokenizer)
     : tokenizer_(tokenizer) {}
@@ -9,4 +9,4 @@ R2T2ASRPrompt R2T2ASRPromptBuilder::build(const R2T2ASRRequest & request, int64_
     return tokenizer_.build_prompt(request.context, request.language, audio_feature_tokens);
 }
 
-}  // namespace engine::community_models::r2t2_asr
+}  // namespace engine::community_models::confucius4_r2t2

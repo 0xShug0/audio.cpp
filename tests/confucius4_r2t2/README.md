@@ -1,6 +1,6 @@
 # R2T2 ASR verification
 
-These files verify the `r2t2_asr` family against the macOS MPS reference
+These files verify the `confucius4_r2t2` family against the macOS MPS reference
 implementation in the Confucius4-R2T2 repository (see `docs/community_models/r2t2.md`).
 
 ## Files
@@ -9,7 +9,7 @@ implementation in the Confucius4-R2T2 repository (see `docs/community_models/r2t
 |---|---|
 | `make_golden.py` | Runs the Python reference (`R2T2ASRModel` on MPS) for an audio file and writes offline text plus per-chunk streaming `fixed_text`, `raw_decoded`, and `text` to a golden JSON. |
 | `compare.py` | Runs `audiocpp_cli` offline and streaming with `--log-file`, parses the per-chunk trace, and diffs everything against a golden. |
-| `test_r2t2_asr_transcription.cpp` | Repo-native smoke test: offline + streaming transcripts against the golden for `assets/resources/sample_16k.wav`. Skips with exit code 125 when the model or audio is missing. Also exposes `--encode <text>` to dump token ids for tokenizer diffing. |
+| `test_confucius4_r2t2_transcription.cpp` | Repo-native smoke test: offline + streaming transcripts against the golden for `assets/resources/sample_16k.wav`. Skips with exit code 125 when the model or audio is missing. Also exposes `--encode <text>` to dump token ids for tokenizer diffing. |
 | `golden*.json` | Recorded reference outputs. |
 
 ## Goldens
@@ -31,21 +31,21 @@ Run from the Confucius4-R2T2 checkout (its `uv` environment has torch/MPS):
 
 ```bash
 cd /path/to/Confucius4-R2T2
-PYTHONPATH=. uv run python /path/to/audio.cpp/tests/r2t2_asr/make_golden.py \
+PYTHONPATH=. uv run python /path/to/audio.cpp/tests/confucius4_r2t2/make_golden.py \
   --model_path /path/to/audio.cpp/models/Confucius4-R2T2 \
   --audio resources/test.wav \
-  --out /path/to/audio.cpp/tests/r2t2_asr/golden.json
+  --out /path/to/audio.cpp/tests/confucius4_r2t2/golden.json
 ```
 
 ## Comparing
 
 ```bash
 cd /path/to/audio.cpp
-python3 tests/r2t2_asr/compare.py \
+python3 tests/confucius4_r2t2/compare.py \
   --cli build/macos-metal-release/bin/audiocpp_cli \
   --model models/Confucius4-R2T2 \
   --audio assets/resources/sample_16k.wav \
-  --golden tests/r2t2_asr/golden_sample16k.json \
+  --golden tests/confucius4_r2t2/golden_sample16k.json \
   --backend metal
 ```
 
@@ -58,6 +58,6 @@ stream (the reference WebSocket integrator's rule), every per-chunk committed
 The same binary can dump the family tokenizer for diffing against Hugging Face:
 
 ```bash
-build/macos-metal-release/bin/test_r2t2_asr_transcription \
+build/macos-metal-release/bin/test_confucius4_r2t2_transcription \
   --encode "language English<asr_text>Some text 22,500"
 ```

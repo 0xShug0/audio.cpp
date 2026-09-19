@@ -4,8 +4,8 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
-#include "engine/community_models/r2t2_asr/assets.h"
-#include "engine/community_models/r2t2_asr/tokenizer_text.h"
+#include "engine/community_models/confucius4_r2t2/assets.h"
+#include "engine/community_models/confucius4_r2t2/tokenizer_text.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -27,7 +27,7 @@ constexpr int kExitFail = 1;
 constexpr int kExitSkip = 125;
 
 // Golden output from the macOS MPS reference implementation
-// (tests/r2t2_asr/golden_sample16k.json, produced by make_golden.py).
+// (tests/confucius4_r2t2/golden_sample16k.json, produced by make_golden.py).
 const char * kExpectedOffline =
     "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer than you.";
 const char * kExpectedStreamFinal =
@@ -142,8 +142,8 @@ std::string run_streaming(
 // Debug aid: print token ids for a text argument so the family tokenizer can be
 // diffed against the reference Hugging Face tokenizer.
 int encode_probe(const std::filesystem::path & model_path, const std::string & text) {
-    auto assets = engine::community_models::r2t2_asr::load_r2t2_asr_assets(model_path, "r2t2_asr");
-    engine::community_models::r2t2_asr::R2T2ASRTextTokenizer tokenizer(assets);
+    auto assets = engine::community_models::confucius4_r2t2::load_confucius4_r2t2_assets(model_path, "confucius4_r2t2");
+    engine::community_models::confucius4_r2t2::R2T2ASRTextTokenizer tokenizer(assets);
     const auto ids = tokenizer.encode(text);
     std::cout << "count=" << ids.size() << "\nids=";
     for (size_t i = 0; i < ids.size(); ++i) {
@@ -170,7 +170,7 @@ int main(int argc, char ** argv) {
     if (!model_available || !engine::io::is_existing_file(audio_path)) {
         std::fprintf(
             stderr,
-            "SKIP: test_r2t2_asr_transcription requires model weights at '%s' and audio at '%s'.\n",
+            "SKIP: test_confucius4_r2t2_transcription requires model weights at '%s' and audio at '%s'.\n",
             model_path.string().c_str(),
             audio_path.string().c_str());
         return kExitSkip;
@@ -180,14 +180,14 @@ int main(int argc, char ** argv) {
         auto registry = engine::runtime::make_default_registry();
         engine::runtime::ModelLoadRequest load_request;
         load_request.model_path = model_path;
-        load_request.family_hint = "r2t2_asr";
+        load_request.family_hint = "confucius4_r2t2";
         auto model = registry.load(load_request);
 
         engine::runtime::SessionOptions options;
         options.backend.type = parse_backend(backend_name);
         options.backend.threads = 8;
-        options.options["r2t2_asr.chunk_size_ms"] = std::to_string(kStreamingChunkMs);
-        options.options["r2t2_asr.max_tokens"] = std::to_string(kStreamingMaxNewTokens);
+        options.options["confucius4_r2t2.chunk_size_ms"] = std::to_string(kStreamingChunkMs);
+        options.options["confucius4_r2t2.max_tokens"] = std::to_string(kStreamingMaxNewTokens);
 
         const auto audio = read_audio(audio_path);
 
