@@ -54,6 +54,19 @@
         "confucius4_r2t2.chunk_size_ms": "320",
         "confucius4_r2t2.max_tokens": "32"
       }
+    },
+    {
+      "id": "r2t2-asr-live",
+      "family": "confucius4_r2t2",
+      "path": "../../models/Confucius4-R2T2-GGUF/r2t2-q8_0.gguf",
+      "task": "asr",
+      "mode": "streaming",
+      "session_options": {
+        "confucius4_r2t2.chunk_size_ms": "320",
+        "confucius4_r2t2.max_tokens": "32",
+        "confucius4_r2t2.endpointing": "true",
+        "confucius4_r2t2.max_segment_seconds": "20"
+      }
     }
   ]
 }

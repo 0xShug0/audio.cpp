@@ -288,6 +288,62 @@
         "required": false,
         "default": 64,
         "description": "Thinker weight context in MB."
+      },
+      {
+        "name": "endpointing",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "VAD-driven endpointing for long streaming sessions: close and re-open the LSP segment on speech ends so sessions run past the 115.40 s audio-tower limit with bounded cost. Streaming only."
+      },
+      {
+        "name": "vad_model_path",
+        "type": "string",
+        "required": false,
+        "default": "assets/framework/models/silero_vad",
+        "description": "Silero VAD model directory (or safetensors file) used by endpointing."
+      },
+      {
+        "name": "vad_threshold",
+        "type": "float",
+        "required": false,
+        "default": 0.4,
+        "description": "Speech probability threshold for endpointing VAD decisions (0-1)."
+      },
+      {
+        "name": "vad_min_speech_ms",
+        "type": "int",
+        "required": false,
+        "default": 100,
+        "description": "Minimum speech-burst duration; shorter bursts are absorbed into the surrounding segment instead of triggering a boundary."
+      },
+      {
+        "name": "vad_min_silence_ms",
+        "type": "int",
+        "required": false,
+        "default": 200,
+        "description": "Silence duration that closes a segment; drives finalize latency after the speaker stops (~200 ms plus one decode)."
+      },
+      {
+        "name": "vad_speech_pad_ms",
+        "type": "int",
+        "required": false,
+        "default": 50,
+        "description": "Context prepended to a detected speech onset so first syllables are not clipped."
+      },
+      {
+        "name": "vad_gap_keep_ms",
+        "type": "int",
+        "required": false,
+        "default": 2000,
+        "description": "Rolling window of non-speech audio prepended to the next segment, capped below the segment limit. Zero disables retention."
+      },
+      {
+        "name": "max_segment_seconds",
+        "type": "float",
+        "required": false,
+        "default": 20.0,
+        "description": "Force a segment boundary after this much segment audio even without a VAD pause; must stay in (0, 110] because the audio tower position table holds 1500 frames (115.40 s)."
       }
     ],
     "load": []

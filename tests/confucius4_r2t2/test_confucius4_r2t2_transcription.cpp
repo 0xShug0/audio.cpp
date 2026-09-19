@@ -8,6 +8,7 @@
 #include "engine/community_models/confucius4_r2t2/tokenizer_text.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -35,6 +36,19 @@ const char * kExpectedStreamFinal =
 
 constexpr int64_t kStreamingChunkMs = 320;
 constexpr int64_t kStreamingMaxNewTokens = 32;
+
+// Segments decode independently, so a boundary legitimately rewrites casing
+// and sentence punctuation ("nature, others" vs "nature. Others"). Endpointed
+// comparisons normalize both sides to words+digits.
+std::string normalize_words(const std::string & text) {
+    std::string out;
+    for (const char c : text) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+    }
+    return out;
+}
 
 std::filesystem::path repo_path(const std::string & relative) {
     return std::filesystem::path(ENGINE_REPO_ROOT) / relative;
@@ -91,7 +105,10 @@ std::string run_offline(
 std::string run_streaming(
     engine::runtime::ILoadedVoiceModel & model,
     const engine::runtime::AudioBuffer & audio,
-    const engine::runtime::SessionOptions & options) {
+    const engine::runtime::SessionOptions & options,
+    size_t * segment_count = nullptr,
+    int64_t input_chunk_ms = kStreamingChunkMs,
+    std::vector<engine::runtime::TimeSpan> * spans = nullptr) {
     auto session = model.create_task_session(
         engine::runtime::TaskSpec{engine::runtime::VoiceTaskKind::Asr, engine::runtime::RunMode::Streaming},
         options);
@@ -104,9 +121,37 @@ std::string run_streaming(
     streaming->prepare(engine::runtime::build_preparation_request(request));
 
     std::string committed;
+    std::string segment_text;
+    size_t segments = 0;
+    int64_t previous_end = 0;
     streaming->set_stream_event_sink([&](const engine::runtime::StreamEvent & event) {
         if (event.partial_text.has_value()) {
+            if (event.partial_text->text.find("language") != std::string::npos ||
+                event.partial_text->text.find("<asr_text>") != std::string::npos) {
+                throw std::runtime_error("language metadata leaked into transcript delta");
+            }
             committed += event.partial_text->text;
+        }
+        for (const auto & activity : event.voice_activity) {
+            if (activity.kind == engine::runtime::VoiceActivityEvent::Kind::SpeechEnd &&
+                activity.segment.has_value() &&
+                !activity.segment->text.empty()) {
+                const auto span = activity.segment->span;
+                const int64_t frames = audio.samples.size() / audio.channels;
+                const double cap = options.options.count("confucius4_r2t2.max_segment_seconds")
+                    ? std::stod(options.options.at("confucius4_r2t2.max_segment_seconds")) : 20.0;
+                if (span.start_sample < previous_end || span.end_sample > frames ||
+                    span.end_sample <= span.start_sample ||
+                    span.end_sample - span.start_sample > static_cast<int64_t>(cap * audio.sample_rate) ||
+                    activity.sample != span.end_sample) {
+                    throw std::runtime_error("invalid endpoint segment span");
+                }
+                if (!segment_text.empty()) segment_text += ' ';
+                segment_text += activity.segment->text;
+                previous_end = span.end_sample;
+                if (spans) spans->push_back(span);
+                ++segments;
+            }
         }
     });
     request.options["language"] = "Auto";
@@ -114,7 +159,7 @@ std::string run_streaming(
 
     const int64_t chunk_frames = std::max<int64_t>(
         1,
-        static_cast<int64_t>(audio.sample_rate) * kStreamingChunkMs / 1000);
+        static_cast<int64_t>(audio.sample_rate) * input_chunk_ms / 1000);
     const int64_t frames = static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
     for (int64_t start = 0; start < frames; start += chunk_frames) {
         const int64_t take = std::min<int64_t>(chunk_frames, frames - start);
@@ -127,13 +172,22 @@ std::string run_streaming(
         streaming->process_audio_chunk(chunk);
     }
     const auto result = streaming->finish_stream();
+    if (segment_count != nullptr) {
+        *segment_count = segments;
+    }
     if (!result.text_output.has_value()) {
         throw std::runtime_error("streaming run produced no text");
     }
     std::cout << "Committed stream:    " << committed << "\n";
     // finish_stream() returns the final tail separately; the emitted deltas
     // must form a nonempty transcript prefix, never consume metadata offsets.
-    if (committed.empty() || std::string(kExpectedStreamFinal).compare(0, committed.size(), committed) != 0) {
+    const bool endpointed = options.options.count("confucius4_r2t2.endpointing") &&
+        options.options.at("confucius4_r2t2.endpointing") == "true";
+    if (endpointed) {
+        if (segment_text != result.text_output->text || segments != result.speech_segments.size()) {
+            throw std::runtime_error("segment events do not reconstruct the final transcript");
+        }
+    } else if (committed.empty() || std::string(kExpectedStreamFinal).compare(0, committed.size(), committed) != 0) {
         throw std::runtime_error("committed deltas are not a prefix of the expected transcript: " + committed);
     }
     return result.text_output->text;
@@ -207,6 +261,54 @@ int main(int argc, char ** argv) {
                       << "  expected: " << kExpectedStreamFinal << "\n"
                       << "  actual:   " << stream_final << "\n";
             return kExitFail;
+        }
+
+        // Endpointing smoke: a misconfigured VAD path must fail fast at
+        // start_stream with an actionable error, and a real run must emit at
+        // least one non-empty segment boundary whose text joins into the
+        // final transcript.
+        try {
+            engine::runtime::SessionOptions bad = options;
+            bad.options["confucius4_r2t2.endpointing"] = "true";
+            bad.options["confucius4_r2t2.vad_model_path"] = "assets/definitely/missing/silero_vad";
+            run_streaming(*model, audio, bad);
+            std::cerr << "FAIL: endpointing with a missing VAD model should have thrown\n";
+            return kExitFail;
+        } catch (const std::exception & error) {
+            std::cout << "Endpointing bad-path check: rejected as expected (" << error.what() << ")\n";
+        }
+
+        engine::runtime::SessionOptions endpointed = options;
+        endpointed.options["confucius4_r2t2.endpointing"] = "true";
+        size_t segments = 0;
+        const std::string endpointed_final = run_streaming(*model, audio, endpointed, &segments);
+        std::cout << "Endpointed final:    " << endpointed_final << " (" << segments << " segments)\n";
+        if (segments == 0) {
+            std::cerr << "FAIL: endpointed run emitted no segment boundaries\n";
+            return kExitFail;
+        }
+        if (normalize_words(endpointed_final) != normalize_words(kExpectedStreamFinal)) {
+            std::cerr << "FAIL: endpointed transcript mismatch\n"
+                      << "  expected: " << kExpectedStreamFinal << "\n"
+                      << "  actual:   " << endpointed_final << "\n";
+            return kExitFail;
+        }
+
+        // One transport packet contains several VAD boundaries. Its output
+        // must equal irregular small packets, including exact sample spans.
+        endpointed.options["confucius4_r2t2.max_segment_seconds"] = "3.013";
+        endpointed.options["confucius4_r2t2.vad_gap_keep_ms"] = "5000";
+        std::vector<engine::runtime::TimeSpan> large_spans, small_spans;
+        const auto large = run_streaming(*model, audio, endpointed, nullptr, 60000, &large_spans);
+        const auto small = run_streaming(*model, audio, endpointed, nullptr, 17, &small_spans);
+        if (large != small || large_spans.size() != small_spans.size() || large_spans.size() < 2) {
+            throw std::runtime_error("endpoint output depends on transport packet size");
+        }
+        for (size_t i = 0; i < large_spans.size(); ++i) {
+            if (large_spans[i].start_sample != small_spans[i].start_sample ||
+                large_spans[i].end_sample != small_spans[i].end_sample) {
+                throw std::runtime_error("endpoint spans depend on transport packet size");
+            }
         }
 
         std::cout << "PASS: Confucius4-R2T2 offline and streaming transcripts match the MPS golden.\n";
