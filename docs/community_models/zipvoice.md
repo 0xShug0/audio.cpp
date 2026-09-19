@@ -27,7 +27,13 @@ both timesteps), fbank, and vocos audio — all at cosine 1.0. The Chinese/Engli
 A ready-made, self-contained package is hosted at
 [davidxifeng/zipvoice-gguf](https://huggingface.co/davidxifeng/zipvoice-gguf) — the model
 manager downloads it directly (`zipvoice-distill-orig.gguf`, flow-matching model + bundled
-Vocos + embedded frontend sidecars). To rebuild it locally:
+Vocos + embedded frontend sidecars). The Q8_0 package includes the same resources:
+
+```bash
+python3 tools/model_manager_v2.py install zipvoice_distill_q8_0
+```
+
+To rebuild it locally:
 
 ```bash
 # 1. stage the Chinese frontend tables (requires the upstream ZipVoice python env

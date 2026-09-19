@@ -173,6 +173,17 @@
       "files": [
         "zipvoice-distill-orig.gguf"
       ]
+    },
+    {
+      "id": "zipvoice_distill_q8_0",
+      "display_name": "ZipVoice-Distill GGUF (Q8_0)",
+      "description": "Self-contained Q8_0 GGUF with bundled Vocos and embedded text-frontend sidecars.",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ZipVoice-Distill-GGUF",
+      "files": [
+        "zipvoice-distill-q8_0.gguf"
+      ]
     }
   ],
   "dependencies": [],
