@@ -758,8 +758,6 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
 
     const ggml_type tsrc0 = op->src[0]->type;
     const ggml_type tsrc1 = op->src[1]->type;
-    const bool full_f32 = tsrc0 == GGML_TYPE_F32 && tsrc1 == GGML_TYPE_F32 &&
-        ggml_get_op_params_i32(op, 0) == GGML_PREC_F32;
 
     const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
 
@@ -778,8 +776,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
     const int16_t r2   = (int16_t) (ne12 / op->src[0]->ne[2]);
     const int16_t r3   = (int16_t) (ne13 / op->src[0]->ne[3]);
 
-    snprintf(base, 256, "kernel_mul_mm_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1),
-             full_f32 ? "_prec_f32" : "");
+    snprintf(base, 256, "kernel_mul_mm_%s_%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1));
     snprintf(name, 256, "%s_bci=%d_bco=%d_ne12=%d_ne13=%d_r2=%d_r3=%d",
              base, bc_inp, bc_out, ne12, ne13, r2, r3);
 
@@ -803,13 +800,13 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
         res.nr0 = NRA;
         res.nr1 = NRB;
 
-        const size_t smem_a = NRA * N_MM_NK_TOTAL * (full_f32 ? sizeof(float) : sizeof(ggml_fp16_t));
+        const size_t smem_a = NRA * N_MM_NK_TOTAL * sizeof(ggml_fp16_t);
         res.smem = smem_a;
     } else {
         res.nr0 = 64;
         res.nr1 = 32;
 
-        res.smem = full_f32 ? (8192 + 4096) : (bc_out ? 8192 : (4096 + 2048));
+        res.smem = bc_out ? 8192 : (4096 + 2048);
     }
 
     res.nsg = N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y;

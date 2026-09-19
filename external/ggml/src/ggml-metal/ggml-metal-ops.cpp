@@ -2371,15 +2371,7 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
         !ggml_is_transposed(op->src[1]) &&
         // for now the matrix-matrix multiplication kernel only works on A14+/M1+ SoCs
         // AMD GPU and older A-chips will reuse matrix-vector multiplication kernel
-        // Short F32 contractions (e.g. 32-dim QK attention) still benefit
-        // from tiled MM when both output axes are large enough. Keep the
-        // existing MV choice for small outputs and other precision modes.
-        props_dev->has_simdgroup_mm &&
-        (ne00 >= 64 || (ne00 >= 32 && ne01 >= 64 && ne11 >= 32 &&
-                        op->src[0]->type == GGML_TYPE_F32 &&
-                        op->src[1]->type == GGML_TYPE_F32 &&
-                        ggml_get_op_params_i32(op, 0) == GGML_PREC_F32)) &&
-        ne11 > ne11_mm_min) {
+        props_dev->has_simdgroup_mm && ne00 >= 64 && ne11 > ne11_mm_min) {
         //GGML_LOG_INFO("matrix: ne00 = %6d, ne01 = %6d, ne02 = %6d, ne11 = %6d, ne12 = %6d\n", ne00, ne01, ne02, ne11, ne12);
 
         // some Metal matrix data types require aligned pointers
