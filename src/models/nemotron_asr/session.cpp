@@ -780,49 +780,11 @@ runtime::TaskResult NemotronASRStreamingSession::finalize() {
         throw std::runtime_error("Nemotron ASR streaming request is shorter than the first required chunk");
     }
     const auto decoded = decoder_->finish_stream_decode();
-    // Safety net: a blank incremental final is re-decoded through the offline
-    // encoder (full-context single pass). At the default lookahead 3 the
-    // chunk-end frames lack right context and short utterances can come back
-    // blank; at lookahead 0 the schedule is exact and this rarely fires.
-    const auto is_blank = [](const std::string & text) {
-        return text.find_first_not_of(" \t\n\r") == std::string::npos;
-    };
-    if (is_blank(decoded.text)) {
-        // The full-context path is the OFFLINE encoder — one pass over the whole
-        // turn with full attention and no chunk windows. (run_streaming_audio
-        // shares the chunked streaming graph and its chunk-end truncation, so it
-        // does not help here.)
-        //
-        // The re-decode input is padded with ~500 ms of silence: the greedy
-        // RNNT has cut-length dead pockets where it emits nothing at all
-        // (measured on hi.wav: cuts at 560-570 ms decode empty in the f32
-        // reference too, while 550 and 580 decode fine). Extra silence moves
-        // the frame grid out of the pocket without touching the speech.
-        auto padded_audio = streaming_audio_;
-        padded_audio.samples.resize(
-            padded_audio.samples.size() + static_cast<size_t>(assets_->config.frontend.sample_rate / 2),
-            0.0f);
-        const auto frontend = frontend_.extract(padded_audio, true);
-        const auto encoded = encoder_->encode(frontend, stream_prompt_id_, stream_lookahead_);
-        auto full = decoder_->decode(encoded, stream_decode_options_);
-        if (is_blank(full.text)) {
-            // Still blank — retry once with a longer pad before giving up.
-            padded_audio.samples.resize(
-                padded_audio.samples.size() + static_cast<size_t>(assets_->config.frontend.sample_rate),
-                0.0f);
-            const auto frontend2 = frontend_.extract(padded_audio, true);
-            const auto encoded2 = encoder_->encode(frontend2, stream_prompt_id_, stream_lookahead_);
-            full = decoder_->decode(encoded2, stream_decode_options_);
-        }
-        debug::trace_log_scalar(
-            "nemotron_asr.streaming.empty_final_rerun",
-            full.text.empty() ? 0 : 1);
-        runtime::TaskResult result;
-        result.text_output = runtime::Transcript{full.text, streaming_language_};
-        result.word_timestamps = full.token_timestamps;
-        debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
-        return result;
-    }
+    // No fallback: the streaming decode is the result. The greedy RNNT has
+    // cut-length dead pockets (verified in the f32 reference - hi.wav at a
+    // 0.57 s cut decodes empty in every streaming shape), and the offline
+    // re-decode that used to rescue them cost 250-330 ms inside the
+    // end-of-turn window; see docs/nemotron_streaming_end_of_turn.md.
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{decoded.text, streaming_language_};
     result.word_timestamps = decoded.token_timestamps;
