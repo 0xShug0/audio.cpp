@@ -42,8 +42,10 @@ void mm(ggml_backend_t backend,int K,int M,int N,int broadcast,int mode,bool f32
 int main() {
  auto b=ggml_backend_metal_init();if(!b)return 77;
  try {
- for(int k:{64,65,128})for(int bc:{0,1})mm(b,k,67,35,bc,0,true);
- for(int mode:{1,2})for(int k:{64,128})mm(b,k,67,35,0,mode,true);
+ for(int k:{31,32,33,48,63,64,65,128})for(int bc:{0,1})mm(b,k,67,35,bc,0,true);
+ for(int mode:{1,2})for(int k:{32,48,64,128})mm(b,k,67,35,0,mode,true);
+ for(int m:{63,64,67})for(int n:{8,9,31,32,35})mm(b,32,m,n,0,0,true);
+ for(int k:{32,48})mm(b,k,512,512,0,0,true,20);
  for(bool prec:{false,true}){mm(b,128,67,35,0,0,prec);mm(b,128,67,35,0,0,prec,5,GGML_TYPE_F16);}
  } catch (const std::exception & e) {std::fprintf(stderr,"%s\n",e.what());ggml_backend_free(b);return 1;}
  ggml_backend_free(b);
