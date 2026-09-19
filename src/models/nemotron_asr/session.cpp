@@ -188,10 +188,12 @@ NemotronASRSessionBase::NemotronASRSessionBase(
         conv_weight_storage_type_,
         weight_context_bytes_);
     // Streaming encoder graphs are metadata-only arenas but the prefix ladder
-    // multiplies them (up to ~56 variants at lookahead 0), so they default to a
-    // fraction of the offline graph's arena. An explicit
+    // multiplies them (up to ~15 variants at lookahead 0). The streaming graph
+    // caps its node array at 64k entries (~3.4k used), so a 16 MB per-variant
+    // arena holds the metadata with a wide margin — about a sixth of the old
+    // 96 MB per-variant commit. An explicit
     // nemotron_asr.encoder_graph_arena_mb option is honored as-is for both.
-    constexpr size_t kDefaultStreamEncoderGraphArenaBytes = 96ull * 1024ull * 1024ull;
+    constexpr size_t kDefaultStreamEncoderGraphArenaBytes = 16ull * 1024ull * 1024ull;
     const size_t stream_arena_bytes = encoder_graph_arena_bytes_ == kDefaultEncoderGraphArenaBytes
         ? kDefaultStreamEncoderGraphArenaBytes
         : encoder_graph_arena_bytes_;
@@ -586,6 +588,14 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
     } else if (flush_tail && stream_next_chunk_start_ < total) {
         // The tail never fills a whole native chunk: zero-pad it so the final
         // audio is encoded too (the padding decodes to blank tokens).
+        //
+        // The pad MUST reach the full chunk window even when the leftover is
+        // short: the RNNT fires a word's trailing token on a post-speech
+        // frame, and when the client's turn buffer cuts the speech decay the
+        // model needs 2-3 zero-padding frames before it emits the final token
+        // (measured: a tail ending at the speech edge turns 'Hello' into
+        // 'Hel'). The reference implementation pads the final chunk to the
+        // full required length for the same reason.
         const int64_t copy_from = std::max<int64_t>(stream_next_chunk_start_, 0);
         window.assign(
             streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(copy_from),

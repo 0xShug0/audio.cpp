@@ -33,6 +33,11 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr size_t kEncoderGraphNodes = 2097152;
+// Streaming graphs measure ~3.4k nodes (traced); the cap sizes the cgraph
+// node array, which lives in the per-variant arena — 2M slots cost ~16 MB of
+// arena per variant for nothing. 64k leaves a ~20x margin and lets the
+// prefix ladder plus tail variants stay affordable.
+constexpr size_t kStreamGraphNodes = 65536;
 
 int64_t causal_conv_output_dim(int64_t input, int64_t kernel, int64_t stride, bool streaming) {
     const int64_t left = streaming ? kernel - stride : kernel - 1;
@@ -950,7 +955,7 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
         graph->output = engine::core::wrap_tensor(dep_tensor, graph->output.shape, GGML_TYPE_F32);
     }
 
-    graph->graph = ggml_new_graph_custom(graph->ggml, kEncoderGraphNodes, false);
+    graph->graph = ggml_new_graph_custom(graph->ggml, kStreamGraphNodes, false);
     ggml_build_forward_expand(graph->graph, graph->output.tensor);
     ggml_build_forward_expand(graph->graph, graph->next_subsampling_cache0.tensor);
     ggml_build_forward_expand(graph->graph, graph->next_subsampling_cache1.tensor);
@@ -960,6 +965,7 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
         ggml_build_forward_expand(graph->graph, graph->next_attention_value_cache[static_cast<size_t>(layer)].tensor);
         ggml_build_forward_expand(graph->graph, graph->next_conv_cache[static_cast<size_t>(layer)].tensor);
     }
+    debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_nodes", (int64_t) ggml_graph_n_nodes(graph->graph));
     graph->pos_graph = ggml_new_graph_custom(graph->ggml, 4096, false);
     for (const auto & projected : graph->projected_pos_emb_computed) {
         ggml_build_forward_expand(graph->pos_graph, projected.tensor);
@@ -1065,6 +1071,12 @@ void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int
         (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, std::min<int64_t>(prefix, enc.sliding_window - 1), false);
     }
     (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, enc.sliding_window - 1, false);
+    // NOTE: short tail variants (8/16/24 mel) were tried here so the finalize
+    // flush could encode 1-3 frames instead of 4. Refuted by measurement: the
+    // RNNT fires a word's trailing token on a post-speech frame, and when the
+    // turn buffer cuts the speech decay the model needs 2-3 zero-padding
+    // frames before emitting it ('Hello' -> 'Hel' with a short tail). The
+    // finalize flush must pad to the full chunk window.
 }
 
 NemotronEncoderStreamState NemotronEncoderRuntime::make_stream_state() const {
