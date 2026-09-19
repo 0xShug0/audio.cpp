@@ -1,4 +1,3 @@
-#include <iostream>
 #include "engine/models/nemotron_asr/session.h"
 
 #include "engine/framework/debug/profiler.h"
@@ -7,6 +6,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -25,6 +27,35 @@ std::shared_ptr<const NemotronASRAssets> require_assets(std::shared_ptr<const Ne
         throw std::runtime_error("Nemotron ASR session requires assets");
     }
     return assets;
+}
+
+// Opt-in per-chunk debugging (NEMOTRON_DUMP_CHUNKS=<path prefix>): writes the
+// mel features and the encoder output of every streaming chunk as little-endian
+// f32 blobs plus a .meta sidecar with the dimensions, so a reference
+// implementation (transformers nemotron_asr_streaming) can be diffed
+// chunk-for-chunk and frame-for-frame.
+void dump_stream_chunk(
+    const std::string & prefix,
+    int64_t seq,
+    const NemotronFrontendFeatures & mel,
+    const NemotronEncodedAudio & enc,
+    bool center) {
+    const char * env = std::getenv("NEMOTRON_DUMP_CHUNKS");
+    if (env == nullptr || *env == '\0') {
+        return;
+    }
+    const std::string base = std::string(env) + "_c" + std::to_string(seq);
+    auto write_f32 = [&](const std::string & path, const float * data, size_t count) {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char *>(data), static_cast<std::streamsize>(count * sizeof(float)));
+    };
+    write_f32(base + "_mel.f32", mel.values.data(), static_cast<size_t>(mel.frames * mel.feature_dim));
+    write_f32(base + "_enc.f32", enc.values.data(), static_cast<size_t>(enc.frames * enc.hidden_size));
+    std::ofstream meta(base + ".meta");
+    meta << "mel_frames=" << mel.frames << " mel_valid=" << mel.valid_frames
+         << " mel_dim=" << mel.feature_dim << " enc_frames=" << enc.frames
+         << " enc_valid=" << enc.valid_frames << " enc_hidden=" << enc.hidden_size
+         << " center=" << (center ? 1 : 0) << "\n";
 }
 
 engine::assets::TensorStorageType option_weight_type(
@@ -339,7 +370,12 @@ NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
     const int64_t first_mel_frames = std::max<int64_t>(
         assets_->config.encoder.subsampling_factor,
         1 + assets_->config.encoder.subsampling_factor * lookahead);
-    const int64_t mel_frames_per_chunk = assets_->config.encoder.subsampling_factor * (lookahead + 1);
+    // The sliding chunk carries at least 4 encoded frames: at lookahead 0 the
+    // emit-all schedule is exact for any chunk size (no frame needs right
+    // context), and larger chunks amortize the per-graph overheads — 1-frame
+    // chunks at 80 ms measurably fall behind realtime on one CPU thread.
+    const int64_t mel_frames_per_chunk = assets_->config.encoder.subsampling_factor *
+        std::max<int64_t>(lookahead + 1, 4);
     const int64_t first_samples = (first_mel_frames - 1) * fc.hop_length + fc.win_length / 2;
     const int64_t samples_per_chunk = mel_frames_per_chunk * fc.hop_length + fc.win_length;
     auto waveform = frontend_.prepare_waveform(audio);
@@ -490,13 +526,15 @@ void NemotronASRStreamingSession::start_stream(const runtime::TaskRequest & requ
     stream_first_mel_frames_ = std::max<int64_t>(
         enc.subsampling_factor,
         1 + enc.subsampling_factor * stream_lookahead_);
-    stream_mel_frames_per_chunk_ = enc.subsampling_factor * (stream_lookahead_ + 1);
+    stream_mel_frames_per_chunk_ = enc.subsampling_factor *
+        std::max<int64_t>(stream_lookahead_ + 1, 4);
     stream_first_samples_ = (stream_first_mel_frames_ - 1) * fc.hop_length + fc.win_length / 2;
     stream_samples_per_chunk_ = stream_mel_frames_per_chunk_ * fc.hop_length + fc.win_length;
     stream_next_chunk_start_ = stream_first_mel_frames_ * fc.hop_length - fc.n_fft / 2;
     stream_await_first_chunk_ = true;
     stream_tail_encoded_ = false;
     stream_decode_active_ = false;
+    stream_dump_chunk_seq_ = 0;
     encoder_stream_state_ = encoder_->make_stream_state();
 }
 
@@ -570,6 +608,8 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
         stream_prompt_id_,
         stream_lookahead_,
         encoder_stream_state_);
+    dump_stream_chunk("stream", stream_dump_chunk_seq_, features, encoded, center);
+    ++stream_dump_chunk_seq_;
 
     if (!stream_decode_active_) {
         decoder_->begin_stream_decode(stream_decode_options_);

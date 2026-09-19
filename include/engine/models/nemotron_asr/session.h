@@ -111,6 +111,7 @@ private:
     bool stream_await_first_chunk_ = true;
     bool stream_tail_encoded_ = false;
     bool stream_decode_active_ = false;
+    int64_t stream_dump_chunk_seq_ = 0;
 };
 
 }  // namespace engine::models::nemotron_asr

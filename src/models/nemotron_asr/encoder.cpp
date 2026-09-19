@@ -1,4 +1,3 @@
-#include <iostream>
 #include "engine/models/nemotron_asr/encoder.h"
 
 #include "engine/framework/core/backend.h"
@@ -1019,7 +1018,11 @@ void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int
     const int64_t first_frames = std::max<int64_t>(
         enc.subsampling_factor,
         1 + enc.subsampling_factor * lookahead_tokens);
-    const int64_t next_frames = enc.subsampling_factor * (lookahead_tokens + 1);
+    // Must match the session's sliding-chunk size: the session carries a floor
+    // of 4 encoded frames per chunk (lookahead 0 with 1-frame chunks falls
+    // behind realtime on CPU), so the prebuilt ladder must use the same size.
+    const int64_t next_frames = enc.subsampling_factor *
+        std::max<int64_t>(lookahead_tokens + 1, 4);
     (void) ensure_stream_graph(first_frames, feature_dim, lookahead_tokens, 0, true);
     const int64_t k = enc.subsampling_kernel;
     const int64_t s = enc.subsampling_stride;
@@ -1037,12 +1040,18 @@ void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int
     const size_t per_variant = stream_graph_arena_bytes_;
     const int64_t kMaxPrebuiltPrefixGraphs =
         static_cast<int64_t>(kMaxPrebuildArenaCommit / std::max<size_t>(per_variant, 1));
+    // The session's prefix sequence: the first chunk emits first_encoded frames
+    // (centered conv over first_frames), so chunk 2's prefix = first_encoded;
+    // each later chunk adds stage3_frames. The final variant caps at
+    // sliding_window - 1.
+    const int64_t first_encoded = causal_conv_output_dim(first_frames, k, s, false);
     int64_t prebuilt = 0;
-    for (int64_t prefix = stage3_frames;
+    for (int64_t prefix = first_encoded;
          prefix < enc.sliding_window && prebuilt < kMaxPrebuiltPrefixGraphs;
          prefix += stage3_frames, ++prebuilt) {
         (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, std::min<int64_t>(prefix, enc.sliding_window - 1), false);
     }
+    (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, enc.sliding_window - 1, false);
 }
 
 NemotronEncoderStreamState NemotronEncoderRuntime::make_stream_state() const {
