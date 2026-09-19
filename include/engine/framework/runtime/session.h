@@ -163,6 +163,10 @@ struct TaskRequest {
     std::optional<VoiceCondition> voice = std::nullopt;
     std::vector<VoiceArtifact> input_artifacts;
     std::unordered_map<std::string, std::string> options;
+    /// List-valued options, kept apart from the single-valued ones so a family
+    /// reading either cannot silently see the other half-formed. The `*_list`
+    /// option types the spec schema already declares are carried here.
+    std::unordered_map<std::string, std::vector<std::string>> option_arrays;
 };
 
 struct AudioPreparationContract {
@@ -176,6 +180,9 @@ struct SessionPreparationRequest {
     std::optional<Transcript> text = std::nullopt;
     std::optional<VoiceCondition> voice = std::nullopt;
     std::unordered_map<std::string, std::string> options;
+    /// See TaskRequest::option_arrays. Carried through preparation so a session
+    /// can size its graphs for what run() will actually be handed.
+    std::unordered_map<std::string, std::vector<std::string>> option_arrays;
 };
 
 struct VoiceActivityEvent {

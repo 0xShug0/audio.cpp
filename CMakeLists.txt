@@ -238,12 +238,16 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
 
     # Define default archs
     if ("${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "" AND "$ENV{CUDAARCHS}" STREQUAL "")
+        # Remembered so the summary below can tell the difference between "the
+        # portable list is what you asked for" and "the portable list is what you
+        # got by not asking".
+        set(_AUDIOCPP_CUDA_ARCH_DEFAULTED TRUE)
         # XX-virtual = PTX (JIT, forward-compatible); XX-real = SASS (native).
         if (CUDAToolkit_VERSION VERSION_LESS "13")
             # 50/61/70 (Maxwell/Pascal/Volta) unsupported by CUDA 13 toolkits
             list(APPEND CMAKE_CUDA_ARCHITECTURES 50-virtual 61-virtual 70-virtual)
         endif()
-        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-virtual 80-virtual 86-real)
+        list(APPEND CMAKE_CUDA_ARCHITECTURES 75-real 80-virtual 86-real)
         if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.8")
             list(APPEND CMAKE_CUDA_ARCHITECTURES 89-real 90-virtual)
         endif()
@@ -280,10 +284,36 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     endif()
     message(STATUS "Using CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} CMAKE_CUDA_ARCHITECTURES_NATIVE=${CMAKE_CUDA_ARCHITECTURES_NATIVE}")
 
+    # The line above prints both halves of this and interprets neither: how many
+    # architectures are about to be compiled, and which one this host can run.
+    # The option is documented (README, docs/build/linux.md), but configure is
+    # where the choice is actually being made, so say it here too.
+    if (_AUDIOCPP_CUDA_ARCH_DEFAULTED AND
+        CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES "^[0-9]")
+        list(LENGTH CMAKE_CUDA_ARCHITECTURES _AUDIOCPP_ARCH_COUNT)
+        message(STATUS "  portable default: ${_AUDIOCPP_ARCH_COUNT} architectures, so every .cu file is compiled ${_AUDIOCPP_ARCH_COUNT} times")
+        message(STATUS "  this host is ${CMAKE_CUDA_ARCHITECTURES_NATIVE}; for a local build roughly 3x faster:")
+        message(STATUS "      -DCMAKE_CUDA_ARCHITECTURES=native    (the result then runs on this GPU only)")
+        message(STATUS "      scripts/build_linux.sh: --cuda-arch native")
+    endif()
+
     if (NOT MSVC)
         set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
     endif()
 endif()
+
+# ⚠ Outside the CUDA block on purpose: ccache is not a CUDA concern, and a
+# CPU-only, Vulkan or HIP build benefits from it just as much. GGML_CCACHE is
+# forced OFF above, so ggml's own probe never runs and nothing caches anything
+# unless the caller wires a launcher up by hand.
+find_program(AUDIOCPP_CCACHE_PROGRAM ccache)
+if (AUDIOCPP_CCACHE_PROGRAM AND
+    NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "ccache is installed (${AUDIOCPP_CCACHE_PROGRAM}) and NOT in use. Rebuilds are much faster with:")
+    message(STATUS "    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache")
+    message(STATUS "    scripts/build_linux.sh: --ccache")
+endif()
+
 if (ENGINE_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED COMPONENTS CXX)
 endif()
@@ -401,6 +431,7 @@ add_library(engine_core OBJECT
     src/framework/model_spec/schema.cpp
     src/framework/assets/tensor_source.cpp
     src/framework/assets/weight_norm_folding.cpp
+    src/framework/assets/lora_tensor_source.cpp
     src/framework/assets/torch_bin.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
@@ -412,6 +443,7 @@ add_library(engine_core OBJECT
     src/framework/model_spec/metadata.cpp
     src/framework/runtime/session.cpp
     src/framework/runtime/task_vocabulary.cpp
+    src/framework/runtime/partial_text.cpp
     src/framework/runtime/artifacts.cpp
     src/framework/runtime/cache.cpp
     src/framework/runtime/graph_executor.cpp
@@ -419,6 +451,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/host_ops.cpp
     src/framework/runtime/kv_cache.cpp
     src/framework/runtime/bounded_static_kv_decode.cpp
+    src/framework/runtime/greedy_qwen_decoder.cpp
     src/framework/runtime/options.cpp
     src/framework/runtime/session_base.cpp
     src/framework/runtime/workspace.cpp
@@ -460,6 +493,7 @@ add_library(engine_core OBJECT
     src/framework/modules/speech_encoders/campplus_encoder.cpp
     src/framework/modules/speech_encoders/s3_tokenizer.cpp
     src/framework/modules/codecs/nemo_nano_codec.cpp
+    src/framework/codecs/wan_video_vae_runtime.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
     src/framework/modules/vocoders/hifigan_vocoder.cpp
@@ -500,6 +534,7 @@ add_library(engine_core OBJECT
     src/framework/modules/optimizations/fast_kv_modules.cpp
     src/framework/tokenizers/hf_tokenizer_json.cpp
     src/framework/tokenizers/llama_bpe.cpp
+    src/framework/tokenizers/qwen_bpe_bundle.cpp
     external/llama_tokenizer/bpe-core.cpp
     external/llama_tokenizer/unicode.cpp
     external/llama_tokenizer/unicode-data.cpp
@@ -532,6 +567,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/mimi_codec_runtime.cpp
     src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
+    src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
@@ -563,6 +599,50 @@ add_library(engine_model_marblenet_vad OBJECT
 )
 set_target_properties(engine_model_marblenet_vad PROPERTIES EXCLUDE_FROM_ALL TRUE)
 audiocpp_configure_runtime_object(engine_model_marblenet_vad)
+
+audiocpp_add_model(moss_transcribe_diarize
+    SOURCES
+        src/models/moss_transcribe_diarize/runtime.cpp
+        src/models/moss_transcribe_diarize/session.cpp
+    INCLUDES
+        engine/models/moss_transcribe_diarize/session.h
+    LOADERS
+        engine::models::moss_transcribe_diarize::make_moss_transcribe_diarize_loader
+)
+
+audiocpp_add_model(universr
+    SOURCES
+        src/models/universr/assets.cpp
+        src/models/universr/network.cpp
+        src/models/universr/runtime.cpp
+        src/models/universr/frontend.cpp
+        src/models/universr/session.cpp
+    INCLUDES
+        engine/models/universr/session.h
+    LOADERS
+        engine::models::universr::make_universr_loader
+)
+
+audiocpp_add_model(apollo
+    SOURCES
+        src/models/apollo/assets.cpp
+        src/models/apollo/runtime.cpp
+        src/models/apollo/session.cpp
+    INCLUDES
+        engine/models/apollo/session.h
+    LOADERS
+        engine::models::apollo::make_apollo_loader
+)
+
+audiocpp_add_model(pulsevad
+    SOURCES
+        src/models/pulsevad/runtime.cpp
+        src/models/pulsevad/session.cpp
+    INCLUDES
+        engine/models/pulsevad/session.h
+    LOADERS
+        engine::models::pulsevad::make_pulsevad_loader
+)
 
 audiocpp_add_model(roformer
     SOURCES
@@ -762,6 +842,24 @@ audiocpp_add_model(minimax_h3
         engine/community_models/minimax_h3/session.h
     LOADERS
         engine::models::minimax_h3::make_minimax_h3_loader
+)
+
+audiocpp_add_model(liveavatar
+    SOURCES
+        src/community_models/liveavatar/assets.cpp
+        src/community_models/liveavatar/pipeline.cpp
+        src/community_models/liveavatar/pipeline_state.cpp
+        src/community_models/liveavatar/pipeline_text_encoder.cpp
+        src/community_models/liveavatar/pipeline_vae.cpp
+        src/community_models/liveavatar/pipeline_denoiser.cpp
+        src/community_models/liveavatar/pipeline_liveavatar.cpp
+        src/community_models/liveavatar/pipeline_offline.cpp
+        src/community_models/liveavatar/wan_s2v_audio_conditioner.cpp
+        src/community_models/liveavatar/session.cpp
+    INCLUDES
+        engine/community_models/liveavatar/session.h
+    LOADERS
+        engine::community_models::liveavatar::make_liveavatar_loader
 )
 
 audiocpp_add_model(minimax_music3
@@ -1262,6 +1360,30 @@ audiocpp_add_model(nemotron_asr
         engine::models::nemotron_asr::make_nemotron_asr_loader
 )
 
+audiocpp_add_model(cohere_asr
+    SOURCES
+        src/models/cohere_asr/assets.cpp
+        src/models/cohere_asr/weights.cpp
+        src/models/cohere_asr/runtime.cpp
+        src/models/cohere_asr/session.cpp
+    INCLUDES
+        engine/models/cohere_asr/model.h
+    LOADERS
+        engine::models::cohere_asr::make_cohere_asr_loader
+)
+
+audiocpp_add_model(canary_asr
+    SOURCES
+        src/models/canary_asr/assets.cpp
+        src/models/canary_asr/weights.cpp
+        src/models/canary_asr/runtime.cpp
+        src/models/canary_asr/session.cpp
+    INCLUDES
+        engine/models/canary_asr/model.h
+    LOADERS
+        engine::models::canary_asr::make_canary_asr_loader
+)
+
 audiocpp_add_model(moonshine_asr
     SOURCES
         src/models/moonshine_asr/assets.cpp
@@ -1411,6 +1533,39 @@ audiocpp_add_model(stable_audio
         engine/models/stable_audio/loader.h
     LOADERS
         engine::models::stable_audio::make_stable_audio_loader
+)
+
+audiocpp_add_model(yue2
+    SOURCES
+        src/models/yue2/ar_runtime.cpp
+        src/models/yue2/assets.cpp
+        src/models/yue2/lora.cpp
+        src/models/yue2/nar_runtime.cpp
+        src/models/yue2/pipeline.cpp
+        src/models/yue2/request.cpp
+        src/models/yue2/session.cpp
+        src/models/yue2/tokenizer_text.cpp
+        src/models/yue2/types.cpp
+    INCLUDES
+        engine/models/yue2/session.h
+    LOADERS
+        engine::models::yue2::make_yue2_loader
+)
+
+audiocpp_add_model(sheetsage2
+    SOURCES
+        src/models/sheetsage/audio_frontend.cpp
+        src/models/sheetsage/processing.cpp
+        src/models/sheetsage/runtime.cpp
+        src/models/sheetsage/session.cpp
+    INCLUDES
+        engine/models/sheetsage/audio_frontend.h
+        engine/models/sheetsage/processing.h
+        engine/models/sheetsage/types.h
+        engine/models/sheetsage/runtime.h
+        engine/models/sheetsage/session.h
+    LOADERS
+        engine::models::sheetsage::make_sheetsage2_loader
 )
 
 audiocpp_add_model(supertonic
@@ -2329,6 +2484,37 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
+    add_executable(yue2_vae_parity_probe
+        tests/yue2/yue2_vae_parity_probe.cpp
+    )
+    target_link_libraries(yue2_vae_parity_probe PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(yue2_vae_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    # The NAR probe uses the YuE2 model runtime, which only exists when the
+    # model composite links it; the VAE probe above only needs framework code.
+    if ("yue2" IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(yue2_nar_parity_probe
+            tests/yue2/yue2_nar_parity_probe.cpp
+        )
+        target_link_libraries(yue2_nar_parity_probe PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(yue2_nar_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endif()
+
+    add_executable(sheetsage2_decoder_parity_probe
+        src/models/sheetsage/runtime.cpp
+        tests/yue2/sheetsage2_decoder_parity_probe.cpp
+    )
+    target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE engine_runtime ggml)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+endif()
+
 if (ENGINE_BUILD_WARMBENCH)
     function(add_engine_warmbench target_name source_file)
         add_executable(${target_name}
@@ -2468,6 +2654,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
 
+        if(sheetsage2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(sheetsage_audio_frontend_test tests/unittests/test_sheetsage_audio_frontend.cpp)
+            add_test(NAME sheetsage_audio_frontend_test COMMAND sheetsage_audio_frontend_test --log)
+            add_engine_unittest(sheetsage_processing_test tests/unittests/test_sheetsage_processing.cpp)
+            add_test(NAME sheetsage_processing_test COMMAND sheetsage_processing_test --log)
+        endif()
+
         add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
         add_test(NAME midi_file_test COMMAND midi_file_test)
 
@@ -2485,6 +2678,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
         add_test(NAME audio_chunking_test COMMAND audio_chunking_test)
+        add_engine_unittest(partial_text_test tests/unittests/test_partial_text.cpp)
+        add_test(NAME partial_text_test COMMAND partial_text_test)
 
         add_engine_unittest(wav_writer_formats_test tests/unittests/test_wav_writer_formats.cpp)
         add_test(NAME wav_writer_formats_test COMMAND wav_writer_formats_test)
@@ -2534,6 +2729,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
         target_include_directories(gguf_tensor_source_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME gguf_tensor_source_test COMMAND gguf_tensor_source_test)
+        add_engine_unittest(lora_tensor_source_test tests/unittests/test_lora_tensor_source.cpp)
+        add_test(NAME lora_tensor_source_test COMMAND lora_tensor_source_test --log)
 
         add_engine_unittest(transformer_kv_ring_test tests/unittests/test_transformer_kv_ring.cpp)
         add_test(NAME transformer_kv_ring_test COMMAND transformer_kv_ring_test)

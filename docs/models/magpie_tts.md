@@ -63,23 +63,38 @@ That tokenizer path has not been ported to the native C++ frontend yet, so
 `voice_id` accepts either a baked speaker name from the package speaker map or a
 numeric speaker index.
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--language <code>` / `--request-option language=<code>` | language code | `en` | Target synthesis language used by the Magpie text frontend. |
-| `--request-option voice_id=<name-or-index>` | packaged speaker name or index | `0` | Baked speaker context prompt. |
-| `--temperature` / `--request-option temperature=<f>` | float >= 0 | `0.6` | Audio-token sampling temperature. |
-| `--top-k` / `--request-option top_k=<n>` | integer > 0 | `80` | Audio-token top-k sampling limit. |
-| `--guidance-scale` / `--request-option guidance_scale=<f>` | float >= 0 | `2.5` | Classifier-free guidance scale for decoder logits. |
-| `--max-tokens` / `--request-option max_tokens=<n>` | integer > 0 | `500` | Maximum decoder frames per text segment. |
-| `--text-chunk-size` / `--request-option text_chunk_size=<n>` | integer > 0 | `300` | Long-form text chunk budget. |
-| `--text-chunk-mode` / `--request-option text_chunk_mode=<mode>` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
-| `--seed` / `--request-option seed=<n>` | integer >= 0 | `0` | Audio-token sampling seed. |
-| `--session-option magpie_tts.graph_arena_mb=<mb>` | integer MiB | `1024` | Reusable graph arena size for Magpie stages. |
-| `--session-option magpie_tts.weight_context_mb=<mb>` | integer MiB | `2048` | Weight metadata arena size. |
-| `--session-option magpie_tts.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type when supported. |
-| `--session-option magpie_tts.conv_weight_type=<type>` | `native`, `f32`, `f16` | `native` | Convolution weight storage type when supported. |
+| `--language` | language code | `en` | Target synthesis language used by the Magpie text frontend. |
+| `--temperature` | float >= 0 | `0.6` | Audio-token sampling temperature. |
+| `--top-k` | integer > 0 | `80` | Audio-token top-k sampling limit. |
+| `--guidance-scale` | float >= 0 | `2.5` | Classifier-free guidance scale for decoder logits. |
+| `--max-tokens` | integer > 0 | `500` | Maximum decoder frames per text segment. |
+| `--text-chunk-size` | integer > 0 | `300` | Long-form text chunk budget. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
+| `--seed` | integer >= 0 | `0` | Audio-token sampling seed. |
 
-For GGUF packages, leave weight options at `native` unless you are deliberately
-testing a conversion or storage policy.
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `language` | language code | `en` | Target synthesis language used by the Magpie text frontend. |
+| `voice_id` | `Aria`, `Jason`, `John`, `Leo`, `Sofia`, or numeric index | `0` | Baked speaker context prompt. |
+| `temperature` | float >= 0 | `0.6` | Audio-token sampling temperature. |
+| `top_k` | integer > 0 | `80` | Audio-token top-k sampling limit. |
+| `guidance_scale` | float >= 0 | `2.5` | Classifier-free guidance scale for decoder logits. |
+| `max_tokens` | integer > 0 | `500` | Maximum decoder frames per text segment. |
+| `text_chunk_size` | integer > 0 | `300` | Long-form text chunk budget. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
+| `seed` | integer >= 0 | `0` | Audio-token sampling seed. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `magpie_tts.graph_arena_mb` | integer MiB | `1024` | Reusable graph arena size for Magpie stages. |
+| `magpie_tts.weight_context_mb` | integer MiB | `2048` | Weight metadata arena size. |
+| `magpie_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type when supported. |
+| `magpie_tts.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type when supported. |

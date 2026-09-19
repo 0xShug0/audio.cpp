@@ -554,6 +554,30 @@ Conv2dWeights conv2d_from_source(
 }
 
 template <typename Store>
+Conv3dWeights conv3d_from_source(
+    Store & store,
+    const assets::TensorSource & source,
+    const std::string & prefix,
+    assets::TensorStorageType storage_type,
+    int64_t out_channels,
+    int64_t in_channels,
+    int64_t kernel_depth,
+    int64_t kernel_height,
+    int64_t kernel_width,
+    bool use_bias) {
+    Conv3dWeights weights;
+    weights.weight = store.load_tensor(
+        source,
+        prefix + ".weight",
+        storage_type,
+        {out_channels * in_channels, kernel_depth, kernel_height, kernel_width});
+    if (use_bias) {
+        weights.bias = store.load_f32_tensor(source, prefix + ".bias", {out_channels});
+    }
+    return weights;
+}
+
+template <typename Store>
 DepthwiseConv1dWeights depthwise_conv1d_from_source(
     Store & store,
     const assets::TensorSource & source,

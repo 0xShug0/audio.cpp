@@ -3,7 +3,9 @@
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
 | Built-in audio utilities | `builtin_audio_utils` | `s2s` denoise/enhance/super-resolution | [Built-in audio utilities](#built-in-audio-utilities) |
+| Apollo | `apollo` | `s2s` music restoration | [Apollo](models/apollo.md) |
 | AudioSR | `audiosr` | `s2s` audio super-resolution | [AudioSR](#audiosr) |
+| UniverSR | `universr` | `s2s` audio/speech super-resolution | [UniverSR](models/universr.md) |
 | ControlFoley | `controlfoley` | `gen` Foley/SFX generation | [ControlFoley](#controlfoley) |
 | GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility API | [GTCRN](#gtcrn) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
@@ -13,6 +15,7 @@
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
 | MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
+| SheetSage2 | `sheetsage2` | `midi` audio to ABC score | [SheetSage2](#sheetsage2) |
 | HTDemucs | `htdemucs` | `sep` | [HTDemucs](#htdemucs) |
 | BS-RoFormer | `bs_roformer` | `sep` | [BS-RoFormer](#bs-roformer) |
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
@@ -34,8 +37,10 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda 
 
 The `builtin_audio_utils` family exposes the built-in framework audio utility
 models through the normal CLI and server model-loading path. These utilities do
-not use a GGUF or external model directory as `--model`; pass the utility id
-directly.
+require separately downloaded SafeTensors weights; they are not embedded in the
+executable. Pass the weights file or its directory as `--model` and select the
+implementation with `--load-option utility=<utility-id>`. Absolute and relative
+paths are supported; no repository checkout or fixed `assets/` layout is needed.
 
 | Utility id | Operation | Input rate | Output rate |
 |---|---|---:|---:|
@@ -48,11 +53,19 @@ directly.
 | `gtcrn_vctk` | Denoise/enhance | 16 kHz | 16 kHz |
 | `flashsr` | Audio super-resolution | 16 kHz | 48 kHz |
 
-CLI example:
+Weights are in [the audio utility assets directory](https://github.com/0xShug0/audio.cpp/tree/main/assets/framework/audio_utilities).
+For DeepFilterNet2, ZipEnhancer, and FlashSR, keep the original weight filename
+inside the selected model directory. RNNoise and GTCRN also accept a weight file
+with a custom filename. Directory loading selects `rnnoise10Gb_15.safetensors`
+for RNNoise and `<utility-id>.safetensors` for the others (`gtcrn` selects
+`gtcrn_streaming.safetensors`).
+
+CLI example (replace the path with your download location):
 
 ```bash
 audiocpp_cli --task s2s --family builtin_audio_utils \
-  --model rnnoise \
+  --model /absolute/path/to/models/rnnoise \
+  --load-option utility=rnnoise \
   --backend cuda \
   --audio input.wav \
   --out enhanced.wav \
@@ -66,11 +79,15 @@ Server config example:
 {
   "id": "builtin-rnnoise",
   "family": "builtin_audio_utils",
-  "path": "rnnoise",
+  "path": "/absolute/path/to/models/rnnoise",
+  "load_options": {"utility": "rnnoise"},
   "task": "s2s",
   "mode": "offline"
 }
 ```
+
+Relative model paths in server configuration are resolved relative to the
+configuration file, not the server's working directory.
 
 Server request example:
 
@@ -274,6 +291,21 @@ VeVo2 covers speech, singing, voice conversion, singing conversion, and editing 
 ```bash
 audiocpp_cli --task vc --family vevo2 --model models/VeVo2 --backend cuda --audio source.wav --voice-ref target.wav --out converted.wav
 ```
+
+## SheetSage2
+
+SheetSage2 transcribes music into an ABC score. It uses the `midi` task route but
+writes ABC notation, not a binary MIDI file.
+
+```bash
+audiocpp_cli --task midi --family sheetsage2 \
+  --model models/SheetSage2-GGUF/sheetsage2-orig.gguf \
+  --backend cuda --threads 8 --audio song.wav \
+  --out score.abc --log
+```
+
+Use the original-precision package; Q8 is not supported. The resulting score can
+condition [YuE2](models/yue2.md) through `abc_file` with `cot=melody` or `cot=full`.
 
 ## MuScriptor
 

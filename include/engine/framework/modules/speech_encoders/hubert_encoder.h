@@ -47,6 +47,7 @@ struct HubertEncoderConfig {
     int64_t final_projection_size = 0;
     HubertFeatureExtractorNorm feature_extractor_norm = HubertFeatureExtractorNorm::LayerNormEveryLayer;
     HubertEncoderLayerNormOrder encoder_layer_norm_order = HubertEncoderLayerNormOrder::PreNorm;
+    bool record_final_layer_after_final_norm = false;
 };
 
 struct HubertEncoderLayerWeightNames {
@@ -79,6 +80,14 @@ struct HubertEncoderWeightBinding {
 
 struct HubertEncoderOutput {
     std::vector<float> hidden_states;
+    int64_t batch = 0;
+    int64_t tokens = 0;
+    int64_t hidden_size = 0;
+};
+
+struct HubertEncoderLayerOutput {
+    std::vector<int64_t> layer_indices;
+    std::vector<std::vector<float>> hidden_states;
     int64_t batch = 0;
     int64_t tokens = 0;
     int64_t hidden_size = 0;
@@ -134,6 +143,11 @@ public:
         int64_t batch,
         int64_t samples,
         HubertEncoderRunConfig run_config) const;
+    HubertEncoderLayerOutput encode_layers(
+        const std::vector<float> & input_values,
+        int64_t batch,
+        int64_t samples,
+        const std::vector<int64_t> & output_layers) const;
     void release_runtime_graph();
 
 private:

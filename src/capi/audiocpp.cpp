@@ -830,6 +830,34 @@ audiocpp_status audiocpp_request_set_option(audiocpp_request * request, const ch
     });
 }
 
+audiocpp_status audiocpp_request_set_option_array(audiocpp_request * request,
+                                                  const char * key,
+                                                  const char * const * values,
+                                                  size_t count) {
+    if (request == nullptr || key == nullptr) {
+        return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request and key must be non-null");
+    }
+    if (values == nullptr && count != 0) {
+        return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "values must be non-null when count is not 0");
+    }
+    for (size_t i = 0; i < count; ++i) {
+        // Checked before anything is written, so a bad element cannot leave the
+        // option half-assigned.
+        if (values[i] == nullptr) {
+            return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "option array values must be non-null");
+        }
+    }
+    return guard([&] {
+        std::vector<std::string> copied;
+        copied.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            copied.emplace_back(values[i]);
+        }
+        request->request.option_arrays[key] = std::move(copied);
+        return AUDIOCPP_OK;
+    });
+}
+
 /* ------------------------------------------------------------------ */
 /* Result                                                              */
 /* ------------------------------------------------------------------ */

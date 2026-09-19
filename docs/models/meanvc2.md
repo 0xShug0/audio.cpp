@@ -56,13 +56,19 @@ The runtime resamples input internally as needed. Streaming uses 160 ms preferre
 input chunks at 16 kHz and keeps conversion state in the session until
 `finish_stream`.
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Source speech to convert. |
 | `--voice-ref` | WAV path | required | Target speaker reference. |
-| `--seed` / `--request-option seed=<n>` | integer >= 0 | `42` | Random seed for MeanVC2 flow noise. |
+| `--seed` | integer >= 0 | `42` | Random seed for MeanVC2 flow noise. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `seed` | integer >= 0 | `42` | Random seed for MeanVC2 flow noise. |
 
 MeanVC2 currently exposes no load or session tuning options through the model
 spec. The GGUF package carries all required component weights.

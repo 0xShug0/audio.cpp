@@ -4,16 +4,6 @@
 family. audio.cpp supports the upstream tiny, small, and medium streaming
 checkpoints through the `moonshine_asr` family.
 
-| Field | Value |
-|---|---|
-| Family | `moonshine_asr` |
-| Task | `asr` |
-| Modes | `offline`, `streaming` |
-| Language | English |
-| Recommended package | `moonshine_streaming_tiny_q8_0` |
-| Output | Transcript text |
-| Timestamps | Not exposed |
-
 ## Install
 
 The recommended packages are standalone Q8_0 GGUFs in the aggregate audio.cpp
@@ -28,7 +18,7 @@ python3 tools/model_manager_v2.py install moonshine_streaming_medium_q8_0
 The GGUFs embed the model spec, configuration, and tokenizer sidecars, so each
 file can be loaded directly.
 
-## CLI
+## Quick Start
 
 Offline transcription:
 
@@ -54,18 +44,35 @@ audiocpp_cli --task asr --mode streaming \
   --log
 ```
 
-## Options
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `moonshine_asr` |
+| Task | `asr` |
+| Modes | `offline`, `streaming` |
+| Language | English |
+| Recommended package | `moonshine_streaming_tiny_q8_0` |
+| Output | Transcript text |
+| Timestamps | Not exposed |
+
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
 | `--max-tokens` | integer | audio-duration derived | Maximum generated transcript tokens. |
 | `--text-out` | TXT path | not set | Transcript output. |
-| `--session-option moonshine_asr.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
-| `--session-option moonshine_asr.encoder_gelu=<mode>` | `erf`, `exact`, `tanh`, `quick` | `quick` | Encoder GELU lowering. |
-| `--session-option moonshine_asr.cpu_blas_scheduler=true\|false` | bool | `true` | Use BLAS/Accelerate for supported CPU encoder matmuls. |
 
-## Convert
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `moonshine_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared matmul weight storage type. |
+| `moonshine_asr.encoder_gelu` | `erf`, `exact`, `tanh`, `quick` | `quick` | Encoder GELU lowering. |
+| `moonshine_asr.cpu_blas_scheduler` | bool | `true` | Use BLAS/Accelerate for supported CPU encoder matmuls. |
+
+## Conversion
 
 The helper converts the upstream safetensors checkpoints into standalone GGUFs:
 

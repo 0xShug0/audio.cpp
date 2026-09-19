@@ -82,7 +82,10 @@ public:
     }
 };
 
-std::string espeak_text(const std::string & text, const std::string & language, const std::filesystem::path & root) {
+/// Phonemizes through eSpeak and returns its output WITH the tie characters intact, so that a
+/// caller can still see `a^ɪ` and `ə^l` as units. The two mapping arms below both need that:
+/// upstream applies its tables to eSpeak's raw output, not to an already-collapsed string.
+std::string espeak_raw(const std::string & text, const std::string & language, const std::filesystem::path & root) {
     const auto * library_override = std::getenv("AUDIOCPP_ESPEAK_LIBRARY");
     const auto * data_override = std::getenv("AUDIOCPP_ESPEAK_DATA");
     const auto library = library_override && *library_override
@@ -95,6 +98,14 @@ std::string espeak_text(const std::string & text, const std::string & language, 
     else if (std::filesystem::is_regular_file(root / "espeak-ng-data" / "phontab")) data = root / "espeak-ng-data";
 #endif
     engine::audio::EspeakPhonemizer phonemizer(library, data, {language == "fr-fr" ? "fr" : language});
+    // ⚠ GUILLEMETS ARE NOT IN KOKORO'S VOCABULARY, but the curly quotes upstream turns them into
+    // are. Spanish and French prose carries « » as ordinary quotation marks, and passing them
+    // through as punctuation — which is what happened — put an untokenizable symbol in front of
+    // the model. Measured over real corpus text, that was ~12% of Spanish and ~15% of French
+    // sentences.
+    std::string source = text;
+    replace(source, u8"«", u8"“");
+    replace(source, u8"»", u8"”");
     // Preserve punctuation ourselves: TextToPhonemes consumes clause punctuation.
     const U punctuation = U";:,.!?¡¿—…\"«»“”()";
     std::string out, chunk;
@@ -105,7 +116,7 @@ std::string espeak_text(const std::string & text, const std::string & language, 
         out += ps;
         chunk.clear();
     };
-    for (char32_t c : decode(text)) {
+    for (char32_t c : decode(source)) {
         if (punctuation.find(c) != U::npos) {
             const bool spaced = !chunk.empty() && chunk.back() == ' ';
             flush(); if (spaced && !out.empty() && out.back() != ' ') out += ' ';
@@ -114,13 +125,88 @@ std::string espeak_text(const std::string & text, const std::string & language, 
         else chunk += encode(U(1, c));
     }
     flush();
-    out = std::regex_replace(out, std::regex("\\([a-z-]+\\)"), "");
+    return std::regex_replace(out, std::regex("\\([a-z-]+\\)"), "");
+}
+
+/// The mapping every language except English gets: the tie-bar digraphs, and nothing else.
+///
+/// ⚠ DELIBERATELY NARROW. Upstream keeps a second, much richer table for English alone, and
+/// applying it here would be destructive rather than approximate: `r`→`ɹ` flattens the Spanish
+/// and Italian trill, `x`→`k` flattens the jota, and stripping the nasalisation tilde deletes
+/// the French nasal vowels. English can afford those because it has no trill and its `ɾ` really
+/// is an allophone of /t/.
+std::string generic_kokoro_mapping(std::string out) {
     for (const auto & pair : std::vector<std::pair<std::string, std::string>>{
         {u8"a^ɪ", "I"}, {u8"a^ʊ", "W"}, {"d^z", u8"ʣ"}, {u8"d^ʒ", u8"ʤ"},
         {u8"e^ɪ", "A"}, {u8"o^ʊ", "O"}, {u8"ə^ʊ", "Q"}, {"s^s", "S"},
         {"t^s", u8"ʦ"}, {u8"t^ʃ", u8"ʧ"}, {u8"ɔ^ɪ", "Y"}}) replace(out, pair.first, pair.second);
     replace(out, "^", ""); replace(out, "-", "");
     return spaces(out);
+}
+
+/// Rewrites a syllabic consonant as schwa + consonant: `n̩` becomes `ᵊn`.
+///
+/// ⚠ Kokoro's vocabulary has no id for the combining mark (U+0329) but does have ᵊ, so this is
+/// the difference between a word being spoken and being lost. eSpeak writes "button" as
+/// `bˈʌʔn̩` — the mark turns up in ordinary English, not in exotica.
+std::string syllabic_to_schwa(std::string value) {
+    static const std::regex syllabic(u8"(\\S)\u0329");
+    value = std::regex_replace(value, syllabic, u8"ᵊ$1");
+    replace(value, u8"\u0329", "");   // anything the rule could not pair with a segment
+    return value;
+}
+
+/// The English arm, which upstream keeps separate from the one above and which this port did not
+/// have.
+///
+/// ⚠ THE TWO ARMS ARE NOT INTERCHANGEABLE. Measured against upstream over 60 sentences of
+/// ordinary English, the generic table agreed on NONE of them: it emitted `ː` in 60 sentences,
+/// `ɚ` in 50, `ɐ` in 39 and `ɾ` in 39, where upstream emits none of those and emits `ᵊ` in 31.
+/// Every one of those symbols IS in Kokoro's vocabulary, so nothing ever failed — the model was
+/// simply handed tokens it had not been trained on, on every English sentence.
+std::string english_kokoro_mapping(std::string ps, bool british) {
+    // Longest key first, as upstream sorts it: a diphthong must be claimed before its bare
+    // vowel, and the glottal+syllabic pair before syllabic_to_schwa sees it.
+    static const std::vector<std::pair<std::string, std::string>> kE2M = {
+        {u8"ʔˌn\u0329", u8"ʔn"}, {u8"ʔn\u0329", u8"ʔn"},
+        {u8"a^ɪ", "I"}, {u8"a^ʊ", "W"}, {u8"d^ʒ", u8"ʤ"}, {u8"e^ɪ", "A"},
+        {u8"t^ʃ", u8"ʧ"}, {u8"ɔ^ɪ", "Y"}, {u8"ə^l", u8"ᵊl"},
+        {u8"ʲo", "jo"}, {u8"ʲə", u8"jə"},
+        {"e", "A"}, {u8"ʲ", ""}, {u8"ɚ", u8"əɹ"}, {"r", u8"ɹ"},
+        {"x", "k"}, {u8"ç", "k"}, {u8"ɐ", u8"ə"}, {u8"ɬ", "l"}, {u8"\u0303", ""},
+    };
+    for (const auto & entry : kE2M) replace(ps, entry.first, entry.second);
+
+    ps = syllabic_to_schwa(std::move(ps));
+
+    if (british) {
+        // Dead in upstream too, and kept that way on purpose. kE2M above is sorted longest
+        // key first, and `e^ə` is not one of its keys, so the bare {"e", "A"} rule has
+        // already turned every `e^ə` into `A^ə` before control reaches here — SQUARE comes
+        // out of upstream as `skwˈAə`, never `skwˈɛː`. Making this line live would be the more
+        // faithful transcription and the wrong change: Kokoro's bf_/bm_ voices were trained
+        // on `Aə` for SQUARE, so `ɛː` would push en-GB off-distribution. Retained so this
+        // function stays diffable line-for-line against misaki.
+        replace(ps, u8"e^ə", u8"ɛː");
+        replace(ps, u8"iə", u8"ɪə");
+        replace(ps, u8"ə^ʊ", "Q");
+    } else {
+        replace(ps, u8"o^ʊ", "O");
+        replace(ps, u8"ɜːɹ", u8"ɜɹ");
+        replace(ps, u8"ɜː", u8"ɜɹ");
+        replace(ps, u8"ɪə", u8"iə");
+        replace(ps, u8"ː", "");        // en-us drops length marks; en-gb keeps them
+    }
+    replace(ps, "o", u8"ɔ");           // upstream: eSpeak < 1.52 compatibility
+    replace(ps, u8"ɾ", "T");           // the flap is its own token, not a tap
+    replace(ps, u8"ʔ", "t");           // ...and the glottal stop is the /t/ it stands for
+    replace(ps, "^", "");
+    replace(ps, "-", "");
+    return spaces(ps);
+}
+
+std::string espeak_text(const std::string & text, const std::string & language, const std::filesystem::path & root) {
+    return generic_kokoro_mapping(espeak_raw(text, language, root));
 }
 
 std::vector<std::string> split(const std::string & s, char delim) {
@@ -410,6 +496,10 @@ std::string MultilingualG2P::phonemize(const std::string & text, const std::stri
         {"e", "es"}, {"f", "fr-fr"}, {"h", "hi"}, {"i", "it"}, {"p", "pt-br"}};
     auto it = langs.find(language);
     if (it == langs.end()) throw std::runtime_error("Unsupported Kokoro language: " + language);
+    // English has its own mapping upstream, and gets it here too.
+    if (language == "a" || language == "b") {
+        return english_kokoro_mapping(espeak_raw(text, it->second, impl_->root), language == "b");
+    }
     return espeak_text(text, it->second, impl_->root);
 }
 }

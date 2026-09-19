@@ -6,6 +6,7 @@
 #include <cctype>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -392,30 +393,60 @@ std::vector<std::string> validate_candidate(const PackageSpecCandidate & candida
     return errors;
 }
 
-// Where the conversion looks for the small files (configs, tokenizers) that
-// belong in the output. `--root` wins, and so does an explicit `--sidecar`
-// set. Otherwise a GGUF input's own embedded copies are used — for a re-encode
-// they are exactly the files that package ships, where the directory the file
-// happens to sit in is only a guess. Everything else keeps using that
-// directory, which is what every safetensors conversion does.
-std::filesystem::path resolve_sidecar_root(const std::filesystem::path & requested,
-                                           const std::vector<engine::assets::TensorSourceInput> & inputs,
-                                           const std::vector<engine::assets::GgufEmbeddedFile> & explicit_sidecars,
-                                           bool embed_sidecars) {
+struct SidecarPlan {
+    std::filesystem::path root;
+    // Carried across by name rather than rediscovered by walking `root`. A
+    // directory walk applies excluded_sidecar(), which drops .bin, .pt, .pth and
+    // anything over 64 MiB — right for a source tree full of weights, wrong for
+    // files that were already chosen as a finished package's sidecars. Kokoro's
+    // voices are voices/*.bin, so a re-encode silently produced a package with
+    // none of its 54 voices while reporting embedded_sidecars=true.
+    std::vector<engine::assets::GgufEmbeddedFile> carried;
+    // The package being re-emitted, if any. The end-of-run check reads its sidecar
+    // list again from the file rather than trusting `carried`, so a bug in the
+    // carrying is caught by the check instead of hidden by it.
+    std::filesystem::path reused_from;
+};
+
+// What the conversion embeds, and where it looks for anything else. The small
+// files (configs, tokenizers) that belong in the output: `--root` wins, and so
+// does an explicit `--sidecar` set. Otherwise a GGUF input's own embedded copies
+// are used — for a re-encode they are exactly the files that package ships,
+// where the directory the file happens to sit in is only a guess. Everything
+// else keeps using that directory, which is what every safetensors conversion
+// does.
+SidecarPlan plan_sidecars(const std::filesystem::path & requested,
+                          const std::vector<engine::assets::TensorSourceInput> & inputs,
+                          const std::vector<engine::assets::GgufEmbeddedFile> & explicit_sidecars,
+                          bool embed_sidecars) {
     if (!requested.empty())
-        return std::filesystem::weakly_canonical(requested);
+        return {std::filesystem::weakly_canonical(requested), {}, {}};
     const auto parent = std::filesystem::weakly_canonical(inputs.front().path.parent_path());
     if (!embed_sidecars || !explicit_sidecars.empty())
-        return parent;
+        return {parent, {}, {}};
     for (const auto & input : inputs) {
         if (!is_gguf_path(input.path) || !engine::assets::gguf_has_embedded_sidecars(input.path))
             continue;
         const auto materialized = engine::assets::materialize_gguf_sidecars(input.path);
-        std::cerr << "note: reusing the sidecars embedded in " << input.path.string()
+        // ⚠ The names come from the GGUF, not from a walk of `materialized`. That
+        // directory is a cache keyed by path+size+mtime and shared between runs, so
+        // walking it would carry across anything that happened to be sitting in it.
+        // The file is the authority on what the package contains.
+        std::vector<engine::assets::GgufEmbeddedFile> carried;
+        for (const auto & name : engine::assets::gguf_embedded_sidecar_names(input.path)) {
+            const auto destination = std::filesystem::path(name).lexically_normal();
+            const auto source = materialized / destination;
+            if (!engine::io::is_existing_file(source)) {
+                throw std::runtime_error("sidecar '" + name + "' embedded in " + input.path.string() +
+                                         " did not materialise at " + source.string());
+            }
+            carried.push_back({source, destination});
+        }
+        std::cerr << "note: reusing the " << carried.size() << " sidecars embedded in " << input.path.string()
                   << "; pass --root to override\n";
-        return materialized;
+        return {materialized, std::move(carried), input.path};
     }
-    return parent;
+    return {parent, {}, {}};
 }
 
 PackageSpecCandidate select_package_spec(const std::vector<engine::assets::TensorSourceInput> & inputs,
@@ -651,8 +682,11 @@ int main(int argc, char ** argv) {
             std::cout << "gguf=" << std::filesystem::weakly_canonical(inspect_path).string() << "\n";
             std::cout << "tensors=" << tensors.size() << "\n";
             std::cout << "rank0_scalars=" << scalar_count << "\n";
-            std::cout << "embedded_sidecars="
-                      << (engine::assets::gguf_has_embedded_sidecars(inspect_path) ? "true" : "false") << "\n";
+            // The count, not just the boolean: a package that lost 54 of its 59
+            // sidecars still reports true, which is how that went unnoticed.
+            const auto inspect_sidecars = engine::assets::gguf_embedded_sidecar_names(inspect_path);
+            std::cout << "embedded_sidecars=" << (inspect_sidecars.empty() ? "false" : "true") << "\n";
+            std::cout << "embedded_sidecar_count=" << inspect_sidecars.size() << "\n";
             const auto model_spec = engine::assets::read_gguf_embedded_model_spec(inspect_path);
             std::cout << "embedded_model_spec=" << (model_spec.has_value() ? "true" : "false") << "\n";
             if (model_spec.has_value())
@@ -679,8 +713,12 @@ int main(int argc, char ** argv) {
             }
         }
         const auto storage_type = engine::assets::parse_tensor_storage_type(type);
-        const auto resolved_sidecar_root =
-            resolve_sidecar_root(sidecar_root, inputs, sidecars, embed_sidecars);
+        const auto sidecar_plan = plan_sidecars(sidecar_root, inputs, sidecars, embed_sidecars);
+        const auto & resolved_sidecar_root = sidecar_plan.root;
+        // Empty unless the input was a GGUF whose sidecars are being reused, which
+        // plan_sidecars only does when the caller passed no --sidecar of its own,
+        // so these cannot collide with an explicit destination.
+        sidecars.insert(sidecars.end(), sidecar_plan.carried.begin(), sidecar_plan.carried.end());
         std::optional<engine::assets::GgufEmbeddedModelSpec> embedded_model_spec;
         if (!allow_missing_model_spec) {
             embedded_model_spec =
@@ -711,11 +749,52 @@ int main(int argc, char ** argv) {
             std::cout << "excluded_prefix=" << prefix << "\n";
         std::cout << "type_overrides=" << conversion_options.type_overrides.size() << "\n";
         std::cout << "folded_weight_norm_patterns=" << conversion_options.folded_weight_norm_patterns.size() << "\n";
-        std::cout << "embedded_sidecars=" << (engine::assets::gguf_has_embedded_sidecars(output) ? "true" : "false")
-                  << "\n";
-        std::cout << "embedded_model_spec=" << (embedded_model_spec.has_value() ? "true" : "false") << "\n";
-        if (embedded_model_spec.has_value()) {
-            std::cout << "model_spec_family=" << embedded_model_spec->family << "\n";
+        // ⚠ READ THE FINISHED FILE BACK AND CHECK IT AGAINST WHAT WAS ASKED FOR.
+        // This tool used to write a package missing 54 of its 59 sidecars, exit 0,
+        // and report embedded_sidecars=true -- because "true" was read from the
+        // output but was too coarse to notice, and the model-spec line was read
+        // from the in-memory intent rather than from the file at all. A claim
+        // about the output that is not read from the output is not a check.
+        const auto written_sidecars = engine::assets::gguf_embedded_sidecar_names(output);
+        // ⚠ The expected set is read from the INPUT package, not from the plan that
+        // produced the output. An earlier version of this check compared against
+        // planned_sidecar_destinations, which is built by the same filtered walk that
+        // caused the bug -- so it agreed with a run that dropped 54 voices. A check
+        // derived from the thing it is checking cannot fail.
+        if (embed_sidecars && !sidecar_plan.reused_from.empty()) {
+            const auto expected = engine::assets::gguf_embedded_sidecar_names(sidecar_plan.reused_from);
+            const std::set<std::string> expected_set(expected.begin(), expected.end());
+            const std::set<std::string> written(written_sidecars.begin(), written_sidecars.end());
+            std::vector<std::string> missing;
+            std::set_difference(expected_set.begin(), expected_set.end(), written.begin(), written.end(),
+                                std::back_inserter(missing));
+            if (!missing.empty()) {
+                std::ostringstream report;
+                report << "re-encoding " << sidecar_plan.reused_from.string() << " kept " << written.size()
+                       << " of its " << expected_set.size() << " sidecars; missing:";
+                for (size_t i = 0; i < missing.size() && i < 8; ++i)
+                    report << "\n  " << missing[i];
+                if (missing.size() > 8)
+                    report << "\n  ... and " << (missing.size() - 8) << " more";
+                throw std::runtime_error(report.str());
+            }
+        }
+        // Read back, not reported from intent: a spec that failed to embed would
+        // otherwise still print true.
+        const auto written_spec = engine::assets::read_gguf_embedded_model_spec(output);
+        if (embedded_model_spec.has_value() && !written_spec.has_value()) {
+            throw std::runtime_error("model spec for family '" + embedded_model_spec->family +
+                                     "' was not embedded in " + output.string());
+        }
+        if (embedded_model_spec.has_value() && written_spec->family != embedded_model_spec->family) {
+            throw std::runtime_error("embedded model spec family is '" + written_spec->family + "', expected '" +
+                                     embedded_model_spec->family + "'");
+        }
+        std::cout << "embedded_sidecars=" << (written_sidecars.empty() ? "false" : "true") << "\n";
+        std::cout << "embedded_sidecar_count=" << written_sidecars.size() << "\n";
+        std::cout << "embedded_model_spec=" << (written_spec.has_value() ? "true" : "false") << "\n";
+        if (written_spec.has_value()) {
+            std::cout << "model_spec_family=" << written_spec->family << "\n";
         }
         return 0;
     } catch (const std::exception & error) {

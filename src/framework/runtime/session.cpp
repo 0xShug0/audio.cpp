@@ -432,6 +432,13 @@ SessionPreparationRequest build_preparation_request(const AudioBuffer & audio) {
 SessionPreparationRequest build_preparation_request(const TaskRequest & request) {
     SessionPreparationRequest prep;
     prep.options = request.options;
+    // ⚠ CARRY THE LIST OPTIONS TOO. Preparation decides how the graphs are sized, and a family
+    // whose work depends on a list option would otherwise size itself for a different request
+    // than the one run() is handed. For kokoro_tts that was not merely a bad estimate: with the
+    // phonemes missing here, preparation fell back to the built-in G2P, and a Japanese request
+    // failed for want of UniDic even though the caller had supplied phonemes precisely so that
+    // the G2P would never be consulted.
+    prep.option_arrays = request.option_arrays;
     prep.text = request.text_input;
     prep.voice = request.voice;
     if (request.audio_input.has_value()) {

@@ -2,6 +2,8 @@
 
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
 
+#include "engine/framework/debug/trace.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -115,9 +117,22 @@ struct EncodedInputIds {
     size_t phoneme_count = 0;
 };
 
+/// `reject_unknown` decides what an out-of-vocabulary symbol means, and the answer depends
+/// entirely on who produced the stream.
+///
+/// ⚠ FALSE for our own G2P, TRUE for a caller's. The reference implementation (hexgrad/Kokoro's
+/// KModel, `filter(None, map(vocab.get, phonemes))`) drops what it cannot tokenize, and for our
+/// own output that is the only sane answer: eSpeak emits a syllabic mark for "button" that this
+/// vocabulary has no id for, and nobody downstream can do anything about it.
+///
+/// A CALLER'S stream is the opposite case. They can fix it, so telling them is strictly more
+/// useful than guessing -- and guessing is not harmless here. Canonical IPA writes a diphthong
+/// as two symbols, and Kokoro writes it as one, so dropping the off-glide silently turns
+/// `lˈaᶦk` into `lˈak`: "like" becomes "lack", with no error and audio that sounds deliberate.
 EncodedInputIds encode_input_ids_and_count(
     const std::string & phonemes,
-    const KokoroAssets & assets) {
+    const KokoroAssets & assets,
+    bool reject_unknown) {
     EncodedInputIds encoded;
     encoded.ids.reserve(phonemes.size() + 2);
     encoded.ids.push_back(0);
@@ -144,9 +159,30 @@ EncodedInputIds encode_input_ids_and_count(
                 throw std::runtime_error("invalid UTF-8 continuation byte in Kokoro phoneme string");
             }
         }
-        const auto it = assets.vocab.find(phonemes.substr(i, width));
+        const std::string symbol = phonemes.substr(i, width);
+        const auto it = assets.vocab.find(symbol);
         if (it == assets.vocab.end()) {
-            throw std::runtime_error("Kokoro vocab is missing phoneme symbol: " + phonemes.substr(i, width));
+            if (reject_unknown) {
+                throw std::runtime_error(
+                    "Kokoro vocab is missing phoneme symbol: " + symbol +
+                    "; supplied phonemes must be in Kokoro's own " + std::to_string(assets.vocab.size()) +
+                    "-symbol vocabulary, which is not canonical IPA -- a diphthong is one symbol there"
+                    " and two in IPA, so an off-glide is a common cause");
+            }
+            // Skipped, not fatal, matching the reference implementation: hexgrad/Kokoro's KModel
+            // tokenizes with `filter(None, map(vocab.get, phonemes))`, which drops any phoneme the
+            // 114-entry vocab has no id for.
+            //
+            // This matters because our OWN G2P produces such symbols for ordinary words: eSpeak-ng
+            // glottalises /t/ before a syllabic nasal, so "button" is `b'V?n` with a U+0329
+            // syllabic mark the vocab does not carry. Throwing there loses the whole request;
+            // dropping the mark gives a correct reading of the word.
+            //
+            // Malformed UTF-8 above still throws — that is a real error. An unknown but
+            // well-formed phoneme is not.
+            engine::debug::trace_log_scalar("kokoro.skipped_phoneme", std::string_view(symbol));
+            i += width;
+            continue;
         }
         encoded.ids.push_back(it->second);
         ++encoded.phoneme_count;
@@ -215,15 +251,33 @@ KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
 KokoroSynthesisInput build_kokoro_synthesis_input(
     const runtime::Transcript & text,
     const KokoroFrontendSessionState & state,
-    const KokoroAssets & assets) {
+    const KokoroAssets & assets,
+    std::optional<std::string_view> phoneme_override) {
     if (state.voice_pack == nullptr) {
         throw std::runtime_error("Kokoro frontend session voice pack was not prepared");
     }
-    const std::string phonemes = phonemize_text(text, state.language_code, assets);
-    const EncodedInputIds encoded = encode_input_ids_and_count(phonemes, assets);
+    const bool supplied = phoneme_override.has_value();
+    if (supplied && phoneme_override->empty()) {
+        // Falling back to the built-in G2P here would speak `text` for a chunk the caller
+        // asked to be spoken from phonemes, which reads as the engine ignoring the option.
+        throw std::runtime_error("Kokoro supplied phonemes are empty; an override must carry symbols");
+    }
+    const std::string phonemes =
+        supplied ? std::string(*phoneme_override) : phonemize_text(text, state.language_code, assets);
+    // Strict for a caller's stream, lenient for our own -- see encode_input_ids_and_count.
+    const EncodedInputIds encoded = encode_input_ids_and_count(phonemes, assets, supplied);
     if (encoded.phoneme_count > 510) {
+        // Two different failures wearing one message helps nobody: the caller who supplied the
+        // phonemes can fix this by sending less, and is told so; the caller who supplied text
+        // is hitting an engine limitation and is told that instead.
         throw std::runtime_error(
-            "Kokoro phoneme string exceeds 510 symbols; segmenting is not implemented in the framework path yet");
+            supplied
+                ? "Kokoro phoneme chunk exceeds 510 symbols; split the supplied phonemes across "
+                  "more list entries (each entry is rendered separately and the audio is merged)"
+                : "Kokoro phoneme string exceeds 510 symbols; segmenting is not implemented in the framework path yet");
+    }
+    if (supplied) {
+        engine::debug::trace_log_scalar("kokoro.supplied_phoneme_count", static_cast<int64_t>(encoded.phoneme_count));
     }
     KokoroSynthesisInput input;
     input.voice_id = state.voice_id;
@@ -241,11 +295,12 @@ KokoroSynthesisInput build_kokoro_synthesis_input(
 int64_t estimate_kokoro_request_tokens(
     const runtime::SessionPreparationRequest & request,
     const KokoroFrontendSessionState & state,
-    const KokoroAssets & assets) {
+    const KokoroAssets & assets,
+    std::optional<std::string_view> phoneme_override) {
     if (!request.text.has_value()) {
         return 0;
     }
-    const auto input = build_kokoro_synthesis_input(*request.text, state, assets);
+    const auto input = build_kokoro_synthesis_input(*request.text, state, assets, phoneme_override);
     return static_cast<int64_t>(input.input_ids.size());
 }
 

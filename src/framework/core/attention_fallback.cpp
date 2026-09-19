@@ -122,4 +122,29 @@ bool resolve_flash_attention(ggml_backend_t backend, int64_t head_dim, Attention
     return !cuda_device_wants_eager(backend);
 }
 
+// The device description is the only vendor signal ggml-backend exposes for
+// Vulkan ("Intel(R) Graphics (BMG G31)", "Intel(R) Arc(tm) A770 Graphics", ...).
+// Any null handle, non-Vulkan device, or missing description answers false.
+bool vulkan_device_is_intel(ggml_backend_t backend) {
+    if (backend == nullptr) {
+        return false;
+    }
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    if (device == nullptr) {
+        return false;
+    }
+    if (ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+        return false;
+    }
+    const char * name = ggml_backend_dev_name(device);
+    if (name == nullptr || std::strncmp(name, "Vulkan", 6) != 0) {
+        return false;
+    }
+    const char * description = ggml_backend_dev_description(device);
+    if (description == nullptr) {
+        return false;
+    }
+    return to_lower(description).find("intel") != std::string::npos;
+}
+
 }  // namespace engine::core

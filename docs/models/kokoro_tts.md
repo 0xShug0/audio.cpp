@@ -62,17 +62,17 @@ audiocpp_cli --task tts --family kokoro_tts \
 Use `--voice-id <id>` to select one of the packaged voices. The voice prefix
 selects the language family:
 
-| Prefix | Language |
-|---|---|
-| `af`, `am` | American English |
-| `bf`, `bm` | British English |
-| `ef`, `em` | Spanish |
-| `ff` | French |
-| `hf`, `hm` | Hindi |
-| `if`, `im` | Italian |
-| `jf`, `jm` | Japanese |
-| `pf`, `pm` | Brazilian Portuguese |
-| `zf`, `zm` | Mandarin Chinese |
+| Prefix | Language | Voice IDs |
+|---|---|---|
+| `af`, `am` | American English | `af_alloy`, `af_aoede`, `af_bella`, `af_heart`, `af_jessica`, `af_kore`, `af_nicole`, `af_nova`, `af_river`, `af_sarah`, `af_sky`, `am_adam`, `am_echo`, `am_eric`, `am_fenrir`, `am_liam`, `am_michael`, `am_onyx`, `am_puck`, `am_santa` |
+| `bf`, `bm` | British English | `bf_alice`, `bf_emma`, `bf_isabella`, `bf_lily`, `bm_daniel`, `bm_fable`, `bm_george`, `bm_lewis` |
+| `ef`, `em` | Spanish | `ef_dora`, `em_alex`, `em_santa` |
+| `ff` | French | `ff_siwis` |
+| `hf`, `hm` | Hindi | `hf_alpha`, `hf_beta`, `hm_omega`, `hm_psi` |
+| `if`, `im` | Italian | `if_sara`, `im_nicola` |
+| `jf`, `jm` | Japanese | `jf_alpha`, `jf_gongitsune`, `jf_nezumi`, `jf_tebukuro`, `jm_kumo` |
+| `pf`, `pm` | Brazilian Portuguese | `pf_dora`, `pm_alex`, `pm_santa` |
+| `zf`, `zm` | Mandarin Chinese | `zf_xiaobei`, `zf_xiaoni`, `zf_xiaoxiao`, `zf_xiaoyi`, `zm_yunjian`, `zm_yunxi`, `zm_yunxia`, `zm_yunyang` |
 
 The request language must match the selected voice. For example, use
 `--language zh` with `zf_*` or `zm_*` voices.
@@ -95,19 +95,29 @@ UniDic because it is large. Export a local full multilingual GGUF with
 `--embed-multilingual-resources` if you need Japanese to work from a bundled
 package.
 
-## Options
+## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--language <code>` / `--request-option language=<code>` | language code | voice prefix | Text frontend language. |
-| `--voice-id <id>` | packaged voice id | `af_heart` | Built-in voice pack. |
-| `--seed <n>` / `--request-option seed=<n>` | integer | random | Decoder noise seed. |
-| `--text-chunk-size <n>` / `--request-option text_chunk_size=<n>` | integer chars | `240` | Long-form chunk size. |
-| `--session-option kokoro_tts.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type. |
-| `--session-option kokoro_tts.conv_weight_type=<type>` | `native`, `f32`, `f16` | `native` | Convolution weight storage type. |
+| `--language` | language code | voice prefix | Text frontend language. |
+| `--voice-id` | voice ID listed above | `af_heart` | Built-in voice pack. |
+| `--seed` | integer | random | Decoder noise seed. |
+| `--text-chunk-size` | integer chars | `240` | Long-form chunk size. |
 
-For GGUF packages, leave weight options at `native` unless you are testing a
-conversion or storage policy.
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `language` | language code | voice prefix | Text frontend language. |
+| `seed` | integer | random | Decoder noise seed. |
+| `text_chunk_size` | integer chars | `240` | Long-form chunk size. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `kokoro_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type. |
+| `kokoro_tts.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type. |
 
 ## Conversion
 

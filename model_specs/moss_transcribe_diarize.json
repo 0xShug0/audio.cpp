@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "family": "moss_transcribe_diarize",
+  "display_name": "MOSS-Transcribe-Diarize",
+  "description": "Joint transcription, speaker diarization, and timestamps across 50+ languages with a Whisper encoder and Qwen3 decoder.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "auto",
+    "50+ languages"
+  ],
+  "capabilities": {
+    "asr": [
+      "segments",
+      "speaker_turns"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "min": 1,
+        "default": 5120,
+        "required": false,
+        "description": "Maximum generated transcript tokens."
+      },
+      {
+        "name": "instruct",
+        "type": "string",
+        "required": false,
+        "description": "Transcription instruction; empty uses the upstream diarization prompt."
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moss_transcribe_diarize_bf16",
+      "display_name": "MOSS-Transcribe-Diarize GGUF BF16",
+      "default": true,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-Transcribe-Diarize-GGUF",
+      "files": [
+        "MOSS-Transcribe-Diarize-GGUF/moss-transcribe-diarize-bf16.gguf"
+      ],
+      "strip_prefix": "MOSS-Transcribe-Diarize-GGUF"
+    },
+    {
+      "id": "moss_transcribe_diarize_q8_0",
+      "display_name": "MOSS-Transcribe-Diarize GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-Transcribe-Diarize-GGUF",
+      "files": [
+        "MOSS-Transcribe-Diarize-GGUF/moss-transcribe-diarize-q8_0.gguf"
+      ],
+      "strip_prefix": "MOSS-Transcribe-Diarize-GGUF"
+    },
+    {
+      "id": "moss_transcribe_diarize_q4_k",
+      "display_name": "MOSS-Transcribe-Diarize GGUF Q4_K",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MOSS-Transcribe-Diarize-GGUF",
+      "files": [
+        "MOSS-Transcribe-Diarize-GGUF/moss-transcribe-diarize-q4_k.gguf"
+      ],
+      "strip_prefix": "MOSS-Transcribe-Diarize-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [],
+    "recommended_package": "moss_transcribe_diarize_bf16"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}

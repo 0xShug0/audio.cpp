@@ -11,6 +11,7 @@
 
 #include <ggml-alloc.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -379,11 +380,28 @@ core::TensorValue build_hubert_graph(
     const core::TensorValue & input_values,
     const HubertEncoderWeights & weights,
     const HubertEncoderRunConfig & run_config,
-    std::vector<std::pair<core::TensorValue, std::vector<float>>> & graph_inputs) {
+    std::vector<std::pair<core::TensorValue, std::vector<float>>> & graph_inputs,
+    std::vector<core::TensorValue> * layer_outputs = nullptr,
+    const std::vector<int64_t> * output_layers = nullptr) {
     const auto & config = weights.config;
-    const int64_t output_hidden_layer = run_config.output_hidden_layer >= 0
+    int64_t output_hidden_layer = run_config.output_hidden_layer >= 0
         ? run_config.output_hidden_layer
         : config.output_hidden_layer;
+    if (output_layers != nullptr) {
+        if (output_layers->empty()) {
+            throw std::runtime_error("HuBERT layer output request cannot be empty");
+        }
+        output_hidden_layer = 0;
+        for (const int64_t layer : *output_layers) {
+            if (layer < 0 || layer > config.num_hidden_layers) {
+                throw std::runtime_error("HuBERT requested output layer is out of range");
+            }
+            output_hidden_layer = std::max(output_hidden_layer, layer);
+        }
+        if (run_config.apply_final_projection) {
+            throw std::runtime_error("HuBERT layer outputs cannot request final projection");
+        }
+    }
     if (output_hidden_layer < 0) {
         throw std::runtime_error("HuBERT run output layer cannot be negative");
     }
@@ -456,6 +474,20 @@ core::TensorValue build_hubert_graph(
         graph_inputs.push_back({attention_mask, std::move(mask)});
     }
 
+    const auto maybe_record_layer = [&](int64_t layer_index, const core::TensorValue & value) {
+        if (layer_outputs == nullptr || output_layers == nullptr ||
+            std::find(output_layers->begin(), output_layers->end(), layer_index) == output_layers->end()) {
+            return;
+        }
+        auto output = value;
+        if (output.shape.dims[1] != raw_tokens) {
+            output = SliceModule({1, 0, raw_tokens}).build(ctx, output);
+        }
+        layer_outputs->push_back(config.materialize_output ? contiguous(ctx, output) : output);
+    };
+
+    maybe_record_layer(0, hidden);
+
     for (int64_t layer = 0; layer < output_hidden_layer; ++layer) {
         const std::string prefix = "encoder.layers." + std::to_string(layer);
         if (config.encoder_layer_norm_order == HubertEncoderLayerNormOrder::PreNorm) {
@@ -477,6 +509,9 @@ core::TensorValue build_hubert_graph(
             hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
                          .build(ctx, hidden, norm_weights(weights, prefix + ".final_layer_norm"));
         }
+        if (!config.record_final_layer_after_final_norm || layer + 1 != config.num_hidden_layers) {
+            maybe_record_layer(layer + 1, hidden);
+        }
     }
     if (hidden.shape.dims[1] != raw_tokens) {
         hidden = SliceModule({1, 0, raw_tokens}).build(ctx, hidden);
@@ -484,6 +519,9 @@ core::TensorValue build_hubert_graph(
     if (config.apply_final_layer_norm) {
         hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
                      .build(ctx, hidden, norm_weights(weights, "encoder.layer_norm"));
+    }
+    if (config.record_final_layer_after_final_norm) {
+        maybe_record_layer(config.num_hidden_layers, hidden);
     }
     if (run_config.apply_final_projection) {
         hidden = LinearModule({config.hidden_size, config.final_projection_size, true, GGML_PREC_F32})
@@ -520,7 +558,7 @@ public:
         if (samples <= 0 || static_cast<int64_t>(input_values.size()) != batch * samples) {
             throw std::runtime_error("HuBERT encoder input size mismatch");
         }
-        ensure_graph(batch, samples, run_config);
+        ensure_graph(batch, samples, run_config, {});
         core::write_tensor_f32(input_, input_values);
         for (const auto & graph_input : graph_inputs_) {
             core::write_tensor_f32(graph_input.first, graph_input.second);
@@ -533,6 +571,47 @@ public:
         out.batch = batch;
         out.tokens = output_.shape.dims[1];
         out.hidden_size = output_.shape.dims[2];
+        if (weights_->config.release_graph_after_encode) {
+            release_graph();
+        }
+        return out;
+    }
+
+    HubertEncoderLayerOutput encode_layers(
+        const std::vector<float> & input_values,
+        int64_t batch,
+        int64_t samples,
+        const std::vector<int64_t> & output_layers) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (batch != 1) {
+            throw std::runtime_error("HuBERT encoder currently requires batch size 1");
+        }
+        if (samples <= 0 || static_cast<int64_t>(input_values.size()) != batch * samples) {
+            throw std::runtime_error("HuBERT encoder input size mismatch");
+        }
+        if (output_layers.empty()) {
+            throw std::runtime_error("HuBERT encode_layers requires at least one layer");
+        }
+        std::vector<int64_t> normalized = output_layers;
+        std::sort(normalized.begin(), normalized.end());
+        normalized.erase(std::unique(normalized.begin(), normalized.end()), normalized.end());
+        ensure_graph(batch, samples, {}, normalized);
+        core::write_tensor_f32(input_, input_values);
+        for (const auto & graph_input : graph_inputs_) {
+            core::write_tensor_f32(graph_input.first, graph_input.second);
+        }
+        if (engine::core::compute_backend_graph(weights_->execution_context->backend(), graph_) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("ggml_backend_graph_compute failed for HuBERT encoder layer outputs");
+        }
+        HubertEncoderLayerOutput out;
+        out.layer_indices = normalized;
+        out.batch = batch;
+        out.tokens = layer_outputs_.empty() ? 0 : layer_outputs_.front().shape.dims[1];
+        out.hidden_size = weights_->config.hidden_size;
+        out.hidden_states.reserve(layer_outputs_.size());
+        for (const auto & layer_output : layer_outputs_) {
+            out.hidden_states.push_back(core::read_tensor_f32(layer_output.tensor));
+        }
         if (weights_->config.release_graph_after_encode) {
             release_graph();
         }
@@ -560,14 +639,20 @@ private:
         }
         input_ = {};
         output_ = {};
+        layer_outputs_.clear();
         graph_inputs_.clear();
         batch_ = 0;
         samples_ = 0;
         output_hidden_layer_ = -1;
         apply_final_projection_ = false;
+        output_layers_.clear();
     }
 
-    void ensure_graph(int64_t batch, int64_t samples, const HubertEncoderRunConfig & run_config) {
+    void ensure_graph(
+        int64_t batch,
+        int64_t samples,
+        const HubertEncoderRunConfig & run_config,
+        const std::vector<int64_t> & output_layers) {
         const int64_t output_hidden_layer = run_config.output_hidden_layer >= 0
             ? run_config.output_hidden_layer
             : weights_->config.output_hidden_layer;
@@ -575,7 +660,8 @@ private:
             batch_ == batch &&
             samples_ == samples &&
             output_hidden_layer_ == output_hidden_layer &&
-            apply_final_projection_ == run_config.apply_final_projection) {
+            apply_final_projection_ == run_config.apply_final_projection &&
+            output_layers_ == output_layers) {
             return;
         }
         release_graph();
@@ -593,10 +679,25 @@ private:
             "framework.hubert.encode",
             weights_->execution_context->config().type};
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, samples}));
-        output_ = build_hubert_graph(ctx, input_, *weights_, run_config, graph_inputs_);
+        if (output_layers.empty()) {
+            output_ = build_hubert_graph(ctx, input_, *weights_, run_config, graph_inputs_);
+        } else {
+            output_ = {};
+            build_hubert_graph(ctx, input_, *weights_, run_config, graph_inputs_, &layer_outputs_, &output_layers);
+            if (layer_outputs_.size() != output_layers.size()) {
+                throw std::runtime_error("HuBERT layer output graph did not produce all requested layers");
+            }
+        }
         graph_ = ggml_new_graph_custom(ggml_, 131072, false);
-        ggml_set_output(output_.tensor);
-        ggml_build_forward_expand(graph_, output_.tensor);
+        if (output_layers.empty()) {
+            ggml_set_output(output_.tensor);
+            ggml_build_forward_expand(graph_, output_.tensor);
+        } else {
+            for (const auto & layer_output : layer_outputs_) {
+                ggml_set_output(layer_output.tensor);
+                ggml_build_forward_expand(graph_, layer_output.tensor);
+            }
+        }
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->execution_context->backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
@@ -608,6 +709,7 @@ private:
         samples_ = samples;
         output_hidden_layer_ = output_hidden_layer;
         apply_final_projection_ = run_config.apply_final_projection;
+        output_layers_ = output_layers;
     }
 
     std::shared_ptr<const HubertEncoderWeights> weights_;
@@ -617,11 +719,13 @@ private:
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_;
     core::TensorValue output_;
+    std::vector<core::TensorValue> layer_outputs_;
     std::vector<std::pair<core::TensorValue, std::vector<float>>> graph_inputs_;
     int64_t batch_ = 0;
     int64_t samples_ = 0;
     int64_t output_hidden_layer_ = -1;
     bool apply_final_projection_ = false;
+    std::vector<int64_t> output_layers_;
 };
 
 }  // namespace
@@ -925,6 +1029,17 @@ HubertEncoderOutput HubertEncoderComponent::encode(
         throw std::runtime_error("HuBERT component is not initialized");
     }
     return state_->runner->encode(input_values, batch, samples, run_config);
+}
+
+HubertEncoderLayerOutput HubertEncoderComponent::encode_layers(
+    const std::vector<float> & input_values,
+    int64_t batch,
+    int64_t samples,
+    const std::vector<int64_t> & output_layers) const {
+    if (state_ == nullptr || state_->runner == nullptr) {
+        throw std::runtime_error("HuBERT component is not initialized");
+    }
+    return state_->runner->encode_layers(input_values, batch, samples, output_layers);
 }
 
 void HubertEncoderComponent::release_runtime_graph() {

@@ -30,6 +30,12 @@
         "min": 0
       },
       {
+        "name": "phonemes",
+        "type": "string_list",
+        "description": "Kokoro-vocabulary phonemes to synthesize directly, bypassing the built-in eSpeak-ng G2P. One entry per chunk: entries are rendered in order and merged into one result, so the caller chooses the split points that only its own G2P knows. Each entry must be at most 510 symbols and must not be empty -- an entry is a chunk to speak, so drop it rather than leaving it blank. Text is still required and its language must still match the voice.",
+        "required": false
+      },
+      {
         "name": "text_chunk_size",
         "type": "int",
         "description": "Maximum codepoints per text chunk before synthesis. Default 240.",

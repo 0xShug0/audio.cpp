@@ -37,6 +37,19 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 };
 
+class RopeInterleavedPairsModule {
+public:
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & even,
+        const core::TensorValue & odd,
+        const core::TensorValue & cos,
+        const core::TensorValue & sin) const;
+
+    static const core::ModuleSchema & static_schema() noexcept;
+};
+
 class TimeMask4dModule {
 public:
     const core::ModuleSchema & schema() const noexcept;

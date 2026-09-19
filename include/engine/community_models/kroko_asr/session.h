@@ -6,6 +6,7 @@
 #include "engine/community_models/kroko_asr/tokenizer.h"
 #include "engine/community_models/kroko_asr/zipformer.h"
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 
 #include <chrono>
@@ -83,6 +84,7 @@ private:
     std::vector<float> streaming_resampler_source_;
     int64_t processed_feature_offset_ = 0;
     int64_t streaming_total_samples_ = 0;
+    runtime::PartialTextPublisher streaming_partials_;
     int64_t streaming_source_offset_ = 0;
     int64_t streaming_source_frames_ = 0;
     int64_t streaming_next_output_sample_ = 0;
