@@ -3188,6 +3188,27 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(dots_tts_vocoder_parity tests/dots_tts/dots_tts_vocoder_parity.cpp)
 
+        # Same shape as dots_tts_vocoder_parity: needs a GGUF and a PyTorch reference
+        # dump, so it is driven by hand rather than registered with add_test.
+        add_engine_unittest(auk_vae_parity tests/auk/auk_vae_parity.cpp)
+        # Not an audiocpp_add_model() family yet: there is no loader, no spec and no
+        # GGUF package, so the encoder builds into the probe that exercises it.
+        target_sources(auk_vae_parity PRIVATE src/models/auk/vae_encoder.cpp)
+        add_engine_unittest(auk_conditioner_parity tests/auk/auk_conditioner_parity.cpp)
+        target_sources(auk_conditioner_parity PRIVATE src/models/auk/conditioner.cpp)
+        add_engine_unittest(auk_dit_parity tests/auk/auk_dit_parity.cpp)
+        target_sources(auk_dit_parity PRIVATE src/models/auk/dit.cpp src/models/auk/sampler.cpp)
+        add_engine_unittest(auk_audio_tower_parity tests/auk/auk_audio_tower_parity.cpp)
+        target_sources(auk_audio_tower_parity PRIVATE src/models/auk/audio_tower.cpp)
+        add_engine_unittest(auk_token_check tests/auk/auk_token_check.cpp)
+        target_sources(auk_token_check PRIVATE src/models/auk/message.cpp)
+        add_engine_unittest(auk_pipeline tests/auk/auk_pipeline.cpp)
+        target_sources(auk_pipeline PRIVATE
+            src/models/auk/dit.cpp src/models/auk/sampler.cpp
+            src/models/auk/conditioner.cpp src/models/auk/vae_encoder.cpp
+            src/models/auk/audio_tower.cpp src/models/auk/message.cpp
+            src/models/auk/task.cpp)
+
         # Needs the GGUF and a PyTorch reference dump, so it is driven by hand
         # rather than registered with add_test -- same as dots_tts_vocoder_parity.
         add_engine_unittest(echo_tts_dit_parity tests/echo_tts/echo_tts_dit_parity.cpp)
