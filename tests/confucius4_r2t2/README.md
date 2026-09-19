@@ -9,7 +9,7 @@ implementation in the Confucius4-R2T2 repository (see `docs/community_models/r2t
 |---|---|
 | `make_golden.py` | Runs the Python reference (`R2T2ASRModel` on MPS) for an audio file and writes offline text plus per-chunk streaming `fixed_text`, `raw_decoded`, and `text` to a golden JSON. |
 | `compare.py` | Runs `audiocpp_cli` offline and streaming with `--log-file`, parses the per-chunk trace, and diffs everything against a golden. |
-| `test_confucius4_r2t2_transcription.cpp` | Repo-native smoke test: offline + streaming transcripts against the golden for `assets/resources/sample_16k.wav`. Skips with exit code 125 when the model or audio is missing. Also exposes `--encode <text>` to dump token ids for tokenizer diffing. |
+| `test_confucius4_r2t2_transcription.cpp` | Repo-native smoke test: offline + final streaming transcripts against the golden, plus a check that Auto-language deltas form a nonempty prefix of the expected transcript for `assets/resources/sample_16k.wav`. Skips with exit code 125 when the model or audio is missing. Also exposes `--encode <text>` to dump token ids for tokenizer diffing. |
 | `golden*.json` | Recorded reference outputs. |
 
 ## Goldens
@@ -50,8 +50,10 @@ python3 tests/confucius4_r2t2/compare.py \
 ```
 
 The comparison checks four things: the offline transcript, the committed delta
-stream (the reference WebSocket integrator's rule), every per-chunk committed
-`fixed_text`, and the final streaming transcript. See the results table in
+stream, every per-chunk committed `fixed_text`, and the final streaming
+transcript. Metadata-only rollback prefixes are filtered from the unmodified
+reference goldens before comparing committed text; `language` fragments must
+not appear in the emitted deltas. See the results table in
 `docs/community_models/r2t2.md` for what is exact and the two documented internal
 (non-observable) differences on the English clip.
 
