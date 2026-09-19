@@ -350,6 +350,52 @@ int main(int argc, char ** argv) try {
         out_path, engine::audio::AudioBuffer{static_cast<int>(vae_config.sampling_rate), 1, generated});
     std::cout << "wrote " << out_path.string() << " ("
               << double(generated.size()) / double(vae_config.sampling_rate) << "s at 24 kHz)\n";
+
+    // ⚠ THE MODEL CANNOT REPORT FAILURE. It is a flow-matching generator: noise and
+    // conditioning in, a velocity field out. There is no refusal token and no
+    // confidence, so an instruction it cannot act on produces audio that resembles the
+    // input -- which is indistinguishable from "the edit was subtle" unless something
+    // measures it. That measurement belongs here, not in the model.
+    //
+    // This detects ONE of the three ways an edit goes wrong, and only names that one:
+    //
+    //   1. the output is unchanged            <- detected here, by correlation
+    //   2. the instruction named something not in the audio (a target or anchor the
+    //      speaker never clearly says) -- needs the source transcribed, and word-level
+    //      ASR regularizes a mumbled word into a plausible one, so it is not reliable
+    //   3. the output changed, but not in the way asked -- needs the OUTPUT transcribed
+    //      and compared against the intent
+    //
+    // Reporting (1) as "unchanged" rather than "failed" is deliberate: an edit that
+    // legitimately changes little looks the same from here.
+    //
+    // ⚠ AND IT IS TASK-DEPENDENT. AuK REGENERATES rather than splices, so a content edit
+    // comes back near zero correlation even when ASR shows the words are nearly
+    // identical -- this check is meaningless there. Paralinguistic edits stay
+    // waveform-aligned (0.70-0.99 measured), which is where it discriminates.
+    if (!ref_audio.empty()) {
+        const auto source = engine::audio::read_wav_f32(ref_audio);
+        const size_t count = std::min(source.samples.size(), generated.size());
+        if (count > 0) {
+            double dot = 0.0, lhs = 0.0, rhs = 0.0;
+            for (size_t index = 0; index < count; ++index) {
+                dot += double(source.samples[index]) * double(generated[index]);
+                lhs += double(source.samples[index]) * double(source.samples[index]);
+                rhs += double(generated[index]) * double(generated[index]);
+            }
+            const double correlation = (lhs == 0.0 || rhs == 0.0) ? 0.0 : dot / std::sqrt(lhs * rhs);
+            const double gate = double_arg(argc, argv, "--unchanged-above", 0.98);
+            std::cout << std::fixed << std::setprecision(4)
+                      << "change: correlation with the source is " << correlation;
+            if (correlation >= gate) {
+                std::cout << " -- UNCHANGED (at or above " << gate << ")\n"
+                          << "  the instruction may name something the audio does not contain,\n"
+                          << "  or the model did not act on it. The audio was still written.\n";
+                return 3;
+            }
+            std::cout << " (below " << gate << ", so something changed)\n";
+        }
+    }
     return 0;
 } catch (const std::exception & error) {
     std::cerr << "FAIL: " << error.what() << "\n";

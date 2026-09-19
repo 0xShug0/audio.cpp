@@ -9,10 +9,15 @@
 #   THE ENGLISH FORWARDED TO THE FRENCH BASKETS OF FLOWERS OF WHICH THEY HAD MADE
 #   A PLENTIFUL PROVISION TO GREET THE ARRIVAL OF THE YOUNG PRINCESS ...
 #
-# so the targets below are words that occur EXACTLY ONCE in it, except where the point is
-# ambiguity: delete_after and delete_before deliberately target "the" WITH an anchor,
-# which is AuK's own mechanism for saying which one, and they are checkable by ear --
-# you can hear which "the" went.
+# so the targets below are words that occur EXACTLY ONCE in it, and the anchors are words
+# a listener can confirm are actually spoken.
+#
+# ⚠ THAT SECOND CONDITION IS NOT AUTOMATIC. An earlier version anchored on "forwarded",
+# which ASR reports confidently and the speaker does not clearly say -- in isolation that
+# word transcribes as "Voted". The model found nothing to anchor to and correctly did
+# nothing, which looked like a broken feature. ASR regularizes a mumbled word into the
+# one that fits the sentence, so it is reliable for checking OUTPUTS and not for choosing
+# parameters.
 #
 # ⚠ The fixture matters as much as the instruction. "Remove the background noise" of a
 # clean recording and "keep the first speaker" of a single-speaker one produce output
@@ -41,8 +46,8 @@ CASES=(
 "content_edit_replace|content_edit|replace|orig=baskets;new=bundles|clean_speech|6|the same voice, BASKETS becomes BUNDLES"
 "content_edit_insert|content_edit|insert_before|text=fresh;anchor=flowers|clean_speech|6|FRESH appears before FLOWERS, nothing else changes"
 "content_edit_delete|content_edit|delete|target=plentiful|clean_speech|6|PLENTIFUL gone, the rest intact"
-"content_edit_delete_after|content_edit|delete_after|target=the;anchor=forwarded|clean_speech|6|the SECOND the (in TO THE FRENCH) gone, the first kept"
-"content_edit_delete_greet|content_edit|delete_after|target=the;anchor=greet|clean_speech|6|the THIRD the (in GREET THE) gone, the first two kept"
+"delete_after_plentiful|content_edit|delete_after|target=plentiful;anchor=made a|clean_speech|6|PLENTIFUL gone, anchored to MADE A -- both words are clearly spoken"
+"delete_after_flowers|content_edit|delete_after|target=flowers;anchor=baskets of|clean_speech|6|FLOWERS gone, anchored to BASKETS OF"
 "lyric_edit|vocal_edit||orig=baskets;new=bundles|voice_over_music|6|SUBSTITUTE FIXTURE (speech over music, not singing): the word changes, the music stays"
 "pitch_up|pitch_edit|increase|semitones=4|clean_speech|6|the same words, audibly higher"
 "pitch_down|pitch_edit|decrease|semitones=4|clean_speech|6|the same words, audibly lower"
