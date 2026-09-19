@@ -77,6 +77,17 @@ def transcript_from_stdout(stdout):
     return None
 
 
+def transcript_fixed_text(chunk, language):
+    """Sanitize reference metadata fragments without changing the raw golden."""
+    fixed = chunk["fixed_text"]
+    if not language or language.lower() == "auto":
+        raw = chunk["raw_decoded"]
+        metadata = raw.split("<asr_text>", 1)[0]
+        if "<asr_text>" not in raw or (fixed and metadata.startswith(fixed)):
+            return ""
+    return fixed
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cli", required=True)
@@ -131,11 +142,10 @@ def main():
     got_chunks = parse_trace(trace_path)
     got_final = transcript_from_stdout(streams.stdout)
 
-    # Observable committed stream: the reference WebSocket integrator emits
-    # fixed_text[len(last):] whenever the stable prefix grows (code points).
+    # Match transcript-only stable prefixes, excluding reference metadata artifacts.
     last, expected_stream = "", []
     for chunk in golden["stream_chunks"]:
-        fixed = chunk["fixed_text"]
+        fixed = transcript_fixed_text(chunk, golden.get("language"))
         if len(fixed) > len(last):
             expected_stream.append(fixed[len(last):])
             last = fixed
@@ -158,6 +168,7 @@ def main():
         failures.append(("chunk-count", len(want_chunks), len(per_chunk)))
         print(f"chunk count differ: want {len(want_chunks)} got {len(per_chunk)}")
     for i, (want, got) in enumerate(zip(want_chunks, per_chunk)):
+        want = dict(want, fixed_text=transcript_fixed_text(want, golden.get("language")))
         if got["fixed_text"] != want["fixed_text"]:
             failures.append((f"chunk[{i}].fixed_text", want["fixed_text"], got["fixed_text"]))
             print(f"chunk[{i}] fixed_text MISMATCH\n  want: {want['fixed_text']!r}\n  got:  {got['fixed_text']!r}")

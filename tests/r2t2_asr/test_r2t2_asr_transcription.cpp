@@ -109,6 +109,7 @@ std::string run_streaming(
             committed += event.partial_text->text;
         }
     });
+    request.options["language"] = "Auto";
     streaming->start_stream(request);
 
     const int64_t chunk_frames = std::max<int64_t>(
@@ -130,6 +131,11 @@ std::string run_streaming(
         throw std::runtime_error("streaming run produced no text");
     }
     std::cout << "Committed stream:    " << committed << "\n";
+    // finish_stream() returns the final tail separately; the emitted deltas
+    // must form a nonempty transcript prefix, never consume metadata offsets.
+    if (committed.empty() || std::string(kExpectedStreamFinal).compare(0, committed.size(), committed) != 0) {
+        throw std::runtime_error("committed deltas are not a prefix of the expected transcript: " + committed);
+    }
     return result.text_output->text;
 }
 

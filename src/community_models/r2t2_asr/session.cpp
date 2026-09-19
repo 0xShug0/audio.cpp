@@ -366,6 +366,10 @@ R2T2ASRSession::StreamOutcome R2T2ASRSession::decode_stream_chunk(bool final_flu
     std::string fixed_text = decode_rollback_prefix(current_ids, k);
     if (contains_asr_text_tag(fixed_text)) {
         fixed_text = text_after_asr_tag(fixed_text);
+    } else if (force_language_.empty()) {
+        // Rollback may remove the separator even when raw_decoded_ has it.
+        // Until the stable prefix reaches <asr_text>, it is only metadata.
+        fixed_text.clear();
     }
     fixed_text = truncate_at_pipe(fixed_text);
 
@@ -394,16 +398,9 @@ R2T2ASRSession::StreamOutcome R2T2ASRSession::decode_stream_chunk(bool final_flu
 }
 
 void R2T2ASRSession::publish_stream_delta(const std::string & fixed_text, runtime::StreamEvent & event) {
-    // Mirrors the reference WebSocket integrator, which slices the committed
-    // text by the previously published length (in code points):
-    //
-    //     if len(fixed) > len(last_fixed): emit fixed[len(last_fixed):]
-    //
-    // The stable prefix can regress between chunks (for example a token
-    // rollback can leave a partial metadata fragment such as "language"), and
-    // the reference does not rewrite what it already sent. The authoritative
-    // transcript is delivered in the final result, so consumers that need exact
-    // text use that.
+    // fixed_text contains transcript text only; metadata must never advance
+    // this code-point offset. Stable transcript prefixes may still shrink
+    // between chunks, so only publish newly committed code points.
     const size_t length = utf8_codepoint_count(fixed_text);
     if (length <= published_codepoints_) {
         return;
