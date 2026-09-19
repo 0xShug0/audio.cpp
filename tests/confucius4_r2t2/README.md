@@ -63,3 +63,17 @@ The same binary can dump the family tokenizer for diffing against Hugging Face:
 build/macos-metal-release/bin/test_confucius4_r2t2_transcription \
   --encode "language English<asr_text>Some text 22,500"
 ```
+
+## Graph reuse regression
+
+```bash
+build/macos-metal-release/bin/test_confucius4_r2t2_graph_reuse --backend metal
+```
+
+This model-backed test compares actual encoder capacities after growth and
+shrink, checks the Metal attention precision boundary, and compares exact
+encoder + exact decoder against reused encoder + reused decoder on real audio
+prefixes (automatic language and forced English). Decoder-only synthetic
+injection tests remain separate. The embedding RMSE bound is a drift alarm;
+observable token equality is checked independently. The test defaults to CPU
+and accepts `--model` for a local safetensors directory or GGUF file.
