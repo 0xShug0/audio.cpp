@@ -43,6 +43,24 @@ struct BigVganGraphOptions {
     BigVganActivationLayout activation_layout = BigVganActivationLayout::InterleavedPairs;
     bool use_depthwise_transpose_module = false;
     bool lower_padded_conv_transpose_as_crop = false;
+    // Causal convolutions throughout the decoder, as AuK's BigVGANFlowVAE uses
+    // (layers.py Conv1d/ConvTranspose1d with causal=True):
+    //   Conv1d           left pad dilation*(kernel-1), no right pad
+    //   ConvTranspose1d  no padding, then drop the trailing `stride` samples
+    // ⚠ Not cosmetic. The symmetric form is `floor((kernel - stride) / 2)`, which is
+    // only exact when kernel - stride is even; with AuK's odd rates (5 and 3) the
+    // length drifts and compounds through every later stage. It also shifts content
+    // at every layer even where the lengths happen to agree.
+    //
+    // ⚠ LAST ON PURPOSE. Callers brace-initialize this struct positionally
+    // (dramabox/vocoder.cpp:367 passes {true, false, GroupedByStage, true}), so a new
+    // field anywhere but the end silently reassigns every one after it.
+    bool causal = false;
+    // ⚠ The input convolution is a SEPARATE question. AuK builds conv_pre with
+    // causal=False hardcoded (bigvgan_flow_vae.py:312) while every other convolution
+    // in the same decoder follows the config's causal flag, so "the decoder is causal"
+    // and "conv_pre is causal" are genuinely different facts. Default false to match.
+    bool causal_input_conv = false;
 };
 
 struct BigVganVocoderWeights {
@@ -134,12 +152,14 @@ public:
     static BigVganVocoderComponent load_from_tensor_source(
         std::shared_ptr<const assets::TensorSource> source,
         core::BackendConfig backend,
-        BigVganVocoderConfig config);
+        BigVganVocoderConfig config,
+        BigVganGraphOptions options = {});
 
     BigVganVocoderComponent() = default;
     BigVganVocoderComponent(
         std::shared_ptr<const BigVganVocoderWeights> weights,
-        core::BackendConfig backend);
+        core::BackendConfig backend,
+        BigVganGraphOptions options = {});
 
     const core::BackendConfig & backend() const noexcept;
     const std::shared_ptr<const BigVganVocoderWeights> & weights() const noexcept;
@@ -164,6 +184,7 @@ private:
 
     std::shared_ptr<const BigVganVocoderWeights> weights_;
     core::BackendConfig backend_;
+    BigVganGraphOptions options_;
     std::shared_ptr<State> state_;
 };
 

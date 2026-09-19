@@ -506,17 +506,30 @@ ggml_tensor * conv1d(
     ggml_context * ctx,
     ggml_tensor * x,
     const Conv1dWeights & conv,
-    const std::string & name) {
+    const std::string & name,
+    bool causal) {
     ggml_tensor * weight = weight_3d(ctx, conv.weight, conv.kernel, conv.in_channels, conv.out_channels, name + ".weight");
     ggml_tensor * x3 = ggml_reshape_3d(ctx, contiguous_if_needed(ctx, x), x->ne[0], x->ne[1], 1);
+    // ggml takes ONE symmetric padding, and AuK pads only on the left. Padding
+    // symmetrically by dilation*(kernel-1) and keeping the leading `frames` outputs is
+    // the same thing: those outputs are exactly the windows a left-only pad produces,
+    // and the extra right-hand ones are what the left-only pad never computes.
+    const int64_t causal_padding = conv.dilation * (conv.kernel - 1);
+    const int64_t input_frames = x->ne[0];
     ggml_tensor * y3 = ggml_conv_1d_fast_1d_im2col(
         ctx,
         weight,
         x3,
         static_cast<int>(conv.stride),
-        static_cast<int>(conv.padding),
+        static_cast<int>(causal ? causal_padding : conv.padding),
         static_cast<int>(conv.dilation));
     ggml_tensor * y = ggml_reshape_2d(ctx, y3, y3->ne[0], y3->ne[1]);
+    if (causal) {
+        if (conv.stride != 1) {
+            throw std::runtime_error("BigVGAN causal Conv1d expects stride 1");
+        }
+        y = slice_frames(ctx, y, 0, input_frames);
+    }
     if (conv.use_bias) {
         y = ggml_add(ctx, y, weight_2d(ctx, *conv.bias, 1, conv.out_channels, name + ".bias"));
     }
@@ -529,13 +542,17 @@ ggml_tensor * conv_transpose1d(
     ggml_tensor * x,
     const ConvTranspose1dWeights & conv,
     const std::string & name,
-    bool lower_padding_as_crop) {
+    bool lower_padding_as_crop,
+    bool causal) {
+    // AuK: padding 0, then x[:, :, :-stride]. With kernel = 2*stride that lands on
+    // exactly frames*stride for odd strides too, where the symmetric form does not.
+    const int64_t causal_frames = causal ? x->ne[0] * conv.stride : 0;
     if (conv.transpose_weight.has_value()) {
         core::ModuleBuildContext build_ctx{ctx, name.c_str(), backend_type};
         auto * input = ggml_reshape_3d(ctx, contiguous_if_needed(ctx, x), x->ne[0], x->ne[1], 1);
         const auto input_value =
             core::wrap_tensor(input, core::TensorShape::from_dims({1, conv.in_channels, x->ne[0]}), GGML_TYPE_F32);
-        const int module_padding = lower_padding_as_crop ? 0 : static_cast<int>(conv.padding);
+        const int module_padding = (causal || lower_padding_as_crop) ? 0 : static_cast<int>(conv.padding);
         const auto module = ConvTranspose1dModule({
             conv.in_channels,
             conv.out_channels,
@@ -545,7 +562,9 @@ ggml_tensor * conv_transpose1d(
             1,
             conv.use_bias});
         auto output = module.build(build_ctx, input_value, {*conv.transpose_weight, conv.bias});
-        if (lower_padding_as_crop && conv.padding > 0) {
+        if (causal) {
+            output = SliceModule({2, 0, causal_frames}).build(build_ctx, output);
+        } else if (lower_padding_as_crop && conv.padding > 0) {
             const int64_t cropped_frames = output.shape.dims[2] - 2 * conv.padding;
             if (cropped_frames <= 0) {
                 throw std::runtime_error("BigVGAN padded ConvTranspose1d crop would produce empty output");
@@ -572,9 +591,12 @@ ggml_tensor * conv_transpose1d(
         weight,
         input3,
         1,
-        static_cast<int>(conv.kernel - 1 - conv.padding),
+        static_cast<int>(causal ? conv.kernel - 1 : conv.kernel - 1 - conv.padding),
         1);
     ggml_tensor * y = ggml_reshape_2d(ctx, y3, y3->ne[0], y3->ne[1]);
+    if (causal) {
+        y = slice_frames(ctx, y, 0, causal_frames);
+    }
     if (conv.use_bias) {
         y = ggml_add(ctx, y, weight_2d(ctx, *conv.bias, 1, conv.out_channels, name + ".bias"));
     }
@@ -637,7 +659,8 @@ ggml_tensor * activation1d(
     ggml_tensor * x,
     const ActivationWeights & weights,
     const std::string & name,
-    bool use_depthwise_transpose_module) {
+    bool use_depthwise_transpose_module,
+    bool causal) {
     const int64_t pad = kBigVganActivationKernel / kBigVganActivationRatio - 1;
     const int64_t pad_left =
         pad * kBigVganActivationRatio + (kBigVganActivationKernel - kBigVganActivationRatio) / 2;
@@ -667,8 +690,13 @@ ggml_tensor * activation1d(
     ggml_tensor * periodic = ggml_sqr(ctx, ggml_sin(ctx, ggml_mul(ctx, up, alpha)));
     ggml_tensor * activated = ggml_add(ctx, up, ggml_mul(ctx, periodic, inv_beta));
 
-    const int64_t lowpass_left = kBigVganActivationKernel / 2 - 1;
-    const int64_t lowpass_right = kBigVganActivationKernel / 2;
+    // ⚠ Only the DOWNsample is causal in AuK. Activation1d passes `causal` to
+    // DownSample1d and leaves UpSample1d at its default, so the upsample above stays
+    // exactly as it was; LowPassFilter1d(causal=True) is pad_left=kernel-1,
+    // pad_right=0 against the symmetric kernel/2-1, kernel/2.
+    const int64_t lowpass_left =
+        causal ? kBigVganActivationKernel - 1 : kBigVganActivationKernel / 2 - 1;
+    const int64_t lowpass_right = causal ? 0 : kBigVganActivationKernel / 2;
     ggml_tensor * down = replicate_pad(ctx, activated, lowpass_left, lowpass_right);
     down = depthwise_conv_filter(ctx, down, weights.down_filter, kBigVganActivationRatio);
     return named(down, name.c_str());
@@ -681,14 +709,15 @@ ggml_tensor * amp_block(
     const ResBlockWeights & block,
     const std::string & name,
     BigVganActivationLayout activation_layout,
-    bool use_depthwise_transpose_module) {
+    bool use_depthwise_transpose_module,
+    bool causal) {
     for (int layer = 0; layer < 3; ++layer) {
         const int act1_index = activation_layout == BigVganActivationLayout::InterleavedPairs ? 2 * layer : layer;
         const int act2_index = activation_layout == BigVganActivationLayout::InterleavedPairs ? 2 * layer + 1 : layer + 3;
-        ggml_tensor * xt = activation1d(ctx, backend_type, x, block.activations[static_cast<size_t>(act1_index)], name + ".act1." + std::to_string(layer), use_depthwise_transpose_module);
-        xt = conv1d(ctx, xt, block.convs1[static_cast<size_t>(layer)], name + ".convs1." + std::to_string(layer));
-        xt = activation1d(ctx, backend_type, xt, block.activations[static_cast<size_t>(act2_index)], name + ".act2." + std::to_string(layer), use_depthwise_transpose_module);
-        xt = conv1d(ctx, xt, block.convs2[static_cast<size_t>(layer)], name + ".convs2." + std::to_string(layer));
+        ggml_tensor * xt = activation1d(ctx, backend_type, x, block.activations[static_cast<size_t>(act1_index)], name + ".act1." + std::to_string(layer), use_depthwise_transpose_module, causal);
+        xt = conv1d(ctx, xt, block.convs1[static_cast<size_t>(layer)], name + ".convs1." + std::to_string(layer), causal);
+        xt = activation1d(ctx, backend_type, xt, block.activations[static_cast<size_t>(act2_index)], name + ".act2." + std::to_string(layer), use_depthwise_transpose_module, causal);
+        xt = conv1d(ctx, xt, block.convs2[static_cast<size_t>(layer)], name + ".convs2." + std::to_string(layer), causal);
         x = named(ggml_add(ctx, x, xt), (name + ".residual." + std::to_string(layer)).c_str());
     }
     return x;
@@ -700,7 +729,7 @@ ggml_tensor * build_bigvgan_graph_impl(
     const BigVganVocoderWeights & weights,
     ggml_tensor * mel,
     const BigVganGraphOptions & options) {
-    ggml_tensor * x = conv1d(ctx, mel, weights.conv_pre, "conv_pre");
+    ggml_tensor * x = conv1d(ctx, mel, weights.conv_pre, "conv_pre", options.causal && options.causal_input_conv);
     for (size_t up_index = 0; up_index < weights.ups.size(); ++up_index) {
         const std::string upsample_name = weights.ups[up_index].transpose_weight.has_value()
             ? "ups." + std::to_string(up_index)
@@ -711,7 +740,8 @@ ggml_tensor * build_bigvgan_graph_impl(
             x,
             weights.ups[up_index],
             upsample_name,
-            options.lower_padded_conv_transpose_as_crop);
+            options.lower_padded_conv_transpose_as_crop,
+            options.causal);
         ggml_tensor * sum = nullptr;
         for (int64_t kernel_index = 0; kernel_index < kBigVganNumKernels; ++kernel_index) {
             const size_t block_index = up_index * static_cast<size_t>(kBigVganNumKernels) + static_cast<size_t>(kernel_index);
@@ -722,13 +752,14 @@ ggml_tensor * build_bigvgan_graph_impl(
                 weights.resblocks[block_index],
                 "resblocks." + std::to_string(block_index),
                 options.activation_layout,
-                options.use_depthwise_transpose_module);
+                options.use_depthwise_transpose_module,
+                options.causal);
             sum = sum == nullptr ? block : ggml_add(ctx, sum, block);
         }
         x = named(ggml_scale(ctx, sum, 1.0F / static_cast<float>(kBigVganNumKernels)), ("upsample." + std::to_string(up_index)).c_str());
     }
-    x = activation1d(ctx, backend_type, x, weights.activation_post, "activation_post", options.use_depthwise_transpose_module);
-    x = conv1d(ctx, x, weights.conv_post, "conv_post");
+    x = activation1d(ctx, backend_type, x, weights.activation_post, "activation_post", options.use_depthwise_transpose_module, options.causal);
+    x = conv1d(ctx, x, weights.conv_post, "conv_post", options.causal);
     if (!options.apply_final_activation) {
         return named(x, "waveform");
     }
@@ -737,8 +768,11 @@ ggml_tensor * build_bigvgan_graph_impl(
 
 class BigVganRunner {
 public:
-    BigVganRunner(const BigVganVocoderWeights & weights, const core::BackendConfig & backend)
-        : weights_(weights), backend_(backend) {
+    BigVganRunner(
+        const BigVganVocoderWeights & weights,
+        const core::BackendConfig & backend,
+        const BigVganGraphOptions & options = {})
+        : weights_(weights), backend_(backend), options_(options) {
         if (weights_.execution_context == nullptr) {
             throw std::runtime_error("BigVGAN runner requires execution context");
         }
@@ -802,7 +836,7 @@ private:
             throw std::runtime_error("failed to initialize BigVGAN graph context");
         }
         mel_ = named(ggml_new_tensor_2d(ggml_, GGML_TYPE_F32, frames, weights_.config.num_mels), "mel");
-        output_ = build_bigvgan_graph_impl(ggml_, weights_.execution_context->backend_type(), weights_, mel_, {});
+        output_ = build_bigvgan_graph_impl(ggml_, weights_.execution_context->backend_type(), weights_, mel_, options_);
         graph_ = ggml_new_graph_custom(ggml_, 262144, false);
         ggml_build_forward_expand(graph_, output_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_.execution_context->backend()));
@@ -817,6 +851,7 @@ private:
 
     const BigVganVocoderWeights & weights_;
     core::BackendConfig backend_;
+    BigVganGraphOptions options_;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
@@ -1042,7 +1077,8 @@ BigVganVocoderComponent BigVganVocoderComponent::load_from_safetensors(
 BigVganVocoderComponent BigVganVocoderComponent::load_from_tensor_source(
     std::shared_ptr<const assets::TensorSource> source,
     core::BackendConfig backend,
-    BigVganVocoderConfig config) {
+    BigVganVocoderConfig config,
+    BigVganGraphOptions options) {
     validate_config(config);
     if (source == nullptr) {
         throw std::runtime_error("BigVGAN component requires tensor source");
@@ -1124,19 +1160,21 @@ BigVganVocoderComponent BigVganVocoderComponent::load_from_tensor_source(
 
     weights->store->upload();
     source->release_storage();
-    return BigVganVocoderComponent(std::move(weights), backend);
+    return BigVganVocoderComponent(std::move(weights), backend, options);
 }
 
 BigVganVocoderComponent::BigVganVocoderComponent(
     std::shared_ptr<const BigVganVocoderWeights> weights,
-    core::BackendConfig backend)
+    core::BackendConfig backend,
+    BigVganGraphOptions options)
     : weights_(std::move(weights)),
       backend_(backend),
+      options_(options),
       state_(std::make_shared<State>()) {
     if (weights_ == nullptr) {
         throw std::runtime_error("BigVGAN component requires weights");
     }
-    state_->runner = std::make_unique<BigVganRunner>(*weights_, backend_);
+    state_->runner = std::make_unique<BigVganRunner>(*weights_, backend_, options_);
 }
 
 const core::BackendConfig & BigVganVocoderComponent::backend() const noexcept {
