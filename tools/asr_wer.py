@@ -12,7 +12,7 @@ roughly how does it compare", not "which model is better".
   tools/asr_wer.py --cli build/bin/audiocpp_cli --family vibevoice_asr_streaming \
                    --model path/to.gguf [--backend cuda] [--label 7B]
 """
-import argparse, json, pathlib, re, subprocess, sys
+import argparse, json, os, pathlib, re, subprocess, sys
 
 
 def normalize(text):
@@ -38,8 +38,10 @@ def main():
     parser.add_argument("--family", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--backend", default="cpu")
-    parser.add_argument("--threads", default="16")
+    parser.add_argument("--threads", default=str(min(os.cpu_count() or 4, 16)))
     parser.add_argument("--label", default="")
+    parser.add_argument("--timeout", type=float, default=1800,
+                        help="Per-clip seconds before the clip is scored as a miss.")
     parser.add_argument("--assets", default="assets/asr_validation/librispeech")
     args = parser.parse_args()
 
@@ -51,11 +53,23 @@ def main():
     total_errors = total_words = 0
     print(f"{'clip':46s} {'WER':>7s}  {'err/words':>10s}")
     for clip in clips:
-        reference = normalize(clip.with_suffix(".txt").read_text())
-        result = subprocess.run(
-            [args.cli, "--task", "asr", "--family", args.family, "--model", args.model,
-             "--backend", args.backend, "--threads", args.threads, "--audio", str(clip)],
-            capture_output=True, text=True, timeout=1800)
+        transcript = clip.with_suffix(".txt")
+        if not transcript.exists():
+            print(f"{clip.stem[:46]:46s} {'no ref':>7s}  {'-':>10s}")
+            continue
+        reference = normalize(transcript.read_text())
+        try:
+            result = subprocess.run(
+                [args.cli, "--task", "asr", "--family", args.family, "--model", args.model,
+                 "--backend", args.backend, "--threads", args.threads, "--audio", str(clip)],
+                capture_output=True, text=True, timeout=args.timeout)
+        except subprocess.TimeoutExpired:
+            # Score it as a total miss and keep going; one slow clip should not throw
+            # away the clips already measured.
+            print(f"{clip.stem[:46]:46s} {'timeout':>7s}  {'-':>10s}")
+            total_errors += len(reference)
+            total_words += len(reference)
+            continue
         # ⚠ Two output shapes. A diarizing family (vibevoice_asr_streaming) emits
         # `speaker_turns=[{...}]` plus a MULTI-LINE text_output with "Speaker N:"
         # prefixes; a plain one (parakeet_tdt) puts everything after `text_output=` on
@@ -82,9 +96,12 @@ def main():
                     parts.append(line)
             hypothesis = " ".join(parts)
         hypothesis = re.sub(r"Speaker\s+\d+\s*:", " ", hypothesis)
-        if not hypothesis.strip() and result.returncode != 0:
-            hypothesis = ""
-            print(f"  (exit {result.returncode}) {result.stderr.strip().splitlines()[-1][:80] if result.stderr.strip() else ''}")
+        if not hypothesis.strip():
+            # ⚠ Print this on a CLEAN exit too. A model that exits 0 and says nothing is
+            # the failure mode that scored a working model at 100% WER; silence here is
+            # what made it look like a model result instead of a harness bug.
+            tail = result.stderr.strip().splitlines()[-3:]
+            print(f"  (exit {result.returncode}) " + " | ".join(line[:100] for line in tail))
         words = normalize(hypothesis)
         errors = edit_distance(reference, words)
         total_errors += errors
