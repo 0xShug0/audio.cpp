@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/conformer_modules.h"
@@ -22,6 +23,7 @@ struct CohereAssets {
     std::vector<tokenizers::SentencePiecePiece> vocabulary;
     std::vector<float> window;
     audio::SparseMelFilterbank filterbank;
+    std::shared_ptr<const audio::NemoMelFrontend> frontend;
     int32_t special_token(const std::string & text) const;
 };
 
@@ -38,6 +40,11 @@ struct CohereWeights {
 std::shared_ptr<const CohereAssets> load_cohere_assets(const std::filesystem::path & path);
 std::unique_ptr<CohereWeights> load_cohere_weights(
     const CohereAssets & assets, core::ExecutionContext & execution, assets::TensorStorageType type);
+
+audio::AudioTensor extract_cohere_frontend(
+    const std::vector<float> & samples,
+    const CohereAssets & assets,
+    size_t threads);
 
 class CohereRuntime {
 public:

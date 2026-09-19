@@ -548,6 +548,7 @@ add_library(engine_core OBJECT
     src/framework/audio/conversion.cpp
     src/framework/audio/deepfilternet2.cpp
     src/framework/audio/dsp.cpp
+    src/framework/audio/nemo_mel_frontend.cpp
     src/framework/audio/flashsr.cpp
     src/framework/audio/gtcrn.cpp
     src/framework/audio/istft_graph.cpp
@@ -2669,6 +2670,19 @@ endif()
 
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
     enable_testing()
+
+    if(cohere_asr IN_LIST AUDIOCPP_LINKED_MODELS AND
+       canary_asr IN_LIST AUDIOCPP_LINKED_MODELS AND
+       citrinet_asr IN_LIST AUDIOCPP_LINKED_MODELS AND
+       parakeet_tdt IN_LIST AUDIOCPP_LINKED_MODELS AND
+       sortformer_diar IN_LIST AUDIOCPP_LINKED_MODELS AND
+       sortformer_diar_v2 IN_LIST AUDIOCPP_LINKED_MODELS AND
+       hviske_asr IN_LIST AUDIOCPP_LINKED_MODELS AND
+       nemotron_asr IN_LIST AUDIOCPP_LINKED_MODELS AND
+       granite5asr IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(nemo_mel_migration_probe tests/nemo_mel_migration/probe.cpp)
+        target_link_libraries(nemo_mel_migration_probe PRIVATE engine_runtime ggml)
+    endif()
 
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 

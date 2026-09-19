@@ -6,6 +6,8 @@
 
 namespace engine::models::sortformer_diar {
 
+audio::NemoMelFrontend make_sortformer_frontend(const SortformerAssets & assets);
+
 SortformerFeatureBatch compute_sortformer_features(
     const runtime::AudioBuffer & audio,
     const SortformerAssets & assets,

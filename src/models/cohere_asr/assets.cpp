@@ -40,6 +40,19 @@ std::shared_ptr<const CohereAssets> load_cohere_assets(const std::filesystem::pa
     // using the checkpoint's BF16 copies of the training preprocessor buffers.
     out->window = audio::get_cached_stft_window({512, 160, 400, true, audio::STFTPadMode::Constant});
     out->filterbank = audio::MelFilterbank().build_sparse({16000, 512, 128, 0.0f, 8000.0f, true});
+    audio::NemoMelFrontendConfig frontend_config;
+    frontend_config.sample_rate = 16000;
+    frontend_config.n_mels = 128;
+    frontend_config.stft = {512, 160, 400, true, audio::STFTPadMode::Constant};
+    frontend_config.preemphasis = 0.97f;
+    frontend_config.dither_stddev = 1.0e-5f;
+    frontend_config.dither_method = audio::DitherMethod::BoxMuller16;
+    frontend_config.window = audio::MelWindow::FromArgument;
+    frontend_config.mel_bank = audio::MelBank::FromArgument;
+    frontend_config.norm = audio::MelNorm::PerBinF32;
+    frontend_config.layout = audio::MelLayout::FeatureMajor;
+    out->frontend = std::make_shared<audio::NemoMelFrontend>(
+        frontend_config, out->window, out->filterbank.dense);
     return out;
 }
 

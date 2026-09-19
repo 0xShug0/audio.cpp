@@ -50,6 +50,18 @@ std::shared_ptr<const CanaryAssets> load_canary_assets(const std::filesystem::pa
     }
     out->window = out->source->require_f32("preprocessor.featurizer.window", {400});
     out->filterbank = {out->source->require_f32("preprocessor.featurizer.fb", {1, 128, 257}), {128, 257}};
+    audio::NemoMelFrontendConfig frontend_config;
+    frontend_config.sample_rate = 16000;
+    frontend_config.n_mels = 128;
+    frontend_config.stft = {512, 160, 400, true, audio::STFTPadMode::Constant};
+    frontend_config.preemphasis = 0.97f;
+    frontend_config.window = audio::MelWindow::FromArgument;
+    frontend_config.mel_bank = audio::MelBank::FromArgument;
+    frontend_config.mel_path = audio::MelPath::LogMelSpectrogram;
+    frontend_config.norm = audio::MelNorm::PerBinF32;
+    frontend_config.layout = audio::MelLayout::FeatureMajor;
+    out->frontend = std::make_shared<audio::NemoMelFrontend>(
+        frontend_config, out->window, out->filterbank);
     return out;
 }
 

@@ -1,4 +1,5 @@
 #include "engine/models/cohere_asr/model.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 
 #include "engine/framework/audio/waveform_ops.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -240,50 +241,19 @@ audio::AudioTensor extract_features(const std::vector<float> & samples, const Co
     if (samples.size() < 320 || samples.size() > 35 * 16000) {
         throw std::runtime_error("Cohere chunks must contain between 20 ms and 35 seconds of audio");
     }
-    // The reference frontend uses length-seeded CPU torch.randn, even for CUDA inference.
-    // Its 16-value Box-Muller ordering differs from std::normal_distribution.
-    std::mt19937 rng(static_cast<uint32_t>(samples.size()));
-    std::vector<float> noise(samples.size());
-    const auto uniform = [&]() { return static_cast<float>(rng() & 0xffffffu) * 0x1p-24f; };
-    for (auto & value : noise) {
-        value = uniform();
-    }
-    const auto normal_block = [](float * values) {
-        for (size_t i = 0; i < 8; ++i) {
-            const float radius = std::sqrt(-2.0f * std::log(1.0f - values[i]));
-            const float theta = 6.2831853071795864769f * values[i + 8];
-            values[i] = radius * std::cos(theta);
-            values[i + 8] = radius * std::sin(theta);
-        }
-    };
-    for (size_t i = 0; i + 16 <= noise.size(); i += 16) {
-        normal_block(noise.data() + i);
-    }
-    if (noise.size() % 16 != 0) {
-        auto * tail = noise.data() + noise.size() - 16;
-        for (size_t i = 0; i < 16; ++i) {
-            tail[i] = uniform();
-        }
-        normal_block(tail);
-    }
-    for (size_t i = 0; i < samples.size(); ++i) {
-        noise[i] = samples[i] + 1e-5f * noise[i];
-    }
-    const auto emphasized = audio::apply_preemphasis(noise, 0.97f);
-    auto magnitude = audio::STFT().compute_magnitude(emphasized, assets.window, 1,
-        static_cast<int64_t>(samples.size()), {512, 160, 400, true, audio::STFTPadMode::Constant}, threads);
-    auto mel = audio::MelFilterbank().compute_custom_sparse_from_magnitude(magnitude.values, 1, 257,
-        magnitude.shape[2], magnitude.shape[2], assets.filterbank);
-    for (auto & value : mel.values) {
-        value = std::log(value + 0x1p-24f);
-    }
-    const int64_t valid = static_cast<int64_t>(samples.size()) / 160;
-    auto normalized = audio::FeatureNormalizer().compute(mel.values, {valid}, 1, 128,
-        mel.shape[2], audio::FeatureNormalizeType::PerFeature);
-    return std::move(normalized.normalized);
+    auto features = assets.frontend->extract_mono(
+        samples, {true, audio::ValidFrameRule::FloorHops}, threads);
+    return {std::move(features.values), {1, features.feature_size, features.frames}};
 }
 
 }  // namespace
+
+audio::AudioTensor extract_cohere_frontend(
+    const std::vector<float> & samples,
+    const CohereAssets & assets,
+    size_t threads) {
+    return extract_features(samples, assets, threads);
+}
 
 std::vector<std::vector<int32_t>> CohereRuntime::transcribe(
     const std::vector<std::vector<float>> & samples, const std::vector<int32_t> & prompt, int64_t max_tokens) {
@@ -298,7 +268,7 @@ std::vector<std::vector<int32_t>> CohereRuntime::transcribe(
         ? std::min(static_cast<size_t>(batch), std::max(size_t{1}, threads)) : 1;
     const auto extract = [&](size_t worker) {
         for (size_t b = worker; b < samples.size(); b += workers) {
-            features[b] = extract_features(samples[b], assets_, std::max(size_t{1}, threads / workers));
+            features[b] = extract_cohere_frontend(samples[b], assets_, std::max(size_t{1}, threads / workers));
         }
     };
     std::vector<std::future<void>> pending;

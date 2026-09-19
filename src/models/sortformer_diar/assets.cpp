@@ -1,4 +1,5 @@
 #include "engine/models/sortformer_diar/assets.h"
+#include "engine/models/sortformer_diar/frontend.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/assets/resource_bundle.h"
@@ -177,6 +178,7 @@ std::shared_ptr<const SortformerAssets> load_sortformer_assets(const std::filesy
     assets->model_config = parse_sortformer_model_config(assets->resources);
     assets->feature_config = parse_sortformer_feature_config(assets->resources);
     assets->model_weights = assets->resources.open_tensor_source("weights");
+    assets->frontend = std::make_shared<audio::NemoMelFrontend>(make_sortformer_frontend(*assets));
     return assets;
 }
 
