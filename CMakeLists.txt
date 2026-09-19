@@ -1469,6 +1469,22 @@ audiocpp_add_model(qwen3_asr
         qwen3_forced_aligner
 )
 
+audiocpp_add_model(confucius4_r2t2
+    SOURCES
+        src/community_models/confucius4_r2t2/assets.cpp
+        src/community_models/confucius4_r2t2/text_postprocess.cpp
+        src/community_models/confucius4_r2t2/tokenizer_text.cpp
+        src/community_models/confucius4_r2t2/frontend_whisper.cpp
+        src/community_models/confucius4_r2t2/audio_encoder.cpp
+        src/community_models/confucius4_r2t2/thinker.cpp
+        src/community_models/confucius4_r2t2/prompt_asr.cpp
+        src/community_models/confucius4_r2t2/session.cpp
+    INCLUDES
+        engine/community_models/confucius4_r2t2/session.h
+    LOADERS
+        engine::community_models::confucius4_r2t2::make_confucius4_r2t2_loader
+)
+
 audiocpp_add_model(qwen3_forced_aligner
     SOURCES
         src/models/qwen3_forced_aligner/processor.cpp
@@ -2969,6 +2985,23 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(test_granite5asr_golden_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(test_granite5asr_golden_transcription PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        if (confucius4_r2t2 IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_confucius4_r2t2_graph_reuse tests/confucius4_r2t2/test_graph_reuse.cpp)
+            target_compile_definitions(test_confucius4_r2t2_graph_reuse PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+            target_link_libraries(test_confucius4_r2t2_graph_reuse PRIVATE engine_runtime ggml)
+            add_executable(test_confucius4_r2t2_transcription
+                tests/confucius4_r2t2/test_confucius4_r2t2_transcription.cpp
+            )
+            target_compile_definitions(test_confucius4_r2t2_transcription PRIVATE
+                ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+            )
+            target_link_libraries(test_confucius4_r2t2_transcription PRIVATE engine_runtime ggml)
+            target_include_directories(test_confucius4_r2t2_transcription PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_confucius4_r2t2_transcription PRIVATE OpenMP::OpenMP_CXX)
+            endif()
         endif()
 
         if (vibeasr IN_LIST AUDIOCPP_LINKED_MODELS)

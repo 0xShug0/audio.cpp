@@ -36,6 +36,24 @@
       "path": "../../models/Qwen3-ASR-0.6B",
       "task": "asr",
       "mode": "offline"
+    },
+    {
+      "id": "r2t2-asr",
+      "family": "confucius4_r2t2",
+      "path": "../../models/Confucius4-R2T2-GGUF/r2t2-q8_0.gguf",
+      "task": "asr",
+      "mode": "offline"
+    },
+    {
+      "id": "r2t2-asr-stream",
+      "family": "confucius4_r2t2",
+      "path": "../../models/Confucius4-R2T2-GGUF/r2t2-q8_0.gguf",
+      "task": "asr",
+      "mode": "streaming",
+      "session_options": {
+        "confucius4_r2t2.chunk_size_ms": "320",
+        "confucius4_r2t2.max_tokens": "32"
+      }
     }
   ]
 }

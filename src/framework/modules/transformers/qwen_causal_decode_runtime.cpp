@@ -1763,6 +1763,7 @@ private:
     }
 
     void build_block_graph(int64_t chunk) {
+        const auto build_start = Clock::now();
         block_ctx_.reset(ggml_init({config_.prefill_graph_arena_bytes, nullptr, true}));
         if (!block_ctx_) { throw std::runtime_error("Qwen chunked prefill context allocation failed"); }
         core::ModuleBuildContext ctx{block_ctx_.get(), config_.trace_name.c_str(), backend_type_};
@@ -1811,6 +1812,8 @@ private:
             throw std::runtime_error("Qwen chunked prefill graph allocation failed");
         }
         block_steps_ = chunk;
+        debug::timing_log_scalar(config_.trace_name + ".block_prefill.graph.build_ms",
+                                 engine::debug::elapsed_ms(build_start, Clock::now()));
     }
 
     void release_block_graph() {

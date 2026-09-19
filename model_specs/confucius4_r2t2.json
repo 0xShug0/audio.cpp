@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "family": "confucius4_r2t2",
+  "display_name": "Confucius4-R2T2",
+  "description": "NetEase Youdao Confucius4-R2T2 real-time ASR: a Qwen3-ASR fine-tune with Longest Stable Prefix (LSP) streaming. Low-latency append-only streaming from 80 ms to 2 s chunks, context and hotword prompts, 30 languages.",
+  "category": "asr",
+  "status": "community",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "yue",
+    "ar",
+    "de",
+    "fr",
+    "es",
+    "pt",
+    "id",
+    "it",
+    "ko",
+    "ru",
+    "th",
+    "vi",
+    "ja",
+    "tr",
+    "hi",
+    "ms",
+    "nl",
+    "sv",
+    "da",
+    "fi",
+    "pl",
+    "cs",
+    "fil",
+    "fa",
+    "el",
+    "hu",
+    "mk",
+    "ro"
+  ],
+  "capabilities": {
+    "asr": [
+      "partial_results"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "ui": {
+    "recommended_package": "confucius4_r2t2_q8_0",
+    "tags": [
+      "ASR",
+      "Stream"
+    ],
+    "docs": [
+      "docs/community_models/r2t2.md",
+      "docs/asr.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "netease-youdao/Confucius4-R2T2",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "confucius4_r2t2_q8_0",
+      "display_name": "Confucius4-R2T2 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Confucius4-R2T2-GGUF",
+      "files": [
+        "r2t2-q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "davidxifeng/Confucius4-R2T2-gguf"
+      }
+    },
+    {
+      "id": "confucius4_r2t2_f16",
+      "display_name": "Confucius4-R2T2 F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Confucius4-R2T2-GGUF",
+      "files": [
+        "r2t2-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "davidxifeng/Confucius4-R2T2-gguf"
+      }
+    },
+    {
+      "id": "confucius4_r2t2_safetensors",
+      "display_name": "Confucius4-R2T2 (HF safetensors)",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Confucius4-R2T2",
+      "files": [
+        "added_tokens.json",
+        "chat_template.json",
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "special_tokens_map.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "netease-youdao/Confucius4-R2T2"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "chat_template": "model:chat_template.json",
+        "chat_template_jinja": "model:chat_template.jinja",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "optional_files": {
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "chat_template": "model:chat_template.json",
+        "chat_template_jinja": "model:chat_template.jinja",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "required": false,
+        "default": "Auto",
+        "description": "Recognition language: ISO-639 code (zh/en/ja/...) or canonical name (Chinese/English/...), or Auto for detection."
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "required": false,
+        "default": 512,
+        "description": "Offline decode budget."
+      }
+    ],
+    "session": [
+      {
+        "name": "chunk_size_ms",
+        "type": "int",
+        "required": false,
+        "default": 320,
+        "description": "Streaming decode chunk size in milliseconds (80-2000)."
+      },
+      {
+        "name": "unfixed_chunk_num",
+        "type": "int",
+        "required": false,
+        "default": 2,
+        "description": "Leading chunks decoded without a stable-prefix prompt."
+      },
+      {
+        "name": "unfixed_token_num",
+        "type": "int",
+        "required": false,
+        "default": 5,
+        "description": "Tokens rolled back from the accumulated text before it becomes the prefix prompt."
+      },
+      {
+        "name": "rollback_punctuation",
+        "type": "bool",
+        "required": false,
+        "default": false,
+        "description": "Keep trailing text uncommitted when it ends with punctuation instead of rolling back tokens."
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "required": false,
+        "default": 32,
+        "description": "Greedy decode budget per streaming chunk and for the final flush (session-scoped; distinct from the offline request max_tokens)."
+      },
+      {
+        "name": "audio_encoder_weight_type",
+        "type": "enum",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native",
+        "description": "Audio tower weight storage."
+      },
+      {
+        "name": "thinker_weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0"
+        ],
+        "required": false,
+        "default": "native",
+        "description": "Thinker weight storage."
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native",
+        "description": "Alias for thinker_weight_type."
+      },
+      {
+        "name": "audio_encoder_graph_arena_mb",
+        "type": "int",
+        "required": false,
+        "default": 128,
+        "description": "Audio tower graph arena in MB."
+      },
+      {
+        "name": "thinker_prefill_graph_arena_mb",
+        "type": "int",
+        "required": false,
+        "default": 256,
+        "description": "Thinker prefill graph arena in MB."
+      },
+      {
+        "name": "thinker_decode_graph_arena_mb",
+        "type": "int",
+        "required": false,
+        "default": 256,
+        "description": "Thinker decode graph arena in MB."
+      },
+      {
+        "name": "thinker_weight_context_mb",
+        "type": "int",
+        "required": false,
+        "default": 64,
+        "description": "Thinker weight context in MB."
+      }
+    ],
+    "load": []
+  },
+  "dependencies": []
+}

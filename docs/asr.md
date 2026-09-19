@@ -7,6 +7,7 @@
 | Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
 | Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](community_models/granite5asr.md) |
 | Qwen3 ASR | `qwen3_asr` | offline, streaming | [Qwen3 ASR](#qwen3-asr) |
+| Confucius4-R2T2 | `confucius4_r2t2` | offline, streaming | [Confucius4-R2T2](community_models/r2t2.md) |
 | Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](models/higgs_audio_stt.md) |
@@ -60,6 +61,28 @@ audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --ba
 ```bash
 audiocpp_cli --task asr --mode streaming --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --request-option audio_chunk_seconds=5 --text-out transcript.txt
 ```
+
+## Confucius4-R2T2
+
+Confucius4-R2T2 is a low-latency append-only streaming ASR model: a Qwen3-ASR
+1.7B fine-tune with Longest Stable Prefix (LSP) decoding. Committed text is
+never revised, and chunk sizes from 80 ms to 2 s are supported. It runs the
+same audio tower as Qwen3 ASR, so only the streaming state machine differs.
+
+```bash
+audiocpp_cli --task asr --family confucius4_r2t2 --model models/Confucius4-R2T2 \
+  --backend metal --audio speech_16k.wav --text-out transcript.txt
+```
+
+```bash
+audiocpp_cli --task asr --mode streaming --family confucius4_r2t2 \
+  --model models/Confucius4-R2T2 --backend metal --audio speech_16k.wav \
+  --session-option confucius4_r2t2.chunk_size_ms=320 --text-out transcript.txt
+```
+
+Streaming emits append-only partial text; the final transcript is returned when
+the stream ends. See the [Confucius4-R2T2 model guide](community_models/r2t2.md) for the
+session options, the LSP state machine, and the MPS golden verification recipe.
 
 ## Citrinet ASR
 
