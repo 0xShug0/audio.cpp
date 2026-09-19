@@ -115,9 +115,14 @@ int main(int argc, char ** argv) {
         const std::filesystem::path timing_path =
             engine::tools::arg_value(argc, argv, "--timing-file", "/tmp/nemotron_asr_warm_bench_timing.log");
 
-        setenv("MINITTS_TRACE_ENABLED", "0", 1);
-        setenv("MINITTS_TIMING_ENABLED", "1", 1);
-        setenv("MINITTS_TIMING_FILE", timing_path.c_str(), 1);
+#ifdef _WIN32
+#define setenv_platform(name, value, overwrite) _putenv_s(name, value)
+#else
+#define setenv_platform(name, value, overwrite) setenv(name, value, overwrite)
+#endif
+        setenv_platform("MINITTS_TRACE_ENABLED", "0", 1);
+        setenv_platform("MINITTS_TIMING_ENABLED", "1", 1);
+        setenv_platform("MINITTS_TIMING_FILE", timing_path.string().c_str(), 1);
         engine::debug::configure_logging(engine::debug::LoggingConfig{true, timing_path.string()});
 
         auto registry = engine::runtime::make_default_registry();
@@ -213,6 +218,7 @@ int main(int argc, char ** argv) {
         for (int i = 0; i < warmup; ++i) {
             if (streaming_session) {
                 stream_session->reset();
+                stream_session->start_stream(warmup_request);
                 stream_session->process_audio_chunk({
                     warmup_audio.sample_rate,
                     warmup_audio.channels,
@@ -242,6 +248,14 @@ int main(int argc, char ** argv) {
                 if (streaming_session) {
                     stream_session->reset();
                     const auto & audio = request_audio_buffers[request_index];
+                    engine::runtime::TaskRequest stream_request;
+                    stream_request.audio_input = audio;
+                    stream_request.text_input = engine::runtime::Transcript{"", language};
+                    stream_request.options["lookahead_tokens"] = request_lookahead;
+                    stream_request.options["max_tokens"] = max_tokens;
+                    stream_request.options["streaming"] = request_streaming;
+                    stream_request.options["keep_language_tags"] = request_keep_language_tags;
+                    stream_session->start_stream(stream_request);
                     stream_session->process_audio_chunk({
                         audio.sample_rate,
                         audio.channels,

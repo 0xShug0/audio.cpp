@@ -16,6 +16,7 @@
 #include <ggml.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -25,6 +26,8 @@
 
 namespace engine::community_models::granite5asr {
 namespace {
+
+using Clock = std::chrono::steady_clock;
 
 constexpr size_t kEncoderGraphNodes = 1048576;
 constexpr float kLayerNormEpsilon = 1.0e-5f;
@@ -438,52 +441,93 @@ Granite5EncoderRuntime::Granite5EncoderRuntime(
           execution_context.backend_type(),
           "Granite 5 ASR encoder weights",
           256ull * 1024ull * 1024ull),
-      graph_arena_bytes_(graph_arena_bytes) {
+      graph_arena_bytes_(graph_arena_bytes),
+      graph_cache_(std::make_unique<GraphCache>()) {
     if (assets_ == nullptr) {
         throw std::runtime_error("Granite 5 ASR encoder runtime requires assets");
     }
     weights_ = load_encoder_weights(weight_store_, *assets_->source, assets_->config, storage_type);
 }
 
-std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
-    const Granite5FrontendFeatures & features) {
-    if (features.frames <= 0 || features.values.empty()) {
-        return {};
+Granite5EncoderRuntime::~Granite5EncoderRuntime() = default;
+
+struct Granite5EncoderRuntime::GraphCacheEntry {
+    ggml_context * ggml_ctx = nullptr;
+    ggml_gallocr * allocator = nullptr;
+    ggml_cgraph * graph = nullptr;
+    core::TensorValue input;
+    core::TensorValue logits;
+    int64_t input_frames = 0;
+    int64_t feature_dim = 0;
+};
+
+struct Granite5EncoderRuntime::GraphCache {
+    // LRU-front list of shape-keyed graphs. Chunked streaming re-decodes the SAME
+    // window shape every chunk and repeated offline turns cluster around a few
+    // lengths, so a small cache eliminates nearly all graph-build latency.
+    std::vector<GraphCacheEntry> entries;
+    static constexpr size_t kMaxEntries = 6;
+
+    ~GraphCache() {
+        for (auto & entry : entries) {
+            if (entry.allocator != nullptr) {
+                ggml_gallocr_free(entry.allocator);
+            }
+            if (entry.ggml_ctx != nullptr) {
+                ggml_free(entry.ggml_ctx);
+            }
+        }
+    }
+};
+
+Granite5EncoderRuntime::GraphCacheEntry & Granite5EncoderRuntime::ensure_graph_entry(
+    int64_t input_frames,
+    int64_t feature_dim) {
+    static const bool kBenchNoCache = std::getenv("GRANITE_NO_CACHE") != nullptr;
+    if (!kBenchNoCache) for (size_t i = 0; i < graph_cache_->entries.size(); ++i) {
+        if (graph_cache_->entries[i].input_frames == input_frames &&
+            graph_cache_->entries[i].feature_dim == feature_dim) {
+            if (i != 0) {
+                auto entry = std::move(graph_cache_->entries[i]);
+                graph_cache_->entries.erase(graph_cache_->entries.begin() + static_cast<std::ptrdiff_t>(i));
+                graph_cache_->entries.insert(graph_cache_->entries.begin(), std::move(entry));
+            }
+            debug::timing_log_scalar("granite5asr.encoder.graph_build_ms", 0.0);
+            return graph_cache_->entries.front();
+        }
     }
 
-    const auto & config = assets_->config;
-    const int64_t num_frames = features.frames;
-    const int64_t feat_dim = features.feature_dim;
+    const auto build_start = Clock::now();
+    GraphCacheEntry entry;
+    entry.input_frames = input_frames;
+    entry.feature_dim = feature_dim;
 
     ggml_init_params params{};
     params.mem_size = graph_arena_bytes_;
     params.mem_buffer = nullptr;
     params.no_alloc = true;
-
-    ggml_context * ggml_ctx = ggml_init(params);
-    if (!ggml_ctx) {
+    entry.ggml_ctx = ggml_init(params);
+    if (entry.ggml_ctx == nullptr) {
         throw std::runtime_error("Failed to initialize GGML context for Granite 5 ASR encoder");
     }
-
-    ggml_gallocr * galloc = ggml_gallocr_new(
+    entry.allocator = ggml_gallocr_new(
         ggml_backend_get_default_buffer_type(execution_context_->backend()));
-    if (!galloc) {
-        ggml_free(ggml_ctx);
+    if (entry.allocator == nullptr) {
+        ggml_free(entry.ggml_ctx);
         throw std::runtime_error("Failed to initialize GGML allocator for Granite 5 ASR encoder");
     }
 
-    std::vector<int32_t> token_ids;
-
+    const auto & config = assets_->config;
     try {
-        core::ModuleBuildContext ctx{ggml_ctx, "granite5asr_encoder", execution_context_->backend_type()};
+        core::ModuleBuildContext ctx{entry.ggml_ctx, "granite5asr_encoder", execution_context_->backend_type()};
 
-        auto in_tensor = core::wrap_tensor(
-            ggml_new_tensor_2d(ggml_ctx, GGML_TYPE_F32, feat_dim, num_frames),
-            core::TensorShape::from_dims({1, num_frames, feat_dim}),
+        entry.input = core::wrap_tensor(
+            ggml_new_tensor_2d(entry.ggml_ctx, GGML_TYPE_F32, feature_dim, input_frames),
+            core::TensorShape::from_dims({1, input_frames, feature_dim}),
             GGML_TYPE_F32);
 
-        auto h = modules::LinearModule({feat_dim, config.encoder.hidden_size, true})
-                     .build(ctx, in_tensor, weights_.input_linear);
+        auto h = modules::LinearModule({feature_dim, config.encoder.hidden_size, true})
+                     .build(ctx, entry.input, weights_.input_linear);
 
         const int64_t mid_layer_idx = config.encoder.num_layers / 2; // 8
         for (int64_t idx = 0; idx < config.encoder.num_layers; ++idx) {
@@ -505,56 +549,91 @@ std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
             }
         }
 
-        auto logits = modules::LinearModule({config.encoder.hidden_size, config.vocab_size, true})
-                          .build(ctx, h, weights_.out);
+        entry.logits = modules::LinearModule({config.encoder.hidden_size, config.vocab_size, true})
+                           .build(ctx, h, weights_.out);
 
-        ggml_cgraph * gf = ggml_new_graph_custom(ggml_ctx, kEncoderGraphNodes, false);
-        ggml_build_forward_expand(gf, logits.tensor);
-
-        if (!ggml_gallocr_alloc_graph(galloc, gf)) {
-            throw std::runtime_error("Failed to allocate GGML graph for Granite 5 ASR encoder");
-        }
-
-        ggml_backend_tensor_set(
-            in_tensor.tensor,
-            features.values.data(),
-            0,
-            features.values.size() * sizeof(float));
-
-        if (ggml_backend_graph_compute(execution_context_->backend(), gf) != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Failed to compute GGML graph for Granite 5 ASR encoder");
-        }
-
-        const int64_t out_frames = logits.shape.dims[1];
-        const int64_t vocab_size = config.vocab_size;
-        std::vector<float> logits_data(static_cast<size_t>(out_frames * vocab_size));
-        ggml_backend_tensor_get(
-            logits.tensor,
-            logits_data.data(),
-            0,
-            logits_data.size() * sizeof(float));
-
-        token_ids.reserve(static_cast<size_t>(out_frames));
-        for (int64_t t = 0; t < out_frames; ++t) {
-            const float * frame_logits = &logits_data[static_cast<size_t>(t * vocab_size)];
-            int32_t best_id = 0;
-            float max_val = frame_logits[0];
-            for (int32_t v = 1; v < static_cast<int32_t>(vocab_size); ++v) {
-                if (frame_logits[v] > max_val) {
-                    max_val = frame_logits[v];
-                    best_id = v;
-                }
-            }
-            token_ids.push_back(best_id);
-        }
+        entry.graph = ggml_new_graph_custom(entry.ggml_ctx, kEncoderGraphNodes, false);
+        ggml_build_forward_expand(entry.graph, entry.logits.tensor);
     } catch (...) {
-        ggml_gallocr_free(galloc);
-        ggml_free(ggml_ctx);
+        if (entry.allocator != nullptr) {
+            ggml_gallocr_free(entry.allocator);
+        }
+        ggml_free(entry.ggml_ctx);
         throw;
     }
 
-    ggml_gallocr_free(galloc);
-    ggml_free(ggml_ctx);
+    graph_cache_->entries.insert(graph_cache_->entries.begin(), std::move(entry));
+    if (graph_cache_->entries.size() > GraphCache::kMaxEntries) {
+        auto & oldest = graph_cache_->entries.back();
+        if (oldest.allocator != nullptr) {
+            ggml_gallocr_free(oldest.allocator);
+        }
+        ggml_free(oldest.ggml_ctx);
+        graph_cache_->entries.pop_back();
+    }
+    debug::timing_log_scalar(
+        "granite5asr.encoder.graph_build_ms",
+        engine::debug::elapsed_ms(build_start, Clock::now()));
+    return graph_cache_->entries.front();
+}
+
+std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
+    const Granite5FrontendFeatures & features) {
+    if (features.frames <= 0 || features.values.empty()) {
+        return {};
+    }
+
+    const auto & config = assets_->config;
+    const auto wall_start = Clock::now();
+    auto & entry = ensure_graph_entry(features.frames, features.feature_dim);
+
+    std::vector<int32_t> token_ids;
+
+    if (!ggml_gallocr_alloc_graph(entry.allocator, entry.graph)) {
+        throw std::runtime_error("Failed to allocate GGML graph for Granite 5 ASR encoder");
+    }
+
+    ggml_backend_tensor_set(
+        entry.input.tensor,
+        features.values.data(),
+        0,
+        features.values.size() * sizeof(float));
+
+    if (ggml_backend_graph_compute(execution_context_->backend(), entry.graph) != GGML_STATUS_SUCCESS) {
+        throw std::runtime_error("Failed to compute GGML graph for Granite 5 ASR encoder");
+    }
+
+    const int64_t out_frames = entry.logits.tensor->ne[1];
+    const int64_t vocab_size = config.vocab_size;
+    std::vector<float> logits_data(static_cast<size_t>(out_frames * vocab_size));
+    ggml_backend_tensor_get(
+        entry.logits.tensor,
+        logits_data.data(),
+        0,
+        logits_data.size() * sizeof(float));
+
+    const auto argmax_start = Clock::now();
+    token_ids.reserve(static_cast<size_t>(out_frames));
+    for (int64_t t = 0; t < out_frames; ++t) {
+        const float * frame_logits = &logits_data[static_cast<size_t>(t * vocab_size)];
+        int32_t best_id = 0;
+        float max_val = frame_logits[0];
+        for (int32_t v = 1; v < static_cast<int32_t>(vocab_size); ++v) {
+            if (frame_logits[v] > max_val) {
+                max_val = frame_logits[v];
+                best_id = v;
+            }
+        }
+        token_ids.push_back(best_id);
+    }
+    const double argmax_ms = engine::debug::elapsed_ms(argmax_start, Clock::now());
+
+    debug::timing_log_scalar(
+        "granite5asr.encoder.compute_ms",
+        engine::debug::elapsed_ms(wall_start, Clock::now()) - argmax_ms);
+    debug::timing_log_scalar(
+        "granite5asr.encoder_ms",
+        engine::debug::elapsed_ms(wall_start, Clock::now()));
     return token_ids;
 }
 

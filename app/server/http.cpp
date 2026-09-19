@@ -164,6 +164,21 @@ void send_all(SocketHandle socket, const std::string & data) {
     }
 }
 
+// Streaming replies interleave small SSE events with the client's ongoing
+// upload. With Nagle enabled each small event waits for the peer's ACK of the
+// previous segment (delayed-ACK stretches that to hundreds of milliseconds),
+// so partials queue up behind the upload instead of arriving while the user
+// speaks. Disable Nagle on accepted sockets.
+void set_no_delay(SocketHandle socket) {
+#ifdef _WIN32
+    constexpr int value = 1;
+    setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char *>(&value), sizeof(value));
+#else
+    constexpr int value = 1;
+    setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value));
+#endif
+}
+
 // An SSE body is written while a model lock is held, so an unbounded blocking
 // send() lets a client that uploads but never reads fill the kernel send buffer
 // and pin that model indefinitely. A send timeout turns it into a failed write.
@@ -787,6 +802,7 @@ void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_req
             // stops reading can pin a model. Applying it server-wide would risk
             // truncating a large ordinary response to a merely slow client.
             set_send_timeout(socket.get(), limits.send_timeout_ms);
+            set_no_delay(socket.get());
         }
         // Constructed unconditionally so it outlives the handler call, but only
         // published on `request` when the client actually declared a chunked body.

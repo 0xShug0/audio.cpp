@@ -18,6 +18,8 @@
 #include "ggml-backend.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -31,6 +33,11 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr size_t kEncoderGraphNodes = 2097152;
+// Streaming graphs measure ~3.4k nodes (traced); the cap sizes the cgraph
+// node array, which lives in the per-variant arena — 2M slots cost ~16 MB of
+// arena per variant for nothing. 64k leaves a ~20x margin and lets the
+// prefix ladder plus tail variants stay affordable.
+constexpr size_t kStreamGraphNodes = 65536;
 
 int64_t causal_conv_output_dim(int64_t input, int64_t kernel, int64_t stride, bool streaming) {
     const int64_t left = streaming ? kernel - stride : kernel - 1;
@@ -381,9 +388,12 @@ StreamingLayerOutputs build_projected_cache_streaming_encoder_layer(
     x = engine::core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, ff2.tensor), x.shape, GGML_TYPE_F32);
     return {
         engine::modules::LayerNormModule({config.hidden_size, 1.0e-5f, true, true}).build(ctx, x, weights.norm_out),
-        engine::core::ensure_backend_addressable_layout(ctx, next_key_cache),
-        engine::core::ensure_backend_addressable_layout(ctx, next_value_cache),
-        conv_outputs.next_cache,
+        // The next-cache tensors must own their buffers (see the owned_copy note
+        // in the graph build): views alias base-node regions the allocator
+        // reuses, which corrupted the cache hand-off.
+        engine::core::wrap_tensor(ggml_cont(ctx.ggml, next_key_cache.tensor), next_key_cache.shape, next_key_cache.type),
+        engine::core::wrap_tensor(ggml_cont(ctx.ggml, next_value_cache.tensor), next_value_cache.shape, next_value_cache.type),
+        engine::core::wrap_tensor(ggml_cont(ctx.ggml, conv_outputs.next_cache.tensor), conv_outputs.next_cache.shape, conv_outputs.next_cache.type),
     };
 }
 
@@ -493,11 +503,13 @@ NemotronEncoderRuntime::NemotronEncoderRuntime(
     std::shared_ptr<const NemotronASRAssets> assets,
     std::shared_ptr<const NemotronWeights> weights,
     engine::core::ExecutionContext & execution_context,
-    size_t graph_arena_bytes)
+    size_t graph_arena_bytes,
+    size_t stream_graph_arena_bytes)
     : assets_(std::move(assets)),
       weights_(std::move(weights)),
       execution_context_(&execution_context),
-      graph_arena_bytes_(graph_arena_bytes) {
+      graph_arena_bytes_(graph_arena_bytes),
+      stream_graph_arena_bytes_(stream_graph_arena_bytes != 0 ? stream_graph_arena_bytes : graph_arena_bytes) {
     if (assets_ == nullptr || weights_ == nullptr) {
         throw std::runtime_error("Nemotron ASR encoder requires assets and weights");
     }
@@ -718,12 +730,23 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     const bool streaming_graph = true;
     const int64_t k = enc.subsampling_kernel;
     const int64_t s = enc.subsampling_stride;
-    const bool first_chunk_time = first_chunk ? false : streaming_graph;
-    const int64_t stage1_frames = causal_conv_output_dim(input_frames, k, s, first_chunk_time);
+    // First chunk: the subsampling convs prepend a zero frame + the (zero) cache
+    // — 2 frames of left context, no right pad. The centered formula
+    // (causal_conv_output_dim(..., false)) assumes a right pad that does not
+    // exist here and overcounts for even mel counts (la0's 8-mel first window:
+    // mask 5 vs conv 4). Size the first chunk from the actual prepend instead;
+    // for odd mel counts (la3's 25-mel first window) the results are identical.
+    const int64_t stage1_frames = first_chunk
+        ? (input_frames + 2 - k) / s + 1
+        : causal_conv_output_dim(input_frames, k, s, streaming_graph);
     const int64_t stage1_features = causal_conv_output_dim(feature_dim, k, s, false);
-    const int64_t stage2_frames = causal_conv_output_dim(stage1_frames, k, s, first_chunk_time);
+    const int64_t stage2_frames = first_chunk
+        ? (stage1_frames + 2 - k) / s + 1
+        : causal_conv_output_dim(stage1_frames, k, s, streaming_graph);
     const int64_t stage2_features = causal_conv_output_dim(stage1_features, k, s, false);
-    const int64_t stage3_frames = causal_conv_output_dim(stage2_frames, k, s, first_chunk_time);
+    const int64_t stage3_frames = first_chunk
+        ? (stage2_frames + 2 - k) / s + 1
+        : causal_conv_output_dim(stage2_frames, k, s, streaming_graph);
     const int64_t stage3_features = causal_conv_output_dim(stage2_features, k, s, false);
     if (stage3_features * enc.subsampling_channels != 4352) {
         throw std::runtime_error("Nemotron ASR streaming subsampling feature shape mismatch");
@@ -741,7 +764,12 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     graph->streaming = true;
     graph->first_chunk = first_chunk;
     graph->backend = execution_context_->backend();
-    ggml_init_params params{graph_arena_bytes_, nullptr, true};
+    // Streaming graphs hold only tensor metadata (weights live in the backend
+    // buffers, activations in the gallocr), but the arena is committed per graph
+    // variant and the prefix ladder multiplies variants — the offline graph's
+    // 1 GB default times ~57 prefix sizes (lookahead 0) exhausts commit. The
+    // dedicated smaller stream arena keeps the ladder affordable.
+    ggml_init_params params{stream_graph_arena_bytes_, nullptr, true};
     graph->ggml = ggml_init(params);
     if (graph->ggml == nullptr) {
         throw std::runtime_error("Failed to initialize Nemotron ASR streaming encoder graph context");
@@ -767,15 +795,24 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     graph->attention_mask = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({stage3_frames, key_frames}));
     graph->prompt = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, stage3_frames, config.num_prompts}));
     graph->pos_emb = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, 2 * key_frames - 1, enc.hidden_size}));
-    for (auto * tensor : {graph->mask1.tensor, graph->mask2.tensor, graph->mask3.tensor, graph->keep_mask.tensor, graph->attention_mask.tensor, graph->prompt.tensor, graph->pos_emb.tensor}) {
-        ggml_set_input(tensor);
+    for (auto * tensor : {graph->mask1.tensor, graph->mask2.tensor, graph->mask3.tensor, graph->keep_mask.tensor, graph->attention_mask.tensor, graph->prompt.tensor, graph->pos_emb.tensor}) {        ggml_set_input(tensor);
         ggml_set_output(tensor);
     }
 
     auto x = engine::core::reshape_tensor(ctx, graph->input, engine::core::TensorShape::from_dims({1, 1, input_frames, feature_dim}));
     x = pad_freq_2d(ctx, x, k, s);
-    graph->next_subsampling_cache0 =
-        engine::core::ensure_backend_addressable_layout(ctx, next_time_cache_4d(ctx, graph->subsampling_cache0, x, 1));
+    // The hand-off tensors must own their buffers. A view (even a contiguous
+    // one) points into a base node's gallocr region whose lifetime the
+    // allocator does NOT extend for later reads through the view — measured:
+    // the next attention K/V caches aliased later conv-cache buffers
+    // (K12 == conv17, V18 == conv20 data pointers), so the hand-off copied
+    // corrupted content into the next chunk's attention prefix. ggml_cont
+    // gives each cache its own region, which the zero-weighted dependency
+    // chain then keeps alive until the output.
+    auto owned_copy = [&ctx](engine::core::TensorValue value) {
+        return engine::core::wrap_tensor(ggml_cont(ctx.ggml, value.tensor), value.shape, value.type);
+    };
+    graph->next_subsampling_cache0 = owned_copy(next_time_cache_4d(ctx, graph->subsampling_cache0, x, 1));
     ggml_set_output(graph->next_subsampling_cache0.tensor);
     x = first_chunk
         ? engine::modules::ConcatModule({2}).build(ctx, zero_time_prefix_4d(ctx, x, 1), engine::modules::ConcatModule({2}).build(ctx, graph->subsampling_cache0, x))
@@ -785,8 +822,7 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask1));
 
     x = pad_freq_2d(ctx, x, k, s);
-    graph->next_subsampling_cache1 =
-        engine::core::ensure_backend_addressable_layout(ctx, next_time_cache_4d(ctx, graph->subsampling_cache1, x, 1));
+    graph->next_subsampling_cache1 = owned_copy(next_time_cache_4d(ctx, graph->subsampling_cache1, x, 1));
     ggml_set_output(graph->next_subsampling_cache1.tensor);
     x = first_chunk
         ? engine::modules::ConcatModule({2}).build(ctx, zero_time_prefix_4d(ctx, x, 1), engine::modules::ConcatModule({2}).build(ctx, graph->subsampling_cache1, x))
@@ -799,8 +835,7 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2));
 
     x = pad_freq_2d(ctx, x, k, s);
-    graph->next_subsampling_cache2 =
-        engine::core::ensure_backend_addressable_layout(ctx, next_time_cache_4d(ctx, graph->subsampling_cache2, x, 1));
+    graph->next_subsampling_cache2 = owned_copy(next_time_cache_4d(ctx, graph->subsampling_cache2, x, 1));
     ggml_set_output(graph->next_subsampling_cache2.tensor);
     x = first_chunk
         ? engine::modules::ConcatModule({2}).build(ctx, zero_time_prefix_4d(ctx, x, 1), engine::modules::ConcatModule({2}).build(ctx, graph->subsampling_cache2, x))
@@ -879,7 +914,7 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
         x = layer_out.output;
         graph->next_attention_key_cache.push_back(layer_out.next_key_cache);
         graph->next_attention_value_cache.push_back(layer_out.next_value_cache);
-        graph->next_conv_cache.push_back(engine::core::ensure_backend_addressable_layout(ctx, layer_out.next_conv_cache));
+        graph->next_conv_cache.push_back(owned_copy(layer_out.next_conv_cache));
         ggml_set_output(graph->next_attention_key_cache.back().tensor);
         ggml_set_output(graph->next_attention_value_cache.back().tensor);
         ggml_set_output(graph->next_conv_cache.back().tensor);
@@ -894,7 +929,33 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     graph->output = engine::modules::LinearModule({enc.hidden_size, config.decoder_hidden_size, true})
                         .build(ctx, x, weights.encoder_projector);
 
-    graph->graph = ggml_new_graph_custom(graph->ggml, kEncoderGraphNodes, false);
+    // The next-cache tensors are read AFTER the compute (the cache hand-off),
+    // but the graph allocator only sees in-graph lifetimes and may hand their
+    // buffers to other tensors — measured: the first chunk's next attention
+    // KV caches aliased with next_subsampling_cache0 (identical data pointers)
+    // and the hand-off read the subsampling content. Chain a zero-weighted
+    // scalar dependency from every cache into the output node: the allocator
+    // must keep every cache alive until the end, and the buffers stay distinct.
+    // The scales are exactly zero, so the encoder output is unchanged.
+    {
+        auto dep_tensor = graph->output.tensor;
+        auto chain = [&](const engine::core::TensorValue & cache) {
+            auto sum = ggml_sum(ctx.ggml, cache.tensor);
+            auto scaled = ggml_scale(ctx.ggml, sum, 0.0f);
+            dep_tensor = ggml_add1(ctx.ggml, dep_tensor, scaled);
+        };
+        chain(graph->next_subsampling_cache0);
+        chain(graph->next_subsampling_cache1);
+        chain(graph->next_subsampling_cache2);
+        for (int64_t layer = 0; layer < enc.layers; ++layer) {
+            chain(graph->next_attention_key_cache[static_cast<size_t>(layer)]);
+            chain(graph->next_attention_value_cache[static_cast<size_t>(layer)]);
+            chain(graph->next_conv_cache[static_cast<size_t>(layer)]);
+        }
+        graph->output = engine::core::wrap_tensor(dep_tensor, graph->output.shape, GGML_TYPE_F32);
+    }
+
+    graph->graph = ggml_new_graph_custom(graph->ggml, kStreamGraphNodes, false);
     ggml_build_forward_expand(graph->graph, graph->output.tensor);
     ggml_build_forward_expand(graph->graph, graph->next_subsampling_cache0.tensor);
     ggml_build_forward_expand(graph->graph, graph->next_subsampling_cache1.tensor);
@@ -904,6 +965,7 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
         ggml_build_forward_expand(graph->graph, graph->next_attention_value_cache[static_cast<size_t>(layer)].tensor);
         ggml_build_forward_expand(graph->graph, graph->next_conv_cache[static_cast<size_t>(layer)].tensor);
     }
+    debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_nodes", (int64_t) ggml_graph_n_nodes(graph->graph));
     graph->pos_graph = ggml_new_graph_custom(graph->ggml, 4096, false);
     for (const auto & projected : graph->projected_pos_emb_computed) {
         ggml_build_forward_expand(graph->pos_graph, projected.tensor);
@@ -954,7 +1016,6 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     debug::timing_log_scalar("nemotron_asr.encoder.stream.graph_build_ms", build_ms);
     debug::timing_log_scalar("nemotron_asr.encoder.stream.graph_rebuild_ms", build_ms);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_cache_hit", false);
-    debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_input_frames", input_frames);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_encoded_frames", stage3_frames);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_prefix_frames", prefix_frames);
     debug::trace_log_scalar("nemotron_asr.encoder.stream.graph_prefix_capacity", prefix_capacity);
@@ -971,17 +1032,51 @@ void NemotronEncoderRuntime::release_offline_graph() {
 
 void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int64_t lookahead_tokens) {
     const auto & enc = assets_->config.encoder;
-    const int64_t first_frames = 1 + enc.subsampling_factor * lookahead_tokens;
-    const int64_t next_frames = enc.subsampling_factor * (lookahead_tokens + 1);
+    // Must match the session's first-window size: at least one full encoded
+    // frame of mel input, or the first chunk misses the prebuilt graph.
+    const int64_t first_frames = std::max<int64_t>(
+        enc.subsampling_factor,
+        1 + enc.subsampling_factor * lookahead_tokens);
+    // Must match the session's sliding-chunk size: the session carries a floor
+    // of 4 encoded frames per chunk (lookahead 0 with 1-frame chunks falls
+    // behind realtime on CPU), so the prebuilt ladder must use the same size.
+    const int64_t next_frames = enc.subsampling_factor *
+        std::max<int64_t>(lookahead_tokens + 1, 4);
     (void) ensure_stream_graph(first_frames, feature_dim, lookahead_tokens, 0, true);
     const int64_t k = enc.subsampling_kernel;
     const int64_t s = enc.subsampling_stride;
     const int64_t stage1_frames = causal_conv_output_dim(next_frames, k, s, true);
     const int64_t stage2_frames = causal_conv_output_dim(stage1_frames, k, s, true);
     const int64_t stage3_frames = causal_conv_output_dim(stage2_frames, k, s, true);
-    for (int64_t prefix = stage3_frames; prefix < enc.sliding_window; prefix += stage3_frames) {
+    // Warm the prefix ladder: one graph variant per prefix step up to
+    // sliding_window - 1. A small lookahead yields many variants (lookahead 0 ->
+    // 56), so the prebuild is bounded by a graph-arena commit budget instead of
+    // a variant count; variants beyond the budget build lazily in
+    // encode_stream_chunk (~100 ms each) as the stream reaches them. The
+    // streaming-graph arena is metadata-only, so 64 MB per variant keeps the
+    // whole ladder affordable and the stream stall-free.
+    constexpr size_t kMaxPrebuildArenaCommit = 6ull << 30;  // 6 GB
+    const size_t per_variant = stream_graph_arena_bytes_;
+    const int64_t kMaxPrebuiltPrefixGraphs =
+        static_cast<int64_t>(kMaxPrebuildArenaCommit / std::max<size_t>(per_variant, 1));
+    // The session's prefix sequence: the first chunk emits first_encoded frames
+    // (centered conv over first_frames), so chunk 2's prefix = first_encoded;
+    // each later chunk adds stage3_frames. The final variant caps at
+    // sliding_window - 1.
+    const int64_t first_encoded = causal_conv_output_dim(first_frames, k, s, false);
+    int64_t prebuilt = 0;
+    for (int64_t prefix = first_encoded;
+         prefix < enc.sliding_window && prebuilt < kMaxPrebuiltPrefixGraphs;
+         prefix += stage3_frames, ++prebuilt) {
         (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, std::min<int64_t>(prefix, enc.sliding_window - 1), false);
     }
+    (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, enc.sliding_window - 1, false);
+    // NOTE: short tail variants (8/16/24 mel) were tried here so the finalize
+    // flush could encode 1-3 frames instead of 4. Refuted by measurement: the
+    // RNNT fires a word's trailing token on a post-speech frame, and when the
+    // turn buffer cuts the speech decay the model needs 2-3 zero-padding
+    // frames before emitting it ('Hello' -> 'Hel' with a short tail). The
+    // finalize flush must pad to the full chunk window.
 }
 
 NemotronEncoderStreamState NemotronEncoderRuntime::make_stream_state() const {
@@ -1102,6 +1197,7 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
         }
     }
     engine::core::write_tensor_f32(graph.input, input_scratch_);
+    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(1)); // input written
 
     auto write_zeros = [](const engine::core::TensorValue & tensor) {
         const size_t elements = static_cast<size_t>(tensor.shape.num_elements());
@@ -1109,16 +1205,36 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
         engine::core::write_tensor_f32(tensor, zeros);
     };
     const auto cache_transfer_start = Clock::now();
-    if (use_cross_backend_cache) {
-        const auto backend = execution_context_->backend();
-        if (ggml_nelements(backend_cache_source->next_subsampling_cache0.tensor) != ggml_nelements(graph.subsampling_cache0.tensor) ||
-            ggml_nelements(backend_cache_source->next_subsampling_cache1.tensor) != ggml_nelements(graph.subsampling_cache1.tensor) ||
-            ggml_nelements(backend_cache_source->next_subsampling_cache2.tensor) != ggml_nelements(graph.subsampling_cache2.tensor)) {
-            throw std::runtime_error("Nemotron ASR streaming subsampling backend cache shape mismatch");
+    // Cache hand-off between graph variants: shapes must match exactly (element
+    // count equality is not enough — same ne with different strides trips ggml's
+    // layout assert). A mismatch means the variant ladder built inconsistent
+    // geometry; name the tensors instead of aborting inside ggml.
+    auto copy_cache = [this](const engine::core::TensorValue & src, engine::core::TensorValue & dst, const char * name) {
+        const ggml_tensor * s = src.tensor;
+        const ggml_tensor * d = dst.tensor;
+        bool same_layout = s->type == d->type;
+        for (int i = 0; same_layout && i < 4; ++i) {
+            same_layout = s->ne[i] == d->ne[i] && s->nb[i] == d->nb[i];
         }
-        ggml_backend_tensor_copy_async(backend, backend, backend_cache_source->next_subsampling_cache0.tensor, graph.subsampling_cache0.tensor);
-        ggml_backend_tensor_copy_async(backend, backend, backend_cache_source->next_subsampling_cache1.tensor, graph.subsampling_cache1.tensor);
-        ggml_backend_tensor_copy_async(backend, backend, backend_cache_source->next_subsampling_cache2.tensor, graph.subsampling_cache2.tensor);
+        if (!same_layout) {
+            auto shape_of = [](const ggml_tensor * t) {
+                std::string s = std::to_string(t->ne[0]);
+                for (int i = 1; i < 4; ++i) {
+                    s += "x" + std::to_string(t->ne[i]);
+                }
+                return s;
+            };
+            throw std::runtime_error(std::string("Nemotron ASR streaming cache layout mismatch (") +
+                                     name + ": next " + shape_of(src.tensor) + " vs graph " +
+                                     shape_of(dst.tensor) + ")");
+        }
+        ggml_backend_tensor_copy_async(execution_context_->backend(), execution_context_->backend(), src.tensor, dst.tensor);
+    };
+    if (use_cross_backend_cache) {
+        copy_cache(backend_cache_source->next_subsampling_cache0, graph.subsampling_cache0, "subsampling0");
+        debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(11));
+        copy_cache(backend_cache_source->next_subsampling_cache1, graph.subsampling_cache1, "subsampling1");
+        copy_cache(backend_cache_source->next_subsampling_cache2, graph.subsampling_cache2, "subsampling2");
     } else if (!use_same_backend_cache) {
         if (!state.first_chunk) {
             throw std::runtime_error("Nemotron ASR streaming cache is missing between chunks");
@@ -1138,14 +1254,14 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
         graph.stream_static_prompt_id = prompt_id;
     }
 
+    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(12));
     for (size_t layer = 0; layer < graph.conv_cache.size(); ++layer) {
         if (use_cross_backend_cache) {
-            const auto backend = execution_context_->backend();
             if (layer >= backend_cache_source->next_conv_cache.size() ||
                 ggml_nelements(backend_cache_source->next_conv_cache[layer].tensor) != ggml_nelements(graph.conv_cache[layer].tensor)) {
                 throw std::runtime_error("Nemotron ASR streaming convolution backend cache shape mismatch");
             }
-            ggml_backend_tensor_copy_async(backend, backend, backend_cache_source->next_conv_cache[layer].tensor, graph.conv_cache[layer].tensor);
+            copy_cache(backend_cache_source->next_conv_cache[layer], graph.conv_cache[layer], "conv");
         } else if (!use_same_backend_cache) {
             if (!state.first_chunk) {
                 throw std::runtime_error("Nemotron ASR streaming convolution cache is missing between chunks");
@@ -1153,6 +1269,7 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
             write_zeros(graph.conv_cache[layer]);
         }
     }
+    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(13));
     if (state.attention_cached_frames > 0) {
         if (!use_cross_backend_cache && !use_same_backend_cache) {
             throw std::runtime_error("Nemotron ASR streaming attention cache is missing between chunks");
@@ -1164,27 +1281,40 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
         }
         for (size_t layer = 0; layer < graph.attention_key_cache.size(); ++layer) {
             if (use_cross_backend_cache) {
-                const auto backend = execution_context_->backend();
                 if (ggml_nelements(backend_cache_source->next_attention_key_cache[layer].tensor) != ggml_nelements(graph.attention_key_cache[layer].tensor) ||
                     ggml_nelements(backend_cache_source->next_attention_value_cache[layer].tensor) != ggml_nelements(graph.attention_value_cache[layer].tensor)) {
                     throw std::runtime_error("Nemotron ASR streaming attention backend cache shape mismatch");
                 }
-                ggml_backend_tensor_copy_async(
-                    backend,
-                    backend,
+                if (layer == 0) {
+                    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(130));
+                }
+                // Hand the cache over through host staging instead of
+                // ggml_backend_tensor_copy_async: both tensors are contiguous F32
+                // graph nodes, and the read/write helpers are the same proven path
+                // every input and output of this encoder uses.
+                attention_key_scratch_.resize(static_cast<size_t>(ggml_nelements(graph.attention_key_cache[layer].tensor)));
+                attention_value_scratch_.resize(static_cast<size_t>(ggml_nelements(graph.attention_value_cache[layer].tensor)));
+                engine::core::read_tensor_f32_into(
                     backend_cache_source->next_attention_key_cache[layer].tensor,
-                    graph.attention_key_cache[layer].tensor);
-                ggml_backend_tensor_copy_async(
-                    backend,
-                    backend,
+                    attention_key_scratch_);
+                engine::core::write_tensor_f32(graph.attention_key_cache[layer], attention_key_scratch_);
+                if (layer == 0) {
+                    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(131));
+                }
+                engine::core::read_tensor_f32_into(
                     backend_cache_source->next_attention_value_cache[layer].tensor,
-                    graph.attention_value_cache[layer].tensor);
+                    attention_value_scratch_);
+                engine::core::write_tensor_f32(graph.attention_value_cache[layer], attention_value_scratch_);
+                if (layer == 0) {
+                    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(132));
+                }
             }
         }
     }
     debug::timing_log_scalar(
         "nemotron_asr.encoder.stream.cache_transfer_ms",
         engine::debug::elapsed_ms(cache_transfer_start, Clock::now()));
+    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(2)); // caches copied
 
     engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
     const auto compute_start = Clock::now();
@@ -1195,6 +1325,7 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
         throw std::runtime_error("Nemotron ASR streaming encoder graph compute failed");
     }
 
+    debug::trace_log_scalar("nemotron_asr.encoder.stream.stage", int64_t(3)); // compute done
     engine::core::read_tensor_f32_into(graph.output.tensor, output_scratch_);
     state.attention_seen_frames += graph.encoded_frames;
     state.attention_cached_frames = std::min<int64_t>(enc.sliding_window - 1, state.attention_seen_frames);
@@ -1232,6 +1363,42 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
     out.frames = graph.encoded_frames;
     out.valid_frames = graph.encoded_frames;
     out.hidden_size = graph.decoder_hidden;
+    // Opt-in post-chunk cache dump (NEMOTRON_DUMP_CACHES=<prefix>): writes every
+    // next-cache tensor in a fixed order so the hand-off content can be diffed
+    // against the reference implementation chunk for chunk.
+    if (const char * dump_env = std::getenv("NEMOTRON_DUMP_CACHES"); dump_env != nullptr && *dump_env != '\0') {
+        const std::string base = std::string(dump_env) + "_c" + std::to_string(state.dump_seq) + "_nc";
+        std::ofstream blob(base + ".f32", std::ios::binary);
+        std::vector<int64_t> counts;
+        std::vector<const void *> ptrs;
+        auto write_cache = [&](const engine::core::TensorValue & tensor) {
+            std::vector<float> tmp(static_cast<size_t>(ggml_nelements(tensor.tensor)));
+            engine::core::read_tensor_f32_into(tensor.tensor, tmp);
+            blob.write(reinterpret_cast<const char *>(tmp.data()), static_cast<std::streamsize>(tmp.size() * sizeof(float)));
+            counts.push_back(static_cast<int64_t>(tmp.size()));
+            ptrs.push_back(tensor.tensor->data);
+        };
+        write_cache(graph.next_subsampling_cache0);
+        write_cache(graph.next_subsampling_cache1);
+        write_cache(graph.next_subsampling_cache2);
+        for (int64_t layer = 0; layer < enc.layers; ++layer) {
+            write_cache(graph.next_conv_cache[static_cast<size_t>(layer)]);
+            write_cache(graph.next_attention_key_cache[static_cast<size_t>(layer)]);
+            write_cache(graph.next_attention_value_cache[static_cast<size_t>(layer)]);
+        }
+        blob.close();
+        std::ofstream meta(base + ".meta");
+        meta << "prefix=" << graph.prefix_frames << " encoded=" << graph.encoded_frames;
+        for (int64_t c : counts) {
+            meta << " " << c;
+        }
+        meta << "\n";
+        std::ofstream ptr_meta(base + "_ptr.meta");
+        for (const void * p : ptrs) {
+            ptr_meta << p << "\n";
+        }
+    }
+    ++state.dump_seq;
     state.first_chunk = false;
     debug::timing_log_scalar("nemotron_asr.encoder.stream_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     debug::trace_log_scalar("nemotron_asr.encoder.stream.valid_frames", out.valid_frames);

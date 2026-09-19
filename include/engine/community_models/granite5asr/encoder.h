@@ -55,6 +55,7 @@ public:
         engine::core::ExecutionContext & execution_context,
         assets::TensorStorageType storage_type,
         size_t graph_arena_bytes = 1024ull * 1024ull * 1024ull);
+    ~Granite5EncoderRuntime();
 
     std::vector<int32_t> transcribe_features(
         const Granite5FrontendFeatures & features);
@@ -62,11 +63,19 @@ public:
     const Granite5ASRAssets & assets() const noexcept { return *assets_; }
 
 private:
+    struct GraphCacheEntry;
+    struct GraphCache;
+    GraphCacheEntry & ensure_graph_entry(int64_t input_frames, int64_t feature_dim);
+
     std::shared_ptr<const Granite5ASRAssets> assets_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     engine::core::BackendWeightStore weight_store_;
     Granite5EncoderWeights weights_;
     size_t graph_arena_bytes_;
+    // Shape-keyed encoder graphs: building the 16-block conformer graph costs
+    // real milliseconds and chunked streaming re-decodes the SAME window shape
+    // every chunk, so graphs are cached per input length (small LRU).
+    std::unique_ptr<GraphCache> graph_cache_;
 };
 
 }  // namespace engine::community_models::granite5asr

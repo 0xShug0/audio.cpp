@@ -355,7 +355,36 @@ Granite5ASRStreamingSession::Granite5ASRStreamingSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
     std::shared_ptr<const Granite5ASRAssets> assets)
-    : Granite5ASRSessionBase(std::move(task), std::move(options), std::move(assets)) {}
+    : Granite5ASRSessionBase(std::move(task), std::move(options), std::move(assets)) {
+    // Chunked-streaming geometry (publisher chunked TurboCTC recipe): every
+    // center chunk carries its left context through the encoder and is decoded
+    // immediately, so partials stream per chunk. Defaults tuned for END-OF-TURN
+    // latency: a 1 s center keeps the final flush window small. Raising
+    // center_chunk_sec to 2 cuts total encoder compute ~30% at equal accuracy
+    // (fewer, larger windows) but adds ~20-25% end-of-turn latency at 1 thread;
+    // left contexts below 2 s duplicate words across window boundaries.
+    float center_sec = 1.0f;
+    float left_sec = 2.0f;
+    const auto & opts = RuntimeSessionBase::options().options;
+    const std::string family = family_impl();
+    auto parse_positive = [](const std::string & value, float fallback) {
+        try {
+            const float parsed = std::stof(value);
+            if (parsed > 0.0f) {
+                return parsed;
+            }
+        } catch (...) {}
+        return fallback;
+    };
+    if (const auto it = opts.find(family + ".center_chunk_sec"); it != opts.end()) {
+        center_sec = parse_positive(it->second, center_sec);
+    }
+    if (const auto it = opts.find(family + ".left_context_sec"); it != opts.end()) {
+        left_sec = parse_positive(it->second, left_sec);
+    }
+    stream_center_samples_ = static_cast<int64_t>(center_sec * 16000.0f);
+    stream_left_context_samples_ = static_cast<int64_t>(left_sec * 16000.0f);
+}
 
 std::string Granite5ASRStreamingSession::family() const {
     return family_impl();
@@ -377,7 +406,12 @@ runtime::StreamingPolicy Granite5ASRStreamingSession::streaming_policy() const {
     runtime::StreamingPolicy policy;
     policy.input = runtime::StreamingInputKind::AudioChunks;
     policy.output = runtime::StreamingOutputKind::FinalResult;
-    policy.preferred_audio_chunk_samples = 512;
+    policy.preferred_audio_chunk_samples = stream_center_samples_ > 0
+        ? stream_center_samples_
+        : 16000;
+    policy.preferred_audio_chunk_seconds = stream_center_samples_ > 0
+        ? static_cast<double>(stream_center_samples_) / 16000.0
+        : 1.0;
     return policy;
 }
 
@@ -387,6 +421,11 @@ void Granite5ASRStreamingSession::start_stream(const runtime::TaskRequest & requ
     streaming_audio_ = runtime::AudioBuffer{};
     streaming_audio_.sample_rate = 16000;
     streaming_audio_.channels = 1;
+    stream_next_center_start_ = 0;
+    stream_last_raw_token_ = -1;
+    stream_collapsed_ids_.clear();
+    stream_emitted_text_.clear();
+    stream_finalized_ = false;
 }
 
 void Granite5ASRStreamingSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
@@ -395,6 +434,83 @@ void Granite5ASRStreamingSession::set_stream_event_sink(runtime::StreamEventCall
 
 void Granite5ASRStreamingSession::reset() {
     streaming_audio_.samples.clear();
+    stream_next_center_start_ = 0;
+    stream_last_raw_token_ = -1;
+    stream_collapsed_ids_.clear();
+    stream_emitted_text_.clear();
+    stream_finalized_ = false;
+}
+
+bool Granite5ASRStreamingSession::decode_next_center_window(bool flush_tail, std::string & delta_out) {
+    if (stream_finalized_) {
+        return false;
+    }
+    const int64_t total = static_cast<int64_t>(streaming_audio_.samples.size());
+    const int64_t center_end = std::min<int64_t>(
+        stream_next_center_start_ + stream_center_samples_, total);
+    if (center_end <= stream_next_center_start_) {
+        return false; // nothing new since the last window
+    }
+    if (!flush_tail && center_end < stream_next_center_start_ + stream_center_samples_) {
+        return false; // wait for a full center chunk (low-latency default)
+    }
+
+    const int64_t window_start = std::max<int64_t>(
+        0, stream_next_center_start_ - stream_left_context_samples_);
+    runtime::AudioBuffer window;
+    window.sample_rate = 16000;
+    window.channels = 1;
+    window.samples.assign(
+        streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(window_start),
+        streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(center_end));
+
+    const auto features = frontend_.extract_waveform(window.samples);
+    const auto raw_tokens = encoder_->transcribe_features(features);
+    if (!raw_tokens.empty()) {
+        // Map the center region to CTC frames. One CTC frame covers
+        // hop * stack * encoder-stride samples: the frontend stacks `stack_factor`
+        // mel frames per feature, and each subsample layer halves the encoder
+        // sequence (subsample_layers = {0, 1} -> stride 4 total). One frame of
+        // slack at the start avoids clipping a word onset; the continuous
+        // collapse below absorbs the boundary repeat.
+        int64_t encoder_stride = 1;
+        for (const int64_t layer_idx : assets_->config.encoder.subsample_layers) {
+            (void)layer_idx;
+            encoder_stride *= 2;
+        }
+        const int64_t frame_samples = assets_->config.frontend.hop_length *
+            assets_->config.frontend.stack_factor * encoder_stride;
+        int64_t start_frame = std::max<int64_t>(
+            0, (stream_next_center_start_ - window_start) / frame_samples - 1);
+        const int64_t end_frame = std::min<int64_t>(
+            static_cast<int64_t>(raw_tokens.size()),
+            (center_end - window_start + frame_samples - 1) / frame_samples);
+        for (int64_t f = start_frame; f < end_frame; ++f) {
+            const int32_t id = raw_tokens[static_cast<size_t>(f)];
+            if (id != stream_last_raw_token_) {
+                if (id != static_cast<int32_t>(assets_->config.blank_token_id)) {
+                    stream_collapsed_ids_.push_back(id);
+                }
+                stream_last_raw_token_ = id;
+            }
+        }
+    }
+    stream_next_center_start_ = center_end;
+
+    if (!stream_collapsed_ids_.empty() && assets_->tokenizer != nullptr) {
+        const auto current_text = assets_->tokenizer->decode_ids(stream_collapsed_ids_);
+        if (current_text.size() > stream_emitted_text_.size() &&
+            current_text.compare(0, stream_emitted_text_.size(), stream_emitted_text_) == 0) {
+            delta_out += current_text.substr(stream_emitted_text_.size());
+            stream_emitted_text_ = current_text;
+        } else if (current_text != stream_emitted_text_) {
+            // CTC revised earlier text: re-emit the full transcript (append-style
+            // clients surface a repeat; the final result stays correct).
+            delta_out += current_text;
+            stream_emitted_text_ = current_text;
+        }
+    }
+    return true;
 }
 
 runtime::StreamEvent Granite5ASRStreamingSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
@@ -407,14 +523,38 @@ runtime::StreamEvent Granite5ASRStreamingSession::process_audio_chunk(const runt
             16000);
         streaming_audio_.samples.insert(streaming_audio_.samples.end(), mono.begin(), mono.end());
     }
-    return {};
+
+    runtime::StreamEvent event;
+    event.is_final = false;
+    std::string delta;
+    while (decode_next_center_window(/*flush_tail=*/false, delta)) {
+    }
+    if (!delta.empty()) {
+        event.partial_text = runtime::Transcript{delta, "en"};
+        if (stream_event_sink_) {
+            stream_event_sink_(event);
+            return {};
+        }
+    }
+    return event;
 }
 
 runtime::TaskResult Granite5ASRStreamingSession::finish_stream() {
     require_prepared("Granite 5 ASR finish_stream()");
-    const auto transcript = transcribe_audio(streaming_audio_, streaming_request_.options);
+    std::string delta;
+    while (decode_next_center_window(/*flush_tail=*/true, delta)) {
+    }
+    (void)delta;
+
     runtime::TaskResult result;
-    result.text_output = transcript;
+    if (stream_collapsed_ids_.empty() || assets_->tokenizer == nullptr) {
+        result.text_output = runtime::Transcript{"", "en"};
+    } else {
+        result.text_output = runtime::Transcript{
+            engine::io::trim_ascii_whitespace(assets_->tokenizer->decode_ids(stream_collapsed_ids_)),
+            "en"};
+    }
+    stream_finalized_ = true;
     return result;
 }
 

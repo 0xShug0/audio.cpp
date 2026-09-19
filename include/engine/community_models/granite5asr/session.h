@@ -82,6 +82,18 @@ private:
     runtime::StreamEventCallback stream_event_sink_;
     runtime::AudioBuffer streaming_audio_;
     runtime::TaskRequest streaming_request_;
+
+    // Windowed chunked-streaming state (the publisher's chunked TurboCTC recipe):
+    // every center chunk is (re-)encoded together with its left-context window and
+    // CTC-greedy decoded continuously, so partials stream as chunks land.
+    bool decode_next_center_window(bool flush_tail, std::string & delta_out);
+    int64_t stream_center_samples_ = 0;
+    int64_t stream_left_context_samples_ = 0;
+    int64_t stream_next_center_start_ = 0;
+    int32_t stream_last_raw_token_ = -1;
+    std::vector<int32_t> stream_collapsed_ids_;
+    std::string stream_emitted_text_;
+    bool stream_finalized_ = false;
 };
 
 class Granite5ASRLoadedModel final : public runtime::ILoadedVoiceModel {
