@@ -108,7 +108,9 @@ ZipVoiceWeights load_zipvoice_weights(
         if ((d0 >= 0 && d0 != meta.shape[1]) || (d1 >= 0 && d1 != meta.shape[0])) {
             throw std::runtime_error("zipvoice: " + name + " shape mismatch");
         }
-        return weights.store->load_f32_tensor(*source, name, meta.shape);
+        // Linear and embedding weights can retain their GGUF quantization.
+        return weights.store->load_tensor(
+            *source, name, engine::assets::TensorStorageType::Native, meta.shape);
     };
     const auto t1 = [&](const std::string & name, int64_t d0) {
         const auto meta = source->require_metadata(name);

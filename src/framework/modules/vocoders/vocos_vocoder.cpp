@@ -68,7 +68,11 @@ public:
             return {f32(name + ".weight"), f32(name + ".bias")};
         };
         const auto linear = [&](const std::string & name) -> LinearWeights {
-            return {f32(name + ".weight"), f32(name + ".bias")};
+            // Keep matrix weights quantized; convolution and norm weights stay F32.
+            const auto weight = name + ".weight";
+            return {store.load_tensor(*source, weight, assets::TensorStorageType::Native,
+                                     source->require_metadata(weight).shape),
+                    f32(name + ".bias")};
         };
         weights.embed = {f32("backbone.embed.weight"), f32("backbone.embed.bias")};
         weights.input_norm = norm("backbone.norm");
