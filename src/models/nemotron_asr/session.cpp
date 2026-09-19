@@ -603,7 +603,14 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
         if (stream_next_chunk_start_ < 0) {
             window.insert(window.begin(), static_cast<size_t>(-stream_next_chunk_start_), 0.0f);
         }
-        window.resize(static_cast<size_t>(stream_samples_per_chunk_), 0.0f);
+        // Test override: grow the flush window so the padded silence duration
+        // reaches the model's trailing-token requirement even when the client
+        // cuts early (NEMOTRON_FLUSH_WINDOW_MEL=<mel frames>).
+        int64_t flush_mel = stream_mel_frames_per_chunk_;
+        if (const char * wenv = std::getenv("NEMOTRON_FLUSH_WINDOW_MEL"); wenv != nullptr && *wenv != 0) {
+            flush_mel = std::max<int64_t>(stream_mel_frames_per_chunk_, std::strtoll(wenv, nullptr, 10));
+        }
+        window.resize(static_cast<size_t>(flush_mel * fc.hop_length + fc.win_length), 0.0f);
         stream_tail_encoded_ = true;
     } else {
         return false;
