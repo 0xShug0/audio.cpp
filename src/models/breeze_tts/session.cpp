@@ -58,6 +58,23 @@ core::AttentionPreference attention_preference_from_options(const runtime::Sessi
     return core::AttentionPreference::Auto;
 }
 
+Bf16ActivationMode bf16_activation_mode_from_options(const runtime::SessionOptions & options) {
+    const auto value = runtime::find_option(options.options, {"bf16_activations", "breeze_tts.bf16_activations"});
+    if (!value.has_value()) {
+        return Bf16ActivationMode::Auto;
+    }
+    if (*value == "auto") {
+        return Bf16ActivationMode::Auto;
+    }
+    if (*value == "on") {
+        return Bf16ActivationMode::On;
+    }
+    if (*value == "off") {
+        return Bf16ActivationMode::Off;
+    }
+    throw std::runtime_error("BreezeTTS bf16_activations must be auto, on or off (got '" + *value + "')");
+}
+
 void trace_attention_preference(core::AttentionPreference preference) {
     const char * name = "auto";
     if (preference == core::AttentionPreference::Flash) {
@@ -75,9 +92,11 @@ void validate_session_options(
     // Older standalone GGUF packages embed a v1 contract that predates this
     // backend-compatibility option; keep them usable while still validating
     // the option value in attention_preference_from_options().
-    if (contract.session_option_keys.find("breeze_tts.attention") ==
-        contract.session_option_keys.end()) {
-        validation_options.options.erase("breeze_tts.attention");
+    // bf16_activations is handled the same way.
+    for (const char * key : {"breeze_tts.attention", "bf16_activations", "breeze_tts.bf16_activations"}) {
+        if (contract.session_option_keys.find(key) == contract.session_option_keys.end()) {
+            validation_options.options.erase(key);
+        }
     }
     runtime::validate_spec_backed_session_options(validation_options, contract, kFamily, kModelName);
 }
@@ -173,13 +192,15 @@ BreezeTTSSession::BreezeTTSSession(
         2048ull * 1024ull * 1024ull);
     const auto attention_preference = attention_preference_from_options(options);
     trace_attention_preference(attention_preference);
+    const auto bf16_activations = bf16_activation_mode_from_options(options);
     generator_ = std::make_unique<BreezeGeneratorRuntime>(
         assets_,
         execution_context(),
         graph_arena_bytes,
         weight_context_bytes,
         storage_type,
-        attention_preference);
+        attention_preference,
+        bf16_activations);
 }
 
 BreezeTTSSession::~BreezeTTSSession() = default;

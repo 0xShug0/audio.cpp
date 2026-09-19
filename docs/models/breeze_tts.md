@@ -97,6 +97,7 @@ audiocpp_cli \
 |---|---|---:|---|
 | `breeze_tts.reference_cache_slots` | integer >= 0 | `1` | Prepared reference-audio cache slots. |
 | `breeze_tts.attention` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |
+| `breeze_tts.bf16_activations` | `auto`, `on`, `off` | `auto` | Reference bf16 activation rounding (and, on Metal, the bf16 KV cache). `auto` is on for CUDA/HIP/Vulkan and off on Metal; see [Metal and the reference bf16 path](#metal-and-the-reference-bf16-path). |
 | `weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Weight storage type; quantized types convert at load time from the BF16 package. |
 
 BreezeTTS streaming is incremental by default. It emits audio events from the
@@ -126,3 +127,36 @@ and HIP alike: `q8_0` cut the fixed 100-token regression case from RTF ~1.5 to
 voice-design regression cases. Counter to intuition, fp32 is the one
 configuration known to be *worse* for this model (mispronunciations and
 runaway repetition), because the model is trained and tuned in bf16.
+
+## Metal and the reference bf16 path
+
+The official BreezeTTS 2 inference rounds activations to bf16 at every decoder
+stage and keeps a bf16 KV cache. CUDA, HIP and Vulkan match that by default; the
+casts are cheap enough there. On Metal the same rounding costs a visible share
+of the AR loop — even after adding the fused round-to-bf16 unary op for Metal
+(which removes the f32 -> bf16 -> f32 cast pair at every rounding point) the
+reference path measured roughly **20% slower on the AR component** on a Mac
+mini M4, and about the same on an M4 MacBook Air — so on Metal it is **opt-in**:
+
+```bash
+# Reference bf16 parity on Metal (slower, matches the official implementation)
+audiocpp_cli --task tts --family breeze_tts \
+  --model models/Breeze-TTS-2-GGUF/breeze-tts-2-q8_0.gguf \
+  --backend metal \
+  --text "Welcome to the local voice demo." \
+  --session-option breeze_tts.bf16_activations=on \
+  --out breeze_tts_bf16.wav
+```
+
+| Value | Behavior |
+|---|---|
+| `auto` (default) | on for CUDA/HIP/Vulkan, off on Metal |
+| `on` | bf16 activation rounding on every GPU backend; on Metal it also switches the KV cache to bf16 |
+| `off` | f32 activations; Metal/CUDA/Vulkan keep an f16 KV cache (HIP keeps bf16) |
+
+The trade-off is real in both directions: the Metal default (`auto` -> off) is
+the faster path but is the same f32 configuration this page warns about above,
+so if a prompt mispronounces or collapses into repetition, re-run it with
+`bf16_activations=on` before changing anything else. On non-Metal GPUs the
+default already matches the reference, and `off` is only useful for A/B
+measurements.

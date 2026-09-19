@@ -1013,6 +1013,28 @@ template<> inline float4 elu_approx<float4>(float4 x) {
 constant short FC_unary_op [[function_constant(FC_UNARY + 0)]];
 constant bool  FC_unary_cnt[[function_constant(FC_UNARY + 1)]];
 
+// GGML_UNARY_OP_ROUND_BF16 semantics: round-to-nearest-even f32 -> bf16 -> f32,
+// mirroring ggml's ggml_compute_fp32_to_bf16 (NaNs are forced quiet). Doing it with
+// integer math keeps the op available on Metal devices without bf16 hardware support.
+static inline uint bf16_round_bits(uint u) {
+    if ((u & 0x7fffffffu) > 0x7f800000u) {
+        return ((u >> 16) | 64u) << 16;
+    }
+    return (u + (0x7fffu + ((u >> 16) & 1u))) & 0xffff0000u;
+}
+
+static inline uint4 bf16_round_bits(uint4 u) {
+    const uint4 sign_mask = uint4(0x7fffffffu);
+    const uint4 inf_bits  = uint4(0x7f800000u);
+    const uint4 high      = u >> 16;
+    const uint4 rounded   = (u + (0x7fffu + (high & 1u))) & 0xffff0000u;
+    const uint4 quiet     = (high | 64u) << 16;
+    return select(rounded, quiet, (u & sign_mask) > inf_bits);
+}
+
+static inline float  bf16_round_f32(float  x) { return as_type<float>(bf16_round_bits(as_type<uint>(x))); }
+static inline float4 bf16_round_f32(float4 x) { return as_type<float4>(bf16_round_bits(as_type<uint4>(x))); }
+
 template <typename T0, typename T, typename TC>
 kernel void kernel_unary_impl(
         constant ggml_metal_kargs_unary & args,
@@ -1186,6 +1208,10 @@ kernel void kernel_unary_impl(
             const TC y_neg   = (exp(clamped) - TC(1.0f) - xi) * TC(args.slope) + TC(args.bias) * xi;
             dst_ptr[i0] = (T) (gate * y_pos + (TC(1.0f) - gate) * y_neg);
         }
+
+        if (FC_OP == OP_UNARY_NUM_ROUND_BF16) {
+            dst_ptr[i0] = (T) bf16_round_f32(x);
+        }
     }
 
 #undef FC_OP
@@ -1196,6 +1222,14 @@ typedef decltype(kernel_unary_impl<float, float, float>) kernel_unary_t;
 
 template [[host_name("kernel_unary_f32_f32")]]   kernel kernel_unary_t kernel_unary_impl<float,  float,  float>;
 template [[host_name("kernel_unary_f32_f32_4")]] kernel kernel_unary_t kernel_unary_impl<float4, float4, float4>;
+// GGML_UNARY_OP_ROUND_BF16 widens f16/bf16 inputs to f32 while rounding, so the
+// fused op needs the narrower source types as well.
+template [[host_name("kernel_unary_f16_f32")]]   kernel kernel_unary_t kernel_unary_impl<half,   float,  float>;
+template [[host_name("kernel_unary_f16_f32_4")]] kernel kernel_unary_t kernel_unary_impl<half4,  float4, float4>;
+#if defined(GGML_METAL_HAS_BF16)
+template [[host_name("kernel_unary_bf16_f32")]]   kernel kernel_unary_t kernel_unary_impl<bfloat,  float,  float>;
+template [[host_name("kernel_unary_bf16_f32_4")]] kernel kernel_unary_t kernel_unary_impl<bfloat4, float4, float4>;
+#endif
 template [[host_name("kernel_unary_f16_f16")]]   kernel kernel_unary_t kernel_unary_impl<half,   half,   float>;
 template [[host_name("kernel_unary_f16_f16_4")]] kernel kernel_unary_t kernel_unary_impl<half4,  half4,  float4>;
 
@@ -7932,6 +7966,8 @@ template [[host_name("kernel_cpy_contig_f16_f16")]] kernel kernel_cpy_contig_t k
 #if defined(GGML_METAL_HAS_BF16)
 template [[host_name("kernel_cpy_contig_bf16_f32")]]  kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, float>;
 template [[host_name("kernel_cpy_contig_bf16_bf16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, bfloat>;
+template [[host_name("kernel_cpy_contig_f16_bf16")]]  kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<half,   bfloat>;
+template [[host_name("kernel_cpy_contig_bf16_f16")]] kernel kernel_cpy_contig_t kernel_cpy_contig_t_t<bfloat, half>;
 #endif
 
 template<typename T>
@@ -8064,6 +8100,8 @@ template [[host_name("kernel_cpy_f16_f16")]]   kernel kernel_cpy_t kernel_cpy_t_
 #if defined(GGML_METAL_HAS_BF16)
 template [[host_name("kernel_cpy_bf16_f32")]]  kernel kernel_cpy_t kernel_cpy_t_t<bfloat,  float>;
 template [[host_name("kernel_cpy_bf16_bf16")]] kernel kernel_cpy_t kernel_cpy_t_t<bfloat,  bfloat>;
+template [[host_name("kernel_cpy_f16_bf16")]]  kernel kernel_cpy_t kernel_cpy_t_t<half,    bfloat>;
+template [[host_name("kernel_cpy_bf16_f16")]]  kernel kernel_cpy_t kernel_cpy_t_t<bfloat,  half>;
 #endif
 
 template<short QK,

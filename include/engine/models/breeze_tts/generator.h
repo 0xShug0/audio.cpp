@@ -34,6 +34,17 @@ struct BreezeStreamEvent {
     bool done = false;
 };
 
+// BreezeTTS 2's reference inference rounds activations to bf16 (and keeps a bf16
+// KV cache). That is what the model was trained with, but on backends without a
+// cheap fused cast it costs a visible share of the AR loop, so the choice is
+// explicit: 'auto' keeps the reference behavior on CUDA/HIP/Vulkan and stays on
+// the faster f32 path on Metal, 'on'/'off' force it either way.
+enum class Bf16ActivationMode {
+    Auto,
+    On,
+    Off,
+};
+
 class BreezeGeneratorRuntime {
 public:
     BreezeGeneratorRuntime(
@@ -42,7 +53,8 @@ public:
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type,
-        engine::core::AttentionPreference attention_preference = engine::core::AttentionPreference::Auto);
+        engine::core::AttentionPreference attention_preference = engine::core::AttentionPreference::Auto,
+        Bf16ActivationMode bf16_activations = Bf16ActivationMode::Auto);
     ~BreezeGeneratorRuntime();
 
     engine::runtime::AudioBuffer generate(const BreezeGenerationRequest & request);
