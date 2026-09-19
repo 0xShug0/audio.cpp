@@ -4,6 +4,8 @@
 #include "engine/community_models/confucius4_r2t2/tokenizer_text.h"
 #include "engine/community_models/confucius4_r2t2/types.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/audio/wav_reader.h"
+#include "engine/community_models/confucius4_r2t2/frontend_whisper.h"
 
 #include <algorithm>
 #include <cmath>
@@ -37,9 +39,29 @@ int main(int argc, char ** argv) {
         engine::core::ExecutionContext execution(backend);
         model::R2T2ASRAudioEncoderRuntime exact(assets, execution, 128ull << 20, engine::assets::TensorStorageType::Native);
         model::R2T2ASRAudioEncoderRuntime reused(assets, execution, 128ull << 20, engine::assets::TensorStorageType::Native);
+        model::R2T2ASRTextTokenizer tokenizer(assets);
+        model::R2T2ASRThinkerRuntime thinker(assets, execution, 256ull << 20, 256ull << 20, 64ull << 20,
+                                          engine::assets::TensorStorageType::Native);
+        auto check_joint = [&](const model::R2T2ASRAudioEmbeddings & expected,
+                               const model::R2T2ASRAudioEmbeddings & actual, const std::string & language) {
+            const auto prompt = tokenizer.build_prompt("", language, expected.tokens);
+            model::R2T2ASRGenerationOptions options;
+            options.max_new_tokens = 32;
+            const auto reference = thinker.generate(prompt, expected, options);
+            options.reuse_graphs = true;
+            const auto candidate = thinker.generate(prompt, actual, options);
+            if (reference.token_ids.empty()) {
+                throw std::runtime_error("real-audio joint regression produced no tokens");
+            }
+            if (reference.token_ids != candidate.token_ids) {
+                throw std::runtime_error("joint encoder/decoder token mismatch: exact=" + tokenizer.decode(reference.token_ids) +
+                                         " reused=" + tokenizer.decode(candidate.token_ids));
+            }
+            std::cout << "joint parity tokens=" << reference.token_ids.size() << " language=" << language << '\n';
+        };
         // Exercise partial convolution chunks, capacity boundaries, and shrinking
         // after growth. Nonzero deterministic input exposes padding leakage.
-        for (const int64_t frames : {32, 96, 100, 101, 199, 200, 201, 399, 400, 401, 799, 101, 32}) {
+        for (const int64_t frames : {32, 96, 100, 101, 199, 200, 201, 399, 400, 401, 479, 480, 481, 487, 488, 489, 799, 199, 101, 32}) {
             model::R2T2ASRAudioFeatures features;
             features.frames = frames;
             features.mel_bins = assets->config.audio_encoder.num_mel_bins;
@@ -53,14 +75,12 @@ int main(int argc, char ** argv) {
             if (expected.tokens != actual.tokens || expected.values.size() != actual.values.size()) {
                 throw std::runtime_error("encoder output shape changed");
             }
-            // Mirror the runtime's bucketing to know whether this run computed
-            // padded tokens at all. Without padded tokens the reusable graph
-            // must match the exact graph bit for bit.
-            const int64_t chunk_frames = assets->config.audio_encoder.n_window * 2;
-            const int64_t chunks = (frames + chunk_frames - 1) / chunk_frames;
-            const int64_t bucket_chunks = chunks <= 2 ? chunks : (chunks + 3) / 4 * 4;
-            const bool padded = frames >= chunk_frames &&
-                model::confucius4_r2t2_audio_encoder_token_count(bucket_chunks * chunk_frames) != features.encoder_tokens;
+            const int64_t capacity = reused.graph_capacity_frames();
+            const bool padded = model::confucius4_r2t2_audio_encoder_token_count(capacity) != features.encoder_tokens;
+            if (backend.type == engine::core::BackendType::Metal && features.encoder_tokens < 64 &&
+                model::confucius4_r2t2_audio_encoder_token_count(capacity) >= 64) {
+                throw std::runtime_error("padding crossed the Metal attention precision boundary");
+            }
             float max_error = 0;
             double error2 = 0, reference2 = 0;
             for (size_t i = 0; i < actual.values.size(); ++i) {
@@ -72,24 +92,34 @@ int main(int argc, char ** argv) {
             }
             const double relative_rmse = std::sqrt(error2 / std::max(reference2, 1e-20));
             std::cout << "frames=" << frames << (padded ? " padded=yes" : " padded=no")
-                      << " max_error=" << max_error << " relative_rmse=" << relative_rmse << '\n';
+                      << " capacity_frames=" << capacity << " max_error=" << max_error << " relative_rmse=" << relative_rmse << '\n';
             if (!padded) {
                 if (max_error != 0.0F) { throw std::runtime_error("unpadded reusable graph differs from exact graph"); }
             } else {
-                // Padded tokens change the reduction order inside softmax and
-                // attention value sums, so bit equality is impossible. Deep
-                // stacks amplify the kernel-order noise; the observed ceiling
-                // is about 2e-2 relative RMSE at 63 padded tokens. The real
-                // correctness bar is greedy decoder parity below plus the
-                // end-to-end streaming transcript check.
-                if (relative_rmse > 2e-2) { throw std::runtime_error("padded encoder drift exceeded the noise budget"); }
+                // This bound is only an embedding drift alarm, not evidence of
+                // transcript equivalence or a diagnosis of the numerical cause.
+                // Joint encoder/decoder comparisons below check observable tokens.
+                if (relative_rmse > 2e-3) { throw std::runtime_error("padded encoder drift exceeded the noise budget"); }
                 const auto again = reused.encode(features, true);
                 if (again.values != actual.values) { throw std::runtime_error("padded encoder output is not deterministic"); }
             }
         }
-        model::R2T2ASRTextTokenizer tokenizer(assets);
-        model::R2T2ASRThinkerRuntime thinker(assets, execution, 256ull << 20, 256ull << 20, 64ull << 20,
-                                          engine::assets::TensorStorageType::Native);
+        // Real audio prefixes cover both automatic and forced language prompts,
+        // then shrink to exercise capacity selection and clearing previous inputs.
+        const auto wav = engine::audio::read_wav_f32(std::filesystem::path(ENGINE_REPO_ROOT) / "assets/resources/sample_16k.wav");
+        model::R2T2ASRWhisperFrontend frontend(assets);
+        for (const double seconds : {1.01, 4.01, 4.89, 8.01, 1.99}) {
+            engine::runtime::AudioBuffer audio;
+            audio.sample_rate = wav.sample_rate;
+            audio.channels = wav.channels;
+            const size_t count = std::min(wav.samples.size(), static_cast<size_t>(seconds * wav.sample_rate) * wav.channels);
+            audio.samples.assign(wav.samples.begin(), wav.samples.begin() + count);
+            const auto features = frontend.extract(audio);
+            const auto expected = exact.encode(features);
+            const auto actual = reused.encode(features, true);
+            check_joint(expected, actual, "");
+            check_joint(expected, actual, "English");
+        }
         // Repeated prompts grow then shrink across prefill blocks and KV buckets.
         for (const int64_t tokens : {4, 65, 129, 7, 65}) {
             const auto prompt = tokenizer.build_prompt("", "English", tokens);
@@ -108,7 +138,7 @@ int main(int argc, char ** argv) {
             if (expected.token_ids != actual.token_ids) { throw std::runtime_error("reused decoder token sequence changed"); }
             std::cout << "injection_tokens=" << tokens << " decoder parity passed\n";
         }
-        std::cout << "PASS: graph reuse matches exact encoder and decoder after growth and shrink\n";
+        std::cout << "PASS: bounded encoder drift and joint token parity after growth and shrink\n";
         return 0;
     } catch (const std::exception & error) {
         std::cerr << "FAIL: " << error.what() << '\n';

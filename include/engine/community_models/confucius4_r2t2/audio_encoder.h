@@ -22,6 +22,9 @@ public:
         assets::TensorStorageType weight_storage_type);
     ~R2T2ASRAudioEncoderRuntime();
 
+    // Actual retained graph capacity, including capacity retained after shrink.
+    int64_t graph_capacity_frames() const noexcept { return graph_capacity_frames_; }
+
     R2T2ASRAudioEmbeddings encode(const R2T2ASRAudioFeatures & features, bool reuse_graph = false);
 
 private:
@@ -29,6 +32,7 @@ private:
     std::shared_ptr<const R2T2ASRAudioEncoderWeights> weights_;
     core::ExecutionContext * execution_ = nullptr;
     size_t graph_arena_bytes_ = 0;
+    int64_t graph_capacity_frames_ = 0;
     std::unique_ptr<R2T2ASRAudioEncoderGraph> graph_;
 };
 

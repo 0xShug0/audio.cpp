@@ -501,7 +501,12 @@ public:
         const bool shape_matches = reusable_ && reusable
             ? frames >= chunk_frame_limit_ && frames <= frames_
             : !reusable_ && !reusable && frames_ == frames;
-        return weights_.get() == &weights && shape_matches && backend_ == backend && compute_threads_ == std::max(1, threads);
+        // Metal switches its attention value matmul to half-input SIMD-group
+        // matrix multiplication at inner dimension 64. Do not move a shorter
+        // input across that precision boundary merely to reuse a larger graph.
+        const bool same_attention_kernel = backend_type_ != core::BackendType::Metal ||
+            (confucius4_r2t2_audio_encoder_token_count(frames) < 64) == (output_tokens_ < 64);
+        return weights_.get() == &weights && shape_matches && same_attention_kernel && backend_ == backend && compute_threads_ == std::max(1, threads);
     }
 
     R2T2ASRAudioEmbeddings run(const R2T2ASRAudioFeatures & features) {
@@ -627,7 +632,12 @@ R2T2ASRAudioEmbeddings R2T2ASRAudioEncoderRuntime::encode(const R2T2ASRAudioFeat
             // At most one graph is retained. Grow in four-chunk buckets after
             // the first two chunks, bounding padding overhead and memory.
             capacity = (chunks <= 2 ? chunks : (chunks + 3) / 4 * 4) * chunk_frames;
+            if (execution_->backend_type() == core::BackendType::Metal && features.encoder_tokens < 64 &&
+                confucius4_r2t2_audio_encoder_token_count(capacity) >= 64) {
+                capacity = features.frames;
+            }
         }
+        graph_capacity_frames_ = 0;
         graph_.reset();
         graph_ = std::make_unique<R2T2ASRAudioEncoderGraph>(
             assets_,
@@ -636,6 +646,7 @@ R2T2ASRAudioEmbeddings R2T2ASRAudioEncoderRuntime::encode(const R2T2ASRAudioFeat
             graph_arena_bytes_,
             capacity,
             reusable);
+        graph_capacity_frames_ = capacity;
     } else {
         debug::timing_log_scalar("confucius4_r2t2.audio_encoder.graph.build_ms", 0.0);
 
