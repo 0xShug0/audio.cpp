@@ -285,21 +285,33 @@ are identical. It is a drop-in smaller package, not a separate family.
 | Task, modes, output, timestamps | As the streaming 7B above |
 
 Sizes, and word error rate on the four LibriSpeech clips in
-`assets/asr_validation/librispeech/` (CUDA, greedy decode):
+`assets/asr_validation/librispeech/`, greedy decode:
 
-| Package | GGUF size | WER |
-|---|---:|---:|
-| `vibevoice_asr_streaming_7b_q4_k` | 5.86 GB | 4.35% |
-| `vibevoice_asr_streaming_1_5b_bf16` | 5.64 GB | 4.35% |
-| `vibevoice_asr_streaming_1_5b_q8_0` | 3.34 GB | 5.80% |
-| `vibevoice_asr_streaming_1_5b_q4_k` | 2.12 GB | 7.25% |
+| Package | GGUF size | WER (CUDA) | WER (CPU) |
+|---|---:|---:|---:|
+| `vibevoice_asr_streaming_7b_q4_k` | 5.86 GB | 4.35% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_bf16` | 5.64 GB | 4.35% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_q8_0` | 3.34 GB | 5.80% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_q4_k` | 2.12 GB | 7.25% | 5.80% |
+
+> [!NOTE]
+> **A WER number for a quantized package is only meaningful with its backend.**
+> CPU and CUDA quantize activations differently in upstream ggml — Q4_K weights
+> meet `Q8_K` activations on CPU (one scale per 256) and `Q8_1` on CUDA (scale
+> and sum per 32), and Q8_0 weights meet `Q8_0` against `Q8_1`. The two backends
+> therefore differ slightly but deterministically on every quantized matmul.
+> BF16 quantizes no activations, which is why its two columns agree exactly.
+>
+> On these clips the whole effect is one fragile word, where CPU hears the
+> correct "cutter" and CUDA hears "country". This is expected upstream behavior,
+> not an audio.cpp defect. The 7B not flipping here is four clips, not immunity.
 
 > [!WARNING]
 > Four clips is 69 words. One substitution moves the number by 1.4 points, so
 > these separate "works and is in the right class" from "broken" and nothing
 > finer. The like-for-like pair is the two `q4_k` rows: at equal quantization the
-> 7B is ahead. Do not read the tie between 7B Q4_K and 1.5B BF16 as parity --
-> different clips happen to sum to the same total.
+> 7B is ahead on both backends. Do not read the tie between 7B Q4_K and 1.5B BF16
+> as parity -- different clips happen to sum to the same total.
 
 Install:
 

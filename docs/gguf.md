@@ -163,9 +163,13 @@ Q8 packaging notes:
   check, BF16 and Q4_K produced the same transcript wording on the validation
   clip; Q8_0 produced the same sentence with minor wording drift. On the 1.5B
   packages, scored WER over the four `assets/asr_validation/librispeech` clips
-  degrades in quantization order -- BF16 4.35%, Q8_0 5.80%, Q4_K 7.25% -- but
-  that whole spread is two substitutions out of 69 words, so treat the ordering
-  as unsurprising rather than as measured.
+  degrades in quantization order on both backends -- CUDA 4.35/5.80/7.25% and
+  CPU 4.35/4.35/5.80% for BF16/Q8_0/Q4_K -- but that whole spread is two
+  substitutions out of 69 words, so treat the ordering as unsurprising rather
+  than as measured. Note that the quantized packages score differently per
+  backend because CPU and CUDA quantize activations differently upstream (Q8_K
+  or Q8_0 against Q8_1); BF16 quantizes none and matches exactly. Quote a WER
+  for a quantized package with its backend.
 
 ## Build The Converter
 
