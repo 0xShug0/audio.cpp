@@ -6,6 +6,7 @@ audio.cpp supports two VibeVoice ASR families:
 |---|---|---|---|
 | VibeVoice ASR | `vibevoice_asr` | offline | `vibevoice_asr_q8_0` |
 | VibeVoice ASR Streaming 7B | `vibevoice_asr_streaming` | offline, streaming | `vibevoice_asr_streaming_7b_q8_0` |
+| VibeVoice ASR Streaming 1.5B | `vibevoice_asr_streaming` | offline, streaming | `vibevoice_asr_streaming_1_5b_q8_0` |
 
 ## VibeVoice ASR
 
@@ -267,3 +268,73 @@ because removed context is not available. The window size also causes very
 small differences in results because the model calculates in a different
 sequence. For reproducible results, do not change the binary or the window
 size.
+
+## VibeVoice ASR Streaming 1.5B
+
+The 1.5B checkpoint is the smaller sibling of the streaming 7B and runs through
+the **same loader with no code changes**: the layer count, hidden size, and head
+counts are all read from the checkpoint's own `config.json`, and the tensor names
+are identical. It is a drop-in smaller package, not a separate family.
+
+| Field | Value |
+|---|---|
+| Family | `vibevoice_asr_streaming` |
+| Model package | `vibevoice_asr_streaming_1_5b_q8_0` |
+| Model directory | `models/VibeVoice-ASR-Streaming-1.5B-GGUF` |
+| Upstream weights | <https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B> |
+| Task, modes, output, timestamps | As the streaming 7B above |
+
+Sizes, and word error rate on the four LibriSpeech clips in
+`assets/asr_validation/librispeech/` (CUDA, greedy decode):
+
+| Package | GGUF size | WER |
+|---|---:|---:|
+| `vibevoice_asr_streaming_7b_q4_k` | 5.86 GB | 4.35% |
+| `vibevoice_asr_streaming_1_5b_bf16` | 5.64 GB | 4.35% |
+| `vibevoice_asr_streaming_1_5b_q8_0` | 3.34 GB | 5.80% |
+| `vibevoice_asr_streaming_1_5b_q4_k` | 2.12 GB | 7.25% |
+
+> [!WARNING]
+> Four clips is 69 words. One substitution moves the number by 1.4 points, so
+> these separate "works and is in the right class" from "broken" and nothing
+> finer. The like-for-like pair is the two `q4_k` rows: at equal quantization the
+> 7B is ahead. Do not read the tie between 7B Q4_K and 1.5B BF16 as parity --
+> different clips happen to sum to the same total.
+
+Install:
+
+```bash
+python3 tools/model_manager_v2.py install vibevoice_asr_streaming_1_5b_q8_0
+```
+
+Offline CLI, identical to the 7B apart from the model path:
+
+```bash
+audiocpp_cli --task asr \
+  --family vibevoice_asr_streaming \
+  --model models/VibeVoice-ASR-Streaming-1.5B-GGUF/vibevoice-asr-streaming-1.5b-q8_0.gguf \
+  --backend cuda \
+  --threads 8 \
+  --audio assets/resources/sample_16k.wav \
+  --text-out transcript.txt \
+  --turns-out speaker_turns.json \
+  --metrics \
+  --log
+```
+
+Convert from safetensors:
+
+```bash
+audiocpp_gguf --input model.safetensors.index.json \
+              --output vibevoice-asr-streaming-1.5b-q8_0.gguf \
+              --type q8_0 --family vibevoice_asr_streaming --root sidecars
+```
+
+### The padded vocabulary differs, and that is fine
+
+`embed_tokens` is `(151936, 1536)` here against `(152064, 3584)` in the 7B: the
+7B's vocabulary row count is padded, the 1.5B's is not. Nothing breaks, because
+the shape is validated against the `vocab_size` in the same checkpoint's config.
+It would only matter to code that treats the 7B's padded count as a constant --
+a shared tokenizer bundle, or a logits slice sized for the 7B -- so keep that in
+mind when adding anything that spans both sizes.

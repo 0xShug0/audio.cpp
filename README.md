@@ -124,7 +124,7 @@ Runtime tags summarize the supported loading paths. GGUF package precision varie
 | **silero_vad** | VAD | lang agnostic | Silero VAD | Bundled, Stream |
 | **sortformer_diar** | Diar | en | Sortformer-4spk-v1 | - |
 | **vibevoice_asr** | ASR | auto | VibeVoice ASR | GGUF 16/Q8 |
-| **vibevoice_asr_streaming** | ASR | en, zh, es, pt, de, ja, ko, fr, ru, it | VibeVoice ASR Streaming 7B with persistent decoder state and speaker turns | GGUF BF16/Q8/Q4, Stream |
+| **vibevoice_asr_streaming** | ASR | en, zh, es, pt, de, ja, ko, fr, ru, it | VibeVoice ASR Streaming 7B<br>VibeVoice ASR Streaming 1.5B<br>persistent decoder state and speaker turns | GGUF BF16/Q8/Q4, Stream |
 | **voxtral_realtime** | ASR | auto | Voxtral-Mini-4B-Realtime-2602 | GGUF 16/Q8/Q4, Stream |
 
 ### Audio Conversion And Processing

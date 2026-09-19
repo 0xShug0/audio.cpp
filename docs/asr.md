@@ -20,6 +20,7 @@
 | SenseVoice-Small | `sense_asr` | offline, streaming | [SenseVoice-Small](#sensevoice-small) |
 | VibeVoice ASR | `vibevoice_asr` | offline | [VibeVoice ASR](models/vibevoice_asr.md#vibevoice-asr) |
 | VibeVoice ASR Streaming 7B | `vibevoice_asr_streaming` | offline, streaming | [VibeVoice ASR Streaming 7B](models/vibevoice_asr.md#vibevoice-asr-streaming-7b) |
+| VibeVoice ASR Streaming 1.5B | `vibevoice_asr_streaming` | offline, streaming | [VibeVoice ASR Streaming 1.5B](models/vibevoice_asr.md#vibevoice-asr-streaming-15b) |
 | Voxtral Realtime | `voxtral_realtime` | offline, streaming | [Voxtral Realtime](models/voxtral_realtime.md) |
 
 This page covers ASR models. Detailed Qwen3 ASR and forced-alignment notes live in [Qwen3 models](models/qwen3.md).
@@ -307,10 +308,11 @@ chunking, server usage, and validation notes.
 
 ## VibeVoice ASR
 
-VibeVoice ASR covers the original offline ASR family and the new Streaming 7B
-family. The streaming family has its own dedicated GGUF repo and supports both
-offline and live streaming transcription. The Streaming 7B model can emit
-speaker-attributed text, but it does not produce timestamped segments.
+VibeVoice ASR covers the original offline ASR family and the Streaming family.
+The streaming family has its own dedicated GGUF repos and supports both offline
+and live streaming transcription, in a 7B and a 1.5B size that share one loader.
+The streaming models can emit speaker-attributed text, but they do not produce
+timestamped segments.
 
 See [VibeVoice ASR models](models/vibevoice_asr.md) for package IDs, conversion
 notes, CLI examples, live server configuration, and request options.

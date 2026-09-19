@@ -161,7 +161,11 @@ Q8 packaging notes:
   Q8_0 except for one capitalization-only difference.
 - `vibevoice_asr_streaming` also has a tested `q4_k` package. In a quick CUDA
   check, BF16 and Q4_K produced the same transcript wording on the validation
-  clip; Q8_0 produced the same sentence with minor wording drift.
+  clip; Q8_0 produced the same sentence with minor wording drift. On the 1.5B
+  packages, scored WER over the four `assets/asr_validation/librispeech` clips
+  degrades in quantization order -- BF16 4.35%, Q8_0 5.80%, Q4_K 7.25% -- but
+  that whole spread is two substitutions out of 69 words, so treat the ordering
+  as unsurprising rather than as measured.
 
 ## Build The Converter
 
