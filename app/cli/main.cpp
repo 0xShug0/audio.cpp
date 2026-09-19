@@ -576,7 +576,15 @@ void run_streaming(
                     std::cout << "speech_segment";
                     break;
                 }
-                std::cout << " sample=" << activity.sample << " probability=" << activity.probability << "\n";
+                std::cout << " sample=" << activity.sample << " probability=" << activity.probability;
+                if (activity.segment.has_value()) {
+                    std::cout << " start_sample=" << activity.segment->span.start_sample
+                              << " end_sample=" << activity.segment->span.end_sample;
+                    if (!activity.segment->text.empty()) {
+                        std::cout << " text=" << activity.segment->text;
+                    }
+                }
+                std::cout << "\n";
             }
         };
 

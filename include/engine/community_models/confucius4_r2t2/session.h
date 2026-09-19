@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/runtime/session.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/community_models/confucius4_r2t2/assets.h"
@@ -11,9 +12,15 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
+
+namespace engine::models::silero_vad {
+class SileroRuntime;
+struct SileroVADConfig;
+}
 
 namespace engine::community_models::confucius4_r2t2 {
 
@@ -30,6 +37,27 @@ struct R2T2ASRStreamConfig {
     int64_t unfixed_token_num = 5;
     bool rollback_punctuation = false;
     int64_t max_new_tokens = 32;
+};
+
+/// VAD-driven endpointing for long streaming sessions (dictation / input
+/// method). Defaults mirror the reference ws_server.py FireRed VAD intent
+/// (0.4 speech threshold, 200 ms minimum silence, 50 ms onset pad, 20 s
+/// maximum speech frame) expressed in Silero VAD terms. When enabled, a
+/// speech end closes the current segment: the session runs the authoritative
+/// final flush, publishes a VoiceActivityEvent::SpeechEnd carrying the
+/// segment text, and re-opens a fresh LSP segment so audio towers never see
+/// more than one segment worth of audio (far below the 1500-frame position
+/// table). A bounded non-speech context window is retained between segments;
+/// it also counts toward the segment cap.
+struct R2T2ASREndpointingConfig {
+    bool enabled = false;
+    std::filesystem::path vad_model_path = "assets/framework/models/silero_vad";
+    float threshold = 0.4f;
+    int min_speech_ms = 100;
+    int min_silence_ms = 200;
+    int speech_pad_ms = 50;
+    int gap_keep_ms = 2000;
+    double max_segment_seconds = 20.0;
 };
 
 /// Confucius4-R2T2 streaming ASR session.
@@ -83,6 +111,42 @@ private:
     std::string build_stream_prefix(bool final_flush) const;
     std::string decode_rollback_prefix(const std::vector<int32_t> & ids, int64_t rollback) const;
     void publish_stream_delta(const std::string & fixed_text, runtime::StreamEvent & event);
+
+    // Endpointed streaming: the family embeds a Silero VAD runtime and splits
+    // the incoming stream into speech segments. See R2T2ASREndpointingConfig.
+    void ensure_vad_runtime();
+    /// Steps the VAD over the chunk; returns true when the current segment
+    /// must end (accepted speech end).
+    void process_endpoint_frame(const runtime::AudioChunk & chunk, runtime::StreamEvent & event);
+    bool feed_vad(const runtime::AudioChunk & chunk);
+    /// Runs the authoritative final flush for the open segment, publishes the
+    /// segment boundary event, and re-opens a fresh LSP segment.
+    void flush_segment(runtime::StreamEvent & event, bool from_vad);
+    void begin_new_segment();
+    void append_stream_text(const std::string & segment_text);
+    std::string joined_stream_text(const std::string & current_segment_text) const;
+    int64_t to_stream_samples(int64_t vad_samples) const;
+    const models::silero_vad::SileroVADConfig & vad_config() const;
+
+    R2T2ASREndpointingConfig endpointing_;
+    std::unique_ptr<models::silero_vad::SileroRuntime> vad_runtime_;
+    std::unique_ptr<models::silero_vad::SileroVADConfig> vad_config_;
+    // Session-global VAD bookkeeping: survives segment resets so spans stay
+    // monotonic across the whole stream.
+    std::vector<float> endpoint_input_;
+    std::vector<float> vad_remainder_;
+    int64_t vad_consumed_samples_ = 0;
+    // Gap-context window (interleaved, stream format) retained before onset.
+    std::vector<float> vad_seed_;
+    bool in_speech_ = false;
+    bool segment_has_audio_ = false;
+    runtime::VoiceActivityEvent pending_speech_end_;
+    int64_t segment_start_stream_sample_ = 0;
+    int64_t segment_stream_frames_ = 0;
+    int64_t max_segment_stream_frames_ = 0;
+    int64_t stream_frames_consumed_ = 0;
+    std::vector<std::pair<runtime::TimeSpan, std::string>> completed_segments_;
+    int64_t segment_index_ = 0;
 
     runtime::TaskSpec task_;
     std::shared_ptr<const R2T2ASRAssets> assets_;

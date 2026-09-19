@@ -9,6 +9,7 @@ implementation in the Confucius4-R2T2 repository (see `docs/community_models/r2t
 |---|---|
 | `make_golden.py` | Runs the Python reference (`R2T2ASRModel` on MPS) for an audio file and writes offline text plus per-chunk streaming `fixed_text`, `raw_decoded`, and `text` to a golden JSON. |
 | `compare.py` | Runs `audiocpp_cli` offline and streaming with `--log-file`, parses the per-chunk trace, and diffs everything against a golden. |
+| `long_stream_test.py` | Long-session behavior: without endpointing a >115.4 s stream must fail safely on the audio-tower position table (and records the per-chunk cost curve); with `--endpointing` it must complete, emit segment boundaries, and keep per-chunk cost flat. |
 | `test_confucius4_r2t2_transcription.cpp` | Repo-native smoke test: offline + final streaming transcripts against the golden, plus a check that Auto-language deltas form a nonempty prefix of the expected transcript for `assets/resources/sample_16k.wav`. Skips with exit code 125 when the model or audio is missing. Also exposes `--encode <text>` to dump token ids for tokenizer diffing. |
 | `golden*.json` | Recorded reference outputs. |
 
@@ -49,6 +50,23 @@ python3 tests/confucius4_r2t2/compare.py \
   --backend metal
 ```
 
+## Long-session / endpointing
+
+```bash
+# Baseline: must fail safely past 115.40 s (position table), prints cost curve
+python3 tests/confucius4_r2t2/long_stream_test.py \
+  --cli build/macos-metal-release/bin/audiocpp_cli \
+  --model models/Confucius4-R2T2-GGUF/r2t2-q8_0.gguf
+
+# Endpointed: must complete past the limit with flat per-chunk cost
+python3 tests/confucius4_r2t2/long_stream_test.py \
+  --cli build/macos-metal-release/bin/audiocpp_cli \
+  --model models/Confucius4-R2T2-GGUF/r2t2-q8_0.gguf --endpointing
+```
+
+The script assembles its audio by looping `assets/resources/sample_16k.wav`
+with silence gaps, so it needs no external fixtures.
+
 The comparison checks four things: the offline transcript, the committed delta
 stream, every per-chunk committed `fixed_text`, and the final streaming
 transcript. Metadata-only rollback prefixes are filtered from the unmodified
@@ -63,6 +81,11 @@ The same binary can dump the family tokenizer for diffing against Hugging Face:
 build/macos-metal-release/bin/test_confucius4_r2t2_transcription \
   --encode "language English<asr_text>Some text 22,500"
 ```
+
+The smoke test also compares 60 s and 17 ms transport packets with a 3.013 s
+segment cap and a 5 s gap window. It checks identical text and spans, ordered
+boundaries, input-range timestamps, and the strict cap including gap audio.
+The English fixture also rejects language metadata in transcript deltas.
 
 ## Graph reuse regression
 
