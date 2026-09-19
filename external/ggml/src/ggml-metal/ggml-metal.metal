@@ -7913,6 +7913,11 @@ kernel void kernel_cpy_t_t(
     const int i01 = ntg[1] == 1 ? tgpig[0]%args.ne01 : tgpig[0]*ntg[1] + tiitg/ntg[0];
     const int iw0 = ntg[1] == 1 ? tgpig[0]/args.ne01 : 0;
 
+    // Padded rows must not cross channel strides or the destination boundary.
+    if (i01 >= args.ne01) {
+        return;
+    }
+
     const int64_t n = i03*args.ne02*args.ne01*args.ne00 + i02*args.ne01*args.ne00 + i01*args.ne00;
 
     const int64_t i3 = n/(args.ne2*args.ne1*args.ne0);
