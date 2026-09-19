@@ -99,6 +99,11 @@ private:
     // decoder runs incrementally across chunks, so partials stream as chunks land
     // instead of only at finalize.
     bool encode_and_decode_next_chunk(bool flush_tail, std::string & delta_out);
+    // Speculative flush support (see the member docs below).
+    int64_t flush_window_mel() const;
+    void build_flush_window(int64_t total, std::vector<float> & window) const;
+    void maybe_speculative_flush();
+    void discard_speculative_flush();
     int64_t stream_lookahead_ = 0;
     int64_t stream_prompt_id_ = 0;
     NemotronDecodeOptions stream_decode_options_;
@@ -112,6 +117,15 @@ private:
     bool stream_tail_encoded_ = false;
     bool stream_decode_active_ = false;
     int64_t stream_dump_chunk_seq_ = 0;
+    // Speculative flush: while the turn is still open, the flush window is
+    // encoded as soon as the ingest sees enough trailing silence, and finalize
+    // reuses the result unless speech followed (then the state snapshot is
+    // restored and the normal flush runs). See session.cpp for the knobs.
+    bool spec_valid_ = false;
+    NemotronEncodedAudio spec_frames_;
+    NemotronEncoderStreamState spec_state_snapshot_{};
+    int64_t spec_last_loud_sample_ = 0;
+    int64_t spec_audio_mark_ = 0;
 };
 
 }  // namespace engine::models::nemotron_asr

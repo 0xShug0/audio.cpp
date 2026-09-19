@@ -1071,6 +1071,25 @@ void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int
         (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, std::min<int64_t>(prefix, enc.sliding_window - 1), false);
     }
     (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, enc.sliding_window - 1, false);
+    // Flush variants: the finalize/speculative flush pads its window beyond the
+    // full chunk size so the encoded stream carries ~500 ms of post-speech
+    // silence (the model's trailing-token requirement) even when the client
+    // closes right after the last speech. Same prefix sequence as the ladder;
+    // the session builds its flush window from the same env default.
+    const char * flush_env = std::getenv("NEMOTRON_FLUSH_WINDOW_MEL");
+    const int64_t flush_mel = std::max<int64_t>(
+        next_frames,
+        flush_env != nullptr && *flush_env != 0
+            ? std::strtoll(flush_env, nullptr, 10)
+            : 8 * 8);
+    if (flush_mel > next_frames) {
+        for (int64_t prefix = first_encoded;
+             prefix < enc.sliding_window;
+             prefix += stage3_frames) {
+            (void) ensure_stream_graph(flush_mel, feature_dim, lookahead_tokens, std::min<int64_t>(prefix, enc.sliding_window - 1), false);
+        }
+        (void) ensure_stream_graph(flush_mel, feature_dim, lookahead_tokens, enc.sliding_window - 1, false);
+    }
     // NOTE: short tail variants (8/16/24 mel) were tried here so the finalize
     // flush could encode 1-3 frames instead of 4. Refuted by measurement: the
     // RNNT fires a word's trailing token on a post-speech frame, and when the

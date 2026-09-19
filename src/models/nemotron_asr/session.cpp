@@ -537,6 +537,10 @@ void NemotronASRStreamingSession::start_stream(const runtime::TaskRequest & requ
     stream_tail_encoded_ = false;
     stream_decode_active_ = false;
     stream_dump_chunk_seq_ = 0;
+    spec_valid_ = false;
+    spec_frames_ = NemotronEncodedAudio{};
+    spec_last_loud_sample_ = 0;
+    spec_audio_mark_ = 0;
     encoder_stream_state_ = encoder_->make_stream_state();
 }
 
@@ -564,6 +568,7 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
 
     std::vector<float> window;
     bool center = false;
+    bool reuse_spec = false;
     if (stream_await_first_chunk_) {
         if (total < stream_first_samples_) {
             return false;
@@ -589,44 +594,40 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
         // The tail never fills a whole native chunk: zero-pad it so the final
         // audio is encoded too (the padding decodes to blank tokens).
         //
-        // The pad MUST reach the full chunk window even when the leftover is
-        // short: the RNNT fires a word's trailing token on a post-speech
-        // frame, and when the client's turn buffer cuts the speech decay the
-        // model needs 2-3 zero-padding frames before it emits the final token
-        // (measured: a tail ending at the speech edge turns 'Hello' into
-        // 'Hel'). The reference implementation pads the final chunk to the
-        // full required length for the same reason.
-        const int64_t copy_from = std::max<int64_t>(stream_next_chunk_start_, 0);
-        window.assign(
-            streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(copy_from),
-            streaming_audio_.samples.end());
-        if (stream_next_chunk_start_ < 0) {
-            window.insert(window.begin(), static_cast<size_t>(-stream_next_chunk_start_), 0.0f);
+        // The pad MUST carry ~500 ms of post-speech silence: the RNNT fires a
+        // word's trailing token only after that much silence in the encoded
+        // stream (measured: 210 ms fails, 530 ms works; the padding content is
+        // irrelevant — the reference wavs' own tails are digital zeros). The
+        // flush window is sized for it (flush_window_mel), and when the
+        // speculative flush already encoded this window, its frames are
+        // reused instead of re-encoding.
+        if (spec_valid_) {
+            reuse_spec = true;
+        } else {
+            build_flush_window(total, window);
         }
-        // Test override: grow the flush window so the padded silence duration
-        // reaches the model's trailing-token requirement even when the client
-        // cuts early (NEMOTRON_FLUSH_WINDOW_MEL=<mel frames>).
-        int64_t flush_mel = stream_mel_frames_per_chunk_;
-        if (const char * wenv = std::getenv("NEMOTRON_FLUSH_WINDOW_MEL"); wenv != nullptr && *wenv != 0) {
-            flush_mel = std::max<int64_t>(stream_mel_frames_per_chunk_, std::strtoll(wenv, nullptr, 10));
-        }
-        window.resize(static_cast<size_t>(flush_mel * fc.hop_length + fc.win_length), 0.0f);
         stream_tail_encoded_ = true;
     } else {
         return false;
     }
 
-    auto features = frontend_.extract_waveform(window, center);
-    if (center && features.frames > stream_first_mel_frames_) {
-            features = slice_features(features, 0, stream_first_mel_frames_);
+    NemotronEncodedAudio encoded;
+    if (reuse_spec) {
+        encoded = std::move(spec_frames_);
+        spec_frames_ = NemotronEncodedAudio{};
+    } else {
+        auto features = frontend_.extract_waveform(window, center);
+        if (center && features.frames > stream_first_mel_frames_) {
+                features = slice_features(features, 0, stream_first_mel_frames_);
+        }
+        encoded = encoder_->encode_stream_chunk(
+            features,
+            stream_prompt_id_,
+            stream_lookahead_,
+            encoder_stream_state_);
+        dump_stream_chunk("stream", stream_dump_chunk_seq_, features, encoded, center);
+        ++stream_dump_chunk_seq_;
     }
-    auto encoded = encoder_->encode_stream_chunk(
-        features,
-        stream_prompt_id_,
-        stream_lookahead_,
-        encoder_stream_state_);
-    dump_stream_chunk("stream", stream_dump_chunk_seq_, features, encoded, center);
-    ++stream_dump_chunk_seq_;
 
     if (!stream_decode_active_) {
         decoder_->begin_stream_decode(stream_decode_options_);
@@ -639,10 +640,78 @@ bool NemotronASRStreamingSession::encode_and_decode_next_chunk(bool flush_tail, 
     if (stream_await_first_chunk_) {
         stream_await_first_chunk_ = false;
         stream_next_chunk_start_ = stream_first_mel_frames_ * fc.hop_length - fc.n_fft / 2;
-    } else {
+    } else if (!reuse_spec) {
         stream_next_chunk_start_ += stream_mel_frames_per_chunk_ * fc.hop_length;
     }
     return true;
+}
+
+int64_t NemotronASRStreamingSession::flush_window_mel() const {
+    const auto & enc = assets_->config.encoder;
+    const char * env = std::getenv("NEMOTRON_FLUSH_WINDOW_MEL");
+    const int64_t requested = env != nullptr && *env != 0 ? std::strtoll(env, nullptr, 10) : 8 * 8;
+    return std::max<int64_t>(enc.subsampling_factor * std::max<int64_t>(stream_lookahead_ + 1, 4), requested);
+}
+
+void NemotronASRStreamingSession::build_flush_window(int64_t total, std::vector<float> & window) const {
+    const auto & fc = assets_->config.frontend;
+    const int64_t copy_from = std::max<int64_t>(stream_next_chunk_start_, 0);
+    window.assign(
+        streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(copy_from),
+        streaming_audio_.samples.begin() + static_cast<std::ptrdiff_t>(total));
+    if (stream_next_chunk_start_ < 0) {
+        window.insert(window.begin(), static_cast<size_t>(-stream_next_chunk_start_), 0.0f);
+    }
+    window.resize(static_cast<size_t>(flush_window_mel() * fc.hop_length + fc.win_length), 0.0f);
+}
+
+// Speculative flush: once the ingest sees enough trailing silence, encode the
+// flush window right here on the ingest thread (the backend cannot run
+// concurrent graphs, and during silence there is no realtime encode to
+// contend with). Finalize then reuses the frames instead of paying the encode
+// after end of turn. The result is discarded — and the encoder state restored
+// from the snapshot — whenever speech resumes or a full chunk shifts the
+// window origin, because the padded frames are only valid while the audio
+// after the snapshot stays silent.
+void NemotronASRStreamingSession::maybe_speculative_flush() {
+    if (spec_valid_ || stream_await_first_chunk_ || stream_tail_encoded_ || !stream_decode_active_) {
+        return;
+    }
+    const char * env = std::getenv("NEMOTRON_SPEC_FLUSH");
+    if (env != nullptr && *env == '0') {
+        return;
+    }
+    const auto & fc = assets_->config.frontend;
+    const int64_t total = static_cast<int64_t>(streaming_audio_.samples.size());
+    const int64_t flush_samples = flush_window_mel() * fc.hop_length + fc.win_length;
+    if (stream_next_chunk_start_ + flush_samples <= total) {
+        return;
+    }
+    const char * silence_env = std::getenv("NEMOTRON_SPEC_SILENCE_MS");
+    const double silence_s = silence_env != nullptr && *silence_env != 0 ? std::strtod(silence_env, nullptr) / 1000.0 : 0.15;
+    if (total - spec_last_loud_sample_ < static_cast<int64_t>(silence_s * fc.sample_rate)) {
+        return;
+    }
+    spec_state_snapshot_ = encoder_stream_state_;
+    std::vector<float> window;
+    build_flush_window(total, window);
+    auto features = frontend_.extract_waveform(window, /*center=*/false);
+    spec_frames_ = encoder_->encode_stream_chunk(
+        features,
+        stream_prompt_id_,
+        stream_lookahead_,
+        encoder_stream_state_);
+    spec_audio_mark_ = total;
+    spec_valid_ = true;
+}
+
+void NemotronASRStreamingSession::discard_speculative_flush() {
+    if (!spec_valid_) {
+        return;
+    }
+    encoder_stream_state_ = spec_state_snapshot_;
+    spec_frames_ = NemotronEncodedAudio{};
+    spec_valid_ = false;
 }
 
 runtime::StreamEvent NemotronASRStreamingSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
@@ -650,17 +719,41 @@ runtime::StreamEvent NemotronASRStreamingSession::process_audio_chunk(const runt
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Nemotron ASR process_audio_chunk called on non-streaming session");
     }
+    const char * energy_env = std::getenv("NEMOTRON_SPEC_ENERGY");
+    const double energy = energy_env != nullptr && *energy_env != 0 ? std::strtod(energy_env, nullptr) : 0.01;
+    const int64_t scan_from = static_cast<int64_t>(streaming_audio_.samples.size());
     runtime::AudioBuffer audio;
     audio.sample_rate = chunk.sample_rate;
     audio.channels = chunk.channels;
     audio.samples = chunk.samples;
     runtime::append_audio_buffer(streaming_audio_, audio);
+    const int64_t total = static_cast<int64_t>(streaming_audio_.samples.size());
+    // 10 ms windowed RMS: the speech/silence distinction must ignore decay
+    // transients (a per-sample max counts the quiet tail of a word as speech
+    // and the speculative flush never fires).
+    constexpr int64_t kRmsWindow = 160;
+    for (int64_t w = scan_from - scan_from % kRmsWindow; w + kRmsWindow <= total; w += kRmsWindow) {
+        double acc = 0.0;
+        for (int64_t i = w; i < w + kRmsWindow; ++i) {
+            const float v = streaming_audio_.samples[static_cast<size_t>(i)];
+            acc += double(v) * double(v);
+        }
+        if (std::sqrt(acc / double(kRmsWindow)) > energy) {
+            spec_last_loud_sample_ = w + kRmsWindow;
+        }
+    }
 
     runtime::StreamEvent event;
     event.is_final = false;
     std::string delta;
+    bool encoded_full_chunk = false;
     while (encode_and_decode_next_chunk(/*flush_tail=*/false, delta)) {
+        encoded_full_chunk = true;
     }
+    if (spec_valid_ && (encoded_full_chunk || spec_last_loud_sample_ > spec_audio_mark_)) {
+        discard_speculative_flush();
+    }
+    maybe_speculative_flush();
     if (!delta.empty()) {
         event.partial_text = runtime::Transcript{delta, streaming_language_};
         if (stream_event_sink_) {
@@ -699,9 +792,28 @@ runtime::TaskResult NemotronASRStreamingSession::finalize() {
         // turn with full attention and no chunk windows. (run_streaming_audio
         // shares the chunked streaming graph and its chunk-end truncation, so it
         // does not help here.)
-        const auto frontend = frontend_.extract(streaming_audio_, true);
+        //
+        // The re-decode input is padded with ~500 ms of silence: the greedy
+        // RNNT has cut-length dead pockets where it emits nothing at all
+        // (measured on hi.wav: cuts at 560-570 ms decode empty in the f32
+        // reference too, while 550 and 580 decode fine). Extra silence moves
+        // the frame grid out of the pocket without touching the speech.
+        auto padded_audio = streaming_audio_;
+        padded_audio.samples.resize(
+            padded_audio.samples.size() + static_cast<size_t>(assets_->config.frontend.sample_rate / 2),
+            0.0f);
+        const auto frontend = frontend_.extract(padded_audio, true);
         const auto encoded = encoder_->encode(frontend, stream_prompt_id_, stream_lookahead_);
-        const auto full = decoder_->decode(encoded, stream_decode_options_);
+        auto full = decoder_->decode(encoded, stream_decode_options_);
+        if (is_blank(full.text)) {
+            // Still blank — retry once with a longer pad before giving up.
+            padded_audio.samples.resize(
+                padded_audio.samples.size() + static_cast<size_t>(assets_->config.frontend.sample_rate),
+                0.0f);
+            const auto frontend2 = frontend_.extract(padded_audio, true);
+            const auto encoded2 = encoder_->encode(frontend2, stream_prompt_id_, stream_lookahead_);
+            full = decoder_->decode(encoded2, stream_decode_options_);
+        }
         debug::trace_log_scalar(
             "nemotron_asr.streaming.empty_final_rerun",
             full.text.empty() ? 0 : 1);
