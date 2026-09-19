@@ -479,6 +479,8 @@ add_library(engine_core OBJECT
     src/framework/decoders/tdt_decoder_greedy_separate_heads.cpp
     src/framework/modules/linear_module.cpp
     src/framework/modules/packed_linear_weights.cpp
+    src/framework/modules/convnext_modules.cpp
+    src/framework/modules/vocoders/vocos_vocoder.cpp
     src/framework/modules/primitive_modules.cpp
     src/framework/modules/activation_modules.cpp
     src/framework/modules/norm_modules.cpp
@@ -825,6 +827,21 @@ audiocpp_add_model(f5_tts
     ALIASES
         habibi
         habibi_tts
+)
+
+audiocpp_add_model(zipvoice
+    SOURCES
+        src/community_models/zipvoice/session.cpp
+        src/community_models/zipvoice/synthesize.cpp
+        src/community_models/zipvoice/emilia_tokenizer.cpp
+        src/community_models/zipvoice/jieba_segmenter.cpp
+        src/community_models/zipvoice/weights.cpp
+        src/community_models/zipvoice/zipformer.cpp
+    INCLUDES
+        engine/community_models/zipvoice/session.h
+        engine/community_models/zipvoice/synthesize.h
+    LOADERS
+        engine::models::zipvoice::make_zipvoice_loader
 )
 
 audiocpp_add_model(minimax_h3
@@ -2919,6 +2936,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             endif()
         endif()
         # Model-specific tests and probes.
+        if (zipvoice IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(zipvoice_parity tests/zipvoice/zipvoice_parity_main.cpp)
+            target_link_libraries(zipvoice_parity PRIVATE engine_runtime ggml)
+            target_include_directories(zipvoice_parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(zipvoice_parity PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+            add_executable(zipvoice_zh_tokens tests/zipvoice/zipvoice_zh_tokens_main.cpp)
+            target_link_libraries(zipvoice_zh_tokens PRIVATE engine_runtime)
+        endif()
         if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             target_compile_definitions(engine_model_f5_tts PRIVATE F5_MEL_TEST=1)
             foreach(f5_test IN ITEMS f5_e2e f5_parity f5_cfg_parity f5_tokenizer)

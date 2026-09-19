@@ -83,6 +83,9 @@
     { "id": "echo-tts",               "display_name": "Echo-TTS (voice clone)",                "family": "echo_tts",             "path": "models/Echo-TTS-GGUF",                   "task": "clon",  "mode": "offline", "download_id": "echo_tts_q8_0",           "min_vram_gb": 8,
       "input_hint_en": "**Echo-TTS**: English zero-shot cloning at 44.1 kHz. Upload a reference voice -- no transcript needed. Output is CC-BY-NC-SA and may not be used commercially." },
 
+    { "id": "zipvoice",              "display_name": "ZipVoice (中英零样本克隆)",           "display_name_en": "ZipVoice (zh/en zero-shot cloning)", "family": "zipvoice",            "path": "models/ZipVoice-Distill-GGUF",          "task": "clon",  "mode": "offline", "download_id": "zipvoice_distill_gguf",  "min_vram_gb": 4,
+      "input_hint": "**ZipVoice**：中/英零样本声音克隆（k2-fsa TTSZipformer flow-matching + Vocos，蒸馏版 8 步采样）。上传参考音频，并在『参考文本’里填入它的逐字转写——参考音频与参考文本必须配对；合成文本支持中文、英文及混排。权重 Apache-2.0。",
+      "input_hint_en": "**ZipVoice**: zero-shot voice cloning in zh/en (k2-fsa TTSZipformer flow matching + Vocos, distilled 8-step sampling). Upload a reference clip and put its exact transcript in the reference-text box — the clip and the transcript must match; synthesis text supports zh/en/mixed. Weights are Apache-2.0." },
     { "id": "chatterbox",             "display_name": "Chatterbox (voice clone)",              "family": "chatterbox",           "path": "models/chatterbox",                      "task": "clon",  "mode": "offline", "download_id": "chatterbox",              "min_vram_gb": 12 },
     { "id": "chatterbox-turbo",       "display_name": "Chatterbox Turbo (tts)",                "family": "chatterbox_turbo",     "path": "models/Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf", "task": "tts", "mode": "offline", "download_id": "chatterbox_turbo_q8_0", "min_vram_gb": 4,
       "input_hint_en": "**Chatterbox Turbo**: fast English TTS with the built-in voice. No reference voice is required." },

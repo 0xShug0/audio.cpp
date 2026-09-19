@@ -340,6 +340,14 @@
     {"name": "duration_factor", "type": "slider", "label": "duration_factor（语速/时长倍率，>1 更慢，<1 更快）", "label_en": "duration_factor (duration multiplier; >1 slower, <1 faster)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05, "info": "对齐官方 IndexTTS2.5 的 duration_factor：缩放输出时长，不改变音色/内容", "info_en": "Matches official IndexTTS2.5 duration_factor: scales output duration without changing timbre or content"}
   ],
 
+  "zipvoice": [
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale（引导强度，0=关闭）", "label_en": "guidance_scale (0 disables CFG)", "default": 3.0, "minimum": 0.0, "maximum": 10.0, "step": 0.5},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（Euler 步数）", "label_en": "num_inference_steps", "default": 8, "minimum": 1, "maximum": 64, "step": 1, "precision": 0},
+    {"name": "t_shift", "type": "slider", "label": "t_shift（时间步偏移，越小越偏低 SNR）", "label_en": "t_shift (timestep shift)", "default": 0.5, "minimum": 0.05, "maximum": 1.0, "step": 0.05},
+    {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (duration multiplier)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "lang", "type": "text", "label": "lang（英文段 espeak 语言）", "label_en": "lang (espeak voice for English runs)", "default": "en-us", "placeholder": "en-us"}
+  ],
+
   "irodori_tts": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（RF 扩散步数）", "label_en": "num_inference_steps", "default": 40, "minimum": 1, "step": 1, "precision": 0},
     {"name": "duration_sec", "type": "number", "label": "duration_sec（0=模型自动预测时长）", "label_en": "duration_sec (0 = auto)", "default": 0, "minimum": 0, "step": 0.5},

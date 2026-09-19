@@ -79,8 +79,13 @@ struct Runtime {
 #ifdef _WIN32
                 "espeak-ng.dll", "libespeak-ng.dll",
 #elif defined(__APPLE__)
+                "/opt/homebrew/lib/libespeak-ng.dylib",
+                "/usr/local/lib/libespeak-ng.dylib",
                 "libespeak-ng.dylib", "libespeak-ng.1.dylib",
 #else
+                "/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1",
+                "/usr/lib/aarch64-linux-gnu/libespeak-ng.so.1",
+                "/usr/lib/libespeak-ng.so.1",
                 "libespeak-ng.so.1", "libespeak-ng.so",
 #endif
             });
@@ -130,6 +135,27 @@ EspeakPhonemizer::EspeakPhonemizer(std::filesystem::path library,
 #endif
     if (data_.extension() == ".bin" || data_.extension() == ".gguf")
         data_ = materialize_espeak_data(data_);
+#if !defined(AUDIOCPP_STATIC_ESPEAK) && !defined(_WIN32)
+    // Dynamic eSpeak-ng with no explicit data path: probe common install
+    // locations (library-relative first, then system share directories) so a
+    // stock install works without session options.
+    if (data_.empty()) {
+        std::vector<std::filesystem::path> data_candidates;
+        if (!library_.empty()) {
+            const auto lib_dir = library_.parent_path();
+            data_candidates.push_back(lib_dir / ".." / "share" / "espeak-ng-data");
+            data_candidates.push_back(lib_dir / "espeak-ng-data");
+        }
+        data_candidates.push_back("/opt/homebrew/share/espeak-ng-data");
+        data_candidates.push_back("/usr/local/share/espeak-ng-data");
+        data_candidates.push_back("/usr/share/espeak-ng-data");
+        for (const auto & candidate : data_candidates)
+            if (std::filesystem::is_regular_file(candidate / "phontab")) {
+                data_ = candidate.lexically_normal();
+                break;
+            }
+    }
+#endif
     if (!data_.empty() && data_.filename().empty()) data_ = data_.parent_path();
     if (!library_.empty() && !std::filesystem::is_regular_file(library_))
         throw std::runtime_error("eSpeak-ng library does not exist: " + library_.string());

@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "family": "zipvoice",
+  "display_name": "ZipVoice",
+  "description": "Community ZipVoice / ZipVoice-Distill flow-matching TTS with a TTSZipformer backbone (U-Net downsampling stacks, compact relative position attention), duration prediction from prompt ratio, Euler solver with t-shift and classifier-free guidance, and Vocos mel-24kHz vocoder (k2-fsa/ZipVoice).",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "runtime": {
+    "tags": [
+      "server"
+    ]
+  },
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript matching the reference voice audio; required for zero-shot cloning.",
+        "required": true
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale; default 3.0 for ZipVoice-Distill (guidance-scale embedding), 1.0 for ZipVoice (batched CFG). 0 disables guidance.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 3.0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Euler ODE steps; default 8 for ZipVoice-Distill, 16 for ZipVoice.",
+        "required": false,
+        "min": 1,
+        "max": 64,
+        "default": 8
+      },
+      {
+        "name": "t_shift",
+        "type": "float",
+        "description": "Shift timesteps toward low SNR (smaller = stronger shift); default 0.5.",
+        "required": false,
+        "min": 0.05,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier applied through the prompt-duration ratio; default 1.0.",
+        "required": false,
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0
+      },
+      {
+        "name": "feat_scale",
+        "type": "float",
+        "description": "Feature scale applied to log-mel features; default 0.1 (reference default).",
+        "required": false,
+        "min": 0.01,
+        "max": 1.0,
+        "default": 0.1
+      },
+      {
+        "name": "target_rms",
+        "type": "float",
+        "description": "Target RMS for prompt loudness normalization; 0 disables. Default 0.1.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Noise seed; default 666 (reference default).",
+        "required": false,
+        "min": 0,
+        "default": 666
+      },
+      {
+        "name": "lang",
+        "type": "string",
+        "description": "espeak language for phonemization; default en-us.",
+        "required": false,
+        "default": "en-us"
+      }
+    ],
+    "session": [
+      {
+        "name": "vocos_path",
+        "type": "string",
+        "description": "Path to the Vocos vocoder checkpoint (vocos.safetensors or GGUF); required unless bundled in the model GGUF or placed next to the checkpoint.",
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Default guidance scale for requests that do not set it.",
+        "required": false,
+        "min": 0.0,
+        "max": 10.0,
+        "default": 3.0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Default Euler steps for requests that do not set it.",
+        "required": false,
+        "min": 1,
+        "max": 64,
+        "default": 8
+      },
+      {
+        "name": "t_shift",
+        "type": "float",
+        "description": "Default timestep shift for requests that do not set it.",
+        "required": false,
+        "min": 0.05,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "espeak_library_path",
+        "type": "string",
+        "description": "Path to the espeak-ng shared library (e.g. /opt/homebrew/lib/libespeak-ng.dylib) for tokenizer=espeak.",
+        "required": false
+      },
+      {
+        "name": "espeak_data_path",
+        "type": "string",
+        "description": "Path to the espeak-ng data directory or package for tokenizer=espeak.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "davidxifeng/zipvoice-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "zipvoice_distill_gguf",
+      "display_name": "ZipVoice-Distill GGUF (local conversion)",
+      "description": "Self-contained GGUF: flow-matching model, bundled Vocos vocoder and the embedded text-frontend sidecars (tokens, config, zh tables) in one file. Converted from k2-fsa/ZipVoice with export_zipvoice_zh_dict.py + convert_zipvoice.py.",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "ZipVoice-Distill-GGUF",
+      "files": [
+        "zipvoice-distill-orig.gguf"
+      ]
+    },
+    {
+      "id": "zipvoice_distill_q8_0",
+      "display_name": "ZipVoice-Distill GGUF (Q8_0)",
+      "description": "Self-contained Q8_0 GGUF with bundled Vocos and embedded text-frontend sidecars.",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "ZipVoice-Distill-GGUF",
+      "files": [
+        "zipvoice-distill-q8_0.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "zipvoice_distill_gguf",
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": [
+      "docs/community_models/zipvoice.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "tokens": "model:tokens.txt",
+        "model_config": "model:model.json"
+      },
+      "optional_files": {
+        "zh_chars": "model:zh_chars.tsv",
+        "zh_phrases": "model:zh_phrases.tsv",
+        "zh_syllables": "model:zh_syllables.tsv",
+        "zh_jieba_dict": "model:zh_jieba_dict.txt",
+        "zh_hmm_model": "model:zh_hmm_model.txt"
+      },
+      "tensors": {
+        "model": {
+          "source": "weights:",
+          "prefix": "model"
+        }
+      },
+      "optional_tensors": {
+        "vocos_vocoder": {
+          "source": "weights:",
+          "prefix": "vocos"
+        }
+      }
+    }
+  ]
+}
