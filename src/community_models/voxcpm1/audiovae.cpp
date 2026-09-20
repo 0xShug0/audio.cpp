@@ -970,6 +970,7 @@ public:
   }
 
   ~Impl() {
+    release_streaming_decoder_graph();
     release_decoder_graph();
     release_encoder_graph();
   }
@@ -1041,17 +1042,20 @@ public:
   }
 
   void release_runtime_memory() {
+    release_streaming_decoder_graph();
     release_decoder_graph();
     release_encoder_graph_impl();
   }
+
+  void release_streaming_decode_graph() { release_streaming_decoder_graph(); }
 
   void release_encoder_graph() { release_encoder_graph_impl(); }
 
   // Streaming decode support
   bool supports_streaming_decode() const {
-    // The stateful path only uses concat, conv, view/cont and buffer copies,
-    // the same ops as the offline decoder graph. Metal is untested and stays
-    // on the per-patch decode.
+    // The stateful graph runs the same decoder ops as the offline graph; its
+    // state handling adds only concat, view/cont and backend tensor copies.
+    // Metal is untested and stays on the per-patch decode.
     const core::BackendType t = execution_context_.backend_type();
     return t == core::BackendType::Cpu || t == core::BackendType::Cuda ||
            t == core::BackendType::Hip || t == core::BackendType::Vulkan;
@@ -1574,6 +1578,10 @@ VoxCPM1EncodedPrompt VoxCPM1AudioVAEDecoderRuntime::encode_prompt_audio(
 
 void VoxCPM1AudioVAEDecoderRuntime::release_runtime_memory() {
   impl_->release_runtime_memory();
+}
+
+void VoxCPM1AudioVAEDecoderRuntime::release_streaming_decode_graph() {
+  impl_->release_streaming_decode_graph();
 }
 
 void VoxCPM1AudioVAEDecoderRuntime::release_encoder_graph() {

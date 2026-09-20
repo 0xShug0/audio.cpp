@@ -106,6 +106,10 @@ public:
       const std::optional<runtime::AudioBuffer> &reference_audio);
   void release_runtime_memory();
   void release_encoder_graph();
+  // Drops the streaming decode graph. It is built against the tensors of the
+  // AudioVAEStreamingDecodeState passed to decode_streaming_step, so call this
+  // before that state goes away.
+  void release_streaming_decode_graph();
 
 private:
   class Impl;

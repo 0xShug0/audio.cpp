@@ -431,6 +431,17 @@ VoxCPM1SessionBase::run_streaming_request(
     use_streaming_decode =
         decoder_->initialize_streaming_decode_state(streaming_state);
   }
+  // The streaming graph is built against streaming_state's tensors. Drop it
+  // while that state is still alive; declared after streaming_state so it is
+  // destroyed first, and before the request-scoped release_guard runs.
+  struct StreamingGraphGuard {
+    VoxCPM1AudioVAEDecoderRuntime *decoder = nullptr;
+    ~StreamingGraphGuard() {
+      if (decoder != nullptr) {
+        decoder->release_streaming_decode_graph();
+      }
+    }
+  } streaming_graph_guard{use_streaming_decode ? decoder_.get() : nullptr};
 
   auto emit_chunk = [&](const VoxCPM1StreamingChunk &chunk) {
     const auto decoder_start = Clock::now();
