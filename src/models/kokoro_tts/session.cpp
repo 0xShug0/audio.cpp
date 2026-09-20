@@ -340,13 +340,24 @@ void append_kokoro_word_timings(
     const KokoroAssets & assets,
     size_t chunk_samples,
     int64_t chunk_start_sample) {
-    // An internal invariant, so it throws rather than degrading: durations are produced one per
-    // token by the same graph that consumes them, and a mismatch means timings that look right
-    // and point at the wrong audio, which is worse than no timings at all.
+    // ⚠ REPORTS NOTHING RATHER THAN THROWING, and the distinction matters because of what this
+    // function is for. The audio is the product; the timings are an extra with a designed absence
+    // -- an empty list is exactly what a caller running against an older engine sees, and every
+    // caller therefore already has a path for it. Throwing here would turn a defect in a
+    // supplementary feature into a failed synthesis, which is a strictly worse outcome than the
+    // one it would be reporting. Emitting timings that point at the wrong audio WOULD be worse
+    // than silence, so the check stays; only its severity changes.
+    //
+    // The invariant does hold by construction today: the predictor sizes `durations` to
+    // `input_ids.size()` on both its padded and unpadded paths. This is here so that a later
+    // change to that cannot quietly produce a highlight that drifts.
     if (input_ids.size() != durations.size()) {
-        throw std::runtime_error(
-            "Kokoro duration count " + std::to_string(durations.size()) +
-            " does not match token count " + std::to_string(input_ids.size()));
+        // The one that means something is wrong, and therefore the only one that is traced: a
+        // chunk with no tokens or no audio is not a defect and a trace named for a skip would
+        // tell whoever reads it the opposite.
+        engine::debug::trace_log_scalar(
+            "kokoro.word_timings_token_mismatch", static_cast<int64_t>(input_ids.size()));
+        return;
     }
     if (chunk_samples == 0 || input_ids.empty()) {
         return;
