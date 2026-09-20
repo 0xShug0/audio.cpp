@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace engine::models::kokoro_tts {
@@ -313,112 +314,6 @@ std::string cache_key_prefix(
         text.text + ":";
 }
 
-/// One timing per PHONEME GROUP -- a run of tokens between the space tokens Kokoro's own
-/// vocabulary carries -- from the durations its duration predictor produced.
-///
-/// ⚠ THIS IS A MEASUREMENT, NOT AN ESTIMATE, and that is the whole point. The model predicts a
-/// per-token frame count before the decoder runs, and the decoder upsamples by exactly those
-/// counts (`expand_tc_by_durations`), so a group's share of the output is known rather than
-/// guessed at. A caller that today spreads words across a buffer in proportion to their spelling
-/// can read the model's own answer instead.
-///
-/// ⚠ A GROUP, NOT A WRITTEN WORD, and the label says so by carrying the group's PHONEMES. Nothing
-/// in this family maps tokens back to the input text: the built-in G2P emits a phoneme string and
-/// keeps no span, and on the supplied-phoneme path there is no text to map to at all. A group is
-/// one spoken word on both paths -- eSpeak separates words with the space symbol and a caller's
-/// stream does the same -- so the unit is right even though the label is phonemic. A caller that
-/// knows which of its words produced which group (its own G2P told it) can join the two; one that
-/// does not still gets the boundaries.
-///
-/// The frames->samples scale is derived from THIS CHUNK's audio rather than assumed from a hop
-/// length, so it stays correct if the decoder's upsampling ratio ever changes, and it absorbs the
-/// rounding in a chunk whose sample count is not an exact multiple of the frame count.
-void append_kokoro_word_timings(
-    std::vector<runtime::WordTimestamp> & out,
-    const std::vector<int32_t> & input_ids,
-    const std::vector<int32_t> & durations,
-    const KokoroAssets & assets,
-    size_t chunk_samples,
-    int64_t chunk_start_sample) {
-    // ⚠ REPORTS NOTHING RATHER THAN THROWING, and the distinction matters because of what this
-    // function is for. The audio is the product; the timings are an extra with a designed absence
-    // -- an empty list is exactly what a caller running against an older engine sees, and every
-    // caller therefore already has a path for it. Throwing here would turn a defect in a
-    // supplementary feature into a failed synthesis, which is a strictly worse outcome than the
-    // one it would be reporting. Emitting timings that point at the wrong audio WOULD be worse
-    // than silence, so the check stays; only its severity changes.
-    //
-    // The invariant does hold by construction today: the predictor sizes `durations` to
-    // `input_ids.size()` on both its padded and unpadded paths. This is here so that a later
-    // change to that cannot quietly produce a highlight that drifts.
-    if (input_ids.size() != durations.size()) {
-        // The one that means something is wrong, and therefore the only one that is traced: a
-        // chunk with no tokens or no audio is not a defect and a trace named for a skip would
-        // tell whoever reads it the opposite.
-        engine::debug::trace_log_scalar(
-            "kokoro.word_timings_token_mismatch", static_cast<int64_t>(input_ids.size()));
-        return;
-    }
-    if (chunk_samples == 0 || input_ids.empty()) {
-        return;
-    }
-
-    int64_t total_frames = 0;
-    for (const int32_t duration : durations) {
-        total_frames += duration;
-    }
-    if (total_frames <= 0) {
-        return;
-    }
-    const double samples_per_frame = static_cast<double>(chunk_samples) / static_cast<double>(total_frames);
-
-    // id -> symbol, for the labels. The vocabulary is ~114 entries and this runs once per chunk,
-    // against a decoder pass that is orders of magnitude more expensive.
-    std::unordered_map<int32_t, std::string> symbols;
-    symbols.reserve(assets.vocab.size());
-    int32_t space_id = -1;
-    for (const auto & [symbol, id] : assets.vocab) {
-        symbols.emplace(id, symbol);
-        if (symbol == " ") {
-            space_id = id;
-        }
-    }
-
-    // ⚠ PAD IS A BOUNDARY AND SO IS SPACE. The id sequence is [pad, ...ids..., pad]; treating pad
-    // as an ordinary token would glue the leading silence onto the first group. `space_id` is -1
-    // only for a vocabulary with no space symbol, which would make every token one group -- so the
-    // comparison is against a value no id can take rather than against a guess at 16.
-    int64_t frame = 0;
-    size_t index = 0;
-    while (index < input_ids.size()) {
-        const int32_t id = input_ids[index];
-        if (id == 0 || id == space_id) {
-            frame += durations[index];
-            ++index;
-            continue;
-        }
-        const int64_t group_start_frame = frame;
-        std::string label;
-        while (index < input_ids.size() && input_ids[index] != 0 && input_ids[index] != space_id) {
-            const auto it = symbols.find(input_ids[index]);
-            if (it != symbols.end()) {
-                label += it->second;
-            }
-            frame += durations[index];
-            ++index;
-        }
-        runtime::WordTimestamp timing;
-        timing.span.start_sample =
-            chunk_start_sample + static_cast<int64_t>(static_cast<double>(group_start_frame) * samples_per_frame);
-        timing.span.end_sample =
-            chunk_start_sample + static_cast<int64_t>(static_cast<double>(frame) * samples_per_frame);
-        timing.word = std::move(label);
-        // The model does not score its own duration prediction, and inventing a number here would
-        // be read as one. Left at 0, which the ABI documents as "no confidence reported".
-        out.push_back(std::move(timing));
-    }
-}
-
 /// Request options, validated against the package's own contract.
 ///
 /// Older standalone GGUF packages embed a schema-v1 contract written before
@@ -468,6 +363,129 @@ std::optional<runtime::VoiceCondition> voice_with_request_rate(
 }
 
 }  // namespace
+
+/// One timing per PHONEME GROUP -- a run of tokens between the space tokens Kokoro's own
+/// vocabulary carries -- from the durations its duration predictor produced.
+///
+/// ⚠ THIS IS A MEASUREMENT, NOT AN ESTIMATE, and that is the whole point. The model predicts a
+/// per-token frame count before the decoder runs, and the decoder upsamples by exactly those
+/// counts (`expand_tc_by_durations`), so a group's share of the output is known rather than
+/// guessed at. A caller that today spreads words across a buffer in proportion to their spelling
+/// can read the model's own answer instead.
+///
+/// ⚠ A GROUP, NOT A WRITTEN WORD, and the label says so by carrying the group's PHONEMES. Nothing
+/// in this family maps tokens back to the input text: the built-in G2P emits a phoneme string and
+/// keeps no span, and on the supplied-phoneme path there is no text to map to at all. A group is
+/// one spoken word on both paths -- eSpeak separates words with the space symbol and a caller's
+/// stream does the same -- so the unit is right even though the label is phonemic. A caller that
+/// knows which of its words produced which group (its own G2P told it) can join the two; one that
+/// does not still gets the boundaries.
+///
+/// The frames->samples scale is derived from THIS CHUNK's audio rather than assumed from a hop
+/// length, so it stays correct if the decoder's upsampling ratio ever changes, and it absorbs the
+/// rounding in a chunk whose sample count is not an exact multiple of the frame count.
+void append_kokoro_word_timings(
+    std::vector<runtime::WordTimestamp> & out,
+    const std::vector<int32_t> & input_ids,
+    const std::vector<int32_t> & durations,
+    const std::unordered_map<std::string, int32_t> & vocab,
+    size_t chunk_samples,
+    int64_t chunk_start_sample) {
+    // ⚠ REPORTS NOTHING RATHER THAN THROWING, and the distinction matters because of what this
+    // function is for. The audio is the product; the timings are an extra with a designed absence
+    // -- an empty list is exactly what a caller running against an older engine sees, and every
+    // caller therefore already has a path for it. Throwing here would turn a defect in a
+    // supplementary feature into a failed synthesis, which is a strictly worse outcome than the
+    // one it would be reporting. Emitting timings that point at the wrong audio WOULD be worse
+    // than silence, so the check stays; only its severity changes.
+    //
+    // The invariant does hold by construction today: the predictor sizes `durations` to
+    // `input_ids.size()` on both its padded and unpadded paths. This is here so that a later
+    // change to that cannot quietly produce a highlight that drifts.
+    if (input_ids.size() != durations.size()) {
+        // The one that means something is wrong, and therefore the only one that is traced: a
+        // chunk with no tokens or no audio is not a defect and a trace named for a skip would
+        // tell whoever reads it the opposite.
+        engine::debug::trace_log_scalar(
+            "kokoro.word_timings_token_mismatch", static_cast<int64_t>(input_ids.size()));
+        return;
+    }
+    if (chunk_samples == 0 || input_ids.empty()) {
+        return;
+    }
+
+    int64_t total_frames = 0;
+    for (const int32_t duration : durations) {
+        total_frames += duration;
+    }
+    if (total_frames <= 0) {
+        return;
+    }
+    const double samples_per_frame = static_cast<double>(chunk_samples) / static_cast<double>(total_frames);
+
+    // ⚠ A PUNCTUATION-ONLY GROUP IS NOT A WORD, and emitting one shifts every caller that joins
+    // its own words to these in order. The G2P spaces a mark that followed a space in the source,
+    // so `She said "hello" loudly.` -- four words -- phonemizes to `ʃi sˈɛd " həlˈO" lˈWdli.` and
+    // would report FIVE groups, the third being the opening quote. From there the caller's third
+    // word is on the fourth group and stays one out for the rest of the chunk. The mark's frames
+    // are real and are still consumed; they simply belong between words rather than to one, the
+    // same way the space token's do.
+    static const std::unordered_set<std::string> punctuation = {
+        ";", ":", ",", ".", "!", "?", "-", "\u2014", "\u2026", "\"", "(", ")",
+        "\u201C", "\u201D", "\u2018", "\u2019", "'",
+    };
+
+    // id -> symbol, for the labels. The vocabulary is ~114 entries and this runs once per chunk,
+    // against a decoder pass that is orders of magnitude more expensive.
+    std::unordered_map<int32_t, std::string> symbols;
+    symbols.reserve(vocab.size());
+    int32_t space_id = -1;
+    for (const auto & [symbol, id] : vocab) {
+        symbols.emplace(id, symbol);
+        if (symbol == " ") {
+            space_id = id;
+        }
+    }
+
+    // ⚠ PAD IS A BOUNDARY AND SO IS SPACE. The id sequence is [pad, ...ids..., pad]; treating pad
+    // as an ordinary token would glue the leading silence onto the first group. `space_id` is -1
+    // only for a vocabulary with no space symbol, which would make every token one group -- so the
+    // comparison is against a value no id can take rather than against a guess at 16.
+    int64_t frame = 0;
+    size_t index = 0;
+    while (index < input_ids.size()) {
+        const int32_t id = input_ids[index];
+        if (id == 0 || id == space_id) {
+            frame += durations[index];
+            ++index;
+            continue;
+        }
+        const int64_t group_start_frame = frame;
+        std::string label;
+        bool spoken = false;
+        while (index < input_ids.size() && input_ids[index] != 0 && input_ids[index] != space_id) {
+            const auto it = symbols.find(input_ids[index]);
+            if (it != symbols.end()) {
+                label += it->second;
+                spoken = spoken || punctuation.find(it->second) == punctuation.end();
+            }
+            frame += durations[index];
+            ++index;
+        }
+        if (!spoken) {
+            continue;   // a standalone mark: its frames are consumed, no word is reported
+        }
+        runtime::WordTimestamp timing;
+        timing.span.start_sample =
+            chunk_start_sample + static_cast<int64_t>(static_cast<double>(group_start_frame) * samples_per_frame);
+        timing.span.end_sample =
+            chunk_start_sample + static_cast<int64_t>(static_cast<double>(frame) * samples_per_frame);
+        timing.word = std::move(label);
+        // The model does not score its own duration prediction, and inventing a number here would
+        // be read as one. Left at 0, which the ABI documents as "no confidence reported".
+        out.push_back(std::move(timing));
+    }
+}
 
 void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
     validate_request_options(request.options, request.option_arrays, *contract_);
@@ -647,7 +665,7 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
             word_timestamps,
             input.input_ids,
             predictor.durations,
-            *assets_,
+            assets_->vocab,
             audio.size(),
             static_cast<int64_t>(merged_audio.samples.size()));
         runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{24000, 1, std::move(audio)});

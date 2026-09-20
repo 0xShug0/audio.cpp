@@ -146,3 +146,31 @@ python tools/prepare_kokoro_gguf.py \
 
 The detailed validation notes live in
 [`tests/kokoro_tts/MULTILINGUAL_GGUF.md`](../../tests/kokoro_tts/MULTILINGUAL_GGUF.md).
+
+## Word timestamps
+
+Kokoro predicts a per-token frame count before the decoder runs, and the decoder upsamples by
+exactly those counts, so where each unit lands in the output is known rather than estimated. The
+family reports it through `word_timestamps` (`audiocpp_result_word()`, `--words-out`, and the
+`word_timestamps=` line the CLI prints when that flag is absent).
+
+Four things a caller needs to know to consume it:
+
+- **The unit is a phoneme group, not a written word.** A group is a run of tokens between the space
+  tokens Kokoro's vocabulary carries. Nothing in this family maps tokens back to the input text —
+  the built-in G2P keeps no span, and with supplied phonemes there is no text being spoken at all —
+  so a group is the finest unit that exists here. On ordinary prose it is one spoken word.
+- **The label is the group's phonemes**, in Kokoro's own alphabet, not the written word. A caller
+  whose own G2P produced the stream knows which of its words became which group and can join the
+  two in order; the groups are emitted in output order with no gaps in the sequence.
+- **Punctuation the G2P spaced off is not reported.** An opening quote or a dash that stood alone
+  gets no entry of its own, because reporting one would shift a caller joining words to groups in
+  order. Its duration is still consumed, so the following group starts after it. A mark attached to
+  a word (`lˈɛft.`) stays part of that word's span, which means a sentence-final pause falls inside
+  the last word rather than after it.
+- **Spans are in output samples at the result's own sample rate**, and `confidence` is always 0:
+  the model does not score its own duration prediction and any number there would be read as one.
+
+⚠ A package published before this existed embeds a model contract that does not declare the
+capability, so `audiocpp_model_supports_timestamps()` reports 0 against it even though the timings
+are reported. Regenerate the package to make the two agree.
