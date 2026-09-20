@@ -812,6 +812,35 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(piper_tts
+    SOURCES
+        src/community_models/piper_tts/assets.cpp
+        src/community_models/piper_tts/frontend.cpp
+        src/community_models/piper_tts/vits_runtime.cpp
+        src/community_models/piper_tts/session.cpp
+    INCLUDES
+        engine/community_models/piper_tts/session.h
+    LOADERS
+        engine::models::piper_tts::make_piper_tts_loader
+)
+
+audiocpp_add_model(kitten_tts
+    SOURCES
+        src/community_models/kitten_tts/assets.cpp
+        src/community_models/kitten_tts/decoder.cpp
+        src/community_models/kitten_tts/frontend.cpp
+        src/community_models/kitten_tts/plbert.cpp
+        src/community_models/kitten_tts/predictor.cpp
+        src/community_models/kitten_tts/session.cpp
+    INCLUDES
+        engine/community_models/kitten_tts/session.h
+    LOADERS
+        engine::models::kitten_tts::make_kitten_tts_loader
+)
+if(MSVC)
+    target_compile_options(engine_model_kitten_tts PRIVATE /utf-8)
+endif()
+
 audiocpp_add_model(f5_tts
     SOURCES
         src/community_models/f5_tts/session.cpp

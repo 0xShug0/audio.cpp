@@ -26,6 +26,7 @@ Practical expectations:
 | **granite5asr** | ASR | en | Community | [IBM Granite Speech 5.0 470M TurboCTC](granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
 | **inflect_v2** | TTS | en | Community | [Inflect Micro v2 and Nano v2](inflect_v2.md) native FP32 offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
+| **kitten_tts** | TTS | en | Community | [KittenTTS Mini 0.8](kitten_tts.md) native 80M-parameter synthesis with eight built-in voices and the shared eSpeak-ng frontend |
 | **liveavatar** | Audio-to-video | auto | [@0xShug0](https://github.com/0xShug0) | [LiveAvatar](liveavatar.md) audio-to-video avatar generation with Wan2.2 S2V and an optional low-VRAM denoiser path |
 | **mms_forced_aligner** | Align | nl (nld), en (eng); pre-romanized Latin | Community | [MMS-300M-1130 Forced Aligner](mms_forced_aligner.md) word-timestamp alignment from a wav2vec2 CTC checkpoint (safetensors or local GGUF) |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
@@ -36,6 +37,7 @@ Practical expectations:
 | **sopro_tts** | TTS, voice cloning | en, pt, fr, de | Community | [Sopro V2 Turbo](sopro_tts.md) 120M zero-shot cloning — SentencePiece text, style-prefix semantic LM over FSQ tokens, two-step rectified-flow acoustic DiT, Vocos ISTFT vocoder at 24 kHz; offline plus segment-level streaming |
 | **voxcpm1** | TTS, voice cloning | zh, en, ja, ko | Community | [VoxCPM1](voxcpm1.md) tokenizer-free 0.5B TTS with 16 kHz output, streaming, and continuation-mode voice cloning |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support, plus the Orukeet r3 weight variant |
+| **piper_tts** | TTS | en | Community | [Piper TTS](piper_tts.md) native VITS synthesis for the Lessac medium voice with the shared eSpeak-ng frontend |
 | **sanotts** | TTS | en, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne, hi | Community | [sanoTTS voice family](sanotts.md) eighteen voices from 294k to 2.27M parameters, FP32 offline synthesis |
 | **sense_asr** | ASR | auto, zh, en, yue, ja, ko, pt, ru, es, it, fr, de, nl, pl, tr, ar, hi, vi, th, id, ms, fa, nospeech | Jason Chen [@jasonchen31](https://github.com/jasonchen31), [@LauraGPT](https://github.com/LauraGPT) / FunASR | [SenseVoice-Small](sense_asr.md) offline/streaming SAN-M + CTC transcription with event/emotion/language tags and ITN |
 | **sortformer_diar_v2** | Diarization | multilingual | Community | [NVIDIA Sortformer v2.1](sortformer_diar_v2.md) four-speaker streaming diarization with local F32 and mixed-F16 conversion profiles |
