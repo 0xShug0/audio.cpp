@@ -131,11 +131,13 @@ run_linux_job() {
     run_loader_check "$image"
 
     echo "--- configure ($backend)"
+    # Keep these flags in step with the Configure step of linux-build.yml.
     docker_run "$image" "cmake -S . -B '$build_dir' \
         -DCMAKE_BUILD_TYPE=Debug \
         -DAUDIOCPP_VERSION=ci \
         -DENGINE_ENABLE_CUDA=OFF \
-        -DENGINE_ENABLE_VULKAN=$vulkan"
+        -DENGINE_ENABLE_VULKAN=$vulkan \
+        -DENGINE_BUILD_TESTS=ON"
 
     echo "--- build ($backend)"
     docker_run "$image" "cmake --build '$build_dir' --parallel \$(nproc) \
