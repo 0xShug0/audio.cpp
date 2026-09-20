@@ -759,7 +759,8 @@ audiocpp_cli --task tts --family supertonic --model /path/to/supertonic-3 --back
 | `--voice-id` | `M1`-`M5`, `F1`-`F5` | `M1` | Preset voice. |
 | `--language` | language code | `en` | Text language. |
 | `--num-inference-steps` | integer | `8` | Flow denoising steps. |
-| `--request-option speaking_rate=<float>` | float | `1.05` | Speech speed multiplier. |
+| `--request-option speed=<float>` | float | `1.05` | Speech speed multiplier. |
+| `--request-option speaking_rate=<float>` | float | `1.05` | Alias for `speed`. |
 | `--seed` | integer | `1234` | Noise seed. |
 | `--text-chunk-size` | characters | `300`, or `120` for `ko`/`ja` | Framework long-form text chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |

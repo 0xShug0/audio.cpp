@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::models::kokoro_tts {
@@ -324,23 +325,47 @@ void validate_request_options(
     const std::unordered_map<std::string, std::string> & options,
     const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
     const engine::model_spec::ModelContract & contract) {
-    if (contract.request_option_keys.find(kPhonemesOption) != contract.request_option_keys.end()) {
+    const bool old_phonemes = contract.request_option_keys.find(kPhonemesOption) == contract.request_option_keys.end();
+    const bool old_speed = contract.request_option_keys.find("speed") == contract.request_option_keys.end();
+    const bool old_speaking_rate = contract.request_option_keys.find("speaking_rate") == contract.request_option_keys.end();
+    if (!old_phonemes && !old_speed && !old_speaking_rate) {
         runtime::validate_spec_backed_request_options(options, option_arrays, contract, kModelName);
         return;
     }
-    // Keys only: the validator reads names, and copying the map wholesale would copy every
-    // supplied phoneme string to drop one entry from it.
+    std::unordered_map<std::string, std::string> validation_options;
+    for (const auto & [key, _] : options) {
+        if ((key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate)) continue;
+        validation_options.emplace(key, std::string{});
+    }
+    // Keys only: the validator reads names, not the supplied values.
     std::unordered_map<std::string, std::vector<std::string>> validation_arrays;
     for (const auto & [key, _] : option_arrays) {
-        if (key != kPhonemesOption) validation_arrays.emplace(key, std::vector<std::string>{});
+        if ((key == kPhonemesOption && old_phonemes) ||
+            (key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate)) continue;
+        validation_arrays.emplace(key, std::vector<std::string>{});
     }
-    runtime::validate_spec_backed_request_options(options, validation_arrays, contract, kModelName);
+    runtime::validate_spec_backed_request_options(validation_options, validation_arrays, contract, kModelName);
+}
+
+std::optional<runtime::VoiceCondition> voice_with_request_rate(
+    const std::optional<runtime::VoiceCondition> & voice,
+    const std::unordered_map<std::string, std::string> & options) {
+    const auto rate = runtime::parse_positive_finite_float_option(options, {"speed", "speaking_rate"});
+    if (!rate.has_value() || (voice.has_value() && voice->style.has_value() &&
+                              voice->style->speaking_rate.has_value())) {
+        return voice;
+    }
+    auto resolved = voice.value_or(runtime::VoiceCondition{});
+    if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
+    resolved.style->speaking_rate = *rate;
+    return resolved;
 }
 
 }  // namespace
 
 void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
     validate_request_options(request.options, request.option_arrays, *contract_);
+    const auto voice = voice_with_request_rate(request.voice, request.options);
     if (const auto seed = runtime::parse_u64_option(request.options, {"seed"})) {
         if (rng_seed_ != *seed) {
             rng_seed_ = *seed;
@@ -365,7 +390,7 @@ void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & reques
             runtime::SessionPreparationRequest chunk_request = request;
             chunk_request.text = runtime::Transcript{chunk, request.text->language};
             const auto frontend_state =
-                resolve_kokoro_frontend_session_state(chunk_request.text, chunk_request.voice, *assets_);
+                resolve_kokoro_frontend_session_state(chunk_request.text, voice, *assets_);
             if (prepare_phonemes.empty()) {
                 request_size = std::max(
                     request_size,
@@ -397,6 +422,7 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
         throw std::runtime_error("Kokoro TTS run requires text_input");
     }
     validate_request_options(request.options, request.option_arrays, *contract_);
+    const auto voice = voice_with_request_rate(request.voice, request.options);
 
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
@@ -432,7 +458,7 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
     std::optional<KokoroFrontendSessionState> shared_state;
     std::string shared_key_prefix;
     if (supplied) {
-        shared_state = resolve_kokoro_frontend_session_state(request.text_input, request.voice, *assets_);
+        shared_state = resolve_kokoro_frontend_session_state(request.text_input, voice, *assets_);
         shared_key_prefix = cache_key_prefix(*shared_state, *request.text_input);
     }
     for (size_t chunk_index = 0; chunk_index < chunk_count; ++chunk_index) {
@@ -442,7 +468,7 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
                      : std::optional<std::string_view>{};
         const auto frontend_state = supplied
             ? *shared_state
-            : resolve_kokoro_frontend_session_state(chunk_request.text_input, chunk_request.voice, *assets_);
+            : resolve_kokoro_frontend_session_state(chunk_request.text_input, voice, *assets_);
         const std::string cache_key =
             (supplied ? shared_key_prefix : cache_key_prefix(frontend_state, *chunk_request.text_input)) +
             // Without this, two requests with the same text and different supplied phonemes

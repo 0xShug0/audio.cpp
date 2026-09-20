@@ -1312,6 +1312,12 @@ void ServerState::refresh_model_option_flags(LoadedModel & model) {
         "language",
         effective_override,
         model.config.path);
+    if (model.config.task == "tts") {
+        model.accepts_speed = model_accepts_request_option(
+            model.config.family, "speed", effective_override, model.config.path);
+        model.accepts_speaking_rate = model_accepts_request_option(
+            model.config.family, "speaking_rate", effective_override, model.config.path);
+    }
 }
 
 HttpResponse ServerState::handle_model_load(const std::string & body_text) {
@@ -2097,6 +2103,27 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
     }
     if (const auto * value = body.find("reference_text")) {
         request.options["reference_text"] = value->as_string();
+    }
+    const auto * speed = body.find("speed");
+    if (speed == nullptr) {
+        speed = body.find("speaking_rate");
+    }
+    if (speed != nullptr) {
+        const float rate = static_cast<float>(speed->as_number());
+        if (!std::isfinite(rate) || rate <= 0.0f) {
+            throw std::runtime_error("speed must be a positive finite number");
+        }
+        if (!model.accepts_speed && !model.accepts_speaking_rate && model.config.family != "kokoro_tts") {
+            throw std::runtime_error("speed is not supported by this model");
+        }
+        if (model.accepts_speed) {
+            request.options["speed"] = std::to_string(rate);
+        } else if (model.accepts_speaking_rate) {
+            request.options["speaking_rate"] = std::to_string(rate);
+        }
+        voice.style = engine::runtime::StyleCondition{};
+        voice.style->speaking_rate = rate;
+        has_voice = true;
     }
     if (has_voice) {
         request.voice = std::move(voice);
