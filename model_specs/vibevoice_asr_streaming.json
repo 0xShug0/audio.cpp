@@ -1,7 +1,7 @@
 {
   "family": "vibevoice_asr_streaming",
-  "display_name": "VibeVoice ASR Streaming 7B",
-  "description": "Microsoft VibeVoice ASR Streaming 7B model for chunked streaming speech-to-text with persistent decoder state.",
+  "display_name": "VibeVoice ASR Streaming",
+  "description": "Microsoft VibeVoice ASR Streaming models (7B and 1.5B) for chunked streaming speech-to-text with persistent decoder state.",
   "category": "asr",
   "status": "supported",
   "tasks": [
@@ -180,6 +180,54 @@
       "files": [
         "vibevoice-asr-streaming-7b-q4_k.gguf"
       ]
+    },
+    {
+      "id": "vibevoice_asr_streaming_1_5b_q8_0",
+      "display_name": "VibeVoice ASR Streaming 1.5B Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VibeVoice-ASR-Streaming-1.5B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-1.5b-q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "vibevoice_asr_streaming_1_5b_bf16",
+      "display_name": "VibeVoice ASR Streaming 1.5B BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VibeVoice-ASR-Streaming-1.5B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-1.5b-bf16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "vibevoice_asr_streaming_1_5b_q4_k",
+      "display_name": "VibeVoice ASR Streaming 1.5B Q4_K GGUF",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "VibeVoice-ASR-Streaming-1.5B-GGUF",
+      "files": [
+        "vibevoice-asr-streaming-1.5b-q4_k.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF",
+        "revision": "main",
+        "gated": false
+      }
     }
   ],
   "sources": [
