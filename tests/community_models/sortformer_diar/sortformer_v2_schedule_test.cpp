@@ -76,6 +76,7 @@ void compare(const std::vector<SortformerV2StreamWindow> & a, const std::vector<
 void test_stream_features_match_continuous() {
     SortformerV2Assets assets;
     assets.feature_config = frontend();
+    assets.frontend = std::make_shared<engine::audio::NemoMelFrontend>(make_sortformer_v2_frontend(assets));
     std::vector<float> samples(20000);
     for (size_t i = 0; i < samples.size(); ++i) samples[i] = std::sin(static_cast<float>(i) * 0.013f);
 
