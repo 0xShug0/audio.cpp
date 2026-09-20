@@ -6,6 +6,7 @@
 #include <array>
 #include <vector>
 #include <map>
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <mutex>
@@ -35,9 +36,10 @@
 
 std::mutex lock;
 std::vector<std::pair<std::string, std::string>> shader_fnames;
-// Set when a shader yields no SPIR-V, so the build stops at generation rather
-// than at a link error that points nowhere useful.
-bool generation_failed = false;
+// Set when a shader fails to compile or yields no SPIR-V, so the build stops at
+// generation rather than at a link error that points nowhere useful. Written
+// from the compile threads, so it has to be atomic.
+std::atomic<bool> generation_failed{false};
 std::locale c_locale("C");
 
 std::string GLSLC = "glslc";
@@ -82,7 +84,7 @@ enum MatMulIdType {
 
 namespace {
 
-void execute_command(std::vector<std::string>& command, std::string& stdout_str, std::string& stderr_str) {
+int execute_command(std::vector<std::string>& command, std::string& stdout_str, std::string& stderr_str) {
 #ifdef _WIN32
     HANDLE stdout_read, stdout_write;
     HANDLE stderr_read, stderr_write;
@@ -131,8 +133,11 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
     CloseHandle(stdout_read);
     CloseHandle(stderr_read);
     WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    return (int)exit_code;
 #else
     int stdout_pipe[2];
     int stderr_pipe[2];
@@ -179,7 +184,9 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
 
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
-        waitpid(pid, nullptr, 0);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
 #endif
 }
@@ -377,24 +384,31 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
 
     std::string stdout_str, stderr_str;
     try {
-        // Success is judged by the artefact, not by stderr. Judging by stderr
-        // discards a shader over a warning, and misses the case that matters
-        // more: a compile that reports nothing and writes nothing.
-        //
-        // An empty result is retried rather than accepted. It has been seen in
-        // CI with no accompanying diagnostic, and retrying costs milliseconds
-        // on a genuinely broken shader while saving a build that would
-        // otherwise fail much later at link, naming a symbol whose absence has
-        // no visible cause.
+        // A compile can report success and still leave no SPIR-V behind. That
+        // has been observed in CI, and because the generated header declares
+        // every shader unconditionally, the gap only surfaces at link as an
+        // undefined reference to a generated symbol, long after the cause is
+        // visible. Judge by the exit code first, then by the artefact, and
+        // retry an empty result before giving up.
         constexpr int max_attempts = 3;
+        int exit_code = 0;
         bool produced = false;
 
         for (int attempt = 1; attempt <= max_attempts && !produced; ++attempt) {
             stdout_str.clear();
             stderr_str.clear();
-            execute_command(cmd, stdout_str, stderr_str);
-            produced = spv_is_usable(out_path);
 
+            // Drop any earlier artefact first, so a compile that reports
+            // success without writing cannot be credited to a stale file.
+            std::error_code ec;
+            std::filesystem::remove(out_path, ec);
+
+            exit_code = execute_command(cmd, stdout_str, stderr_str);
+            if (exit_code != 0 || !stderr_str.empty()) {
+                break;
+            }
+
+            produced = spv_is_usable(out_path);
             if (!produced && attempt < max_attempts) {
                 std::cerr << "shader " << name << " produced no SPIR-V; retrying ("
                           << (attempt + 1) << "/" << max_attempts << ")" << std::endl;
@@ -402,9 +416,8 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
             }
         }
 
-        if (!produced) {
-            std::cerr << "cannot compile " << name << " after " << max_attempts
-                      << " attempts\n\n";
+        if (exit_code != 0 || !stderr_str.empty()) {
+            std::cerr << "cannot compile " << name << " (exit code " << exit_code << ")\n\n";
             for (const auto& part : cmd) {
                 std::cerr << part << " ";
             }
@@ -413,11 +426,11 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
             return;
         }
 
-        if (!stderr_str.empty()) {
-            // Diagnostics alongside a usable artefact are warnings. Keeping the
-            // shader is the point: dropping it is what leaves a declaration
-            // with no definition.
-            std::cerr << "warnings compiling " << name << ":\n" << stderr_str << std::endl;
+        if (!produced) {
+            std::cerr << "cannot compile " << name << ": no SPIR-V produced after "
+                      << max_attempts << " attempts (" << out_path << ")" << std::endl;
+            generation_failed = true;
+            return;
         }
 
         if (dep_file) {
@@ -436,6 +449,7 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
         shader_fnames.push_back(std::make_pair(name, out_path));
     } catch (const std::exception& e) {
         std::cerr << "Error executing command for " << name << ": " << e.what() << std::endl;
+        generation_failed = true;
     }
 }
 
