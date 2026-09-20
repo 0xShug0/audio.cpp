@@ -40,9 +40,10 @@ server-wide value.
 
 ## Support And Test Status
 
-AuK's experimental original-weight GGUF includes the flow model, VAE, Qwen
-conditioning components, and tokenizer resources. Use explicit FP32 execution;
-quantized execution is not validated. See [AuK](models/auk.md) for CLI usage.
+AuK Base and AuK-Flash use separate GGUFs for the generator, Qwen conditioner,
+and VAE, plus config and tokenizer sidecars. F16 and Q8_0 components have smoke
+coverage, but full Python parity was measured only for the earlier combined
+GGUF with FP32 inference. See [AuK](community_models/auk.md) for CLI usage.
 
 Status labels:
 

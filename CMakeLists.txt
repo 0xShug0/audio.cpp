@@ -1603,13 +1603,13 @@ audiocpp_add_model(sheetsage2
 
 audiocpp_add_model(auk
     SOURCES
-        src/models/auk/audio_conditioning.cpp
-        src/models/auk/conditioning.cpp
-        src/models/auk/flow.cpp
-        src/models/auk/vae.cpp
-        src/models/auk/session.cpp
+        src/community_models/auk/audio_conditioning.cpp
+        src/community_models/auk/conditioning.cpp
+        src/community_models/auk/flow.cpp
+        src/community_models/auk/vae.cpp
+        src/community_models/auk/session.cpp
     INCLUDES
-        engine/models/auk/session.h
+        engine/community_models/auk/session.h
     LOADERS
         engine::models::auk::make_auk_loader
 )

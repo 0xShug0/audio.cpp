@@ -1,4 +1,4 @@
-#include "engine/models/auk/conditioning.h"
+#include "engine/community_models/auk/conditioning.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/lookup_modules.h"

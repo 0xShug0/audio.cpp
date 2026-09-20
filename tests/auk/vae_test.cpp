@@ -1,4 +1,4 @@
-#include "engine/models/auk/vae.h"
+#include "engine/community_models/auk/vae.h"
 #include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"

@@ -1,4 +1,4 @@
-#include "engine/models/auk/conditioning.h"
+#include "engine/community_models/auk/conditioning.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"

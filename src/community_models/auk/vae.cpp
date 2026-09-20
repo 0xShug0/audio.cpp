@@ -1,4 +1,4 @@
-#include "engine/models/auk/vae.h"
+#include "engine/community_models/auk/vae.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"

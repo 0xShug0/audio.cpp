@@ -2,9 +2,9 @@
 
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/model_spec/metadata.h"
-#include "engine/models/auk/conditioning.h"
-#include "engine/models/auk/flow.h"
-#include "engine/models/auk/vae.h"
+#include "engine/community_models/auk/conditioning.h"
+#include "engine/community_models/auk/flow.h"
+#include "engine/community_models/auk/vae.h"
 
 namespace engine::models::auk {
 

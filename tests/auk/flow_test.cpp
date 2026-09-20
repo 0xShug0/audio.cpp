@@ -1,7 +1,8 @@
-#include "engine/models/auk/flow.h"
-#include "engine/models/auk/vae.h"
-#include "engine/models/auk/conditioning.h"
-#include "engine/models/auk/session.h"
+#include "engine/community_models/auk/flow.h"
+#include "engine/community_models/auk/vae.h"
+#include "engine/community_models/auk/conditioning.h"
+#include "engine/community_models/auk/session.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/framework/audio/wav_writer.h"
@@ -64,7 +65,7 @@ int main(int argc, char ** argv) {
             engine::debug::trace_log_scalar("auk.session.device_used_before_bytes", before_session.used_bytes);
             auto session = std::make_unique<engine::models::auk::AukSession>(
                 engine::runtime::TaskSpec{explicit_task ? engine::runtime::parse_voice_task_kind(argv[8]) : engine::runtime::VoiceTaskKind::Tts,
-                 engine::runtime::RunMode::Offline}, options, assets);
+                 engine::runtime::RunMode::Offline}, options, assets, engine::runtime::require_model_contract("auk"));
             session->prepare({});
             std::vector<std::filesystem::path> fixtures{directory};
             if (alternate_fixture) {
@@ -195,7 +196,7 @@ int main(int argc, char ** argv) {
                 engine::debug::trace_log_scalar("auk.session.lifetime", lifetime + 1);
                 session = std::make_unique<engine::models::auk::AukSession>(
                     engine::runtime::TaskSpec{engine::runtime::VoiceTaskKind::Tts, engine::runtime::RunMode::Offline},
-                    options, assets);
+                    options, assets, engine::runtime::require_model_contract("auk"));
                 session->prepare({});
                 const auto result = session->run(lifetime_request);
                 if (!result.audio_output || result.audio_output->sample_rate != 24000 ||

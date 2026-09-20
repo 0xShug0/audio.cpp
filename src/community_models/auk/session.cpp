@@ -1,4 +1,4 @@
-#include "engine/models/auk/session.h"
+#include "engine/community_models/auk/session.h"
 
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"

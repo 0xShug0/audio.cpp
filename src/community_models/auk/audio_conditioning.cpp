@@ -1,4 +1,4 @@
-#include "engine/models/auk/conditioning.h"
+#include "engine/community_models/auk/conditioning.h"
 #include "engine/framework/modules/attention/transformer_blocks.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/graph_optimizer.h"
