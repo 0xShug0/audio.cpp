@@ -1,6 +1,125 @@
 {
   "cases": [
     {
+      "id": "auk_zero_shot_tts",
+      "coverage": "AuK zero-shot TTS with reference speaker audio",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "zero_shot",
+        "text": "Say the following with the same voice: 'Ladies and gentlemen, it's an honor to have the opportunity to address such a distinguished audience'",
+        "voice_ref": "reference/AuK/assets/demo-input-audio/zero-shot-tts/ref.wav",
+        "options": {"duration_sec": 6.0},
+        "seed": 42
+      }]
+    },
+    {
+      "id": "auk_instruct_tts",
+      "coverage": "AuK instruction TTS without reference audio",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "instruct",
+        "text": "Welcome home. How was work today?",
+        "options": {"instruct": "A calm woman speaking clear English at a natural pace.", "duration_sec": 3.0},
+        "seed": 42
+      }]
+    },
+    {
+      "id": "auk_speech_content_edit",
+      "coverage": "AuK speech content replacement",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "gen",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "replace_words",
+        "audio": "reference/AuK/assets/demo-input-audio/content-edit/content.wav",
+        "text": "Replace 'but accepting what we cannot have' with 'and living well with dreams unmet'.",
+        "options": {"duration_sec": 7.0},
+        "seed": 42
+      }]
+    },
+    {
+      "id": "auk_lyric_edit",
+      "coverage": "AuK lyric replacement in isolated vocals",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "gen",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "replace_lyrics",
+        "audio": "reference/AuK/assets/demo-input-audio/vocal-edit/vocaledit-en-1-input.wav",
+        "text": "Change \"rear view\" to \"like you\" in the vocal recording.",
+        "seed": 42
+      }]
+    },
+    {
+      "id": "auk_speech_enhancement",
+      "coverage": "AuK speech denoising and dereverberation",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "gen",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "enhance",
+        "audio": "reference/AuK/assets/demo-input-audio/se/se-zh-1-input.wav",
+        "text": "Preserve all speakers, remove noise and reverberation, and output clean speech of the same length.",
+        "seed": 42
+      }]
+    },
+    {
+      "id": "auk_flash_zero_shot_tts",
+      "coverage": "AuK-Flash fixed-schedule zero-shot TTS",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "tts",
+      "session_options": {"auk.variant": "flash"},
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "zero_shot",
+        "text": "Say the following with the same voice: 'Ladies and gentlemen, it's an honor to have the opportunity to address such a distinguished audience'",
+        "voice_ref": "reference/AuK/assets/demo-input-audio/zero-shot-tts/ref.wav",
+        "options": {"duration_sec": 6.0},
+        "seed": 42
+      }]
+    },
+    {
+      "id": "auk_flash_instruct_tts",
+      "coverage": "AuK-Flash fixed-schedule instruction TTS",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "tts",
+      "session_options": {"auk.variant": "flash"},
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "instruct",
+        "text": "Welcome home. How was work today?",
+        "options": {"instruct": "A calm woman speaking clear English at a natural pace.", "duration_sec": 3.0},
+        "seed": 42
+      }]
+    },
+    {
+      "id": "auk_flash_speech_content_edit",
+      "coverage": "AuK-Flash fixed-schedule speech content replacement",
+      "family": "auk",
+      "model": "models/AuK-Base-and-Flash-GGUF",
+      "task": "gen",
+      "session_options": {"auk.variant": "flash"},
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "replace_words",
+        "audio": "reference/AuK/assets/demo-input-audio/content-edit/content.wav",
+        "text": "Replace 'but accepting what we cannot have' with 'and living well with dreams unmet'.",
+        "options": {"duration_sec": 7.0},
+        "seed": 42
+      }]
+    },
+    {
       "id": "ace_step_turbo_text2music_long_chunk",
       "coverage": "ACE-Step turbo text2music, planner, DiT, long VAE decode chunking, then shorter request in the same session",
       "family": "ace_step",

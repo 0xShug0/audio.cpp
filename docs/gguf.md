@@ -40,6 +40,10 @@ server-wide value.
 
 ## Support And Test Status
 
+AuK's experimental original-weight GGUF includes the flow model, VAE, Qwen
+conditioning components, and tokenizer resources. Use explicit FP32 execution;
+quantized execution is not validated. See [AuK](models/auk.md) for CLI usage.
+
 Status labels:
 
 | Label | Meaning |

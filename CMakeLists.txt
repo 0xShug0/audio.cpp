@@ -1601,6 +1601,22 @@ audiocpp_add_model(sheetsage2
         engine::models::sheetsage::make_sheetsage2_loader
 )
 
+audiocpp_add_model(auk
+    SOURCES
+        src/models/auk/audio_conditioning.cpp
+        src/models/auk/conditioning.cpp
+        src/models/auk/flow.cpp
+        src/models/auk/vae.cpp
+        src/models/auk/session.cpp
+    INCLUDES
+        engine/models/auk/session.h
+    LOADERS
+        engine::models::auk::make_auk_loader
+)
+if(TARGET engine_model_auk)
+    target_link_libraries(engine_model_auk PRIVATE yaml_vendor)
+endif()
+
 audiocpp_add_model(supertonic
     SOURCES
         src/models/supertonic/assets.cpp
@@ -2631,6 +2647,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_executable(${target} ${source})
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
+
+    add_engine_unittest(auk_conditioning_test tests/auk/conditioning_test.cpp)
+    add_engine_unittest(auk_vae_test tests/auk/vae_test.cpp)
+    add_engine_unittest(auk_flow_test tests/auk/flow_test.cpp)
 
     add_engine_unittest(sortformer_v2_aosc_test tests/community_models/sortformer_diar/sortformer_v2_aosc_test.cpp)
     add_test(NAME sortformer_v2_aosc_test COMMAND sortformer_v2_aosc_test)
