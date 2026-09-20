@@ -1042,12 +1042,12 @@ public:
   }
 
   void release_runtime_memory() {
+    // The streaming graph references the request's AudioVAEStreamingDecodeState;
+    // the session calls this before that state is destroyed.
     release_streaming_decoder_graph();
     release_decoder_graph();
     release_encoder_graph_impl();
   }
-
-  void release_streaming_decode_graph() { release_streaming_decoder_graph(); }
 
   void release_encoder_graph() { release_encoder_graph_impl(); }
 
@@ -1578,10 +1578,6 @@ VoxCPM1EncodedPrompt VoxCPM1AudioVAEDecoderRuntime::encode_prompt_audio(
 
 void VoxCPM1AudioVAEDecoderRuntime::release_runtime_memory() {
   impl_->release_runtime_memory();
-}
-
-void VoxCPM1AudioVAEDecoderRuntime::release_streaming_decode_graph() {
-  impl_->release_streaming_decode_graph();
 }
 
 void VoxCPM1AudioVAEDecoderRuntime::release_encoder_graph() {
