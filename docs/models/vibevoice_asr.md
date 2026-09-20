@@ -281,6 +281,7 @@ are identical. It is a drop-in smaller package, not a separate family.
 | Family | `vibevoice_asr_streaming` |
 | Model package | `vibevoice_asr_streaming_1_5b_q8_0` |
 | Model directory | `models/VibeVoice-ASR-Streaming-1.5B-GGUF` |
+| GGUF repo | <https://huggingface.co/christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF> |
 | Upstream weights | <https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B> |
 | Task, modes, output, timestamps | As the streaming 7B above |
 

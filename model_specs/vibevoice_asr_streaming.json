@@ -192,7 +192,7 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/VibeVoice-ASR-Streaming-1.5B-GGUF",
+        "repo": "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF",
         "revision": "main",
         "gated": false
       }
@@ -208,7 +208,7 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/VibeVoice-ASR-Streaming-1.5B-GGUF",
+        "repo": "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF",
         "revision": "main",
         "gated": false
       }
@@ -224,7 +224,7 @@
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "audio-cpp/VibeVoice-ASR-Streaming-1.5B-GGUF",
+        "repo": "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF",
         "revision": "main",
         "gated": false
       }
