@@ -2,6 +2,7 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
+| AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](community_models/auk.md) |
 | Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
 | Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |

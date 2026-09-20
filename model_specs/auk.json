@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "family": "auk",
+  "display_name": "AuK",
+  "description": "Tencent AuK base and AuK-Flash speech generation and editing models.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "edit"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "cuda",
+      "gguf"
+    ]
+  },
+  "ui": {
+    "tags": [
+      "TTS",
+      "Edit"
+    ],
+    "docs": [
+      "docs/community_models/auk.md"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "speaker_reference"
+    ],
+    "edit": [
+      "prompt_editing"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "instruct",
+        "type": "string",
+        "description": "TTS voice description. Without it, text carries the complete upstream instruction; editing instructions always go in text.",
+        "required": false
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Positive output duration in seconds. Required without reference audio; otherwise defaults to the valid reference duration.",
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Euler sampling steps for AuK base; AuK-Flash always uses its fixed four-step schedule.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Batched guidance strength for AuK base; AuK-Flash always disables classifier-free guidance.",
+        "required": false,
+        "default": 2.0
+      },
+      {
+        "name": "sway_sampling_coef",
+        "type": "float",
+        "description": "Sway coefficient for AuK base; ignored by AuK-Flash.",
+        "required": false,
+        "default": -1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Nonnegative noise seed, or -1 for a random seed.",
+        "required": false,
+        "min": -1,
+        "default": -1
+      }
+    ],
+    "session": [
+      {
+        "name": "variant",
+        "type": "enum",
+        "values": ["base", "flash"],
+        "description": "AuK generation schedule; select flash with an AuK-Flash component.",
+        "required": false,
+        "default": "base"
+      },
+      {
+        "name": "model_gguf",
+        "type": "string",
+        "description": "AuK base or Flash generator GGUF relative to the model root; defaults to the selected variant's F32 file.",
+        "required": false
+      },
+      {
+        "name": "qwen_gguf",
+        "type": "string",
+        "description": "Qwen2.5-Omni-3B conditioning GGUF relative to the model root.",
+        "required": false,
+        "default": "qwen2.5-omni-3b-bf16.gguf"
+      },
+      {
+        "name": "vae_gguf",
+        "type": "string",
+        "description": "AuK VAE GGUF relative to the model root.",
+        "required": false,
+        "default": "auk-vae-f32.gguf"
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "values": ["auto", "flash", "eager"],
+        "description": "Flow-model attention mode.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release Qwen conditioning and generation weights between stages to reduce peak VRAM.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
+  "dependencies": [],
+  "packages": [],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "base_config": "model:config/auk-base.yaml",
+        "flash_config": "model:config/auk-flash.yaml",
+        "tokenizer_json": "model:tokenizer/tokenizer.json",
+        "tokenizer_config": "model:tokenizer/tokenizer_config.json"
+      }
+    }
+  ]
+}
