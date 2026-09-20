@@ -480,6 +480,7 @@ Because the body carries audio rather than JSON, parameters are query parameters
 | `channels` | `1` | interleaved channel count |
 | `sample_format` | `s16le` | `s16le` or `f32le` |
 | `language` | unset | passed through to the model |
+| `prompt` | unset | URL-encoded recognition context (hotwords, spellings), same as the multipart `prompt` field |
 | `busy_timeout_ms` | model policy | how long to wait for the model lock, as elsewhere; clamped by the configured ceiling, so a request can shorten its own wait but never weaken the guard |
 
 ```bash
