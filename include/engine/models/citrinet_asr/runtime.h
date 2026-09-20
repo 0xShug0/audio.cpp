@@ -21,6 +21,16 @@ struct CitrinetInferenceResult {
     std::vector<float> logits;
 };
 
+struct CitrinetFrontendFeatures {
+    std::vector<float> values;
+    int64_t raw_frames = 0;
+    int64_t padded_frames = 0;
+};
+
+CitrinetFrontendFeatures extract_citrinet_frontend(
+    const runtime::AudioBuffer & audio,
+    const CitrinetWeights & weights);
+
 struct CitrinetTranscriptionResult {
     std::string text;
     std::vector<int32_t> token_ids;

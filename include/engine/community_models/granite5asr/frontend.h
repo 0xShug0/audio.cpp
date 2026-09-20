@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/community_models/granite5asr/assets.h"
 
@@ -20,15 +20,8 @@ public:
     explicit Granite5Frontend(std::shared_ptr<const Granite5ASRAssets> assets);
 
     Granite5FrontendFeatures extract(const runtime::AudioBuffer & audio) const;
-    Granite5FrontendFeatures extract_waveform(const std::vector<float> & waveform) const;
-    std::vector<float> prepare_waveform(const runtime::AudioBuffer & audio) const;
-
-    const Granite5FrontendConfig & config() const noexcept { return assets_->config.frontend; }
-
 private:
-    std::shared_ptr<const Granite5ASRAssets> assets_;
-    audio::AudioTensor mel_filterbank_;
-    std::vector<float> window_;
+    audio::NemoMelFrontend frontend_;
 };
 
 }  // namespace engine::community_models::granite5asr

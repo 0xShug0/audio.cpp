@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -95,6 +96,7 @@ struct SortformerV2Assets {
     // Empty preserves compatibility with older packages and uses the
     // deterministic audio.cpp reconstruction.
     std::vector<float> mel_filterbank;
+    std::shared_ptr<const audio::NemoMelFrontend> frontend;
     std::shared_ptr<const assets::TensorSource> model_weights;
 };
 
