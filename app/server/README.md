@@ -2,6 +2,8 @@
 
 `audiocpp_server` is an HTTP adapter over the framework runtime registry. It keeps one loaded model and one offline task session per active model id, so repeated HTTP requests reuse the same framework session and model-owned graph/cache state.
 
+`POST /v1/audio/speech` accepts top-level `speed` (or `speaking_rate`) as a positive speech-rate multiplier when the selected model supports speed control. Models without speed control reject the field.
+
 ## Build
 
 ```bash

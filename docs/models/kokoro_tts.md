@@ -102,6 +102,7 @@ package.
 | `--language` | language code | voice prefix | Text frontend language. |
 | `--voice-id` | voice ID listed above | `af_heart` | Built-in voice pack. |
 | `--seed` | integer | random | Decoder noise seed. |
+| `--speaking-rate` | positive float | `1.0` | Speech speed multiplier. |
 | `--text-chunk-size` | integer chars | `240` | Long-form chunk size. |
 
 ## Request Options (use with `--request-option`)
@@ -110,6 +111,7 @@ package.
 |---|---|---:|---|
 | `language` | language code | voice prefix | Text frontend language. |
 | `seed` | integer | random | Decoder noise seed. |
+| `speed` | positive float | `1.0` | Speech speed multiplier; `speaking_rate` is also accepted, but conflicting values are rejected. |
 | `text_chunk_size` | integer chars | `240` | Long-form chunk size. |
 
 ## Session Options (use with `--session-option`)

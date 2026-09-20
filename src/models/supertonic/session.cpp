@@ -6,6 +6,7 @@
 #include "engine/models/supertonic/runtime.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -212,11 +213,16 @@ SupertonicGenerationOptions SupertonicSession::generation_options_from_request(c
         }
         options.num_inference_steps = static_cast<int>(*value);
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"speaking_rate"})) {
-        if (*value <= 0.0F) {
-            throw std::runtime_error("Supertonic speaking_rate must be positive");
-        }
+    if (const auto value = runtime::parse_positive_finite_float_option(request.options, {"speed", "speaking_rate"})) {
         options.speaking_rate = *value;
+    }
+    if (request.voice.has_value() && request.voice->style.has_value() &&
+        request.voice->style->speaking_rate.has_value()) {
+        const float rate = *request.voice->style->speaking_rate;
+        if (!std::isfinite(rate) || rate <= 0.0f) {
+            throw std::runtime_error("Supertonic speaking_rate must be positive and finite");
+        }
+        options.speaking_rate = rate;
     }
     if (const auto value = runtime::parse_u32_option(request.options, {"seed"})) {
         options.seed = *value;
