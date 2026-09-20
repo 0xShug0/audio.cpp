@@ -3018,10 +3018,15 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         audio_contract.sample_rate = sample_rate;
         audio_contract.channels = channels;
         task_request.audio_input = std::move(audio_contract);
-        const std::string language = query_param(request.query, "language");
+        const std::string language = decoded_query_param(request.query, "language");
+        // Recognition-context biasing (hotwords), same meaning as the multipart
+        // route's `prompt` field; URL-encoded because it rides in the query.
+        const std::string prompt = decoded_query_param(request.query, "prompt");
         if (!language.empty()) {
             task_request.options["language"] = language;
-            task_request.text_input = engine::runtime::Transcript{std::string(), language};
+        }
+        if (!language.empty() || !prompt.empty()) {
+            task_request.text_input = engine::runtime::Transcript{prompt, language};
         }
         task_request = apply_default_request_options(model, std::move(task_request));
     } catch (const std::runtime_error & ex) {
