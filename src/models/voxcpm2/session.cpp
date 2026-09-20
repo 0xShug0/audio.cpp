@@ -461,23 +461,18 @@ VoxCPM2SessionBase::run_streaming_request(
     const auto decoder_start = Clock::now();
     auto audio = decoder_->decode_features(chunk.decode_features,
                                            chunk.decode_patches);
-    if (chunk.trim_front_patches > 0 || chunk.trim_back_patches > 0) {
-      // Context patches were decoded for continuity only.
-      const int64_t patch_samples =
-          assets_->config.patch_size *
+    if (chunk.context_patches > 0) {
+      // Left-context patches were decoded for the decoder's history only.
+      const int64_t context_samples =
+          chunk.context_patches * assets_->config.patch_size *
           product(assets_->config.audio_vae.decoder_rates);
-      const int64_t front = chunk.trim_front_patches * patch_samples;
-      const int64_t back = chunk.trim_back_patches * patch_samples;
-      if (front + back > static_cast<int64_t>(audio.samples.size())) {
+      if (context_samples > static_cast<int64_t>(audio.samples.size())) {
         throw std::runtime_error(
             "VoxCPM2 streaming context trim exceeds chunk audio length");
       }
-      audio.samples.erase(
-          audio.samples.end() - static_cast<std::ptrdiff_t>(back),
-          audio.samples.end());
-      audio.samples.erase(
-          audio.samples.begin(),
-          audio.samples.begin() + static_cast<std::ptrdiff_t>(front));
+      audio.samples.erase(audio.samples.begin(),
+                          audio.samples.begin() +
+                              static_cast<std::ptrdiff_t>(context_samples));
     }
     decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     if (emitted_chunks == 0) {
@@ -643,14 +638,11 @@ VoxCPM2GenerationOptions VoxCPM2SessionBase::generation_options_from_request(
           {"voxcpm2.stream_left_context", "stream_left_context"})) {
     options.stream_left_context = *value;
   }
-  if (const auto value = runtime::parse_i64_option(
-          request.options,
-          {"voxcpm2.stream_right_context", "stream_right_context"})) {
-    options.stream_right_context = *value;
-  }
-  if (options.stream_left_context < 0 || options.stream_right_context < 0) {
+  if (options.stream_left_context < 0 ||
+      options.stream_left_context > kVoxCPM2MaxStreamLeftContext) {
     throw std::runtime_error(
-        "VoxCPM2 stream_left_context and stream_right_context must be non-negative");
+        "VoxCPM2 stream_left_context must be between 0 and " +
+        std::to_string(kVoxCPM2MaxStreamLeftContext));
   }
   if (options.min_tokens < 0) {
     throw std::runtime_error("VoxCPM2 min_tokens must be non-negative");

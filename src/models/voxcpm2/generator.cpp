@@ -80,6 +80,12 @@ void validate_generation_options(const VoxCPM2GenerationOptions &options) {
   if (!std::isfinite(options.guidance_scale)) {
     throw std::runtime_error("VoxCPM2 guidance_scale must be finite");
   }
+  if (options.stream_left_context < 0 ||
+      options.stream_left_context > kVoxCPM2MaxStreamLeftContext) {
+    throw std::runtime_error(
+        "VoxCPM2 stream_left_context must be between 0 and " +
+        std::to_string(kVoxCPM2MaxStreamLeftContext));
+  }
   if (options.retry_badcase_max_times <= 0) {
     throw std::runtime_error(
         "VoxCPM2 retry_badcase_max_times must be positive");
@@ -1565,42 +1571,16 @@ private:
       ++result.decode_patches;
     }
     uint64_t patch_noise_start = noise_start_index;
-    // Streaming emission with context. Every emitted patch is decoded inside a
-    // window of up to stream_left_context earlier patches (the prompt's
-    // context rows count, exactly as the offline decode uses them) and up to
-    // stream_right_context later ones; the session trims the context off the
-    // audio again. Without it each patch went through the non-causal decoder
-    // alone and the seams clicked.
+    // Streaming emission. The AudioVAE decoder is causal but is invoked
+    // statelessly per chunk, so a patch decoded alone starts from zero
+    // padding instead of the preceding audio's convolution history and the
+    // seams click. Each emitted patch is therefore decoded inside a window of
+    // up to stream_left_context preceding patches (the prompt's context rows
+    // count, exactly as the offline decode uses them); the session trims the
+    // context off the audio again.
     const bool streaming =
         streaming_chunks != nullptr || static_cast<bool>(streaming_chunk_callback);
     const int64_t left_ctx = std::max<int64_t>(0, options.stream_left_context);
-    const int64_t right_ctx = std::max<int64_t>(0, options.stream_right_context);
-    int64_t next_emit = result.decode_trim_patches;
-    const auto emit_streaming_patches = [&](int64_t upto) {
-      for (; next_emit < upto; ++next_emit) {
-        const int64_t left = std::min(left_ctx, next_emit);
-        const int64_t right =
-            std::min(right_ctx, result.decode_patches - 1 - next_emit);
-        const int64_t first = next_emit - left;
-        const int64_t count = left + 1 + right;
-        VoxCPM2StreamingChunk chunk;
-        chunk.decode_features.assign(
-            result.decode_features.begin() +
-                static_cast<std::ptrdiff_t>(first * patch_elems),
-            result.decode_features.begin() +
-                static_cast<std::ptrdiff_t>((first + count) * patch_elems));
-        chunk.decode_patches = count;
-        chunk.trim_front_patches = left;
-        chunk.trim_back_patches = right;
-        chunk.generated_patches = next_emit - result.decode_trim_patches + 1;
-        if (streaming_chunk_callback) {
-          streaming_chunk_callback(chunk);
-        }
-        if (streaming_chunks != nullptr) {
-          streaming_chunks->push_back(std::move(chunk));
-        }
-      }
-    };
     for (int64_t index = 0; index < max_tokens; ++index) {
       const auto projected =
           projection_.run(lm_hidden, residual_hidden, zero_hidden);
@@ -1615,8 +1595,23 @@ private:
       append_patch(result.decode_features, patch, patch_elems);
       ++result.decode_patches;
       if (streaming) {
-        // Emit what now has its full right context.
-        emit_streaming_patches(result.decode_patches - right_ctx);
+        const int64_t emit = result.decode_patches - 1;
+        const int64_t left = std::min(left_ctx, emit);
+        const int64_t first = emit - left;
+        VoxCPM2StreamingChunk chunk;
+        chunk.decode_features.assign(
+            result.decode_features.begin() +
+                static_cast<std::ptrdiff_t>(first * patch_elems),
+            result.decode_features.end());
+        chunk.decode_patches = left + 1;
+        chunk.context_patches = left;
+        chunk.generated_patches = result.generated_patches;
+        if (streaming_chunk_callback) {
+          streaming_chunk_callback(chunk);
+        }
+        if (streaming_chunks != nullptr) {
+          streaming_chunks->push_back(std::move(chunk));
+        }
       }
       prefix_cond = patch;
 
@@ -1632,10 +1627,6 @@ private:
       lm_hidden = next_projected.fsq_hidden;
       residual_hidden =
           residual_lm_.run_step(next_projected.residual_input).hidden;
-    }
-    if (streaming) {
-      // The tail: the last patches with whatever right context exists.
-      emit_streaming_patches(result.decode_patches);
     }
     return result;
   }
