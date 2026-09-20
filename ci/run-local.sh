@@ -32,6 +32,10 @@ done
 
 ALL_JOBS=(linux-cpu linux-vulkan nix-cpu nix-vulkan)
 
+# Docker state shared by every job.
+DEPS_IMAGE="audiocpp-ci-local:ubuntu-24.04"
+NIX_STORE_VOLUME="audiocpp-ci-local-nix-store"
+
 usage() {
     cat <<EOF
 usage: ci/run-local.sh [--clean] <job>...
@@ -80,6 +84,14 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
+# Discard the shared docker state once, before any job runs: the dependency
+# image is cached by tag and would otherwise survive a change to the package
+# list, and the nix store must not be wiped between the two nix jobs.
+if [ $CLEAN -eq 1 ]; then
+    docker image rm "$DEPS_IMAGE" >/dev/null 2>&1 || true
+    docker volume rm "$NIX_STORE_VOLUME" >/dev/null 2>&1 || true
+fi
+
 # Run as the invoking user so the build tree is not left root-owned.
 docker_run() {
     local image="$1"; shift
@@ -99,10 +111,12 @@ docker_run() {
 # The apt install needs root, so the dependencies are baked into a thin image
 # once rather than installed on every run.
 ubuntu_image_with_deps() {
-    local tag="audiocpp-ci-local:ubuntu-24.04"
+    local tag="$DEPS_IMAGE"
     if ! docker image inspect "$tag" >/dev/null 2>&1; then
         echo "--- building $tag (one time)" >&2
-        docker build -q -t "$tag" -f - "$REPO_ROOT" >/dev/null <<EOF
+        # Context is stdin-only: the Dockerfile copies nothing, and the repo
+        # root would ship the build trees to the daemon for no reason.
+        docker build -q -t "$tag" - >/dev/null <<EOF || return 1
 FROM $IMAGE_UBUNTU
 RUN apt-get update && apt-get install -y --no-install-recommends \\
         gcc-13 g++-13 cmake make glslc libvulkan-dev spirv-headers \\
@@ -117,18 +131,20 @@ run_loader_check() {
     # Both workflows run this before building.
     echo "--- check_loader_catalog_sync"
     docker_run "$1" "python3 tools/check_loader_catalog_sync.py --self-test && \
-                     python3 tools/check_loader_catalog_sync.py"
+                     python3 tools/check_loader_catalog_sync.py" || return 1
 }
 
 run_linux_job() {
     local backend="$1" vulkan="$2"
     local build_dir="build/ci-local-linux-$backend"
     local image
-    image="$(ubuntu_image_with_deps)"
+    image="$(ubuntu_image_with_deps)" || return 1
 
-    [ $CLEAN -eq 1 ] && rm -rf "$REPO_ROOT/$build_dir"
+    if [ $CLEAN -eq 1 ]; then
+        rm -rf "$REPO_ROOT/$build_dir"
+    fi
 
-    run_loader_check "$image"
+    run_loader_check "$image" || return 1
 
     echo "--- configure ($backend)"
     # Keep these flags in step with the Configure step of linux-build.yml.
@@ -137,27 +153,30 @@ run_linux_job() {
         -DAUDIOCPP_VERSION=ci \
         -DENGINE_ENABLE_CUDA=OFF \
         -DENGINE_ENABLE_VULKAN=$vulkan \
-        -DENGINE_BUILD_TESTS=ON"
+        -DENGINE_BUILD_TESTS=ON" || return 1
 
     echo "--- build ($backend)"
     docker_run "$image" "cmake --build '$build_dir' --parallel \$(nproc) \
-        --target audiocpp_cli audiocpp_server audiocpp_gguf"
+        --target audiocpp_cli audiocpp_server audiocpp_gguf" || return 1
 
     echo "--- build and run unit tests ($backend)"
     docker_run "$image" "cmake --build '$build_dir' --parallel \$(nproc) && \
-        ctest --test-dir '$build_dir' --output-on-failure --parallel 4"
+        ctest --test-dir '$build_dir' --output-on-failure --parallel 4" || return 1
 }
 
 run_nix_job() {
     local package="$1"
+    local image
+    image="$(ubuntu_image_with_deps)" || return 1
+
+    # nix-build.yml runs the loader check too, and nixos/nix has no python3.
+    run_loader_check "$image" || return 1
+
     # The container's /nix is ephemeral under --rm, so without this every run
     # re-downloads the whole closure. A named volume keeps the store between
-    # runs; --clean discards it.
-    local store_volume="audiocpp-ci-local-nix-store"
-    if [ $CLEAN -eq 1 ]; then
-        docker volume rm "$store_volume" >/dev/null 2>&1 || true
-    fi
-    docker volume create "$store_volume" >/dev/null
+    # runs; --clean discards it (once, above).
+    local store_volume="$NIX_STORE_VOLUME"
+    docker volume create "$store_volume" >/dev/null || return 1
 
     echo "--- nix build .#$package"
     # The container runs as root against a checkout owned by someone else, so
