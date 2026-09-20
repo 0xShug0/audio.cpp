@@ -313,6 +313,101 @@ std::string cache_key_prefix(
         text.text + ":";
 }
 
+/// One timing per PHONEME GROUP -- a run of tokens between the space tokens Kokoro's own
+/// vocabulary carries -- from the durations its duration predictor produced.
+///
+/// ⚠ THIS IS A MEASUREMENT, NOT AN ESTIMATE, and that is the whole point. The model predicts a
+/// per-token frame count before the decoder runs, and the decoder upsamples by exactly those
+/// counts (`expand_tc_by_durations`), so a group's share of the output is known rather than
+/// guessed at. A caller that today spreads words across a buffer in proportion to their spelling
+/// can read the model's own answer instead.
+///
+/// ⚠ A GROUP, NOT A WRITTEN WORD, and the label says so by carrying the group's PHONEMES. Nothing
+/// in this family maps tokens back to the input text: the built-in G2P emits a phoneme string and
+/// keeps no span, and on the supplied-phoneme path there is no text to map to at all. A group is
+/// one spoken word on both paths -- eSpeak separates words with the space symbol and a caller's
+/// stream does the same -- so the unit is right even though the label is phonemic. A caller that
+/// knows which of its words produced which group (its own G2P told it) can join the two; one that
+/// does not still gets the boundaries.
+///
+/// The frames->samples scale is derived from THIS CHUNK's audio rather than assumed from a hop
+/// length, so it stays correct if the decoder's upsampling ratio ever changes, and it absorbs the
+/// rounding in a chunk whose sample count is not an exact multiple of the frame count.
+void append_kokoro_word_timings(
+    std::vector<runtime::WordTimestamp> & out,
+    const std::vector<int32_t> & input_ids,
+    const std::vector<int32_t> & durations,
+    const KokoroAssets & assets,
+    size_t chunk_samples,
+    int64_t chunk_start_sample) {
+    // An internal invariant, so it throws rather than degrading: durations are produced one per
+    // token by the same graph that consumes them, and a mismatch means timings that look right
+    // and point at the wrong audio, which is worse than no timings at all.
+    if (input_ids.size() != durations.size()) {
+        throw std::runtime_error(
+            "Kokoro duration count " + std::to_string(durations.size()) +
+            " does not match token count " + std::to_string(input_ids.size()));
+    }
+    if (chunk_samples == 0 || input_ids.empty()) {
+        return;
+    }
+
+    int64_t total_frames = 0;
+    for (const int32_t duration : durations) {
+        total_frames += duration;
+    }
+    if (total_frames <= 0) {
+        return;
+    }
+    const double samples_per_frame = static_cast<double>(chunk_samples) / static_cast<double>(total_frames);
+
+    // id -> symbol, for the labels. The vocabulary is ~114 entries and this runs once per chunk,
+    // against a decoder pass that is orders of magnitude more expensive.
+    std::unordered_map<int32_t, std::string> symbols;
+    symbols.reserve(assets.vocab.size());
+    int32_t space_id = -1;
+    for (const auto & [symbol, id] : assets.vocab) {
+        symbols.emplace(id, symbol);
+        if (symbol == " ") {
+            space_id = id;
+        }
+    }
+
+    // ⚠ PAD IS A BOUNDARY AND SO IS SPACE. The id sequence is [pad, ...ids..., pad]; treating pad
+    // as an ordinary token would glue the leading silence onto the first group. `space_id` is -1
+    // only for a vocabulary with no space symbol, which would make every token one group -- so the
+    // comparison is against a value no id can take rather than against a guess at 16.
+    int64_t frame = 0;
+    size_t index = 0;
+    while (index < input_ids.size()) {
+        const int32_t id = input_ids[index];
+        if (id == 0 || id == space_id) {
+            frame += durations[index];
+            ++index;
+            continue;
+        }
+        const int64_t group_start_frame = frame;
+        std::string label;
+        while (index < input_ids.size() && input_ids[index] != 0 && input_ids[index] != space_id) {
+            const auto it = symbols.find(input_ids[index]);
+            if (it != symbols.end()) {
+                label += it->second;
+            }
+            frame += durations[index];
+            ++index;
+        }
+        runtime::WordTimestamp timing;
+        timing.span.start_sample =
+            chunk_start_sample + static_cast<int64_t>(static_cast<double>(group_start_frame) * samples_per_frame);
+        timing.span.end_sample =
+            chunk_start_sample + static_cast<int64_t>(static_cast<double>(frame) * samples_per_frame);
+        timing.word = std::move(label);
+        // The model does not score its own duration prediction, and inventing a number here would
+        // be read as one. Left at 0, which the ABI documents as "no confidence reported".
+        out.push_back(std::move(timing));
+    }
+}
+
 /// Request options, validated against the package's own contract.
 ///
 /// Older standalone GGUF packages embed a schema-v1 contract written before
@@ -452,6 +547,9 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
     double predictor_ms = 0.0;
     double decoder_ms = 0.0;
     runtime::AudioBuffer merged_audio;
+    // One entry per phoneme group, accumulated across chunks: the chunks are joined into one
+    // buffer, so their timings have to be too, each offset by the audio already merged.
+    std::vector<runtime::WordTimestamp> word_timestamps;
     // Resolved once in the supplied path, where every chunk runs the same request: the state
     // and the text half of the key cannot differ between chunks there.
     const bool supplied = !supplied_phonemes.empty();
@@ -532,11 +630,21 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
         });
         const auto inference_ended = std::chrono::steady_clock::now();
         inference_ms += std::chrono::duration<double, std::milli>(inference_ended - inference_started).count();
+        // Before the append and before the move: the offset is where THIS chunk starts in the
+        // merged buffer, and `audio` is about to be emptied into it.
+        append_kokoro_word_timings(
+            word_timestamps,
+            input.input_ids,
+            predictor.durations,
+            *assets_,
+            audio.size(),
+            static_cast<int64_t>(merged_audio.samples.size()));
         runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{24000, 1, std::move(audio)});
     }
 
     runtime::TaskResult result;
     result.audio_output = std::move(merged_audio);
+    result.word_timestamps = std::move(word_timestamps);
     const double wall_ms = frontend_ms + inference_ms;
     engine::debug::timing_log_scalar("kokoro.frontend_ms", frontend_ms);
     engine::debug::timing_log_scalar("kokoro.inference_ms", inference_ms);

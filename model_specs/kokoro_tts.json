@@ -12,7 +12,7 @@
     "tags": ["gguf"]
   },
   "capabilities": {
-    "tts": ["built_in_voices", "long_form"]
+    "tts": ["built_in_voices", "long_form", "word_timestamps"]
   },
   "options": {
     "request": [
