@@ -6,6 +6,8 @@
 #include <array>
 #include <vector>
 #include <map>
+#include <atomic>
+#include <chrono>
 #include <thread>
 #include <mutex>
 #include <future>
@@ -34,6 +36,10 @@
 
 std::mutex lock;
 std::vector<std::pair<std::string, std::string>> shader_fnames;
+// Set when a shader fails to compile or yields no SPIR-V, so the build stops at
+// generation rather than at a link error that points nowhere useful. Written
+// from the compile threads, so it has to be atomic.
+std::atomic<bool> generation_failed{false};
 std::locale c_locale("C");
 
 std::string GLSLC = "glslc";
@@ -78,7 +84,7 @@ enum MatMulIdType {
 
 namespace {
 
-void execute_command(std::vector<std::string>& command, std::string& stdout_str, std::string& stderr_str) {
+int execute_command(std::vector<std::string>& command, std::string& stdout_str, std::string& stderr_str) {
 #ifdef _WIN32
     HANDLE stdout_read, stdout_write;
     HANDLE stderr_read, stderr_write;
@@ -127,8 +133,11 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
     CloseHandle(stdout_read);
     CloseHandle(stderr_read);
     WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    return (int)exit_code;
 #else
     int stdout_pipe[2];
     int stderr_pipe[2];
@@ -175,7 +184,9 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
 
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
-        waitpid(pid, nullptr, 0);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
 #endif
 }
@@ -324,6 +335,14 @@ compile_count_guard acquire_compile_slot() {
     return compile_count_guard(&compile_count, &decrement_compile_count);
 }
 
+// A shader is usable only if its SPIR-V exists and is non-empty. A zero-byte
+// file is what an interrupted or silently-failed compile leaves behind.
+static bool spv_is_usable(const std::string & path) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    return !ec && size > 0;
+}
+
 void string_to_spv_func(std::string name, std::string in_path, std::string out_path, std::map<std::string, std::string> defines, bool coopmat, bool dep_file, compile_count_guard slot) {
     std::string target_env = (name.find("_cm2") != std::string::npos) ? "--target-env=vulkan1.3" : "--target-env=vulkan1.2";
 
@@ -365,19 +384,52 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
 
     std::string stdout_str, stderr_str;
     try {
-        // std::cout << "Executing command: ";
-        // for (const auto& part : cmd) {
-        //     std::cout << part << " ";
-        // }
-        // std::cout << std::endl;
+        // A compile can report success and still leave no SPIR-V behind. That
+        // has been observed in CI, and because the generated header declares
+        // every shader unconditionally, the gap only surfaces at link as an
+        // undefined reference to a generated symbol, long after the cause is
+        // visible. Judge by the exit code first, then by the artefact, and
+        // retry an empty result before giving up.
+        constexpr int max_attempts = 3;
+        int exit_code = 0;
+        bool produced = false;
 
-        execute_command(cmd, stdout_str, stderr_str);
-        if (!stderr_str.empty()) {
-            std::cerr << "cannot compile " << name << "\n\n";
+        for (int attempt = 1; attempt <= max_attempts && !produced; ++attempt) {
+            stdout_str.clear();
+            stderr_str.clear();
+
+            // Drop any earlier artefact first, so a compile that reports
+            // success without writing cannot be credited to a stale file.
+            std::error_code ec;
+            std::filesystem::remove(out_path, ec);
+
+            exit_code = execute_command(cmd, stdout_str, stderr_str);
+            if (exit_code != 0 || !stderr_str.empty()) {
+                break;
+            }
+
+            produced = spv_is_usable(out_path);
+            if (!produced && attempt < max_attempts) {
+                std::cerr << "shader " << name << " produced no SPIR-V; retrying ("
+                          << (attempt + 1) << "/" << max_attempts << ")" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100 * attempt));
+            }
+        }
+
+        if (exit_code != 0 || !stderr_str.empty()) {
+            std::cerr << "cannot compile " << name << " (exit code " << exit_code << ")\n\n";
             for (const auto& part : cmd) {
                 std::cerr << part << " ";
             }
             std::cerr << "\n\n" << stderr_str << std::endl;
+            generation_failed = true;
+            return;
+        }
+
+        if (!produced) {
+            std::cerr << "cannot compile " << name << ": no SPIR-V produced after "
+                      << max_attempts << " attempts (" << out_path << ")" << std::endl;
+            generation_failed = true;
             return;
         }
 
@@ -397,6 +449,7 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
         shader_fnames.push_back(std::make_pair(name, out_path));
     } catch (const std::exception& e) {
         std::cerr << "Error executing command for " << name << ": " << e.what() << std::endl;
+        generation_failed = true;
     }
 }
 
@@ -1050,6 +1103,12 @@ void write_output_files() {
         if (input_filepath != "") {
             std::string data = read_binary_file(path);
             if (data.empty()) {
+                // The declaration above is already written, so skipping the
+                // definition leaves a symbol declared and never defined, which
+                // surfaces much later as an undefined reference at link.
+                std::cerr << "ERROR: shader '" << name << "' produced no SPIR-V ("
+                          << path << ")\n";
+                generation_failed = true;
                 continue;
             }
 
@@ -1194,7 +1253,22 @@ int main(int argc, char** argv) {
 
     process_shaders();
 
+    // Stop before writing anything. A partial header and source carry fresh
+    // timestamps, so a second build would find them newer than their inputs
+    // and link the gap rather than regenerate it.
+    if (generation_failed) {
+        std::cerr << "shader generation failed; see errors above" << std::endl;
+        return EXIT_FAILURE;
+    }
+
     write_output_files();
+
+    // The embed step has its own way to fail: a shader that compiled but whose
+    // artefact is unreadable by the time it is read back.
+    if (generation_failed) {
+        std::cerr << "shader generation failed; see errors above" << std::endl;
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }
