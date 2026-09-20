@@ -2729,6 +2729,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(safetensors_offsets_test tests/unittests/test_safetensors_offsets.cpp)
         add_test(NAME safetensors_offsets_test COMMAND safetensors_offsets_test)
 
+        add_engine_unittest(asr_graph_capacity_test tests/unittests/test_asr_graph_capacity.cpp)
+        add_test(NAME asr_graph_capacity_test COMMAND asr_graph_capacity_test)
+
         add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
         add_test(NAME audio_chunking_test COMMAND audio_chunking_test)
         add_engine_unittest(partial_text_test tests/unittests/test_partial_text.cpp)
