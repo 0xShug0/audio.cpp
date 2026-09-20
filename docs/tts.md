@@ -533,6 +533,8 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `--text-chunk-size` | integer chars | `2048` | Long-form chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form chunking mode; keeps style/tag controls attached to chunks by default. |
 | `--request-option voxcpm2.chunk_strategy=continuation\|stateless` | enum | `continuation` | Long-form chunk generation strategy. `stateless` synthesizes each text chunk from the same original prompt/reference and concatenates the audio; use it for plain text/reference-clone long-form input, not voice/emotion tag carry-over. |
+| `--request-option voxcpm2.stream_left_context=<n>` | integer patches | `3` | Streaming: earlier patches decoded together with each emitted patch as left context and trimmed off again. The AudioVAE decoder is not causal; without context every patch boundary is a click. `0` restores the old per-patch decode. |
+| `--request-option voxcpm2.stream_right_context=<n>` | integer patches | `0` | Streaming: later patches waited for and decoded as right context, then trimmed. Each patch delays the stream by one patch of audio (160 ms at 48 kHz). |
 | `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
 | `--num-inference-steps` | integer | `10` | Flow matching steps. |
 | `--guidance-scale` | float | `2.0` | CFG strength. |
