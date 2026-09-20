@@ -1253,8 +1253,18 @@ int main(int argc, char** argv) {
 
     process_shaders();
 
+    // Stop before writing anything. A partial header and source carry fresh
+    // timestamps, so a second build would find them newer than their inputs
+    // and link the gap rather than regenerate it.
+    if (generation_failed) {
+        std::cerr << "shader generation failed; see errors above" << std::endl;
+        return EXIT_FAILURE;
+    }
+
     write_output_files();
 
+    // The embed step has its own way to fail: a shader that compiled but whose
+    // artefact is unreadable by the time it is read back.
     if (generation_failed) {
         std::cerr << "shader generation failed; see errors above" << std::endl;
         return EXIT_FAILURE;
