@@ -377,6 +377,15 @@ const std::vector<float> & ParakeetEncoderRuntime::relative_positional_encoding(
     if (cached != relative_positional_encoding_cache_.end()) {
         return cached->second;
     }
+    // Bounded: each entry is (2 * frames - 1) * hidden floats -- tens of MB at
+    // conversational lengths -- and the only caller is ensure_graph(), which
+    // rebuilds whenever the request size moves. A clip length that recurs hits
+    // the graph cache and never gets here, so keeping every size this process
+    // has ever seen would grow without bound to no benefit.
+    constexpr size_t kMaxCachedPositionalEncodings = 4;
+    if (relative_positional_encoding_cache_.size() >= kMaxCachedPositionalEncodings) {
+        relative_positional_encoding_cache_.clear();
+    }
     auto inserted = relative_positional_encoding_cache_.emplace(
         frames,
         make_relative_positional_encoding(assets_->config.encoder.hidden_size, frames, assets_->config.encoder.max_position_embeddings));
@@ -387,26 +396,14 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     if (input_frames <= 0 || feature_dim <= 0) {
         throw std::runtime_error("Parakeet TDT encoder graph requires positive input shape");
     }
-    // A cached graph is only reused if it is not much bigger than the request.
-    //
-    // The graph runs at its built capacity no matter how short the real audio
-    // is — encode() zero-pads up to it — so an oversized cached graph is paid
-    // for in full on every call. Measured on this encoder: a 7.4s clip costs
-    // 1018 ms on a matched graph and 10928 ms on a 60s-capacity one, while
-    // rebuilding costs ~400 ms once (dominated by the 24 positional
-    // projections; the allocation itself is ~0.4 ms). Rebuilding therefore wins
-    // outright whenever the mismatch is more than a few percent, and it wins by
-    // more with every subsequent call at the new size.
-    //
-    // The tolerance keeps the common case — a stream of clips whose lengths
-    // wobble slightly — from rebuilding on every call, while capping the wasted
-    // compute at roughly the same fraction.
-    constexpr double kMaxGraphOversizeRatio = 1.10;
+    // A cached graph is only reused if it is not much bigger than the request;
+    // see asr_graph_capacity_usable() for why. Measured on this encoder: a 7.4s
+    // clip costs 1018 ms on a matched graph and 10928 ms on a 60s-capacity one,
+    // while rebuilding costs ~400 ms once (dominated by the 24 positional
+    // projections; the allocation itself is ~0.4 ms).
     const bool capacity_usable =
         graph_ != nullptr &&
-        graph_->input_frames >= input_frames &&
-        static_cast<double>(graph_->input_frames) <=
-            kMaxGraphOversizeRatio * static_cast<double>(input_frames);
+        engine::modules::asr_graph_capacity_usable(graph_->input_frames, input_frames);
     if (capacity_usable &&
         graph_->backend == execution_context_->backend() &&
         graph_->feature_dim == feature_dim) {

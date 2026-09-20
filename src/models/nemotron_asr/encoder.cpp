@@ -510,6 +510,20 @@ const std::vector<float> & NemotronEncoderRuntime::relative_positional_encoding(
     if (cached != relative_positional_encoding_cache_.end()) {
         return cached->second;
     }
+    // Bounded: each entry is (2 * frames - 1) * hidden floats -- tens of MB at
+    // conversational lengths -- and the offline path now rebuilds its graph
+    // whenever the request size moves, so keeping every size it has ever seen
+    // would grow without bound.
+    //
+    // Eviction is a coarse clear rather than an LRU, which can drop the entry
+    // the streaming path reuses on every chunk. That is acceptable because a
+    // streaming session asks for one stable key_frames, so on its own it never
+    // reaches the bound; only interleaved offline work at four different sizes
+    // can evict it, and the cost is one regeneration of a chunk-sized encoding.
+    constexpr size_t kMaxCachedPositionalEncodings = 4;
+    if (relative_positional_encoding_cache_.size() >= kMaxCachedPositionalEncodings) {
+        relative_positional_encoding_cache_.clear();
+    }
     auto inserted = relative_positional_encoding_cache_.emplace(
         frames,
         make_relative_positional_encoding(1, assets_->config.encoder.hidden_size, frames, assets_->config.encoder.max_position_embeddings));
@@ -523,7 +537,7 @@ void NemotronEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     if (graph_ != nullptr &&
         !graph_->streaming &&
         graph_->backend == execution_context_->backend() &&
-        graph_->input_frames >= input_frames &&
+        engine::modules::asr_graph_capacity_usable(graph_->input_frames, input_frames) &&
         graph_->feature_dim == feature_dim) {
         debug::timing_log_scalar("nemotron_asr.encoder.graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("nemotron_asr.encoder.graph_cache_hit", true);
