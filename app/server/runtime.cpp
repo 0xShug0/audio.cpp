@@ -876,6 +876,37 @@ std::string stream_event_json(const engine::runtime::StreamEvent & event) {
             << ",\"language\":" << json_quote(event.partial_text->language)
             << "}";
     }
+    if (!event.voice_activity.empty()) {
+        field("voice_activity");
+        out << "[";
+        for (size_t i = 0; i < event.voice_activity.size(); ++i) {
+            const auto & activity = event.voice_activity[i];
+            if (i != 0) {
+                out << ",";
+            }
+            const char * kind = "speech_segment";
+            using Kind = engine::runtime::VoiceActivityEvent::Kind;
+            if (activity.kind == Kind::SpeechStart) {
+                kind = "speech_start";
+            } else if (activity.kind == Kind::SpeechEnd) {
+                kind = "speech_end";
+            }
+            out << "{\"kind\":" << json_quote(kind)
+                << ",\"sample\":" << activity.sample
+                << ",\"probability\":" << activity.probability;
+            if (activity.segment.has_value()) {
+                out << ",\"segment\":{\"start_sample\":" << activity.segment->span.start_sample
+                    << ",\"end_sample\":" << activity.segment->span.end_sample
+                    << ",\"confidence\":" << activity.segment->confidence;
+                if (!activity.segment->text.empty()) {
+                    out << ",\"text\":" << json_quote(activity.segment->text);
+                }
+                out << "}";
+            }
+            out << "}";
+        }
+        out << "]";
+    }
     if (event.audio_output.has_value()) {
         const auto wav = encode_pcm16_wav(*event.audio_output);
         field("audio");
@@ -3017,14 +3048,31 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
                 task_request,
                 audio,
                 [&](const engine::runtime::StreamEvent & event) {
-                    if (!event.partial_text.has_value() || event.partial_text->text.empty()) {
-                        return;
+                    // Segment-final deltas must precede the boundary: the
+                    // client first appends the rollback tail, then commits the
+                    // segment and starts a new line (reset semantics, mirroring
+                    // the reference ws_server integrator).
+                    if (event.partial_text.has_value() && !event.partial_text->text.empty()) {
+                        write_sse(
+                            writer,
+                            "{\"type\":\"transcript.text.delta\",\"delta\":" +
+                                json_quote(event.partial_text->text) +
+                                "}");
                     }
-                    write_sse(
-                        writer,
-                        "{\"type\":\"transcript.text.delta\",\"delta\":" +
-                            json_quote(event.partial_text->text) +
-                            "}");
+                    for (const auto & activity : event.voice_activity) {
+                        using Kind = engine::runtime::VoiceActivityEvent::Kind;
+                        if (activity.kind != Kind::SpeechEnd || !activity.segment.has_value()) {
+                            continue;
+                        }
+                        const auto & segment = *activity.segment;
+                        std::ostringstream out;
+                        out << "{\"type\":\"transcript.segment.end\",\"text\":"
+                            << json_quote(segment.text)
+                            << ",\"start_sample\":" << segment.span.start_sample
+                            << ",\"end_sample\":" << segment.span.end_sample
+                            << ",\"reset\":true}";
+                        write_sse(writer, out.str());
+                    }
                 },
                 busy_timeout_ms);
             if (!timed_result.result.text_output.has_value()) {

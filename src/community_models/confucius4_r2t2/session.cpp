@@ -1,10 +1,13 @@
 #include "engine/community_models/confucius4_r2t2/session.h"
 
 #include "engine/framework/audio/chunking.h"
+#include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/community_models/confucius4_r2t2/text_postprocess.h"
+#include "engine/models/silero_vad/assets.h"
+#include "engine/models/silero_vad/runtime.h"
 
 #include <algorithm>
 #include <chrono>
@@ -125,7 +128,7 @@ R2T2ASRSession::R2T2ASRSession(
     if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.max_tokens"})) {
         stream_config_.max_new_tokens = *value;
     }
-    if (stream_config_.chunk_seconds <= 0.0) {
+    if (!std::isfinite(stream_config_.chunk_seconds) || stream_config_.chunk_seconds <= 0.0) {
         throw std::runtime_error("confucius4_r2t2.chunk_size_ms must be positive");
     }
     if (stream_config_.unfixed_chunk_num < 0 || stream_config_.unfixed_token_num < 0) {
@@ -133,6 +136,46 @@ R2T2ASRSession::R2T2ASRSession(
     }
     if (stream_config_.max_new_tokens <= 0) {
         throw std::runtime_error("confucius4_r2t2.max_tokens must be positive");
+    }
+    if (const auto value = runtime::find_option(options.options, {"confucius4_r2t2.endpointing"})) {
+        endpointing_.enabled = runtime::parse_bool_option(*value, "confucius4_r2t2.endpointing");
+    }
+    if (const auto value = runtime::find_option(options.options, {"confucius4_r2t2.vad_model_path"})) {
+        if (!value->empty()) {
+            endpointing_.vad_model_path = *value;
+        }
+    }
+    if (const auto value = runtime::parse_float_option(options.options, {"confucius4_r2t2.vad_threshold"})) {
+        endpointing_.threshold = *value;
+    }
+    if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.vad_min_speech_ms"})) {
+        endpointing_.min_speech_ms = *value;
+    }
+    if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.vad_min_silence_ms"})) {
+        endpointing_.min_silence_ms = *value;
+    }
+    if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.vad_speech_pad_ms"})) {
+        endpointing_.speech_pad_ms = *value;
+    }
+    if (const auto value = runtime::parse_int_option(options.options, {"confucius4_r2t2.vad_gap_keep_ms"})) {
+        endpointing_.gap_keep_ms = *value;
+    }
+    if (const auto value = runtime::parse_float_option(options.options, {"confucius4_r2t2.max_segment_seconds"})) {
+        endpointing_.max_segment_seconds = static_cast<double>(*value);
+    }
+    if (!std::isfinite(endpointing_.threshold) || endpointing_.threshold <= 0.0f || endpointing_.threshold >= 1.0f) {
+        throw std::runtime_error("confucius4_r2t2.vad_threshold must be in (0, 1)");
+    }
+    if (endpointing_.min_speech_ms < 0 || endpointing_.min_silence_ms <= 0 ||
+        endpointing_.speech_pad_ms < 0 || endpointing_.gap_keep_ms < 0) {
+        throw std::runtime_error(
+            "confucius4_r2t2.vad_min_speech_ms, confucius4_r2t2.vad_speech_pad_ms and confucius4_r2t2.vad_gap_keep_ms "
+            "must be non-negative and confucius4_r2t2.vad_min_silence_ms must be positive");
+    }
+    if (!std::isfinite(endpointing_.max_segment_seconds) || endpointing_.max_segment_seconds <= 0.0 || endpointing_.max_segment_seconds > 110.0) {
+        throw std::runtime_error(
+            "confucius4_r2t2.max_segment_seconds must be in (0, 110]: the audio tower position table "
+            "holds 1500 frames (115.40 s) and every segment must stay well inside it");
     }
     for (const auto & [key, value] : options.options) {
         (void) value;
@@ -148,7 +191,15 @@ R2T2ASRSession::R2T2ASRSession(
             key != "confucius4_r2t2.unfixed_chunk_num" &&
             key != "confucius4_r2t2.unfixed_token_num" &&
             key != "confucius4_r2t2.rollback_punctuation" &&
-            key != "confucius4_r2t2.max_tokens") {
+            key != "confucius4_r2t2.max_tokens" &&
+            key != "confucius4_r2t2.endpointing" &&
+            key != "confucius4_r2t2.vad_model_path" &&
+            key != "confucius4_r2t2.vad_threshold" &&
+            key != "confucius4_r2t2.vad_min_speech_ms" &&
+            key != "confucius4_r2t2.vad_min_silence_ms" &&
+            key != "confucius4_r2t2.vad_speech_pad_ms" &&
+            key != "confucius4_r2t2.vad_gap_keep_ms" &&
+            key != "confucius4_r2t2.max_segment_seconds") {
             throw std::runtime_error("unknown R2T2 ASR session option: " + key);
         }
     }
@@ -310,7 +361,7 @@ std::string R2T2ASRSession::build_stream_prefix(bool final_flush) const {
     if (final_flush) {
         // finish_streaming_transcribe uses a fixed rollback without the
         // replacement-character loop and never rolls back past the first token.
-        const int64_t end_index = std::max<int64_t>(1, static_cast<int64_t>(ids.size()) - stream_config_.unfixed_token_num);
+        const int64_t end_index = std::min<int64_t>(ids.size(), std::max<int64_t>(1, static_cast<int64_t>(ids.size()) - stream_config_.unfixed_token_num));
         return truncate_at_pipe(sanitize_utf8_lossy(tokenizer_.decode(std::vector<int32_t>(ids.begin(), ids.begin() + static_cast<std::ptrdiff_t>(end_index)))));
     }
     int64_t k = stream_config_.unfixed_token_num;
@@ -399,9 +450,16 @@ R2T2ASRSession::StreamOutcome R2T2ASRSession::decode_stream_chunk(bool final_flu
 }
 
 void R2T2ASRSession::publish_stream_delta(const std::string & fixed_text, runtime::StreamEvent & event) {
-    // fixed_text contains transcript text only; metadata must never advance
-    // this code-point offset. Stable transcript prefixes may still shrink
-    // between chunks, so only publish newly committed code points.
+    // Mirrors the reference WebSocket integrator, which slices the committed
+    // text by the previously published length (in code points):
+    //
+    //     if len(fixed) > len(last_fixed): emit fixed[len(last_fixed):]
+    //
+    // The stable prefix can regress between chunks, and the reference does
+    // not rewrite what it already sent. Metadata-only prefixes are suppressed
+    // before reaching this method. The authoritative
+    // transcript is delivered in the final result, so consumers that need exact
+    // text use that.
     const size_t length = utf8_codepoint_count(fixed_text);
     if (length <= published_codepoints_) {
         return;
@@ -431,6 +489,11 @@ void R2T2ASRSession::start_stream(const runtime::TaskRequest & request) {
     }
     reset();
     streaming_request_ = request;
+    if (endpointing_.enabled) {
+        // Load eagerly so a misconfigured VAD path fails at start_stream, not
+        // at the first chunk.
+        ensure_vad_runtime();
+    }
     if (streaming_request_.audio_input.has_value()) {
         streaming_request_.audio_input->samples.clear();
     }
@@ -473,6 +536,22 @@ void R2T2ASRSession::reset() {
     stream_channels_ = 1;
     stream_started_ = false;
     stream_wall_start_ = {};
+    if (vad_runtime_ != nullptr) {
+        vad_runtime_->reset(1);
+    }
+    endpoint_input_.clear();
+    vad_remainder_.clear();
+    vad_consumed_samples_ = 0;
+    vad_seed_.clear();
+    in_speech_ = false;
+    segment_has_audio_ = false;
+    pending_speech_end_ = {};
+    segment_start_stream_sample_ = 0;
+    segment_stream_frames_ = 0;
+    max_segment_stream_frames_ = 0;
+    stream_frames_consumed_ = 0;
+    completed_segments_.clear();
+    segment_index_ = 0;
 }
 
 runtime::StreamEvent R2T2ASRSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
@@ -493,16 +572,96 @@ runtime::StreamEvent R2T2ASRSession::process_audio_chunk(const runtime::AudioChu
         chunk_size_samples_ = std::max<int64_t>(
             1,
             static_cast<int64_t>(std::llround(stream_config_.chunk_seconds * static_cast<double>(chunk.sample_rate))));
+        max_segment_stream_frames_ = std::max<int64_t>(1, static_cast<int64_t>(
+            endpointing_.max_segment_seconds * static_cast<double>(chunk.sample_rate)));
     } else if (chunk.sample_rate != stream_sample_rate_ || chunk.channels != stream_channels_) {
         // Chunk boundaries are counted in frames of the stream's first chunk;
         // a mid-stream format change would silently corrupt the slicing.
         throw std::runtime_error(
             "R2T2 ASR streaming audio format changed mid-stream (sample rate or channel count); start a new stream instead");
     }
-    buffer_.insert(buffer_.end(), chunk.samples.begin(), chunk.samples.end());
+    if (!endpointing_.enabled) {
+        buffer_.insert(buffer_.end(), chunk.samples.begin(), chunk.samples.end());
 
+        runtime::StreamEvent event;
+        event.is_final = false;
+        const size_t channel_stride = static_cast<size_t>(chunk.channels);
+        while (buffer_.size() >= static_cast<size_t>(chunk_size_samples_) * channel_stride) {
+            const size_t take_values = static_cast<size_t>(chunk_size_samples_) * channel_stride;
+            audio_accum_.insert(audio_accum_.end(), buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(take_values));
+            buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(take_values));
+            const auto outcome = decode_stream_chunk(/*final_flush=*/false);
+            if (!outcome.fixed_text.empty()) {
+                publish_stream_delta(outcome.fixed_text, event);
+            }
+            append_stream_text(outcome.text);
+            if (stream_event_sink_ != nullptr && event.partial_text.has_value()) {
+                stream_event_sink_(event);
+                event.partial_text.reset();
+            }
+        }
+        if (stream_event_sink_ != nullptr && event.partial_text.has_value()) {
+            stream_event_sink_(event);
+            event.partial_text.reset();
+        }
+        return event;
+    }
+
+    // Buffer transport packets into globally aligned 32 ms VAD frames. This
+    // makes endpoint decisions independent of the caller's packet sizes.
     runtime::StreamEvent event;
-    event.is_final = false;
+    size_t offset = 0;
+    while (offset < chunk.samples.size()) {
+        const int64_t next_frame = to_stream_samples(vad_consumed_samples_ + 512);
+        const size_t frame_values = static_cast<size_t>(std::max<int64_t>(
+            1, next_frame - stream_frames_consumed_)) * chunk.channels;
+        const size_t take = std::min(frame_values - endpoint_input_.size(), chunk.samples.size() - offset);
+        endpoint_input_.insert(endpoint_input_.end(), chunk.samples.begin() + offset,
+                               chunk.samples.begin() + offset + take);
+        offset += take;
+        if (endpoint_input_.size() == frame_values) {
+            runtime::AudioChunk frame;
+            frame.sample_rate = stream_sample_rate_;
+            frame.channels = stream_channels_;
+            frame.samples.swap(endpoint_input_);
+            process_endpoint_frame(frame, event);
+        }
+    }
+    return event;
+}
+
+void R2T2ASRSession::process_endpoint_frame(const runtime::AudioChunk & chunk, runtime::StreamEvent & event) {
+    const bool vad_segment_end = feed_vad(chunk);
+    const int64_t chunk_frames = static_cast<int64_t>(chunk.samples.size() / chunk.channels);
+    if (in_speech_ || segment_has_audio_ || vad_segment_end) {
+        int64_t offset = 0;
+        while (offset < chunk_frames) {
+            if (!segment_has_audio_) {
+                segment_has_audio_ = true;
+                segment_start_stream_sample_ = stream_frames_consumed_ + offset;
+            }
+            const int64_t take = std::min(chunk_frames - offset,
+                max_segment_stream_frames_ - segment_stream_frames_);
+            buffer_.insert(buffer_.end(), chunk.samples.begin() + offset * chunk.channels,
+                           chunk.samples.begin() + (offset + take) * chunk.channels);
+            segment_stream_frames_ += take;
+            offset += take;
+            if (segment_stream_frames_ == max_segment_stream_frames_) {
+                flush_segment(event, vad_segment_end && offset == chunk_frames);
+            }
+        }
+    } else {
+        vad_seed_.insert(vad_seed_.end(), chunk.samples.begin(), chunk.samples.end());
+        const int64_t seed_frames = std::min<int64_t>(max_segment_stream_frames_ - 1,
+            static_cast<int64_t>(endpointing_.gap_keep_ms) * stream_sample_rate_ / 1000);
+        const size_t keep = std::min(vad_seed_.size(), static_cast<size_t>(seed_frames) * chunk.channels);
+        vad_seed_.erase(vad_seed_.begin(), vad_seed_.end() - static_cast<std::ptrdiff_t>(keep));
+    }
+    stream_frames_consumed_ += chunk_frames;
+    if (vad_segment_end && segment_has_audio_) {
+        flush_segment(event, true);
+    }
+
     const size_t channel_stride = static_cast<size_t>(chunk.channels);
     while (buffer_.size() >= static_cast<size_t>(chunk_size_samples_) * channel_stride) {
         const size_t take_values = static_cast<size_t>(chunk_size_samples_) * channel_stride;
@@ -512,14 +671,7 @@ runtime::StreamEvent R2T2ASRSession::process_audio_chunk(const runtime::AudioChu
         if (!outcome.fixed_text.empty()) {
             publish_stream_delta(outcome.fixed_text, event);
         }
-        if (!streaming_result_.text_output.has_value()) {
-            streaming_result_.text_output = runtime::Transcript{outcome.text, language_};
-        } else {
-            streaming_result_.text_output->text = outcome.text;
-            if (!language_.empty()) {
-                streaming_result_.text_output->language = language_;
-            }
-        }
+        append_stream_text(outcome.text);
         if (stream_event_sink_ != nullptr && event.partial_text.has_value()) {
             stream_event_sink_(event);
             event.partial_text.reset();
@@ -529,7 +681,7 @@ runtime::StreamEvent R2T2ASRSession::process_audio_chunk(const runtime::AudioChu
         stream_event_sink_(event);
         event.partial_text.reset();
     }
-    return event;
+
 }
 
 runtime::TaskResult R2T2ASRSession::finish_stream() {
@@ -545,21 +697,53 @@ runtime::TaskResult R2T2ASRSession::finalize() {
     if (!stream_started_) {
         throw std::runtime_error("R2T2 ASR finalize() requires start_stream");
     }
-    if (!buffer_.empty()) {
-        audio_accum_.insert(audio_accum_.end(), buffer_.begin(), buffer_.end());
-        buffer_.clear();
-        const auto outcome = decode_stream_chunk(/*final_flush=*/true);
+    if (endpointing_.enabled) {
+        if (!endpoint_input_.empty()) {
+            runtime::AudioChunk tail;
+            tail.sample_rate = stream_sample_rate_;
+            tail.channels = stream_channels_;
+            tail.samples.swap(endpoint_input_);
+            runtime::StreamEvent event;
+            process_endpoint_frame(tail, event);
+        }
+        // Anything still in the non-speech lead-in window gets one final
+        // decode: quiet speech the VAD ended on would otherwise be dropped.
+        // The window is bounded (vad_gap_keep_ms), so this costs at most one
+        // short decode at stream end.
+        if (!in_speech_ && !segment_has_audio_ && !vad_seed_.empty()) {
+            buffer_ = std::move(vad_seed_);
+            vad_seed_.clear();
+            segment_stream_frames_ = static_cast<int64_t>(buffer_.size() / static_cast<size_t>(std::max(1, stream_channels_)));
+            segment_start_stream_sample_ = stream_frames_consumed_ - segment_stream_frames_;
+            segment_has_audio_ = true;
+        }
+        // Close the open segment (if any) with the same authoritative final
+        // flush a VAD-driven boundary would use.
+        if (in_speech_ || segment_has_audio_) {
+            runtime::StreamEvent boundary_event;
+            flush_segment(boundary_event, /*from_vad=*/false);
+        }
         if (!streaming_result_.text_output.has_value()) {
-            streaming_result_.text_output = runtime::Transcript{outcome.text, language_};
+            streaming_result_.text_output = runtime::Transcript{joined_stream_text(std::string()), language_};
         } else {
-            streaming_result_.text_output->text = outcome.text;
+            streaming_result_.text_output->text = joined_stream_text(std::string());
             if (!language_.empty()) {
                 streaming_result_.text_output->language = language_;
             }
         }
-    }
-    if (!streaming_result_.text_output.has_value()) {
-        streaming_result_.text_output = runtime::Transcript{text_, language_};
+        for (const auto & [span, segment_text] : completed_segments_) {
+            streaming_result_.speech_segments.push_back(runtime::SpeechSegment{span, 1.0f, segment_text});
+        }
+    } else {
+        if (!buffer_.empty()) {
+            audio_accum_.insert(audio_accum_.end(), buffer_.begin(), buffer_.end());
+            buffer_.clear();
+            const auto outcome = decode_stream_chunk(/*final_flush=*/true);
+            append_stream_text(outcome.text);
+        }
+        if (!streaming_result_.text_output.has_value()) {
+            streaming_result_.text_output = runtime::Transcript{text_, language_};
+        }
     }
     if (stream_event_sink_ != nullptr) {
         // The final transcript travels in the task result (the server emits it
@@ -577,6 +761,209 @@ runtime::TaskResult R2T2ASRSession::finalize() {
         debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     }
     return streaming_result_;
+}
+
+void R2T2ASRSession::ensure_vad_runtime() {
+    if (vad_runtime_ != nullptr) {
+        return;
+    }
+    namespace sv = engine::models::silero_vad;
+    const auto paths = sv::resolve_silero_assets(endpointing_.vad_model_path);
+    auto weights = sv::load_silero_weights_cached(paths.checkpoint_path);
+    vad_runtime_ = std::make_unique<sv::SileroRuntime>(
+        std::move(weights), execution_context(), engine::assets::TensorStorageType::Native);
+    vad_runtime_->prepare(16000);
+    vad_config_ = std::make_unique<sv::SileroVADConfig>();
+    vad_config_->threshold = endpointing_.threshold;
+    vad_config_->min_silence_duration_ms = endpointing_.min_silence_ms;
+    vad_config_->speech_pad_ms = endpointing_.speech_pad_ms;
+    // neg_threshold stays on the runtime default (threshold - 0.15); the
+    // min-speech gate is enforced on the segment span below, mirroring the
+    // reference VAD's min_speech_frame semantics.
+}
+
+const engine::models::silero_vad::SileroVADConfig & R2T2ASRSession::vad_config() const {
+    return *vad_config_;
+}
+
+int64_t R2T2ASRSession::to_stream_samples(int64_t vad_samples) const {
+    if (stream_sample_rate_ == 16000 || vad_samples == 0) {
+        return vad_samples;
+    }
+    return static_cast<int64_t>(std::llround(
+        static_cast<double>(vad_samples) * static_cast<double>(stream_sample_rate_) / 16000.0));
+}
+
+bool R2T2ASRSession::feed_vad(const runtime::AudioChunk & chunk) {
+    ensure_vad_runtime();
+    auto mono = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
+        chunk.samples, chunk.sample_rate, chunk.channels, 16000);
+    // Rounded source-frame boundaries can resample to 511/513 values at
+    // unusual rates. A complete VAD frame always advances exactly 512 ticks.
+    const int64_t expected_frames = std::max<int64_t>(1,
+        to_stream_samples(vad_consumed_samples_ + 512) - stream_frames_consumed_);
+    if (static_cast<int64_t>(chunk.samples.size() / chunk.channels) == expected_frames) {
+        mono.resize(512, mono.empty() ? 0.0f : mono.back());
+    }
+    vad_remainder_.insert(vad_remainder_.end(), mono.begin(), mono.end());
+
+    bool end_requested = false;
+    constexpr int64_t kVadFrameSamples = 512;
+    while (vad_remainder_.size() >= static_cast<size_t>(kVadFrameSamples)) {
+        runtime::AudioChunk frame;
+        frame.sample_rate = 16000;
+        frame.channels = 1;
+        frame.start_sample = vad_consumed_samples_;
+        frame.samples.assign(vad_remainder_.begin(), vad_remainder_.begin() + kVadFrameSamples);
+        vad_remainder_.erase(vad_remainder_.begin(), vad_remainder_.begin() + kVadFrameSamples);
+        vad_consumed_samples_ += kVadFrameSamples;
+
+        const auto vad_event = vad_runtime_->process_chunk(frame, vad_config());
+        for (const auto & activity : vad_event.voice_activity) {
+            using Kind = runtime::VoiceActivityEvent::Kind;
+            if (activity.kind == Kind::SpeechStart) {
+                if (!segment_has_audio_) {
+                    // Fresh segment: anchor its span at the lead-in it is
+                    // about to receive and seed the decoder buffer with the
+                    // bounded non-speech window so boundary words survive.
+                    segment_has_audio_ = true;
+                    if (!vad_seed_.empty()) {
+                        buffer_.insert(buffer_.end(), vad_seed_.begin(), vad_seed_.end());
+                        segment_stream_frames_ +=
+                            static_cast<int64_t>(vad_seed_.size() / static_cast<size_t>(std::max(1, stream_channels_)));
+                        vad_seed_.clear();
+                    }
+                    segment_start_stream_sample_ = stream_frames_consumed_ - segment_stream_frames_;
+                }
+                in_speech_ = true;
+            } else if (activity.kind == Kind::SpeechEnd) {
+                in_speech_ = false;
+                auto end_activity = activity;
+                end_activity.sample = to_stream_samples(activity.sample);
+                if (end_activity.segment.has_value()) {
+                    end_activity.segment->span.start_sample = to_stream_samples(end_activity.segment->span.start_sample);
+                    end_activity.segment->span.end_sample = to_stream_samples(end_activity.segment->span.end_sample);
+                }
+                const int64_t span_frames = end_activity.segment.has_value()
+                    ? end_activity.segment->span.end_sample - end_activity.segment->span.start_sample
+                    : 0;
+                const int64_t min_speech_frames = static_cast<int64_t>(
+                    static_cast<double>(endpointing_.min_speech_ms) * stream_sample_rate_ / 1000.0);
+                if (span_frames >= min_speech_frames) {
+                    pending_speech_end_ = std::move(end_activity);
+                    end_requested = true;
+                }
+                // Rejected bursts (coughs, clicks below min_speech_ms) stay
+                // absorbed in the open segment; the next onset continues it.
+            }
+        }
+    }
+    return end_requested;
+}
+
+void R2T2ASRSession::flush_segment(runtime::StreamEvent & event, bool from_vad) {
+    if (!buffer_.empty()) {
+        audio_accum_.insert(audio_accum_.end(), buffer_.begin(), buffer_.end());
+        buffer_.clear();
+    }
+    const runtime::TimeSpan span{
+        segment_start_stream_sample_,
+        segment_start_stream_sample_ + segment_stream_frames_,
+    };
+    std::string segment_text;
+    if (!audio_accum_.empty()) {
+        const auto outcome = decode_stream_chunk(/*final_flush=*/true);
+        segment_text = outcome.text;
+        if (!outcome.fixed_text.empty()) {
+            publish_stream_delta(outcome.fixed_text, event);
+        }
+    }
+    if (!segment_text.empty()) {
+        completed_segments_.push_back({span, segment_text});
+    }
+    // The current segment is already in completed_segments_; pass empty so the
+    // joined view is not appended twice.
+    append_stream_text(std::string());
+
+    runtime::VoiceActivityEvent boundary;
+    if (from_vad && pending_speech_end_.kind == runtime::VoiceActivityEvent::Kind::SpeechEnd) {
+        boundary = std::move(pending_speech_end_);
+        pending_speech_end_ = {};
+    } else {
+        boundary.kind = runtime::VoiceActivityEvent::Kind::SpeechEnd;
+        boundary.sample = span.end_sample;
+        boundary.probability = 0.0f;
+        boundary.segment = runtime::SpeechSegment{span, 0.0f, {}};
+    }
+    boundary.sample = span.end_sample;
+    boundary.segment = runtime::SpeechSegment{span, boundary.probability, segment_text};
+    if (boundary.segment.has_value()) {
+        // Authoritative segment text travels with the boundary so clients can
+        // replace their delta-assembled buffer instead of appending to it.
+        boundary.segment->text = segment_text;
+    }
+    if (!segment_text.empty()) {
+        // Empty boundaries (silence-only flushes, e.g. the final lead-in
+        // window decode) carry no commit action; skip them rather than make
+        // clients filter reset events with nothing to commit.
+        event.voice_activity.push_back(boundary);
+    }
+    debug::trace_log_scalar("confucius4_r2t2.stream.segment_index", segment_index_);
+    debug::trace_log_scalar("confucius4_r2t2.stream.segment_frames", segment_stream_frames_);
+    debug::trace_log_scalar("confucius4_r2t2.stream.segment_text", segment_text);
+    if (stream_event_sink_ != nullptr) {
+        stream_event_sink_(event);
+        event.voice_activity.clear();
+        event.partial_text.reset();
+    }
+    begin_new_segment();
+}
+
+void R2T2ASRSession::begin_new_segment() {
+    // Only reset the recognizer. VAD recurrent state, its clock, the input
+    // remainder and speech state must survive both natural and forced cuts.
+    text_.clear();
+    raw_decoded_.clear();
+    buffer_.clear();
+    audio_accum_.clear();
+    chunk_id_ = 0;
+    published_codepoints_ = 0;
+    segment_has_audio_ = false;
+    segment_stream_frames_ = 0;
+    ++segment_index_;
+}
+
+void R2T2ASRSession::append_stream_text(const std::string & segment_text) {
+    const std::string joined = joined_stream_text(segment_text);
+    if (!streaming_result_.text_output.has_value()) {
+        streaming_result_.text_output = runtime::Transcript{joined, language_};
+    } else {
+        streaming_result_.text_output->text = joined;
+        if (!language_.empty()) {
+            streaming_result_.text_output->language = language_;
+        }
+    }
+}
+
+std::string R2T2ASRSession::joined_stream_text(const std::string & current_segment_text) const {
+    std::ostringstream joined;
+    bool first = true;
+    auto append = [&](const std::string & text) {
+        if (text.empty()) {
+            return;
+        }
+        if (!first) {
+            joined << ' ';
+        }
+        first = false;
+        joined << text;
+    };
+    for (const auto & [span, segment_text] : completed_segments_) {
+        (void) span;
+        append(segment_text);
+    }
+    append(current_segment_text);
+    return joined.str();
 }
 
 // Loading adapter: confucius4_r2t2 uses the schema-v1 spec-backed loader, so the loader
