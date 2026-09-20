@@ -9,6 +9,10 @@
 
 namespace engine::models::voxcpm2 {
 
+// Upper bound for VoxCPM2GenerationOptions::stream_left_context. The decode
+// window grows with it and every emitted patch re-decodes the whole window.
+inline constexpr int64_t kVoxCPM2MaxStreamLeftContext = 8;
+
 struct VoxCPM2GenerationOptions {
   int64_t min_tokens = 2;
   int64_t max_tokens = 4096;
@@ -19,21 +23,15 @@ struct VoxCPM2GenerationOptions {
   float retry_badcase_ratio_threshold = 6.0F;
   uint32_t seed = 1234;
   std::string cfm_noise_file;
-  // Streaming: how many already-generated patches are decoded together with
-  // each emitted patch as left context, and how many later patches are waited
-  // for as right context. The AudioVAE decoder is not causal; a patch decoded
-  // alone deviates at both edges from the full-sequence decode, and the hard
-  // concatenation is heard as a click at every patch boundary. Measured on
-  // VoxCPM2 Q8 (48 kHz, plain text, fixed seed) against the offline decode:
-  // alone, 40 % of all samples deviate by more than 0.01 and seams jump by up
-  // to 0.55 of full scale; with 3 patches of left context the largest
-  // deviation is 0.0015 (about 50 steps of 16-bit), with 4 it is 0.0005, with
-  // 5 or more 0.0004. Right context changes nothing audible and each patch of
-  // it delays the stream by one patch of audio. The decoder graph is built in
-  // capacity tiers, so a window of 4 patches (3 left) costs the same as 3 and
-  // a window of 5 the same as 8: 3 / 0 is the last cheap point.
+  // Streaming: number of preceding patches decoded together with each emitted
+  // patch as left context. The AudioVAE decoder is causal, but the streaming
+  // path invokes it statelessly per patch, so its causal-convolution history
+  // restarts from zero padding at every patch boundary and the seams click.
+  // Decoding the preceding patches in the same window rebuilds that history;
+  // the session trims their audio off again. The prompt's context rows count,
+  // as in the offline decode. 0 decodes every patch alone. Range
+  // [0, kVoxCPM2MaxStreamLeftContext].
   int64_t stream_left_context = 3;
-  int64_t stream_right_context = 0;
 };
 
 struct VoxCPM2PromptAudio {
@@ -74,10 +72,9 @@ struct VoxCPM2StreamingChunk {
   std::vector<float> decode_features;
   int64_t decode_patches = 0;
   int64_t generated_patches = 0;
-  // Context patches at the front and back of decode_features: decoded with
-  // the chunk for continuity, then dropped from its audio.
-  int64_t trim_front_patches = 0;
-  int64_t trim_back_patches = 0;
+  // Left-context patches at the front of decode_features: decoded with the
+  // chunk to rebuild the decoder's causal history, then dropped from its audio.
+  int64_t context_patches = 0;
 };
 
 struct VoxCPM2StreamingResult {
