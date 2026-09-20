@@ -970,6 +970,7 @@ public:
   }
 
   ~Impl() {
+    release_streaming_decoder_graph();
     release_decoder_graph();
     release_encoder_graph();
   }
@@ -1041,6 +1042,9 @@ public:
   }
 
   void release_runtime_memory() {
+    // The streaming graph references the request's AudioVAEStreamingDecodeState;
+    // the session calls this before that state is destroyed.
+    release_streaming_decoder_graph();
     release_decoder_graph();
     release_encoder_graph_impl();
   }
@@ -1049,9 +1053,12 @@ public:
 
   // Streaming decode support
   bool supports_streaming_decode() const {
+    // The stateful graph runs the same decoder ops as the offline graph; its
+    // state handling adds only concat, view/cont and backend tensor copies.
+    // Metal is untested and stays on the per-patch decode.
     const core::BackendType t = execution_context_.backend_type();
     return t == core::BackendType::Cpu || t == core::BackendType::Cuda ||
-           t == core::BackendType::Hip;
+           t == core::BackendType::Hip || t == core::BackendType::Vulkan;
   }
 
   bool initialize_streaming_decode_state(AudioVAEStreamingDecodeState& state) {
