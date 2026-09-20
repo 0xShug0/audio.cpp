@@ -1049,9 +1049,12 @@ public:
 
   // Streaming decode support
   bool supports_streaming_decode() const {
+    // The stateful path only uses concat, conv, view/cont and buffer copies,
+    // the same ops as the offline decoder graph. Metal is untested and stays
+    // on the per-patch decode.
     const core::BackendType t = execution_context_.backend_type();
     return t == core::BackendType::Cpu || t == core::BackendType::Cuda ||
-           t == core::BackendType::Hip;
+           t == core::BackendType::Hip || t == core::BackendType::Vulkan;
   }
 
   bool initialize_streaming_decode_state(AudioVAEStreamingDecodeState& state) {
