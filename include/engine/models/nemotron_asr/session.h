@@ -1,12 +1,14 @@
 #pragma once
 
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/models/nemotron_asr/assets.h"
 #include "engine/models/nemotron_asr/decoder.h"
 #include "engine/models/nemotron_asr/encoder.h"
 #include "engine/models/nemotron_asr/frontend.h"
 #include "engine/models/nemotron_asr/weights.h"
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -30,13 +32,6 @@ protected:
     int64_t prompt_id_for_request(const runtime::TaskRequest & request) const;
     int64_t lookahead_for_options(const std::unordered_map<std::string, std::string> & options) const;
     NemotronDecodeOptions decode_options_for_request(const runtime::TaskRequest & request) const;
-    NemotronDecodedText run_streaming_audio(
-        const runtime::AudioBuffer & audio,
-        int64_t prompt_id,
-        int64_t lookahead,
-        const NemotronDecodeOptions & decode_options,
-        const NemotronTextDeltaCallback & on_text_delta = nullptr);
-
     runtime::TaskSpec task_;
     std::shared_ptr<const NemotronASRAssets> assets_;
     std::shared_ptr<const NemotronWeights> weights_;
@@ -49,7 +44,6 @@ protected:
     NemotronFrontend frontend_;
     std::unique_ptr<NemotronEncoderRuntime> encoder_;
     std::unique_ptr<NemotronDecoderRuntime> decoder_;
-    runtime::AudioBuffer streaming_audio_;
     std::string streaming_language_;
     std::unordered_map<std::string, std::string> streaming_options_;
 };
@@ -92,7 +86,25 @@ public:
     runtime::TaskResult finalize() override;
 
 private:
+    runtime::StreamEvent process_available_chunks(bool flush_tail);
+    void process_feature_chunk(const NemotronFrontendFeatures & features);
+    runtime::StreamEvent publish_stream_update();
+
     runtime::StreamEventCallback stream_event_sink_;
+    runtime::PartialTextPublisher partials_;
+    NemotronEncoderStreamState encoder_stream_state_;
+    NemotronDecoderStreamState decoder_stream_state_;
+    std::vector<float> streaming_waveform_;
+    int64_t streaming_waveform_base_ = 0;
+    int64_t received_samples_ = 0;
+    int64_t next_chunk_start_ = 0;
+    int64_t prompt_id_ = 0;
+    int64_t lookahead_ = 0;
+    int64_t chunks_processed_ = 0;
+    bool first_chunk_processed_ = false;
+    bool stream_started_ = false;
+    bool finalized_ = false;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
 };
 
 }  // namespace engine::models::nemotron_asr
