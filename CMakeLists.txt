@@ -3198,6 +3198,22 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(moss_voicegen_codec_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
 
+        add_executable(moss_voicegen_codec_encode_parity
+            tests/moss_voicegen/codec_encode_parity.cpp
+        )
+        target_link_libraries(moss_voicegen_codec_encode_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_voicegen_codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        add_executable(moss_tts_delay_backbone_parity
+            tests/moss_tts_delay/backbone_parity.cpp
+        )
+        target_link_libraries(moss_tts_delay_backbone_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_tts_delay_backbone_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
         add_executable(moss_voicegen_smoke
             tests/moss_voicegen/voicegen_smoke.cpp
         )
