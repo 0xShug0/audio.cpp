@@ -1,5 +1,7 @@
 #include "engine/community_models/moss_tts_v15/prompt.h"
 
+#include "engine/framework/text/moss_tts_normalization.h"
+
 #include <stdexcept>
 
 namespace engine::models::moss_tts_v15 {
@@ -50,6 +52,10 @@ std::string render_references(const std::vector<ReferenceAudio> & references) {
 }  // namespace
 
 std::string render_user_inst(const PromptFields & fields) {
+    // The reference normalises the text as it builds the message
+    // (processing_moss_tts.py, build_user_message), not later, so the prompt the
+    // model sees is the normalised one. Clean prose is unchanged by this.
+    const std::string text = engine::text::normalize_moss_tts_text(fields.text);
     return std::string(kUserInstPrefix) + render_references(fields.references)
         + "\n- Instruction:\n" + field(fields.instruction)
         + "\n- Tokens:\n" + field(fields.tokens)
@@ -57,7 +63,7 @@ std::string render_user_inst(const PromptFields & fields) {
         + "\n- Sound Event:\n" + field(fields.sound_event)
         + "\n- Ambient Sound:\n" + field(fields.ambient_sound)
         + "\n- Language:\n" + field(fields.language)
-        + "\n- Text:\n" + fields.text
+        + "\n- Text:\n" + text
         + kUserInstSuffix;
 }
 

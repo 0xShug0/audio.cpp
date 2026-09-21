@@ -466,6 +466,7 @@ add_library(engine_core OBJECT
     src/framework/text/chinese_variant.cpp
     src/framework/text/chunking.cpp
     src/framework/text/subtitle.cpp
+    src/framework/text/moss_tts_normalization.cpp
     src/framework/text/text_normalization.cpp
     src/framework/text/unicode_normalization.cpp
     src/framework/io/yaml.cpp
@@ -3235,6 +3236,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(moss_tts_v15_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
+
+        add_executable(moss_tts_v15_text_normalization_test
+            tests/moss_tts_v15/text_normalization_test.cpp
+        )
+        target_link_libraries(moss_tts_v15_text_normalization_test PRIVATE engine_runtime ggml)
+        add_test(NAME moss_tts_v15_text_normalization
+            COMMAND moss_tts_v15_text_normalization_test --vectors
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/moss_tts_v15/reference/text_normalization_vectors.json")
 
         add_executable(moss_voicegen_smoke
             tests/moss_voicegen/voicegen_smoke.cpp
