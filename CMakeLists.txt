@@ -2985,6 +2985,26 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(streaming_audio_input_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME streaming_audio_input_test COMMAND streaming_audio_input_test)
 
+        if(NOT WIN32)
+            # Transport-only regression: no model weights or inference runtime.
+            add_executable(http_listener_test
+                tests/unittests/test_http_listener.cpp
+                app/server/http.cpp
+                src/framework/debug/trace.cpp
+                src/framework/io/json.cpp
+                src/framework/io/filesystem.cpp
+            )
+            target_include_directories(http_listener_test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/external/cJSON)
+            target_link_libraries(http_listener_test PRIVATE cjson_vendor Threads::Threads)
+            add_test(NAME http_listener_test COMMAND http_listener_test)
+            add_test(NAME http_listener_high_fd_test COMMAND http_listener_test --high-fd)
+            set_tests_properties(http_listener_test http_listener_high_fd_test PROPERTIES
+                TIMEOUT 30 RESOURCE_LOCK http_listener_port)
+            set_tests_properties(http_listener_high_fd_test PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
+
         add_executable(http_live_body_test
             tests/unittests/test_http_live_body.cpp
             app/server/http.cpp

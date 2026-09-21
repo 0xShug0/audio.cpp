@@ -34,7 +34,6 @@ constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 using SocketHandle = int;
@@ -834,30 +833,36 @@ void handle_client(SocketHandle client, IHttpHandler & handler, uint64_t max_req
 }
 
 bool wait_for_client(SocketHandle socket, int timeout_ms) {
+#ifdef _WIN32
+    // Windows fd_set stores handles rather than indexing by their numeric value.
     fd_set read_set;
     FD_ZERO(&read_set);
     FD_SET(socket, &read_set);
-
     timeval timeout{};
     timeout.tv_sec = timeout_ms / 1000;
     timeout.tv_usec = (timeout_ms % 1000) * 1000;
-
-#ifdef _WIN32
     const int ready = select(0, &read_set, nullptr, nullptr, &timeout);
-#else
-    const int ready = select(socket + 1, &read_set, nullptr, nullptr, &timeout);
-#endif
     if (ready < 0) {
-#ifdef _WIN32
-        if (WSAGetLastError() == WSAEINTR) {
-#else
-        if (errno == EINTR) {
-#endif
-            return false;
-        }
+        if (WSAGetLastError() == WSAEINTR) return false;
         throw std::runtime_error("server select failed");
     }
     return ready > 0 && FD_ISSET(socket, &read_set);
+#else
+    // POSIX FD_SET indexes a fixed-size bitmap. A valid listener above
+    // FD_SETSIZE would write past it; poll has no such numeric limit.
+    pollfd descriptor{};
+    descriptor.fd = socket;
+    descriptor.events = POLLIN;
+    const int ready = poll(&descriptor, 1, timeout_ms);
+    if (ready < 0) {
+        if (errno == EINTR) return false;
+        throw std::runtime_error("server poll failed");
+    }
+    if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        throw std::runtime_error("server listener poll reported a socket error");
+    }
+    return ready > 0 && (descriptor.revents & POLLIN) != 0;
+#endif
 }
 
 }  // namespace
