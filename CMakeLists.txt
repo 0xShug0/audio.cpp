@@ -1064,7 +1064,7 @@ audiocpp_add_model(moss_tts_v15
     INCLUDES
         engine/community_models/moss_tts_v15/loader.h
     LOADERS
-        engine::models::moss_tts_v15::make_loader
+        engine::models::moss_tts_v15::make_moss_tts_v15_loader
 )
 
 audiocpp_add_model(moss_voicegen

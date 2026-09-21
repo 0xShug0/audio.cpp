@@ -6,7 +6,7 @@
 
 namespace engine::models::moss_tts_v15 {
 
-std::shared_ptr<const Assets> load_assets(const std::filesystem::path & model_path) {
+std::shared_ptr<const Assets> load_moss_tts_v15_assets(const std::filesystem::path & model_path) {
     Assets assets;
     assets.resources = engine::model_spec::load_resource_bundle(
         model_path, engine::model_spec::default_spec_path("moss_tts_v15"));

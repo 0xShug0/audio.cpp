@@ -27,7 +27,7 @@ private:
     std::shared_ptr<const Assets> assets_;
 };
 
-std::unique_ptr<LoadedModel> load_model(const std::filesystem::path & model_path);
-std::shared_ptr<runtime::IVoiceModelLoader> make_loader();
+std::unique_ptr<LoadedModel> load_moss_tts_v15_model(const std::filesystem::path & model_path);
+std::shared_ptr<runtime::IVoiceModelLoader> make_moss_tts_v15_loader();
 
 }  // namespace engine::models::moss_tts_v15

@@ -75,7 +75,7 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_assets(request.model_path);
+        const auto assets = load_moss_tts_v15_assets(request.model_path);
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
@@ -94,7 +94,7 @@ public:
     }
 
     std::unique_ptr<runtime::ILoadedVoiceModel> load(const runtime::ModelLoadRequest & request) const override {
-        return load_model(request.model_path);
+        return load_moss_tts_v15_model(request.model_path);
     }
 };
 
@@ -130,12 +130,12 @@ std::unique_ptr<runtime::IVoiceTaskSession> LoadedModel::create_task_session(
     return std::make_unique<MossTtsV15Session>(task, options, assets_);
 }
 
-std::unique_ptr<LoadedModel> load_model(const std::filesystem::path & model_path) {
-    auto assets = load_assets(model_path);
+std::unique_ptr<LoadedModel> load_moss_tts_v15_model(const std::filesystem::path & model_path) {
+    auto assets = load_moss_tts_v15_assets(model_path);
     return std::make_unique<LoadedModel>(metadata(*assets), capabilities(), std::move(assets));
 }
 
-std::shared_ptr<runtime::IVoiceModelLoader> make_loader() {
+std::shared_ptr<runtime::IVoiceModelLoader> make_moss_tts_v15_loader() {
     return std::make_shared<Loader>();
 }
 

@@ -24,6 +24,6 @@ struct Assets {
     std::shared_ptr<const assets::TensorSource> audio_tokenizer_weights;
 };
 
-std::shared_ptr<const Assets> load_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const Assets> load_moss_tts_v15_assets(const std::filesystem::path & model_path);
 
 }  // namespace engine::models::moss_tts_v15
