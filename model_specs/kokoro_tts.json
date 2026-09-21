@@ -50,6 +50,13 @@
         "required": false,
         "min": 32,
         "default": 240
+      },
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Report where each phoneme group lands in the output, from the durations the model predicts before vocoding. Entries are phoneme groups in Kokoro's own alphabet, not written words, and do not map one-to-one onto the input text: see docs/models/kokoro_tts.md. Default false.",
+        "required": false,
+        "default": false
       }
     ],
     "session": [

@@ -2871,6 +2871,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(transformer_kv_ring_test tests/unittests/test_transformer_kv_ring.cpp)
         add_test(NAME transformer_kv_ring_test COMMAND transformer_kv_ring_test)
 
+        add_engine_unittest(kokoro_word_timings_test tests/unittests/test_kokoro_word_timings.cpp)
+        target_include_directories(kokoro_word_timings_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        target_link_libraries(kokoro_word_timings_test PRIVATE engine_model_kokoro_tts)
+        add_test(NAME kokoro_word_timings_test COMMAND kokoro_word_timings_test)
+
         add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
         # So the test can read the specs this repository ships, rather than a
         # copy of them staged somewhere.
