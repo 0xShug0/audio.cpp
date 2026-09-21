@@ -554,6 +554,8 @@ add_library(engine_core OBJECT
     src/framework/audio/deepfilternet2.cpp
     src/framework/audio/dsp.cpp
     src/framework/audio/nemo_mel_frontend.cpp
+    src/framework/audio/mel_spectrogram_frontend.cpp
+    src/framework/audio/reference_audio_frontend.cpp
     src/framework/audio/flashsr.cpp
     src/framework/audio/gtcrn.cpp
     src/framework/audio/istft_graph.cpp
@@ -2698,6 +2700,23 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(nemo_mel_migration_probe PRIVATE engine_runtime ggml)
     endif()
 
+    if(index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS AND
+       confucius4_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
+       seed_vc IN_LIST AUDIOCPP_LINKED_MODELS AND
+       glm_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
+       niagara_asr IN_LIST AUDIOCPP_LINKED_MODELS AND
+       qwen3_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
+       vietneu_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
+       dramabox IN_LIST AUDIOCPP_LINKED_MODELS AND
+       mira_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
+       chatterbox IN_LIST AUDIOCPP_LINKED_MODELS AND
+       dots_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
+       kroko_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(shared_mel_migration_probe tests/shared_mel_migration/probe.cpp)
+        target_link_libraries(shared_mel_migration_probe PRIVATE engine_runtime ggml)
+        target_include_directories(shared_mel_migration_probe PRIVATE src/models/chatterbox)
+    endif()
+
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 
     function(add_engine_unittest target source)
@@ -2763,6 +2782,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
+
+        add_engine_unittest(mel_spectrogram_frontend_test
+            tests/unittests/test_mel_spectrogram_frontend.cpp)
+        add_test(NAME mel_spectrogram_frontend_test COMMAND mel_spectrogram_frontend_test)
 
         if(sheetsage2 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(sheetsage_audio_frontend_test tests/unittests/test_sheetsage_audio_frontend.cpp)

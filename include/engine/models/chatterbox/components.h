@@ -70,6 +70,10 @@ struct VoiceEncoderConfig {
     bool final_relu = true;
 };
 
+std::vector<float> compute_voice_encoder_mel(
+    const std::vector<float> & waveform,
+    const VoiceEncoderConfig & config);
+
 struct VoiceEncoderLayerWeights {
     std::vector<float> weight_ih;
     std::vector<float> weight_hh;

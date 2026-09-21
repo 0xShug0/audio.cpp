@@ -38,6 +38,10 @@ struct KaldiFbankFeatures {
 
 const std::vector<float> &cached_kaldi_povey_window(int64_t window_size);
 
+// Float triangle construction used by 16 kHz CAMPPlus speaker frontends.
+// extract_kaldi_fbank uses a numerically different double-precision bank.
+const std::vector<float> &cached_kaldi_campplus_mel_filterbank_16k();
+
 class KaldiMelFilterbankCache {
 public:
   KaldiMelFilterbankCache();

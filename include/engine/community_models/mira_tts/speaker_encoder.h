@@ -11,6 +11,8 @@
 
 namespace engine::community_models::mira_tts {
 
+std::vector<float> compute_mira_reference_mel(const runtime::AudioBuffer & audio, size_t threads);
+
 class MiraSpeakerEncoder final {
 public:
     MiraSpeakerEncoder(
