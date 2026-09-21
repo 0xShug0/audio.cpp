@@ -18,6 +18,7 @@ using Clock = std::chrono::steady_clock;
 constexpr size_t kDefaultWeightContextBytes = 3072ull * 1024ull * 1024ull;
 constexpr size_t kDefaultEncoderGraphArenaBytes = 1024ull * 1024ull * 1024ull;
 constexpr size_t kDefaultDecoderGraphArenaBytes = 256ull * 1024ull * 1024ull;
+constexpr double kStreamingFlushSeconds = 0.5;
 
 std::shared_ptr<const NemotronASRAssets> require_assets(std::shared_ptr<const NemotronASRAssets> assets) {
     if (assets == nullptr) {
@@ -302,61 +303,6 @@ runtime::TaskResult NemotronASROfflineSession::run(const runtime::TaskRequest & 
     return result;
 }
 
-NemotronDecodedText NemotronASRSessionBase::run_streaming_audio(
-    const runtime::AudioBuffer & audio,
-    int64_t prompt_id,
-    int64_t lookahead,
-    const NemotronDecodeOptions & decode_options,
-    const NemotronTextDeltaCallback & on_text_delta) {
-    const auto & fc = assets_->config.frontend;
-    const int64_t first_mel_frames = 1 + assets_->config.encoder.subsampling_factor * lookahead;
-    const int64_t mel_frames_per_chunk = assets_->config.encoder.subsampling_factor * (lookahead + 1);
-    const int64_t first_samples = (first_mel_frames - 1) * fc.hop_length + fc.win_length / 2;
-    const int64_t samples_per_chunk = mel_frames_per_chunk * fc.hop_length + fc.win_length;
-    auto waveform = frontend_.prepare_waveform(audio);
-    if (static_cast<int64_t>(waveform.size()) < first_samples) {
-        throw std::runtime_error("Nemotron ASR streaming request is shorter than the first required chunk");
-    }
-    NemotronEncoderStreamState stream_state = encoder_->make_stream_state();
-    bool first_chunk = true;
-    int64_t chunk_count = 0;
-    int64_t mel_frame_idx = first_mel_frames;
-    int64_t start_idx = mel_frame_idx * fc.hop_length - fc.n_fft / 2;
-    auto next_chunk = [&](NemotronEncodedAudio & out) -> bool {
-        if (first_chunk) {
-            first_chunk = false;
-            ++chunk_count;
-            std::vector<float> chunk_waveform(
-                waveform.begin(),
-                waveform.begin() + static_cast<std::ptrdiff_t>(first_samples));
-            auto features = frontend_.extract_waveform(chunk_waveform, true);
-            if (features.frames > first_mel_frames) {
-                features = slice_features(features, 0, first_mel_frames);
-            }
-            out = encoder_->encode_stream_chunk(features, prompt_id, lookahead, stream_state);
-            return true;
-        }
-        if (start_idx + samples_per_chunk >= static_cast<int64_t>(waveform.size())) {
-            return false;
-        }
-        std::vector<float> chunk_waveform(
-            waveform.begin() + static_cast<std::ptrdiff_t>(start_idx),
-            waveform.begin() + static_cast<std::ptrdiff_t>(start_idx + samples_per_chunk));
-        auto features = frontend_.extract_waveform(chunk_waveform, false);
-        if (features.frames != mel_frames_per_chunk) {
-            throw std::runtime_error("Nemotron ASR streaming frontend produced unexpected chunk frame count");
-        }
-        out = encoder_->encode_stream_chunk(features, prompt_id, lookahead, stream_state);
-        mel_frame_idx += mel_frames_per_chunk;
-        start_idx = mel_frame_idx * fc.hop_length - fc.n_fft / 2;
-        ++chunk_count;
-        return true;
-    };
-    auto decoded = decoder_->decode_streaming(decode_options, next_chunk, on_text_delta);
-    debug::trace_log_scalar("nemotron_asr.streaming.chunks", chunk_count);
-    return decoded;
-}
-
 NemotronASRStreamingSession::NemotronASRStreamingSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
@@ -396,17 +342,35 @@ runtime::StreamingPolicy NemotronASRStreamingSession::streaming_policy() const {
     runtime::StreamingPolicy policy;
     policy.input = runtime::StreamingInputKind::AudioChunks;
     policy.output = runtime::StreamingOutputKind::FinalResult;
-    policy.preferred_audio_chunk_samples = assets_->config.frontend.sample_rate;
+    const auto & fc = assets_->config.frontend;
+    const int64_t mel_frames =
+        assets_->config.encoder.subsampling_factor *
+        std::max<int64_t>(assets_->config.encoder.default_lookahead_tokens + 1, 4);
+    policy.preferred_audio_chunk_samples = mel_frames * fc.hop_length;
+    policy.preferred_audio_chunk_seconds =
+        static_cast<double>(policy.preferred_audio_chunk_samples) /
+        static_cast<double>(fc.sample_rate);
     return policy;
 }
 
 void NemotronASRStreamingSession::start_stream(const runtime::TaskRequest & request) {
+    require_prepared("Nemotron ASR start_stream()");
     reset();
     streaming_options_ = request.options;
     streaming_language_ = request.text_input.has_value() ? request.text_input->language : "";
     if (const auto option = runtime::find_option(request.options, {"language"})) {
         streaming_language_ = *option;
     }
+    runtime::TaskRequest config_request;
+    config_request.text_input = runtime::Transcript{"", streaming_language_};
+    config_request.options = streaming_options_;
+    prompt_id_ = prompt_id_for_request(config_request);
+    lookahead_ = lookahead_for_options(streaming_options_);
+    encoder_stream_state_ = encoder_->make_stream_state();
+    decoder_stream_state_ = decoder_->make_stream_state(
+        decode_options_for_request(config_request));
+    stream_wall_start_ = Clock::now();
+    stream_started_ = true;
 }
 
 void NemotronASRStreamingSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
@@ -418,7 +382,18 @@ void NemotronASRStreamingSession::reset() {
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Nemotron ASR reset called on non-streaming session");
     }
-    streaming_audio_ = runtime::AudioBuffer{};
+    streaming_waveform_.clear();
+    streaming_waveform_base_ = 0;
+    received_samples_ = 0;
+    next_chunk_start_ = 0;
+    prompt_id_ = 0;
+    lookahead_ = 0;
+    chunks_processed_ = 0;
+    first_chunk_processed_ = false;
+    stream_started_ = false;
+    finalized_ = false;
+    stream_wall_start_ = {};
+    partials_.reset();
 }
 
 runtime::StreamEvent NemotronASRStreamingSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
@@ -426,14 +401,154 @@ runtime::StreamEvent NemotronASRStreamingSession::process_audio_chunk(const runt
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Nemotron ASR process_audio_chunk called on non-streaming session");
     }
-    runtime::AudioBuffer audio;
-    audio.sample_rate = chunk.sample_rate;
-    audio.channels = chunk.channels;
-    audio.samples = chunk.samples;
-    runtime::append_audio_buffer(streaming_audio_, audio);
+    if (!stream_started_ || finalized_) {
+        throw std::runtime_error(
+            "Nemotron ASR process_audio_chunk requires an active stream");
+    }
+    if (chunk.sample_rate != assets_->config.frontend.sample_rate ||
+        chunk.channels != 1) {
+        throw std::runtime_error(
+            "Nemotron ASR streaming requires mono audio at the model sample rate");
+    }
+    if (chunk.start_sample != received_samples_) {
+        throw std::runtime_error("Nemotron ASR streaming chunks must be contiguous");
+    }
+    streaming_waveform_.insert(
+        streaming_waveform_.end(), chunk.samples.begin(), chunk.samples.end());
+    received_samples_ += static_cast<int64_t>(chunk.samples.size());
+    return process_available_chunks(false);
+}
+
+void NemotronASRStreamingSession::process_feature_chunk(
+    const NemotronFrontendFeatures & features) {
+    auto encoded = encoder_->encode_stream_chunk(
+        features, prompt_id_, lookahead_, encoder_stream_state_);
+    decoder_->decode_stream_chunk(encoded, decoder_stream_state_);
+    ++chunks_processed_;
+}
+
+runtime::StreamEvent NemotronASRStreamingSession::publish_stream_update() {
     runtime::StreamEvent event;
-    event.is_final = false;
+    auto delta = partials_.publish(decoder_stream_state_.decoded.text);
+    if (delta.empty()) {
+        return event;
+    }
+    event.partial_text = runtime::Transcript{std::move(delta), streaming_language_};
+    if (stream_event_sink_) {
+        stream_event_sink_(event);
+        return {};
+    }
     return event;
+}
+
+runtime::StreamEvent NemotronASRStreamingSession::process_available_chunks(
+    bool flush_tail) {
+    const auto & fc = assets_->config.frontend;
+    const int64_t first_mel_frames = std::max<int64_t>(
+        assets_->config.encoder.subsampling_factor,
+        1 + assets_->config.encoder.subsampling_factor * lookahead_);
+    const int64_t mel_frames_per_chunk =
+        assets_->config.encoder.subsampling_factor *
+        std::max<int64_t>(lookahead_ + 1, 4);
+    const int64_t first_samples =
+        (first_mel_frames - 1) * fc.hop_length + fc.win_length / 2;
+    const int64_t samples_per_chunk =
+        mel_frames_per_chunk * fc.hop_length + fc.win_length;
+
+    runtime::StreamEvent combined;
+    auto publish = [&]() {
+        auto event = publish_stream_update();
+        if (!stream_event_sink_ && event.partial_text.has_value()) {
+            if (!combined.partial_text.has_value()) {
+                combined.partial_text = runtime::Transcript{"", streaming_language_};
+            }
+            combined.partial_text->text += event.partial_text->text;
+        }
+    };
+    auto pad_features = [](NemotronFrontendFeatures features, int64_t frames) {
+        if (features.frames > frames) {
+            return slice_features(features, 0, frames);
+        }
+        features.values.resize(
+            static_cast<size_t>(frames * features.feature_dim), 0.0f);
+        features.frames = frames;
+        features.valid_frames = frames;
+        return features;
+    };
+    auto waveform_slice = [&](int64_t begin, int64_t end) {
+        if (end < begin || end > received_samples_ ||
+            std::max<int64_t>(begin, 0) < streaming_waveform_base_) {
+            throw std::runtime_error("Nemotron ASR streaming waveform slice is out of range");
+        }
+        std::vector<float> result(static_cast<size_t>(end - begin), 0.0f);
+        const int64_t source_begin = std::max<int64_t>(begin, 0);
+        const auto first = streaming_waveform_.begin() +
+            static_cast<std::ptrdiff_t>(source_begin - streaming_waveform_base_);
+        const auto last = streaming_waveform_.begin() +
+            static_cast<std::ptrdiff_t>(end - streaming_waveform_base_);
+        std::copy(first, last, result.begin() + static_cast<std::ptrdiff_t>(source_begin - begin));
+        return result;
+    };
+
+    if (!first_chunk_processed_ &&
+        (received_samples_ >= first_samples || flush_tail)) {
+        auto first_waveform = waveform_slice(
+            0, std::min<int64_t>(received_samples_, first_samples));
+        auto features = pad_features(
+            frontend_.extract_waveform(first_waveform, true), first_mel_frames);
+        process_feature_chunk(features);
+        first_chunk_processed_ = true;
+        next_chunk_start_ = first_mel_frames * fc.hop_length - fc.n_fft / 2;
+        publish();
+    }
+
+    while (first_chunk_processed_ &&
+           received_samples_ >= next_chunk_start_ + samples_per_chunk) {
+        auto waveform = waveform_slice(
+            next_chunk_start_, next_chunk_start_ + samples_per_chunk);
+        auto features = frontend_.extract_waveform(waveform, false);
+        if (features.frames != mel_frames_per_chunk) {
+            throw std::runtime_error(
+                "Nemotron ASR streaming frontend produced unexpected chunk frame count");
+        }
+        process_feature_chunk(features);
+        next_chunk_start_ += mel_frames_per_chunk * fc.hop_length;
+        publish();
+    }
+
+    if (flush_tail && first_chunk_processed_) {
+        const int64_t tail_samples = received_samples_ - next_chunk_start_;
+        if (tail_samples > fc.win_length) {
+            auto waveform = waveform_slice(next_chunk_start_, received_samples_);
+            auto features = pad_features(
+                frontend_.extract_waveform(waveform, false), mel_frames_per_chunk);
+            process_feature_chunk(features);
+            publish();
+        }
+        const int64_t flush_chunks = std::max<int64_t>(
+            1,
+            static_cast<int64_t>(std::ceil(
+                kStreamingFlushSeconds * static_cast<double>(fc.sample_rate) /
+                static_cast<double>(mel_frames_per_chunk * fc.hop_length))));
+        const std::vector<float> silence(static_cast<size_t>(samples_per_chunk), 0.0f);
+        const auto silence_features = frontend_.extract_waveform(silence, false);
+        for (int64_t chunk = 0; chunk < flush_chunks; ++chunk) {
+            process_feature_chunk(silence_features);
+            publish();
+        }
+    }
+
+    if (!flush_tail && first_chunk_processed_) {
+        const int64_t keep_from = std::max<int64_t>(0, next_chunk_start_);
+        if (keep_from > streaming_waveform_base_) {
+            const int64_t discard = keep_from - streaming_waveform_base_;
+            streaming_waveform_.erase(
+                streaming_waveform_.begin(),
+                streaming_waveform_.begin() + static_cast<std::ptrdiff_t>(discard));
+            streaming_waveform_base_ = keep_from;
+        }
+    }
+    return combined;
 }
 
 runtime::TaskResult NemotronASRStreamingSession::finalize() {
@@ -441,33 +556,25 @@ runtime::TaskResult NemotronASRStreamingSession::finalize() {
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Nemotron ASR finalize called on non-streaming session");
     }
-    if (streaming_audio_.samples.empty()) {
+    if (!stream_started_ || finalized_) {
+        throw std::runtime_error("Nemotron ASR finalize requires an active stream");
+    }
+    if (received_samples_ == 0) {
         throw std::runtime_error("Nemotron ASR finalize requires streamed audio");
     }
-    const auto wall_start = Clock::now();
-    runtime::TaskRequest config_request;
-    config_request.text_input = runtime::Transcript{"", streaming_language_};
-    config_request.options = streaming_options_;
-    const int64_t prompt_id = prompt_id_for_request(config_request);
-    const int64_t lookahead = lookahead_for_options(streaming_options_);
-    const auto decode_options = decode_options_for_request(config_request);
-    const auto decoded = run_streaming_audio(
-        streaming_audio_,
-        prompt_id,
-        lookahead,
-        decode_options,
-        [&](const std::string & delta) {
-            if (!stream_event_sink_ || delta.empty()) {
-                return;
-            }
-            runtime::StreamEvent event;
-            event.partial_text = runtime::Transcript{delta, streaming_language_};
-            stream_event_sink_(event);
-        });
+    (void) process_available_chunks(true);
+    auto decoded = decoder_->stream_result(decoder_stream_state_);
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{decoded.text, streaming_language_};
-    result.word_timestamps = decoded.token_timestamps;
-    debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
+    result.word_timestamps = std::move(decoded.token_timestamps);
+    finalized_ = true;
+    stream_started_ = false;
+    streaming_waveform_.clear();
+    debug::trace_log_scalar("nemotron_asr.streaming.chunks", chunks_processed_);
+    if (stream_wall_start_ != std::chrono::steady_clock::time_point{}) {
+        debug::timing_log_scalar(
+            "session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_, Clock::now()));
+    }
     return result;
 }
 

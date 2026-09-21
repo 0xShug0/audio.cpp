@@ -228,7 +228,7 @@ Nemotron ASR is an NVIDIA Nemotron 3.5 ASR RNNT model with offline and streaming
 | Task | `asr` |
 | Modes | `offline`, `streaming` |
 | Output | Transcription text; optional token timestamps through `--words-out` |
-| Streaming input | Audio chunks; preferred chunk size is one second at the model sample rate |
+| Streaming input | Audio chunks; native cache-aware inference with a 320 ms preferred input cadence by default |
 | Timestamps | Token timestamps |
 
 Offline:

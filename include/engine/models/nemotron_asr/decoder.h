@@ -8,7 +8,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,7 +26,14 @@ struct NemotronDecodedText {
     std::vector<runtime::WordTimestamp> token_timestamps;
 };
 
-using NemotronTextDeltaCallback = std::function<void(const std::string &)>;
+struct NemotronDecoderStreamState {
+    NemotronDecodeOptions options;
+    NemotronDecodedText decoded;
+    int64_t encoded_frames = 0;
+    int64_t symbols_at_frame = 0;
+    int32_t input_token = 0;
+    bool decoder_cache_initialized = false;
+};
 
 class NemotronDecoderRuntime {
 public:
@@ -40,11 +46,11 @@ public:
 
     void prepare();
     NemotronDecodedText decode(const NemotronEncodedAudio & encoded, const NemotronDecodeOptions & options);
-    NemotronDecodedText decode_streaming(
-        const NemotronDecodeOptions & options,
-        const std::function<bool(NemotronEncodedAudio &)> & next_chunk,
-        const NemotronTextDeltaCallback & on_text_delta = nullptr);
-
+    NemotronDecoderStreamState make_stream_state(const NemotronDecodeOptions & options);
+    void decode_stream_chunk(
+        const NemotronEncodedAudio & encoded,
+        NemotronDecoderStreamState & state);
+    NemotronDecodedText stream_result(const NemotronDecoderStreamState & state) const;
 private:
     struct Graph;
     struct JointGraph;
