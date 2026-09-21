@@ -77,7 +77,11 @@ private:
 
     R2T2ASRRequest make_request(const runtime::TaskRequest & request) const;
     R2T2ASRResult run_single(const R2T2ASRRequest & request);
-    std::string generate_text(const R2T2ASRPrompt & prompt, const R2T2ASRAudioEmbeddings & embeddings);
+    std::string generate_text(
+        const R2T2ASRPrompt & prompt,
+        const R2T2ASRAudioEmbeddings & embeddings,
+        int64_t cached_prefix_steps);
+    R2T2ASRAudioEmbeddings encode_stream_audio(const R2T2ASRAudioFeatures & features);
 
     StreamOutcome decode_stream_chunk(bool final_flush);
     std::string build_stream_prefix(bool final_flush) const;
@@ -118,6 +122,15 @@ private:
     runtime::StreamEventCallback stream_event_sink_;
     bool stream_started_ = false;
     std::chrono::steady_clock::time_point stream_wall_start_{};
+
+    // Incremental streaming state. The audio tower is block-diagonal per
+    // attention window, so embeddings of completed windows are final and are
+    // cached; the thinker keeps the K/V rows of the prompt head plus those
+    // cached audio tokens, and only the tail is recomputed per chunk.
+    R2T2ASRAudioEmbeddings cached_audio_embeddings_;
+    int64_t cached_audio_frames_ = 0;
+    int64_t prev_cached_audio_tokens_ = 0;
+    int64_t stream_decodes_ = 0;
 };
 
 }  // namespace engine::community_models::confucius4_r2t2

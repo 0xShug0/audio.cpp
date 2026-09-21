@@ -12,6 +12,11 @@ namespace engine::community_models::confucius4_r2t2 {
 struct R2T2ASRGenerationOptions {
     int64_t max_new_tokens = 512;
     bool reuse_graphs = false;
+    // Streaming: reuse the thinker K/V rows of the first cached_prefix_steps
+    // prompt rows, which the caller guarantees are unchanged since the
+    // previous generate() call.
+    bool incremental_prefill = false;
+    int64_t cached_prefix_steps = 0;
     bool return_timestamps = false;
     bool clamp_timestamps_to_audio = false;
 };

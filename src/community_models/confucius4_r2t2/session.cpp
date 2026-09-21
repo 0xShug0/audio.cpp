@@ -73,6 +73,39 @@ bool language_is_supported(const R2T2ASRAssets & assets, const std::string & lan
     return std::find(supported.begin(), supported.end(), language) != supported.end();
 }
 
+// Log-mel values are mel-major ([mel_bins][frames]); slice frames [begin, end).
+R2T2ASRAudioFeatures slice_audio_features(const R2T2ASRAudioFeatures & features, int64_t begin, int64_t end) {
+    if (begin < 0 || end > features.frames || begin >= end) {
+        throw std::runtime_error("R2T2 ASR audio feature slice is out of range");
+    }
+    R2T2ASRAudioFeatures out;
+    out.mel_bins = features.mel_bins;
+    out.frames = end - begin;
+    out.encoder_tokens = confucius4_r2t2_audio_encoder_token_count(out.frames);
+    out.attention_mask.assign(static_cast<size_t>(out.frames), 1);
+    out.values.resize(static_cast<size_t>(out.mel_bins * out.frames));
+    for (int64_t mel = 0; mel < features.mel_bins; ++mel) {
+        std::copy_n(
+            features.values.begin() + static_cast<std::ptrdiff_t>(mel * features.frames + begin),
+            static_cast<size_t>(out.frames),
+            out.values.begin() + static_cast<std::ptrdiff_t>(mel * out.frames));
+    }
+    return out;
+}
+
+void append_audio_embeddings(R2T2ASRAudioEmbeddings & target, const R2T2ASRAudioEmbeddings & source, int64_t skip_tokens) {
+    if (skip_tokens < 0 || skip_tokens > source.tokens) {
+        throw std::runtime_error("R2T2 ASR audio embedding skip count is out of range");
+    }
+    if (target.tokens > 0 && target.hidden_size != source.hidden_size) {
+        throw std::runtime_error("R2T2 ASR audio embedding hidden size mismatch");
+    }
+    target.hidden_size = source.hidden_size;
+    const auto first = source.values.begin() + static_cast<std::ptrdiff_t>(skip_tokens * source.hidden_size);
+    target.values.insert(target.values.end(), first, source.values.end());
+    target.tokens += source.tokens - skip_tokens;
+}
+
 }  // namespace
 
 R2T2ASRSession::R2T2ASRSession(
@@ -271,12 +304,54 @@ runtime::TaskResult R2T2ASRSession::run(const runtime::TaskRequest & request) {
 
 std::string R2T2ASRSession::generate_text(
     const R2T2ASRPrompt & prompt,
-    const R2T2ASRAudioEmbeddings & embeddings) {
+    const R2T2ASRAudioEmbeddings & embeddings,
+    int64_t cached_prefix_steps) {
     R2T2ASRGenerationOptions options;
     options.max_new_tokens = stream_config_.max_new_tokens;
     options.reuse_graphs = true;
+    options.incremental_prefill = true;
+    options.cached_prefix_steps = cached_prefix_steps;
     const auto tokens = thinker_.generate(prompt, embeddings, options);
     return tokenizer_.decode(tokens.token_ids);
+}
+
+R2T2ASRAudioEmbeddings R2T2ASRSession::encode_stream_audio(const R2T2ASRAudioFeatures & features) {
+    const auto & config = assets_->config.audio_encoder;
+    const int64_t chunk_frames = config.n_window * 2;
+    const int64_t window_frames = config.n_window_infer;
+    if (chunk_frames <= 0 || window_frames <= 0 || window_frames % chunk_frames != 0) {
+        return audio_encoder_.encode(features, /*reuse_graph=*/true);
+    }
+    const auto encode_range = [&](int64_t begin, int64_t end) {
+        return audio_encoder_.encode(slice_audio_features(features, begin, end), /*reuse_graph=*/true);
+    };
+    // The last two log-mel frames still see the reflect padding at the end of
+    // the audio, so only windows ending before them are final.
+    const int64_t final_frames = std::max<int64_t>(0, features.frames - 2);
+    const int64_t complete_frames = final_frames / window_frames * window_frames;
+    if (complete_frames > cached_audio_frames_) {
+        append_audio_embeddings(cached_audio_embeddings_, encode_range(cached_audio_frames_, complete_frames), 0);
+        cached_audio_frames_ = complete_frames;
+    }
+    R2T2ASRAudioEmbeddings out = cached_audio_embeddings_;
+    if (features.frames > cached_audio_frames_) {
+        // Inputs shorter than one conv chunk get an exact-size graph rebuilt on
+        // every call; re-encoding the previous window along with such a tail is
+        // cheaper and keeps the reusable graph.
+        int64_t begin = cached_audio_frames_;
+        if (features.frames - begin < chunk_frames && begin >= window_frames) {
+            begin -= window_frames;
+        }
+        const int64_t skip_tokens = begin < cached_audio_frames_
+            ? confucius4_r2t2_audio_encoder_token_count(cached_audio_frames_ - begin)
+            : 0;
+        append_audio_embeddings(out, encode_range(begin, features.frames), skip_tokens);
+    }
+    if (out.tokens != features.encoder_tokens) {
+        throw std::runtime_error("R2T2 ASR windowed audio encoding produced an unexpected token count");
+    }
+    debug::trace_log_scalar("confucius4_r2t2.stream.cached_audio_frames", cached_audio_frames_);
+    return out;
 }
 
 std::string R2T2ASRSession::decode_rollback_prefix(
@@ -330,8 +405,18 @@ R2T2ASRSession::StreamOutcome R2T2ASRSession::decode_stream_chunk(bool final_flu
     accum.samples = audio_accum_;
     const auto features = frontend_.extract(accum);
     const auto prompt = tokenizer_.build_raw_audio_prompt(prompt_raw_ + prefix, features.encoder_tokens);
-    const auto embeddings = audio_encoder_.encode(features, /*reuse_graph=*/true);
-    std::string generated = generate_text(prompt, embeddings);
+    const auto embeddings = encode_stream_audio(features);
+    // Prompt rows through the audio tokens that were already cached at the
+    // previous decode are unchanged: fixed chat template head, then final
+    // window embeddings. Everything after them (tail audio, template close,
+    // stable text prefix) shifts or changes and is prefilled again.
+    const int64_t cached_prefix_steps = stream_decodes_ == 0 || prompt.audio_token_positions.empty()
+        ? 0
+        : prompt.audio_token_positions.front() + prev_cached_audio_tokens_;
+    prev_cached_audio_tokens_ = cached_audio_embeddings_.tokens;
+    ++stream_decodes_;
+    debug::trace_log_scalar("confucius4_r2t2.stream.cached_prefix_steps", cached_prefix_steps);
+    std::string generated = generate_text(prompt, embeddings, cached_prefix_steps);
     generated = normalize_punct_by_context(generated);
     generated = sanitize_utf8_lossy(generated);
     // Remove U+FFFD replacement characters, mirroring .replace('\ufffd', '').
@@ -473,6 +558,10 @@ void R2T2ASRSession::reset() {
     stream_channels_ = 1;
     stream_started_ = false;
     stream_wall_start_ = {};
+    cached_audio_embeddings_ = {};
+    cached_audio_frames_ = 0;
+    prev_cached_audio_tokens_ = 0;
+    stream_decodes_ = 0;
 }
 
 runtime::StreamEvent R2T2ASRSession::process_audio_chunk(const runtime::AudioChunk & chunk) {

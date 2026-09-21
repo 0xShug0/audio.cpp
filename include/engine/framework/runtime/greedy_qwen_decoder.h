@@ -66,6 +66,13 @@ public:
     // growing prompts. Each call still recomputes the full prompt.
     std::vector<int32_t> generate(const Prompt & prompt, int64_t max_new_tokens, bool reuse_graphs = false);
 
+    // Streaming variant of the reusing path. The caller guarantees the first
+    // cached_prefix_steps prompt rows (token ids and injected embeddings) are
+    // identical to the previous call on this runtime; their K/V rows are kept
+    // and only the remainder is prefilled. The decode cache grows in 512-step
+    // buckets so a steadily growing prompt rarely discards that state.
+    std::vector<int32_t> generate_incremental(const Prompt & prompt, int64_t max_new_tokens, int64_t cached_prefix_steps);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
