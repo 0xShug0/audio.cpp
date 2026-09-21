@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/audio/dsp.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/community_models/vietneu_tts/assets.h"
 #include "engine/community_models/vietneu_tts/types.h"
@@ -20,6 +21,8 @@ struct VietneuSpeakerFeatures {
     int64_t mel_bins = 0;
     int64_t frames = 0;
 };
+
+audio::AudioTensor compute_vietneu_speaker_mel(const runtime::AudioBuffer & audio, int threads);
 
 class VietneuSpeakerEncoderRuntime {
 public:

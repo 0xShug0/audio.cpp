@@ -138,6 +138,33 @@ std::vector<float> make_mel_filterbank(int sample_rate, int fft_size,
   return filters;
 }
 
+std::vector<float> make_float_mel_filterbank(
+    int64_t sample_rate, int64_t fft_size, int64_t num_mels,
+    float low_frequency, float high_frequency) {
+  const int64_t filtered_bins = fft_size / 2;
+  const float nyquist = 0.5F * static_cast<float>(sample_rate);
+  if (high_frequency <= 0.0F) high_frequency += nyquist;
+  const float bin_width = static_cast<float>(sample_rate) / static_cast<float>(fft_size);
+  const float mel_low = 1127.0F * std::log(1.0F + low_frequency / 700.0F);
+  const float mel_high = 1127.0F * std::log(1.0F + high_frequency / 700.0F);
+  const float mel_delta = (mel_high - mel_low) / static_cast<float>(num_mels + 1);
+  std::vector<float> bank(static_cast<size_t>(num_mels * (filtered_bins + 1)), 0.0F);
+  for (int64_t mel_bin = 0; mel_bin < num_mels; ++mel_bin) {
+    const float left = mel_low + static_cast<float>(mel_bin) * mel_delta;
+    const float center = mel_low + static_cast<float>(mel_bin + 1) * mel_delta;
+    const float right = mel_low + static_cast<float>(mel_bin + 2) * mel_delta;
+    for (int64_t fft_bin = 0; fft_bin < filtered_bins; ++fft_bin) {
+      const float freq = bin_width * static_cast<float>(fft_bin);
+      const float mel = 1127.0F * std::log(1.0F + freq / 700.0F);
+      const float rising = (mel - left) / std::max(center - left, 1.0e-12F);
+      const float falling = (right - mel) / std::max(right - center, 1.0e-12F);
+      bank[static_cast<size_t>(mel_bin * (filtered_bins + 1) + fft_bin)] =
+          std::max(0.0F, std::min(rising, falling));
+    }
+  }
+  return bank;
+}
+
 struct SpeakerMelFilterbankKey {
   int64_t sample_rate = 0;
   int64_t padded_window_size = 0;
@@ -226,6 +253,11 @@ const std::vector<float> &KaldiMelFilterbankCache::get(
     return it->second;
   }
   return impl_->values.emplace(key, build_filterbank()).first->second;
+}
+
+const std::vector<float> &cached_kaldi_campplus_mel_filterbank_16k() {
+  static const auto bank = make_float_mel_filterbank(16000, 512, 80, 20.0F, 0.0F);
+  return bank;
 }
 
 KaldiFbankFeatures extract_kaldi_fbank(const std::vector<float> &audio,
