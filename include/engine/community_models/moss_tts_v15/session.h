@@ -1,0 +1,86 @@
+#pragma once
+
+#include "engine/community_models/moss_tts_v15/assets.h"
+#include "engine/community_models/moss_tts_v15/prompt.h"
+#include "engine/framework/decoders/moss_tts_delay/backbone.h"
+#include "engine/framework/decoders/moss_tts_delay/delay_decoder.h"
+#include "engine/framework/decoders/moss_tts_delay/heads.h"
+#include "engine/community_models/moss_tts_v15/assets.h"
+#include "engine/community_models/moss_tts_v15/prompt.h"
+#include "engine/framework/core/execution_context.h"
+#include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
+#include "engine/framework/modules/multi_codebook_embedding.h"
+#include "engine/framework/runtime/session_base.h"
+
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <string>
+
+namespace engine::models::moss_tts_v15 {
+
+class MossTtsV15Session final
+    : public runtime::RuntimeSessionBase
+    , public runtime::IOfflineVoiceTaskSession {
+public:
+    MossTtsV15Session(
+        runtime::TaskSpec task,
+        runtime::SessionOptions options,
+        std::shared_ptr<const Assets> assets);
+    ~MossTtsV15Session() override;
+
+    std::string family() const override;
+    runtime::VoiceTaskKind task_kind() const override;
+    runtime::RunMode run_mode() const override;
+    void prepare(const runtime::SessionPreparationRequest & request) override;
+    runtime::TaskResult run(const runtime::TaskRequest & request) override;
+
+private:
+    struct GeneratedChunk {
+        std::vector<int32_t> codes;  // [n_vq, frames] row-major
+        int64_t codebooks = 0;
+        int64_t frames = 0;
+        bool started_audio = false;
+        bool hit_frame_ceiling = false;
+    };
+
+    // Takes the whole prompt rather than text/instruction/language: v1.5 also carries
+    // reference audio and a duration budget, and threading those as further positional
+    // parameters would be worse than passing the block the builder already needs.
+    GeneratedChunk generate_chunk(
+        const PromptFields & fields,
+        const decoders::MossTtsDelaySamplingOptions & sampling,
+        uint32_t seed,
+        decoders::MossTtsDelayLengthBounds bounds_override,
+        int64_t requested_frames);
+    std::vector<float> decode_codes(const GeneratedChunk & chunk);
+    // Resamples the caller's recording to the codec rate if needed, then encodes it.
+    ReferenceAudio encode_reference(const runtime::AudioBuffer & audio);
+
+    runtime::TaskSpec task_;
+    std::shared_ptr<const Assets> assets_;
+    engine::assets::TensorStorageType weight_storage_type_ = engine::assets::TensorStorageType::BF16;
+    size_t backbone_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
+#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
+    size_t backbone_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+    size_t heads_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
+    size_t heads_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+    size_t codec_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
+    size_t codec_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+#else
+    size_t backbone_weight_context_bytes_ = 8192ull * 1024ull * 1024ull;
+    size_t heads_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
+    size_t heads_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
+    size_t codec_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
+    size_t codec_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
+#endif
+
+    // The execution context comes from RuntimeSessionBase; the runtimes below borrow it.
+    std::shared_ptr<tokenizers::LlamaBpeTokenizer> tokenizer_;
+    std::unique_ptr<engine::modules::MultiCodebookEmbedding> codebooks_;
+    std::unique_ptr<decoders::MossTtsDelayBackboneRuntime> backbone_;
+    std::unique_ptr<decoders::MossTtsDelayHeadsRuntime> heads_;
+    std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> codec_;
+};
+
+}  // namespace engine::models::moss_tts_v15

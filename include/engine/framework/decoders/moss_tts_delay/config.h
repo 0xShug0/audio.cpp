@@ -12,7 +12,10 @@
 // tokenizer codec runtime, so the family shares one set of runtimes instead of
 // copying them per checkpoint.
 
+#include "engine/framework/io/json.h"
+
 #include <cstdint>
+#include <string_view>
 
 namespace engine::decoders {
 
@@ -50,5 +53,9 @@ struct MossTtsDelayConfig {
     int64_t audio_assistant_delay_slot_token_id = 0;
     int64_t sampling_rate = 0;
 };
+
+// Parses a moss_tts_delay checkpoint's config.json. `model_label` only names the
+// model in error messages; every field read here is the family's.
+MossTtsDelayConfig parse_moss_tts_delay_config(const io::json::Value & root, std::string_view model_label);
 
 }  // namespace engine::decoders

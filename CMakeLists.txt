@@ -474,6 +474,7 @@ add_library(engine_core OBJECT
     src/framework/debug/trace.cpp
     src/framework/debug/profiler.cpp
     src/framework/decoders/moss_tts_delay/backbone.cpp
+    src/framework/decoders/moss_tts_delay/config.cpp
     src/framework/decoders/moss_tts_delay/delay_decoder.cpp
     src/framework/decoders/moss_tts_delay/heads.cpp
     src/framework/decoders/tdt_decoder_runner.cpp
@@ -1052,6 +1053,18 @@ audiocpp_add_model(moss
     ALIASES
         moss_tts_local
         moss_tts_nano
+)
+
+audiocpp_add_model(moss_tts_v15
+    SOURCES
+        src/community_models/moss_tts_v15/assets.cpp
+        src/community_models/moss_tts_v15/prompt.cpp
+        src/community_models/moss_tts_v15/session.cpp
+        src/community_models/moss_tts_v15/loader.cpp
+    INCLUDES
+        engine/community_models/moss_tts_v15/loader.h
+    LOADERS
+        engine::models::moss_tts_v15::make_loader
 )
 
 audiocpp_add_model(moss_voicegen
