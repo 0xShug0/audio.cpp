@@ -85,10 +85,14 @@ the whole process.
 
 | package | backend | RTF | peak VRAM (cloning) |
 |---|---|---|---|
-| q4_k | CUDA | 0.65 | 14.1 GiB |
-| q8_0 | CUDA | 0.77 | 17.9 GiB |
+| q4_k | CUDA | 0.69–0.72 | 14.1 GiB |
+| q8_0 | CUDA | 0.80–0.84 | 17.9 GiB |
 | bf16 | CUDA | — | does not fit in 24 GiB when cloning |
 | q4_k | CPU, 16 threads | ~16 | — |
+
+The CUDA figures are the range over three runs on an otherwise-in-use desktop
+GPU; a single run of q8_0 also came back at 1.08, so treat these as a band
+rather than a number.
 
 CUDA is roughly 25-30x faster than the CPU path here, and comfortably faster
 than real time; the CPU path is not.
