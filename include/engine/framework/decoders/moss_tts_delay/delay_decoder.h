@@ -56,6 +56,14 @@ public:
     // feed back into the model.
     MossTtsDelayRow step(MossTtsDelayStepLogits & logits);
 
+    // Seeds the repetition penalty with the prompt's audio rows, [rows][n_vq]
+    // row-major. The reference penalises against every earlier row including the
+    // prompt's; for a prompt that carries no audio that is all pad and makes no
+    // difference, but a cloning prompt carries the reference recording's codes
+    // and without this they are never penalised. Kept apart from the generated
+    // history so extract_audio_codes() still returns only what was generated.
+    void seed_prompt_codes(const int32_t * codes, int64_t rows);
+
     bool stopped() const noexcept { return stopped_; }
     int64_t steps() const noexcept { return step_index_; }
 
@@ -83,6 +91,7 @@ private:
     int64_t delayed_length_ = kNotDelaying;
 
     std::vector<MossTtsDelayRow> history_;
+    std::vector<MossTtsDelayRow> prompt_history_;
 };
 
 }  // namespace engine::decoders

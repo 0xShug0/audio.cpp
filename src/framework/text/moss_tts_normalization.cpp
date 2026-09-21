@@ -332,14 +332,32 @@ U32 protect_spans(const U32 & text, std::vector<U32> & protectedSpans) {
 }
 
 U32 restore_spans(const U32 & text, const std::vector<U32> & protectedSpans) {
-    U32 out = text;
-    for (size_t i = 0; i < protectedSpans.size(); ++i) {
-        const auto token = placeholder(i);
-        for (;;) {
-            const auto at = out.find(token);
-            if (at == U32::npos) break;
-            out = out.substr(0, at) + protectedSpans[i] + out.substr(at + token.size());
+    // One left-to-right pass, never re-scanning what has been written. Replacing
+    // token-by-token over the whole string instead loops forever when a
+    // protected span contains placeholder text itself -- "https://x.com/___PROT0___"
+    // is a URL, so it is protected whole, and restoring it puts the token back
+    // for the next iteration to find. The string grows without bound and the
+    // session thread never returns.
+    U32 out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size();) {
+        if (text.compare(i, 7, U"___PROT") == 0) {
+            size_t j = i + 7;
+            size_t index = 0;
+            bool digits = false;
+            while (j < text.size() && is_ascii_digit(text[j])) {
+                index = index * 10 + static_cast<size_t>(text[j] - U'0');
+                digits = true;
+                ++j;
+            }
+            if (digits && text.compare(j, 3, U"___") == 0 && index < protectedSpans.size()) {
+                out += protectedSpans[index];
+                i = j + 3;
+                continue;
+            }
         }
+        out.push_back(text[i]);
+        ++i;
     }
     return out;
 }
@@ -582,7 +600,7 @@ U32 normalize_repeated_punctuation(const U32 & text) {
                 if (text[j] == U'.') ++dots; else ++ellipses;
                 ++j;
             }
-            if (dots >= 3 || ellipses >= 1) {
+            if (dots >= 3 || ellipses >= 2) {
                 out += U'。';
                 i = j;
                 continue;

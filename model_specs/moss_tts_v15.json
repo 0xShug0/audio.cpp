@@ -21,6 +21,9 @@
       "speaker_reference",
       "style_control",
       "long_form"
+    ],
+    "clone": [
+      "speaker_reference"
     ]
   },
   "runtime": {
@@ -147,26 +150,47 @@
       "docs/tts.md",
       "docs/gguf.md"
     ],
-    "recommended_package": "moss_tts_v15_bf16_codec_f16"
+    "recommended_package": "moss_tts_v15_q8_0_codec_f16"
   },
   "packages": [
     {
+      "id": "moss_tts_v15_q8_0_codec_f16",
+      "display_name": "MOSS-TTS-v1.5 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTS-v1.5-GGUF",
+      "files": [
+        "moss_tts_v15_q8_0_codec_f16.gguf"
+      ]
+    },
+    {
+      "id": "moss_tts_v15_q4_k_codec_f16",
+      "display_name": "MOSS-TTS-v1.5 Q4_K GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MOSS-TTS-v1.5-GGUF",
+      "files": [
+        "moss_tts_v15_q4_k_codec_f16.gguf"
+      ]
+    },
+    {
       "id": "moss_tts_v15_bf16_codec_f16",
       "display_name": "MOSS-TTS-v1.5 BF16 GGUF",
-      "default": true,
+      "default": false,
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "MOSS-TTS-v1.5-GGUF",
       "files": [
-        "MOSS-TTS-v1.5-GGUF/moss_tts_v15_bf16_codec_f16.gguf"
-      ],
-      "strip_prefix": "MOSS-TTS-v1.5-GGUF"
+        "moss_tts_v15_bf16_codec_f16.gguf"
+      ]
     }
   ],
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "audio-cpp/audio.cpp-gguf",
+      "repo": "christopherthompson81/MOSS-TTS-v1.5-GGUF",
       "revision": "main",
       "gated": false
     }

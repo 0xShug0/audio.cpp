@@ -3,7 +3,7 @@
 import sys, json, torch
 from transformers import AutoModel, AutoProcessor
 MODEL="/mnt/data/models/MOSS-TTS-v1.5"; CODEC="/mnt/data/models/MOSS-Audio-Tokenizer"
-OUT="/home/chris/Programming/audio.cpp-fork/tests/moss_tts_delay/reference"
+OUT="/home/chris/Programming/audio.cpp-fork/tests/moss_tts_v15/reference"
 import os; os.makedirs(OUT, exist_ok=True)
 dev="cuda"
 proc=AutoProcessor.from_pretrained(MODEL, trust_remote_code=True, codec_path=CODEC)

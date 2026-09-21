@@ -107,12 +107,19 @@ runtime::RunMode MossTtsV15Session::run_mode() const {
 }
 
 void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
-    // The server calls prepare() on every request against one long-lived session, so this
-    // has to be idempotent: building the runtimes here unconditionally re-uploaded the
-    // whole 5.7 GB model per request, which cost about four seconds on top of roughly one
-    // second of actual work. Nothing in this model depends on the request — there is no
-    // reference audio to encode — so it is all built once.
-    if (backbone_ != nullptr) {
+    // The server calls prepare() on every request against one long-lived session,
+    // so this has to be idempotent: building the runtimes unconditionally would
+    // re-upload the whole model per request. Nothing built here depends on the
+    // request — the reference recording is encoded in run(), not here — so it is
+    // all built once.
+    //
+    // The guard is on the last thing constructed, not the first. Guarding on
+    // backbone_ would let a prepare() that threw while building the heads, the
+    // codec or the embeddings be retried, take the early return, and report
+    // itself prepared with those members still null; run() then dereferences a
+    // null codec_. On a model this size an allocation failure partway through is
+    // not hypothetical.
+    if (codec_ != nullptr) {
         mark_prepared();
         return;
     }
@@ -216,6 +223,9 @@ MossTtsV15Session::GeneratedChunk MossTtsV15Session::generate_chunk(
     }
 
     decoders::MossTtsDelayDecoder decoder(config, sampling, seed, bounds);
+    // A cloning prompt carries the reference recording's codes, and the reference
+    // implementation penalises repetition against them like any earlier row.
+    decoder.seed_prompt_codes(prompt.audio_codes.data(), prompt_rows);
     backbone_->begin_generation(prompt_rows + max_steps + 8);
     auto hidden = backbone_->prefill(prompt.text_tokens, prompt_bias);
 
@@ -343,11 +353,22 @@ runtime::TaskResult MossTtsV15Session::run(const runtime::TaskRequest & request)
         option_float(request.options, {"repetition_penalty"}, sampling.audio_repetition_penalty);
     const auto seed = static_cast<uint32_t>(option_int(request.options, {"seed"}, 0));
 
+    // A per-request duration budget has to be shared out, not applied to every
+    // chunk: "--tokens 40" on a text that splits three ways meant three takes of
+    // 40 frames each, roughly three times what was asked for, with every chunk
+    // also floored at 0.45 x 40 however short its own text was.
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     const auto text_chunk_mode =
         engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
+
+    int64_t total_chunk_characters = 0;
+    for (const auto & chunk_request : chunk_requests) {
+        if (chunk_request.text_input.has_value()) {
+            total_chunk_characters += static_cast<int64_t>(chunk_request.text_input->text.size());
+        }
+    }
 
     runtime::AudioBuffer merged;
     merged.sample_rate = static_cast<int>(codec_->sampling_rate());
@@ -359,12 +380,19 @@ runtime::TaskResult MossTtsV15Session::run(const runtime::TaskRequest & request)
         // stays reproducible for a given request seed.
         PromptFields fields;
         fields.text = chunk_request.text_input->text;
+        // Share the request's budget across chunks in proportion to their length.
+        int64_t chunk_frames = 0;
+        if (requested_frames > 0 && total_chunk_characters > 0) {
+            const auto chars = static_cast<int64_t>(chunk_request.text_input->text.size());
+            chunk_frames = std::max<int64_t>(
+                1, (requested_frames * chars + total_chunk_characters / 2) / total_chunk_characters);
+        }
         if (!instruction.empty()) {
             fields.instruction = instruction;
         }
         fields.language = language;
-        if (requested_frames > 0) {
-            fields.tokens = std::to_string(requested_frames);
+        if (chunk_frames > 0) {
+            fields.tokens = std::to_string(chunk_frames);
         }
         fields.references = references;
         const auto chunk = generate_chunk(
@@ -372,7 +400,7 @@ runtime::TaskResult MossTtsV15Session::run(const runtime::TaskRequest & request)
             sampling,
             seed + static_cast<uint32_t>(chunk_index),
             bounds_override,
-            requested_frames);
+            chunk_frames);
         if (chunk.frames <= 0) {
             // The model can answer in text rather than audio; upstream behaves the same way.
             ++silent_chunks;

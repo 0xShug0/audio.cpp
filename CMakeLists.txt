@@ -3244,6 +3244,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME moss_tts_v15_text_normalization
             COMMAND moss_tts_v15_text_normalization_test --vectors
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/moss_tts_v15/reference/text_normalization_vectors.json")
+        # Kept separate from the shipped vectors so upstream's set stays as it
+        # ships: these are cases it does not reach, with expectations taken from
+        # the reference implementation rather than written by hand.
+        add_test(NAME moss_tts_v15_text_normalization_regressions
+            COMMAND moss_tts_v15_text_normalization_test --vectors
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/moss_tts_v15/reference/text_normalization_regressions.json")
 
         add_executable(moss_voicegen_smoke
             tests/moss_voicegen/voicegen_smoke.cpp

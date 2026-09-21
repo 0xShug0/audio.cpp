@@ -52,13 +52,34 @@ int32_t MossTtsDelayDecoder::sample_text(std::vector<float> & logits) {
     return token;
 }
 
+void MossTtsDelayDecoder::seed_prompt_codes(const int32_t * codes, int64_t rows) {
+    if (codes == nullptr || rows <= 0) {
+        return;
+    }
+    const auto n_vq = static_cast<size_t>(config_.num_codebooks);
+    prompt_history_.clear();
+    prompt_history_.reserve(static_cast<size_t>(rows));
+    for (int64_t row = 0; row < rows; ++row) {
+        MossTtsDelayRow entry;
+        entry.codes.assign(codes + static_cast<size_t>(row) * n_vq,
+                           codes + static_cast<size_t>(row + 1) * n_vq);
+        prompt_history_.push_back(std::move(entry));
+    }
+}
+
 int32_t MossTtsDelayDecoder::sample_code(std::vector<float> & logits, int64_t codebook) {
     std::vector<int32_t> previous;
     if (sampling_.audio_repetition_penalty != 1.0F) {
-        // The reference penalises against every earlier row of this codebook, prompt rows
-        // included. Those are all pad, and pad is masked to -inf just below, so restricting
-        // this to the generated history gives the same result.
-        previous.reserve(history_.size());
+        // The reference penalises against every earlier row of this codebook,
+        // prompt rows included. When the prompt carries no audio those rows are
+        // all pad and it makes no difference; when it carries a cloning
+        // reference they are real codes, so they have to be here or the codes
+        // that occur in the reference recording are the only ones never
+        // penalised.
+        previous.reserve(prompt_history_.size() + history_.size());
+        for (const auto & row : prompt_history_) {
+            previous.push_back(row.codes[static_cast<size_t>(codebook)]);
+        }
         for (const auto & row : history_) {
             previous.push_back(row.codes[static_cast<size_t>(codebook)]);
         }
