@@ -73,6 +73,8 @@ Task tags: `TTS` text to speech, `Clone` voice cloning, `VC` voice conversion, `
 
 Runtime tags summarize the supported loading paths. GGUF package precision varies by model and release; check the [audio.cpp GGUF repo](https://huggingface.co/audio-cpp/audio.cpp-gguf) or [docs/gguf.md](docs/gguf.md) for the exact package list. `Bundled` means the tiny runtime asset ships under `assets/framework/models` and needs no separate model download. `Stream` means the family exposes a streaming server/session path.
 
+Model weights keep the license of their original release, which is separate from audio.cpp's own license. [docs/model_licenses.md](docs/model_licenses.md) lists that license per family, and whether it allows commercial use.
+
 ### Speech Generation And Conversation
 
 | Family | Task | Lang | Variants | Runtime |

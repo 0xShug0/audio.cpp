@@ -41,7 +41,7 @@ Please check the supported model table in [README.md](README.md), the community 
 
 If the model family is already listed, build on the existing implementation instead of opening a duplicate port. Add the new variant to the same family/spec/package layout unless there is a real architecture or task boundary that requires a separate family.
 
-For new or updated model packages, keep the loader, model spec, docs, and UI/model-manager package entries aligned. A package should not advertise a model that the CLI/server cannot actually load, and a spec should not claim options or routes the implementation does not support.
+For new or updated model packages, keep the loader, model spec, docs, and UI/model-manager package entries aligned. Add or update the family's row in [docs/model_licenses.md](docs/model_licenses.md) too. A package should not advertise a model that the CLI/server cannot actually load, and a spec should not claim options or routes the implementation does not support.
 
 Good follow-up work for existing model families includes:
 
