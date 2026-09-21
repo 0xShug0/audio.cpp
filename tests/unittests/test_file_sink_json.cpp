@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -57,8 +58,17 @@ void test_word_timestamp_json_escapes_control_characters() {
 }
 
 void test_emit_task_result_serializes_all_file_outputs() {
-    const auto root = std::filesystem::temp_directory_path() / "audio_cpp_file_sink_json_test";
-    std::filesystem::remove_all(root);
+    const auto root = std::filesystem::temp_directory_path() /
+        ("audio_cpp_file_sink_json_test_" + std::to_string(std::random_device{}()));
+    // Refuse a collision instead of deleting or reusing another test's files.
+    require(std::filesystem::create_directory(root), "could not create isolated output directory");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::error_code ignored;
+            std::filesystem::remove_all(path, ignored);
+        }
+    } cleanup{root};
     const auto artifact_dir = root / "artifacts";
     const auto segments_path = root / "segments.json";
     const auto turns_path = root / "turns.json";
@@ -121,7 +131,6 @@ void test_emit_task_result_serializes_all_file_outputs() {
     require(manifest_json.find("NUL\\u0000 after") != std::string::npos, "request id NUL escape");
     require(manifest_json.find("chapter\\\"1") != std::string::npos, "chapter id quote escape");
 
-    std::filesystem::remove_all(root);
 }
 
 }  // namespace
