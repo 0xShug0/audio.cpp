@@ -159,13 +159,8 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
     static const std::unordered_set<std::string> empty;
     static const std::unordered_map<std::string, std::unordered_set<std::string>> values = {
         {"asr", {"word_timestamps", "segments", "speaker_turns", "vad_chunking", "partial_results"}},
-        // ⚠ `word_timestamps` IS A TTS CAPABILITY TOO, not only an ASR one. A family whose
-        // architecture predicts per-token durations before vocoding -- Kokoro does, and so does
-        // any FastSpeech-shaped model -- knows where each spoken unit lands in the buffer it just
-        // produced. Declaring it is what makes audiocpp_model_supports_timestamps() true, so a
-        // caller can ask whether the timings are worth reading instead of probing for an empty list.
         {"tts", {"speaker_reference", "voice_design", "emotion_control", "style_control",
-                 "multi_speaker", "long_form", "built_in_voices", "word_timestamps"}},
+                 "multi_speaker", "long_form", "built_in_voices"}},
         {"clone", {"speaker_reference", "emotion_control", "style_control", "multi_speaker", "long_form"}},
         {"vc", {"speaker_reference", "singing"}},
         {"s2s", {"speaker_reference", "audio_enhancement"}},

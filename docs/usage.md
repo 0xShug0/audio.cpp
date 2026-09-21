@@ -39,7 +39,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--segments-out` | VAD | Speech segments JSON. |
 | `--vad-chunks-out` | offline VAD | VAD-based audio chunk windows JSON. |
 | `--turns-out` | diarization | Speaker turns JSON. |
-| `--words-out` | ASR/alignment, and TTS families that predict durations | Word timestamps JSON. `kokoro_tts` reports one entry per phoneme group — see [its page](models/kokoro_tts.md#word-timestamps). Without this flag the JSON is printed to stdout, as it is for the other outputs. |
+| `--words-out` | ASR/alignment | Word timestamps JSON. Sets `return_timestamps`. For `kokoro_tts` the entries are phoneme groups, not written words — read [its page](models/kokoro_tts.md#phoneme-group-timings) before joining them to text. |
 | `--audio-chunk-seconds` | ASR | Split long audio before model inference, where supported. |
 | `--audio-chunk-mode` | ASR/alignment | `auto`, `fixed`, `vad`, or `none`, where supported. |
 

@@ -23,6 +23,9 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_kokoro_tts_loader();
 /// One timing per PHONEME GROUP -- a run of tokens between the space tokens Kokoro's vocabulary
 /// carries -- from the durations its duration predictor produced, appended to `out`.
 ///
+/// A group is NOT a written word: on the text path eSpeak-ng merges function words, so
+/// `on the` arrives as one group. See the note on the definition in session.cpp.
+///
 /// Declared here rather than kept in session.cpp's anonymous namespace so it can be tested
 /// directly: it is a pure function of its arguments, and the pad/space boundaries, the
 /// punctuation-only groups and the frames->samples scale are all worth pinning down without

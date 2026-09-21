@@ -245,6 +245,7 @@ void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
 namespace {
 
 constexpr const char * kPhonemesOption = "phonemes";
+constexpr const char * kTimestampsOption = "return_timestamps";
 
 /// The supplied phoneme chunks, or empty when the caller set no such option.
 ///
@@ -322,6 +323,13 @@ std::string cache_key_prefix(
 /// phonemes -- the engine serves the request either way -- while every unrelated
 /// unknown option is still rejected. Same shape as irodori_tts.codec_backend and
 /// the Parakeet TDT VAD controls, which are older options in the same position.
+///
+/// ⚠ `return_timestamps` IS IN THAT SAME POSITION AND REACHES HERE WITHOUT BEING ASKED FOR.
+/// `--words-out` injects it for every family (app/cli/main.cpp), so a package published before
+/// this option existed would fail the whole synthesis on a flag whose only job is to choose an
+/// output file -- not a degraded result, no audio at all. The durations it reports are computed
+/// by the same graph in every package, so serving the request against an older contract gives
+/// the caller exactly what a regenerated one would.
 void validate_request_options(
     const std::unordered_map<std::string, std::string> & options,
     const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
@@ -329,23 +337,37 @@ void validate_request_options(
     const bool old_phonemes = contract.request_option_keys.find(kPhonemesOption) == contract.request_option_keys.end();
     const bool old_speed = contract.request_option_keys.find("speed") == contract.request_option_keys.end();
     const bool old_speaking_rate = contract.request_option_keys.find("speaking_rate") == contract.request_option_keys.end();
-    if (!old_phonemes && !old_speed && !old_speaking_rate) {
+    const bool old_timestamps = contract.request_option_keys.find(kTimestampsOption) == contract.request_option_keys.end();
+    if (!old_phonemes && !old_speed && !old_speaking_rate && !old_timestamps) {
         runtime::validate_spec_backed_request_options(options, option_arrays, contract, kModelName);
         return;
     }
     std::unordered_map<std::string, std::string> validation_options;
     for (const auto & [key, _] : options) {
-        if ((key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate)) continue;
+        if ((key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate) ||
+            (key == kTimestampsOption && old_timestamps)) continue;
         validation_options.emplace(key, std::string{});
     }
     // Keys only: the validator reads names, not the supplied values.
     std::unordered_map<std::string, std::vector<std::string>> validation_arrays;
     for (const auto & [key, _] : option_arrays) {
         if ((key == kPhonemesOption && old_phonemes) ||
-            (key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate)) continue;
+            (key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate) ||
+            (key == kTimestampsOption && old_timestamps)) continue;
         validation_arrays.emplace(key, std::vector<std::string>{});
     }
     runtime::validate_spec_backed_request_options(validation_options, validation_arrays, contract, kModelName);
+}
+
+/// Whether the caller asked for timings.
+///
+/// ⚠ OPT-IN, AND DEFAULTING TO OFF IS THE POINT. What this family can report is a phoneme-group
+/// alignment in Kokoro's own alphabet, which is not the written-word timeline `word_timestamps`
+/// means elsewhere -- so a caller receives it because it asked this family for it, not because it
+/// read a generic capability and assumed the usual contract.
+bool request_return_timestamps(const std::unordered_map<std::string, std::string> & options) {
+    const auto value = runtime::find_option(options, {kTimestampsOption});
+    return value.has_value() && runtime::parse_bool_option(*value, kTimestampsOption);
 }
 
 std::optional<runtime::VoiceCondition> voice_with_request_rate(
@@ -373,13 +395,16 @@ std::optional<runtime::VoiceCondition> voice_with_request_rate(
 /// guessed at. A caller that today spreads words across a buffer in proportion to their spelling
 /// can read the model's own answer instead.
 ///
-/// ⚠ A GROUP, NOT A WRITTEN WORD, and the label says so by carrying the group's PHONEMES. Nothing
-/// in this family maps tokens back to the input text: the built-in G2P emits a phoneme string and
-/// keeps no span, and on the supplied-phoneme path there is no text to map to at all. A group is
-/// one spoken word on both paths -- eSpeak separates words with the space symbol and a caller's
-/// stream does the same -- so the unit is right even though the label is phonemic. A caller that
-/// knows which of its words produced which group (its own G2P told it) can join the two; one that
-/// does not still gets the boundaries.
+/// ⚠ A GROUP IS NOT A WRITTEN WORD, AND ON THE TEXT PATH THERE MAY BE FEWER OF THEM. Nothing in
+/// this family maps tokens back to the input text: the built-in G2P emits a phoneme string and
+/// keeps no span, and on the supplied-phoneme path there is no text to map to at all. Whoever
+/// chose the spacing owns the boundaries, and eSpeak-ng -- which chooses them on the text path --
+/// MERGES FUNCTION WORDS: `on the` is the single group `ɔnðə`, `at a` is `æTə`, `in the` is
+/// `ɪnðə`. So a caller that zips these onto whitespace-split words is correct on some sentences
+/// and one out for the rest of the chunk on others, which is the worst way to be wrong. A caller
+/// whose own G2P produced the stream picked the spacing itself and can join the two safely. This
+/// is why the option is opt-in and why the family declares no `word_timestamps` capability: the
+/// division of the audio is exact, the mapping to written words is not available here.
 ///
 /// The frames->samples scale is derived from THIS CHUNK's audio rather than assumed from a hop
 /// length, so it stays correct if the decoder's upsampling ratio ever changes, and it absorbs the
@@ -578,6 +603,7 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
     runtime::AudioBuffer merged_audio;
     // One entry per phoneme group, accumulated across chunks: the chunks are joined into one
     // buffer, so their timings have to be too, each offset by the audio already merged.
+    const bool return_timestamps = request_return_timestamps(request.options);
     std::vector<runtime::WordTimestamp> word_timestamps;
     // Resolved once in the supplied path, where every chunk runs the same request: the state
     // and the text half of the key cannot differ between chunks there.
@@ -661,13 +687,15 @@ runtime::TaskResult KokoroTTSSession::run(const runtime::TaskRequest & request) 
         inference_ms += std::chrono::duration<double, std::milli>(inference_ended - inference_started).count();
         // Before the append and before the move: the offset is where THIS chunk starts in the
         // merged buffer, and `audio` is about to be emptied into it.
-        append_kokoro_word_timings(
-            word_timestamps,
-            input.input_ids,
-            predictor.durations,
-            assets_->vocab,
-            audio.size(),
-            static_cast<int64_t>(merged_audio.samples.size()));
+        if (return_timestamps) {
+            append_kokoro_word_timings(
+                word_timestamps,
+                input.input_ids,
+                predictor.durations,
+                assets_->vocab,
+                audio.size(),
+                static_cast<int64_t>(merged_audio.samples.size()));
+        }
         runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{24000, 1, std::move(audio)});
     }
 

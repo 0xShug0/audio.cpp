@@ -31,6 +31,17 @@ const std::unordered_map<std::string, int32_t> & vocab() {
     return values;
 }
 
+/// The same miniature plus the phonemes eSpeak uses for "on the", which it emits WITHOUT a space
+/// between them. Kept separate so the other cases keep reading as a minimal vocabulary.
+const std::unordered_map<std::string, int32_t> & merging_vocab() {
+    static const std::unordered_map<std::string, int32_t> values = {
+        {"$", 0}, {" ", 16},
+        {"k", 53}, {"\u00e6", 43}, {"t", 62},
+        {"\u0254", 44}, {"n", 57}, {"\u00f0", 45}, {"\u0259", 46},
+    };
+    return values;
+}
+
 /// [pad, h, i, space, k, æ, t, pad] -- "hi cat", two groups.
 std::vector<int32_t> two_words() { return {0, 50, 51, 16, 53, 43, 62, 0}; }
 
@@ -99,6 +110,25 @@ void test_attached_punctuation_stays_with_its_word() {
     engine::test::require(out[0].word == "hi.", "the mark rides on the word it is attached to");
 }
 
+/// ⚠ THE CASE THAT MAKES THIS FEATURE MISUSABLE, pinned so the claim cannot come back.
+///
+/// eSpeak-ng merges function words on the text path: "on the" phonemizes to ONE group, `ɔnðə`,
+/// with no space token between them. Two written words therefore produce one timing, and a caller
+/// that zipped these onto whitespace-split words would be off by one from here to the end of the
+/// chunk. The grouping is doing exactly what it should -- it reports the boundaries the G2P
+/// produced -- which is precisely why those boundaries are not a written-word timeline.
+void test_merged_function_words_are_one_group() {
+    // [pad, ɔ, n, ð, ə, space, k, æ, t, pad] -- what eSpeak emits for "on the cat":
+    // no space inside `ɔnðə`, so it is a single group even though the text had two words.
+    const std::vector<int32_t> ids = {0, 44, 57, 45, 46, 16, 53, 43, 62, 0};
+    std::vector<WordTimestamp> out;
+    append_kokoro_word_timings(out, ids, {1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, merging_vocab(), 1000, 0);
+
+    engine::test::require(out.size() == 2, "three written words collapse to two phoneme groups");
+    engine::test::require(out[0].word == "\u0254n\u00f0\u0259", "the function words share one group");
+    engine::test::require(out[1].word == "k\u00e6t", "the following group is unaffected");
+}
+
 void test_a_count_mismatch_reports_nothing_rather_than_throwing() {
     // The audio is the product; an empty word list is a state every caller already handles, so a
     // broken invariant must not cost the render.
@@ -122,6 +152,7 @@ int main() {
         test_chunk_offset_accumulates();
         test_a_standalone_mark_is_not_a_word();
         test_attached_punctuation_stays_with_its_word();
+        test_merged_function_words_are_one_group();
         test_a_count_mismatch_reports_nothing_rather_than_throwing();
         std::cout << "kokoro_word_timings_test passed\n";
         return 0;

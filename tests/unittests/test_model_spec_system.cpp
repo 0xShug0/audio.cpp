@@ -229,16 +229,6 @@ void expect_rejects(const std::string & label, const std::string & spec_text, co
     engine::test::require(rejected, label + " should reject with: " + needle);
 }
 
-/// The other half of expect_rejects: a spec the validator must ACCEPT. Without it, widening a
-/// capability set is only ever tested by the absence of a rejection somewhere else.
-void expect_accepts(const std::string & label, const std::string & spec_text) {
-    try {
-        engine::model_spec::validate_spec(json::parse(spec_text), label);
-    } catch (const std::runtime_error & error) {
-        engine::test::require(false, label + " should validate, but: " + error.what());
-    }
-}
-
 std::string spec_with_download(const std::string & download) {
     auto text = schema_v1_spec_text("[]");
     const std::string anchor = "\"download\": {\"kind\": \"unsupported\", \"reason\": \"test fixture\"}";
@@ -712,9 +702,7 @@ void test_typed_schema_renamed_dependencies() {
         })JSON",
         "capability key must be one of this model's tasks");
 
-    // Capability values are typed per task. `word_timestamps` is shared by asr, align and tts --
-    // a TTS family that predicts durations before vocoding knows where each unit lands -- so the
-    // token that cannot cross over is one genuinely specific to streaming recognition.
+    // Capability values are typed per task, so ASR timestamp capabilities cannot be attached to TTS.
     expect_rejects(
         "typed_rejects_unknown_capability",
         R"JSON({
@@ -727,7 +715,7 @@ void test_typed_schema_renamed_dependencies() {
           "modes": ["offline"],
           "languages": ["en"],
           "runtime": {"tags": ["gguf"]},
-          "capabilities": {"tts": ["partial_results"]},
+          "capabilities": {"tts": ["word_timestamps"]},
           "options": {"request": [], "session": [], "load": []},
           "packages": [
             {
@@ -756,53 +744,7 @@ void test_typed_schema_renamed_dependencies() {
             }
           ]
         })JSON",
-        "unknown capability 'partial_results'");
-
-    // ...and the positive half of the same rule, so that widening the set again cannot silently
-    // pass: a TTS family MAY declare word_timestamps, which is what makes
-    // audiocpp_model_supports_timestamps() true for kokoro_tts.
-    expect_accepts(
-        "typed_accepts_tts_word_timestamps",
-        R"JSON({
-          "schema_version": 1,
-          "family": "typed_model",
-          "display_name": "Typed Model",
-          "description": "Typed model with predicted durations.",
-          "category": "tts",
-          "status": "experimental",
-          "tasks": ["tts"],
-          "modes": ["offline"],
-          "languages": ["en"],
-          "runtime": {"tags": ["gguf"]},
-          "capabilities": {"tts": ["word_timestamps", "built_in_voices"]},
-          "options": {"request": [], "session": [], "load": []},
-          "packages": [
-            {
-              "id": "typed_model_q8",
-              "display_name": "Typed Model Q8",
-              "format": "gguf",
-              "precision": "q8_0",
-              "target_directory": "Typed-Model",
-              "download": {"kind": "huggingface_snapshot", "repo": "audio-cpp/typed-model"},
-              "files": ["typed-model-q8_0.gguf"],
-              "default": true
-            }
-          ],
-          "dependencies": [],
-          "ui": {
-            "recommended_package": "typed_model_q8",
-            "tags": ["TTS"],
-            "docs": ["docs/tts.md"]
-          },
-          "sources": [
-            {
-              "format": "gguf",
-              "roots": {"model": ".", "weights": "$gguf"},
-              "files": {"config": "model:config.json"},
-              "tensors": {"weights": "weights:"}
-            }
-          ]
-        })JSON");
+        "unknown capability 'word_timestamps'");
 }
 
 void test_dependency_option_mapping_from_production_spec() {
