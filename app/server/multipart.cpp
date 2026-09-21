@@ -65,12 +65,28 @@ std::string strip_trailing_newline(std::string value) {
 // A boundary token inside a header or binary payload is ordinary data unless
 // it starts a delimiter line (RFC 2046 section 5.1.1). Keep the parser's existing
 // LF-only compatibility in addition to CRLF. Prefix matching at a line start
-// remains unchanged; this does not impose a new boundary-suffix policy.
+// remains unchanged, but the token must still have the delimiter suffix the
+// existing loop understands. This prevents a line such as
+// `--boundary-owned` from becoming a false delimiter.
 // Checking each line start avoids rescanning long binary lines for inline tokens.
+bool is_boundary_line(
+    const std::string & body,
+    const std::string & delimiter,
+    size_t line_start) {
+    if (body.compare(line_start, delimiter.size(), delimiter) != 0) {
+        return false;
+    }
+    const size_t suffix = line_start + delimiter.size();
+    return suffix == body.size() ||
+        body.compare(suffix, 2, "--") == 0 ||
+        body.compare(suffix, 2, "\r\n") == 0 ||
+        body.compare(suffix, 1, "\n") == 0;
+}
+
 size_t find_boundary_line(const std::string & body, const std::string & delimiter, size_t start = 0) {
     size_t line_start = start;
     while (line_start <= body.size()) {
-        if (body.compare(line_start, delimiter.size(), delimiter) == 0) {
+        if (is_boundary_line(body, delimiter, line_start)) {
             return line_start;
         }
         const size_t newline = body.find('\n', line_start);

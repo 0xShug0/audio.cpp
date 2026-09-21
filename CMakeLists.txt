@@ -2997,9 +2997,23 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_executable(server_multipart_test
             tests/unittests/test_server_multipart.cpp
             app/server/multipart.cpp
+            app/server/http.cpp
         )
         target_include_directories(server_multipart_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         add_test(NAME server_multipart_test COMMAND server_multipart_test)
+
+        add_executable(server_multipart_http_test
+            tests/unittests/test_server_multipart_http.cpp
+            app/server/multipart.cpp
+            app/server/http.cpp
+        )
+        target_include_directories(server_multipart_http_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        target_link_libraries(server_multipart_http_test PRIVATE engine_runtime ggml)
+        if(WIN32)
+            target_link_libraries(server_multipart_http_test PRIVATE ws2_32)
+        endif()
+        add_test(NAME server_multipart_http_test COMMAND server_multipart_http_test)
+        set_tests_properties(server_multipart_http_test PROPERTIES TIMEOUT 30)
 
         add_executable(server_base64_test
             tests/unittests/test_server_base64.cpp

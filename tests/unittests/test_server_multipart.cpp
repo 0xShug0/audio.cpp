@@ -109,6 +109,7 @@ void test_parse_multipart_body_only_accepts_delimiter_lines() {
     // a delimiter because the token does not begin a line in either location.
     std::string body = "preamble " + inline_marker + " bytes\r\n";
     body += "still preamble\r\n";
+    body += inline_marker + "-not-a-delimiter\r\n";
     body += inline_marker + "\r\n";
     body += "Content-Disposition: form-data; name=\"file\"; filename=\"inline-";
     body += inline_marker + "--name.bin\"\r\n";
