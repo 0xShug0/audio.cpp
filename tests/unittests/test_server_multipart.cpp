@@ -129,6 +129,17 @@ void test_parse_multipart_body_only_accepts_delimiter_lines() {
     require(parts[1].data == "kept-after-inline-markers", "later part data");
 }
 
+void test_parse_multipart_body_rejects_false_closing_prefix() {
+    const std::string payload = "head\r\n--BOUNDARY--not-a-close\r\nend";
+    const std::string body =
+        "--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\n" + payload +
+        "\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"later\"\r\n\r\nkept\r\n--BOUNDARY--";
+    const auto parts = parse_multipart_body(body, "BOUNDARY");
+    require(parts.size() == 2, "a closing-prefix payload line must not hide later parts");
+    require(parts[0].data == payload, "false closing-prefix line is byte-exact payload");
+    require(parts[1].data == "kept", "EOF closing delimiter remains supported");
+}
+
 void test_parse_multipart_body_no_boundary_match() {
     require(parse_multipart_body("not a multipart body", "BOUNDARY").empty(), "no matching boundary yields no parts");
 }
@@ -141,6 +152,7 @@ int main() {
         test_parse_multipart_body_fields_and_file();
         test_parse_multipart_body_binary_with_embedded_nul();
         test_parse_multipart_body_only_accepts_delimiter_lines();
+        test_parse_multipart_body_rejects_false_closing_prefix();
         test_parse_multipart_body_no_boundary_match();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';

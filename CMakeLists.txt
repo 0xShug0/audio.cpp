@@ -2997,7 +2997,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_executable(server_multipart_test
             tests/unittests/test_server_multipart.cpp
             app/server/multipart.cpp
-            app/server/http.cpp
         )
         target_include_directories(server_multipart_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         add_test(NAME server_multipart_test COMMAND server_multipart_test)
