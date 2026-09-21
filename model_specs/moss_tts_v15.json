@@ -133,8 +133,8 @@
         "type": "enum",
         "preset": "weight_type_full",
         "required": false,
-        "default": "bf16",
-        "description": "Backbone and head weight storage; default bf16. f16 is rejected because this backbone produces NaN in it."
+        "default": "native",
+        "description": "Backbone and head weight storage; default native, which keeps a GGUF package's own type. Forcing bf16 dequantises a quantised package and costs the VRAM the quantisation was meant to save. f16 is rejected: this backbone produces NaN in it."
       }
     ],
     "load": []

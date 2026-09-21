@@ -76,6 +76,35 @@ a 189.4 Hz reference came back at 184.0 Hz, where the same model without a refer
 produced 117.3 Hz. If you want a voice from a written description rather than a
 recording, `moss_voicegen` is the model built for that.
 
+## Performance and VRAM
+
+Measured on an RTX 3090 (24 GiB) and a 16-thread CPU. The times are
+`session.wall_ms` — the work itself, excluding model load, which for a 9 GB
+package is tens of seconds of disk I/O and swamps everything else if you time
+the whole process.
+
+| package | backend | RTF | peak VRAM (cloning) |
+|---|---|---|---|
+| q4_k | CUDA | 0.65 | 14.1 GiB |
+| q8_0 | CUDA | 0.77 | 17.9 GiB |
+| bf16 | CUDA | — | does not fit in 24 GiB when cloning |
+| q4_k | CPU, 16 threads | ~16 | — |
+
+CUDA is roughly 25-30x faster than the CPU path here, and comfortably faster
+than real time; the CPU path is not.
+
+**`weight_type` defaults to `native`, and you want to keep it there.** A GGUF
+package carries its own type; forcing `bf16` dequantises it on load, so a
+quantised package costs exactly as much memory as bf16 and the quantisation
+buys nothing. Measured: q4_k peaks at 21.2 GiB forced to `bf16` against
+10.6 GiB left `native`. For safetensors it makes no difference — those are bf16
+upstream anyway.
+
+**bf16 cannot clone on a 24 GiB card.** Cloning holds both halves of the codec
+resident, where plain TTS needs only the decoder, and the encoder's weights are
+the allocation that does not fit. Plain TTS works at every size. Use q8_0 on a
+24 GiB card, or bf16 on something larger.
+
 ## What works
 
 Measured on the reference implementation and reproduced through audio.cpp:
