@@ -2728,6 +2728,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_engine_unittest(auk_vae_test tests/auk/vae_test.cpp)
     add_engine_unittest(auk_flow_test tests/auk/flow_test.cpp)
 
+    if (ENGINE_ENABLE_CUDA)
+        add_engine_unittest(cuda_bias_fusion_test tests/unittests/test_cuda_bias_fusion.cpp)
+        add_test(NAME cuda_bias_fusion_test COMMAND cuda_bias_fusion_test)
+        set_tests_properties(cuda_bias_fusion_test PROPERTIES SKIP_RETURN_CODE 77)
+        add_engine_unittest(cuda_rope_rows_test tests/unittests/test_cuda_rope_rows.cpp)
+        add_test(NAME cuda_rope_rows_test COMMAND cuda_rope_rows_test)
+        set_tests_properties(cuda_rope_rows_test PROPERTIES SKIP_RETURN_CODE 77)
+        add_engine_unittest(cuda_head_convert_test tests/unittests/test_cuda_head_convert.cpp)
+        target_link_libraries(cuda_head_convert_test PRIVATE CUDA::cudart_static)
+        add_test(NAME cuda_head_convert_test COMMAND cuda_head_convert_test)
+        set_tests_properties(cuda_head_convert_test PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+
     add_engine_unittest(sortformer_v2_aosc_test tests/community_models/sortformer_diar/sortformer_v2_aosc_test.cpp)
     add_test(NAME sortformer_v2_aosc_test COMMAND sortformer_v2_aosc_test)
 

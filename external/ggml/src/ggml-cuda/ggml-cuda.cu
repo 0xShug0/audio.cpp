@@ -4158,6 +4158,32 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
     return false;
 }
 
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+static bool ggml_cuda_safe_bias_fusion(const ggml_cgraph * graph, int i) {
+    const auto * add = graph->nodes[i];
+    const auto * reshape = graph->nodes[i + 1];
+    const auto * output = graph->nodes[i + 2];
+    if ((add->flags & GGML_TENSOR_FLAG_OUTPUT) || (reshape->flags & GGML_TENSOR_FLAG_OUTPUT) ||
+        ggml_node_get_use_count(graph, i) != 1 || ggml_node_get_use_count(graph, i + 1) != 1 ||
+        reshape->view_offs != 0) {
+        return false;
+    }
+    const auto overlaps = [](const ggml_tensor * a, const ggml_tensor * b) {
+        const auto a_start = reinterpret_cast<uintptr_t>(a->data);
+        const auto b_start = reinterpret_cast<uintptr_t>(b->data);
+        return a_start < b_start + ggml_nbytes(b) && b_start < a_start + ggml_nbytes(a);
+    };
+    // Unlike generic fusion checks, include leaf buffers: the allocator can
+    // recycle a bias after ADD, but this fused kernel needs it until the end.
+    if (overlaps(output, add->src[1])) return false;
+    // Pointwise inputs may alias the destination exactly, never partially.
+    if (overlaps(output, add->src[0]) && output->data != add->src[0]->data) return false;
+    if (output->op == GGML_OP_ADD && overlaps(output, output->src[0]) &&
+        output->data != output->src[0]->data) return false;
+    return true;
+}
+#endif
+
 // try and fuse nodes and return the number of nodes to skip
 static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i) {
 
@@ -4167,6 +4193,45 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
     }
 
     ggml_tensor * node = cgraph->nodes[i];
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    // Linear modules bridge their bias addition and activation with a reshape.
+    // Fuse the elementwise work without materializing that large intermediate.
+    if (node->op == GGML_OP_ADD && i + 2 < cgraph->n_nodes) {
+        const auto * reshape = cgraph->nodes[i + 1];
+        auto * activation = cgraph->nodes[i + 2];
+        const auto * x = node->src[0];
+        const auto * bias = node->src[1];
+        if (reshape->op == GGML_OP_RESHAPE && reshape->src[0] == node &&
+            activation->op == GGML_OP_UNARY && activation->src[0] == reshape &&
+            ggml_get_unary_op(activation) == GGML_UNARY_OP_GELU_ERF &&
+            x->type == GGML_TYPE_F32 && bias->type == GGML_TYPE_F32 &&
+            node->type == GGML_TYPE_F32 && activation->type == GGML_TYPE_F32 &&
+            ggml_is_contiguous(x) && ggml_is_contiguous(bias) && ggml_is_contiguous(activation) &&
+            bias->ne[0] == x->ne[0] && ggml_nelements(bias) == x->ne[0] &&
+            ggml_nelements(activation) == ggml_nelements(x) &&
+            ggml_cuda_safe_bias_fusion(cgraph, i)) {
+            ggml_cuda_op_bias_gelu_erf(*cuda_ctx, node, activation);
+            return 2;
+        }
+        // Match residual + (projection + bias), retaining both FP32 additions.
+        if (reshape->op == GGML_OP_RESHAPE && reshape->src[0] == node &&
+            activation->op == GGML_OP_ADD && activation->src[1] == reshape &&
+            x->type == GGML_TYPE_F32 && bias->type == GGML_TYPE_F32 &&
+            node->type == GGML_TYPE_F32 && activation->type == GGML_TYPE_F32 &&
+            activation->src[0]->type == GGML_TYPE_F32 &&
+            ggml_is_contiguous(x) && ggml_is_contiguous(bias) && ggml_is_contiguous(activation) &&
+            ggml_is_contiguous(activation->src[0]) &&
+            ggml_are_same_shape(activation->src[0], activation) &&
+            bias->ne[0] == x->ne[0] && ggml_nelements(bias) == x->ne[0] &&
+            ggml_nelements(activation) == ggml_nelements(x) &&
+            ggml_cuda_safe_bias_fusion(cgraph, i)) {
+            ggml_cuda_op_bias_residual(*cuda_ctx, node, activation->src[0], activation);
+            return 2;
+        }
+    }
+
+#endif
 
     //topk-moe
     if (cgraph->nodes[i]->op == GGML_OP_UNARY || cgraph->nodes[i]->op == GGML_OP_SOFT_MAX ||

@@ -682,12 +682,41 @@ static __global__ void convert_unary(
     }
 }
 
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+// Attention heads are narrow and often strided. Flatten the destination so
+// each block handles eight 64-wide rows rather than leaving threads idle.
+static __global__ void convert_f32_f16_head64(
+        const float * __restrict__ x, half * __restrict__ y, uint32_t count,
+        uint3 ne01, uint3 ne02, int64_t s01, int64_t s02, int64_t s03) {
+    const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= count / 2) return;
+    const uint2 row = fast_div_modulo(i >> 5, ne01);
+    const uint2 batch = fast_div_modulo(row.x, ne02);
+    const int64_t source = int64_t(batch.x)*s03 + int64_t(batch.y)*s02 + int64_t(row.y)*s01 + 2*(i & 31);
+    reinterpret_cast<half2 *>(y)[i] = ggml_cuda_cast<half2>(*reinterpret_cast<const float2 *>(x + source));
+}
+#endif
+
 template <typename src_t, typename dst_t>
 static void convert_unary_cuda(const void * vx, dst_t * y,
         const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t ne03,
         const int64_t s01, const int64_t s02, const int64_t s03, cudaStream_t stream) {
     const int64_t ne0203 = ne02*ne03;
     const uint3 ne02_fdv = init_fastdiv_values(ne02);
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if constexpr (std::is_same_v<src_t, float> && std::is_same_v<dst_t, half>) {
+        const int64_t count = ne00*ne01*ne0203;
+        if (ne00 == 64 && count > 0 && count <= INT32_MAX &&
+            s01 % 2 == 0 && s02 % 2 == 0 && s03 % 2 == 0 &&
+            reinterpret_cast<uintptr_t>(vx) % alignof(float2) == 0 &&
+            reinterpret_cast<uintptr_t>(y) % alignof(half2) == 0) {
+            convert_f32_f16_head64<<<(count / 2 + 255) / 256, 256, 0, stream>>>(
+                static_cast<const float *>(vx), y, static_cast<uint32_t>(count),
+                init_fastdiv_values(ne01), ne02_fdv, s01, s02, s03);
+            return;
+        }
+    }
+#endif
     const dim3 num_blocks((ne00 + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE, (int)std::min(ne01, (int64_t)65535), (int)std::min(ne0203, (int64_t)65535));
     convert_unary<src_t><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>
         (vx, y, ne00, ne01, ne0203, ne02_fdv, s01, s02, s03);
