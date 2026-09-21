@@ -61,6 +61,9 @@ void apply_options(
     if (const auto export_semantic = runtime::find_option(options, {"export_semantic"})) {
         out.export_semantic = runtime::parse_bool_option(*export_semantic, "export_semantic");
     }
+    if (const auto stop_after = runtime::find_option(options, {"stop_after"})) {
+        out.stop_after = parse_stop_after(*stop_after);
+    }
     if (const auto seed = runtime::parse_u64_option(options, {"seed"})) {
         out.seed = *seed;
     }
@@ -119,6 +122,18 @@ void apply_options(
     out.abc = abc_from_options(options);
     if (!out.abc.empty() && out.cot == Yue2CotMode::Off) {
         throw std::runtime_error("Yue2 external ABC requires cot=melody or cot=full");
+    }
+    if (out.stop_after == Yue2StopAfter::Semantic) {
+        // The semantic token stream is the only product of this stage.
+        out.export_semantic = true;
+    }
+    if (out.stop_after == Yue2StopAfter::Abc) {
+        if (out.cot == Yue2CotMode::Off) {
+            throw std::runtime_error("Yue2 stop_after=abc requires cot=melody or cot=full");
+        }
+        if (!out.abc.empty()) {
+            throw std::runtime_error("Yue2 stop_after=abc generates no score when abc or abc_file is supplied");
+        }
     }
     if (const auto nar_noise_file = runtime::find_option(options, {"nar_noise_file"})) {
         const std::filesystem::path path(*nar_noise_file);

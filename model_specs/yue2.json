@@ -65,6 +65,18 @@
         "default": "full"
       },
       {
+        "name": "stop_after",
+        "type": "enum",
+        "values": [
+          "abc",
+          "semantic",
+          "audio"
+        ],
+        "description": "Last stage to run. abc writes the generated score only; semantic also writes the semantic token export; audio renders the full song.",
+        "required": false,
+        "default": "audio"
+      },
+      {
         "name": "abc",
         "type": "string",
         "description": "External ABC score text for melody/full routes.",

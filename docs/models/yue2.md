@@ -208,6 +208,41 @@ The indices are the same values the reference YuE2 Python pipeline stores in its
 python3 -c "import json, numpy; numpy.save('semantic.npy', numpy.array(json.load(open('semantic.json')), dtype=numpy.int32))"
 ```
 
+## Stopping Early
+
+`stop_after` ends the run before the remaining stages:
+
+| Value | Runs | Produces |
+|---|---|---|
+| `abc` | ABC planner | `score` artifact |
+| `semantic` | ABC planner, semantic AR | `score` and `semantic` artifacts |
+| `audio` | everything | audio, plus `score`; `semantic` with `export_semantic=true` |
+
+`stop_after=abc` requires `cot=melody` or `cot=full` and no external
+`abc` / `abc_file`, because there would be nothing to generate.
+`stop_after=semantic` implies `export_semantic=true`, since the token stream is
+all that stage produces.
+
+A result from `abc` or `semantic` carries **no audio**. Use `--out-dir` on the
+CLI to collect the artifacts (`--out` writes nothing), and `/v1/tasks/run` on
+the server — `/v1/audio/speech` requires an audio output.
+
+```bash
+./build/debug/bin/audiocpp_cli \
+  --task gen \
+  --family yue2 \
+  --model models/Yue2-3B-GGUF \
+  --backend cuda \
+  --threads 8 \
+  --lyrics "..." \
+  --request-option style="English, folk pop" \
+  --request-option stop_after=semantic \
+  --seed 1234 \
+  --out-dir yue2_out \
+  --log
+# -> yue2_out/score.abc, yue2_out/semantic.json
+```
+
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -222,6 +257,7 @@ python3 -c "import json, numpy; numpy.save('semantic.npy', numpy.array(json.load
 |---|---|---:|---|
 | `style` | text | required | Music style prompt. |
 | `cot` | `off`, `melody`, `full` | `full` | Symbolic planning route. |
+| `stop_after` | `abc`, `semantic`, `audio` | `audio` | Last stage to run. See "Stopping Early". |
 | `abc` | ABC text | empty | Inline ABC score; requires `cot=melody` or `cot=full`. |
 | `abc_file` | path | empty | ABC score file; requires `cot=melody` or `cot=full`. |
 | `nar_noise_file` | raw float32 file | empty | Provide a noise file for NAR generation, shaped `[frames,64]`. |
