@@ -62,6 +62,26 @@ std::string strip_trailing_newline(std::string value) {
     return value;
 }
 
+// A boundary token inside a header or binary payload is ordinary data unless
+// it starts a delimiter line (RFC 2046 section 5.1.1). Keep the parser's existing
+// LF-only compatibility in addition to CRLF. Prefix matching at a line start
+// remains unchanged; this does not impose a new boundary-suffix policy.
+// Checking each line start avoids rescanning long binary lines for inline tokens.
+size_t find_boundary_line(const std::string & body, const std::string & delimiter, size_t start = 0) {
+    size_t line_start = start;
+    while (line_start <= body.size()) {
+        if (body.compare(line_start, delimiter.size(), delimiter) == 0) {
+            return line_start;
+        }
+        const size_t newline = body.find('\n', line_start);
+        if (newline == std::string::npos) {
+            return std::string::npos;
+        }
+        line_start = newline + 1;
+    }
+    return std::string::npos;
+}
+
 MultipartPart parse_part(const std::string & segment) {
     MultipartPart part;
     size_t header_end = segment.find("\r\n\r\n");
@@ -127,7 +147,7 @@ std::vector<MultipartPart> parse_multipart_body(const std::string & body, const 
     std::vector<MultipartPart> parts;
     const std::string delimiter = "--" + boundary;
 
-    size_t pos = body.find(delimiter);
+    size_t pos = find_boundary_line(body, delimiter);
     if (pos == std::string::npos) {
         return parts;
     }
@@ -143,7 +163,7 @@ std::vector<MultipartPart> parse_multipart_body(const std::string & body, const 
             pos += 1;
         }
 
-        const size_t next_delim = body.find(delimiter, pos);
+        const size_t next_delim = find_boundary_line(body, delimiter, pos);
         if (next_delim == std::string::npos) {
             break;
         }

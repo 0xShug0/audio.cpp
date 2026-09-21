@@ -88,6 +88,46 @@ void test_parse_multipart_body_binary_with_embedded_nul() {
     require(parts[0].data == payload, "binary part data is byte-exact");
 }
 
+void test_parse_multipart_body_only_accepts_delimiter_lines() {
+    const std::string boundary = "BINARY_BOUNDARY";
+    const std::string inline_marker = "--" + boundary;
+
+    std::string payload;
+    payload.push_back('\x00');
+    payload.push_back('\x80');
+    payload.push_back('\xff');
+    payload += "prefix" + inline_marker + "-owned";
+    payload.push_back('\r');
+    payload += "bare-cr\nowned-newline\n";
+    payload += "x" + inline_marker + "--inline-closing";
+    for (int i = 0; i < 2000; ++i) {
+        payload += "inline-" + inline_marker + (i % 2 == 0 ? "--" : "") + "-marker";
+    }
+    payload.push_back('\x01');
+
+    // The preamble and filename both contain boundary-looking bytes. Neither is
+    // a delimiter because the token does not begin a line in either location.
+    std::string body = "preamble " + inline_marker + " bytes\r\n";
+    body += "still preamble\r\n";
+    body += inline_marker + "\r\n";
+    body += "Content-Disposition: form-data; name=\"file\"; filename=\"inline-";
+    body += inline_marker + "--name.bin\"\r\n";
+    body += "Content-Type: application/octet-stream\r\n\r\n";
+    body += payload;
+    body += "\r\n" + inline_marker + "\r\n";
+    body += "Content-Disposition: form-data; name=\"later\"\n\n";
+    body += "kept-after-inline-markers\n";
+    body += inline_marker + "--\n";
+
+    const auto parts = parse_multipart_body(body, boundary);
+    require(parts.size() == 2, "inline boundary-looking bytes must not create extra parts");
+    require(parts[0].name == "file", "binary part name");
+    require(parts[0].filename == "inline-" + inline_marker + "--name.bin", "filename preserves inline marker");
+    require(parts[0].data == payload, "binary payload with inline markers is byte-exact");
+    require(parts[1].name == "later", "later legitimate part remains reachable");
+    require(parts[1].data == "kept-after-inline-markers", "later part data");
+}
+
 void test_parse_multipart_body_no_boundary_match() {
     require(parse_multipart_body("not a multipart body", "BOUNDARY").empty(), "no matching boundary yields no parts");
 }
@@ -99,6 +139,7 @@ int main() {
         test_extract_multipart_boundary();
         test_parse_multipart_body_fields_and_file();
         test_parse_multipart_body_binary_with_embedded_nul();
+        test_parse_multipart_body_only_accepts_delimiter_lines();
         test_parse_multipart_body_no_boundary_match();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
