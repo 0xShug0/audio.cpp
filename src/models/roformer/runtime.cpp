@@ -1038,6 +1038,18 @@ PreparedChunk prepare_runtime_chunk(
     return {std::move(stft), std::move(features)};
 }
 
+const std::vector<float> & run_runtime_graph(
+    MelBandGraph & graph,
+    const std::vector<float> & features,
+    const RoformerArchitectureConfig & config) {
+    const auto graph_start = Clock::now();
+    const auto & masks = graph.run(features);
+    engine::debug::timing_log_scalar(
+        config.family + ".graph.total_ms",
+        engine::debug::elapsed_ms(graph_start));
+    return masks;
+}
+
 void finish_runtime_chunk(
     const std::vector<float> & raw_masks,
     const PreparedChunk & prepared,
@@ -1108,7 +1120,7 @@ const std::vector<float> & RoformerRuntime::separate_chunk(const std::vector<flo
     }
     auto prepared = prepare_runtime_chunk(chunk_planar, assets_->config, fft_threads_);
     finish_runtime_chunk(
-        impl_->mel_graph->run(prepared.features),
+        run_runtime_graph(*impl_->mel_graph, prepared.features, assets_->config),
         prepared,
         assets_->config,
         fft_threads_,
@@ -1146,11 +1158,8 @@ void RoformerRuntime::process_chunks(size_t count,
     for (size_t i = 0; i < count; ++i) {
         auto prepared = pending.get();
         if (i + 1 < count) pending = launch(i + 1);
-        const auto graph_start = Clock::now();
         // Copy the reusable graph output before the next inference overwrites it.
-        auto masks = impl_->mel_graph->run(prepared.features);
-        engine::debug::timing_log_scalar(assets_->config.family + ".graph.total_ms",
-            engine::debug::elapsed_ms(graph_start));
+        auto masks = run_runtime_graph(*impl_->mel_graph, prepared.features, assets_->config);
         if (reconstructed.valid()) sink(i - 1, reconstructed.get());
         reconstructed = std::async(std::launch::async,
             [this, prepared = std::move(prepared), masks = std::move(masks)] {
