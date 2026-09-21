@@ -2994,6 +2994,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
         add_test(NAME cli_request_options_test COMMAND cli_request_options_test)
 
+        add_engine_unittest(file_sink_json_test tests/unittests/test_file_sink_json.cpp)
+        target_sources(file_sink_json_test PRIVATE app/workflow/file_sink.cpp)
+        add_test(NAME file_sink_json_test COMMAND file_sink_json_test)
+
         add_executable(server_multipart_test
             tests/unittests/test_server_multipart.cpp
             app/server/multipart.cpp

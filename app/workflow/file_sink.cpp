@@ -1,7 +1,6 @@
 #include "file_sink.h"
 
 #include "engine/framework/audio/output.h"
-#include "engine/framework/io/json.h"
 
 #include <algorithm>
 #include <cctype>
@@ -23,7 +22,49 @@ struct MetricsAudioView {
 };
 
 std::string quote_json(const std::string & value) {
-    return engine::io::json::stringify_string(value);
+    // cJSON's C-string API truncates at embedded NUL. File outputs must retain
+    // arbitrary byte values in their strings, so keep this serializer local to
+    // the file-sink boundary instead of widening the framework JSON change.
+    std::string out;
+    out.reserve(value.size() + 2);
+    out.push_back('"');
+    constexpr char hex[] = "0123456789abcdef";
+    for (const unsigned char byte : value) {
+        switch (byte) {
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (byte < 0x20) {
+                out += "\\u00";
+                out.push_back(hex[(byte >> 4) & 0x0f]);
+                out.push_back(hex[byte & 0x0f]);
+            } else {
+                out.push_back(static_cast<char>(byte));
+            }
+            break;
+        }
+    }
+    out.push_back('"');
+    return out;
 }
 
 std::string speech_segments_to_json(const std::vector<engine::runtime::SpeechSegment> & segments) {
