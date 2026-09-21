@@ -1340,6 +1340,36 @@
       ]
     },
     {
+      "id": "yue2_semantic_export",
+      "coverage": "YuE2 semantic token export artifact alongside audio",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio",
+        "artifact"
+      ],
+      "requests": [
+        {
+          "id": "semantic_export",
+          "text": "[Verse]\nThe counter ticks and every frame is stored.\nA steady index writes the music down.\n[Chorus]\nKeep the tokens, read them back again.\nThe song can leave the runtime as a list.",
+          "seed": 20260914,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.01,
+            "style": "English, indie pop, bright guitar, soft drums, warm lead vocal",
+            "cot": "off",
+            "export_semantic": true,
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
       "id": "irodori_tts_500m_emoji_style_clone",
       "coverage": "Irodori-TTS 500M no-reference emoji/style requests and reference clone path in one session",
       "family": "irodori_tts",

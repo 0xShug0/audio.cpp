@@ -48,4 +48,18 @@ float request_guidance_scale(const Yue2Request & request) noexcept {
     return request.cot == Yue2CotMode::Off ? 1.01F : 1.0F;
 }
 
+std::string semantic_codes_to_json(const std::vector<int32_t> & codes) {
+    std::string out;
+    out.reserve(codes.size() * 6 + 2);
+    out.push_back('[');
+    for (size_t i = 0; i < codes.size(); ++i) {
+        if (i != 0) {
+            out.push_back(',');
+        }
+        out += std::to_string(codes[i]);
+    }
+    out.push_back(']');
+    return out;
+}
+
 }  // namespace engine::models::yue2

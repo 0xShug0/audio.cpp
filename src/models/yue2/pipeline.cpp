@@ -335,6 +335,10 @@ public:
         }
         Yue2RunResult out;
         out.audio = std::move(audio);
+        if (request.export_semantic) {
+            out.semantic_codes = codec_from_semantic_tokens(semantic.tokens);
+            out.semantic_truncated = semantic.truncated;
+        }
         if (request.cot != Yue2CotMode::Off && request.abc.empty() && !semantic.plan.abc_ids.empty()) {
             const auto decode_start = Clock::now();
             out.plan_abc_text = tokenizer.decode(semantic.plan.abc_ids);

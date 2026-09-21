@@ -19,6 +19,8 @@ struct Yue2RunResult {
     runtime::AudioBuffer audio;
     std::string plan_abc_text;
     bool plan_abc_truncated = false;
+    std::vector<int32_t> semantic_codes;
+    bool semantic_truncated = false;
 };
 
 class Yue2PipelineRuntime {
