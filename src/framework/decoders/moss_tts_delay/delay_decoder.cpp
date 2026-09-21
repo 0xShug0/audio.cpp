@@ -1,10 +1,10 @@
-#include "engine/community_models/moss_voicegen/delay_decoder.h"
+#include "engine/framework/decoders/moss_tts_delay/delay_decoder.h"
 
 #include <limits>
 #include <stdexcept>
 #include <utility>
 
-namespace engine::models::moss_voicegen {
+namespace engine::decoders {
 namespace {
 
 constexpr float kNegativeInfinity = -std::numeric_limits<float>::infinity();
@@ -17,21 +17,21 @@ void forbid(std::vector<float> & logits, int64_t token_id) {
 
 }  // namespace
 
-MossVoiceGenDelayDecoder::MossVoiceGenDelayDecoder(
-    MossVoiceGenConfig config,
-    MossVoiceGenSamplingOptions sampling,
+MossTtsDelayDecoder::MossTtsDelayDecoder(
+    MossTtsDelayConfig config,
+    MossTtsDelaySamplingOptions sampling,
     uint32_t seed,
-    MossVoiceGenLengthBounds bounds)
+    MossTtsDelayLengthBounds bounds)
     : config_(std::move(config)),
       sampling_(sampling),
       bounds_(bounds),
       rng_(seed) {
     if (config_.num_codebooks <= 0) {
-        throw std::runtime_error("MOSS-VoiceGenerator delay decoder requires a positive codebook count");
+        throw std::runtime_error("MOSS delay decoder requires a positive codebook count");
     }
 }
 
-int32_t MossVoiceGenDelayDecoder::sample_text(std::vector<float> & logits) {
+int32_t MossTtsDelayDecoder::sample_text(std::vector<float> & logits) {
     engine::sampling::HfSampler sampler;
     engine::sampling::HfSamplingOptions options;
     options.do_sample = sampling_.do_sample;
@@ -45,20 +45,41 @@ int32_t MossVoiceGenDelayDecoder::sample_text(std::vector<float> & logits) {
         sampler_scratch_,
         rng_,
         nullptr,
-        "moss_voicegen.text");
+        "moss_tts_delay.text");
     if (sampling_.do_sample) {
         ++sample_call_index_;
     }
     return token;
 }
 
-int32_t MossVoiceGenDelayDecoder::sample_code(std::vector<float> & logits, int64_t codebook) {
+void MossTtsDelayDecoder::seed_prompt_codes(const int32_t * codes, int64_t rows) {
+    if (codes == nullptr || rows <= 0) {
+        return;
+    }
+    const auto n_vq = static_cast<size_t>(config_.num_codebooks);
+    prompt_history_.clear();
+    prompt_history_.reserve(static_cast<size_t>(rows));
+    for (int64_t row = 0; row < rows; ++row) {
+        MossTtsDelayRow entry;
+        entry.codes.assign(codes + static_cast<size_t>(row) * n_vq,
+                           codes + static_cast<size_t>(row + 1) * n_vq);
+        prompt_history_.push_back(std::move(entry));
+    }
+}
+
+int32_t MossTtsDelayDecoder::sample_code(std::vector<float> & logits, int64_t codebook) {
     std::vector<int32_t> previous;
     if (sampling_.audio_repetition_penalty != 1.0F) {
-        // The reference penalises against every earlier row of this codebook, prompt rows
-        // included. Those are all pad, and pad is masked to -inf just below, so restricting
-        // this to the generated history gives the same result.
-        previous.reserve(history_.size());
+        // The reference penalises against every earlier row of this codebook,
+        // prompt rows included. When the prompt carries no audio those rows are
+        // all pad and it makes no difference; when it carries a cloning
+        // reference they are real codes, so they have to be here or the codes
+        // that occur in the reference recording are the only ones never
+        // penalised.
+        previous.reserve(prompt_history_.size() + history_.size());
+        for (const auto & row : prompt_history_) {
+            previous.push_back(row.codes[static_cast<size_t>(codebook)]);
+        }
         for (const auto & row : history_) {
             previous.push_back(row.codes[static_cast<size_t>(codebook)]);
         }
@@ -79,14 +100,14 @@ int32_t MossVoiceGenDelayDecoder::sample_code(std::vector<float> & logits, int64
         sampler_scratch_,
         rng_,
         nullptr,
-        "moss_voicegen.audio");
+        "moss_tts_delay.audio");
     if (sampling_.do_sample) {
         ++sample_call_index_;
     }
     return token;
 }
 
-MossVoiceGenDelayRow MossVoiceGenDelayDecoder::step(MossVoiceGenStepLogits & logits) {
+MossTtsDelayRow MossTtsDelayDecoder::step(MossTtsDelayStepLogits & logits) {
     const int64_t n_vq = config_.num_codebooks;
     const bool delaying = delayed_length_ != kNotDelaying;
 
@@ -163,11 +184,11 @@ MossVoiceGenDelayRow MossVoiceGenDelayDecoder::step(MossVoiceGenStepLogits & log
 
     // Audio side. Codebook i is live once the audio has been running longer than its delay
     // and until the flush window has retired it.
-    MossVoiceGenDelayRow row;
+    MossTtsDelayRow row;
     row.text_token = next_text;
     row.codes.assign(static_cast<size_t>(n_vq), static_cast<int32_t>(config_.audio_pad_code));
     if (static_cast<int64_t>(logits.audio.size()) != n_vq) {
-        throw std::runtime_error("MOSS-VoiceGenerator delay decoder expects one audio head per codebook");
+        throw std::runtime_error("MOSS delay decoder expects one audio head per codebook");
     }
     for (int64_t codebook = 0; codebook < n_vq; ++codebook) {
         const bool started = audio_length_ > codebook;
@@ -203,7 +224,7 @@ MossVoiceGenDelayRow MossVoiceGenDelayDecoder::step(MossVoiceGenStepLogits & log
     return row;
 }
 
-std::vector<int32_t> MossVoiceGenDelayDecoder::extract_audio_codes(
+std::vector<int32_t> MossTtsDelayDecoder::extract_audio_codes(
     int64_t & codebooks_out,
     int64_t & frames_out) const {
     const int64_t n_vq = config_.num_codebooks;
@@ -212,7 +233,7 @@ std::vector<int32_t> MossVoiceGenDelayDecoder::extract_audio_codes(
     // zero while it is being emitted and no codebook is live yet. Counting it would shift
     // every codebook by one row and make the highest codebook read a pad code from the
     // final flush row.
-    std::vector<const MossVoiceGenDelayRow *> audio_rows;
+    std::vector<const MossTtsDelayRow *> audio_rows;
     for (const auto & row : history_) {
         const bool carries_codes =
             row.text_token == static_cast<int32_t>(config_.audio_assistant_gen_slot_token_id)
@@ -263,4 +284,4 @@ std::vector<int32_t> MossVoiceGenDelayDecoder::extract_audio_codes(
     return codes;
 }
 
-}  // namespace engine::models::moss_voicegen
+}  // namespace engine::decoders

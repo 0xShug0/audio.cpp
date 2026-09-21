@@ -14,6 +14,7 @@
 | MioTTS | `miotts` | `tts` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
+| MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](community_models/moss_tts_v15.md) |
 | MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](community_models/moss_voicegen.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |

@@ -466,6 +466,7 @@ add_library(engine_core OBJECT
     src/framework/text/chinese_variant.cpp
     src/framework/text/chunking.cpp
     src/framework/text/subtitle.cpp
+    src/framework/text/moss_tts_normalization.cpp
     src/framework/text/text_normalization.cpp
     src/framework/text/unicode_normalization.cpp
     src/framework/io/yaml.cpp
@@ -473,6 +474,10 @@ add_library(engine_core OBJECT
     src/framework/io/safetensors.cpp
     src/framework/debug/trace.cpp
     src/framework/debug/profiler.cpp
+    src/framework/decoders/moss_tts_delay/backbone.cpp
+    src/framework/decoders/moss_tts_delay/config.cpp
+    src/framework/decoders/moss_tts_delay/delay_decoder.cpp
+    src/framework/decoders/moss_tts_delay/heads.cpp
     src/framework/decoders/tdt_decoder_runner.cpp
     src/framework/decoders/tdt_decoder_greedy_customized.cpp
     src/framework/decoders/tdt_decoder_greedy_duration_loop.cpp
@@ -1051,12 +1056,21 @@ audiocpp_add_model(moss
         moss_tts_nano
 )
 
+audiocpp_add_model(moss_tts_v15
+    SOURCES
+        src/community_models/moss_tts_v15/assets.cpp
+        src/community_models/moss_tts_v15/prompt.cpp
+        src/community_models/moss_tts_v15/session.cpp
+        src/community_models/moss_tts_v15/loader.cpp
+    INCLUDES
+        engine/community_models/moss_tts_v15/loader.h
+    LOADERS
+        engine::models::moss_tts_v15::make_moss_tts_v15_loader
+)
+
 audiocpp_add_model(moss_voicegen
     SOURCES
         src/community_models/moss_voicegen/assets.cpp
-        src/community_models/moss_voicegen/backbone.cpp
-        src/community_models/moss_voicegen/delay_decoder.cpp
-        src/community_models/moss_voicegen/heads.cpp
         src/community_models/moss_voicegen/loader.cpp
         src/community_models/moss_voicegen/session.cpp
         src/community_models/moss_voicegen/tokenizer_text.cpp
@@ -2843,6 +2857,20 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME model_spec_system_test COMMAND model_spec_system_test)
     endif()
 
+        add_executable(moss_tts_v15_text_normalization_test
+            tests/moss_tts_v15/text_normalization_test.cpp
+        )
+        target_link_libraries(moss_tts_v15_text_normalization_test PRIVATE engine_runtime ggml)
+        add_test(NAME moss_tts_v15_text_normalization
+            COMMAND moss_tts_v15_text_normalization_test --vectors
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/moss_tts_v15/reference/text_normalization_vectors.json")
+        # Kept separate from the shipped vectors so upstream's set stays as it
+        # ships: these are cases it does not reach, with expectations taken from
+        # the reference implementation rather than written by hand.
+        add_test(NAME moss_tts_v15_text_normalization_regressions
+            COMMAND moss_tts_v15_text_normalization_test --vectors
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/moss_tts_v15/reference/text_normalization_regressions.json")
+
     if (ENGINE_BUILD_EXTENDED_TESTS)
         find_package(Threads REQUIRED)
 
@@ -3197,6 +3225,32 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(moss_voicegen_codec_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
+
+        add_executable(moss_voicegen_codec_encode_parity
+            tests/moss_voicegen/codec_encode_parity.cpp
+        )
+        target_link_libraries(moss_voicegen_codec_encode_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_voicegen_codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        add_executable(moss_tts_delay_backbone_parity
+            tests/moss_tts_delay/backbone_parity.cpp
+        )
+        target_link_libraries(moss_tts_delay_backbone_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_tts_delay_backbone_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        add_executable(moss_tts_v15_prompt_parity
+            tests/moss_tts_v15/prompt_parity.cpp
+            src/community_models/moss_tts_v15/prompt.cpp
+        )
+        target_link_libraries(moss_tts_v15_prompt_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_tts_v15_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
 
         add_executable(moss_voicegen_smoke
             tests/moss_voicegen/voicegen_smoke.cpp

@@ -1,4 +1,4 @@
-#include "engine/community_models/moss_voicegen/backbone.h"
+#include "engine/framework/decoders/moss_tts_delay/backbone.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::moss_voicegen {
+namespace engine::decoders {
 namespace {
 
 namespace modules = engine::modules;
@@ -53,7 +53,7 @@ struct VoiceGenBackboneLayerWeights {
     core::TensorValue down_proj;
 };
 
-struct VoiceGenBackboneWeights {
+struct MossTtsDelayBackboneWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue embed_tokens;
     std::vector<VoiceGenBackboneLayerWeights> layers;
@@ -70,24 +70,24 @@ void validate_weight_storage_type(assets::TensorStorageType storage_type) {
             return;
         default:
             throw std::runtime_error(
-                "MOSS-VoiceGenerator backbone weight_type supports only native, f32, f16, bf16, and q8_0");
+                "MOSS delay backbone weight_type supports only native, f32, f16, bf16, and q8_0");
     }
 }
 
-VoiceGenBackboneWeights load_backbone_weights(
-    const MossVoiceGenAssets & assets,
+MossTtsDelayBackboneWeights load_backbone_weights(
+    const MossTtsDelayConfig & model_config,
+    const assets::TensorSource & source,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
     validate_weight_storage_type(storage_type);
-    const auto & config = assets.config.backbone;
-    const auto & source = *assets.model_weights;
-    VoiceGenBackboneWeights weights;
+    const auto & config = model_config.backbone;
+    MossTtsDelayBackboneWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "moss_voicegen.backbone.weights",
+        "moss_tts_delay.backbone.weights",
         weight_context_bytes);
     weights.embed_tokens = weights.store->load_tensor(
         source,
@@ -164,7 +164,7 @@ modules::QwenDecoderLayerWeights qwen_layer_weights(const VoiceGenBackboneLayerW
     return out;
 }
 
-modules::QwenDecoderLayerConfig qwen_layer_config(const MossVoiceGenBackboneConfig & config) {
+modules::QwenDecoderLayerConfig qwen_layer_config(const MossTtsDelayBackboneConfig & config) {
     modules::QwenDecoderLayerConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
@@ -183,13 +183,15 @@ modules::QwenDecoderLayerConfig qwen_layer_config(const MossVoiceGenBackboneConf
 
 }  // namespace
 
-struct MossVoiceGenBackboneRuntime::Impl {
-    std::shared_ptr<const MossVoiceGenAssets> assets;
+struct MossTtsDelayBackboneRuntime::Impl {
+    MossTtsDelayConfig config;
+    // Kept alive because the weight store borrows from it.
+    std::shared_ptr<const assets::TensorSource> weights_source;
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
     size_t graph_arena_bytes = 0;
-    VoiceGenBackboneWeights weights;
+    MossTtsDelayBackboneWeights weights;
 
     // Cached-generation step graph (built once by begin_generation, reused every step).
     std::unique_ptr<ggml_context, GgmlContextDeleter> step_ctx;
@@ -242,55 +244,55 @@ struct MossVoiceGenBackboneRuntime::Impl {
     }
 };
 
-MossVoiceGenBackboneRuntime::MossVoiceGenBackboneRuntime(
-    std::shared_ptr<const MossVoiceGenAssets> assets,
+MossTtsDelayBackboneRuntime::MossTtsDelayBackboneRuntime(
+    MossTtsDelayConfig config,
+    std::shared_ptr<const assets::TensorSource> weights,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type)
     : impl_(std::make_unique<Impl>()) {
-    if (assets == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone requires assets");
-    }
-    if (assets->model_weights == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone requires model weights");
+    if (weights == nullptr) {
+        throw std::runtime_error("MOSS delay backbone requires model weights");
     }
     impl_->backend = execution_context.backend();
     if (impl_->backend == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone backend is not initialized");
+        throw std::runtime_error("MOSS delay backbone backend is not initialized");
     }
     impl_->backend_type = execution_context.backend_type();
     impl_->threads = execution_context.config().threads;
     impl_->graph_arena_bytes = graph_arena_bytes;
     impl_->weights = load_backbone_weights(
-        *assets,
+        config,
+        *weights,
         impl_->backend,
         impl_->backend_type,
         weight_context_bytes,
         weight_storage_type);
-    impl_->assets = std::move(assets);
+    impl_->config = std::move(config);
+    impl_->weights_source = std::move(weights);
 }
 
-MossVoiceGenBackboneRuntime::~MossVoiceGenBackboneRuntime() = default;
+MossTtsDelayBackboneRuntime::~MossTtsDelayBackboneRuntime() = default;
 
-int64_t MossVoiceGenBackboneRuntime::hidden_size() const noexcept {
-    return impl_->assets->config.backbone.hidden_size;
+int64_t MossTtsDelayBackboneRuntime::hidden_size() const noexcept {
+    return impl_->config.backbone.hidden_size;
 }
 
-void MossVoiceGenBackboneRuntime::build_step_graph(int64_t cache_steps) const {
+void MossTtsDelayBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     auto & impl = *impl_;
     const auto graph_build_start = Clock::now();
-    const auto & config = impl.assets->config.backbone;
+    const auto & config = impl.config.backbone;
     const auto & weights = impl.weights;
     const int64_t dim = config.head_dim;
 
     ggml_init_params params{impl.graph_arena_bytes, nullptr, true};
     impl.step_ctx.reset(ggml_init(params));
     if (impl.step_ctx == nullptr) {
-        throw std::runtime_error("failed to initialize MOSS-VoiceGenerator backbone step graph context");
+        throw std::runtime_error("failed to initialize MOSS delay backbone step graph context");
     }
     ggml_context * gctx = impl.step_ctx.get();
-    core::ModuleBuildContext ctx{gctx, "moss_voicegen.backbone.step", impl.backend_type};
+    core::ModuleBuildContext ctx{gctx, "moss_tts_delay.backbone.step", impl.backend_type};
 
     auto token_input = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, 1}));
     ggml_set_input(token_input.tensor);
@@ -349,7 +351,7 @@ void MossVoiceGenBackboneRuntime::build_step_graph(int64_t cache_steps) const {
 
     impl.step_buffer = ggml_backend_alloc_ctx_tensors(gctx, impl.backend);
     if (impl.step_buffer == nullptr) {
-        throw std::runtime_error("failed to allocate MOSS-VoiceGenerator backbone step graph");
+        throw std::runtime_error("failed to allocate MOSS delay backbone step graph");
     }
 
     impl.step_token = token_input.tensor;
@@ -367,9 +369,9 @@ void MossVoiceGenBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     impl.step_graph_build_ms += engine::debug::elapsed_ms(graph_build_start);
 }
 
-void MossVoiceGenBackboneRuntime::begin_generation(int64_t max_positions) const {
+void MossTtsDelayBackboneRuntime::begin_generation(int64_t max_positions) const {
     if (max_positions <= 0) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone begin_generation requires max_positions > 0");
+        throw std::runtime_error("MOSS delay backbone begin_generation requires max_positions > 0");
     }
     auto & impl = *impl_;
     if (impl.step_graph == nullptr || impl.step_cache.cache_steps() < max_positions) {
@@ -377,7 +379,7 @@ void MossVoiceGenBackboneRuntime::begin_generation(int64_t max_positions) const 
         build_step_graph(max_positions);
     }
     // Zero the caches so not-yet-written (masked) rows can never inject NaNs into the softmax.
-    const auto & config = impl.assets->config.backbone;
+    const auto & config = impl.config.backbone;
     const size_t elems =
         static_cast<size_t>(impl.step_cache.cache_steps() * config.num_key_value_heads * config.head_dim);
     const std::vector<float> zeros(elems, 0.0F);
@@ -396,26 +398,26 @@ void MossVoiceGenBackboneRuntime::begin_generation(int64_t max_positions) const 
     impl.step_cache.retain_prefix(0);
 }
 
-std::vector<float> MossVoiceGenBackboneRuntime::step(int32_t token_id, const std::vector<float> & audio_bias_row) const {
+std::vector<float> MossTtsDelayBackboneRuntime::step(int32_t token_id, const std::vector<float> & audio_bias_row) const {
     std::vector<float> hidden_state;
     step_into(token_id, audio_bias_row, hidden_state);
     return hidden_state;
 }
 
-void MossVoiceGenBackboneRuntime::step_into(
+void MossTtsDelayBackboneRuntime::step_into(
     int32_t token_id,
     const std::vector<float> & audio_bias_row,
     std::vector<float> & hidden_state) const {
     auto & impl = *impl_;
     if (impl.step_graph == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone step called before begin_generation");
+        throw std::runtime_error("MOSS delay backbone step called before begin_generation");
     }
-    const int64_t hidden = impl.assets->config.backbone.hidden_size;
+    const int64_t hidden = impl.config.backbone.hidden_size;
     if (static_cast<int64_t>(audio_bias_row.size()) != hidden) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone step audio bias row size does not match hidden_size");
+        throw std::runtime_error("MOSS delay backbone step audio bias row size does not match hidden_size");
     }
     if (impl.step_cache.valid_steps() >= impl.step_cache.cache_steps()) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone step exceeds cache capacity");
+        throw std::runtime_error("MOSS delay backbone step exceeds cache capacity");
     }
     const int32_t position = static_cast<int32_t>(impl.step_cache.current_end());
     const int32_t cache_slot = static_cast<int32_t>(impl.step_cache.valid_steps());
@@ -442,7 +444,7 @@ void MossVoiceGenBackboneRuntime::step_into(
     ggml_backend_synchronize(impl.backend);
     impl.step_graph_compute_ms += engine::debug::elapsed_ms(timing_start);
     if (status != GGML_STATUS_SUCCESS) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone step graph compute failed");
+        throw std::runtime_error("MOSS delay backbone step graph compute failed");
     }
     hidden_state.resize(static_cast<size_t>(hidden));
     timing_start = Clock::now();
@@ -452,23 +454,23 @@ void MossVoiceGenBackboneRuntime::step_into(
     ++impl.step_calls;
 }
 
-std::vector<float> MossVoiceGenBackboneRuntime::prefill(
+std::vector<float> MossTtsDelayBackboneRuntime::prefill(
     const std::vector<int32_t> & token_ids,
     const std::vector<float> & audio_bias) const {
     auto & impl = *impl_;
     if (impl.step_graph == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone prefill called before begin_generation");
+        throw std::runtime_error("MOSS delay backbone prefill called before begin_generation");
     }
-    const auto & config = impl.assets->config.backbone;
+    const auto & config = impl.config.backbone;
     const int64_t steps = static_cast<int64_t>(token_ids.size());
     if (steps <= 0) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone prefill requires a non-empty prompt");
+        throw std::runtime_error("MOSS delay backbone prefill requires a non-empty prompt");
     }
     if (steps > impl.step_cache.cache_steps()) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone prefill prompt exceeds cache capacity");
+        throw std::runtime_error("MOSS delay backbone prefill prompt exceeds cache capacity");
     }
     if (static_cast<int64_t>(audio_bias.size()) != steps * config.hidden_size) {
-        throw std::runtime_error("MOSS-VoiceGenerator backbone prefill audio bias size does not match [steps, hidden]");
+        throw std::runtime_error("MOSS delay backbone prefill audio bias size does not match [steps, hidden]");
     }
     const int64_t dim = config.head_dim;
     const int64_t kv_heads = config.num_key_value_heads;
@@ -477,9 +479,9 @@ std::vector<float> MossVoiceGenBackboneRuntime::prefill(
     ggml_init_params params{impl.graph_arena_bytes, nullptr, true};
     std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx(ggml_init(params));
     if (graph_ctx == nullptr) {
-        throw std::runtime_error("failed to initialize MOSS-VoiceGenerator backbone prefill context");
+        throw std::runtime_error("failed to initialize MOSS delay backbone prefill context");
     }
-    core::ModuleBuildContext ctx{graph_ctx.get(), "moss_voicegen.backbone.prefill", impl.backend_type};
+    core::ModuleBuildContext ctx{graph_ctx.get(), "moss_tts_delay.backbone.prefill", impl.backend_type};
 
     auto token_input = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1, steps}));
     ggml_set_input(token_input.tensor);
@@ -511,7 +513,7 @@ std::vector<float> MossVoiceGenBackboneRuntime::prefill(
             attention_mask);
         x = out.output;
         if (!out.key.valid() || !out.value.valid()) {
-            throw std::runtime_error("MOSS-VoiceGenerator backbone prefill decoder did not return K/V state");
+            throw std::runtime_error("MOSS delay backbone prefill decoder did not return K/V state");
         }
         layer_keys.push_back(out.key);
         layer_values.push_back(out.value);
@@ -548,7 +550,7 @@ std::vector<float> MossVoiceGenBackboneRuntime::prefill(
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
         }
-        throw std::runtime_error("failed to allocate MOSS-VoiceGenerator backbone prefill graph");
+        throw std::runtime_error("failed to allocate MOSS delay backbone prefill graph");
     }
     impl.prefill_graph_build_ms += engine::debug::elapsed_ms(timing_start);
 
@@ -584,7 +586,7 @@ std::vector<float> MossVoiceGenBackboneRuntime::prefill(
     impl.prefill_graph_compute_ms += engine::debug::elapsed_ms(timing_start);
     if (status != GGML_STATUS_SUCCESS) {
         ggml_gallocr_free(gallocr);
-        throw std::runtime_error("MOSS-VoiceGenerator backbone prefill graph compute failed");
+        throw std::runtime_error("MOSS delay backbone prefill graph compute failed");
     }
 
     std::vector<float> last_hidden(static_cast<size_t>(config.hidden_size));
@@ -601,15 +603,15 @@ std::vector<float> MossVoiceGenBackboneRuntime::prefill(
     return last_hidden;
 }
 
-int64_t MossVoiceGenBackboneRuntime::cached_positions() const noexcept {
+int64_t MossTtsDelayBackboneRuntime::cached_positions() const noexcept {
     return impl_->step_cache.valid_steps();
 }
 
-int64_t MossVoiceGenBackboneRuntime::release_cached_step_graph() const {
+int64_t MossTtsDelayBackboneRuntime::release_cached_step_graph() const {
     return impl_->release_step_graph();
 }
 
-void MossVoiceGenBackboneRuntime::reset_timing() const {
+void MossTtsDelayBackboneRuntime::reset_timing() const {
     auto & impl = *impl_;
     impl.step_graph_build_ms = 0.0;
     impl.step_input_upload_ms = 0.0;
@@ -624,19 +626,19 @@ void MossVoiceGenBackboneRuntime::reset_timing() const {
     impl.prefill_calls = 0;
 }
 
-void MossVoiceGenBackboneRuntime::log_timing() const {
+void MossTtsDelayBackboneRuntime::log_timing() const {
     const auto & impl = *impl_;
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.step.graph.build_ms", impl.step_graph_build_ms);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.step.input_upload_ms", impl.step_input_upload_ms);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.step.mask_upload_ms", impl.step_mask_upload_ms);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.step.graph.compute_ms", impl.step_graph_compute_ms);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.step.output_read_ms", impl.step_output_read_ms);
-    engine::debug::trace_log_scalar("moss_voicegen.backbone.step.calls", impl.step_calls);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.prefill.graph.build_ms", impl.prefill_graph_build_ms);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.prefill.input_upload_ms", impl.prefill_input_upload_ms);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.prefill.graph.compute_ms", impl.prefill_graph_compute_ms);
-    engine::debug::timing_log_scalar("moss_voicegen.backbone.prefill.output_read_ms", impl.prefill_output_read_ms);
-    engine::debug::trace_log_scalar("moss_voicegen.backbone.prefill.calls", impl.prefill_calls);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.graph.build_ms", impl.step_graph_build_ms);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.input_upload_ms", impl.step_input_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.mask_upload_ms", impl.step_mask_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.graph.compute_ms", impl.step_graph_compute_ms);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.output_read_ms", impl.step_output_read_ms);
+    engine::debug::trace_log_scalar("moss_tts_delay.backbone.step.calls", impl.step_calls);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.graph.build_ms", impl.prefill_graph_build_ms);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.input_upload_ms", impl.prefill_input_upload_ms);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.graph.compute_ms", impl.prefill_graph_compute_ms);
+    engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.output_read_ms", impl.prefill_output_read_ms);
+    engine::debug::trace_log_scalar("moss_tts_delay.backbone.prefill.calls", impl.prefill_calls);
 }
 
-}  // namespace engine::models::moss_voicegen
+}  // namespace engine::decoders

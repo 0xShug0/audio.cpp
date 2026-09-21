@@ -1,21 +1,29 @@
 /*
- * Backbone parity for MOSS-VoiceGenerator. Builds the prompt with the audio.cpp text
- * processor, embeds it the way MossTTSDelayModel.get_input_embeddings does (text embedding
- * plus one embedding per audio codebook), runs the Qwen3 backbone, and compares the
- * resulting hidden states against a dump from the reference PyTorch model.
+ * Backbone parity for the moss_tts_delay family at n_vq 32 -- MOSS-TTS-v1.5, the 8B
+ * sibling of MOSS-VoiceGenerator. Same architecture, same tensor names, four times the
+ * codebooks and a Qwen3-8B backbone in place of 1.7B.
  *
- * It also re-runs the last position through the cached single-step path, which catches
- * rope/mask/cache-slot mistakes that a prefill-only comparison would miss.
+ * Unlike the moss_voicegen test this takes the prompt rows straight from the reference
+ * dump rather than building them, because the v1.5 prompt builder does not exist yet.
+ * That is deliberate: it isolates the backbone -- the geometry, the summed multi-codebook
+ * embedding, rope, and the KV cache -- from prompt construction, which gets its own
+ * parity test later. It is the same split the moss_voicegen tests already use between
+ * prompt_parity and backbone_parity.
  *
- *   moss_voicegen_backbone_parity --model <dir> --prompt <ref_prompt.json> \
- *       --hidden <ref_hidden.json> [--weight-type bf16] [--tolerance 0.02]
+ * Assets are assembled by hand from the raw checkpoint: v1.5's safetensors carry the
+ * same tensor names the backbone already looks up (language_model.*, emb_ext.N.weight),
+ * so no conversion and no model spec are needed to run this.
+ *
+ *   moss_tts_delay_backbone_parity --weights <model.safetensors.index.json> \
+ *       --config <config.json> --prompt <ref_prompt.json> --hidden <ref_hidden.json> \
+ *       [--weight-type bf16] [--tolerance 0.02]
  */
 
-#include "engine/community_models/moss_voicegen/assets.h"
 #include "engine/framework/decoders/moss_tts_delay/backbone.h"
-#include "engine/community_models/moss_voicegen/tokenizer_text.h"
+#include "engine/framework/decoders/moss_tts_delay/config.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/multi_codebook_embedding.h"
 
@@ -106,13 +114,15 @@ Deviation compare(const std::vector<float> & actual, const std::vector<float> & 
 
 int main(int argc, char ** argv) {
     try {
-        const std::string model_dir = arg_value(argc, argv, "--model", "");
+        const std::string weights_path = arg_value(argc, argv, "--weights", "");
+        const std::string config_path = arg_value(argc, argv, "--config", "");
         const std::string prompt_path = arg_value(argc, argv, "--prompt", "");
         const std::string hidden_path = arg_value(argc, argv, "--hidden", "");
         const auto weight_type = parse_weight_type(arg_value(argc, argv, "--weight-type", "bf16"));
         const float tolerance = std::stof(arg_value(argc, argv, "--tolerance", "0.001"));
-        if (model_dir.empty() || prompt_path.empty() || hidden_path.empty()) {
-            std::cerr << "usage: moss_voicegen_backbone_parity --model <dir> --prompt <json> --hidden <json>\n";
+        if (weights_path.empty() || config_path.empty() || prompt_path.empty() || hidden_path.empty()) {
+            std::cerr << "usage: moss_tts_delay_backbone_parity --weights <index.json> "
+                         "--config <config.json> --prompt <json> --hidden <json>\n";
             return 2;
         }
 
@@ -120,15 +130,51 @@ int main(int argc, char ** argv) {
         const auto hidden_reference = json::parse_file(hidden_path);
         const auto expected_last = require_floats(hidden_reference, "last_hidden");
 
-        const auto assets = engine::models::moss_voicegen::load_moss_voicegen_assets(model_dir);
-        const auto & config = assets->config;
-        const engine::models::moss_voicegen::MossVoiceGenTextProcessor processor(assets);
-        const auto rows = processor.build_generation_prefix(
-            json::require_string(prompt_reference, "text"),
-            json::require_string(prompt_reference, "instruction"),
-            json::require_string(prompt_reference, "language"));
+        // Read the checkpoint's own config rather than a model spec: this test runs
+        // against the unconverted HF download.
+        const auto config_json = json::parse_file(config_path);
+        const auto & language_config = config_json.require("language_config");
+        engine::decoders::MossTtsDelayConfig config;
+        config.backbone.hidden_size = json::require_i64(language_config, "hidden_size");
+        config.backbone.intermediate_size = json::require_i64(language_config, "intermediate_size");
+        config.backbone.num_hidden_layers = json::require_i64(language_config, "num_hidden_layers");
+        config.backbone.num_attention_heads = json::require_i64(language_config, "num_attention_heads");
+        config.backbone.num_key_value_heads = json::require_i64(language_config, "num_key_value_heads");
+        config.backbone.head_dim = json::require_i64(language_config, "head_dim");
+        config.backbone.max_position_embeddings =
+            json::require_i64(language_config, "max_position_embeddings");
+        config.backbone.vocab_size = json::require_i64(language_config, "vocab_size");
+        config.backbone.rms_norm_eps =
+            json::optional_f32(language_config, "rms_norm_eps", 1.0e-6F);
+        config.backbone.rope_theta =
+            json::optional_f32(language_config, "rope_theta", 1000000.0F);
+        config.backbone.tie_word_embeddings =
+            json::optional_bool(language_config, "tie_word_embeddings", true);
+        config.num_codebooks = json::require_i64(config_json, "n_vq");
+        config.audio_vocab_size = json::require_i64(config_json, "audio_vocab_size");
+        config.audio_pad_code = json::require_i64(config_json, "audio_pad_code");
+        const auto model_weights = engine::assets::open_tensor_source(weights_path);
 
-        const int64_t steps = static_cast<int64_t>(rows.text_tokens.size());
+        // input_ids is [rows][1 + n_vq]: channel 0 is the text id, the rest are codes.
+        const auto & id_rows = prompt_reference.require("input_ids").as_array();
+        const int64_t steps = static_cast<int64_t>(id_rows.size());
+        struct { std::vector<int32_t> text_tokens; std::vector<int32_t> audio_codes; } rows;
+        rows.text_tokens.reserve(static_cast<size_t>(steps));
+        rows.audio_codes.reserve(static_cast<size_t>(steps * config.num_codebooks));
+        for (const auto & row : id_rows) {
+            const auto & channels = row.as_array();
+            if (static_cast<int64_t>(channels.size()) != config.num_codebooks + 1) {
+                std::cerr << "FAIL: fixture row has " << channels.size() << " channels, expected "
+                          << (config.num_codebooks + 1) << "\n";
+                return 1;
+            }
+            rows.text_tokens.push_back(static_cast<int32_t>(channels[0].as_number()));
+            for (size_t c = 1; c < channels.size(); ++c) {
+                rows.audio_codes.push_back(static_cast<int32_t>(channels[c].as_number()));
+            }
+        }
+        std::cout << "prompt rows=" << steps << " codebooks=" << config.num_codebooks
+                  << " hidden=" << config.backbone.hidden_size << "\n";
         const int64_t hidden_size = config.backbone.hidden_size;
         if (steps != json::require_i64(hidden_reference, "rows")) {
             std::cerr << "FAIL: prompt has " << steps << " rows, reference hidden dump has "
@@ -146,7 +192,7 @@ int main(int argc, char ** argv) {
         codebook_spec.vocab_size = config.audio_vocab_size + 1;
         codebook_spec.pad_token_id = config.audio_pad_code;
         codebook_spec.tensor_prefix = "emb_ext";
-        const engine::modules::MultiCodebookEmbedding codebooks(*assets->model_weights, codebook_spec);
+        const engine::modules::MultiCodebookEmbedding codebooks(*model_weights, codebook_spec);
 
         std::vector<float> audio_bias(static_cast<size_t>(steps * hidden_size), 0.0F);
         for (int64_t row = 0; row < steps; ++row) {
@@ -161,7 +207,8 @@ int main(int argc, char ** argv) {
         backend_config.threads = std::stoi(arg_value(argc, argv, "--threads", "8"));
         engine::core::ExecutionContext execution_context(backend_config);
         const engine::decoders::MossTtsDelayBackboneRuntime backbone(
-            assets->config, assets->model_weights, execution_context, 512ull * 1024ull * 1024ull, 8192ull * 1024ull * 1024ull, weight_type);
+            config, model_weights, execution_context, 512ull * 1024ull * 1024ull,
+            8192ull * 1024ull * 1024ull, weight_type);
 
         backbone.begin_generation(steps + 8);
         const auto prefill_hidden = backbone.prefill(rows.text_tokens, audio_bias);

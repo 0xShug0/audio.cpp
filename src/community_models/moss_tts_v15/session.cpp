@@ -1,5 +1,6 @@
-#include "engine/community_models/moss_voicegen/session.h"
+#include "engine/community_models/moss_tts_v15/session.h"
 
+#include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
@@ -10,7 +11,7 @@
 #include <string_view>
 #include <utility>
 
-namespace engine::models::moss_voicegen {
+namespace engine::models::moss_tts_v15 {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -30,9 +31,9 @@ constexpr double kCeilingFraction = 1.6;
 constexpr int64_t kMinFramesFloor = 12;
 constexpr int64_t kCeilingSlackFrames = 25;
 
-std::shared_ptr<const MossVoiceGenAssets> require_assets(std::shared_ptr<const MossVoiceGenAssets> assets) {
+std::shared_ptr<const Assets> require_assets(std::shared_ptr<const Assets> assets) {
     if (assets == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator session requires assets");
+        throw std::runtime_error("MOSS-TTS-v1.5 session requires assets");
     }
     return assets;
 }
@@ -53,7 +54,7 @@ engine::assets::TensorStorageType parse_weight_type(const std::string & value) {
     // f16 is deliberately not offered: this backbone's attention-sink activations run to
     // ~169k, far past f16's range, and produce NaN from the first position.
     throw std::runtime_error(
-        "moss_voicegen.weight_type supports native, f32, bf16 and q8_0 (f16 produces NaN on this model)");
+        "moss_tts_v15.weight_type supports native, f32, bf16 and q8_0 (f16 produces NaN on this model)");
 }
 
 std::string option_string(
@@ -81,47 +82,64 @@ int option_int(
 
 }  // namespace
 
-MossVoiceGenSession::MossVoiceGenSession(
+MossTtsV15Session::MossTtsV15Session(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const MossVoiceGenAssets> assets)
+    std::shared_ptr<const Assets> assets)
     : runtime::RuntimeSessionBase(options),
       task_(std::move(task)),
       assets_(require_assets(std::move(assets))) {}
 
-MossVoiceGenSession::~MossVoiceGenSession() = default;
+MossTtsV15Session::~MossTtsV15Session() = default;
 
-std::string MossVoiceGenSession::family() const {
-    return "moss_voicegen";
+std::string MossTtsV15Session::family() const {
+    return "moss_tts_v15";
 }
 
-runtime::VoiceTaskKind MossVoiceGenSession::task_kind() const {
-    return runtime::VoiceTaskKind::VoiceDesign;
+runtime::VoiceTaskKind MossTtsV15Session::task_kind() const {
+    // tts and clone are the same path here, distinguished only by whether the request
+    // carries a reference recording, so report whichever the caller asked for.
+    return task_.task;
 }
 
-runtime::RunMode MossVoiceGenSession::run_mode() const {
+runtime::RunMode MossTtsV15Session::run_mode() const {
     return runtime::RunMode::Offline;
 }
 
-void MossVoiceGenSession::prepare(const runtime::SessionPreparationRequest &) {
-    // The server calls prepare() on every request against one long-lived session, so this
-    // has to be idempotent: building the runtimes here unconditionally re-uploaded the
-    // whole 5.7 GB model per request, which cost about four seconds on top of roughly one
-    // second of actual work. Nothing in this model depends on the request — there is no
-    // reference audio to encode — so it is all built once.
-    if (backbone_ != nullptr) {
+void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
+    // The server calls prepare() on every request against one long-lived session,
+    // so this has to be idempotent: building the runtimes unconditionally would
+    // re-upload the whole model per request. Nothing built here depends on the
+    // request — the reference recording is encoded in run(), not here — so it is
+    // all built once.
+    //
+    // The guard is on the last thing constructed, not the first. Guarding on
+    // backbone_ would let a prepare() that threw while building the heads, the
+    // codec or the embeddings be retried, take the early return, and report
+    // itself prepared with those members still null; run() then dereferences a
+    // null codec_. On a model this size an allocation failure partway through is
+    // not hypothetical.
+    if (codec_ != nullptr) {
         mark_prepared();
         return;
     }
 
     const auto & session_options = options().options;
-    const auto weight_type = runtime::find_option(session_options, {"moss_voicegen.weight_type", "weight_type"});
+    const auto weight_type = runtime::find_option(session_options, {"moss_tts_v15.weight_type", "weight_type"});
     if (weight_type.has_value()) {
         weight_storage_type_ = parse_weight_type(*weight_type);
     }
 
     const auto & config = assets_->config;
-    text_processor_ = std::make_unique<MossVoiceGenTextProcessor>(assets_);
+
+    // Same spec moss_voicegen uses: the checkpoint ships tokenizer.json and merges.txt
+    // but no vocab.json, so the vocabulary and merge ranks come from tokenizer.json
+    // rather than from a vocab/merges pair.
+    engine::tokenizers::LlamaBpeTokenizerSpec tokenizer_spec;
+    tokenizer_spec.tokenizer_config_path = assets_->resources.require_file("tokenizer_config");
+    tokenizer_spec.tokenizer_json_path = assets_->resources.require_file("tokenizer_json");
+    tokenizer_spec.pre_type = engine::tokenizers::LlamaBpePreTokenizer::Qwen2;
+    tokenizer_ = engine::tokenizers::load_llama_bpe_tokenizer(tokenizer_spec);
 
     engine::modules::MultiCodebookEmbeddingSpec codebook_spec;
     codebook_spec.hidden_size = config.backbone.hidden_size;
@@ -159,29 +177,33 @@ void MossVoiceGenSession::prepare(const runtime::SessionPreparationRequest &) {
         },
         engine::codecs::moss_audio_tokenizer_v1_config());
     codec_->prepare_decoder();
+    // v1.5 clones from a reference recording, so unlike voice design it needs the
+    // encoder as well. It is prepared lazily on the first request that supplies one.
 
     mark_prepared();
 }
 
-MossVoiceGenSession::GeneratedChunk MossVoiceGenSession::generate_chunk(
-    const std::string & text,
-    const std::string & instruction,
-    const std::optional<std::string> & language,
+MossTtsV15Session::GeneratedChunk MossTtsV15Session::generate_chunk(
+    const PromptFields & fields,
     const decoders::MossTtsDelaySamplingOptions & sampling,
     uint32_t seed,
-    decoders::MossTtsDelayLengthBounds bounds_override) {
+    decoders::MossTtsDelayLengthBounds bounds_override,
+    int64_t requested_frames) {
     const auto & config = assets_->config;
     const int64_t n_vq = config.num_codebooks;
     const int64_t hidden_size = config.backbone.hidden_size;
 
-    const auto prompt = text_processor_->build_generation_prefix(
-        text,
-        instruction.empty() ? std::optional<std::string>() : std::optional<std::string>(instruction),
-        language);
+    const auto prompt = build_generation_prefix(fields, config, *tokenizer_);
     const auto prompt_rows = static_cast<int64_t>(prompt.text_tokens.size());
 
-    const auto characters = static_cast<int64_t>(text.size());
-    const double expected_frames = static_cast<double>(characters) * kFramesPerCharacter;
+    const auto characters = static_cast<int64_t>(fields.text.size());
+    // The family's "- Tokens:" field is an explicit duration budget in codec frames and
+    // the model honours it (40 tokens produced 41 frames on the reference). When the
+    // caller gives one, it is the estimate; otherwise fall back to the character rate,
+    // which is all voice design ever had.
+    const double expected_frames = requested_frames > 0
+        ? static_cast<double>(requested_frames)
+        : static_cast<double>(characters) * kFramesPerCharacter;
     decoders::MossTtsDelayLengthBounds bounds = bounds_override;
     if (bounds.min_frames <= 0) {
         bounds.min_frames = std::max<int64_t>(kMinFramesFloor, static_cast<int64_t>(expected_frames * kFloorFraction));
@@ -201,6 +223,9 @@ MossVoiceGenSession::GeneratedChunk MossVoiceGenSession::generate_chunk(
     }
 
     decoders::MossTtsDelayDecoder decoder(config, sampling, seed, bounds);
+    // A cloning prompt carries the reference recording's codes, and the reference
+    // implementation penalises repetition against them like any earlier row.
+    decoder.seed_prompt_codes(prompt.audio_codes.data(), prompt_rows);
     backbone_->begin_generation(prompt_rows + max_steps + 8);
     auto hidden = backbone_->prefill(prompt.text_tokens, prompt_bias);
 
@@ -223,15 +248,43 @@ MossVoiceGenSession::GeneratedChunk MossVoiceGenSession::generate_chunk(
 
     chunk.codes = decoder.extract_audio_codes(chunk.codebooks, chunk.frames);
     chunk.hit_frame_ceiling = chunk.frames >= bounds.max_frames;
-    debug::trace_log_scalar("moss_voicegen.chunk.text_chars", characters);
-    debug::trace_log_scalar("moss_voicegen.chunk.min_frames", bounds.min_frames);
-    debug::trace_log_scalar("moss_voicegen.chunk.max_frames", bounds.max_frames);
-    debug::trace_log_scalar("moss_voicegen.chunk.frames", chunk.frames);
-    debug::trace_log_scalar("moss_voicegen.chunk.started_audio", chunk.started_audio);
+    debug::trace_log_scalar("moss_tts_v15.chunk.text_chars", characters);
+    debug::trace_log_scalar("moss_tts_v15.chunk.min_frames", bounds.min_frames);
+    debug::trace_log_scalar("moss_tts_v15.chunk.max_frames", bounds.max_frames);
+    debug::trace_log_scalar("moss_tts_v15.chunk.frames", chunk.frames);
+    debug::trace_log_scalar("moss_tts_v15.chunk.started_audio", chunk.started_audio);
     return chunk;
 }
 
-std::vector<float> MossVoiceGenSession::decode_codes(const GeneratedChunk & chunk) {
+ReferenceAudio MossTtsV15Session::encode_reference(const runtime::AudioBuffer & audio) {
+    const auto rate = static_cast<int>(codec_->sampling_rate());
+    if (audio.samples.empty()) {
+        throw std::runtime_error("MOSS-TTS-v1.5 reference recording is empty");
+    }
+
+    // Downmix and resample to the codec's rate: it is mono at 24 kHz, and a reference
+    // at any other shape would otherwise be encoded as though it were not.
+    std::vector<float> mono = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(
+        audio.samples, audio.sample_rate, audio.channels, rate);
+
+    // Whole frames only: a partial frame has no codes and would make the last column
+    // of the reference span ambiguous.
+    const auto samples_per_frame = static_cast<size_t>(rate) / 125 * 10;
+    mono.resize(mono.size() / samples_per_frame * samples_per_frame);
+    if (mono.empty()) {
+        throw std::runtime_error("MOSS-TTS-v1.5 reference recording is shorter than one codec frame");
+    }
+
+    codec_->prepare_encoder();
+    auto encoded = codec_->encode(engine::codecs::MossAudioTokenizerAudio{rate, {std::move(mono)}});
+    ReferenceAudio reference;
+    reference.frames = encoded.frames;
+    reference.codes = std::move(encoded.codebooks);
+    debug::trace_log_scalar("moss_tts_v15.reference_frames", reference.frames);
+    return reference;
+}
+
+std::vector<float> MossTtsV15Session::decode_codes(const GeneratedChunk & chunk) {
     if (chunk.frames <= 0) {
         return {};
     }
@@ -243,16 +296,16 @@ std::vector<float> MossVoiceGenSession::decode_codes(const GeneratedChunk & chun
     }
     auto audio = codec_->decode(engine::codecs::MossAudioTokenizerCodes{chunk.frames, std::move(codes)});
     if (audio.channels.empty()) {
-        throw std::runtime_error("MOSS-VoiceGenerator codec returned no audio");
+        throw std::runtime_error("MOSS-TTS-v1.5 codec returned no audio");
     }
     return std::move(audio.channels.front());
 }
 
-runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & request) {
-    require_prepared("MOSS-VoiceGenerator run()");
+runtime::TaskResult MossTtsV15Session::run(const runtime::TaskRequest & request) {
+    require_prepared("MOSS-TTS-v1.5 run()");
     const auto wall_start = Clock::now();
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
-        throw std::runtime_error("MOSS-VoiceGenerator requires text to speak");
+        throw std::runtime_error("MOSS-TTS-v1.5 requires text to speak");
     }
 
     // The voice description arrives either as a request option or as a style tag on the
@@ -279,8 +332,20 @@ runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & reques
     bounds_override.min_frames = option_int(request.options, {"min_frames"}, 0);
     bounds_override.max_frames = option_int(request.options, {"max_frames"}, 0);
 
+    // The family's own duration field, in codec frames at 12.5 a second.
+    const int64_t requested_frames = option_int(request.options, {"tokens", "moss_tts_v15.tokens"}, 0);
+
+    // A reference recording is what this checkpoint has that voice design does not.
+    // It is encoded once per request and reused for every text chunk, so a long text
+    // does not pay for the reference again on each take.
+    std::vector<ReferenceAudio> references;
+    if (request.voice.has_value() && request.voice->speaker.has_value()
+        && request.voice->speaker->audio.has_value()) {
+        references.push_back(encode_reference(*request.voice->speaker->audio));
+    }
+
     decoders::MossTtsDelaySamplingOptions sampling;
-    sampling.text_temperature = option_float(request.options, {"moss_voicegen.text_temperature"}, sampling.text_temperature);
+    sampling.text_temperature = option_float(request.options, {"moss_tts_v15.text_temperature"}, sampling.text_temperature);
     sampling.audio_temperature = option_float(request.options, {"temperature"}, sampling.audio_temperature);
     sampling.audio_top_p = option_float(request.options, {"top_p"}, sampling.audio_top_p);
     sampling.audio_top_k = option_int(request.options, {"top_k"}, sampling.audio_top_k);
@@ -288,11 +353,22 @@ runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & reques
         option_float(request.options, {"repetition_penalty"}, sampling.audio_repetition_penalty);
     const auto seed = static_cast<uint32_t>(option_int(request.options, {"seed"}, 0));
 
+    // A per-request duration budget has to be shared out, not applied to every
+    // chunk: "--tokens 40" on a text that splits three ways meant three takes of
+    // 40 frames each, roughly three times what was asked for, with every chunk
+    // also floored at 0.45 x 40 however short its own text was.
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     const auto text_chunk_mode =
         engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
     const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
+
+    int64_t total_chunk_characters = 0;
+    for (const auto & chunk_request : chunk_requests) {
+        if (chunk_request.text_input.has_value()) {
+            total_chunk_characters += static_cast<int64_t>(chunk_request.text_input->text.size());
+        }
+    }
 
     runtime::AudioBuffer merged;
     merged.sample_rate = static_cast<int>(codec_->sampling_rate());
@@ -302,13 +378,29 @@ runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & reques
     for (const auto & chunk_request : chunk_requests) {
         // Each chunk gets its own seed offset so a long text does not repeat one take, and
         // stays reproducible for a given request seed.
+        PromptFields fields;
+        fields.text = chunk_request.text_input->text;
+        // Share the request's budget across chunks in proportion to their length.
+        int64_t chunk_frames = 0;
+        if (requested_frames > 0 && total_chunk_characters > 0) {
+            const auto chars = static_cast<int64_t>(chunk_request.text_input->text.size());
+            chunk_frames = std::max<int64_t>(
+                1, (requested_frames * chars + total_chunk_characters / 2) / total_chunk_characters);
+        }
+        if (!instruction.empty()) {
+            fields.instruction = instruction;
+        }
+        fields.language = language;
+        if (chunk_frames > 0) {
+            fields.tokens = std::to_string(chunk_frames);
+        }
+        fields.references = references;
         const auto chunk = generate_chunk(
-            chunk_request.text_input->text,
-            instruction,
-            language,
+            fields,
             sampling,
             seed + static_cast<uint32_t>(chunk_index),
-            bounds_override);
+            bounds_override,
+            chunk_frames);
         if (chunk.frames <= 0) {
             // The model can answer in text rather than audio; upstream behaves the same way.
             ++silent_chunks;
@@ -320,13 +412,13 @@ runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & reques
         ++chunk_index;
     }
 
-    debug::trace_log_scalar("moss_voicegen.chunk_count", static_cast<int64_t>(chunk_requests.size()));
-    debug::trace_log_scalar("moss_voicegen.silent_chunks", silent_chunks);
+    debug::trace_log_scalar("moss_tts_v15.chunk_count", static_cast<int64_t>(chunk_requests.size()));
+    debug::trace_log_scalar("moss_tts_v15.silent_chunks", silent_chunks);
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
 
     if (merged.samples.empty()) {
         throw std::runtime_error(
-            "MOSS-VoiceGenerator produced no audio: the model answered in text. Retry with another seed.");
+            "MOSS-TTS-v1.5 produced no audio: the model answered in text. Retry with another seed.");
     }
 
     runtime::TaskResult result;
@@ -334,4 +426,4 @@ runtime::TaskResult MossVoiceGenSession::run(const runtime::TaskRequest & reques
     return result;
 }
 
-}  // namespace engine::models::moss_voicegen
+}  // namespace engine::models::moss_tts_v15
