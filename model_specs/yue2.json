@@ -89,6 +89,18 @@
         "required": false
       },
       {
+        "name": "semantic_prefix",
+        "type": "string",
+        "description": "JSON array of semantic codec indices to force as the start of the music stream.",
+        "required": false
+      },
+      {
+        "name": "semantic_prefix_file",
+        "type": "string",
+        "description": "Path to a JSON array of semantic codec indices to force as the start of the music stream.",
+        "required": false
+      },
+      {
         "name": "nar_noise_file",
         "type": "string",
         "description": "Path to a raw float32 noise file for NAR generation, shaped [frames,64].",

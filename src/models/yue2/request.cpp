@@ -2,12 +2,15 @@
 
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/binary.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/runtime/options.h"
 
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace engine::models::yue2 {
 namespace {
@@ -48,6 +51,61 @@ std::string abc_from_options(const std::unordered_map<std::string, std::string> 
             throw std::runtime_error("Yue2 abc_file does not exist: " + path.string());
         }
         return engine::io::read_text_file(path);
+    }
+    return {};
+}
+
+std::vector<int32_t> parse_semantic_prefix(const std::string & text, const std::string & source) {
+    engine::io::json::Value root;
+    try {
+        root = engine::io::json::parse(text);
+    } catch (const std::exception & error) {
+        throw std::runtime_error("Yue2 " + source + " must be a JSON array of codec indices: " + error.what());
+    }
+    if (!root.is_array()) {
+        throw std::runtime_error("Yue2 " + source + " must be a JSON array of codec indices");
+    }
+    const auto & items = root.as_array();
+    if (items.empty()) {
+        throw std::runtime_error("Yue2 " + source + " must contain at least one codec index");
+    }
+    std::vector<int32_t> out;
+    out.reserve(items.size());
+    for (size_t index = 0; index < items.size(); ++index) {
+        const auto & item = items[index];
+        if (!item.is_number()) {
+            throw std::runtime_error(
+                "Yue2 " + source + " entry " + std::to_string(index) + " is not a codec index");
+        }
+        int64_t value = 0;
+        try {
+            value = item.as_i64();
+        } catch (const std::exception &) {
+            throw std::runtime_error(
+                "Yue2 " + source + " entry " + std::to_string(index) + " is not an integer");
+        }
+        if (value < 0 || value >= kCodecSize) {
+            throw std::runtime_error(
+                "Yue2 " + source + " entry " + std::to_string(index) + " is out of range [0," +
+                std::to_string(kCodecSize) + ")");
+        }
+        out.push_back(static_cast<int32_t>(value));
+    }
+    return out;
+}
+
+std::vector<int32_t> semantic_prefix_from_options(const std::unordered_map<std::string, std::string> & options) {
+    if (const auto prefix = runtime::find_option(options, {"semantic_prefix"})) {
+        if (!prefix->empty()) {
+            return parse_semantic_prefix(*prefix, "semantic_prefix");
+        }
+    }
+    if (const auto prefix_file = runtime::find_option(options, {"semantic_prefix_file"})) {
+        const std::filesystem::path path(*prefix_file);
+        if (!engine::io::is_existing_file(path)) {
+            throw std::runtime_error("Yue2 semantic_prefix_file does not exist: " + path.string());
+        }
+        return parse_semantic_prefix(engine::io::read_text_file(path), "semantic_prefix_file");
     }
     return {};
 }
@@ -133,6 +191,15 @@ void apply_options(
         }
         if (!out.abc.empty()) {
             throw std::runtime_error("Yue2 stop_after=abc generates no score when abc or abc_file is supplied");
+        }
+    }
+    out.semantic_prefix = semantic_prefix_from_options(options);
+    if (!out.semantic_prefix.empty()) {
+        if (static_cast<int64_t>(out.semantic_prefix.size()) > out.generation.semantic.max_tokens) {
+            throw std::runtime_error("Yue2 semantic prefix is longer than semantic_max_tokens");
+        }
+        if (out.cot != Yue2CotMode::Off && out.abc.empty()) {
+            throw std::runtime_error("Yue2 semantic prefix requires abc or abc_file unless cot=off");
         }
     }
     if (const auto nar_noise_file = runtime::find_option(options, {"nar_noise_file"})) {

@@ -83,6 +83,7 @@ struct Yue2Request {
     Yue2CotMode cot = Yue2CotMode::Full;
     Yue2StopAfter stop_after = Yue2StopAfter::Audio;
     std::string abc;
+    std::vector<int32_t> semantic_prefix;
     std::vector<float> nar_noise;
     bool export_semantic = false;
     uint64_t seed = 1234;
