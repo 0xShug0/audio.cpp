@@ -77,6 +77,7 @@ struct Yue2Request {
     Yue2CotMode cot = Yue2CotMode::Full;
     std::string abc;
     std::vector<float> nar_noise;
+    bool export_semantic = false;
     uint64_t seed = 1234;
     float cfg_scale = -1.0F;
     Yue2GenerationConfig generation;
@@ -100,5 +101,6 @@ const char * cot_mode_name(Yue2CotMode mode) noexcept;
 Yue2CotMode parse_cot_mode(const std::string & value);
 const char * cot_instruction(Yue2CotMode mode) noexcept;
 float request_guidance_scale(const Yue2Request & request) noexcept;
+std::string semantic_codes_to_json(const std::vector<int32_t> & codes);
 
 }  // namespace engine::models::yue2

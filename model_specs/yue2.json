@@ -83,6 +83,13 @@
         "required": false
       },
       {
+        "name": "export_semantic",
+        "type": "bool",
+        "description": "Attach the semantic token stream as a semantic artifact (JSON array of codec indices); default false.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "guidance_scale",
         "type": "float",
         "description": "Semantic classifier-free guidance scale. Default follows the upstream route defaults.",

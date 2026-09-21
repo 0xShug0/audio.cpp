@@ -180,6 +180,7 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"abc", "string", "ABC score conditioning text.", false},
         {"abc_file", "path", "Path to ABC score conditioning text.", false},
         {"cot", "off|melody|full", "Planning mode.", false, "off"},
+        {"export_semantic", "bool", "Attach the semantic token stream as a result artifact.", false, "false"},
         {"seed", "int", "Generation seed.", false, "1234"},
         {"guidance_scale", "float", "Classifier-free guidance scale (legacy alias: cfg_scale).", false, "1.0", "0.0", "20.0"},
         {"num_inference_steps", "int", "NAR ODE steps.", false, "8", "1"},
@@ -269,6 +270,19 @@ runtime::TaskResult Yue2Session::run(const runtime::TaskRequest & request) {
                 {"extension", "abc"},
                 {"source", "generated"},
                 {"truncated", run_result.plan_abc_truncated ? "true" : "false"},
+            }));
+    }
+    if (!run_result.semantic_codes.empty()) {
+        result.output_artifacts.push_back(runtime::make_text_artifact(
+            runtime::ArtifactKind::Custom,
+            "semantic",
+            semantic_codes_to_json(run_result.semantic_codes),
+            {
+                {"mime", "application/vnd.yue2.semantic+json"},
+                {"format", "yue2-semantic-codec"},
+                {"extension", "json"},
+                {"frames", std::to_string(run_result.semantic_codes.size())},
+                {"truncated", run_result.semantic_truncated ? "true" : "false"},
             }));
     }
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));

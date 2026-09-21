@@ -58,6 +58,9 @@ void apply_options(
     if (const auto cot = runtime::find_option(options, {"cot"})) {
         out.cot = parse_cot_mode(*cot);
     }
+    if (const auto export_semantic = runtime::find_option(options, {"export_semantic"})) {
+        out.export_semantic = runtime::parse_bool_option(*export_semantic, "export_semantic");
+    }
     if (const auto seed = runtime::parse_u64_option(options, {"seed"})) {
         out.seed = *seed;
     }

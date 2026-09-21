@@ -172,6 +172,42 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 # -> yue2_out/score.abc
 ```
 
+## Semantic Token Export
+
+Set `export_semantic=true` to attach the semantic stage output as a `semantic`
+artifact (`application/vnd.yue2.semantic+json`). The payload is a flat JSON
+array of codec indices, one integer per semantic frame (25 frames per second)
+in `[0, 32768)`, without the stop token. The CLI writes `semantic.json` when
+`--out-dir` is set:
+
+```bash
+./build/debug/bin/audiocpp_cli \
+  --task gen \
+  --family yue2 \
+  --model models/Yue2-3B-GGUF \
+  --backend cuda \
+  --threads 8 \
+  --lyrics "..." \
+  --request-option style="English, folk pop" \
+  --request-option export_semantic=true \
+  --seed 1234 \
+  --out yue2.wav \
+  --out-dir yue2_out \
+  --log
+# -> yue2_out/semantic.json
+```
+
+The artifact meta carries `frames` (the number of indices) and `truncated`
+(`true` when the stage stopped on `semantic_max_tokens` instead of the stop
+token).
+
+The indices are the same values the reference YuE2 Python pipeline stores in its
+`semantic.npy` (1-D `int32`). To convert:
+
+```bash
+python3 -c "import json, numpy; numpy.save('semantic.npy', numpy.array(json.load(open('semantic.json')), dtype=numpy.int32))"
+```
+
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -189,6 +225,7 @@ the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 | `abc` | ABC text | empty | Inline ABC score; requires `cot=melody` or `cot=full`. |
 | `abc_file` | path | empty | ABC score file; requires `cot=melody` or `cot=full`. |
 | `nar_noise_file` | raw float32 file | empty | Provide a noise file for NAR generation, shaped `[frames,64]`. |
+| `export_semantic` | `true`, `false` | `false` | Attach the semantic token stream as a `semantic` artifact. |
 | `guidance_scale` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. Legacy alias: `cfg_scale`. |
 | `num_inference_steps` | integer > 0 | `8` | NAR midpoint ODE steps. |
 | `seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Equivalent to `--seed <n>`. |
