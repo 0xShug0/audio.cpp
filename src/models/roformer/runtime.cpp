@@ -24,6 +24,10 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <future>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -268,6 +272,21 @@ core::TensorValue reshape_heads(
     const core::TensorValue & input,
     int64_t heads,
     int64_t dim) {
+    if (ctx.backend_type == core::BackendType::Cuda && input.type == GGML_TYPE_F32) {
+        core::validate_rank_between(input, 3, 3, "RoFormer head input");
+        core::validate_last_dim(input, heads * dim, "RoFormer head input");
+        // CUDA RoPE and flash attention accept strided inputs. Split the
+        // projection's feature axis without copying each Q/K/V slice of the
+        // fused projection; retain its original token and batch strides.
+        auto * tensor = input.tensor;
+        auto * view = ggml_view_4d(
+            ctx.ggml, tensor, dim, heads, tensor->ne[1], tensor->ne[2],
+            dim * tensor->nb[0], tensor->nb[1], tensor->nb[2], 0);
+        return core::wrap_tensor(
+            view,
+            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}),
+            input.type);
+    }
     return core::reshape_tensor(
         ctx,
         ensure_contiguous(ctx, input),
@@ -981,12 +1000,15 @@ engine::audio::AudioTensor compute_roformer_istft(
     return result;
 }
 
-void separate_runtime_chunk(
-    MelBandGraph & graph,
+struct PreparedChunk {
+    engine::audio::AudioTensor stft;
+    std::vector<float> features;
+};
+
+PreparedChunk prepare_runtime_chunk(
     const std::vector<float> & chunk_planar,
     const RoformerArchitectureConfig & config,
-    size_t fft_threads,
-    std::vector<float> & output_planar) {
+    size_t fft_threads) {
     const std::string log_prefix = config.family + ".";
     const engine::audio::STFTConfig stft_config{
         config.n_fft,
@@ -1013,11 +1035,20 @@ void separate_runtime_chunk(
     engine::debug::timing_log_scalar(
         log_prefix + "feature_build_ms",
         engine::debug::elapsed_ms(feature_start));
-    const auto graph_start = Clock::now();
-    const auto & raw_masks = graph.run(features);
-    engine::debug::timing_log_scalar(
-        log_prefix + "graph.total_ms",
-        engine::debug::elapsed_ms(graph_start));
+    return {std::move(stft), std::move(features)};
+}
+
+void finish_runtime_chunk(
+    const std::vector<float> & raw_masks,
+    const PreparedChunk & prepared,
+    const RoformerArchitectureConfig & config,
+    size_t fft_threads,
+    std::vector<float> & output_planar) {
+    const std::string log_prefix = config.family + ".";
+    const engine::audio::STFTConfig stft_config{config.n_fft, config.hop_length, config.win_length,
+        true, engine::audio::STFTPadMode::Reflect, engine::audio::STFTFamily::Kokoro};
+    const auto & window = engine::audio::get_cached_stft_window(stft_config);
+    const auto & stft = prepared.stft;
     const auto mask_start = Clock::now();
     auto masked = apply_masks_to_stft(raw_masks, stft, config);
     engine::debug::timing_log_scalar(
@@ -1045,6 +1076,7 @@ void separate_runtime_chunk(
 }  // namespace
 class RoformerRuntime::Impl {
 public:
+    bool pipeline = false;
     std::unique_ptr<MelBandGraph> mel_graph;
     std::vector<float> chunk_output_planar;
 };
@@ -1060,6 +1092,7 @@ RoformerRuntime::RoformerRuntime(
     }
     validate_roformer_weight_storage_type(weight_storage_type);
     fft_threads_ = std::max<size_t>(1, static_cast<size_t>(execution_context.config().threads));
+    impl_->pipeline = execution_context.backend_type() == core::BackendType::Cuda;
     impl_->mel_graph = std::make_unique<MelBandGraph>(assets_, execution_context, weight_storage_type);
 }
 
@@ -1073,13 +1106,63 @@ const std::vector<float> & RoformerRuntime::separate_chunk(const std::vector<flo
     if (impl_->mel_graph == nullptr) {
         throw std::runtime_error("mel_band_roformer graph is not initialized");
     }
-    separate_runtime_chunk(
-        *impl_->mel_graph,
-        chunk_planar,
+    auto prepared = prepare_runtime_chunk(chunk_planar, assets_->config, fft_threads_);
+    finish_runtime_chunk(
+        impl_->mel_graph->run(prepared.features),
+        prepared,
         assets_->config,
         fft_threads_,
         impl_->chunk_output_planar);
     return impl_->chunk_output_planar;
+}
+
+void RoformerRuntime::process_chunks(size_t count,
+        const std::function<void(size_t, std::vector<float> &)> & source,
+        const std::function<void(size_t, const std::vector<float> &)> & sink) {
+    const auto samples = static_cast<size_t>(config().channels * config().chunk_size);
+    if (!impl_->pipeline || count < 2) {
+        std::vector<float> chunk(samples);
+        for (size_t i = 0; i < count; ++i) {
+            source(i, chunk);
+            sink(i, separate_chunk(chunk));
+        }
+        return;
+    }
+    // CPU preparation and reconstruction overlap GPU inference. Backend calls
+    // and ordered overlap-add remain on the caller. Futures own their inputs
+    // and join on exception before request buffers can leave scope.
+    const auto launch = [&](size_t index) {
+        return std::async(std::launch::async, [&, index] {
+#ifdef _OPENMP
+            omp_set_num_threads(static_cast<int>(fft_threads_));
+#endif
+            std::vector<float> chunk(samples);
+            source(index, chunk);
+            return prepare_runtime_chunk(chunk, assets_->config, fft_threads_);
+        });
+    };
+    auto pending = launch(0);
+    std::future<std::vector<float>> reconstructed;
+    for (size_t i = 0; i < count; ++i) {
+        auto prepared = pending.get();
+        if (i + 1 < count) pending = launch(i + 1);
+        const auto graph_start = Clock::now();
+        // Copy the reusable graph output before the next inference overwrites it.
+        auto masks = impl_->mel_graph->run(prepared.features);
+        engine::debug::timing_log_scalar(assets_->config.family + ".graph.total_ms",
+            engine::debug::elapsed_ms(graph_start));
+        if (reconstructed.valid()) sink(i - 1, reconstructed.get());
+        reconstructed = std::async(std::launch::async,
+            [this, prepared = std::move(prepared), masks = std::move(masks)] {
+#ifdef _OPENMP
+                omp_set_num_threads(static_cast<int>(fft_threads_));
+#endif
+                std::vector<float> output;
+                finish_runtime_chunk(masks, prepared, assets_->config, fft_threads_, output);
+                return output;
+            });
+    }
+    sink(count - 1, reconstructed.get());
 }
 
 }  // namespace engine::models::roformer
