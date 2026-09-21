@@ -27,9 +27,15 @@ hidden_size=hid.shape[1]
 print(f"hidden: {tuple(hid.shape)}", flush=True)
 
 probe=[0, rows//2, rows-1]
+# Record the fields as the message actually carried them: writing a value the
+# message did not use makes the fixture describe a prompt nobody rendered.
 json.dump({
-  "name": NAME, "instruction": INSTR, "text": TEXT, "language": "English",
-  "content": str(msg),
+  "name": NAME,
+  "text": msg.text,
+  "instruction": msg.instruction,
+  "language": msg.language,
+  "tokens": msg.tokens,
+  "content": msg._content,
   "input_ids": ids[0].tolist(),
 }, open(f"{OUT}/ref_prompt_{NAME}.json","w"))
 json.dump({
