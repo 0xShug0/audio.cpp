@@ -473,6 +473,9 @@ add_library(engine_core OBJECT
     src/framework/io/safetensors.cpp
     src/framework/debug/trace.cpp
     src/framework/debug/profiler.cpp
+    src/framework/decoders/moss_tts_delay/backbone.cpp
+    src/framework/decoders/moss_tts_delay/delay_decoder.cpp
+    src/framework/decoders/moss_tts_delay/heads.cpp
     src/framework/decoders/tdt_decoder_runner.cpp
     src/framework/decoders/tdt_decoder_greedy_customized.cpp
     src/framework/decoders/tdt_decoder_greedy_duration_loop.cpp
@@ -1054,9 +1057,6 @@ audiocpp_add_model(moss
 audiocpp_add_model(moss_voicegen
     SOURCES
         src/community_models/moss_voicegen/assets.cpp
-        src/community_models/moss_voicegen/backbone.cpp
-        src/community_models/moss_voicegen/delay_decoder.cpp
-        src/community_models/moss_voicegen/heads.cpp
         src/community_models/moss_voicegen/loader.cpp
         src/community_models/moss_voicegen/session.cpp
         src/community_models/moss_voicegen/tokenizer_text.cpp

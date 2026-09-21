@@ -19,8 +19,8 @@
  *       [--weight-type bf16] [--tolerance 0.02]
  */
 
-#include "engine/community_models/moss_voicegen/assets.h"
-#include "engine/community_models/moss_voicegen/backbone.h"
+#include "engine/framework/decoders/moss_tts_delay/backbone.h"
+#include "engine/framework/decoders/moss_tts_delay/config.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/assets/tensor_source.h"
@@ -134,7 +134,7 @@ int main(int argc, char ** argv) {
         // against the unconverted HF download.
         const auto config_json = json::parse_file(config_path);
         const auto & language_config = config_json.require("language_config");
-        engine::models::moss_voicegen::MossVoiceGenConfig config;
+        engine::decoders::MossTtsDelayConfig config;
         config.backbone.hidden_size = json::require_i64(language_config, "hidden_size");
         config.backbone.intermediate_size = json::require_i64(language_config, "intermediate_size");
         config.backbone.num_hidden_layers = json::require_i64(language_config, "num_hidden_layers");
@@ -153,12 +153,7 @@ int main(int argc, char ** argv) {
         config.num_codebooks = json::require_i64(config_json, "n_vq");
         config.audio_vocab_size = json::require_i64(config_json, "audio_vocab_size");
         config.audio_pad_code = json::require_i64(config_json, "audio_pad_code");
-
-        auto assets_owned = std::make_shared<engine::models::moss_voicegen::MossVoiceGenAssets>();
-        assets_owned->config = config;
-        assets_owned->model_weights = engine::assets::open_tensor_source(weights_path);
-        const std::shared_ptr<const engine::models::moss_voicegen::MossVoiceGenAssets> assets =
-            assets_owned;
+        const auto model_weights = engine::assets::open_tensor_source(weights_path);
 
         // input_ids is [rows][1 + n_vq]: channel 0 is the text id, the rest are codes.
         const auto & id_rows = prompt_reference.require("input_ids").as_array();
@@ -197,7 +192,7 @@ int main(int argc, char ** argv) {
         codebook_spec.vocab_size = config.audio_vocab_size + 1;
         codebook_spec.pad_token_id = config.audio_pad_code;
         codebook_spec.tensor_prefix = "emb_ext";
-        const engine::modules::MultiCodebookEmbedding codebooks(*assets->model_weights, codebook_spec);
+        const engine::modules::MultiCodebookEmbedding codebooks(*model_weights, codebook_spec);
 
         std::vector<float> audio_bias(static_cast<size_t>(steps * hidden_size), 0.0F);
         for (int64_t row = 0; row < steps; ++row) {
@@ -211,8 +206,9 @@ int main(int argc, char ** argv) {
         backend_config.device = 0;
         backend_config.threads = std::stoi(arg_value(argc, argv, "--threads", "8"));
         engine::core::ExecutionContext execution_context(backend_config);
-        const engine::models::moss_voicegen::MossVoiceGenBackboneRuntime backbone(
-            assets, execution_context, 512ull * 1024ull * 1024ull, 8192ull * 1024ull * 1024ull, weight_type);
+        const engine::decoders::MossTtsDelayBackboneRuntime backbone(
+            config, model_weights, execution_context, 512ull * 1024ull * 1024ull,
+            8192ull * 1024ull * 1024ull, weight_type);
 
         backbone.begin_generation(steps + 8);
         const auto prefill_hidden = backbone.prefill(rows.text_tokens, audio_bias);

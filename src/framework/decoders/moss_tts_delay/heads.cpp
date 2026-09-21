@@ -1,4 +1,4 @@
-#include "engine/community_models/moss_voicegen/heads.h"
+#include "engine/framework/decoders/moss_tts_delay/heads.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -12,7 +12,7 @@
 #include <string>
 #include <utility>
 
-namespace engine::models::moss_voicegen {
+namespace engine::decoders {
 namespace {
 
 namespace modules = engine::modules;
@@ -35,14 +35,16 @@ void validate_weight_storage_type(assets::TensorStorageType storage_type) {
             return;
         default:
             throw std::runtime_error(
-                "MOSS-VoiceGenerator heads weight_type supports only native, f32, f16, bf16, and q8_0");
+                "MOSS delay heads weight_type supports only native, f32, f16, bf16, and q8_0");
     }
 }
 
 }  // namespace
 
-struct MossVoiceGenHeadsRuntime::Impl {
-    std::shared_ptr<const MossVoiceGenAssets> assets;
+struct MossTtsDelayHeadsRuntime::Impl {
+    MossTtsDelayConfig config;
+    // Kept alive because the weight store borrows from it.
+    std::shared_ptr<const assets::TensorSource> weights_source;
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
@@ -69,34 +71,34 @@ struct MossVoiceGenHeadsRuntime::Impl {
     }
 };
 
-MossVoiceGenHeadsRuntime::MossVoiceGenHeadsRuntime(
-    std::shared_ptr<const MossVoiceGenAssets> assets,
+MossTtsDelayHeadsRuntime::MossTtsDelayHeadsRuntime(
+    MossTtsDelayConfig config,
+    std::shared_ptr<const assets::TensorSource> weights,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type)
     : impl_(std::make_unique<Impl>()) {
-    if (assets == nullptr || assets->model_weights == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator heads require assets and model weights");
+    if (weights == nullptr) {
+        throw std::runtime_error("MOSS delay heads require model weights");
     }
     validate_weight_storage_type(weight_storage_type);
     impl_->backend = execution_context.backend();
     if (impl_->backend == nullptr) {
-        throw std::runtime_error("MOSS-VoiceGenerator heads backend is not initialized");
+        throw std::runtime_error("MOSS delay heads backend is not initialized");
     }
     impl_->backend_type = execution_context.backend_type();
     impl_->threads = execution_context.config().threads;
     impl_->graph_arena_bytes = graph_arena_bytes;
 
-    const auto & config = assets->config;
-    const auto & source = *assets->model_weights;
+    const auto & source = *weights;
     const int64_t hidden_size = config.backbone.hidden_size;
     const int64_t audio_head_size = config.audio_vocab_size + 1;
 
     impl_->store = std::make_shared<core::BackendWeightStore>(
         impl_->backend,
         impl_->backend_type,
-        "moss_voicegen.heads.weights",
+        "moss_tts_delay.heads.weights",
         weight_context_bytes);
     impl_->text_head = impl_->store->load_tensor(
         source, "lm_heads.0.weight", weight_storage_type, {config.backbone.vocab_size, hidden_size});
@@ -114,10 +116,10 @@ MossVoiceGenHeadsRuntime::MossVoiceGenHeadsRuntime(
     ggml_init_params params{impl_->graph_arena_bytes, nullptr, true};
     impl_->graph_ctx.reset(ggml_init(params));
     if (impl_->graph_ctx == nullptr) {
-        throw std::runtime_error("failed to initialize MOSS-VoiceGenerator heads graph context");
+        throw std::runtime_error("failed to initialize MOSS delay heads graph context");
     }
     ggml_context * gctx = impl_->graph_ctx.get();
-    core::ModuleBuildContext ctx{gctx, "moss_voicegen.heads", impl_->backend_type};
+    core::ModuleBuildContext ctx{gctx, "moss_tts_delay.heads", impl_->backend_type};
 
     auto hidden = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, hidden_size}));
     ggml_set_input(hidden.tensor);
@@ -142,23 +144,24 @@ MossVoiceGenHeadsRuntime::MossVoiceGenHeadsRuntime(
 
     impl_->buffer = ggml_backend_alloc_ctx_tensors(gctx, impl_->backend);
     if (impl_->buffer == nullptr) {
-        throw std::runtime_error("failed to allocate MOSS-VoiceGenerator heads graph");
+        throw std::runtime_error("failed to allocate MOSS delay heads graph");
     }
     impl_->hidden_input = hidden.tensor;
     impl_->text_output = text_logits.tensor;
-    impl_->assets = std::move(assets);
+    impl_->config = std::move(config);
+    impl_->weights_source = std::move(weights);
 }
 
-MossVoiceGenHeadsRuntime::~MossVoiceGenHeadsRuntime() = default;
+MossTtsDelayHeadsRuntime::~MossTtsDelayHeadsRuntime() = default;
 
-void MossVoiceGenHeadsRuntime::evaluate(
+void MossTtsDelayHeadsRuntime::evaluate(
     const std::vector<float> & hidden_state,
-    MossVoiceGenStepLogits & out) const {
+    MossTtsDelayStepLogits & out) const {
     auto & impl = *impl_;
-    const auto & config = impl.assets->config;
+    const auto & config = impl.config;
     const int64_t hidden_size = config.backbone.hidden_size;
     if (static_cast<int64_t>(hidden_state.size()) != hidden_size) {
-        throw std::runtime_error("MOSS-VoiceGenerator heads input does not match hidden_size");
+        throw std::runtime_error("MOSS delay heads input does not match hidden_size");
     }
 
     ggml_backend_tensor_set(impl.hidden_input, hidden_state.data(), 0, hidden_state.size() * sizeof(float));
@@ -166,7 +169,7 @@ void MossVoiceGenHeadsRuntime::evaluate(
     const ggml_status status = ggml_backend_graph_compute(impl.backend, impl.graph);
     ggml_backend_synchronize(impl.backend);
     if (status != GGML_STATUS_SUCCESS) {
-        throw std::runtime_error("MOSS-VoiceGenerator heads graph compute failed");
+        throw std::runtime_error("MOSS delay heads graph compute failed");
     }
 
     out.text.resize(static_cast<size_t>(config.backbone.vocab_size));
@@ -183,4 +186,4 @@ void MossVoiceGenHeadsRuntime::evaluate(
     }
 }
 
-}  // namespace engine::models::moss_voicegen
+}  // namespace engine::decoders
