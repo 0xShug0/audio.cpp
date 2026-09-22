@@ -1,9 +1,12 @@
 #include "engine/community_models/vieneu_v3_turbo/loader.h"
 
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/community_models/vieneu_v3_turbo/session.h"
 
 #include <algorithm>
+#include <string>
+#include <string_view>
 #include <stdexcept>
 #include <utility>
 
@@ -152,6 +155,37 @@ const runtime::CapabilitySet & VieNeuTTSLoadedModel::capabilities() const noexce
     return capabilities_;
 }
 
+namespace {
+
+// Session options were named `vietneu_tts.*` before this family was renamed. Map them onto
+// the current prefix (and say so once) instead of ignoring them silently; a key that is
+// unknown after mapping is then rejected by the session like any other unknown option.
+runtime::SessionOptions map_legacy_session_options(const runtime::SessionOptions & options) {
+    constexpr std::string_view kLegacyPrefix = "vietneu_tts.";
+    runtime::SessionOptions mapped = options;
+    bool mapped_any = false;
+    for (auto it = mapped.options.begin(); it != mapped.options.end();) {
+        if (it->first.rfind(kLegacyPrefix, 0) != 0) {
+            ++it;
+            continue;
+        }
+        const std::string current = std::string(kFamily) + "." + it->first.substr(kLegacyPrefix.size());
+        mapped.options.emplace(current, it->second);
+        it = mapped.options.erase(it);
+        mapped_any = true;
+    }
+    if (mapped_any) {
+        debug::log_message(
+            debug::LogLevel::Info,
+            kFamily,
+            std::string("session options '") + std::string(kLegacyPrefix) + "*' are deprecated; use '" +
+                std::string(kFamily) + ".*'");
+    }
+    return mapped;
+}
+
+}  // namespace
+
 std::unique_ptr<runtime::IVoiceTaskSession> VieNeuTTSLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
@@ -161,7 +195,7 @@ std::unique_ptr<runtime::IVoiceTaskSession> VieNeuTTSLoadedModel::create_task_se
     if (assets_->config.variant == VieNeuTTSVariant::Base && task.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("VieNeu-TTS base TTS model only supports the Tts task");
     }
-    return std::make_unique<VieNeuTTSSession>(task, options, assets_);
+    return std::make_unique<VieNeuTTSSession>(task, map_legacy_session_options(options), assets_);
 }
 
 std::unique_ptr<VieNeuTTSLoadedModel> load_vieneu_v3_turbo_model(const std::filesystem::path & model_path) {

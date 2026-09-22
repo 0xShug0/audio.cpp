@@ -36,6 +36,8 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    // Packaged voices carry no reference audio, so the audio fields alone are equal for
+    // every one of them; the codes and the speaker embedding have to be part of the key.
     struct VoicePromptCacheKey {
         std::string reference_text;
         Qwen3VoiceCloneMode mode = Qwen3VoiceCloneMode::Icl;
@@ -43,6 +45,10 @@ private:
         int channels = 0;
         uint64_t sample_count = 0;
         uint64_t sample_hash = 0;
+        uint64_t reference_codes_count = 0;
+        uint64_t reference_codes_hash = 0;
+        uint64_t speaker_embedding_count = 0;
+        uint64_t speaker_embedding_hash = 0;
     };
 
     struct VoicePromptCacheKeyEqual {
@@ -53,6 +59,7 @@ private:
         Qwen3VoiceClonePrompt prompt;
     };
 
+    static VoicePromptCacheKey voice_prompt_cache_key(const Qwen3VoiceCloneInput & input);
     VieNeuTTSRequest make_request(const runtime::TaskRequest & request) const;
     const Qwen3VoiceClonePrompt & resolve_voice_prompt(
         const Qwen3VoiceCloneInput & input,

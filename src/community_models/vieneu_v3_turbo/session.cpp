@@ -204,6 +204,32 @@ uint64_t hash_audio_samples(const runtime::AudioBuffer & audio) {
     return hash;
 }
 
+uint64_t hash_reference_codes(const std::optional<Qwen3SpeechCodes> & codes) {
+    uint64_t hash = 1469598103934665603ull;
+    if (!codes.has_value()) {
+        return hash;
+    }
+    hash = fnv1a_mix(hash, &codes->frames, sizeof(codes->frames));
+    hash = fnv1a_mix(hash, &codes->code_groups, sizeof(codes->code_groups));
+    if (!codes->codes.empty()) {
+        hash = fnv1a_mix(hash, codes->codes.data(), codes->codes.size() * sizeof(int32_t));
+    }
+    return hash;
+}
+
+uint64_t hash_speaker_embedding(const std::optional<std::vector<float>> & values) {
+    uint64_t hash = 1469598103934665603ull;
+    if (!values.has_value()) {
+        return hash;
+    }
+    for (const float value : *values) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        hash = fnv1a_mix(hash, &bits, sizeof(bits));
+    }
+    return hash;
+}
+
 core::BackendConfig voice_prompt_backend_config(const runtime::SessionOptions & options) {
     core::BackendConfig config = options.backend;
     // Voice-clone prompt codes are discrete argmax outputs; keep this stage on CPU so CUDA TF32 math
@@ -273,7 +299,11 @@ bool VieNeuTTSSession::VoicePromptCacheKeyEqual::operator()(
         lhs.sample_rate == rhs.sample_rate &&
         lhs.channels == rhs.channels &&
         lhs.sample_count == rhs.sample_count &&
-        lhs.sample_hash == rhs.sample_hash;
+        lhs.sample_hash == rhs.sample_hash &&
+        lhs.reference_codes_count == rhs.reference_codes_count &&
+        lhs.reference_codes_hash == rhs.reference_codes_hash &&
+        lhs.speaker_embedding_count == rhs.speaker_embedding_count &&
+        lhs.speaker_embedding_hash == rhs.speaker_embedding_hash;
 }
 
 VieNeuTTSSession::VieNeuTTSSession(
@@ -425,7 +455,9 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
 
     const VieNeuTTSRequest first_request = make_request(chunk_requests.front());
     if (!first_request.voice_clone.has_value()) {
-        throw std::runtime_error("VieNeu-TTS base TTS requires voice clone reference audio");
+        throw std::runtime_error(
+            "VieNeu-TTS TTS requires a voice: --voice-ref, reference_codes_file, or "
+            "speaker_embedding_file with x_vector_only_mode=true");
     }
     VieNeuTTSVoiceClonePromptBuilder prompt_builder(
         text_tokenizer_,
@@ -494,18 +526,30 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
     return result;
 }
 
-const Qwen3VoiceClonePrompt & VieNeuTTSSession::resolve_voice_prompt(
-    const Qwen3VoiceCloneInput & input,
-    const VieNeuTTSVoiceClonePromptBuilder & prompt_builder) {
-    const uint64_t sample_count = static_cast<uint64_t>(input.reference_audio.samples.size());
-    const uint64_t sample_hash = hash_audio_samples(input.reference_audio);
+VieNeuTTSSession::VoicePromptCacheKey VieNeuTTSSession::voice_prompt_cache_key(
+    const Qwen3VoiceCloneInput & input) {
     VoicePromptCacheKey key;
     key.reference_text = input.reference_text;
     key.mode = input.mode;
     key.sample_rate = input.reference_audio.sample_rate;
     key.channels = input.reference_audio.channels;
-    key.sample_count = sample_count;
-    key.sample_hash = sample_hash;
+    key.sample_count = static_cast<uint64_t>(input.reference_audio.samples.size());
+    key.sample_hash = hash_audio_samples(input.reference_audio);
+    key.reference_codes_count = input.reference_codes.has_value()
+        ? static_cast<uint64_t>(input.reference_codes->codes.size())
+        : 0;
+    key.reference_codes_hash = hash_reference_codes(input.reference_codes);
+    key.speaker_embedding_count = input.speaker_embedding.has_value()
+        ? static_cast<uint64_t>(input.speaker_embedding->size())
+        : 0;
+    key.speaker_embedding_hash = hash_speaker_embedding(input.speaker_embedding);
+    return key;
+}
+
+const Qwen3VoiceClonePrompt & VieNeuTTSSession::resolve_voice_prompt(
+    const Qwen3VoiceCloneInput & input,
+    const VieNeuTTSVoiceClonePromptBuilder & prompt_builder) {
+    VoicePromptCacheKey key = voice_prompt_cache_key(input);
     if (auto * cached = voice_prompt_cache_.find(key)) {
         debug::trace_log_scalar("vieneu_v3_turbo.voice_prompt_cache.hit", 1);
         debug::trace_log_scalar("vieneu_v3_turbo.voice_prompt_cache.slots", static_cast<int64_t>(voice_prompt_cache_.capacity()));
@@ -526,14 +570,7 @@ const Qwen3VoiceClonePrompt & VieNeuTTSSession::resolve_voice_prompt(
     }
     const bool will_evict = voice_prompt_cache_.size() >= voice_prompt_cache_.capacity();
     voice_prompt_cache_.put(std::move(key), std::move(entry));
-    auto * cached = voice_prompt_cache_.find(VoicePromptCacheKey{
-        input.reference_text,
-        input.mode,
-        input.reference_audio.sample_rate,
-        input.reference_audio.channels,
-        sample_count,
-        sample_hash,
-    });
+    auto * cached = voice_prompt_cache_.find(voice_prompt_cache_key(input));
     if (cached == nullptr) {
         throw std::runtime_error("VieNeu-TTS TTS voice prompt cache insert failed");
     }
@@ -562,7 +599,12 @@ VieNeuTTSRequest VieNeuTTSSession::make_request(const runtime::TaskRequest & req
             reference_audio = &*request.audio_input;
         }
         const auto reference_codes_file = runtime::find_option(request.options, {"reference_codes_file"});
-        if (reference_audio != nullptr || reference_codes_file.has_value()) {
+        const auto speaker_embedding_file = runtime::find_option(request.options, {"speaker_embedding_file"});
+        const auto speaker_embedding_csv = runtime::find_option(request.options, {"speaker_embedding"});
+        // A voice is either reference audio, pre-encoded reference codes, or - in
+        // x-vector-only mode - the speaker embedding on its own.
+        if (reference_audio != nullptr || reference_codes_file.has_value() ||
+            speaker_embedding_file.has_value() || speaker_embedding_csv.has_value()) {
             Qwen3VoiceCloneInput voice_clone;
             if (reference_audio != nullptr) {
                 voice_clone.reference_audio = *reference_audio;
@@ -575,9 +617,9 @@ VieNeuTTSRequest VieNeuTTSSession::make_request(const runtime::TaskRequest & req
                     {"reference_text"})) {
                 voice_clone.reference_text = *reference_text;
             }
-            if (const auto spk_emb_file = runtime::find_option(request.options, {"speaker_embedding_file"})) {
+            if (const auto spk_emb_file = speaker_embedding_file) {
                 voice_clone.speaker_embedding = parse_speaker_embedding_file(*spk_emb_file);
-            } else if (const auto spk_emb_str = runtime::find_option(request.options, {"speaker_embedding"})) {
+            } else if (const auto spk_emb_str = speaker_embedding_csv) {
                 std::vector<float> vals;
                 std::stringstream ss(*spk_emb_str);
                 std::string token;
@@ -597,11 +639,21 @@ VieNeuTTSRequest VieNeuTTSSession::make_request(const runtime::TaskRequest & req
                 }
                 voice_clone.speaker_embedding = vals;
             }
-            bool x_vector_only = false;
+            bool x_vector_only = reference_audio == nullptr && !reference_codes_file.has_value();
             if (const auto value = runtime::find_option(
                     request.options,
                     {"x_vector_only_mode"})) {
                 x_vector_only = runtime::parse_bool_option(*value, "x_vector_only_mode");
+            }
+            if (!x_vector_only && reference_audio == nullptr && !reference_codes_file.has_value()) {
+                throw std::runtime_error(
+                    "VieNeu-TTS voice cloning needs reference audio (--voice-ref) or "
+                    "reference_codes_file; pass x_vector_only_mode=true to clone from the "
+                    "speaker embedding alone");
+            }
+            if (x_vector_only && !voice_clone.speaker_embedding.has_value()) {
+                throw std::runtime_error(
+                    "VieNeu-TTS x_vector_only_mode needs speaker_embedding_file or speaker_embedding");
             }
             voice_clone.mode = x_vector_only
                 ? Qwen3VoiceCloneMode::SpeakerEmbeddingOnly

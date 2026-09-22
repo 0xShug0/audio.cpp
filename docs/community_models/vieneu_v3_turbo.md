@@ -55,6 +55,7 @@ Every request needs a voice. Two ways:
 
 1. **Reference WAV** (`--voice-ref`): the codec encodes it into reference codes (mono, resampled to 48 kHz, first 8 s). A 192-d speaker embedding is also required: the CAM++ speaker encoder is not ported yet, so pass one with `speaker_embedding_file=` (192 comma-separated floats, produced by the Python engine's `extract_speaker_emb`). Without it the embedding is all zeros and the voice will not match.
 2. **Packaged voice** (no audio): `reference_codes_file=` (one frame per line, 16 integers — `numpy.savetxt(codes, fmt="%d")` of the Python `ref_codes`) plus `speaker_embedding_file=`. This is what the Python preset voices ship, and it skips the encoder pass.
+3. **Speaker embedding only**: `speaker_embedding_file=` with no reference audio and no codes (`x_vector_only_mode` is then implied). The voice is weaker than with reference codes, because the model only gets the speaker anchor, not the in-context reference frames.
 
 ```bash
 audiocpp_cli --task tts --family vieneu_v3_turbo \
@@ -93,7 +94,7 @@ Defaults follow `Vieneu.infer()` in the Python package. Use `--request-option na
 | `subtalker_temperature` / `subtalker_top_k` / `subtalker_top_p` | = main | Acoustic decoder overrides. |
 | `codes_dump_file` | — | Parity debugging: appends prompt ids, reference codes and generated codes as text. |
 
-Session options: `vieneu_v3_turbo.weight_type` (`native|f32|f16|bf16|q8_0`), `vieneu_v3_turbo.mem_saver`, `vieneu_v3_turbo.voice_prompt_cache_slots`.
+Session options: `vieneu_v3_turbo.weight_type` (`native|f32|f16|bf16|q8_0`), `vieneu_v3_turbo.mem_saver`, `vieneu_v3_turbo.voice_prompt_cache_slots`. Options written with the old `vietneu_tts.` prefix are still accepted (mapped to the current prefix, with a deprecation note in the log); an unknown option is rejected rather than ignored.
 
 ## Parity and performance
 
