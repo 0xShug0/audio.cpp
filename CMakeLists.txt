@@ -2734,6 +2734,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_engine_unittest(sortformer_v2_schedule_test tests/community_models/sortformer_diar/sortformer_v2_schedule_test.cpp)
     add_test(NAME sortformer_v2_schedule_test COMMAND sortformer_v2_schedule_test)
 
+    if(audio8_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+        # Regression test for the Falcon-H1 host KV cache append (per-head re-stride).
+        add_engine_unittest(audio8_tts_falcon_kv_cache_test tests/unittests/test_audio8_tts_falcon_kv_cache.cpp)
+        target_include_directories(audio8_tts_falcon_kv_cache_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/community_models/audio8_tts)
+        add_test(NAME audio8_tts_falcon_kv_cache_test COMMAND audio8_tts_falcon_kv_cache_test)
+    endif()
+
     if (ENGINE_BUILD_TESTS)
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
