@@ -192,7 +192,7 @@
     },
     {
       "id": "moss_ttsd_q4_k_codec_f16",
-      "display_name": "MOSS-TTSD Q4_K GGUF",
+      "display_name": "MOSS-TTSD Q4_K GGUF (f16 heads)",
       "default": false,
       "format": "gguf",
       "precision": "q4_k",

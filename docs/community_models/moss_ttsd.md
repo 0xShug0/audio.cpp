@@ -60,13 +60,39 @@ rely on it.
 | package | size | clones on a 24 GiB card |
 |---|---|---|
 | `moss_ttsd_q8_0_codec_f16` (default) | 12.2 GB | yes |
-| `moss_ttsd_q4_k_codec_f16` | — | yes |
+| `moss_ttsd_q4_k_codec_f16` | 9.5 GB | yes |
 | `moss_ttsd_bf16_codec_f16` | 18.9 GB | **no** |
 
 ⚠ **bf16 cannot clone on a 24 GiB card.** Cloning needs the codec *encoder* as
 well as the decoder, and its weights want a further 3.5 GB on top of the
 backbone; on an RTX 3090 that fails at `moss.audio_tokenizer.encoder`. Plain
 generation in bf16 is fine. Use q8_0 to clone on 24 GiB, or run bf16 on CPU.
+
+### q4_k needs its heads left alone
+
+⚠ **A plain q4_k of this model is broken**, and quietly: it speaks the first turn
+of a dialogue and stops.
+
+```
+q4_k, heads quantised   3.20s  "The train leaves at four in the afternoon. Ah, back, please."
+q4_k, heads quantised   2.56s  "The train leaves at 4 in the afternoon."
+q4_k, heads at f16     16.48s  full script
+q8_0                   12.48s  full script
+```
+
+`lm_heads.0` is the text head, and it is what decides when the turn ends.
+Quantised to four bits it ends the turn early, which reads as a model that
+cannot hold a dialogue rather than as a bad quantisation. The published package
+is therefore built with the heads kept at f16, which costs 0.95 GB:
+
+```bash
+audiocpp_gguf ... --type q4_k \
+  --keep-type "audio_tokenizer_weights*=f16" \
+  --keep-type "model_weights/lm_heads*=f16"
+```
+
+Note the namespace separator is `/`, not `.`. A pattern that does not match is
+not an error -- it silently produces the broken package.
 
 ## How well does it clone?
 
