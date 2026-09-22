@@ -30,6 +30,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -1103,8 +1104,11 @@ runtime::TaskResult run_v1_singing_voice_conversion(
     return result;
 }
 
-SeedVcV1RequestConfig parse_v1_config(const std::unordered_map<std::string, std::string> & options) {
+SeedVcV1RequestConfig parse_v1_config(
+    const std::unordered_map<std::string, std::string> & options,
+    std::string_view route_path) {
     SeedVcV1RequestConfig config;
+    config.f0_condition = route_path == "v1_svc";
     config.num_inference_steps = runtime::parse_int_option(
         options,
         {"num_inference_steps"})
@@ -1151,7 +1155,7 @@ SeedVcExecutionPlan make_execution_plan(
     if (plan.path == "v2_vc") {
         plan.v2 = parse_v2_config(options);
     } else if (is_v1_path(plan.path)) {
-        plan.v1 = parse_v1_config(options);
+        plan.v1 = parse_v1_config(options, plan.path);
     }
     return plan;
 }

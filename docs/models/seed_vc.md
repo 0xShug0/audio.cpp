@@ -126,7 +126,7 @@ Use this route for singing voice conversion. It supports the V1 F0 and pitch con
 | Route | `v1_svc` |
 | Source singing | Required |
 | Target singer reference | Required |
-| F0 extraction | Optional through `f0_condition` |
+| F0 extraction | Enabled by default; disable with `f0_condition=false` |
 | Pitch controls | `semitone_shift`, `auto_f0_adjust` |
 
 ```bash
@@ -146,7 +146,7 @@ audiocpp_cli --task svc --family seed_vc --model models/SeedVC-MLX --backend cud
 |---|---|---:|---|
 | `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
 | `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
-| `f0_condition` | bool | `false` | Enable F0-conditioned conversion. |
+| `f0_condition` | bool | `true` | Enable F0-conditioned conversion. |
 | `auto_f0_adjust` | bool | `false` | Automatically adjust F0 when F0 conditioning is enabled. |
 | `semitone_shift` | integer | `0` | Shift pitch by semitones when F0 conditioning is enabled. |
 

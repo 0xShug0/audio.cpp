@@ -119,9 +119,8 @@
       {
         "name": "f0_condition",
         "type": "bool",
-        "description": "Enable V1 F0 conditioning for singing voice conversion; default false.",
-        "required": false,
-        "default": false
+        "description": "Enable V1 F0 conditioning. Defaults to true for v1_svc and false for the V1 voice-conversion routes.",
+        "required": false
       },
       {
         "name": "auto_f0_adjust",
