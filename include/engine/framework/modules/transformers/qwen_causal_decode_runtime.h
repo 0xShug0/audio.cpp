@@ -29,6 +29,15 @@ struct QwenCausalDecodeRuntimeConfig {
     std::vector<int32_t> logits_readback_token_ids;
     int64_t sliding_window = 0;
     bool evict_cuda_graph_cache_on_release = false;
+    bool detachable_decode_cache = false;
+};
+
+struct QwenCausalDeviceKVState {
+    int64_t current_end = 0;
+    int64_t valid_steps = 0;
+    std::vector<core::TensorValue> keys;
+    std::vector<core::TensorValue> values;
+    std::shared_ptr<void> storage;
 };
 
 struct QwenCausalDecodeRuntimeWeights {
@@ -114,6 +123,7 @@ public:
     // replication and re-import via start_decode_*_batched with a different
     // batch size — the runtime rebuilds its decode graphs for the new batch.
     runtime::TransformerBatchedKVState export_batched_decode_state() const;
+    QwenCausalDeviceKVState take_decode_device_state();
 
     int64_t decode_cache_steps() const noexcept;
     int64_t decode_current_end() const noexcept;

@@ -634,6 +634,9 @@ private:
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_batch", batch_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_latent_frames", latent_frames_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_output_frames", output_frames_);
+        engine::debug::timing_log_scalar(
+            "framework.oobleck_audio_vae.decode.graph_buffer_bytes",
+            ggml_gallocr_get_buffer_size(gallocr_, 0));
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_build_ms", engine::debug::elapsed_ms(start));
     }
 

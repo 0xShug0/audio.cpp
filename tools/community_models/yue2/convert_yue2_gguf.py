@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-type",
         default="q8_0",
-        choices=["orig", "f16", "bf16", "q8_0", "q2_k", "q3_k", "q4_k", "q5_k", "q6_k"],
+        choices=["orig", "f16", "bf16", "q8_0", "q4_0", "q2_k", "q3_k", "q4_k", "q5_k", "q6_k"],
         help="Storage type for the YuE2 AR/NAR model GGUF.",
     )
     parser.add_argument(
@@ -72,6 +72,11 @@ def parse_args() -> argparse.Namespace:
         help="Storage type for the Oobleck VAE GGUF.",
     )
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--ios",
+        action="store_true",
+        help="Store the token embedding as Q8_0 for yue2.ios_mode.",
+    )
     return parser.parse_args()
 
 
@@ -95,7 +100,10 @@ def main() -> None:
     vae_weights = require_file(source / "YuE2-Vae" / "model.safetensors")
     output.mkdir(parents=True, exist_ok=True)
     copy_sidecars(source, output)
-    model_output = output / typed_name("yue2-3b", args.model_type)
+    model_name = typed_name("yue2-3b", args.model_type)
+    if args.ios:
+        model_name = f"yue2-3b-ios-{args.model_type}.gguf"
+    model_output = output / model_name
     vae_output = output / typed_name("yue2-vae", args.vae_type)
 
     model_cmd = [
@@ -119,6 +127,11 @@ def main() -> None:
         "--exclude-prefix",
         "vae_weights/",
     ]
+    if args.ios:
+        model_cmd.extend([
+            "--keep-type",
+            "model_weights/model.embed_tokens.weight=q8_0",
+        ])
     vae_cmd = [
         str(converter),
         "--input",

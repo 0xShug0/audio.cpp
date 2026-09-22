@@ -29,6 +29,7 @@ struct Yue2ArDevicePrefixState {
     int64_t current_end = 0;
     std::vector<core::TensorValue> keys;
     std::vector<core::TensorValue> values;
+    std::shared_ptr<void> storage;
 };
 
 class Yue2ArRuntime {
@@ -39,7 +40,8 @@ public:
         assets::TensorStorageType weight_type,
         size_t weight_context_bytes,
         size_t prefill_graph_arena_bytes,
-        size_t decode_graph_arena_bytes);
+        size_t decode_graph_arena_bytes,
+        bool low_memory = false);
     ~Yue2ArRuntime();
 
     std::vector<int32_t> generate(
@@ -56,7 +58,11 @@ public:
 
     runtime::TransformerKVState prefill_state(const std::vector<int32_t> & tokens);
     Yue2ArDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens);
+    Yue2ArDevicePrefixState take_semantic_device_state(
+        int64_t prefix_tokens,
+        const std::vector<int32_t> & semantic_tokens);
 
+    void release_abc_runtime();
     void release_runtime_graphs();
 
 private:

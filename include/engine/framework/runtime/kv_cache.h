@@ -32,6 +32,7 @@ inline int64_t ring_stored_position(
 struct TransformerKVCacheOptions {
     bool allow_f16_storage = false;
     bool allow_bf16_storage = false;
+    bool allow_q8_0_storage = false;
     // In-place ring: once full, appends overwrite the oldest unpinned
     // entries instead of failing. The first ring_pinned_steps slots are
     // reserved (e.g. prompt / attention sinks); positions stay absolute.

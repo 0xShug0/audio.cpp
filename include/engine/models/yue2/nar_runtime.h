@@ -36,6 +36,13 @@ public:
         int64_t ode_steps,
         int64_t context);
 
+    std::vector<float> synthesize_from_state(
+        const std::vector<int32_t> & codec,
+        Yue2ArDevicePrefixState ar_state,
+        const std::vector<float> & noise,
+        uint64_t seed,
+        int64_t ode_steps);
+
     void release_runtime_graphs();
 
 private:

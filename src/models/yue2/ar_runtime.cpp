@@ -105,12 +105,19 @@ engine::modules::QwenCausalDecodeRuntimeWeights load_prefix_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const Yue2ModelConfig & config,
-    assets::TensorStorageType storage_type) {
+    assets::TensorStorageType storage_type,
+    bool low_memory) {
     engine::modules::QwenCausalDecodeRuntimeWeights weights;
+    if (low_memory && assets::resolve_tensor_storage_type(
+                          source,
+                          "model.embed_tokens.weight",
+                          assets::TensorStorageType::Native) != assets::TensorStorageType::Q8_0) {
+        throw std::runtime_error("Yue2 iOS mode requires a Q8_0 token embedding");
+    }
     weights.token_embedding = store.load_tensor(
         source,
         "model.embed_tokens.weight",
-        storage_type,
+        low_memory ? assets::TensorStorageType::Native : storage_type,
         {config.vocab_size, config.hidden_size});
     weights.stack.layers.reserve(static_cast<size_t>(config.layers));
     for (int64_t layer = 0; layer < config.layers; ++layer) {
@@ -141,7 +148,8 @@ engine::modules::QwenCausalDecodeRuntimeConfig make_runtime_config(
     core::BackendType backend_type,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
-    int64_t logits_size = 0) {
+    int64_t logits_size = 0,
+    bool low_memory = false) {
     engine::modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "yue2.ar";
     out.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
@@ -161,13 +169,17 @@ engine::modules::QwenCausalDecodeRuntimeConfig make_runtime_config(
     out.decoder.stack.runtime.static_cache.update_mode = engine::modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode =
         engine::modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
+    if (low_memory) {
+        out.decoder.static_cache_type = GGML_TYPE_Q8_0;
+    } else if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
         backend_type == core::BackendType::Vulkan) {
         out.decoder.static_cache_type = GGML_TYPE_F16;
     }
     out.decoder.logits_size = logits_size > 0 ? logits_size : config.vocab_size;
     out.decoder.logits_mode = engine::modules::QwenCausalDecoderLogitsMode::LastStep;
     out.readback_round_type = GGML_TYPE_BF16;
+    out.evict_cuda_graph_cache_on_release = low_memory;
+    out.detachable_decode_cache = low_memory;
     return out;
 }
 
@@ -460,7 +472,8 @@ struct Yue2ArRuntime::Impl {
         assets::TensorStorageType weight_type,
         size_t weight_context_bytes,
         size_t prefill_graph_arena_bytes,
-        size_t decode_graph_arena_bytes)
+        size_t decode_graph_arena_bytes,
+        bool low_memory)
         : execution(execution),
           assets(std::move(assets)),
           weight_type(weight_type) {
@@ -474,25 +487,30 @@ struct Yue2ArRuntime::Impl {
             weight_context_bytes);
         const auto & config = this->assets->config.model;
         const auto & source = *this->assets->model_weights;
-        runtime_weights = load_prefix_weights(*store, source, config, weight_type);
+        runtime_weights = load_prefix_weights(
+            *store, source, config, weight_type, low_memory);
         store->upload();
         runtime_config = make_runtime_config(
             config,
             execution.backend_type(),
             prefill_graph_arena_bytes,
-            decode_graph_arena_bytes);
+            decode_graph_arena_bytes,
+            0,
+            low_memory);
         abc_runtime_config = make_runtime_config(
             config,
             execution.backend_type(),
             prefill_graph_arena_bytes,
             decode_graph_arena_bytes,
-            kAbcEndToken + 1);
+            kAbcEndToken + 1,
+            low_memory);
         semantic_runtime_config = make_runtime_config(
             config,
             execution.backend_type(),
             prefill_graph_arena_bytes,
             decode_graph_arena_bytes,
-            kCodecSize + 1);
+            kCodecSize + 1,
+            low_memory);
     }
 
     struct PrefixStateGraph {
@@ -668,10 +686,14 @@ struct Yue2ArRuntime::Impl {
         const bool compact_abc = is_abc_window(window);
         ensure_generation_runtime(false, compact_semantic, compact_abc);
         auto & active_runtime = compact_semantic ? semantic_runtime : (compact_abc ? abc_runtime : runtime);
+        const auto & active_config =
+            compact_semantic ? semantic_runtime_config : (compact_abc ? abc_runtime_config : runtime_config);
         const auto total_start = Clock::now();
         engine::debug::timing_log_scalar("yue2.ar.generate.prefix_tokens", prefix.size());
-        auto cache_steps_for = [](int64_t prefix_tokens, int64_t remaining_tokens) {
-            return prefix_tokens + std::min<int64_t>(remaining_tokens, kArDecodeChunkTokens);
+        const bool retain_cache = active_config.detachable_decode_cache;
+        auto cache_steps_for = [retain_cache](int64_t prefix_tokens, int64_t remaining_tokens) {
+            return prefix_tokens + std::min<int64_t>(remaining_tokens, kArDecodeChunkTokens) +
+                (retain_cache ? 2 : 0);
         };
         const auto prefill_start = Clock::now();
         auto prefill = active_runtime->prefill_tokens_into_decode_cache(
@@ -834,6 +856,29 @@ struct Yue2ArRuntime::Impl {
         return state;
     }
 
+    Yue2ArDevicePrefixState take_semantic_device_state(
+        int64_t prefix_tokens,
+        const std::vector<int32_t> & semantic_tokens) {
+        if (!semantic_runtime || !semantic_runtime_config.detachable_decode_cache) {
+            throw std::runtime_error("Yue2 semantic cache transfer is not enabled");
+        }
+        const int64_t complete_steps = prefix_tokens + static_cast<int64_t>(semantic_tokens.size());
+        if (semantic_runtime->decode_current_end() == complete_steps - 1 && !semantic_tokens.empty()) {
+            semantic_runtime->decode_token(semantic_tokens.back());
+        }
+        if (semantic_runtime->decode_current_end() != complete_steps) {
+            throw std::runtime_error("Yue2 semantic cache does not match generated token count");
+        }
+        semantic_runtime->decode_token(kMusicEndToken);
+        auto cache = semantic_runtime->take_decode_device_state();
+        Yue2ArDevicePrefixState out;
+        out.current_end = cache.current_end;
+        out.keys = std::move(cache.keys);
+        out.values = std::move(cache.values);
+        out.storage = std::move(cache.storage);
+        return out;
+    }
+
     static bool is_semantic_window(const Yue2ArSamplingWindow & window) noexcept {
         return window.begin == kCodecOffset &&
             window.end == kCodecOffset + kCodecSize &&
@@ -939,14 +984,16 @@ Yue2ArRuntime::Yue2ArRuntime(
     assets::TensorStorageType weight_type,
     size_t weight_context_bytes,
     size_t prefill_graph_arena_bytes,
-    size_t decode_graph_arena_bytes)
+    size_t decode_graph_arena_bytes,
+    bool low_memory)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
           weight_type,
           weight_context_bytes,
           prefill_graph_arena_bytes,
-          decode_graph_arena_bytes)) {}
+          decode_graph_arena_bytes,
+          low_memory)) {}
 
 Yue2ArRuntime::~Yue2ArRuntime() = default;
 
@@ -972,6 +1019,16 @@ runtime::TransformerKVState Yue2ArRuntime::prefill_state(const std::vector<int32
 
 Yue2ArDevicePrefixState Yue2ArRuntime::prefill_device_state(const std::vector<int32_t> & tokens) {
     return impl_->prefill_device_state(tokens);
+}
+
+Yue2ArDevicePrefixState Yue2ArRuntime::take_semantic_device_state(
+    int64_t prefix_tokens,
+    const std::vector<int32_t> & semantic_tokens) {
+    return impl_->take_semantic_device_state(prefix_tokens, semantic_tokens);
+}
+
+void Yue2ArRuntime::release_abc_runtime() {
+    impl_->abc_runtime.reset();
 }
 
 void Yue2ArRuntime::release_runtime_graphs() {

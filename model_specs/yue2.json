@@ -230,6 +230,13 @@
     ],
     "session": [
       {
+        "name": "ios_mode",
+        "type": "bool",
+        "description": "Low-memory iOS profile for a mixed Q4_0/Q8_0 iOS GGUF. Uses CFG 1.0, Q8 KV cache, and staged AR/NAR execution.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "ar_lora",
         "type": "string",
         "description": "Unfused AR LoRA safetensors file. Absolute path or relative to the model root. Requires session reload.",

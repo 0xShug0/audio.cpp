@@ -422,6 +422,7 @@ core::TensorValue build_cached_nar_layer(
     const engine::modules::QwenDecoderLayerWeights & nar_weights,
     const core::TensorValue & ar_key,
     const core::TensorValue & ar_value,
+    const core::TensorValue & ar_indices,
     const Yue2ModelConfig & config,
     core::BackendType backend_type,
     bool allow_flash_attention,
@@ -437,8 +438,23 @@ core::TensorValue build_cached_nar_layer(
     qkv.v = core::ensure_backend_addressable_layout(ctx, qkv.v);
     qkv.k = core::wrap_tensor(ggml_cast(ctx.ggml, qkv.k.tensor, GGML_TYPE_F16), qkv.k.shape, GGML_TYPE_F16);
     qkv.v = core::wrap_tensor(ggml_cast(ctx.ggml, qkv.v.tensor, GGML_TYPE_F16), qkv.v.shape, GGML_TYPE_F16);
-    auto k = engine::modules::ConcatModule({1}).build(ctx, ar_key, qkv.k);
-    auto v = engine::modules::ConcatModule({1}).build(ctx, ar_value, qkv.v);
+    auto prefix_key = ar_key;
+    auto prefix_value = ar_value;
+    if (prefix_key.type != GGML_TYPE_F16) {
+        const int64_t rows = prefix_key.shape.dims[1];
+        const int64_t width = prefix_key.shape.dims[2] * prefix_key.shape.dims[3];
+        auto dequantize = [&](const core::TensorValue & cache) {
+            auto flat = core::reshape_tensor(ctx, cache, core::TensorShape::from_dims({rows, width}));
+            auto values = engine::modules::EmbeddingModule({rows, width}).build(ctx, ar_indices, flat);
+            values = core::reshape_tensor(ctx, values, cache.shape);
+            return core::wrap_tensor(
+                ggml_cast(ctx.ggml, values.tensor, GGML_TYPE_F16), values.shape, GGML_TYPE_F16);
+        };
+        prefix_key = dequantize(prefix_key);
+        prefix_value = dequantize(prefix_value);
+    }
+    auto k = engine::modules::ConcatModule({1}).build(ctx, prefix_key, qkv.k);
+    auto v = engine::modules::ConcatModule({1}).build(ctx, prefix_value, qkv.v);
     auto context =
         mixed_attention(ctx, qkv.q, k, v, nullptr, config, backend_type, allow_flash_attention, attention_tile_rows);
     context = core::ensure_backend_addressable_layout(ctx, context);
@@ -495,7 +511,7 @@ struct Yue2NarRuntime::Impl {
             nar_length = frames + 2;
             total_length = ar_length + nar_length;
             ggml_init_params input_params{
-                ggml_tensor_overhead() * static_cast<size_t>(3 + config.layers * 2),
+                ggml_tensor_overhead() * static_cast<size_t>(4 + config.layers * 2),
                 nullptr,
                 true};
             input_ctx.reset(ggml_init(input_params));
@@ -510,20 +526,29 @@ struct Yue2NarRuntime::Impl {
             state = core::make_tensor(input_build, GGML_TYPE_F32, core::TensorShape::from_dims({1, nar_length, config.latent_dim}));
             time = core::make_tensor(input_build, GGML_TYPE_F32, core::TensorShape::from_dims({1, 256}));
             positions = core::make_tensor(input_build, GGML_TYPE_I32, core::TensorShape::from_dims({nar_length}));
+            ar_indices = core::make_tensor(input_build, GGML_TYPE_I32, core::TensorShape::from_dims({ar_length}));
             ggml_set_input(state.tensor);
             ggml_set_input(time.tensor);
             ggml_set_input(positions.tensor);
+            ggml_set_input(ar_indices.tensor);
             ar_keys.reserve(static_cast<size_t>(config.layers));
             ar_values.reserve(static_cast<size_t>(config.layers));
             for (int64_t layer = 0; layer < config.layers; ++layer) {
-                const auto & key = ar_state.keys[static_cast<size_t>(layer)];
-                const auto & value = ar_state.values[static_cast<size_t>(layer)];
+                auto key = ar_state.keys[static_cast<size_t>(layer)];
+                auto value = ar_state.values[static_cast<size_t>(layer)];
+                if (key.shape.rank == 4 && key.shape.dims[1] > ar_length) {
+                    key = engine::modules::SliceModule({1, 0, ar_length}).build(build, key);
+                }
+                if (value.shape.rank == 4 && value.shape.dims[1] > ar_length) {
+                    value = engine::modules::SliceModule({1, 0, ar_length}).build(build, value);
+                }
                 if (key.shape.rank != 4 || value.shape.rank != 4 ||
                     key.shape.dims[0] != 1 || value.shape.dims[0] != 1 ||
                     key.shape.dims[1] != ar_length || value.shape.dims[1] != ar_length ||
                     key.shape.dims[2] != config.kv_heads || value.shape.dims[2] != config.kv_heads ||
                     key.shape.dims[3] != config.head_dim || value.shape.dims[3] != config.head_dim ||
-                    key.type != GGML_TYPE_F16 || value.type != GGML_TYPE_F16) {
+                    (key.type != GGML_TYPE_F16 && key.type != GGML_TYPE_Q8_0) ||
+                    value.type != key.type) {
                     throw std::runtime_error("Yue2 NAR prefix cache tensor shape mismatch");
                 }
                 ar_keys.push_back(key);
@@ -557,6 +582,7 @@ struct Yue2NarRuntime::Impl {
                     owner.weights->nar_stack.layers[static_cast<size_t>(layer)],
                     ar_keys[static_cast<size_t>(layer)],
                     ar_values[static_cast<size_t>(layer)],
+                    ar_indices,
                     config,
                     owner.execution.backend_type(),
                     owner.allow_flash_attention,
@@ -586,6 +612,13 @@ struct Yue2NarRuntime::Impl {
                 pos_values[static_cast<size_t>(i)] = static_cast<int32_t>(ar_length + i);
             }
             ggml_backend_tensor_set(positions.tensor, pos_values.data(), 0, pos_values.size() * sizeof(int32_t));
+            std::vector<int32_t> ar_index_values(static_cast<size_t>(ar_length));
+            std::iota(ar_index_values.begin(), ar_index_values.end(), 0);
+            ggml_backend_tensor_set(
+                ar_indices.tensor,
+                ar_index_values.data(),
+                0,
+                ar_index_values.size() * sizeof(int32_t));
             engine::debug::timing_log_scalar("yue2.nar.graph.frames", frames);
             engine::debug::timing_log_scalar(
                 "yue2.nar.graph.buffer_bytes", ggml_gallocr_get_buffer_size(gallocr, 0));
@@ -646,6 +679,7 @@ struct Yue2NarRuntime::Impl {
         core::TensorValue state;
         core::TensorValue time;
         core::TensorValue positions;
+        core::TensorValue ar_indices;
         std::vector<core::TensorValue> ar_keys;
         std::vector<core::TensorValue> ar_values;
         core::TensorValue output;
@@ -754,6 +788,37 @@ struct Yue2NarRuntime::Impl {
         return out;
     }
 
+    std::vector<float> synthesize_from_state(
+        const std::vector<int32_t> & codec,
+        Yue2ArDevicePrefixState ar_state,
+        const std::vector<float> & noise,
+        uint64_t seed,
+        int64_t ode_steps) {
+        const auto total_start = Clock::now();
+        const auto & config = assets->config.model;
+        std::vector<float> chunk_noise(static_cast<size_t>(codec.size() * config.latent_dim), 0.0F);
+        if (noise.empty()) {
+            std::mt19937 rng(static_cast<uint32_t>(seed));
+            std::normal_distribution<float> normal(0.0F, 1.0F);
+            for (float & value : chunk_noise) {
+                value = normal(rng);
+            }
+        } else {
+            if (noise.size() != chunk_noise.size()) {
+                throw std::runtime_error("Yue2 nar_noise_file frame count does not match semantic codec count");
+            }
+            chunk_noise = noise;
+        }
+        engine::debug::timing_log_scalar("yue2.nar.synthesize.codec_tokens", codec.size());
+        engine::debug::timing_log_scalar("yue2.nar.synthesize.chunks", 1);
+        const auto solve_start = Clock::now();
+        auto out = solve_chunk(ar_state, chunk_noise, ode_steps);
+        engine::debug::timing_log_scalar(
+            "yue2.nar.synthesize.solve_chunks_ms", engine::debug::elapsed_ms(solve_start));
+        engine::debug::timing_log_scalar("yue2.nar.synthesize.total_ms", engine::debug::elapsed_ms(total_start));
+        return out;
+    }
+
     core::ExecutionContext & execution;
     std::shared_ptr<const Yue2Assets> assets;
     size_t graph_arena_bytes = 0;
@@ -791,6 +856,15 @@ std::vector<float> Yue2NarRuntime::synthesize(
     int64_t ode_steps,
     int64_t context) {
     return impl_->synthesize(prefix, codec, prefill_state, noise, seed, ode_steps, context);
+}
+
+std::vector<float> Yue2NarRuntime::synthesize_from_state(
+    const std::vector<int32_t> & codec,
+    Yue2ArDevicePrefixState ar_state,
+    const std::vector<float> & noise,
+    uint64_t seed,
+    int64_t ode_steps) {
+    return impl_->synthesize_from_state(codec, std::move(ar_state), noise, seed, ode_steps);
 }
 
 void Yue2NarRuntime::release_runtime_graphs() {

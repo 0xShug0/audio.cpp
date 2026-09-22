@@ -21,9 +21,12 @@ void validate_cache_tensor(const core::TensorValue & tensor, const TransformerKV
     if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
         return;
     }
+    if (options.allow_q8_0_storage && tensor.type == GGML_TYPE_Q8_0) {
+        return;
+    }
     throw std::runtime_error(
-        options.allow_f16_storage || options.allow_bf16_storage
-            ? "TransformerKVCache supports only f32/f16/bf16 cache tensors when enabled"
+        options.allow_f16_storage || options.allow_bf16_storage || options.allow_q8_0_storage
+            ? "TransformerKVCache cache tensor storage type is not enabled"
             : "TransformerKVCache requires f32 cache tensors");
 }
 
@@ -43,6 +46,9 @@ void write_cache_tensor(
     if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
         core::write_tensor_bf16(tensor, values);
         return;
+    }
+    if (options.allow_q8_0_storage && tensor.type == GGML_TYPE_Q8_0) {
+        throw std::runtime_error("TransformerKVCache host import does not support q8_0 storage");
     }
     throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
 }
@@ -71,6 +77,9 @@ std::vector<float> read_cache_tensor(const core::TensorValue & tensor, const Tra
     }
     if (options.allow_bf16_storage && tensor.type == GGML_TYPE_BF16) {
         return core::read_tensor_bf16(tensor.tensor);
+    }
+    if (options.allow_q8_0_storage && tensor.type == GGML_TYPE_Q8_0) {
+        throw std::runtime_error("TransformerKVCache host export does not support q8_0 storage");
     }
     throw std::runtime_error("TransformerKVCache requires f32 cache tensors");
 }
@@ -108,7 +117,6 @@ TransformerKVCache::TransformerKVCache(
     if (keys.size() != values.size()) {
         throw std::runtime_error("TransformerKVCache key/value layer counts must match");
     }
-    const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
     layers_.reserve(keys.size());
     for (size_t layer = 0; layer < keys.size(); ++layer) {
         validate_cache_tensor(keys[layer], options_);
@@ -116,8 +124,8 @@ TransformerKVCache::TransformerKVCache(
         layers_.push_back(LayerCache{
             std::move(keys[layer]),
             std::move(values[layer]),
-            std::vector<float>(cache_elems, 0.0F),
-            std::vector<float>(cache_elems, 0.0F),
+            {},
+            {},
         });
     }
 }
@@ -159,6 +167,9 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
             throw std::runtime_error("TransformerKVCache source tensors do not match valid_steps * step_elems");
         }
         if (cache_steps_ > 0) {
+            const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
+            cache.import_key_scratch.resize(cache_elems);
+            cache.import_value_scratch.resize(cache_elems);
             std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
             std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
             if (keep_elems > 0) {

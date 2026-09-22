@@ -29,6 +29,52 @@ struct GgmlContextDeleter {
     }
 };
 
+struct DetachedDecodeCacheStorage {
+    ~DetachedDecodeCacheStorage() {
+        if (buffer != nullptr) {
+            ggml_backend_buffer_free(buffer);
+        }
+    }
+
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
+    ggml_backend_buffer_t buffer = nullptr;
+};
+
+ggml_backend_buffer_t allocate_cache_tensors(
+    ggml_backend_t backend,
+    const runtime::TransformerKVCache & cache,
+    size_t layers) {
+    auto * buft = ggml_backend_get_default_buffer_type(backend);
+    const size_t alignment = ggml_backend_buft_get_alignment(buft);
+    std::vector<ggml_tensor *> tensors;
+    tensors.reserve(layers * 2);
+    for (size_t layer = 0; layer < layers; ++layer) {
+        tensors.push_back(cache.key_tensor(layer).tensor);
+        tensors.push_back(cache.value_tensor(layer).tensor);
+    }
+    size_t bytes = 0;
+    for (auto * tensor : tensors) {
+        bytes = GGML_PAD(bytes, alignment);
+        bytes += ggml_backend_buft_get_alloc_size(buft, tensor);
+    }
+    auto * buffer = ggml_backend_buft_alloc_buffer(buft, bytes);
+    if (buffer == nullptr) {
+        throw std::runtime_error("failed to allocate Qwen detachable decode cache");
+    }
+    ggml_backend_buffer_set_usage(buffer, GGML_BACKEND_BUFFER_USAGE_COMPUTE);
+    auto * base = static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer));
+    size_t offset = 0;
+    for (auto * tensor : tensors) {
+        offset = GGML_PAD(offset, alignment);
+        if (ggml_backend_tensor_alloc(buffer, tensor, base + offset) != GGML_STATUS_SUCCESS) {
+            ggml_backend_buffer_free(buffer);
+            throw std::runtime_error("failed to bind Qwen detachable decode cache tensor");
+        }
+        offset += ggml_backend_buft_get_alloc_size(buft, tensor);
+    }
+    return buffer;
+}
+
 void validate_runtime_config(const QwenCausalDecodeRuntimeConfig & config) {
     if (config.prefill_graph_arena_bytes == 0 || config.decode_graph_arena_bytes == 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime requires positive graph arena sizes");
@@ -732,6 +778,51 @@ public:
         return batched_decode_cache_.export_state();
     }
 
+    QwenCausalDeviceKVState take_decode_device_state() {
+        ensure_decode_started();
+        if (!config_.detachable_decode_cache || decode_cache_buffer_ == nullptr) {
+            throw std::runtime_error("Qwen decode cache was not configured for device transfer");
+        }
+        ggml_backend_synchronize(backend_);
+        QwenCausalDeviceKVState out;
+        out.current_end = decode_cache_.current_end();
+        out.valid_steps = decode_cache_.valid_steps();
+        out.keys.reserve(static_cast<size_t>(config_.decoder.stack.layers));
+        out.values.reserve(static_cast<size_t>(config_.decoder.stack.layers));
+        for (int64_t layer = 0; layer < config_.decoder.stack.layers; ++layer) {
+            out.keys.push_back(decode_cache_.key_tensor(static_cast<size_t>(layer)));
+            out.values.push_back(decode_cache_.value_tensor(static_cast<size_t>(layer)));
+        }
+        release_block_graph();
+        if (prefill_populates_decode_cache_) {
+            release_prefill_graph();
+        }
+        core::release_backend_graph_resources(
+            backend_, decode_graph_, config_.evict_cuda_graph_cache_on_release);
+        if (decode_buffer_ != nullptr) {
+            ggml_backend_buffer_free(decode_buffer_);
+            decode_buffer_ = nullptr;
+        }
+        auto storage = std::make_shared<DetachedDecodeCacheStorage>();
+        storage->ctx = std::move(decode_ctx_);
+        storage->buffer = decode_cache_buffer_;
+        decode_cache_buffer_ = nullptr;
+        out.storage = storage;
+        decode_input_ = nullptr;
+        decode_positions_ = nullptr;
+        decode_cache_slot_ = nullptr;
+        decode_attention_mask_ = nullptr;
+        decode_logits_readback_token_ids_ = nullptr;
+        decode_logits_ = nullptr;
+        decode_hidden_ = nullptr;
+        decode_graph_ = nullptr;
+        decode_cache_ = runtime::TransformerKVCache();
+        decode_attention_mask_values_.clear();
+        decode_cache_steps_ = 0;
+        decode_input_kind_ = InputKind::None;
+        return out;
+    }
+
     void start_decode_embeddings_batched(
         const runtime::TransformerBatchedKVState & state,
         int64_t required_cache_steps) {
@@ -1361,9 +1452,21 @@ private:
         if (decode_hidden_ != nullptr) {
             ggml_build_forward_expand(decode_graph_, decode_hidden_);
         }
+        if (config_.detachable_decode_cache) {
+            decode_cache_buffer_ = allocate_cache_tensors(
+                backend_, decode_cache_, static_cast<size_t>(config_.decoder.stack.layers));
+            debug::timing_log_scalar(
+                config_.trace_name + ".decode.cache_buffer_bytes",
+                static_cast<double>(ggml_backend_buffer_get_size(decode_cache_buffer_)));
+        }
         decode_buffer_ = ggml_backend_alloc_ctx_tensors(decode_ctx_.get(), backend_);
         if (decode_buffer_ == nullptr) {
             throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime decode graph");
+        }
+        if (config_.detachable_decode_cache) {
+            debug::timing_log_scalar(
+                config_.trace_name + ".decode.graph_buffer_bytes",
+                static_cast<double>(ggml_backend_buffer_get_size(decode_buffer_)));
         }
         if (decode_logits_readback_token_ids_ != nullptr) {
             upload_logits_readback_token_ids(decode_logits_readback_token_ids_, config_);
@@ -1841,6 +1944,10 @@ private:
             ggml_backend_buffer_free(decode_buffer_);
             decode_buffer_ = nullptr;
         }
+        if (decode_cache_buffer_ != nullptr) {
+            ggml_backend_buffer_free(decode_cache_buffer_);
+            decode_cache_buffer_ = nullptr;
+        }
         decode_ctx_.reset();
         decode_input_ = nullptr;
         decode_positions_ = nullptr;
@@ -1948,6 +2055,7 @@ private:
     ggml_tensor * decode_hidden_ = nullptr;
     ggml_cgraph * decode_graph_ = nullptr;
     ggml_backend_buffer_t decode_buffer_ = nullptr;
+    ggml_backend_buffer_t decode_cache_buffer_ = nullptr;
     std::vector<ggml_fp16_t> decode_attention_mask_values_;
     runtime::TransformerKVCache decode_cache_;
     int64_t decode_cache_steps_ = 0;
@@ -2064,6 +2172,10 @@ QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_embeddings_batched(
 
 runtime::TransformerBatchedKVState QwenCausalDecodeRuntime::export_batched_decode_state() const {
     return impl_->export_batched_decode_state();
+}
+
+QwenCausalDeviceKVState QwenCausalDecodeRuntime::take_decode_device_state() {
+    return impl_->take_decode_device_state();
 }
 
 int64_t QwenCausalDecodeRuntime::decode_cache_steps() const noexcept {

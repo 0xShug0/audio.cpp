@@ -118,7 +118,8 @@ public:
         size_t nar_graph_arena_bytes,
         size_t vae_graph_arena_bytes,
         core::AttentionPreference attention_preference,
-        int64_t nar_attention_tile_rows)
+        int64_t nar_attention_tile_rows,
+        bool ios_mode)
         : execution(&execution),
           assets(std::move(assets)),
           tokenizer(this->assets->tiktoken_path),
@@ -130,7 +131,8 @@ public:
           ar_decode_graph_arena_bytes(ar_decode_graph_arena_bytes),
           nar_graph_arena_bytes(nar_graph_arena_bytes),
           vae_graph_arena_bytes(vae_graph_arena_bytes),
-          nar_attention_tile_rows(nar_attention_tile_rows) {
+          nar_attention_tile_rows(nar_attention_tile_rows),
+          ios_mode(ios_mode) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 pipeline requires assets");
         }
@@ -165,17 +167,27 @@ public:
         out.plan = std::move(plan);
         generate_plan_abc(request, out.plan);
         ensure_ar();
+        if (ios_mode) {
+            ar->release_abc_runtime();
+        }
         const auto neg = negative_prefix(request, tokenizer, out.plan.abc_ids);
+        const float guidance_scale = ios_mode ? 1.0F : request_guidance_scale(request);
         out.tokens = ar->generate_cfg(
             out.plan.prefix,
             neg,
             semantic_window(request.generation),
-            request_guidance_scale(request),
+            guidance_scale,
             request.seed);
         out.truncated = static_cast<int64_t>(out.tokens.size()) >= request.generation.semantic.max_tokens;
         engine::debug::timing_log_scalar("yue2.semantic.tokens", out.tokens.size());
         engine::debug::timing_log_scalar("yue2.semantic.truncated", out.truncated);
-        ar->release_runtime_graphs();
+        if (ios_mode) {
+            ios_ar_state = ar->take_semantic_device_state(
+                static_cast<int64_t>(out.plan.prefix.size()), out.tokens);
+            ar.reset();
+        } else {
+            ar->release_runtime_graphs();
+        }
         return out;
     }
 
@@ -187,6 +199,20 @@ public:
         const auto codec = codec_from_semantic_tokens(semantic.tokens);
         if (codec.empty()) {
             throw std::runtime_error("Yue2 semantic generation produced no codec tokens");
+        }
+        if (ios_mode) {
+            const int64_t max_chunk = (generation.context - static_cast<int64_t>(semantic.plan.prefix.size()) - 3) / 2;
+            if (static_cast<int64_t>(codec.size()) > max_chunk) {
+                throw std::runtime_error("Yue2 iOS mode requires the semantic sequence to fit one NAR chunk");
+            }
+            if (!ios_ar_state.has_value()) {
+                throw std::runtime_error("Yue2 iOS mode semantic cache is unavailable");
+            }
+            auto ar_state = std::move(*ios_ar_state);
+            ios_ar_state.reset();
+            ensure_nar();
+            return nar->synthesize_from_state(
+                codec, std::move(ar_state), noise, seed, generation.ode_steps);
         }
         ensure_nar();
         ensure_ar();
@@ -208,7 +234,9 @@ public:
         if (frames <= 0 || static_cast<int64_t>(latents.size()) != frames * channels) {
             throw std::runtime_error("Yue2 VAE latent shape mismatch");
         }
-        const int64_t core_frames = assets->config.vae.decode_core_frames;
+        const int64_t core_frames = ios_mode
+            ? std::min<int64_t>(assets->config.vae.decode_core_frames, 512)
+            : assets->config.vae.decode_core_frames;
         const int64_t halo_frames = assets->config.vae.decode_halo_frames;
         const int64_t ratio = assets->config.vae.downsampling_ratio;
         if (core_frames <= 0 || halo_frames < 0 || ratio <= 0) {
@@ -283,7 +311,7 @@ public:
             settings << "seed=" << request.seed
                      << " cot=" << cot_mode_name(request.cot)
                      << " stop_after=" << stop_after_name(request.stop_after)
-                     << " guidance_scale=" << request_guidance_scale(request)
+                     << " guidance_scale=" << (ios_mode ? 1.0F : request_guidance_scale(request))
                      << " num_inference_steps=" << request.generation.ode_steps
                      << " context=" << request.generation.context
                      << " abc=" << (request.abc.empty() ?
@@ -398,7 +426,8 @@ private:
             model_weight_type,
             model_weight_context_bytes,
             ar_prefill_graph_arena_bytes,
-            ar_decode_graph_arena_bytes);
+            ar_decode_graph_arena_bytes,
+            ios_mode);
         engine::debug::timing_log_scalar("yue2.ar.init_ms", engine::debug::elapsed_ms(start));
     }
 
@@ -455,6 +484,8 @@ private:
     size_t nar_graph_arena_bytes = 0;
     size_t vae_graph_arena_bytes = 0;
     int64_t nar_attention_tile_rows = 0;
+    bool ios_mode = false;
+    std::optional<Yue2ArDevicePrefixState> ios_ar_state;
     std::unique_ptr<codecs::OobleckAudioVaeRuntime> vae;
     std::unique_ptr<Yue2ArRuntime> ar;
     std::unique_ptr<Yue2NarRuntime> nar;
@@ -472,7 +503,8 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
     size_t nar_graph_arena_bytes,
     size_t vae_graph_arena_bytes,
     core::AttentionPreference attention_preference,
-    int64_t nar_attention_tile_rows)
+    int64_t nar_attention_tile_rows,
+    bool ios_mode)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -485,7 +517,8 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
           nar_graph_arena_bytes,
           vae_graph_arena_bytes,
           attention_preference,
-          nar_attention_tile_rows)) {}
+          nar_attention_tile_rows,
+          ios_mode)) {}
 
 Yue2PipelineRuntime::~Yue2PipelineRuntime() = default;
 

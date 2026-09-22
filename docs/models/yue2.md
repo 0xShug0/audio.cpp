@@ -306,6 +306,7 @@ the server — `/v1/audio/speech` requires an audio output.
 | `yue2.vae_graph_arena_mb` | MiB integer >= 1 | `1536` | VAE decode graph arena size. |
 | `yue2.attention` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |
 | `yue2.attention_tile_rows` | integer >= 0 | `0` | Query rows per tile in the eager NAR attention. The eager lowering holds the whole score matrix, which grows with the square of the song length; `0` splits the query rows into as few equal tiles as keep one tile's scores under 3 GiB, which is what long songs need on drivers that cap a single buffer at 4 GiB. A song whose scores already fit runs as one tile. Ignored by the flash kernel. |
+| `yue2.ios_mode` | boolean | `false` | Low-memory iOS profile. Uses CFG `1.0`, Q8 KV cache, staged AR/NAR execution, and smaller VAE tiles. Requires an iOS GGUF generated with `convert_yue2_gguf.py --model-type q4_0 --ios` and a semantic sequence that fits one NAR chunk. |
 
 ## Parity Probes
 

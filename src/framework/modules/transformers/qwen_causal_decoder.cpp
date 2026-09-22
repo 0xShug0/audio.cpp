@@ -22,8 +22,8 @@ void validate_config(const QwenCausalDecoderConfig & config) {
         throw std::runtime_error("QwenCausalDecoderConfig requires a positive layer count");
     }
     if (config.static_cache_type != GGML_TYPE_F32 && config.static_cache_type != GGML_TYPE_F16 &&
-        config.static_cache_type != GGML_TYPE_BF16) {
-        throw std::runtime_error("QwenCausalDecoderConfig static cache type must be f32, f16, or bf16");
+        config.static_cache_type != GGML_TYPE_BF16 && config.static_cache_type != GGML_TYPE_Q8_0) {
+        throw std::runtime_error("QwenCausalDecoderConfig static cache type must be f32, f16, bf16, or q8_0");
     }
 }
 
@@ -35,8 +35,8 @@ void validate_hidden_config(const QwenDecoderHiddenConfig & config) {
         throw std::runtime_error("QwenDecoderHiddenConfig requires a positive layer count");
     }
     if (config.static_cache_type != GGML_TYPE_F32 && config.static_cache_type != GGML_TYPE_F16 &&
-        config.static_cache_type != GGML_TYPE_BF16) {
-        throw std::runtime_error("QwenDecoderHiddenConfig static cache type must be f32, f16, or bf16");
+        config.static_cache_type != GGML_TYPE_BF16 && config.static_cache_type != GGML_TYPE_Q8_0) {
+        throw std::runtime_error("QwenDecoderHiddenConfig static cache type must be f32, f16, bf16, or q8_0");
     }
 }
 
@@ -50,6 +50,7 @@ runtime::TransformerKVCacheOptions transformer_cache_options(ggml_type type) {
     runtime::TransformerKVCacheOptions out;
     out.allow_f16_storage = type == GGML_TYPE_F16;
     out.allow_bf16_storage = type == GGML_TYPE_BF16;
+    out.allow_q8_0_storage = type == GGML_TYPE_Q8_0;
     return out;
 }
 
