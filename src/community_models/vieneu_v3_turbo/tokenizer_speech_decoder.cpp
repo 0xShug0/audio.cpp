@@ -1,4 +1,4 @@
-#include "engine/community_models/vietneu_tts/tokenizer_speech_decoder.h"
+#include "engine/community_models/vieneu_v3_turbo/tokenizer_speech_decoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
@@ -33,7 +33,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 namespace json = engine::io::json;
 namespace {
 
@@ -213,7 +213,7 @@ std::vector<float> normalized_codebook(
     return embedding;
 }
 
-DecoderConfig load_decoder_config(const VietneuTTSAssets & assets) {
+DecoderConfig load_decoder_config(const VieNeuTTSAssets & assets) {
     const auto root = assets.resources.parse_json("speech_tokenizer_config");
     const auto & decoder = root.require("decoder_config");
     DecoderConfig config;
@@ -347,7 +347,7 @@ LayerNormWeights load_layer_norm(
 }
 
 std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
-    const VietneuTTSAssets & assets,
+    const VieNeuTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType linear_weight_storage_type,
@@ -357,7 +357,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> load_weights(
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "vietneu_tts.speech_tokenizer_decoder.weights",
+        "vieneu_v3_turbo.speech_tokenizer_decoder.weights",
         32ull * 1024ull * 1024ull);
     weights->config = load_decoder_config(assets);
     const auto & config = weights->config;
@@ -952,7 +952,7 @@ public:
 
         core::ModuleBuildContext build_ctx{
             ctx_.get(),
-            "vietneu_tts.speech_decoder",
+            "vieneu_v3_turbo.speech_decoder",
             execution_context.backend_type(),
         };
         constants.begin_graph();
@@ -1104,7 +1104,7 @@ private:
 };
 
 Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
-    std::shared_ptr<const VietneuTTSAssets> assets,
+    std::shared_ptr<const VieNeuTTSAssets> assets,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     size_t constant_context_bytes,
@@ -1125,7 +1125,7 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
     constants_ = std::make_unique<core::ConstantTensorCache>(
         execution_context_->backend(),
         std::max(1, execution_context_->config().threads),
-        "vietneu_tts.speech_tokenizer_decoder.constants",
+        "vieneu_v3_turbo.speech_tokenizer_decoder.constants",
         constant_context_bytes);
 }
 
@@ -1193,12 +1193,12 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
             decoded.begin() + static_cast<std::ptrdiff_t>(drop),
             decoded.begin() + static_cast<std::ptrdiff_t>(valid_samples));
     }
-    debug::timing_log_scalar("vietneu_tts.speech_decoder.graph.rebuilds", graph_rebuilds);
-    debug::timing_log_scalar("vietneu_tts.speech_decoder.graph.build_ms", graph_build_ms);
-    debug::timing_log_scalar("vietneu_tts.speech_decoder.input_upload_ms", input_upload_ms);
-    debug::timing_log_scalar("vietneu_tts.speech_decoder.graph.compute_ms", graph_compute_ms);
-    debug::timing_log_scalar("vietneu_tts.speech_decoder.output_read_ms", output_read_ms);
-    debug::timing_log_scalar("vietneu_tts.speech_decoder.total_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
+    debug::timing_log_scalar("vieneu_v3_turbo.speech_decoder.graph.rebuilds", graph_rebuilds);
+    debug::timing_log_scalar("vieneu_v3_turbo.speech_decoder.graph.build_ms", graph_build_ms);
+    debug::timing_log_scalar("vieneu_v3_turbo.speech_decoder.input_upload_ms", input_upload_ms);
+    debug::timing_log_scalar("vieneu_v3_turbo.speech_decoder.graph.compute_ms", graph_compute_ms);
+    debug::timing_log_scalar("vieneu_v3_turbo.speech_decoder.output_read_ms", output_read_ms);
+    debug::timing_log_scalar("vieneu_v3_turbo.speech_decoder.total_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
     return runtime::AudioBuffer{kSampleRate, 1, std::move(samples)};
 }
 
@@ -1227,4 +1227,4 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode_and_trim_referen
     return audio;
 }
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

@@ -1479,21 +1479,22 @@ audiocpp_add_model(qwen3_tts
         engine::models::qwen3_tts::make_qwen3_tts_loader
 )
 
-audiocpp_add_model(vietneu_tts
+audiocpp_add_model(vieneu_v3_turbo
     SOURCES
-        src/community_models/vietneu_tts/assets.cpp
-        src/community_models/vietneu_tts/tokenizer_text.cpp
-        src/community_models/vietneu_tts/tokenizer_speech_encoder.cpp
-        src/community_models/vietneu_tts/tokenizer_speech_decoder.cpp
-        src/community_models/vietneu_tts/speaker_encoder.cpp
-        src/community_models/vietneu_tts/talker.cpp
-        src/community_models/vietneu_tts/prompt_tts_voice_clone.cpp
-        src/community_models/vietneu_tts/session.cpp
-        src/community_models/vietneu_tts/loader.cpp
+        src/community_models/vieneu_v3_turbo/assets.cpp
+        src/community_models/vieneu_v3_turbo/tokenizer_text.cpp
+        src/community_models/vieneu_v3_turbo/tokenizer_speech_encoder.cpp
+        src/community_models/vieneu_v3_turbo/tokenizer_speech_decoder.cpp
+        src/community_models/vieneu_v3_turbo/speaker_encoder.cpp
+        src/community_models/vieneu_v3_turbo/talker.cpp
+        src/community_models/vieneu_v3_turbo/prompt_tts_voice_clone.cpp
+        src/community_models/vieneu_v3_turbo/session.cpp
+        src/community_models/vieneu_v3_turbo/loader.cpp
+        src/community_models/vieneu_v3_turbo/frame_cap.cpp
     INCLUDES
-        engine/community_models/vietneu_tts/loader.h
+        engine/community_models/vieneu_v3_turbo/loader.h
     LOADERS
-        engine::models::vietneu_tts::make_vietneu_tts_loader
+        engine::models::vieneu_v3_turbo::make_vieneu_v3_turbo_loader
 )
 
 audiocpp_add_model(qwen3_asr
@@ -2707,7 +2708,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
        glm_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
        niagara_asr IN_LIST AUDIOCPP_LINKED_MODELS AND
        qwen3_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
-       vietneu_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
+       vieneu_v3_turbo IN_LIST AUDIOCPP_LINKED_MODELS AND
        dramabox IN_LIST AUDIOCPP_LINKED_MODELS AND
        mira_tts IN_LIST AUDIOCPP_LINKED_MODELS AND
        chatterbox IN_LIST AUDIOCPP_LINKED_MODELS AND

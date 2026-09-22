@@ -3,8 +3,8 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session.h"
-#include "engine/community_models/vietneu_tts/assets.h"
-#include "engine/community_models/vietneu_tts/types.h"
+#include "engine/community_models/vieneu_v3_turbo/assets.h"
+#include "engine/community_models/vieneu_v3_turbo/types.h"
 
 #include <cstddef>
 #include <memory>
@@ -15,7 +15,7 @@ class ConstantTensorCache;
 
 namespace engine::models {
 
-namespace vietneu_tts {
+namespace vieneu_v3_turbo {
 
 struct Qwen3SpeechTokenizerDecoderWeights;
 class Qwen3SpeechTokenizerDecoderGraph;
@@ -23,7 +23,7 @@ class Qwen3SpeechTokenizerDecoderGraph;
 class Qwen3SpeechTokenizerDecoderRuntime {
 public:
     Qwen3SpeechTokenizerDecoderRuntime(
-        std::shared_ptr<const VietneuTTSAssets> assets,
+        std::shared_ptr<const VieNeuTTSAssets> assets,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         size_t constant_context_bytes,
@@ -37,7 +37,7 @@ public:
         const Qwen3SpeechCodes & generated_codes) const;
 
 private:
-    std::shared_ptr<const VietneuTTSAssets> assets_;
+    std::shared_ptr<const VieNeuTTSAssets> assets_;
     core::ExecutionContext * execution_context_ = nullptr;
     std::shared_ptr<const Qwen3SpeechTokenizerDecoderWeights> weights_;
     size_t graph_arena_bytes_ = 0;
@@ -45,5 +45,5 @@ private:
     mutable std::unique_ptr<Qwen3SpeechTokenizerDecoderGraph> graph_;
 };
 
-}  // namespace vietneu_tts
+}  // namespace vieneu_v3_turbo
 }  // namespace engine::models

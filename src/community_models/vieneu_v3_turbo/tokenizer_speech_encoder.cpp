@@ -1,4 +1,4 @@
-#include "engine/community_models/vietneu_tts/tokenizer_speech_encoder.h"
+#include "engine/community_models/vieneu_v3_turbo/tokenizer_speech_encoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"
@@ -33,7 +33,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 
 namespace {
 
@@ -349,7 +349,7 @@ std::vector<int32_t> quantize_projected(
 }
 
 std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
-    const VietneuTTSAssets & assets,
+    const VieNeuTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType linear_weight_storage_type,
@@ -359,7 +359,7 @@ std::shared_ptr<const Qwen3SpeechTokenizerEncoderWeights> load_weights(
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "vietneu_tts.speech_tokenizer_encoder.weights",
+        "vieneu_v3_turbo.speech_tokenizer_encoder.weights",
         32ull * 1024ull * 1024ull);
 
     const char * conv_prefixes[] = {
@@ -525,7 +525,7 @@ public:
 
         core::ModuleBuildContext build_ctx{
             ctx_.get(),
-            "vietneu_tts.speech_tokenizer_encoder",
+            "vieneu_v3_turbo.speech_tokenizer_encoder",
             execution_context.backend_type(),
         };
         auto x = core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, sample_capacity_}));
@@ -628,7 +628,7 @@ private:
 };
 
 Qwen3SpeechTokenizerEncoderRuntime::Qwen3SpeechTokenizerEncoderRuntime(
-    std::shared_ptr<const VietneuTTSAssets> assets,
+    std::shared_ptr<const VieNeuTTSAssets> assets,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     assets::TensorStorageType linear_weight_storage_type,
@@ -648,7 +648,7 @@ Qwen3SpeechTokenizerEncoderRuntime::Qwen3SpeechTokenizerEncoderRuntime(
     constants_ = std::make_unique<core::ConstantTensorCache>(
         execution_context_->backend(),
         std::max(1, execution_context_->config().threads),
-        "vietneu_tts.speech_tokenizer_encoder.constants",
+        "vieneu_v3_turbo.speech_tokenizer_encoder.constants",
         768ull * 1024ull * 1024ull);
 }
 
@@ -680,10 +680,10 @@ Qwen3SpeechCodes Qwen3SpeechTokenizerEncoderRuntime::encode(const runtime::Audio
             *constants_,
             graph_arena_bytes_);
         debug::timing_log_scalar(
-            "vietneu_tts.speech_tokenizer_encoder.graph.build_ms",
+            "vieneu_v3_turbo.speech_tokenizer_encoder.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
     } else {
-        debug::timing_log_scalar("vietneu_tts.speech_tokenizer_encoder.graph.build_ms", 0.0);
+        debug::timing_log_scalar("vieneu_v3_turbo.speech_tokenizer_encoder.graph.build_ms", 0.0);
     }
     auto projected = graph_->run(waveform);
     Qwen3SpeechCodes out;
@@ -693,4 +693,4 @@ Qwen3SpeechCodes Qwen3SpeechTokenizerEncoderRuntime::encode(const runtime::Audio
     return out;
 }
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

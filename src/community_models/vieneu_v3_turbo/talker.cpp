@@ -1,4 +1,4 @@
-#include "engine/community_models/vietneu_tts/talker.h"
+#include "engine/community_models/vieneu_v3_turbo/talker.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
@@ -26,14 +26,19 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <deque>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -81,7 +86,7 @@ struct CodePredictorWeights {
     std::optional<GraphLinearTensorWeights> small_to_mtp_projection;
 };
 
-struct VietneuTalkerWeights {
+struct VieNeuTalkerWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     assets::TensorData codec_embedding;
     std::vector<assets::TensorData> code_predictor_embeddings;
@@ -112,12 +117,12 @@ bool speech_codes_equal(const Qwen3SpeechCodes & lhs, const Qwen3SpeechCodes & r
            lhs.codes == rhs.codes;
 }
 
-bool speaker_embedding_equal(const VietneuSpeakerEmbedding & lhs, const VietneuSpeakerEmbedding & rhs) {
+bool speaker_embedding_equal(const VieNeuSpeakerEmbedding & lhs, const VieNeuSpeakerEmbedding & rhs) {
     return lhs.dims == rhs.dims &&
            lhs.values == rhs.values;
 }
 
-bool talker_prefill_equal(const VietneuTalkerPrefill & lhs, const VietneuTalkerPrefill & rhs) {
+bool talker_prefill_equal(const VieNeuTalkerPrefill & lhs, const VieNeuTalkerPrefill & rhs) {
     if (lhs.prompt_mode != rhs.prompt_mode ||
         lhs.input_ids != rhs.input_ids ||
         lhs.instruct_ids != rhs.instruct_ids ||
@@ -140,22 +145,22 @@ bool talker_prefill_equal(const VietneuTalkerPrefill & lhs, const VietneuTalkerP
     return true;
 }
 
-struct VietneuTalkerPrefillLogits {
+struct VieNeuTalkerPrefillLogits {
     std::vector<float> values;
     int64_t vocab_size = 0;
 };
 
-struct VietneuTalkerPrefillResult {
-    VietneuTalkerPrefillLogits logits;
-    VietneuSpeakerEmbedding last_hidden;
+struct VieNeuTalkerPrefillResult {
+    VieNeuTalkerPrefillLogits logits;
+    VieNeuSpeakerEmbedding last_hidden;
 };
 
-struct VietneuTalkerCodePredictorInput {
-    VietneuSpeakerEmbedding talker_hidden;
+struct VieNeuTalkerCodePredictorInput {
+    VieNeuSpeakerEmbedding talker_hidden;
     int32_t first_code = 0;
 };
 
-struct VietneuTalkerFrameCodes {
+struct VieNeuTalkerFrameCodes {
     std::vector<int32_t> codes;
 };
 
@@ -314,8 +319,8 @@ std::vector<float> linear_host(
 std::vector<float> text_project_host(
     const std::vector<float> & text_hidden,
     int64_t rows,
-    const VietneuTalkerWeights & weights,
-    const VietneuTTSTalkerConfig & config) {
+    const VieNeuTalkerWeights & weights,
+    const VieNeuTTSTalkerConfig & config) {
     if (weights.text_projection_fc1.weight.bytes.empty()) {
         return text_hidden;
     }
@@ -329,8 +334,8 @@ std::vector<float> text_project_host(
 core::TensorValue project_code_predictor_input(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const VietneuTalkerWeights & weights,
-    const VietneuTTSConfig & config,
+    const VieNeuTalkerWeights & weights,
+    const VieNeuTTSConfig & config,
     core::ConstantTensorCache & constants) {
     if (config.code_predictor.hidden_size == config.talker.hidden_size) {
         return input;
@@ -442,9 +447,9 @@ std::vector<float> layernorm_host(
 }
 
 PromptEmbeddingState build_prompt_state(
-    const VietneuTalkerPrefill & prefill,
-    const VietneuTTSConfig & root_config,
-    const VietneuTalkerWeights & weights) {
+    const VieNeuTalkerPrefill & prefill,
+    const VieNeuTTSConfig & root_config,
+    const VieNeuTalkerWeights & weights) {
     const auto & config = root_config.talker;
     if (prefill.input_ids.size() < 8) {
         throw std::runtime_error("VieNeu-TTS talker prefill input ids are too short");
@@ -464,7 +469,7 @@ PromptEmbeddingState build_prompt_state(
 
     std::vector<float> custom_voice_speaker_embed;
     std::string language = ascii_lower(prefill.language);
-    if (prefill.prompt_mode == VietneuTalkerPromptMode::CustomVoice) {
+    if (prefill.prompt_mode == VieNeuTalkerPromptMode::CustomVoice) {
         const std::string speaker = ascii_lower(prefill.speaker);
         const auto speaker_it = config.speaker_id.find(speaker);
         if (speaker_it == config.speaker_id.end()) {
@@ -503,8 +508,8 @@ PromptEmbeddingState build_prompt_state(
         };
     }
 
-    if (prefill.prompt_mode == VietneuTalkerPromptMode::VoiceDesign ||
-        prefill.prompt_mode == VietneuTalkerPromptMode::CustomVoice) {
+    if (prefill.prompt_mode == VieNeuTalkerPromptMode::VoiceDesign ||
+        prefill.prompt_mode == VieNeuTalkerPromptMode::CustomVoice) {
         PromptEmbeddingState state;
         state.tts_pad = tts_pad;
         if (!prefill.instruct_ids.empty()) {
@@ -522,7 +527,7 @@ PromptEmbeddingState build_prompt_state(
             text_project_host(lookup_rows(weights.text_embedding, config.text_hidden_size, role_ids), 3, weights, config));
 
         auto codec_embed = lookup_rows(weights.codec_embedding, config.hidden_size, codec_prefix);
-        if (prefill.prompt_mode == VietneuTalkerPromptMode::CustomVoice) {
+        if (prefill.prompt_mode == VieNeuTalkerPromptMode::CustomVoice) {
             append_rows(codec_embed, custom_voice_speaker_embed);
         }
         append_rows(
@@ -588,7 +593,7 @@ PromptEmbeddingState build_prompt_state(
         std::fflush(stderr);
 
         // 2. Build text prompt tokens list: [style_token_id, tps] + phone_ids + [tpe]
-        const int32_t style_token_id = 16;
+        const int32_t style_token_id = static_cast<int32_t>(root_config.default_style_token_id);
         const int32_t tps = static_cast<int32_t>(root_config.text_prompt_start_token_id);
         const int32_t tpe = static_cast<int32_t>(root_config.text_prompt_end_token_id);
         
@@ -603,7 +608,7 @@ PromptEmbeddingState build_prompt_state(
 
         // 4. If reference codes are present, build reference rows
         std::vector<float> ref_embed;
-        if (prefill.reference_codes.has_value() && !prefill.reference_ids.empty()) {
+        if (prefill.reference_codes.has_value() && prefill.reference_codes->frames > 0) {
             const auto & ref_codes = *prefill.reference_codes;
             const int64_t T_ref = ref_codes.frames;
             const int32_t ref_slot = static_cast<int32_t>(root_config.audio_ref_slot_token_id);
@@ -647,6 +652,14 @@ PromptEmbeddingState build_prompt_state(
 
         // 8. Trailing text is unused under VieNeu
         state.trailing_text = {};
+        if (std::getenv("VIENEU_LOGITS_DUMP") != nullptr) {
+            std::fprintf(stderr, "[vieneu-debug] prompt_rows=%lld text_rows=%lld ref_frames=%lld ref_ids=%lld has_ref_codes=%d\n",
+                static_cast<long long>(state.prompt.size() / static_cast<size_t>(hidden_size)),
+                static_cast<long long>(text_token_ids.size()),
+                static_cast<long long>(prefill.reference_codes.has_value() ? prefill.reference_codes->frames : -1),
+                static_cast<long long>(prefill.reference_ids.size()),
+                prefill.reference_codes.has_value() ? 1 : 0);
+        }
 
         return state;
     }
@@ -722,19 +735,19 @@ PromptEmbeddingState build_prompt_state(
     return state;
 }
 
-VietneuTalkerWeights load_talker_weights(
-    const VietneuTTSAssets & assets,
+VieNeuTalkerWeights load_talker_weights(
+    const VieNeuTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     engine::assets::TensorStorageType weight_storage_type) {
     const auto & source = *assets.model_weights;
     const auto & config = assets.config.talker;
-    VietneuTalkerWeights weights;
+    VieNeuTalkerWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "vietneu_tts.talker.weights",
+        "vieneu_v3_turbo.talker.weights",
         weight_context_bytes);
 
     if (assets.config.is_vieneu) {
@@ -1048,10 +1061,10 @@ VietneuTalkerWeights load_talker_weights(
 
 }  // namespace
 
-class VietneuTalkerWeightsRuntime {
+class VieNeuTalkerWeightsRuntime {
 public:
-    VietneuTalkerWeightsRuntime(
-        std::shared_ptr<const VietneuTTSAssets> assets,
+    VieNeuTalkerWeightsRuntime(
+        std::shared_ptr<const VieNeuTTSAssets> assets,
         core::BackendType backend_type,
         int device,
         int threads,
@@ -1073,26 +1086,26 @@ public:
             ? engine::sampling::resolve_torch_cuda_sampling_policy(
                   backend_type_,
                   device,
-                  "vietneu_tts.talker.cuda_sampling_policy",
+                  "vieneu_v3_turbo.talker.cuda_sampling_policy",
                   "VieNeu-TTS TTS",
                   engine::sampling::TorchCudaSamplingPolicyFailureMode::StrictCuda)
             : engine::sampling::TorchCudaSamplingPolicy{};
         backend_ = core::init_backend({backend_type_, device, threads_});
-        weights_ = std::make_shared<VietneuTalkerWeights>(
+        weights_ = std::make_shared<VieNeuTalkerWeights>(
             load_talker_weights(*assets_, backend_, backend_type_, kTalkerWeightContextBytes, weight_storage_type));
         talker_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
-            "vietneu_tts.talker.constants",
+            "vieneu_v3_turbo.talker.constants",
             talker_constant_context_bytes);
         code_predictor_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
-            "vietneu_tts.talker.code_predictor.constants",
+            "vieneu_v3_turbo.talker.code_predictor.constants",
             code_predictor_constant_context_bytes);
     }
 
-    ~VietneuTalkerWeightsRuntime() {
+    ~VieNeuTalkerWeightsRuntime() {
         code_predictor_constants_.reset();
         talker_constants_.reset();
         weights_.reset();
@@ -1101,11 +1114,11 @@ public:
         }
     }
 
-    const VietneuTTSAssets & assets() const noexcept {
+    const VieNeuTTSAssets & assets() const noexcept {
         return *assets_;
     }
 
-    const VietneuTalkerWeights & weights() const noexcept {
+    const VieNeuTalkerWeights & weights() const noexcept {
         return *weights_;
     }
 
@@ -1134,8 +1147,8 @@ public:
     }
 
 private:
-    std::shared_ptr<const VietneuTTSAssets> assets_;
-    std::shared_ptr<const VietneuTalkerWeights> weights_;
+    std::shared_ptr<const VieNeuTTSAssets> assets_;
+    std::shared_ptr<const VieNeuTalkerWeights> weights_;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     ggml_backend_t backend_ = nullptr;
@@ -1148,7 +1161,7 @@ private:
 class TalkerPrefillGraph {
 public:
     TalkerPrefillGraph(
-        std::shared_ptr<const VietneuTalkerWeightsRuntime> weights,
+        std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights,
         int64_t prompt_capacity)
         : weights_(std::move(weights)),
           prompt_capacity_(prompt_capacity) {
@@ -1162,7 +1175,7 @@ public:
         }
         const auto & config = weights_->assets().config.talker;
         const auto & tensor_weights = weights_->weights();
-        core::ModuleBuildContext ctx{ctx_.get(), "vietneu_tts.talker.prefill"};
+        core::ModuleBuildContext ctx{ctx_.get(), "vieneu_v3_turbo.talker.prefill"};
         auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, prompt_capacity_, config.hidden_size}));
         input_ = x.tensor;
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_capacity_);
@@ -1209,12 +1222,12 @@ public:
         }
     }
 
-    bool matches(const VietneuTalkerWeightsRuntime & weights, int64_t prompt_capacity) const {
+    bool matches(const VieNeuTalkerWeightsRuntime & weights, int64_t prompt_capacity) const {
         return weights_.get() == &weights && prompt_capacity_ == prompt_capacity;
     }
 
     struct OutputWithCache {
-        VietneuTalkerPrefillResult result;
+        VieNeuTalkerPrefillResult result;
         runtime::TransformerKVState state;
     };
 
@@ -1255,7 +1268,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const VietneuTalkerWeightsRuntime> weights_;
+    std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights_;
     int64_t prompt_capacity_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
@@ -1271,7 +1284,7 @@ private:
 class TalkerCachedStepGraph {
 public:
     TalkerCachedStepGraph(
-        std::shared_ptr<const VietneuTalkerWeightsRuntime> weights,
+        std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights,
         int64_t cache_steps)
         : weights_(std::move(weights)),
           cache_steps_(cache_steps) {
@@ -1285,7 +1298,7 @@ public:
         }
         const auto & config = weights_->assets().config.talker;
         const auto & tensor_weights = weights_->weights();
-        core::ModuleBuildContext ctx{ctx_.get(), "vietneu_tts.talker.cached_step"};
+        core::ModuleBuildContext ctx{ctx_.get(), "vieneu_v3_turbo.talker.cached_step"};
         auto x = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, config.hidden_size}));
         input_ = x.tensor;
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
@@ -1333,7 +1346,7 @@ public:
         }
     }
 
-    bool can_run(const VietneuTalkerWeightsRuntime & weights, int64_t required_capacity) const {
+    bool can_run(const VieNeuTalkerWeightsRuntime & weights, int64_t required_capacity) const {
         return weights_.get() == &weights && cache_steps_ >= required_capacity;
     }
 
@@ -1349,7 +1362,7 @@ public:
         return step_cache_.export_state();
     }
 
-    VietneuTalkerPrefillResult run_step(const std::vector<float> & embedding) {
+    VieNeuTalkerPrefillResult run_step(const std::vector<float> & embedding) {
         last_timing_ = {};
         const auto & config = weights_->assets().config.talker;
         if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
@@ -1386,7 +1399,7 @@ public:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("VieNeu-TTS talker cached step graph compute failed");
         }
-        VietneuTalkerPrefillResult out;
+        VieNeuTalkerPrefillResult out;
         const auto & root_config = weights_->assets().config;
         const int64_t logits_vocab_size = root_config.is_vieneu ? config.text_vocab_size : config.vocab_size;
         out.logits.vocab_size = logits_vocab_size;
@@ -1407,7 +1420,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const VietneuTalkerWeightsRuntime> weights_;
+    std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights_;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
@@ -1515,7 +1528,7 @@ int32_t sample_index(
 
 void apply_main_talker_processors(
     std::vector<float> & logits,
-    const VietneuTTSTalkerConfig & config,
+    const VieNeuTTSTalkerConfig & config,
     const std::vector<int32_t> & generated_first_codes,
     int64_t step,
     float repetition_penalty) {
@@ -1553,10 +1566,10 @@ void apply_main_talker_processors(
 }
 
 std::vector<float> frame_embedding(
-    const VietneuTalkerFrameCodes & frame,
+    const VieNeuTalkerFrameCodes & frame,
     const std::vector<float> & text_hidden,
-    const VietneuTalkerWeights & weights,
-    const VietneuTTSTalkerConfig & config) {
+    const VieNeuTalkerWeights & weights,
+    const VieNeuTTSTalkerConfig & config) {
     if (static_cast<int64_t>(frame.codes.size()) != config.num_code_groups) {
         throw std::runtime_error("VieNeu-TTS talker frame code group count mismatch");
     }
@@ -1576,9 +1589,56 @@ std::vector<float> frame_embedding(
     return out;
 }
 
+// Per-codebook sliding-window repetition history (Python `RepetitionHistory`): only
+// codes emitted in the last `window` frames are penalised, so a code that must
+// legitimately repeat (silence, a held vowel) stops being punished once it leaves
+// the window. window <= 0 keeps every code forever.
+class RepetitionHistory {
+public:
+    RepetitionHistory(int64_t code_groups, int64_t window)
+        : window_(window), counts_(static_cast<size_t>(code_groups)), order_(static_cast<size_t>(code_groups)) {}
+
+    void add(int64_t group, int32_t code) {
+        auto & counts = counts_[static_cast<size_t>(group)];
+        auto & order = order_[static_cast<size_t>(group)];
+        ++counts[code];
+        if (window_ > 0) {
+            order.push_back(code);
+            if (static_cast<int64_t>(order.size()) > window_) {
+                const int32_t old = order.front();
+                order.pop_front();
+                auto it = counts.find(old);
+                if (it != counts.end() && --it->second <= 0) {
+                    counts.erase(it);
+                }
+            }
+        }
+    }
+
+    // logits[code] = logits < 0 ? logits * penalty : logits / penalty for every code in the window.
+    void penalise(int64_t group, std::vector<float> & logits, float penalty) const {
+        if (penalty == 1.0F) {
+            return;
+        }
+        for (const auto & entry : counts_[static_cast<size_t>(group)]) {
+            const int32_t code = entry.first;
+            if (code < 0 || static_cast<size_t>(code) >= logits.size()) {
+                continue;
+            }
+            float & value = logits[static_cast<size_t>(code)];
+            value = value < 0.0F ? value * penalty : value / penalty;
+        }
+    }
+
+private:
+    int64_t window_ = 0;
+    std::vector<std::unordered_map<int32_t, int32_t>> counts_;
+    std::vector<std::deque<int32_t>> order_;
+};
+
 class CodePredictorGraph {
 public:
-    explicit CodePredictorGraph(std::shared_ptr<const VietneuTalkerWeightsRuntime> weights)
+    explicit CodePredictorGraph(std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights)
         : weights_(std::move(weights)),
           code_groups_(weights_->assets().config.talker.num_code_groups) {
         if (code_groups_ <= 1) {
@@ -1591,7 +1651,7 @@ public:
         }
         const auto & config = weights_->assets().config.code_predictor;
         const int64_t head_dim = attention_head_dim(config);
-        core::ModuleBuildContext ctx{ctx_.get(), "vietneu_tts.talker.code_predictor"};
+        core::ModuleBuildContext ctx{ctx_.get(), "vieneu_v3_turbo.talker.code_predictor"};
         cache_keys_.reserve(static_cast<size_t>(config.num_hidden_layers));
         cache_values_.reserve(static_cast<size_t>(config.num_hidden_layers));
         const int64_t cache_capacity = code_groups_ + 1;
@@ -1634,29 +1694,59 @@ public:
         }
     }
 
-    VietneuTalkerFrameCodes generate(
-        const VietneuTalkerCodePredictorInput & input,
-        const VietneuTTSGenerationOptions & options,
+    VieNeuTalkerFrameCodes generate(
+        const VieNeuTalkerCodePredictorInput & input,
+        const VieNeuTTSGenerationOptions & options,
         std::mt19937 & rng,
-        uint64_t & sample_call_index) {
+        uint64_t & sample_call_index,
+        RepetitionHistory * history = nullptr) {
         timing_ = {};
+        // One sampler for every codebook, as in the Python `_sample`: repetition
+        // penalty on the window, temperature, top-k, then nucleus within the k.
+        auto pick = [&](int64_t group, std::vector<float> & values) {
+            if (history != nullptr) {
+                history->penalise(group, values, options.repetition_penalty);
+            }
+            const int32_t chosen = options.subtalker_do_sample
+                ? sample_index(
+                    values,
+                    options.subtalker_top_k,
+                    options.subtalker_top_p,
+                    options.subtalker_temperature,
+                    rng,
+                    weights_->sampling_policy(),
+                    options.seed,
+                    sample_call_index++)
+                : argmax_index(values);
+            if (history != nullptr) {
+                history->add(group, chosen);
+            }
+            return chosen;
+        };
 
         auto embeddings = make_prefill_embeddings(input);
-        VietneuTalkerFrameCodes out;
+        VieNeuTalkerFrameCodes out;
         out.codes.reserve(static_cast<size_t>(code_groups_));
         auto logits = run_prefill(embeddings);
+        // Parity debugging: VIENEU_LOGITS_DUMP=<path> appends the acoustic-decoder
+        // logits of every codebook step (one line per step) for every frame.
+        static const char * logits_dump_path = std::getenv("VIENEU_LOGITS_DUMP");
+        std::ofstream logits_dump;
+        if (logits_dump_path != nullptr) {
+            logits_dump.open(logits_dump_path, std::ios::app);
+            logits_dump << "prefill_hidden";
+            for (int64_t i = 0; i < weights_->assets().config.talker.hidden_size; ++i) logits_dump << ' ' << embeddings[static_cast<size_t>(i)];
+            logits_dump << '\n';
+        }
+        auto dump_logits = [&](int64_t group, const std::vector<float> & values) {
+            if (!logits_dump.is_open()) return;
+            logits_dump << "logits " << group;
+            for (const float v : values) logits_dump << ' ' << v;
+            logits_dump << '\n';
+        };
+        dump_logits(0, logits.values);
 
-        int32_t code = options.subtalker_do_sample
-            ? sample_index(
-                logits.values,
-                options.subtalker_top_k,
-                options.subtalker_top_p,
-                options.subtalker_temperature,
-                rng,
-                weights_->sampling_policy(),
-                options.seed,
-                sample_call_index++)
-            : argmax_index(logits.values);
+        int32_t code = pick(0, logits.values);
         out.codes.push_back(code);
         for (int64_t group = 1; group < code_groups_; ++group) {
             const auto & w = weights_->weights();
@@ -1666,17 +1756,8 @@ public:
                     : lookup_rows(w.code_predictor_embeddings.at(static_cast<size_t>(group - 2)), weights_->assets().config.talker.hidden_size, {code}))
                 : lookup_rows(w.code_predictor_embeddings.at(static_cast<size_t>(group - 1)), weights_->assets().config.talker.hidden_size, {code});
             logits = run_step(group, row);
-            code = options.subtalker_do_sample
-                ? sample_index(
-                    logits.values,
-                    options.subtalker_top_k,
-                    options.subtalker_top_p,
-                    options.subtalker_temperature,
-                    rng,
-                    weights_->sampling_policy(),
-                    options.seed,
-                    sample_call_index++)
-                : argmax_index(logits.values);
+            dump_logits(group, logits.values);
+            code = pick(group, logits.values);
             out.codes.push_back(code);
         }
         return out;
@@ -1686,9 +1767,9 @@ public:
         return timing_;
     }
 
-    VietneuTalkerPrefillLogits read_text_logits() {
+    VieNeuTalkerPrefillLogits read_text_logits() {
         const auto & config = weights_->assets().config.talker;
-        VietneuTalkerPrefillLogits out;
+        VieNeuTalkerPrefillLogits out;
         out.vocab_size = config.text_vocab_size;
         out.values.resize(static_cast<size_t>(config.text_vocab_size));
         const auto timing_start = Clock::now();
@@ -1707,7 +1788,7 @@ private:
         ggml_cgraph * graph = nullptr;
     };
 
-    std::vector<float> make_prefill_embeddings(const VietneuTalkerCodePredictorInput & input) const {
+    std::vector<float> make_prefill_embeddings(const VieNeuTalkerCodePredictorInput & input) const {
         const auto & config = weights_->assets().config;
         if (input.talker_hidden.dims != config.talker.hidden_size ||
             static_cast<int64_t>(input.talker_hidden.values.size()) != config.talker.hidden_size) {
@@ -1848,7 +1929,7 @@ private:
         return step;
     }
 
-    VietneuTalkerPrefillLogits run_prefill(const std::vector<float> & embeddings) {
+    VieNeuTalkerPrefillLogits run_prefill(const std::vector<float> & embeddings) {
         const auto & config = weights_->assets().config.talker;
         if (static_cast<int64_t>(embeddings.size()) != 2 * config.hidden_size) {
             throw std::runtime_error("VieNeu-TTS code predictor prefill embedding size mismatch");
@@ -1870,7 +1951,7 @@ private:
         return read_logits(prefill_logits_);
     }
 
-    VietneuTalkerPrefillLogits run_step(int64_t group, const std::vector<float> & embedding) {
+    VieNeuTalkerPrefillLogits run_step(int64_t group, const std::vector<float> & embedding) {
         const auto & config = weights_->assets().config;
         if (group <= 0 || group >= code_groups_) {
             throw std::runtime_error("VieNeu-TTS code predictor step group out of range");
@@ -1912,10 +1993,10 @@ private:
         return read_logits(step_graph.logits);
     }
 
-    VietneuTalkerPrefillLogits read_logits(ggml_tensor * logits_tensor) {
+    VieNeuTalkerPrefillLogits read_logits(ggml_tensor * logits_tensor) {
         const auto & config = weights_->assets().config.code_predictor;
 
-        VietneuTalkerPrefillLogits out;
+        VieNeuTalkerPrefillLogits out;
         out.vocab_size = config.vocab_size;
         out.values.resize(static_cast<size_t>(config.vocab_size));
         const auto timing_start = Clock::now();
@@ -1926,7 +2007,7 @@ private:
 
 
 
-    std::shared_ptr<const VietneuTalkerWeightsRuntime> weights_;
+    std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights_;
     int64_t code_groups_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     std::vector<core::TensorValue> cache_keys_;
@@ -1944,10 +2025,10 @@ private:
     CodePredictorTiming timing_;
 };
 
-class VietneuTalkerStepRuntime::Impl {
+class VieNeuTalkerStepRuntime::Impl {
 public:
     Impl(
-        std::shared_ptr<const VietneuTalkerWeightsRuntime> weights,
+        std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights,
         int64_t prompt_capacity,
         int64_t generation_capacity)
         : weights_(std::move(weights)),
@@ -1961,9 +2042,9 @@ public:
         }
     }
 
-    VietneuTalkerCodes generate(
-        const VietneuTalkerPrefill & request,
-        const VietneuTTSGenerationOptions & options,
+    VieNeuTalkerCodes generate(
+        const VieNeuTalkerPrefill & request,
+        const VieNeuTTSGenerationOptions & options,
         float repetition_penalty) {
         const auto total_start = Clock::now();
         const int64_t max_new_tokens = options.max_new_tokens;
@@ -2031,7 +2112,7 @@ public:
             }
             cached_step_capacity = cached_step_graph_->cache_steps();
         };
-        VietneuTalkerCodes out;
+        VieNeuTalkerCodes out;
         out.generated_codes.code_groups = config.num_code_groups;
         out.decoder_input_codes.code_groups = config.num_code_groups;
         const int64_t trailing_rows = static_cast<int64_t>(state.trailing_text.size()) / config.hidden_size;
@@ -2044,38 +2125,44 @@ public:
         double cached_step_ms = 0.0;
         CodePredictorTiming code_predictor_timing;
         CachedStepTiming cached_step_timing;
+        const bool is_vieneu = weights_->assets().config.is_vieneu;
+        RepetitionHistory history(config.num_code_groups, options.repetition_window);
         for (int64_t step = 0; step < max_new_tokens; ++step) {
-            auto logits = current.logits.values;
+            int32_t first_code = 0;
             const auto processor_start = Clock::now();
-            apply_main_talker_processors(logits, config, generated_first_codes, step, repetition_penalty);
-            const int32_t first_code = options.do_sample
-                ? sample_index(
-                    logits,
-                    options.top_k,
-                    options.top_p,
-                    options.temperature,
-                    rng,
-                    weights_->sampling_policy(),
-                    options.seed,
-                    sample_call_index++)
-                : argmax_index(logits);
-
-            processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
-            if (!weights_->assets().config.is_vieneu) {
+            if (!is_vieneu) {
+                // Qwen3-TTS style: codebook 0 comes from the backbone head. VieNeu samples
+                // every codebook in the acoustic decoder, so this pass is skipped.
+                auto logits = current.logits.values;
+                apply_main_talker_processors(logits, config, generated_first_codes, step, repetition_penalty);
+                first_code = options.do_sample
+                    ? sample_index(
+                        logits,
+                        options.top_k,
+                        options.top_p,
+                        options.temperature,
+                        rng,
+                        weights_->sampling_policy(),
+                        options.seed,
+                        sample_call_index++)
+                    : argmax_index(logits);
                 if (first_code == config.codec_eos_token_id) {
+                    processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
                     break;
                 }
             }
+            processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
             if (step + 1 >= max_new_tokens) {
                 break;
             }
             generated_first_codes.push_back(first_code);
-            VietneuTalkerCodePredictorInput predictor_input;
+            VieNeuTalkerCodePredictorInput predictor_input;
             predictor_input.talker_hidden = current.last_hidden;
             const int32_t sgs_id = static_cast<int32_t>(weights_->assets().config.speech_generation_start_token_id);
             predictor_input.first_code = sgs_id;
             const auto code_predictor_start = Clock::now();
-            const auto frame = code_predictor_graph_->generate(predictor_input, options, rng, sample_call_index);
+            const auto frame = code_predictor_graph_->generate(
+                predictor_input, options, rng, sample_call_index, is_vieneu ? &history : nullptr);
             code_predictor_ms += engine::debug::elapsed_ms(code_predictor_start, Clock::now());
             const auto & predictor_timing = code_predictor_graph_->timing();
             code_predictor_timing.input_upload_ms += predictor_timing.input_upload_ms;
@@ -2121,24 +2208,24 @@ public:
             out.generated_codes.codes.begin(),
             out.generated_codes.codes.end());
         out.decoder_input_codes.frames += out.generated_codes.frames;
-        debug::timing_log_scalar("vietneu_tts.talker.prompt_state_ms", engine::debug::elapsed_ms(prompt_state_start, prompt_state_end));
-        debug::timing_log_scalar("vietneu_tts.talker.prefill_ms", engine::debug::elapsed_ms(prefill_start, prefill_end));
-        debug::timing_log_scalar("vietneu_tts.talker.code_predictor_build_ms", code_predictor_build_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.cached_step_build_ms", cached_step_build_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.import_prefill_state_ms", import_prefill_state_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.processor_ms", processor_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.code_predictor_ms", code_predictor_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.code_predictor.input_upload_ms", code_predictor_timing.input_upload_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.code_predictor.graph.compute_ms", code_predictor_timing.graph_compute_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.code_predictor.output_read_ms", code_predictor_timing.output_read_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.frame_embed_ms", frame_embed_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.cached_step_ms", cached_step_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.cached_step.input_upload_ms", cached_step_timing.input_upload_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.cached_step.mask_upload_ms", cached_step_timing.mask_upload_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.cached_step.graph.compute_ms", cached_step_timing.graph_compute_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.cached_step.output_read_ms", cached_step_timing.output_read_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.cached_step.kv_copy_ms", cached_step_timing.kv_copy_ms);
-        debug::timing_log_scalar("vietneu_tts.talker.total_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.prompt_state_ms", engine::debug::elapsed_ms(prompt_state_start, prompt_state_end));
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.prefill_ms", engine::debug::elapsed_ms(prefill_start, prefill_end));
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.code_predictor_build_ms", code_predictor_build_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.cached_step_build_ms", cached_step_build_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.import_prefill_state_ms", import_prefill_state_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.processor_ms", processor_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.code_predictor_ms", code_predictor_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.code_predictor.input_upload_ms", code_predictor_timing.input_upload_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.code_predictor.graph.compute_ms", code_predictor_timing.graph_compute_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.code_predictor.output_read_ms", code_predictor_timing.output_read_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.frame_embed_ms", frame_embed_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.cached_step_ms", cached_step_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.cached_step.input_upload_ms", cached_step_timing.input_upload_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.cached_step.mask_upload_ms", cached_step_timing.mask_upload_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.cached_step.graph.compute_ms", cached_step_timing.graph_compute_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.cached_step.output_read_ms", cached_step_timing.output_read_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.cached_step.kv_copy_ms", cached_step_timing.kv_copy_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.total_ms", engine::debug::elapsed_ms(total_start, Clock::now()));
         return out;
     }
 
@@ -2163,47 +2250,47 @@ private:
             graph_ = std::make_unique<TalkerPrefillGraph>(weights_, prompt_steps);
             graph_build_ms = engine::debug::elapsed_ms(build_start, Clock::now());
         }
-        debug::timing_log_scalar("vietneu_tts.talker.prefill.graph.build_ms", graph_build_ms);
+        debug::timing_log_scalar("vieneu_v3_turbo.talker.prefill.graph.build_ms", graph_build_ms);
         return graph_->run_with_state(embeddings);
     }
 
-    std::shared_ptr<const VietneuTalkerWeightsRuntime> weights_;
+    std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights_;
     int64_t prompt_capacity_ = 0;
     int64_t generation_capacity_ = 0;
     std::unique_ptr<TalkerPrefillGraph> graph_;
     std::unique_ptr<TalkerCachedStepGraph> cached_step_graph_;
     std::unique_ptr<CodePredictorGraph> code_predictor_graph_;
-    std::optional<VietneuTalkerPrefill> cached_prompt_prefill_;
+    std::optional<VieNeuTalkerPrefill> cached_prompt_prefill_;
     std::optional<PromptEmbeddingState> cached_prompt_state_;
 };
 
-VietneuTalkerStepRuntime::VietneuTalkerStepRuntime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {
+VieNeuTalkerStepRuntime::VieNeuTalkerStepRuntime(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {
     if (impl_ == nullptr) {
         throw std::runtime_error("VieNeu-TTS talker step runtime requires implementation");
     }
 }
 
-VietneuTalkerStepRuntime::~VietneuTalkerStepRuntime() = default;
+VieNeuTalkerStepRuntime::~VieNeuTalkerStepRuntime() = default;
 
-VietneuTalkerCodes VietneuTalkerStepRuntime::generate(
-    const VietneuTalkerPrefill & prefill,
-    const VietneuTTSGenerationOptions & options,
+VieNeuTalkerCodes VieNeuTalkerStepRuntime::generate(
+    const VieNeuTalkerPrefill & prefill,
+    const VieNeuTTSGenerationOptions & options,
     float repetition_penalty) {
     return impl_->generate(prefill, options, repetition_penalty);
 }
 
-int64_t VietneuTalkerStepRuntime::release_cached_step_graph() {
+int64_t VieNeuTalkerStepRuntime::release_cached_step_graph() {
     return impl_->release_cached_step_graph();
 }
 
-VietneuTalker::VietneuTalker(VietneuTTSTalkerConfig config) : config_(std::move(config)) {}
+VieNeuTalker::VieNeuTalker(VieNeuTTSTalkerConfig config) : config_(std::move(config)) {}
 
-const VietneuTTSTalkerConfig & VietneuTalker::config() const noexcept {
+const VieNeuTTSTalkerConfig & VieNeuTalker::config() const noexcept {
     return config_;
 }
 
-std::shared_ptr<const VietneuTalkerWeightsRuntime> VietneuTalker::create_weights_runtime(
-    std::shared_ptr<const VietneuTTSAssets> assets,
+std::shared_ptr<const VieNeuTalkerWeightsRuntime> VieNeuTalker::create_weights_runtime(
+    std::shared_ptr<const VieNeuTTSAssets> assets,
     core::BackendType backend_type,
     int device,
     int threads,
@@ -2211,7 +2298,7 @@ std::shared_ptr<const VietneuTalkerWeightsRuntime> VietneuTalker::create_weights
     size_t talker_constant_context_bytes,
     size_t code_predictor_constant_context_bytes,
     engine::assets::TensorStorageType weight_storage_type) const {
-    return std::make_shared<VietneuTalkerWeightsRuntime>(
+    return std::make_shared<VieNeuTalkerWeightsRuntime>(
         std::move(assets),
         backend_type,
         device,
@@ -2222,12 +2309,12 @@ std::shared_ptr<const VietneuTalkerWeightsRuntime> VietneuTalker::create_weights
         weight_storage_type);
 }
 
-std::shared_ptr<VietneuTalkerStepRuntime> VietneuTalker::create_step_runtime(
-    std::shared_ptr<const VietneuTalkerWeightsRuntime> weights,
+std::shared_ptr<VieNeuTalkerStepRuntime> VieNeuTalker::create_step_runtime(
+    std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights,
     int64_t prompt_capacity,
     int64_t generation_capacity) const {
-    return std::make_shared<VietneuTalkerStepRuntime>(
-        std::make_unique<VietneuTalkerStepRuntime::Impl>(std::move(weights), prompt_capacity, generation_capacity));
+    return std::make_shared<VieNeuTalkerStepRuntime>(
+        std::make_unique<VieNeuTalkerStepRuntime::Impl>(std::move(weights), prompt_capacity, generation_capacity));
 }
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

@@ -13,7 +13,7 @@
 #include "engine/models/niagara_asr/frontend.h"
 #include "engine/models/qwen3_tts/speaker_encoder.h"
 #include "engine/models/seed_vc/audio_features.h"
-#include "engine/community_models/vietneu_tts/speaker_encoder.h"
+#include "engine/community_models/vieneu_v3_turbo/speaker_encoder.h"
 
 #include <cmath>
 #include <cstdint>
@@ -158,9 +158,9 @@ int main(int argc, char ** argv) try {
         const auto qwen3 = engine::models::qwen3_tts::compute_qwen3_speaker_mel(audio, 8);
         write(out / ("qwen3_tts_" + suffix), qwen3.values,
               qwen3.shape.at(2), qwen3.shape.at(1));
-        const auto vietneu = engine::models::vietneu_tts::compute_vietneu_speaker_mel(audio, 8);
-        write(out / ("vietneu_tts_" + suffix), vietneu.values,
-              vietneu.shape.at(2), vietneu.shape.at(1));
+        const auto vieneu = engine::models::vieneu_v3_turbo::compute_vieneu_speaker_mel(audio, 8);
+        write(out / ("vieneu_v3_turbo_" + suffix), vieneu.values,
+              vieneu.shape.at(2), vieneu.shape.at(1));
 
         engine::models::dramabox::DramaBoxConfig dramabox_config;
         int64_t dramabox_frames = 0;
