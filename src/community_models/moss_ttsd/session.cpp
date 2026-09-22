@@ -202,6 +202,12 @@ MossTtsdSession::GeneratedChunk MossTtsdSession::generate_chunk(
         const double expected = static_cast<double>(spoken_characters) * kFramesPerCharacter;
         bounds.max_frames = static_cast<int64_t>(expected * kCeilingFraction) + kCeilingSlackFrames;
     }
+    // The ceiling counts from the start of the audio, and in continuation the
+    // prompt's frames are already on that clock. Without this the budget for the
+    // words actually being asked for shrinks by the length of the reference.
+    if (assistant_audio.has_value()) {
+        bounds.max_frames += assistant_audio->frames;
+    }
     const int64_t max_steps = bounds.max_frames + n_vq + 4;
 
     std::vector<float> prompt_bias(static_cast<size_t>(prompt_rows * hidden_size), 0.0F);
@@ -213,6 +219,9 @@ MossTtsdSession::GeneratedChunk MossTtsdSession::generate_chunk(
 
     decoders::MossTtsDelayDecoder decoder(config, sampling, seed, bounds);
     decoder.seed_prompt_codes(prompt.audio_codes.data(), prompt_rows);
+    if (assistant_audio.has_value()) {
+        decoder.begin_continuation(assistant_audio->frames);
+    }
     backbone_->begin_generation(prompt_rows + max_steps + 8);
     auto hidden = backbone_->prefill(prompt.text_tokens, prompt_bias);
 
@@ -389,7 +398,38 @@ runtime::TaskResult MossTtsdSession::run(const runtime::TaskRequest & request) {
 
     const auto chunk = generate_chunk(
         fields, assistant_audio, sampling, seed, bounds_override, spoken_characters);
-    auto samples = decode_codes(chunk);
+
+    // ⚠ DECODE THE PROMPT AUDIO WITH IT, THEN CUT THE PROMPT BACK OFF. The codec
+    // is causal, so decoding the generated frames alone starts it cold and the
+    // first moments of the continuation are reconstructed without the context
+    // that produced them -- audible as a seam. The reference does the same thing
+    // and says so: "Keep codec causal context by decoding the whole first
+    // segment first, then trim at waveform level according to start_length
+    // ratio." The trim is by ratio rather than by a computed sample count for
+    // the same reason it is there: the codec's frame-to-sample ratio is its own
+    // business, and deriving the cut from the audio it actually returned cannot
+    // drift from it.
+    GeneratedChunk decoded = chunk;
+    int64_t prompt_frames = 0;
+    if (assistant_audio.has_value() && chunk.frames > 0) {
+        prompt_frames = assistant_audio->frames;
+        decoded.frames = prompt_frames + chunk.frames;
+        decoded.codes.assign(static_cast<size_t>(chunk.codebooks * decoded.frames), 0);
+        for (int64_t cb = 0; cb < chunk.codebooks; ++cb) {
+            auto * row = decoded.codes.data() + static_cast<size_t>(cb * decoded.frames);
+            const auto & prompt_row = assistant_audio->codes[static_cast<size_t>(cb)];
+            std::copy(prompt_row.begin(), prompt_row.end(), row);
+            std::copy(chunk.codes.begin() + static_cast<int64_t>(cb * chunk.frames),
+                      chunk.codes.begin() + static_cast<int64_t>((cb + 1) * chunk.frames),
+                      row + prompt_frames);
+        }
+    }
+    auto samples = decode_codes(decoded);
+    if (prompt_frames > 0 && !samples.empty()) {
+        const double ratio = static_cast<double>(prompt_frames) / static_cast<double>(decoded.frames);
+        const auto cut = static_cast<size_t>(static_cast<double>(samples.size()) * ratio);
+        samples.erase(samples.begin(), samples.begin() + static_cast<std::ptrdiff_t>(std::min(cut, samples.size())));
+    }
 
     runtime::TaskResult result;
     result.audio_output = runtime::AudioBuffer{

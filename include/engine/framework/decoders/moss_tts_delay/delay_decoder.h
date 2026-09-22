@@ -64,6 +64,19 @@ public:
     // history so extract_audio_codes() still returns only what was generated.
     void seed_prompt_codes(const int32_t * codes, int64_t rows);
 
+    // ⚠ CONTINUATION NEEDS THE STATE MACHINE TOLD, NOT JUST THE PENALTY SEEDED.
+    // When the prompt already carries assistant audio -- MOSS-TTSD clones this
+    // way -- the model will not emit an audio-start, because the prefix ended
+    // mid-span. Left at its initial state the decoder therefore believes no
+    // audio has begun: in_audio_ stays false and audio_length_ stays 0, so
+    // `started = audio_length_ > codebook` masks every codebook but the first
+    // and the delay ramp restarts from nothing. The model then begins a fresh
+    // utterance instead of carrying on, and re-speaks the text the prompt audio
+    // had already covered.
+    //
+    // `prompt_audio_frames` is the number of audio frames the prefix carries.
+    void begin_continuation(int64_t prompt_audio_frames);
+
     bool stopped() const noexcept { return stopped_; }
     int64_t steps() const noexcept { return step_index_; }
 
