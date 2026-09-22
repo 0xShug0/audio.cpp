@@ -137,7 +137,7 @@ The converter stages the OpenBMB PyTorch checkpoint as audio.cpp tensor names, f
 |---|---|---|
 | **Offline TTS** | ✅ Works | "This is a test run for the fix" → transcribes as **"This is a test."** (SenseVoice) |
 | **Voice Clone** | ✅ Works | 6/6 target sentences transcribe exactly via SenseVoice; continuation-mode with reference audio + transcript |
-| **Streaming** | ✅ Works | SSE PCM chunks at native 16 kHz; requires `retry_badcase=false` |
+| **Streaming** | ✅ Works | SSE PCM chunks at native 16 kHz; requires `retry_badcase=false`. On CPU, CUDA, HIP and Vulkan each patch is decoded with the AudioVAE's causal-convolution state carried over from the previous patch, so patch boundaries closely match the offline decode. Metal remains on the per-patch fallback and is expected to show the same boundary artifacts; it was not tested. |
 | **Reference-only clone** | ⚠️ Limited | `ref_start`/`ref_end` fails identically in the golden `VoxCPM.cpp` — model-level limitation |
 
 **Regression guard**: VoxCPM2 path is untouched (`config.v1` default `false`); still generates 48 kHz speech with byte-identical output.

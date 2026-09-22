@@ -180,6 +180,8 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"abc", "string", "ABC score conditioning text.", false},
         {"abc_file", "path", "Path to ABC score conditioning text.", false},
         {"cot", "off|melody|full", "Planning mode.", false, "off"},
+        {"export_semantic", "bool", "Attach the semantic token stream as a result artifact.", false, "false"},
+        {"stop_after", "abc|semantic|audio", "Last stage to run; semantic implies export_semantic.", false, "audio"},
         {"seed", "int", "Generation seed.", false, "1234"},
         {"guidance_scale", "float", "Classifier-free guidance scale (legacy alias: cfg_scale).", false, "1.0", "0.0", "20.0"},
         {"num_inference_steps", "int", "NAR ODE steps.", false, "8", "1"},
@@ -200,6 +202,7 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"yue2.nar_graph_arena_mb", "int", "NAR acoustic flow graph arena size in MiB.", false, "6144", "1"},
         {"yue2.vae_graph_arena_mb", "int", "VAE decode graph arena size in MiB.", false, "1536", "1"},
         {"yue2.attention", "auto|flash|eager", "NAR acoustic-flow attention lowering; auto uses flash except on CUDA sm70 (no kernel) and Intel Vulkan (eager measured faster).", false, "auto"},
+        {"yue2.attention_tile_rows", "int", "Query rows per tile in the eager NAR attention; 0 keeps a tile's score matrix under 3 GiB.", false, "0", "0"},
     };
     return out;
 }
@@ -227,7 +230,8 @@ Yue2Session::Yue2Session(
         runtime::parse_size_mb_option(options.options, {"yue2.ar_decode_graph_arena_mb"}, 1536ull * 1024ull * 1024ull),
         runtime::parse_size_mb_option(options.options, {"yue2.nar_graph_arena_mb"}, 6144ull * 1024ull * 1024ull),
         runtime::parse_size_mb_option(options.options, {"yue2.vae_graph_arena_mb"}, 1536ull * 1024ull * 1024ull),
-        attention_preference_from_options(options));
+        attention_preference_from_options(options),
+        runtime::parse_i64_option(options.options, {"yue2.attention_tile_rows"}).value_or(0));
 }
 
 Yue2Session::~Yue2Session() = default;
@@ -269,6 +273,19 @@ runtime::TaskResult Yue2Session::run(const runtime::TaskRequest & request) {
                 {"extension", "abc"},
                 {"source", "generated"},
                 {"truncated", run_result.plan_abc_truncated ? "true" : "false"},
+            }));
+    }
+    if (!run_result.semantic_codes.empty()) {
+        result.output_artifacts.push_back(runtime::make_text_artifact(
+            runtime::ArtifactKind::Custom,
+            "semantic",
+            semantic_codes_to_json(run_result.semantic_codes),
+            {
+                {"mime", "application/vnd.yue2.semantic+json"},
+                {"format", "yue2-semantic-codec"},
+                {"extension", "json"},
+                {"frames", std::to_string(run_result.semantic_codes.size())},
+                {"truncated", run_result.semantic_truncated ? "true" : "false"},
             }));
     }
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));

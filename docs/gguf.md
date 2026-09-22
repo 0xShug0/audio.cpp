@@ -40,6 +40,11 @@ server-wide value.
 
 ## Support And Test Status
 
+AuK Base and AuK-Flash use separate GGUFs for the generator, Qwen conditioner,
+and VAE, plus config and tokenizer sidecars. F16 and Q8_0 components have smoke
+coverage, but full Python parity was measured only for the earlier combined
+GGUF with FP32 inference. See [AuK](community_models/auk.md) for CLI usage.
+
 Status labels:
 
 | Label | Meaning |
@@ -76,6 +81,7 @@ Status labels:
 | `index_tts2` | Done (v2 + v2.5 variant) | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
+| `kitten_tts` | Done | --- | Pass (drift) | --- | --- |
 | `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
 | `meanvc2` | Done | --- | --- | Pass | --- |
@@ -93,6 +99,7 @@ Status labels:
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `outetts` | Done | Pass (TTS + clone) | --- | --- | Pass (TTS + clone) |
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
+| `piper_tts` | Done | Pass | Pass | --- | --- |
 | `personaplex` | Done | --- | --- | --- | Pass |
 | `pocket_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `pulsevad` | Done | Pass | Pass | --- | --- |
@@ -161,7 +168,15 @@ Q8 packaging notes:
   Q8_0 except for one capitalization-only difference.
 - `vibevoice_asr_streaming` also has a tested `q4_k` package. In a quick CUDA
   check, BF16 and Q4_K produced the same transcript wording on the validation
-  clip; Q8_0 produced the same sentence with minor wording drift.
+  clip; Q8_0 produced the same sentence with minor wording drift. On the 1.5B
+  packages, scored WER over the four `assets/asr_validation/librispeech` clips
+  degrades in quantization order on both backends -- CUDA 4.35/5.80/7.25% and
+  CPU 4.35/4.35/5.80% for BF16/Q8_0/Q4_K -- but that whole spread is two
+  substitutions out of 69 words, so treat the ordering as unsurprising rather
+  than as measured. Note that the quantized packages score differently per
+  backend because CPU and CUDA quantize activations differently upstream (Q8_K
+  or Q8_0 against Q8_1); BF16 quantizes none and matches exactly. Quote a WER
+  for a quantized package with its backend.
 
 ## Build The Converter
 

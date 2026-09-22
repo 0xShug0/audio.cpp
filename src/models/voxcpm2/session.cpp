@@ -461,6 +461,19 @@ VoxCPM2SessionBase::run_streaming_request(
     const auto decoder_start = Clock::now();
     auto audio = decoder_->decode_features(chunk.decode_features,
                                            chunk.decode_patches);
+    if (chunk.context_patches > 0) {
+      // Left-context patches were decoded for the decoder's history only.
+      const int64_t context_samples =
+          chunk.context_patches * assets_->config.patch_size *
+          product(assets_->config.audio_vae.decoder_rates);
+      if (context_samples > static_cast<int64_t>(audio.samples.size())) {
+        throw std::runtime_error(
+            "VoxCPM2 streaming context trim exceeds chunk audio length");
+      }
+      audio.samples.erase(audio.samples.begin(),
+                          audio.samples.begin() +
+                              static_cast<std::ptrdiff_t>(context_samples));
+    }
     decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
     if (emitted_chunks == 0) {
       merged.sample_rate = audio.sample_rate;
@@ -620,6 +633,17 @@ VoxCPM2GenerationOptions VoxCPM2SessionBase::generation_options_from_request(
       runtime::find_option(request.options,
                            {"voxcpm2.cfm_noise_file", "cfm_noise_file"})
           .value_or("");
+  if (const auto value = runtime::parse_i64_option(
+          request.options,
+          {"voxcpm2.stream_left_context", "stream_left_context"})) {
+    options.stream_left_context = *value;
+  }
+  if (options.stream_left_context < 0 ||
+      options.stream_left_context > kVoxCPM2MaxStreamLeftContext) {
+    throw std::runtime_error(
+        "VoxCPM2 stream_left_context must be between 0 and " +
+        std::to_string(kVoxCPM2MaxStreamLeftContext));
+  }
   if (options.min_tokens < 0) {
     throw std::runtime_error("VoxCPM2 min_tokens must be non-negative");
   }

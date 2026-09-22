@@ -1,0 +1,77 @@
+{
+ "audio": "resources/test.wav",
+ "chunk_ms": 320,
+ "unfixed_chunk_num": 2,
+ "unfixed_token_num": 5,
+ "max_new_tokens": 32,
+ "language": null,
+ "context": "",
+ "offline": "[ASRTranscription(language='Chinese', text='之前有顾客自己带酒水，也没加收钱或者不让喝。', time_stamps=None)]",
+ "stream_chunks": [
+  {
+   "fixed_text": ""
+  },
+  {
+   "fixed_text": ""
+  },
+  {
+   "fixed_text": ""
+  },
+  {
+   "fixed_text": ""
+  },
+  {
+   "fixed_text": ""
+  },
+  {
+   "fixed_text": ""
+  },
+  {
+   "fixed_text": "language"
+  },
+  {
+   "fixed_text": ""
+  },
+  {
+   "fixed_text": "之前"
+  },
+  {
+   "fixed_text": "之前有"
+  },
+  {
+   "fixed_text": "之前有"
+  },
+  {
+   "fixed_text": "之前有"
+  },
+  {
+   "fixed_text": "之前有顾客"
+  },
+  {
+   "fixed_text": "之前有顾客自己带"
+  },
+  {
+   "fixed_text": "之前有顾客自己带酒"
+  },
+  {
+   "fixed_text": "之前有顾客自己带酒"
+  },
+  {
+   "fixed_text": "之前有顾客自己带酒水"
+  },
+  {
+   "fixed_text": "之前有顾客自己带酒水也没"
+  },
+  {
+   "fixed_text": "之前有顾客自己带酒水也没加"
+  },
+  {
+   "fixed_text": "之前有顾客自己带酒水也没加"
+  },
+  {
+   "fixed_text": "之前有顾客自己带酒水也没加"
+  }
+ ],
+ "stream_final_text": "之前有顾客自己带酒水也没加收钱或者不让喝",
+ "stream_finish_return": "之前有顾客自己带酒水也没加收钱或者不让喝"
+}

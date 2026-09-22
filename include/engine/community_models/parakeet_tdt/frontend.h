@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/community_models/parakeet_tdt/assets.h"
 
@@ -24,13 +24,8 @@ public:
     ParakeetFrontendFeatures extract(
         const engine::runtime::AudioBuffer & audio,
         bool center) const;
-    std::vector<float> prepare_waveform(const engine::runtime::AudioBuffer & audio) const;
-    ParakeetFrontendFeatures extract_waveform(const std::vector<float> & waveform, bool center) const;
-
 private:
-    std::shared_ptr<const ParakeetTDTAssets> assets_;
-    engine::audio::SparseMelFilterbank filterbank_;
-    std::vector<float> window_;
+    engine::audio::NemoMelFrontend frontend_;
 };
 
 }  // namespace engine::community_models::parakeet_tdt

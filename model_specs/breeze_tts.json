@@ -185,6 +185,14 @@
         "required": false,
         "values": ["auto", "flash", "eager"],
         "default": "auto"
+      },
+      {
+        "name": "bf16_activations",
+        "type": "enum",
+        "description": "Reference bf16 activation rounding as the official BreezeTTS 2 inference does it. auto = on for CUDA/HIP/Vulkan and off on Metal, where the cast cost is visible even with the fused round-to-bf16 op (~20% slower AR loop); on/off force it either way. On Metal, on also switches the KV cache to bf16 to match the reference implementation.",
+        "required": false,
+        "values": ["auto", "on", "off"],
+        "default": "auto"
       }
     ],
     "load": []

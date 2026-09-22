@@ -10,15 +10,18 @@
 #include "engine/models/yue2/tokenizer_text.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace engine::models::yue2 {
 
 struct Yue2RunResult {
-    runtime::AudioBuffer audio;
+    std::optional<runtime::AudioBuffer> audio;
     std::string plan_abc_text;
     bool plan_abc_truncated = false;
+    std::vector<int32_t> semantic_codes;
+    bool semantic_truncated = false;
 };
 
 class Yue2PipelineRuntime {
@@ -34,7 +37,8 @@ public:
         size_t ar_decode_graph_arena_bytes,
         size_t nar_graph_arena_bytes,
         size_t vae_graph_arena_bytes,
-        core::AttentionPreference attention_preference = core::AttentionPreference::Auto);
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto,
+        int64_t nar_attention_tile_rows = 0);
     ~Yue2PipelineRuntime();
 
     Yue2Plan plan(const Yue2Request & request);

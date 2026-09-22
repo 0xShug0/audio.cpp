@@ -62,7 +62,9 @@ public:
     GreedyQwenDecoderRuntime(const GreedyQwenDecoderRuntime &) = delete;
     GreedyQwenDecoderRuntime & operator=(const GreedyQwenDecoderRuntime &) = delete;
 
-    std::vector<int32_t> generate(const Prompt & prompt, int64_t max_new_tokens);
+    // Opt-in bounded-block prefill and capacity-bucketed decode for repeated
+    // growing prompts. Each call still recomputes the full prompt.
+    std::vector<int32_t> generate(const Prompt & prompt, int64_t max_new_tokens, bool reuse_graphs = false);
 
 private:
     struct Impl;

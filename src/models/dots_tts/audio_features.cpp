@@ -2,7 +2,7 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
-#include "engine/framework/audio/kaldi_fbank.h"
+#include "engine/framework/audio/reference_audio_frontend.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/audio/waveform_ops.h"
 #include "engine/framework/debug/trace.h"
@@ -18,37 +18,6 @@ namespace {
 
 constexpr float kEditEdgeSilenceMs = 250.0F;
 constexpr float kEditEdgeSilenceTopDb = 30.0F;
-
-std::vector<float> make_dots_speaker_mel_filterbank(
-    int64_t sample_rate,
-    int64_t n_fft,
-    int64_t n_mels,
-    float low_freq,
-    float high_freq) {
-    const int64_t num_fft_bins = n_fft / 2 + 1;
-    const float nyquist = 0.5F * static_cast<float>(sample_rate);
-    if (high_freq <= 0.0F) {
-        high_freq += nyquist;
-    }
-    const float fft_bin_width = static_cast<float>(sample_rate) / static_cast<float>(n_fft);
-    const float mel_low = 1127.0F * std::log(1.0F + low_freq / 700.0F);
-    const float mel_high = 1127.0F * std::log(1.0F + high_freq / 700.0F);
-    const float mel_delta = (mel_high - mel_low) / static_cast<float>(n_mels + 1);
-    std::vector<float> filterbank(static_cast<size_t>(n_mels * num_fft_bins), 0.0F);
-    for (int64_t mel_bin = 0; mel_bin < n_mels; ++mel_bin) {
-        const float left_mel = mel_low + static_cast<float>(mel_bin) * mel_delta;
-        const float center_mel = mel_low + static_cast<float>(mel_bin + 1) * mel_delta;
-        const float right_mel = mel_low + static_cast<float>(mel_bin + 2) * mel_delta;
-        for (int64_t fft_bin = 0; fft_bin < num_fft_bins; ++fft_bin) {
-            const float freq = fft_bin_width * static_cast<float>(fft_bin);
-            const float mel = 1127.0F * std::log(1.0F + freq / 700.0F);
-            const float up = (mel - left_mel) / std::max(center_mel - left_mel, 1.0e-12F);
-            const float down = (right_mel - mel) / std::max(right_mel - center_mel, 1.0e-12F);
-            filterbank[static_cast<size_t>(mel_bin * num_fft_bins + fft_bin)] = std::max(0.0F, std::min(up, down));
-        }
-    }
-    return filterbank;
-}
 
 std::vector<float> validated_mono_samples(const runtime::AudioBuffer & audio, const char * role) {
     if (audio.channels <= 0) {
@@ -128,102 +97,8 @@ void pad_to_multiple(std::vector<float> & waveform, int64_t multiple) {
 }  // namespace
 
 DotsFbankOutput compute_dots_speaker_fbank_16k(const std::vector<float> & waveform_16k) {
-    constexpr int64_t kSampleRate = 16000;
-    constexpr int64_t kWindowSize = 400;
-    constexpr int64_t kWindowShift = 160;
-    constexpr int64_t kPaddedWindowSize = 512;
-    constexpr int64_t kNumMels = 80;
-    constexpr float kLowFreq = 20.0F;
-    constexpr float kHighFreq = 0.0F;
-    constexpr float kPreemphasis = 0.97F;
-    constexpr float kEpsilon = std::numeric_limits<float>::epsilon();
-    if (static_cast<int64_t>(waveform_16k.size()) < kWindowSize) {
-        throw std::runtime_error("DotTTS speaker fbank requires at least one 25 ms frame");
-    }
-    const int64_t frames = 1 + (static_cast<int64_t>(waveform_16k.size()) - kWindowSize) / kWindowShift;
-    const auto & window = engine::audio::cached_kaldi_povey_window(kWindowSize);
-    static engine::audio::KaldiMelFilterbankCache mel_filterbank_cache;
-    const auto & mel_filterbank = mel_filterbank_cache.get(
-        kSampleRate,
-        kPaddedWindowSize,
-        kNumMels,
-        kLowFreq,
-        kHighFreq,
-        [] {
-            return make_dots_speaker_mel_filterbank(
-                kSampleRate,
-                kPaddedWindowSize,
-                kNumMels,
-                kLowFreq,
-                kHighFreq);
-        });
-    std::vector<float> frame(static_cast<size_t>(kWindowSize), 0.0F);
-    std::vector<float> stft_batch(static_cast<size_t>(frames * kPaddedWindowSize), 0.0F);
-    for (int64_t frame_index = 0; frame_index < frames; ++frame_index) {
-        const int64_t start = frame_index * kWindowShift;
-        float mean = 0.0F;
-        for (int64_t i = 0; i < kWindowSize; ++i) {
-            const float sample = waveform_16k[static_cast<size_t>(start + i)];
-            frame[static_cast<size_t>(i)] = sample;
-            mean += sample;
-        }
-        mean /= static_cast<float>(kWindowSize);
-        for (int64_t i = 0; i < kWindowSize; ++i) {
-            frame[static_cast<size_t>(i)] -= mean;
-        }
-        for (int64_t i = kWindowSize - 1; i > 0; --i) {
-            frame[static_cast<size_t>(i)] -= kPreemphasis * frame[static_cast<size_t>(i - 1)];
-        }
-        frame[0] -= kPreemphasis * frame[0];
-        for (int64_t i = 0; i < kWindowSize; ++i) {
-            stft_batch[static_cast<size_t>(frame_index * kPaddedWindowSize + i)] =
-                frame[static_cast<size_t>(i)] * window[static_cast<size_t>(i)];
-        }
-    }
-
-    std::vector<float> stft_window(static_cast<size_t>(kPaddedWindowSize), 1.0F);
-    const engine::audio::STFTConfig stft_config{
-        kPaddedWindowSize,
-        kPaddedWindowSize,
-        kPaddedWindowSize,
-        false,
-        engine::audio::STFTPadMode::Constant,
-        engine::audio::STFTFamily::Default,
-    };
-    const auto magnitude = engine::audio::STFT().compute_magnitude(
-        stft_batch,
-        stft_window,
-        frames,
-        kPaddedWindowSize,
-        stft_config);
-
-    const int64_t freq_bins = (kPaddedWindowSize / 2) + 1;
-    DotsFbankOutput output;
-    output.frames = frames;
-    output.dims = kNumMels;
-    output.values.assign(static_cast<size_t>(frames * kNumMels), 0.0F);
-    for (int64_t frame_index = 0; frame_index < frames; ++frame_index) {
-        for (int64_t mel_bin = 0; mel_bin < kNumMels; ++mel_bin) {
-            float energy = 0.0F;
-            for (int64_t freq = 0; freq < freq_bins; ++freq) {
-                const float mag = magnitude.values[static_cast<size_t>(frame_index * freq_bins + freq)];
-                energy += (mag * mag) * mel_filterbank[static_cast<size_t>(mel_bin * freq_bins + freq)];
-            }
-            output.values[static_cast<size_t>(frame_index * kNumMels + mel_bin)] =
-                std::log(std::max(energy, kEpsilon));
-        }
-    }
-    for (int64_t mel_bin = 0; mel_bin < kNumMels; ++mel_bin) {
-        float mean = 0.0F;
-        for (int64_t frame_index = 0; frame_index < frames; ++frame_index) {
-            mean += output.values[static_cast<size_t>(frame_index * kNumMels + mel_bin)];
-        }
-        mean /= static_cast<float>(frames);
-        for (int64_t frame_index = 0; frame_index < frames; ++frame_index) {
-            output.values[static_cast<size_t>(frame_index * kNumMels + mel_bin)] -= mean;
-        }
-    }
-    return output;
+    auto features = engine::audio::ReferenceAudioFrontend::campplus_fbank_16k(waveform_16k);
+    return {std::move(features.values), features.frames, features.feature_dim};
 }
 
 DotsPreparedReferenceAudio prepare_dots_reference_audio(

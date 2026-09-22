@@ -12,7 +12,7 @@
  */
 
 #include "engine/community_models/moss_voicegen/assets.h"
-#include "engine/community_models/moss_voicegen/backbone.h"
+#include "engine/framework/decoders/moss_tts_delay/backbone.h"
 #include "engine/community_models/moss_voicegen/tokenizer_text.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
@@ -160,8 +160,8 @@ int main(int argc, char ** argv) {
         backend_config.device = 0;
         backend_config.threads = std::stoi(arg_value(argc, argv, "--threads", "8"));
         engine::core::ExecutionContext execution_context(backend_config);
-        const engine::models::moss_voicegen::MossVoiceGenBackboneRuntime backbone(
-            assets, execution_context, 512ull * 1024ull * 1024ull, 8192ull * 1024ull * 1024ull, weight_type);
+        const engine::decoders::MossTtsDelayBackboneRuntime backbone(
+            assets->config, assets->model_weights, execution_context, 512ull * 1024ull * 1024ull, 8192ull * 1024ull * 1024ull, weight_type);
 
         backbone.begin_generation(steps + 8);
         const auto prefill_hidden = backbone.prefill(rows.text_tokens, audio_bias);

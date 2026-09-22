@@ -320,6 +320,7 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_unary(ggml_metal
                 case GGML_UNARY_OP_ROUND:       op_num = OP_UNARY_NUM_ROUND;       break;
                 case GGML_UNARY_OP_TRUNC:       op_num = OP_UNARY_NUM_TRUNC;       break;
                 case GGML_UNARY_OP_XIELU:       op_num = OP_UNARY_NUM_XIELU;       break;
+                case GGML_UNARY_OP_ROUND_BF16:  op_num = OP_UNARY_NUM_ROUND_BF16;  break;
                 default: GGML_ABORT("fatal error");
             } break;
         default: GGML_ABORT("fatal error");

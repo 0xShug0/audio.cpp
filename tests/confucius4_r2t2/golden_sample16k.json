@@ -1,0 +1,229 @@
+{
+ "audio": "/Users/david/github/voice/audio.cpp/assets/resources/sample_16k.wav",
+ "chunk_ms": 320,
+ "unfixed_chunk_num": 2,
+ "unfixed_token_num": 5,
+ "max_new_tokens": 32,
+ "language": null,
+ "context": "",
+ "offline": "[ASRTranscription(language='English', text=\"Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer than you.\", time_stamps=None)]",
+ "stream_chunks": [
+  {
+   "fixed_text": "",
+   "raw_decoded": "language None<asr_text>",
+   "text": ""
+  },
+  {
+   "fixed_text": "",
+   "raw_decoded": "language None<asr_text>",
+   "text": ""
+  },
+  {
+   "fixed_text": "",
+   "raw_decoded": "language None<asr_text>",
+   "text": ""
+  },
+  {
+   "fixed_text": "",
+   "raw_decoded": "language English<asr_text>Some",
+   "text": "Some"
+  },
+  {
+   "fixed_text": "language",
+   "raw_decoded": "language English<asr_text>Some call me",
+   "text": "Some call me"
+  },
+  {
+   "fixed_text": "language",
+   "raw_decoded": "language English<asr_text>Some call me",
+   "text": "Some call me"
+  },
+  {
+   "fixed_text": "",
+   "raw_decoded": "language English<asr_text>Some call me nature.",
+   "text": "Some call me nature."
+  },
+  {
+   "fixed_text": "",
+   "raw_decoded": "language English<asr_text>Some call me nature.",
+   "text": "Some call me nature."
+  },
+  {
+   "fixed_text": "",
+   "raw_decoded": "language English<asr_text>Some call me nature.",
+   "text": "Some call me nature."
+  },
+  {
+   "fixed_text": "",
+   "raw_decoded": "language English<asr_text>Some call me nature,",
+   "text": "Some call me nature,"
+  },
+  {
+   "fixed_text": "Some",
+   "raw_decoded": "language English<asr_text>Some call me nature; others",
+   "text": "Some call me nature; others"
+  },
+  {
+   "fixed_text": "Some",
+   "raw_decoded": "language English<asr_text>Some call me nature; others",
+   "text": "Some call me nature; others"
+  },
+  {
+   "fixed_text": "Some call",
+   "raw_decoded": "language English<asr_text>Some call me nature; others call",
+   "text": "Some call me nature; others call"
+  },
+  {
+   "fixed_text": "Some call me",
+   "raw_decoded": "language English<asr_text>Some call me nature; others call me",
+   "text": "Some call me nature; others call me"
+  },
+  {
+   "fixed_text": "Some call me nature",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother",
+   "text": "Some call me nature, others call me mother"
+  },
+  {
+   "fixed_text": "Some call me nature, others",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature.",
+   "text": "Some call me nature, others call me mother nature."
+  },
+  {
+   "fixed_text": "Some call me nature, others",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature.",
+   "text": "Some call me nature, others call me mother nature."
+  },
+  {
+   "fixed_text": "Some call me nature, others",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature.",
+   "text": "Some call me nature, others call me mother nature."
+  },
+  {
+   "fixed_text": "Some call me nature, others",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature.",
+   "text": "Some call me nature, others call me mother nature."
+  },
+  {
+   "fixed_text": "Some call me nature, others call me",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've",
+   "text": "Some call me nature, others call me mother nature. I've"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been",
+   "text": "Some call me nature, others call me mother nature. I've been"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature.",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for",
+   "text": "Some call me nature, others call me mother nature. I've been here for"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over",
+   "text": "Some call me nature, others call me mother nature. I've been here for over"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over",
+   "text": "Some call me nature, others call me mother nature. I've been here for over"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over",
+   "text": "Some call me nature, others call me mother nature. I've been here for over"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4."
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years.",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years."
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years.",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years."
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years.",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years."
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years.",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years."
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years.",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years."
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years. 22",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years. 22"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, ",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,00",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,00"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 2",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 2",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer"
+  },
+  {
+   "fixed_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,5",
+   "raw_decoded": "language English<asr_text>Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer than",
+   "text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer than"
+  }
+ ],
+ "stream_final_text": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer than you.",
+ "stream_finish_return": "Some call me nature, others call me mother nature. I've been here for over 4.5 billion years, 22,500 times longer than you."
+}

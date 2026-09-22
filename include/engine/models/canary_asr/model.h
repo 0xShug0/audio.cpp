@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/conformer_modules.h"
@@ -21,6 +22,7 @@ struct CanaryAssets {
     std::vector<tokenizers::SentencePiecePiece> vocabulary;
     std::vector<float> window;
     audio::AudioTensor filterbank;
+    std::shared_ptr<const audio::NemoMelFrontend> frontend;
     int32_t special_token(const std::string & text) const;
 };
 
@@ -37,6 +39,17 @@ struct CanaryWeights {
 std::shared_ptr<const CanaryAssets> load_canary_assets(const std::filesystem::path & path);
 std::unique_ptr<CanaryWeights> load_canary_weights(
     const CanaryAssets & assets, core::ExecutionContext & execution, assets::TensorStorageType type);
+
+struct CanaryFrontendFeatures {
+    std::vector<float> values;
+    int64_t raw_frames = 0;
+    int64_t valid_frames = 0;
+};
+
+CanaryFrontendFeatures extract_canary_frontend(
+    const std::vector<float> & samples,
+    const CanaryAssets & assets,
+    size_t threads);
 
 class CanaryRuntime {
 public:

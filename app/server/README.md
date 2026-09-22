@@ -2,6 +2,8 @@
 
 `audiocpp_server` is an HTTP adapter over the framework runtime registry. It keeps one loaded model and one offline task session per active model id, so repeated HTTP requests reuse the same framework session and model-owned graph/cache state.
 
+`POST /v1/audio/speech` accepts top-level `speed` (or `speaking_rate`) as a positive speech-rate multiplier when the selected model supports speed control. Models without speed control reject the field.
+
 ## Build
 
 ```bash
@@ -467,7 +469,7 @@ curl http://127.0.0.1:8080/v1/audio/alignments \
 
 Streams raw PCM **as it is captured** and returns transcript deltas on the same connection, so partial text can appear while the user is still speaking.
 
-The request body is raw interleaved PCM sent with `Transfer-Encoding: chunked`; the response is the same SSE event shape as `stream=true` above, so a client can share one reader. There is no multipart form and no file — the audio never has to exist on disk, and the transport hands each chunk to the model as it arrives rather than assembling the recording first. Whether the *model* then keeps the whole utterance in memory is its own business: `nemotron_asr`, for instance, accumulates internally regardless of how the audio reaches it.
+The request body is raw interleaved PCM sent with `Transfer-Encoding: chunked`; the response is the same SSE event shape as `stream=true` above, so a client can share one reader. There is no multipart form and no file — the audio never has to exist on disk, and the transport hands each chunk to the model as it arrives rather than assembling the recording first.
 
 Because the body carries audio rather than JSON, parameters are query parameters:
 
@@ -478,6 +480,7 @@ Because the body carries audio rather than JSON, parameters are query parameters
 | `channels` | `1` | interleaved channel count |
 | `sample_format` | `s16le` | `s16le` or `f32le` |
 | `language` | unset | passed through to the model |
+| `prompt` | unset | URL-encoded recognition context (hotwords, spellings), same as the multipart `prompt` field |
 | `busy_timeout_ms` | model policy | how long to wait for the model lock, as elsewhere; clamped by the configured ceiling, so a request can shorten its own wait but never weaken the guard |
 
 ```bash
@@ -491,7 +494,7 @@ ffmpeg -f avfoundation -i ":0" -ar 16000 -ac 1 -f s16le - \
 
 A headerless stream carries no format, so the parameters above are a contract the server cannot verify — sending 48 kHz audio while declaring 16 kHz produces a confident, wrong transcript rather than an error.
 
-Whether partial text actually appears *during* capture is a property of the model, not of this endpoint. A model that decodes incrementally (`voxtral_realtime`) emits deltas throughout the utterance; one whose encoder consumes the whole utterance before decoding (`nemotron_asr`) will stream its deltas only after the audio ends. Both work here; only the first feels live.
+Whether partial text actually appears *during* capture is a property of the model, not of this endpoint. Cache-aware streaming models such as `voxtral_realtime` and `nemotron_asr` emit deltas throughout the utterance; buffered models may emit only after enough audio has accumulated.
 
 The request ends when the client sends the terminating chunk. Closing the connection without one is an error, not an end of speech — a truncated transcript that arrives as a normal `transcript.text.done` would be indistinguishable from the speaker stopping, so the endpoint refuses to produce one. The same applies to a stall past the idle timeout, an oversized chunk, or a malformed frame: each surfaces as an SSE `error` event.
 

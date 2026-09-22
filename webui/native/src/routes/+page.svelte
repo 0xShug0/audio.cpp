@@ -315,7 +315,10 @@
   };
   const asrLanguages: Record<string, string[]> = {
     canary_asr: ['en', 'de', 'es', 'fr'],
-    cohere_asr: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'el', 'ar', 'ja', 'zh', 'vi', 'ko']
+    cohere_asr: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'el', 'ar', 'ja', 'zh', 'vi', 'ko'],
+    // Confucius4-R2T2 takes canonical language names (the engine normalizes
+    // case); 'Auto' leaves language detection on.
+    confucius4_r2t2: ['Auto', 'Chinese', 'English', 'Cantonese', 'Japanese', 'Korean', 'Arabic', 'German', 'French', 'Spanish', 'Portuguese', 'Indonesian', 'Italian', 'Russian', 'Thai', 'Vietnamese', 'Turkish', 'Hindi', 'Malay', 'Dutch', 'Swedish', 'Danish', 'Finnish', 'Polish', 'Czech', 'Filipino', 'Persian', 'Greek', 'Romanian', 'Hungarian', 'Macedonian']
   };
 
   function pathVariantLabel(path: string) {
@@ -476,7 +479,7 @@
     !['apollo', 'universr'].includes(selected?.family) &&
     !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
-    ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming'].includes(selected?.family);
+    ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming', 'confucius4_r2t2'].includes(selected?.family);
   $: modelInventoryLoading = server === null ||
     (Boolean(server.ui_management) && Object.keys(packageSizes).length === 0 && packageSizeState !== 'failed');
   $: selectableModelIds = new Set(activeCatalog.filter((entry) => {
@@ -1047,7 +1050,8 @@
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
-    if (selected?.family in asrLanguages) language = 'en';
+    if (selected?.family === 'confucius4_r2t2') language = 'Auto';
+    else if (selected?.family in asrLanguages) language = 'en';
     if (selected?.family === 'minimax_h3') {
       duration = 15;
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration), dit_acceleration: 'none' };
@@ -1060,7 +1064,9 @@
         advancedValues = {
           ...advancedValues,
           ar_lora: configured?.['yue2.ar_lora'] ?? '',
-          ar_lora_scale: Number(configured?.['yue2.ar_lora_scale'] ?? 1)
+          ar_lora_scale: Number(configured?.['yue2.ar_lora_scale'] ?? 1),
+          nar_lora: configured?.['yue2.nar_lora'] ?? '',
+          nar_lora_scale: Number(configured?.['yue2.nar_lora_scale'] ?? 1)
         };
       }
       text = '';

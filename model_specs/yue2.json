@@ -65,6 +65,18 @@
         "default": "full"
       },
       {
+        "name": "stop_after",
+        "type": "enum",
+        "values": [
+          "abc",
+          "semantic",
+          "audio"
+        ],
+        "description": "Last stage to run. abc writes the generated score only; semantic also writes the semantic token export; audio renders the full song.",
+        "required": false,
+        "default": "audio"
+      },
+      {
         "name": "abc",
         "type": "string",
         "description": "External ABC score text for melody/full routes.",
@@ -81,6 +93,13 @@
         "type": "string",
         "description": "Path to a raw float32 noise file for NAR generation, shaped [frames,64].",
         "required": false
+      },
+      {
+        "name": "export_semantic",
+        "type": "bool",
+        "description": "Attach the semantic token stream as a semantic artifact (JSON array of codec indices); default false.",
+        "required": false,
+        "default": false
       },
       {
         "name": "guidance_scale",

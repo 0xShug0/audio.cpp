@@ -135,7 +135,7 @@ void HviskeEncoderRuntime::ensure_graph(int64_t input_frames, int64_t input_feat
     }
     if (graph_ != nullptr &&
         graph_->backend == execution_context_->backend() &&
-        graph_->input_frames >= input_frames &&
+        engine::modules::asr_graph_capacity_usable(graph_->input_frames, input_frames) &&
         graph_->input_features == input_features) {
         debug::timing_log_scalar("hviske_asr.encoder.graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("hviske_asr.encoder.graph_cache_hit", true);

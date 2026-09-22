@@ -81,6 +81,8 @@ private:
         // contract omits it would reject the whole request over an option
         // nobody set. Resolved once at registration for the same cost reason.
         bool accepts_language = true;
+        bool accepts_speed = true;
+        bool accepts_speaking_rate = true;
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;

@@ -1,4 +1,5 @@
 #include "engine/models/canary_asr/model.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 
 #include "engine/framework/audio/waveform_ops.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -194,19 +195,23 @@ CanaryRuntime::CanaryRuntime(const CanaryAssets & assets, const CanaryWeights & 
 
 CanaryRuntime::~CanaryRuntime() = default;
 
+CanaryFrontendFeatures extract_canary_frontend(
+    const std::vector<float> & samples,
+    const CanaryAssets & assets,
+    size_t threads) {
+    auto features = assets.frontend->extract_mono(
+        samples, {true, audio::ValidFrameRule::FloorHops}, threads);
+    return {std::move(features.values), features.raw_frames, features.valid_frames};
+}
+
 std::vector<int32_t> CanaryRuntime::transcribe(const std::vector<float> & samples,
     const std::vector<int32_t> & prompt, int64_t max_tokens) {
     if (samples.size() < 320 || samples.size() > 40 * 16000) {
         throw std::runtime_error("Canary chunks must contain between 20 ms and 40 seconds of audio");
     }
-    const auto emphasized = audio::apply_preemphasis(samples, 0.97f);
-    auto mel = audio::LogMelSpectrogram().compute(emphasized, assets_.window, 1,
-        static_cast<int64_t>(samples.size()), {512, 160, 400, true, audio::STFTPadMode::Constant},
-        assets_.filterbank, static_cast<size_t>(execution_.config().threads));
-    const int64_t valid = static_cast<int64_t>(samples.size()) / 160;
-    auto normalized = audio::FeatureNormalizer().compute(mel.values, {valid}, 1, 128,
-        mel.shape[2], audio::FeatureNormalizeType::PerFeature);
-    const int64_t raw_frames = mel.shape[2];
+    const auto features = extract_canary_frontend(samples, assets_, static_cast<size_t>(execution_.config().threads));
+    const int64_t valid = features.valid_frames;
+    const int64_t raw_frames = features.raw_frames;
     const int64_t required = (raw_frames + 7) / 8;
     if (!graphs_ || graphs_->frames < required) {
         graphs_ = std::make_unique<Graphs>(execution_, weights_, ((required + 31) / 32) * 32);
@@ -215,7 +220,7 @@ std::vector<int32_t> CanaryRuntime::transcribe(const std::vector<float> & sample
     std::vector<float> input(static_cast<size_t>(g.frames * 8 * 128), 0.0f);
     for (int64_t t = 0; t < valid; ++t) {
         for (int64_t m = 0; m < 128; ++m) {
-            input[static_cast<size_t>(t * 128 + m)] = normalized.normalized.values[static_cast<size_t>(m * raw_frames + t)];
+            input[static_cast<size_t>(t * 128 + m)] = features.values[static_cast<size_t>(m * raw_frames + t)];
         }
     }
     const int64_t valid_encoded = (valid + 7) / 8;

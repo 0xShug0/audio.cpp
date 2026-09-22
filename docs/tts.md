@@ -2,6 +2,7 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
+| AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](community_models/auk.md) |
 | Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
 | Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
@@ -13,6 +14,7 @@
 | MioTTS | `miotts` | `tts` | [MioTTS](models/miotts.md) |
 | MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
 | MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
+| MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](community_models/moss_tts_v15.md) |
 | MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](community_models/moss_voicegen.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
@@ -29,9 +31,11 @@
 | IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts.md) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
 | Kokoro 82M | `kokoro_tts` | `tts` | [Kokoro 82M](models/kokoro_tts.md) |
+| KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](community_models/kitten_tts.md) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
+| Piper TTS | `piper_tts` | `tts` | [Piper TTS](community_models/piper_tts.md) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | VieNeu-TTS | `vietneu_tts` | `tts`, `clon` | [VieNeu-TTS](community_models/vietneu_tts.md) |
@@ -532,6 +536,7 @@ audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda -
 | `--text-chunk-size` | integer chars | `2048` | Long-form chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form chunking mode; keeps style/tag controls attached to chunks by default. |
 | `--request-option voxcpm2.chunk_strategy=continuation\|stateless` | enum | `continuation` | Long-form chunk generation strategy. `stateless` synthesizes each text chunk from the same original prompt/reference and concatenates the audio; use it for plain text/reference-clone long-form input, not voice/emotion tag carry-over. |
+| `--request-option voxcpm2.stream_left_context=<n>` | integer, `0`–`8` | `3` | Streaming: preceding patches decoded together with each emitted patch and trimmed off again. The AudioVAE decoder is causal but is invoked per patch, so without them its convolution history restarts at every patch boundary and the seams click. `0` decodes every patch alone; values above `3` cost decoder time for little gain. |
 | `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
 | `--num-inference-steps` | integer | `10` | Flow matching steps. |
 | `--guidance-scale` | float | `2.0` | CFG strength. |
@@ -758,7 +763,8 @@ audiocpp_cli --task tts --family supertonic --model /path/to/supertonic-3 --back
 | `--voice-id` | `M1`-`M5`, `F1`-`F5` | `M1` | Preset voice. |
 | `--language` | language code | `en` | Text language. |
 | `--num-inference-steps` | integer | `8` | Flow denoising steps. |
-| `--request-option speaking_rate=<float>` | float | `1.05` | Speech speed multiplier. |
+| `--request-option speed=<float>` | float | `1.05` | Speech speed multiplier. |
+| `--request-option speaking_rate=<float>` | float | `1.05` | Alias for `speed`. |
 | `--seed` | integer | `1234` | Noise seed. |
 | `--text-chunk-size` | characters | `300`, or `120` for `ko`/`ja` | Framework long-form text chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
