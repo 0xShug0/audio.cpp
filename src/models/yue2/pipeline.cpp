@@ -117,7 +117,8 @@ public:
         size_t ar_decode_graph_arena_bytes,
         size_t nar_graph_arena_bytes,
         size_t vae_graph_arena_bytes,
-        core::AttentionPreference attention_preference)
+        core::AttentionPreference attention_preference,
+        int64_t nar_attention_tile_rows)
         : execution(&execution),
           assets(std::move(assets)),
           tokenizer(this->assets->tiktoken_path),
@@ -128,7 +129,8 @@ public:
           ar_prefill_graph_arena_bytes(ar_prefill_graph_arena_bytes),
           ar_decode_graph_arena_bytes(ar_decode_graph_arena_bytes),
           nar_graph_arena_bytes(nar_graph_arena_bytes),
-          vae_graph_arena_bytes(vae_graph_arena_bytes) {
+          vae_graph_arena_bytes(vae_graph_arena_bytes),
+          nar_attention_tile_rows(nar_attention_tile_rows) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 pipeline requires assets");
         }
@@ -435,7 +437,8 @@ private:
             model_weight_type,
             model_weight_context_bytes,
             nar_graph_arena_bytes,
-            allow_flash_attention);
+            allow_flash_attention,
+            nar_attention_tile_rows);
         engine::debug::timing_log_scalar("yue2.nar.init_ms", engine::debug::elapsed_ms(start));
     }
 
@@ -451,6 +454,7 @@ private:
     size_t ar_decode_graph_arena_bytes = 0;
     size_t nar_graph_arena_bytes = 0;
     size_t vae_graph_arena_bytes = 0;
+    int64_t nar_attention_tile_rows = 0;
     std::unique_ptr<codecs::OobleckAudioVaeRuntime> vae;
     std::unique_ptr<Yue2ArRuntime> ar;
     std::unique_ptr<Yue2NarRuntime> nar;
@@ -467,7 +471,8 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
     size_t ar_decode_graph_arena_bytes,
     size_t nar_graph_arena_bytes,
     size_t vae_graph_arena_bytes,
-    core::AttentionPreference attention_preference)
+    core::AttentionPreference attention_preference,
+    int64_t nar_attention_tile_rows)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -479,7 +484,8 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
           ar_decode_graph_arena_bytes,
           nar_graph_arena_bytes,
           vae_graph_arena_bytes,
-          attention_preference)) {}
+          attention_preference,
+          nar_attention_tile_rows)) {}
 
 Yue2PipelineRuntime::~Yue2PipelineRuntime() = default;
 

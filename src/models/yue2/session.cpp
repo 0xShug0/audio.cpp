@@ -202,6 +202,7 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"yue2.nar_graph_arena_mb", "int", "NAR acoustic flow graph arena size in MiB.", false, "6144", "1"},
         {"yue2.vae_graph_arena_mb", "int", "VAE decode graph arena size in MiB.", false, "1536", "1"},
         {"yue2.attention", "auto|flash|eager", "NAR acoustic-flow attention lowering; auto uses flash except on CUDA sm70 (no kernel) and Intel Vulkan (eager measured faster).", false, "auto"},
+        {"yue2.attention_tile_rows", "int", "Query rows per tile in the eager NAR attention; 0 keeps a tile's score matrix under 3 GiB.", false, "0", "0"},
     };
     return out;
 }
@@ -229,7 +230,8 @@ Yue2Session::Yue2Session(
         runtime::parse_size_mb_option(options.options, {"yue2.ar_decode_graph_arena_mb"}, 1536ull * 1024ull * 1024ull),
         runtime::parse_size_mb_option(options.options, {"yue2.nar_graph_arena_mb"}, 6144ull * 1024ull * 1024ull),
         runtime::parse_size_mb_option(options.options, {"yue2.vae_graph_arena_mb"}, 1536ull * 1024ull * 1024ull),
-        attention_preference_from_options(options));
+        attention_preference_from_options(options),
+        runtime::parse_i64_option(options.options, {"yue2.attention_tile_rows"}).value_or(0));
 }
 
 Yue2Session::~Yue2Session() = default;
