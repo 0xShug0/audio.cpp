@@ -2904,6 +2904,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(kokoro_word_timings_test PRIVATE engine_model_kokoro_tts)
         add_test(NAME kokoro_word_timings_test COMMAND kokoro_word_timings_test)
 
+        add_engine_unittest(quantize_chunking_test tests/unittests/test_quantize_chunking.cpp)
+        add_test(NAME quantize_chunking_test COMMAND quantize_chunking_test)
+
         add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
         # So the test can read the specs this repository ships, rather than a
         # copy of them staged somewhere.
