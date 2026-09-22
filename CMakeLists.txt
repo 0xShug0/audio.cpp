@@ -1059,6 +1059,18 @@ audiocpp_add_model(moss
         moss_tts_nano
 )
 
+audiocpp_add_model(moss_ttsd
+    SOURCES
+        src/community_models/moss_ttsd/assets.cpp
+        src/community_models/moss_ttsd/prompt.cpp
+        src/community_models/moss_ttsd/session.cpp
+        src/community_models/moss_ttsd/loader.cpp
+    INCLUDES
+        engine/community_models/moss_ttsd/loader.h
+    LOADERS
+        engine::models::moss_ttsd::make_moss_ttsd_loader
+)
+
 audiocpp_add_model(moss_tts_v15
     SOURCES
         src/community_models/moss_tts_v15/assets.cpp
