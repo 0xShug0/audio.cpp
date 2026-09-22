@@ -152,6 +152,17 @@ function packageLabel(entry: PackageEntry): string {
     if (entry.id.includes('_kristin_')) return 'Kristin';
     if (entry.id.includes('_vi_')) return 'Vietnamese';
     if (entry.id.includes('_id_')) return 'Indonesian';
+    if (entry.id.includes('_cs_')) return 'Czech';
+    if (entry.id.includes('_de_')) return 'German';
+    if (entry.id.includes('_es_')) return 'Spanish';
+    if (entry.id.includes('_fr_')) return 'French';
+    if (entry.id.includes('_it_')) return 'Italian';
+    if (entry.id.includes('_pt_')) return 'Portuguese (Brazil)';
+    if (entry.id.includes('_ro_')) return 'Romanian';
+    if (entry.id.includes('_ru_')) return 'Russian';
+    if (entry.id.includes('_tr_')) return 'Turkish';
+    if (entry.id.includes('_ne_')) return 'Nepali';
+    if (entry.id.includes('_hi_')) return 'Hindi';
   }
   if (entry.family === 'ace_step') {
     const precision = entry.precision === 'bf16'
