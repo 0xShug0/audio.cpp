@@ -2277,6 +2277,7 @@ if (ENGINE_ENABLE_OPENMP)
 endif()
 
 if (MSVC)
+    target_compile_options(engine_core PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
     target_compile_options(engine_runtime PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
 endif()
 
