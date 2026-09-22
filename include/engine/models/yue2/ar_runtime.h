@@ -45,14 +45,16 @@ public:
     std::vector<int32_t> generate(
         const std::vector<int32_t> & prefix,
         const Yue2ArSamplingWindow & window,
-        uint64_t seed);
+        uint64_t seed,
+        const std::vector<int32_t> & forced = {});
 
     std::vector<int32_t> generate_cfg(
         const std::vector<int32_t> & positive_prefix,
         const std::vector<int32_t> & negative_prefix,
         const Yue2ArSamplingWindow & window,
         float guidance_scale,
-        uint64_t seed);
+        uint64_t seed,
+        const std::vector<int32_t> & forced = {});
 
     runtime::TransformerKVState prefill_state(const std::vector<int32_t> & tokens);
     Yue2ArDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens);

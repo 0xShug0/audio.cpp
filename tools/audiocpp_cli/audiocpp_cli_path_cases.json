@@ -1426,6 +1426,95 @@
       ]
     },
     {
+      "id": "yue2_semantic_prefix_continue",
+      "coverage": "YuE2 continuation from a forced semantic prefix on the direct route",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "semantic_prefix_continue",
+          "text": "[Verse]\nA quiet harbor wakes up slow.\nThe lantern dims, the tide runs low.\nWe count the boats along the line.\nThe morning keeps its steady time.\n[Chorus]\nCarry on, carry on.\nHold the note until it is gone.",
+          "seed": 20260914,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, folk pop, acoustic guitar, soft brushes, warm male vocal, relaxed tempo",
+            "cot": "off",
+            "semantic_prefix": [
+              12046,
+              8433,
+              16287,
+              11138,
+              6563,
+              22418,
+              9529,
+              23781,
+              7955,
+              1103,
+              6583,
+              4347,
+              17256,
+              9470,
+              4579,
+              28211
+            ],
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_semantic_prefix_exact",
+      "coverage": "YuE2 forced semantic prefix that fills the window: the AR stage is skipped and the given frames are exported as they came",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "artifact"
+      ],
+      "requests": [
+        {
+          "id": "semantic_prefix_exact",
+          "text": "[Verse]\nA quiet harbor wakes up slow.\nThe lantern dims, the tide runs low.\n[Chorus]\nCarry on, carry on.\nHold the note until it is gone.",
+          "seed": 20260914,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, folk pop, acoustic guitar, soft brushes, warm male vocal, relaxed tempo",
+            "cot": "off",
+            "stop_after": "semantic",
+            "semantic_prefix": [
+              12046,
+              8433,
+              16287,
+              11138,
+              6563,
+              22418,
+              9529,
+              23781,
+              7955,
+              1103,
+              6583,
+              4347,
+              17256,
+              9470,
+              4579,
+              28211
+            ],
+            "semantic_min_tokens": 16,
+            "semantic_max_tokens": 16
+          }
+        }
+      ]
+    },
+    {
       "id": "irodori_tts_500m_emoji_style_clone",
       "coverage": "Irodori-TTS 500M no-reference emoji/style requests and reference clone path in one session",
       "family": "irodori_tts",

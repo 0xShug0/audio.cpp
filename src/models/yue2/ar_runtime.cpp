@@ -660,9 +660,13 @@ struct Yue2ArRuntime::Impl {
     std::vector<int32_t> generate(
         const std::vector<int32_t> & prefix,
         const Yue2ArSamplingWindow & window,
-        uint64_t seed) {
+        uint64_t seed,
+        const std::vector<int32_t> & forced) {
         if (prefix.empty()) {
             throw std::runtime_error("Yue2 AR prefix must not be empty");
+        }
+        if (static_cast<int64_t>(forced.size()) > window.max_tokens) {
+            throw std::runtime_error("Yue2 AR forced tokens exceed the sampling window");
         }
         const bool compact_semantic = is_semantic_window(window);
         const bool compact_abc = is_abc_window(window);
@@ -673,13 +677,24 @@ struct Yue2ArRuntime::Impl {
         auto cache_steps_for = [](int64_t prefix_tokens, int64_t remaining_tokens) {
             return prefix_tokens + std::min<int64_t>(remaining_tokens, kArDecodeChunkTokens);
         };
-        const auto prefill_start = Clock::now();
-        auto prefill = active_runtime->prefill_tokens_into_decode_cache(
-            prefix,
-            cache_steps_for(static_cast<int64_t>(prefix.size()), window.max_tokens));
-        engine::debug::timing_log_scalar("yue2.ar.generate.prefill_ms", engine::debug::elapsed_ms(prefill_start));
         std::vector<int32_t> emitted;
         emitted.reserve(static_cast<size_t>(window.max_tokens));
+        emitted.insert(emitted.end(), forced.begin(), forced.end());
+        std::vector<int32_t> forced_prefix;
+        if (!forced.empty()) {
+            forced_prefix.reserve(prefix.size() + forced.size());
+            forced_prefix.insert(forced_prefix.end(), prefix.begin(), prefix.end());
+            forced_prefix.insert(forced_prefix.end(), forced.begin(), forced.end());
+            engine::debug::timing_log_scalar("yue2.ar.generate.forced_tokens", forced.size());
+        }
+        const auto & start_prefix = forced.empty() ? prefix : forced_prefix;
+        const auto prefill_start = Clock::now();
+        auto prefill = active_runtime->prefill_tokens_into_decode_cache(
+            start_prefix,
+            cache_steps_for(
+                static_cast<int64_t>(start_prefix.size()),
+                window.max_tokens - static_cast<int64_t>(emitted.size())));
+        engine::debug::timing_log_scalar("yue2.ar.generate.prefill_ms", engine::debug::elapsed_ms(prefill_start));
         std::mt19937 rng(static_cast<uint32_t>(seed));
         Yue2SamplerScratch scratch;
         engine::modules::QwenCausalDecodeStepResult decode_result;
@@ -689,7 +704,7 @@ struct Yue2ArRuntime::Impl {
         double decode_ms = 0.0;
         double refill_prefill_ms = 0.0;
         int64_t refill_count = 0;
-        for (int64_t step = 0; step < window.max_tokens; ++step) {
+        for (int64_t step = static_cast<int64_t>(emitted.size()); step < window.max_tokens; ++step) {
             const auto sample_start = Clock::now();
             const int32_t token = compact_semantic ?
                 sample_semantic_token(decode_result.logits, emitted, window, rng, scratch) :
@@ -742,41 +757,58 @@ struct Yue2ArRuntime::Impl {
         const std::vector<int32_t> & negative_prefix,
         const Yue2ArSamplingWindow & window,
         float guidance_scale,
-        uint64_t seed) {
+        uint64_t seed,
+        const std::vector<int32_t> & forced) {
         if (guidance_scale == 1.0F) {
-            return generate(positive_prefix, window, seed);
+            return generate(positive_prefix, window, seed, forced);
+        }
+        if (static_cast<int64_t>(forced.size()) > window.max_tokens) {
+            throw std::runtime_error("Yue2 AR forced tokens exceed the sampling window");
         }
         const bool compact_semantic = is_semantic_window(window);
         const bool compact_abc = is_abc_window(window);
         ensure_generation_runtime(false, compact_semantic, compact_abc);
         auto & positive_runtime = compact_semantic ? semantic_runtime : (compact_abc ? abc_runtime : runtime);
         const auto total_start = Clock::now();
-        engine::debug::timing_log_scalar("yue2.ar.cfg.positive_prefix_tokens", positive_prefix.size());
-        engine::debug::timing_log_scalar("yue2.ar.cfg.negative_prefix_tokens", negative_prefix.size());
+        auto append_forced = [&forced](const std::vector<int32_t> & tokens) {
+            std::vector<int32_t> out;
+            out.reserve(tokens.size() + forced.size());
+            out.insert(out.end(), tokens.begin(), tokens.end());
+            out.insert(out.end(), forced.begin(), forced.end());
+            return out;
+        };
+        const auto positive_tokens = append_forced(positive_prefix);
+        const auto negative_tokens = append_forced(negative_prefix);
+        engine::debug::timing_log_scalar("yue2.ar.cfg.positive_prefix_tokens", positive_tokens.size());
+        engine::debug::timing_log_scalar("yue2.ar.cfg.negative_prefix_tokens", negative_tokens.size());
+        if (!forced.empty()) {
+            engine::debug::timing_log_scalar("yue2.ar.cfg.forced_tokens", forced.size());
+        }
         const auto positive_prefill_start = Clock::now();
-        auto positive = positive_runtime->prefill_tokens(positive_prefix);
+        auto positive = positive_runtime->prefill_tokens(positive_tokens);
         engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_positive_ms", engine::debug::elapsed_ms(positive_prefill_start));
         const auto negative_prefill_start = Clock::now();
-        auto negative = positive_runtime->prefill_tokens(negative_prefix);
+        auto negative = positive_runtime->prefill_tokens(negative_tokens);
         engine::debug::timing_log_scalar("yue2.ar.cfg.prefill_negative_ms", engine::debug::elapsed_ms(negative_prefill_start));
         const auto start_decode_start = Clock::now();
         const int64_t cache_steps =
             std::max<int64_t>(
-                static_cast<int64_t>(positive_prefix.size()),
-                static_cast<int64_t>(negative_prefix.size())) +
-            window.max_tokens;
+                static_cast<int64_t>(positive_tokens.size()),
+                static_cast<int64_t>(negative_tokens.size())) +
+            window.max_tokens - static_cast<int64_t>(forced.size());
         positive_runtime->start_decode_tokens_batched(
             make_cfg_batched_state(positive.state, negative.state),
             cache_steps);
         engine::debug::timing_log_scalar("yue2.ar.cfg.start_decode_ms", engine::debug::elapsed_ms(start_decode_start));
         std::vector<int32_t> emitted;
         emitted.reserve(static_cast<size_t>(window.max_tokens));
+        emitted.insert(emitted.end(), forced.begin(), forced.end());
         std::mt19937 rng(static_cast<uint32_t>(seed));
         Yue2SamplerScratch scratch;
         std::vector<float> logits(positive.logits.size(), 0.0F);
         double sample_ms = 0.0;
         double decode_batched_ms = 0.0;
-        for (int64_t step = 0; step < window.max_tokens; ++step) {
+        for (int64_t step = static_cast<int64_t>(emitted.size()); step < window.max_tokens; ++step) {
             if (positive.logits.size() != negative.logits.size()) {
                 throw std::runtime_error("Yue2 CFG logits size mismatch");
             }
@@ -953,8 +985,9 @@ Yue2ArRuntime::~Yue2ArRuntime() = default;
 std::vector<int32_t> Yue2ArRuntime::generate(
     const std::vector<int32_t> & prefix,
     const Yue2ArSamplingWindow & window,
-    uint64_t seed) {
-    return impl_->generate(prefix, window, seed);
+    uint64_t seed,
+    const std::vector<int32_t> & forced) {
+    return impl_->generate(prefix, window, seed, forced);
 }
 
 std::vector<int32_t> Yue2ArRuntime::generate_cfg(
@@ -962,8 +995,9 @@ std::vector<int32_t> Yue2ArRuntime::generate_cfg(
     const std::vector<int32_t> & negative_prefix,
     const Yue2ArSamplingWindow & window,
     float guidance_scale,
-    uint64_t seed) {
-    return impl_->generate_cfg(positive_prefix, negative_prefix, window, guidance_scale, seed);
+    uint64_t seed,
+    const std::vector<int32_t> & forced) {
+    return impl_->generate_cfg(positive_prefix, negative_prefix, window, guidance_scale, seed, forced);
 }
 
 runtime::TransformerKVState Yue2ArRuntime::prefill_state(const std::vector<int32_t> & tokens) {

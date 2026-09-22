@@ -243,6 +243,66 @@ the server — `/v1/audio/speech` requires an audio output.
 # -> yue2_out/score.abc, yue2_out/semantic.json
 ```
 
+## Continuing From Semantic Tokens
+
+`semantic_prefix` takes a JSON array of semantic codec indices, one per frame at
+25 frames per second, each in `[0,32768)`. The frames become forced history: the
+AR stage prefills them behind the prompt and samples the rest of the song from
+frame `N`. `semantic_prefix_file` reads the same text from a file and is ignored
+when `semantic_prefix` is set.
+
+The returned stream, and therefore the NAR stage and the rendered audio, includes
+the forced frames. `semantic_min_tokens`, `semantic_max_tokens` and the
+repetition penalty window all count the total stream, so `semantic_max_tokens`
+must be at least `N`.
+
+```bash
+./build/debug/bin/audiocpp_cli \
+  --task gen \
+  --family yue2 \
+  --model models/Yue2-3B-GGUF \
+  --backend cuda \
+  --threads 8 \
+  --lyrics "..." \
+  --request-option style="English, folk pop" \
+  --request-option cot=off \
+  --request-option semantic_prefix_file=/path/to/semantic.json \
+  --request-option semantic_max_tokens=1200 \
+  --seed 1234 \
+  --out yue2-continue.wav \
+  --log
+```
+
+With `cot=melody` or `cot=full` a prefix also requires `abc` or `abc_file`:
+without a score the run would plan a new one that the forced frames do not
+belong to.
+
+To render exactly the given frames and sample nothing, set both token bounds to
+`N`:
+
+```bash
+  --request-option semantic_min_tokens=640 \
+  --request-option semantic_max_tokens=640
+```
+
+That run skips the AR stage: the given frames are the stream, and with
+`stop_after=semantic` they are returned as they came. `stop_after=audio` still
+prefills them once for the NAR conditioning.
+
+Results are deterministic for a given request, but a prefix does not reproduce
+the draws of an uninterrupted run: the sampler RNG starts at the first sampled
+frame, and prefilled K/V differ numerically from step-decoded K/V.
+
+With a guidance scale other than `1.0` the forced frames are appended to both the
+positive and the negative prefix, and that path prefills through host K/V, so
+memory grows with `N`. The default `cot=full` route uses scale `1.0`, which runs a
+single stream on the device.
+
+A prefix does not have to come from the run it continues. Splicing the tokens of
+two renders of one score changes a song's style part-way through;
+[examples/yue2_style_change](../../examples/yue2_style_change/) is a complete
+script for it.
+
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -262,6 +322,8 @@ the server — `/v1/audio/speech` requires an audio output.
 | `abc_file` | path | empty | ABC score file; requires `cot=melody` or `cot=full`. |
 | `nar_noise_file` | raw float32 file | empty | Provide a noise file for NAR generation, shaped `[frames,64]`. |
 | `export_semantic` | `true`, `false` | `false` | Attach the semantic token stream as a `semantic` artifact. |
+| `semantic_prefix` | JSON array of codec indices | empty | Inline semantic frames to force at the start of the music stream. |
+| `semantic_prefix_file` | path | empty | File holding the same JSON array; ignored when `semantic_prefix` is set. |
 | `guidance_scale` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. Legacy alias: `cfg_scale`. |
 | `num_inference_steps` | integer > 0 | `8` | NAR midpoint ODE steps. |
 | `seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Equivalent to `--seed <n>`. |

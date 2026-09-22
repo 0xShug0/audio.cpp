@@ -80,6 +80,18 @@ std::vector<int32_t> codec_from_semantic_tokens(const std::vector<int32_t> & tok
     return out;
 }
 
+std::vector<int32_t> semantic_tokens_from_codec(const std::vector<int32_t> & codec) {
+    std::vector<int32_t> out;
+    out.reserve(codec.size());
+    for (const int32_t index : codec) {
+        if (index < 0 || index >= kCodecSize) {
+            throw std::runtime_error("Yue2 semantic prefix codec index is out of range");
+        }
+        out.push_back(kCodecOffset + index);
+    }
+    return out;
+}
+
 Yue2ArSamplingWindow abc_window(const Yue2GenerationConfig & generation) {
     return Yue2ArSamplingWindow{
         0,
@@ -164,6 +176,18 @@ public:
         Yue2SemanticResult out;
         out.plan = std::move(plan);
         generate_plan_abc(request, out.plan);
+        const auto forced = semantic_tokens_from_codec(request.semantic_prefix);
+        if (!forced.empty() &&
+            static_cast<int64_t>(forced.size()) >= request.generation.semantic.max_tokens) {
+            // The prefix already fills the window: nothing would be sampled, so
+            // the AR prefill and its logits are skipped. stop_after=audio still
+            // prefills the stream once, in the NAR stage, for its conditioning.
+            out.tokens = forced;
+            out.truncated = true;
+            engine::debug::timing_log_scalar("yue2.semantic.tokens", out.tokens.size());
+            engine::debug::timing_log_scalar("yue2.semantic.truncated", out.truncated);
+            return out;
+        }
         ensure_ar();
         const auto neg = negative_prefix(request, tokenizer, out.plan.abc_ids);
         out.tokens = ar->generate_cfg(
@@ -171,7 +195,8 @@ public:
             neg,
             semantic_window(request.generation),
             request_guidance_scale(request),
-            request.seed);
+            request.seed,
+            forced);
         out.truncated = static_cast<int64_t>(out.tokens.size()) >= request.generation.semantic.max_tokens;
         engine::debug::timing_log_scalar("yue2.semantic.tokens", out.tokens.size());
         engine::debug::timing_log_scalar("yue2.semantic.truncated", out.truncated);
@@ -288,7 +313,8 @@ public:
                      << " context=" << request.generation.context
                      << " abc=" << (request.abc.empty() ?
                          (request.cot == Yue2CotMode::Off ? "none" : "generated") : "provided")
-                     << " nar_noise=" << (request.nar_noise.empty() ? "generated" : "provided");
+                     << " nar_noise=" << (request.nar_noise.empty() ? "generated" : "provided")
+                     << " semantic_prefix_frames=" << request.semantic_prefix.size();
             engine::debug::trace_log_scalar("yue2.request", settings.str());
             for (const bool abc : {true, false}) {
                 if (abc && (request.cot == Yue2CotMode::Off || !request.abc.empty())) {
