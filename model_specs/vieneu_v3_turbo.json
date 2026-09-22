@@ -1,7 +1,7 @@
 {
   "family": "vieneu_v3_turbo",
   "display_name": "VieNeu-TTS v3 Turbo",
-  "description": "On-device Vietnamese TTS model with instant voice cloning from 3-5 seconds of reference audio, English-Vietnamese code-switching, streaming playback, batched generation, and conversation mode.",
+  "description": "On-device Vietnamese/English TTS (48 kHz) with instant voice cloning from 3-5 s of reference audio, by Phạm Nguyễn Ngọc Bảo (pnnbao97). Takes SEA-G2P phonemes as text input.",
   "category": "tts",
   "status": "community",
   "tasks": [
@@ -26,7 +26,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "vieneu_v3_turbo_v3_turbo_q8_0",
+    "recommended_package": "vieneu_v3_turbo_q8_0",
     "tags": [
       "TTS",
       "Clone",
@@ -40,16 +40,49 @@
   },
   "packages": [
     {
-      "id": "vieneu_v3_turbo_v3_turbo_q8_0",
-      "display_name": "VieNeu-TTS v3 Turbo GGUF",
+      "id": "vieneu_v3_turbo_q8_0",
+      "display_name": "VieNeu-TTS v3 Turbo Q8_0 GGUF",
       "default": true,
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "VieNeu-TTS-v3-Turbo-GGUF",
       "files": [
+        "vieneu-v3-turbo-q8_0.gguf",
+        "voices/manifest.json",
+        "voices/minh_quan_pro/ref_codes.txt",
+        "voices/minh_quan_pro/speaker.emb.txt"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo-GGUF"
+      }
+    },
+    {
+      "id": "vieneu_v3_turbo_bf16",
+      "display_name": "VieNeu-TTS v3 Turbo BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VieNeu-TTS-v3-Turbo-GGUF",
+      "files": [
+        "vieneu-v3-turbo-bf16.gguf",
+        "voices/manifest.json",
+        "voices/minh_quan_pro/ref_codes.txt",
+        "voices/minh_quan_pro/speaker.emb.txt"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo-GGUF"
+      }
+    },
+    {
+      "id": "vietneu_tts_v3_turbo_q8_0",
+      "display_name": "VieNeu-TTS v3 Turbo Q8_0 GGUF (first community port, July 2026 weights)",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VieNeu-TTS-v3-Turbo-GGUF-2026-07",
+      "files": [
         "model.gguf"
       ],
-      "strip_prefix": ".",
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "phuocnguyen90/VieNeu-TTS-v3-Turbo-GGUF"
