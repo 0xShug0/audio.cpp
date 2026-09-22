@@ -35,6 +35,7 @@
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
+  import { prepareLiveAvatarOutput } from '$lib/models/liveavatar/video';
   import Arena from './Arena.svelte';
   import type {
     AudioOutput,
@@ -91,7 +92,7 @@
   let advancedValues: Record<string, unknown> = {};
   let paramSpecs: ParamSpec[] = [];
   let outputAudio: AudioOutput[] = [];
-  let outputArtifacts: Array<{ id: string; url: string; extension: string }> = [];
+  let outputArtifacts: Array<{ id: string; url: string; extension: string; mime: string }> = [];
   let outputText = '';
   let outputJson = '';
   let logs: string[] = [];
@@ -251,7 +252,7 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
-    if (selected?.family === 'yue2' && spec.scope === 'session') {
+    if (['yue2', 'liveavatar'].includes(selected?.family || '') && spec.scope === 'session') {
       isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
         modelMatchesSelectedPackage(model, selected));
     }
@@ -273,7 +274,7 @@
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
-    { id: 'music', label: 'Music generation', filterLabel: 'Music', tasks: ['gen'] },
+    { id: 'music', label: 'Music / video generation', filterLabel: 'Music / video generation', tasks: ['gen'] },
     { id: 'conversion', label: 'Voice conversion', filterLabel: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
     { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep'] },
     { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi'] },
@@ -435,6 +436,7 @@
   $: modelStudioPanel = modelStudioPanelConfig?.component;
   $: replacesGenericControls = modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements;
   $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
+  $: modelPanelUploading = modelStudioPanelConfig?.blocksRunWhileUploading === true && loraUploading;
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
@@ -446,7 +448,7 @@
     selected?.family === 'chatterbox_turbo'
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
-    isFireRedAudioEdit;
+    isFireRedAudioEdit || selected?.family === 'liveavatar';
   $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
@@ -1072,6 +1074,8 @@
       text = '';
       lyrics = '';
       ensureYue2DefaultLyrics();
+    } else if (selected?.family === 'liveavatar') {
+      text = selected.default_text || '';
     } else if (!text.trim() && selected?.default_text) {
       text = selected.default_text;
     }
@@ -1183,7 +1187,7 @@
   }
 
   async function doLoad(modeOverride?: string) {
-    if (usesYue2Request && loraUploading) return;
+    if (modelPanelUploading) return;
     if (!selectedId) {
       status = 'Choose an installed model before loading.';
       warningStatus = status;
@@ -1401,6 +1405,7 @@
 
   function clearOutput() {
     for (const output of outputAudio) URL.revokeObjectURL(output.url);
+    for (const artifact of outputArtifacts) URL.revokeObjectURL(artifact.url);
     outputAudio = [];
     outputArtifacts = [];
     outputText = '';
@@ -1650,7 +1655,7 @@
   }
 
   async function run() {
-    if (running || (usesYue2Request && loraUploading)) return;
+    if (running || modelPanelUploading) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -1671,6 +1676,7 @@
     errorStatus = '';
     status = tr('status.runningTask', { task: localizedTaskLabel(selected.task) });
     log(status);
+    const liveAvatarDrivingAudio = selected.family === 'liveavatar' ? sourceFile : null;
     try {
       const resolvedSeed = resolveRequestSeed(seed);
       if (referenceVoiceRequired && !voiceFile) {
@@ -1682,6 +1688,12 @@
       }
       if (lyricsRequired && !lyrics.trim()) {
         throw new StatusWarning(`${selected.display_name_en || selected.display_name} requires lyrics.`);
+      }
+      if (selected.family === 'liveavatar') {
+        if (!sourceFile) throw new StatusWarning('LiveAvatar requires driving audio.');
+        if (!String(advancedValues.reference_image_path || '').trim()) {
+          throw new StatusWarning('LiveAvatar requires a reference image.');
+        }
       }
       await ensureLoaded();
         const options = requestOptions();
@@ -1782,6 +1794,10 @@
           request.reference_text = referenceText;
         }
         const result = await runTask({ model: selected.id, request }, aborter.signal);
+        outputText = typeof result.text === 'string' ? result.text : '';
+        outputJson = JSON.stringify(result, (key, value) =>
+          (key === 'audio' || key === 'payload') && typeof value === 'string'
+            ? `<base64 data: ${value.length} chars>` : value, 2);
         if (typeof result.audio === 'string') {
           outputAudio = [{ id: 'output', url: base64AudioUrl(result.audio) }];
         }
@@ -1792,19 +1808,23 @@
             .map((entry) => ({ id: entry.id, url: base64AudioUrl(entry.audio) }));
         }
         if (Array.isArray(result.artifacts)) {
-          outputArtifacts = result.artifacts
-            .filter((entry): entry is { id: string; payload: string; meta?: Record<string, string> } =>
-              typeof entry?.id === 'string' && typeof entry?.payload === 'string')
-            .map((entry) => ({
+          if (selected.family === 'liveavatar') {
+            status = 'Encoding LiveAvatar MP4 in browser…';
+            const prepared = await prepareLiveAvatarOutput(result, liveAvatarDrivingAudio);
+            outputArtifacts = prepared.artifacts;
+            if (prepared.warning) log(prepared.warning);
+          } else {
+            outputArtifacts = result.artifacts
+              .filter((entry): entry is { id: string; payload: string; meta?: Record<string, string> } =>
+                typeof entry?.id === 'string' && typeof entry?.payload === 'string')
+              .map((entry) => ({
               id: entry.id,
               extension: entry.meta?.extension || (entry.meta?.format === 'midi' ? 'mid' : 'bin'),
+              mime: entry.meta?.mime || 'application/octet-stream',
               url: `data:${entry.meta?.mime || 'application/octet-stream'};base64,${entry.payload}`
             }));
+          }
         }
-        outputText = typeof result.text === 'string' ? result.text : '';
-        outputJson = JSON.stringify(result, (key, value) =>
-          (key === 'audio' || key === 'payload') && typeof value === 'string'
-            ? `<base64 data: ${value.length} chars>` : value, 2);
       }
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       warningStatus = '';
@@ -2142,6 +2162,7 @@
     recordingStream?.getTracks().forEach((track) => track.stop());
     liveStream?.getTracks().forEach((track) => track.stop());
     for (const output of outputAudio) URL.revokeObjectURL(output.url);
+    for (const artifact of outputArtifacts) URL.revokeObjectURL(artifact.url);
     if (installPoll !== null) window.clearInterval(installPoll);
     if (packageSizePoll !== null) window.clearInterval(packageSizePoll);
     if (themePreferenceQuery && themePreferenceListener) {
@@ -2262,7 +2283,7 @@
           </div>
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
-            disabled={!selectedId || loadingModel || (usesYue2Request && loraUploading) || installed === false || !server?.ui_management}
+            disabled={!selectedId || loadingModel || modelPanelUploading || installed === false || !server?.ui_management}
             title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
             on:click={toggleSingleModel}>
             {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
@@ -2323,7 +2344,13 @@
               {log}
               {tr}
               {localizedParameterText}
-              {setParameterValue} />
+              {setParameterValue}
+              {sourceFile}
+              sourceRecording={recordingTarget === 'source'}
+              sourceRecordingBlocked={Boolean(recorder) || liveRecording}
+              setSourceFile={(file: File | null) => sourceFile = file}
+              startSourceRecording={() => startRecording('source')}
+              stopSourceRecording={stopRecording} />
           {:else}
             <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
             <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
@@ -2393,7 +2420,7 @@
           {/if}
         </div>
 
-            {#if acceptsSource}
+            {#if acceptsSource && selected.family !== 'liveavatar'}
               <label for="source">{tr('request.sourceAudio')} {needsSource ? '' : `(${tr('request.optional')})`}</label>
               <input id="source" class="file file-native" type="file" accept="audio/*"
                 bind:this={sourceInput}
@@ -2600,7 +2627,7 @@
         {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || (usesYue2Request && loraUploading) || (!isLoaded && installed === false)} on:click={run}
+          <button class="run" disabled={!selectedId || running || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
             <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
@@ -2640,6 +2667,10 @@
             {#each outputArtifacts as artifact}
               <article>
                 <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${selected.id}-${artifact.id}.${artifact.extension}`}>Save {artifact.extension.toUpperCase()}</a></div>
+                {#if artifact.mime.startsWith('video/')}
+                  <MediaPreview src={artifact.url} name={`${selected.id}-${artifact.id}.${artifact.extension}`}
+                    kind="video" label="Video preview" />
+                {/if}
               </article>
             {/each}
           </div>

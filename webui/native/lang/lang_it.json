@@ -30,7 +30,7 @@
     "theme.light": "Chiaro",
     "workflow.tts": "Sintesi vocale",
     "workflow.asr": "ASR / Trascrizione",
-    "workflow.music": "Generazione musicale",
+    "workflow.music": "Generazione di musica e video",
     "workflow.vc": "Conversione vocale",
     "workflow.sep": "Separazione sorgenti",
     "workflow.analysis": "Analisi audio",

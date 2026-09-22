@@ -198,7 +198,8 @@ function packageModelPath(entry: PackageEntry): string {
   if (entry.format === 'gguf' && entry.family === 'minimax_h3') {
     const entryName = entry.id.includes('int8_dit') ? 'dit_int8.gguf' : 'dit.gguf';
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith(`/${entryName}`));
-  } else if (entry.format === 'gguf' && (entry.family === 'minimax_music3' || entry.family === 'yue2')) {
+  } else if (entry.format === 'gguf' &&
+      ['liveavatar', 'minimax_music3', 'yue2'].includes(entry.family)) {
     return `models/${entry.target_directory}`;
   } else if (entry.format === 'gguf') {
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'));
