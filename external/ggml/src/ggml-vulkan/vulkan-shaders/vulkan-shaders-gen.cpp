@@ -85,6 +85,45 @@ enum MatMulIdType {
 
 namespace {
 
+// ⚠ ONLY A RESOURCE SHORTAGE IS WORTH RETRYING. "The compiler could not be started" covers two
+// unrelated situations: the machine is momentarily out of memory, file descriptors or process
+// slots, which clears on its own; and the compiler is missing or the invocation is malformed,
+// which never will. Retrying the second wastes five attempts and four concurrency halvings before
+// reporting a failure that was knowable at once -- and on Windows a missing glslc lands here,
+// because CreateProcess reports it to the caller rather than to a child that has already forked.
+struct spawn_resource_error : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+#ifdef _WIN32
+bool is_resource_exhaustion(DWORD error_code) {
+    return error_code == ERROR_NOT_ENOUGH_MEMORY || error_code == ERROR_OUTOFMEMORY ||
+           error_code == ERROR_NO_SYSTEM_RESOURCES || error_code == ERROR_TOO_MANY_OPEN_FILES;
+}
+#else
+bool is_resource_exhaustion(int error_code) {
+    return error_code == ENOMEM || error_code == EAGAIN ||
+           error_code == EMFILE || error_code == ENFILE;
+}
+#endif
+
+// Raises the retryable type for a resource shortage and the plain one otherwise, so the caller can
+// tell them apart by catch clause rather than by parsing a message. Reads the platform's own error
+// state, which every call site sets immediately before calling.
+[[noreturn]] void throw_spawn_failure(const char * what) {
+#ifdef _WIN32
+    const DWORD error_code = GetLastError();
+    const std::string detail = std::string(what) + ": win32 error " + std::to_string(error_code);
+#else
+    const int error_code = errno;
+    const std::string detail = std::string(what) + ": " + strerror(error_code);
+#endif
+    if (is_resource_exhaustion(error_code)) {
+        throw spawn_resource_error(detail);
+    }
+    throw std::runtime_error(detail);
+}
+
 int execute_command(std::vector<std::string>& command, std::string& stdout_str, std::string& stderr_str) {
 #ifdef _WIN32
     HANDLE stdout_read, stdout_write;
@@ -93,12 +132,12 @@ int execute_command(std::vector<std::string>& command, std::string& stdout_str, 
 
     if (!CreatePipe(&stdout_read, &stdout_write, &sa, 0) ||
         !SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0)) {
-        throw std::runtime_error("Failed to create stdout pipe");
+        throw_spawn_failure("failed to create stdout pipe");
     }
 
     if (!CreatePipe(&stderr_read, &stderr_write, &sa, 0) ||
         !SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT, 0)) {
-        throw std::runtime_error("Failed to create stderr pipe");
+        throw_spawn_failure("failed to create stderr pipe");
     }
 
     PROCESS_INFORMATION pi;
@@ -114,7 +153,7 @@ int execute_command(std::vector<std::string>& command, std::string& stdout_str, 
     }
 
     if (!CreateProcessA(NULL, cmd.data(), NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-        throw std::runtime_error("Failed to create process");
+        throw_spawn_failure("failed to create process");
     }
 
     CloseHandle(stdout_write);
@@ -147,13 +186,14 @@ int execute_command(std::vector<std::string>& command, std::string& stdout_str, 
     // descriptor leaked here is not lost once -- it is lost again on every attempt, and leaking
     // under EMFILE turns a transient shortage into the permanent one it was mistaken for.
     if (pipe(stdout_pipe) != 0) {
-        throw std::runtime_error(std::string("failed to create stdout pipe: ") + strerror(errno));
+        throw_spawn_failure("failed to create stdout pipe");
     }
     if (pipe(stderr_pipe) != 0) {
         const int pipe_errno = errno;
         close(stdout_pipe[0]);
         close(stdout_pipe[1]);
-        throw std::runtime_error(std::string("failed to create stderr pipe: ") + strerror(pipe_errno));
+        errno = pipe_errno;
+        throw_spawn_failure("failed to create stderr pipe");
     }
 
     pid_t pid = fork();
@@ -165,7 +205,8 @@ int execute_command(std::vector<std::string>& command, std::string& stdout_str, 
         close(stdout_pipe[1]);
         close(stderr_pipe[0]);
         close(stderr_pipe[1]);
-        throw std::runtime_error(std::string("failed to fork process: ") + strerror(fork_errno));
+        errno = fork_errno;
+        throw_spawn_failure("failed to fork process");
     }
 
     std::vector<char*> argv;
@@ -449,7 +490,7 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
 
             try {
                 exit_code = execute_command(cmd, stdout_str, stderr_str);
-            } catch (const std::exception & spawn_failure) {
+            } catch (const spawn_resource_error & spawn_failure) {
                 // ⚠ THE PROCESS NEVER STARTED, AND THAT IS A RESOURCE STATE, NOT A BAD SHADER.
                 // fork() returns ENOMEM ("Cannot allocate memory") when the machine is under
                 // memory pressure, and this generator runs as one ninja target among many: the
@@ -479,7 +520,16 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
                 // pressure lasts as long as the neighbouring compile does, so the wait has to
                 // be able to outlast one: 250ms, 500ms, 1s, 2s. Every slot that hit the same
                 // wall backs off with it, which is what frees the machine to make progress.
+                // \u26a0 GIVE THE SLOT BACK BEFORE WAITING. The permit is acquired once per shader and
+                // was held across the whole retry sequence, so a lowered cap governed only shaders
+                // that had not started yet: the tasks already running -- the very ones that just
+                // exhausted the machine -- kept their permits and retried in lockstep, straight into
+                // the same wall. Releasing here makes the reduced cap apply to the retries too, and
+                // re-acquiring after the wait means a task resumes only when the generator is back
+                // under its limit.
+                slot.reset();
                 std::this_thread::sleep_for(std::chrono::milliseconds(250 << (attempt - 1)));
+                slot = acquire_compile_slot();
             }
         }
 
