@@ -3012,7 +3012,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(server_multipart_http_test PRIVATE ws2_32)
         endif()
         add_test(NAME server_multipart_http_test COMMAND server_multipart_http_test)
-        set_tests_properties(server_multipart_http_test PROPERTIES TIMEOUT 30)
+        set_tests_properties(server_multipart_http_test PROPERTIES
+            TIMEOUT 30
+            RESOURCE_LOCK server_multipart_http_port_18095
+        )
 
         add_executable(server_base64_test
             tests/unittests/test_server_base64.cpp
