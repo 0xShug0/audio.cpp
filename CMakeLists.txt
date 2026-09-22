@@ -478,6 +478,7 @@ add_library(engine_core OBJECT
     src/framework/decoders/moss_tts_delay/config.cpp
     src/framework/decoders/moss_tts_delay/delay_decoder.cpp
     src/framework/decoders/moss_tts_delay/heads.cpp
+    src/framework/decoders/moss_tts_delay/prompt.cpp
     src/framework/decoders/tdt_decoder_runner.cpp
     src/framework/decoders/tdt_decoder_greedy_customized.cpp
     src/framework/decoders/tdt_decoder_greedy_duration_loop.cpp
@@ -3343,6 +3344,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(moss_tts_v15_prompt_parity PRIVATE engine_runtime ggml)
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(moss_tts_v15_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        add_executable(moss_ttsd_prompt_parity
+            tests/moss_ttsd/prompt_parity.cpp
+            src/community_models/moss_ttsd/prompt.cpp
+        )
+        target_link_libraries(moss_ttsd_prompt_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_ttsd_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
 
 

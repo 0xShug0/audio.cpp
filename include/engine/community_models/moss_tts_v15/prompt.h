@@ -16,6 +16,7 @@
 
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/framework/decoders/moss_tts_delay/config.h"
+#include "engine/framework/decoders/moss_tts_delay/prompt.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <cstdint>
@@ -26,11 +27,10 @@
 
 namespace engine::models::moss_tts_v15 {
 
-// One speaker's reference codes, [frames][n_vq] as the codec returns them.
-struct ReferenceAudio {
-    std::vector<std::vector<int32_t>> codes;  // [n_vq][frames], codec layout
-    int64_t frames = 0;
-};
+// One speaker's reference codes, [n_vq][frames] as the codec returns them. The
+// family's type: the assembly that consumes it is shared with the other
+// checkpoints, so the rendering here hands back exactly what that expects.
+using ReferenceAudio = decoders::MossReferenceAudio;
 
 struct PromptFields {
     std::string text;
@@ -53,9 +53,11 @@ codecs::MossTokenRows build_generation_prefix(
     const decoders::MossTtsDelayConfig & config,
     const tokenizers::LlamaBpeTokenizer & tokenizer);
 
-// Delay-patterns one reference's codes: row t of codebook v carries frame t - v,
-// and the rest is audio_pad_code. Returns frames + n_vq - 1 rows.
-std::vector<std::vector<int32_t>> apply_delay_pattern(
-    const ReferenceAudio & reference, int64_t num_codebooks, int32_t audio_pad_code);
+// Delay-patterns one reference's codes. Kept as a name in this namespace because
+// the prompt parity test reads it; the implementation is the family's.
+inline std::vector<std::vector<int32_t>> apply_delay_pattern(
+    const ReferenceAudio & reference, int64_t num_codebooks, int32_t audio_pad_code) {
+    return decoders::moss_apply_delay_pattern(reference, num_codebooks, audio_pad_code);
+}
 
 }  // namespace engine::models::moss_tts_v15
