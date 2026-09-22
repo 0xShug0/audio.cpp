@@ -2978,6 +2978,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)
         add_test(NAME conv_transpose_fast_path_test COMMAND conv_transpose_fast_path_test)
 
+        add_engine_unittest(conv1d_pertap_fast_path_test tests/unittests/test_conv1d_pertap_fast_path.cpp)
+        add_test(NAME conv1d_pertap_fast_path_test COMMAND conv1d_pertap_fast_path_test)
+
         add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
         add_test(NAME depthwise_conv1d_lowering_test COMMAND depthwise_conv1d_lowering_test)
 
