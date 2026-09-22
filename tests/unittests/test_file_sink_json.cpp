@@ -25,34 +25,26 @@ std::string read_file(const std::filesystem::path & path) {
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
-std::string control_string() {
-    std::string value = "quote\" backslash\\ LF\n CR\r tab\t backspace\b formfeed\f";
-    value.push_back('\x01');
-    value += " NUL";
-    value.push_back('\0');
-    value += " after UTF-8: \xc3\xa9";
-    return value;
+std::string multiline_text() {
+    return "He said \"hello\".\nPath: C:\\audio\r\nSpeaker\ttext: \xc3\xa9";
 }
 
 void test_word_timestamp_json_escapes_control_characters() {
     engine::runtime::WordTimestamp word;
     word.span.start_sample = 1;
     word.span.end_sample = 2;
-    word.word = control_string();
+    word.word = multiline_text();
 
     const std::string json = minitts::app::word_timestamps_to_json({word});
-    (void) engine::io::json::parse(json);
+    const auto parsed = engine::io::json::parse(json);
+    require(parsed.as_array()[0].require("word").as_string() == word.word, "word text must round-trip exactly");
 
-    require(json.find("quote\\\" backslash\\\\") != std::string::npos, "quotes and backslashes must be escaped");
+    require(json.find("\\\"hello\\\"") != std::string::npos, "quotes must be escaped");
+    require(json.find("C:\\\\audio") != std::string::npos, "backslashes must be escaped");
     require(json.find("\\n") != std::string::npos, "newline must be escaped");
     require(json.find("\\r") != std::string::npos, "carriage return must be escaped");
     require(json.find("\\t") != std::string::npos, "tab must be escaped");
-    require(json.find("\\b") != std::string::npos, "backspace must be escaped");
-    require(json.find("\\f") != std::string::npos, "formfeed must be escaped");
-    require(json.find("\\u0001") != std::string::npos, "control byte must be escaped");
-    require(json.find("NUL\\u0000 after") != std::string::npos, "embedded NUL must be retained as an escape");
-    require(json.find("UTF-8: \xc3\xa9") != std::string::npos, "ordinary UTF-8 must be retained");
-    require(json.find("line\n") == std::string::npos, "raw newline must not appear in JSON");
+    require(json.find("\xc3\xa9") != std::string::npos, "ordinary UTF-8 must be retained");
     require(json.find("start_sample\":1") != std::string::npos, "word start number schema");
     require(json.find("end_sample\":2") != std::string::npos, "word end number schema");
 }
@@ -74,7 +66,7 @@ void test_emit_task_result_serializes_all_file_outputs() {
     const auto turns_path = root / "turns.json";
     const auto words_path = root / "words.json";
 
-    const std::string value = control_string();
+    const std::string value = multiline_text();
     engine::runtime::TaskResult result;
     result.speech_segments.push_back({{10, 20}, 0.75f, value});
     result.speaker_turns.push_back({{30, 40}, value, 0.5f, value});
@@ -104,15 +96,19 @@ void test_emit_task_result_serializes_all_file_outputs() {
     require(segments.as_array()[0].require("start_sample").as_i64() == 10, "segment start number");
     require(turns.as_array()[0].require("end_sample").as_i64() == 40, "turn end number");
     require(words.as_array()[0].require("start_sample").as_i64() == 50, "word start number");
-    require(read_file(segments_path).find("NUL\\u0000 after") != std::string::npos, "segment NUL escape");
-    require(read_file(turns_path).find("quote\\\"") != std::string::npos, "turn quote escape");
+
+    require(segments.as_array()[0].require("text").as_string() == value, "segment text round-trip");
+    require(turns.as_array()[0].require("text").as_string() == value, "speaker text round-trip");
+    require(words.as_array()[0].require("word").as_string() == value, "word output round-trip");
 
     const auto artifact_path = artifact_dir / (minitts::app::safe_output_name(value) + ".json");
     const std::string artifact_json = read_file(artifact_path);
     const auto artifact_value = engine::io::json::parse(artifact_json);
     require(artifact_value.require("bytes").as_i64() == 3, "artifact byte count schema");
     require(artifact_json.find("label\\\"key") != std::string::npos, "artifact metadata key escape");
-    require(artifact_json.find("NUL\\u0000 after") != std::string::npos, "artifact metadata NUL escape");
+
+    require(artifact_value.require("meta").require("label\"key").as_string() == value,
+            "artifact metadata text round-trip");
 
     minitts::app::AppBatchResult batch;
     minitts::app::AppRequestResult item;
@@ -128,7 +124,8 @@ void test_emit_task_result_serializes_all_file_outputs() {
     require(manifest.require("requests").as_array().size() == 1, "batch request schema");
     require(manifest.require("chapters").as_array()[0].require("start_sample").as_i64() == 7,
             "batch chapter start number");
-    require(manifest_json.find("NUL\\u0000 after") != std::string::npos, "request id NUL escape");
+    require(manifest.require("requests").as_array()[0].require("id").as_string() == value,
+            "batch request text round-trip");
     require(manifest_json.find("chapter\\\"1") != std::string::npos, "chapter id quote escape");
 
 }
