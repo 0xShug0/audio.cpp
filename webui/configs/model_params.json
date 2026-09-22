@@ -101,6 +101,20 @@
     {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (speech rate)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05}
   ],
 
+  "kitten_tts": [
+    {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (speech rate)", "default": 1.0, "minimum": 0.01, "maximum": 2.0, "step": 0.05},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 400, "minimum": 32, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
+  ],
+
+  "piper_tts": [
+    {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (speech rate)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "variation", "type": "slider", "label": "variation（音色变化）", "label_en": "variation", "default": 0.667, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "duration_variation", "type": "slider", "label": "duration_variation（时长变化）", "label_en": "duration_variation", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 280, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
+  ],
+
   "omnivoice": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
