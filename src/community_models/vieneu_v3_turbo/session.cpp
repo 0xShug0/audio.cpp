@@ -1,5 +1,7 @@
 #include "engine/community_models/vieneu_v3_turbo/session.h"
 
+#include "engine/community_models/vieneu_v3_turbo/frame_cap.h"
+
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
@@ -131,6 +133,7 @@ VieNeuTTSGenerationOptions generation_options_from_request(
     }
     if (const auto value = runtime::find_option(request.options, {"do_sample"})) {
         options.do_sample = runtime::parse_bool_option(*value, "do_sample");
+        options.subtalker_do_sample = options.do_sample;   // one switch for VieNeu
     }
     if (const auto value = runtime::find_option(
             request.options,
@@ -168,6 +171,17 @@ VieNeuTTSGenerationOptions generation_options_from_request(
     }
     options.seed = runtime::parse_u32_option(request.options, {"seed"})
         .value_or(runtime::random_u32_seed());
+    if (const auto value = runtime::parse_int_option(request.options, {"repetition_window"})) {
+        options.repetition_window = *value;
+    }
+    if (const auto value = runtime::find_option(request.options, {"frame_cap"})) {
+        options.frame_cap = runtime::parse_bool_option(*value, "frame_cap");
+    }
+    // The acoustic decoder follows the main sampler unless overridden explicitly.
+    if (options.subtalker_temperature < 0.0F) options.subtalker_temperature = options.temperature;
+    if (options.subtalker_top_k < 0) options.subtalker_top_k = options.top_k;
+    if (options.subtalker_top_p < 0.0F) options.subtalker_top_p = options.top_p;
+
     return options;
 }
 
@@ -424,7 +438,14 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
     double decoder_ms = 0.0;
     runtime::AudioBuffer merged_audio;
     for (const auto & chunk_request : chunk_requests) {
-        const VieNeuTTSRequest qwen_request = make_request(chunk_request);
+        VieNeuTTSRequest qwen_request = make_request(chunk_request);
+        if (qwen_request.generation.frame_cap) {
+            // `--text` carries SEA-G2P phonemes; cap the frame budget like the Python
+            // engine so a missed EOS cannot run to the hard ceiling.
+            qwen_request.generation.max_new_tokens = std::min(
+                qwen_request.generation.max_new_tokens,
+                std::max<int64_t>(1, max_expected_frames(qwen_request.text)));
+        }
         const auto prompt_start = Clock::now();
         const auto & voice_prompt = resolve_voice_prompt(*qwen_request.voice_clone, prompt_builder);
         prompt_ms += engine::debug::elapsed_ms(prompt_start, Clock::now());

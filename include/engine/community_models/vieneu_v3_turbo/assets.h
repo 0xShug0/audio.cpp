@@ -70,7 +70,7 @@ struct VieNeuTTSConfig {
     std::string tts_model_type;
     std::string tts_model_size;
     std::string tokenizer_type;
-    int64_t max_new_tokens = 2048;
+    int64_t max_new_tokens = 300;
     VieNeuTTSTalkerConfig talker;
     VieNeuTTSCodePredictorConfig code_predictor;
     VieNeuTTSSpeechTokenizerConfig speech_tokenizer;

@@ -10,12 +10,14 @@ namespace engine::models::vieneu_v3_turbo {
 namespace json = engine::io::json;
 namespace {
 
+// Python `max_new_frames` default is 300 (24 s of audio); a generation_config.json
+// may raise it. The talker cache is sized from this, so it is a hard ceiling.
 int64_t parse_generation_max_new_tokens(const assets::ResourceBundle & resources) {
     if (!resources.has_file("generation_config")) {
-        return 2048;
+        return 300;
     }
     const auto generation = resources.parse_json("generation_config");
-    return json::optional_i64(generation, "max_new_tokens", 2048);
+    return json::optional_i64(generation, "max_new_tokens", 300);
 }
 
 VieNeuTTSConfig parse_config(const assets::ResourceBundle & resources) {

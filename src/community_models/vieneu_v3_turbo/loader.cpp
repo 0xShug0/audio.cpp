@@ -45,14 +45,26 @@ runtime::CapabilitySet capabilities(const VieNeuTTSAssets & assets) {
 runtime::ModelCliInterface cli(const VieNeuTTSAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
-        {"reference_text", "<text>", "Transcript of the reference speaker WAV."},
-        {"speaker_embedding_file", "<path>", "Path to the speaker embedding .emb.txt file."},
+        {"speaker_embedding_file", "<path>", "Path to a 192-d speaker embedding file (comma-separated floats)."},
         {"speaker_embedding", "<csv>", "Comma-separated list of 192 speaker embedding float values."},
-        {"subtalker_temperature", "<float>", "Acoustic decoder sampling temperature (default 0.8)."},
-        {"subtalker_do_sample", "true|false", "Enable sampling in the acoustic decoder (default true)."},
+        {"reference_codes_file", "<path>", "Pre-encoded reference codes (one frame per line, 16 ints); replaces the codec encoder pass and makes --voice-ref optional."},
+        {"reference_text", "<text>", "Transcript of the reference WAV (accepted for compatibility; v3 Turbo does not condition on it)."},
+        {"x_vector_only_mode", "true|false", "Clone from the speaker embedding only, without reference codes (default false)."},
+        {"max_tokens", "<int>", "Maximum generated frames per chunk, 80 ms each (default 300)."},
+        {"do_sample", "true|false", "Sample the acoustic decoder (default true); false = greedy."},
+        {"temperature", "<float>", "Sampling temperature for all 16 codebooks (default 0.8)."},
+        {"top_k", "<int>", "Top-k for all codebooks (default 25)."},
+        {"top_p", "<float>", "Nucleus limit within the top-k candidates (default 0.95)."},
+        {"repetition_penalty", "<float>", "Penalty on codes seen in the recent window of each codebook (default 1.2)."},
+        {"repetition_window", "<int>", "Frames each codebook remembers for the penalty (default 64; 0 = unbounded)."},
+        {"frame_cap", "true|false", "Cap max_tokens by the phoneme count of the chunk (default true)."},
+        {"subtalker_temperature", "<float>", "Acoustic decoder temperature override (defaults to temperature)."},
+        {"subtalker_top_k", "<int>", "Acoustic decoder top-k override (defaults to top_k)."},
+        {"subtalker_top_p", "<float>", "Acoustic decoder top-p override (defaults to top_p)."},
+        {"subtalker_do_sample", "true|false", "Alias of do_sample for the acoustic decoder."},
+        {"seed", "<int>", "Sampling seed (random when omitted)."},
         {"text_chunk_size", "<int>", "Maximum character budget per chunk (default 200)."},
         {"text_chunk_mode", "default|endline|tag_aware", "Text chunking mode (default 'default')."},
-        {"reference_codes_file", "<path>", "Pre-encoded reference codes (one frame per line, 16 ints); replaces the codec encoder pass and makes --voice-ref optional."},
         {"codes_dump_file", "<path>", "Append prompt ids, reference codes and generated codes as text (parity debugging)."},
     };
     out.session_options = {

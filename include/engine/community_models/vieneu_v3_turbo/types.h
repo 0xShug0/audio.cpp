@@ -13,17 +13,24 @@ enum class VieNeuTTSVariant {
     Base,
 };
 
+// Defaults follow `Vieneu.infer()` in the Python package (v3 Turbo): one sampler
+// setting drives all 16 codebooks of the acoustic decoder, and the repetition
+// penalty only looks at the last `repetition_window` frames of each codebook.
 struct VieNeuTTSGenerationOptions {
-    int64_t max_new_tokens = 2048;
+    int64_t max_new_tokens = 300;
     bool do_sample = true;
     bool subtalker_do_sample = true;
-    float temperature = 0.9F;
-    int top_k = 50;
-    float top_p = 1.0F;
-    float repetition_penalty = 1.05F;
-    float subtalker_temperature = 0.9F;
-    int subtalker_top_k = 50;
-    float subtalker_top_p = 1.0F;
+    float temperature = 0.8F;
+    int top_k = 25;
+    float top_p = 0.95F;
+    float repetition_penalty = 1.2F;
+    int64_t repetition_window = 64;
+    // Cap max_new_tokens by the phoneme count of the chunk (Python `frame_cap`).
+    bool frame_cap = true;
+    // Acoustic-decoder overrides; when left negative they follow the main values.
+    float subtalker_temperature = -1.0F;
+    int subtalker_top_k = -1;
+    float subtalker_top_p = -1.0F;
     uint32_t seed = 1234;
 };
 

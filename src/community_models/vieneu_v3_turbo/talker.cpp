@@ -32,6 +32,8 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <deque>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -1587,6 +1589,53 @@ std::vector<float> frame_embedding(
     return out;
 }
 
+// Per-codebook sliding-window repetition history (Python `RepetitionHistory`): only
+// codes emitted in the last `window` frames are penalised, so a code that must
+// legitimately repeat (silence, a held vowel) stops being punished once it leaves
+// the window. window <= 0 keeps every code forever.
+class RepetitionHistory {
+public:
+    RepetitionHistory(int64_t code_groups, int64_t window)
+        : window_(window), counts_(static_cast<size_t>(code_groups)), order_(static_cast<size_t>(code_groups)) {}
+
+    void add(int64_t group, int32_t code) {
+        auto & counts = counts_[static_cast<size_t>(group)];
+        auto & order = order_[static_cast<size_t>(group)];
+        ++counts[code];
+        if (window_ > 0) {
+            order.push_back(code);
+            if (static_cast<int64_t>(order.size()) > window_) {
+                const int32_t old = order.front();
+                order.pop_front();
+                auto it = counts.find(old);
+                if (it != counts.end() && --it->second <= 0) {
+                    counts.erase(it);
+                }
+            }
+        }
+    }
+
+    // logits[code] = logits < 0 ? logits * penalty : logits / penalty for every code in the window.
+    void penalise(int64_t group, std::vector<float> & logits, float penalty) const {
+        if (penalty == 1.0F) {
+            return;
+        }
+        for (const auto & entry : counts_[static_cast<size_t>(group)]) {
+            const int32_t code = entry.first;
+            if (code < 0 || static_cast<size_t>(code) >= logits.size()) {
+                continue;
+            }
+            float & value = logits[static_cast<size_t>(code)];
+            value = value < 0.0F ? value * penalty : value / penalty;
+        }
+    }
+
+private:
+    int64_t window_ = 0;
+    std::vector<std::unordered_map<int32_t, int32_t>> counts_;
+    std::vector<std::deque<int32_t>> order_;
+};
+
 class CodePredictorGraph {
 public:
     explicit CodePredictorGraph(std::shared_ptr<const VieNeuTalkerWeightsRuntime> weights)
@@ -1649,8 +1698,31 @@ public:
         const VieNeuTalkerCodePredictorInput & input,
         const VieNeuTTSGenerationOptions & options,
         std::mt19937 & rng,
-        uint64_t & sample_call_index) {
+        uint64_t & sample_call_index,
+        RepetitionHistory * history = nullptr) {
         timing_ = {};
+        // One sampler for every codebook, as in the Python `_sample`: repetition
+        // penalty on the window, temperature, top-k, then nucleus within the k.
+        auto pick = [&](int64_t group, std::vector<float> & values) {
+            if (history != nullptr) {
+                history->penalise(group, values, options.repetition_penalty);
+            }
+            const int32_t chosen = options.subtalker_do_sample
+                ? sample_index(
+                    values,
+                    options.subtalker_top_k,
+                    options.subtalker_top_p,
+                    options.subtalker_temperature,
+                    rng,
+                    weights_->sampling_policy(),
+                    options.seed,
+                    sample_call_index++)
+                : argmax_index(values);
+            if (history != nullptr) {
+                history->add(group, chosen);
+            }
+            return chosen;
+        };
 
         auto embeddings = make_prefill_embeddings(input);
         VieNeuTalkerFrameCodes out;
@@ -1674,17 +1746,7 @@ public:
         };
         dump_logits(0, logits.values);
 
-        int32_t code = options.subtalker_do_sample
-            ? sample_index(
-                logits.values,
-                options.subtalker_top_k,
-                options.subtalker_top_p,
-                options.subtalker_temperature,
-                rng,
-                weights_->sampling_policy(),
-                options.seed,
-                sample_call_index++)
-            : argmax_index(logits.values);
+        int32_t code = pick(0, logits.values);
         out.codes.push_back(code);
         for (int64_t group = 1; group < code_groups_; ++group) {
             const auto & w = weights_->weights();
@@ -1695,17 +1757,7 @@ public:
                 : lookup_rows(w.code_predictor_embeddings.at(static_cast<size_t>(group - 1)), weights_->assets().config.talker.hidden_size, {code});
             logits = run_step(group, row);
             dump_logits(group, logits.values);
-            code = options.subtalker_do_sample
-                ? sample_index(
-                    logits.values,
-                    options.subtalker_top_k,
-                    options.subtalker_top_p,
-                    options.subtalker_temperature,
-                    rng,
-                    weights_->sampling_policy(),
-                    options.seed,
-                    sample_call_index++)
-                : argmax_index(logits.values);
+            code = pick(group, logits.values);
             out.codes.push_back(code);
         }
         return out;
@@ -2073,28 +2125,33 @@ public:
         double cached_step_ms = 0.0;
         CodePredictorTiming code_predictor_timing;
         CachedStepTiming cached_step_timing;
+        const bool is_vieneu = weights_->assets().config.is_vieneu;
+        RepetitionHistory history(config.num_code_groups, options.repetition_window);
         for (int64_t step = 0; step < max_new_tokens; ++step) {
-            auto logits = current.logits.values;
+            int32_t first_code = 0;
             const auto processor_start = Clock::now();
-            apply_main_talker_processors(logits, config, generated_first_codes, step, repetition_penalty);
-            const int32_t first_code = options.do_sample
-                ? sample_index(
-                    logits,
-                    options.top_k,
-                    options.top_p,
-                    options.temperature,
-                    rng,
-                    weights_->sampling_policy(),
-                    options.seed,
-                    sample_call_index++)
-                : argmax_index(logits);
-
-            processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
-            if (!weights_->assets().config.is_vieneu) {
+            if (!is_vieneu) {
+                // Qwen3-TTS style: codebook 0 comes from the backbone head. VieNeu samples
+                // every codebook in the acoustic decoder, so this pass is skipped.
+                auto logits = current.logits.values;
+                apply_main_talker_processors(logits, config, generated_first_codes, step, repetition_penalty);
+                first_code = options.do_sample
+                    ? sample_index(
+                        logits,
+                        options.top_k,
+                        options.top_p,
+                        options.temperature,
+                        rng,
+                        weights_->sampling_policy(),
+                        options.seed,
+                        sample_call_index++)
+                    : argmax_index(logits);
                 if (first_code == config.codec_eos_token_id) {
+                    processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
                     break;
                 }
             }
+            processor_ms += engine::debug::elapsed_ms(processor_start, Clock::now());
             if (step + 1 >= max_new_tokens) {
                 break;
             }
@@ -2104,7 +2161,8 @@ public:
             const int32_t sgs_id = static_cast<int32_t>(weights_->assets().config.speech_generation_start_token_id);
             predictor_input.first_code = sgs_id;
             const auto code_predictor_start = Clock::now();
-            const auto frame = code_predictor_graph_->generate(predictor_input, options, rng, sample_call_index);
+            const auto frame = code_predictor_graph_->generate(
+                predictor_input, options, rng, sample_call_index, is_vieneu ? &history : nullptr);
             code_predictor_ms += engine::debug::elapsed_ms(code_predictor_start, Clock::now());
             const auto & predictor_timing = code_predictor_graph_->timing();
             code_predictor_timing.input_upload_ms += predictor_timing.input_upload_ms;
