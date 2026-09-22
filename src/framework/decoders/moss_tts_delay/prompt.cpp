@@ -51,7 +51,11 @@ std::vector<std::vector<int32_t>> moss_apply_delay_pattern(
     return out;
 }
 
-codecs::MossTokenRows build_moss_generation_prefix(
+namespace {
+
+// The user turn plus the assistant header, which both modes share. Left as a
+// builder rather than finished rows so continuation can append its span.
+codecs::MossTokenRowBuilder build_prefix_through_assistant_header(
     const std::string & user_inst,
     const std::vector<MossReferenceAudio> & references,
     const MossTtsDelayConfig & config,
@@ -100,10 +104,48 @@ codecs::MossTokenRows build_moss_generation_prefix(
 
     pending += std::string(kImEndToken) + kAssistantTurnPrefix + kImStartToken + kAssistantRolePrefix;
     builder.push_text_tokens(tokenizer.encode(pending, true));
+    return builder;
+}
 
+}  // namespace
+
+codecs::MossTokenRows build_moss_generation_prefix(
+    const std::string & user_inst,
+    const std::vector<MossReferenceAudio> & references,
+    const MossTtsDelayConfig & config,
+    const tokenizers::LlamaBpeTokenizer & tokenizer,
+    std::string_view model_label) {
+    auto builder = build_prefix_through_assistant_header(
+        user_inst, references, config, tokenizer, model_label);
     // The audio-start token is not seeded here: the model emits it itself on the
     // first step, and generate() reads the last text token to decide whether this
     // is a continuation, so appending it would be taken as one.
+    return builder.finish();
+}
+
+codecs::MossTokenRows build_moss_continuation_prefix(
+    const std::string & user_inst,
+    const std::vector<MossReferenceAudio> & references,
+    const MossReferenceAudio & assistant_audio,
+    const MossTtsDelayConfig & config,
+    const tokenizers::LlamaBpeTokenizer & tokenizer,
+    std::string_view model_label) {
+    auto builder = build_prefix_through_assistant_header(
+        user_inst, references, config, tokenizer, model_label);
+
+    // Here the audio-start token IS written: this turn's audio has begun, and it
+    // is the caller supplying it rather than the model.
+    builder.push_text_token(static_cast<int32_t>(config.audio_start_token_id));
+    const auto delayed = moss_apply_delay_pattern(
+        assistant_audio, config.num_codebooks, static_cast<int32_t>(config.audio_pad_code));
+    // Only the first `frames` rows -- see the note in the header on why the span
+    // stops short of the delay slots and the audio_end.
+    for (int64_t row = 0; row < assistant_audio.frames; ++row) {
+        builder.push_audio_row(
+            static_cast<int32_t>(config.audio_assistant_gen_slot_token_id),
+            delayed[static_cast<size_t>(row)].data(),
+            config.num_codebooks);
+    }
     return builder.finish();
 }
 

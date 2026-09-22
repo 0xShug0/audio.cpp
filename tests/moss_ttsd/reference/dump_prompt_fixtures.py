@@ -65,3 +65,25 @@ wav = torch.zeros(1, sr)            # one second; content is irrelevant to promp
 wav[0, ::137] = 0.2                 # some structure so the codec does not emit a constant
 codes = proc.encode_audios_from_wav([wav], sampling_rate=sr)
 dump("dialogue_mixed", pm.UserMessage(text=DIALOGUE, reference=[codes[0], None]))
+
+# 4. Continuation: the mode TTSD actually clones in. The user turn names the
+#    speakers, and an assistant turn carries the concatenated reference audio
+#    that the model continues from. The assistant span uses a different pair of
+#    slot tokens from a user span -- gen for the frames, delay for the trailing
+#    n_vq - 1 -- and the turn is left unterminated so generation continues it.
+cont_msgs = [
+    pm.UserMessage(text=DIALOGUE, reference=[codes[0], None]),
+    pm.AssistantMessage(audio_codes_list=[codes[0]]),
+]
+ids = proc([cont_msgs], mode="continuation")["input_ids"]
+json.dump({
+    "name": "dialogue_continuation",
+    "text": DIALOGUE,
+    "instruction": None, "language": None,
+    "quality": None, "sound_event": None, "ambient_sound": None,
+    "content": cont_msgs[0]._content,
+    "reference_codes": [codes[0][:, :n_vq].transpose(0, 1).contiguous().tolist(), None],
+    "assistant_codes": codes[0][:, :n_vq].transpose(0, 1).contiguous().tolist(),
+    "input_ids": ids[0].tolist(),
+}, open(f"{OUT}/ref_prompt_dialogue_continuation.json", "w"))
+print(f"wrote ref_prompt_dialogue_continuation.json  rows={ids.shape[1]}")

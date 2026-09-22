@@ -32,6 +32,20 @@ std::string render_references(const std::vector<std::optional<ReferenceAudio>> &
     return out;
 }
 
+// Only the speakers that brought audio produce a placeholder, so only those are
+// handed to the assembly -- in order, which is what pairs each span with its own
+// "[S<n>]:" tag.
+std::vector<decoders::MossReferenceAudio> present_references(const PromptFields & fields) {
+    std::vector<decoders::MossReferenceAudio> present;
+    present.reserve(fields.references.size());
+    for (const auto & reference : fields.references) {
+        if (reference.has_value()) {
+            present.push_back(*reference);
+        }
+    }
+    return present;
+}
+
 }  // namespace
 
 std::string render_user_inst(const PromptFields & fields) {
@@ -54,18 +68,18 @@ codecs::MossTokenRows build_generation_prefix(
     const PromptFields & fields,
     const decoders::MossTtsDelayConfig & config,
     const tokenizers::LlamaBpeTokenizer & tokenizer) {
-    // Only the speakers that brought audio produce a placeholder, so only those
-    // are handed to the assembly -- in order, which is what pairs each span with
-    // its own "[S<n>]:" tag.
-    std::vector<decoders::MossReferenceAudio> present;
-    present.reserve(fields.references.size());
-    for (const auto & reference : fields.references) {
-        if (reference.has_value()) {
-            present.push_back(*reference);
-        }
-    }
     return decoders::build_moss_generation_prefix(
-        render_user_inst(fields), present, config, tokenizer, "MOSS-TTSD");
+        render_user_inst(fields), present_references(fields), config, tokenizer, "MOSS-TTSD");
+}
+
+codecs::MossTokenRows build_continuation_prefix(
+    const PromptFields & fields,
+    const ReferenceAudio & assistant_audio,
+    const decoders::MossTtsDelayConfig & config,
+    const tokenizers::LlamaBpeTokenizer & tokenizer) {
+    return decoders::build_moss_continuation_prefix(
+        render_user_inst(fields), present_references(fields), assistant_audio,
+        config, tokenizer, "MOSS-TTSD");
 }
 
 }  // namespace engine::models::moss_ttsd

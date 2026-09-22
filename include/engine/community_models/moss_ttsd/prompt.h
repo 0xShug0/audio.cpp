@@ -59,4 +59,14 @@ codecs::MossTokenRows build_generation_prefix(
     const decoders::MossTtsDelayConfig & config,
     const tokenizers::LlamaBpeTokenizer & tokenizer);
 
+// The cloning prefix: the same user turn, plus an assistant turn carrying the
+// reference recording that the generated dialogue continues from. This is the
+// mode the model card uses, and `assistant_audio` is normally the speakers'
+// references concatenated in the order they are introduced.
+codecs::MossTokenRows build_continuation_prefix(
+    const PromptFields & fields,
+    const ReferenceAudio & assistant_audio,
+    const decoders::MossTtsDelayConfig & config,
+    const tokenizers::LlamaBpeTokenizer & tokenizer);
+
 }  // namespace engine::models::moss_ttsd

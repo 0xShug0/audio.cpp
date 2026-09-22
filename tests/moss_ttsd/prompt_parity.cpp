@@ -37,6 +37,20 @@ std::string arg_value(int argc, char ** argv, const std::string & name, const st
     return fallback;
 }
 
+// [n_vq][frames], the codec layout ReferenceAudio takes.
+engine::models::moss_ttsd::ReferenceAudio read_codes(const json::Value & speaker) {
+    engine::models::moss_ttsd::ReferenceAudio audio;
+    for (const auto & codebook : speaker.as_array()) {
+        std::vector<int32_t> row;
+        for (const auto & code : codebook.as_array()) {
+            row.push_back(static_cast<int32_t>(code.as_number()));
+        }
+        audio.frames = static_cast<int64_t>(row.size());
+        audio.codes.push_back(std::move(row));
+    }
+    return audio;
+}
+
 std::optional<std::string> optional_field(const json::Value & object, const std::string & key) {
     const auto * value = object.find(key);
     if (value == nullptr || value->is_null()) {
@@ -92,15 +106,7 @@ int main(int argc, char ** argv) {
                     fields.references.emplace_back();
                     continue;
                 }
-                engine::models::moss_ttsd::ReferenceAudio audio;
-                for (const auto & codebook : speaker.as_array()) {
-                    std::vector<int32_t> row;
-                    for (const auto & code : codebook.as_array()) {
-                        row.push_back(static_cast<int32_t>(code.as_number()));
-                    }
-                    audio.frames = static_cast<int64_t>(row.size());
-                    audio.codes.push_back(std::move(row));
-                }
+                auto audio = read_codes(speaker);
                 std::cout << "  speaker " << (fields.references.size() + 1) << ": "
                           << audio.codes.size() << " codebooks x " << audio.frames << " frames\n";
                 fields.references.emplace_back(std::move(audio));
@@ -118,7 +124,19 @@ int main(int argc, char ** argv) {
         }
         std::cout << "rendered <user_inst> matches the reference\n";
 
-        const auto rows = engine::models::moss_ttsd::build_generation_prefix(fields, config, *tokenizer);
+        // A fixture carrying assistant_codes is a continuation prompt: the model is
+        // handed audio to carry on from rather than asked to start fresh.
+        const auto * assistant = reference.find("assistant_codes");
+        const bool continuation = assistant != nullptr && assistant->is_array();
+        if (continuation) {
+            config.audio_assistant_gen_slot_token_id =
+                json::require_i64(config_json, "audio_assistant_gen_slot_token_id");
+        }
+        const auto rows = continuation
+            ? engine::models::moss_ttsd::build_continuation_prefix(
+                  fields, read_codes(*assistant), config, *tokenizer)
+            : engine::models::moss_ttsd::build_generation_prefix(fields, config, *tokenizer);
+        std::cout << "mode: " << (continuation ? "continuation" : "generation") << "\n";
 
         const auto & expected_rows = reference.require("input_ids").as_array();
         const auto steps = static_cast<int64_t>(rows.text_tokens.size());

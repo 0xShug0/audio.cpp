@@ -55,4 +55,24 @@ codecs::MossTokenRows build_moss_generation_prefix(
     const tokenizers::LlamaBpeTokenizer & tokenizer,
     std::string_view model_label);
 
+// The prefix for CONTINUATION, where the model is handed audio to carry on from
+// rather than asked to start fresh. Used by MOSS-TTSD for cloning: the user turn
+// names the speakers and this appends an assistant turn holding the reference
+// recording, which the generated dialogue continues.
+//
+// ⚠ THE ASSISTANT SPAN IS DELIBERATELY UNFINISHED. A completed span is `frames`
+// generation slots, then n_vq - 1 delay slots as the codebooks retire, then
+// audio_end. This one stops after the `frames` generation slots: the reference
+// truncates in continuation mode, so the codebooks are still mid-flight and the
+// model's first sampled row continues the delay pattern instead of starting a
+// new one. Emitting the delay slots or the audio_end would tell the model the
+// audio had ended, and it would begin again rather than carry on.
+codecs::MossTokenRows build_moss_continuation_prefix(
+    const std::string & user_inst,
+    const std::vector<MossReferenceAudio> & references,
+    const MossReferenceAudio & assistant_audio,
+    const MossTtsDelayConfig & config,
+    const tokenizers::LlamaBpeTokenizer & tokenizer,
+    std::string_view model_label);
+
 }  // namespace engine::decoders
