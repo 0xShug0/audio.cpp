@@ -125,6 +125,26 @@
         "type": "float",
         "required": false,
         "description": "Audio repetition penalty."
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 200.",
+        "required": false,
+        "min": 1,
+        "default": 200
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
       }
     ],
     "session": [
