@@ -249,6 +249,44 @@ void ggml_cuda_op_gelu_erf(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_op_unary<op_gelu_erf>(ctx, dst);
 }
 
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+static __global__ void bias_gelu_erf_kernel(
+        const float * x, const float * bias, float * dst, int64_t count, int64_t width) {
+    const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < count) {
+        // Preserve the FP32 rounding of the separate bias-add operation.
+        const float value = __fadd_rn(x[i], bias[i % width]);
+        dst[i] = op_gelu_erf(value);
+    }
+}
+
+void ggml_cuda_op_bias_gelu_erf(ggml_backend_cuda_context & ctx, const ggml_tensor * add, ggml_tensor * dst) {
+    const int64_t count = ggml_nelements(dst);
+    bias_gelu_erf_kernel<<<(count + 255) / 256, 256, 0, ctx.stream()>>>(
+        static_cast<const float *>(add->src[0]->data),
+        static_cast<const float *>(add->src[1]->data),
+        static_cast<float *>(dst->data), count, add->src[0]->ne[0]);
+}
+
+static __global__ void bias_residual_kernel(const float * x, const float * bias,
+        const float * residual, float * dst, int64_t count, int64_t width) {
+    const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < count) {
+        dst[i] = __fadd_rn(residual[i], __fadd_rn(x[i], bias[i % width]));
+    }
+}
+
+void ggml_cuda_op_bias_residual(ggml_backend_cuda_context & ctx, const ggml_tensor * add,
+        const ggml_tensor * residual, ggml_tensor * dst) {
+    const int64_t count = ggml_nelements(dst);
+    bias_residual_kernel<<<(count + 255) / 256, 256, 0, ctx.stream()>>>(
+        static_cast<const float *>(add->src[0]->data),
+        static_cast<const float *>(add->src[1]->data),
+        static_cast<const float *>(residual->data),
+        static_cast<float *>(dst->data), count, add->src[0]->ne[0]);
+}
+#endif
+
 void ggml_cuda_op_gelu_quick(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_op_unary<op_gelu_quick>(ctx, dst);
 }
