@@ -55,6 +55,47 @@ the words and the audio line up. Omitting it leaves the model continuing a
 recording whose transcript it was never given, which is worth hearing before you
 rely on it.
 
+## Packages and what fits
+
+| package | size | clones on a 24 GiB card |
+|---|---|---|
+| `moss_ttsd_q8_0_codec_f16` (default) | 12.2 GB | yes |
+| `moss_ttsd_q4_k_codec_f16` | — | yes |
+| `moss_ttsd_bf16_codec_f16` | 18.9 GB | **no** |
+
+⚠ **bf16 cannot clone on a 24 GiB card.** Cloning needs the codec *encoder* as
+well as the decoder, and its weights want a further 3.5 GB on top of the
+backbone; on an RTX 3090 that fails at `moss.audio_tokenizer.encoder`. Plain
+generation in bf16 is fine. Use q8_0 to clone on 24 GiB, or run bf16 on CPU.
+
+## How well does it clone?
+
+**Not reliably, and this is the model rather than this port.** Measuring median
+F0 per turn against two references 84 Hz apart, across three runs of the
+reference implementation and one of ours:
+
+```
+run                S1 turn1  S1 turn2  S2 turn1  S2 turn2
+reference run 1      200.0     110.3     154.8     131.9
+reference run 2      203.4     102.8     179.1     160.0
+reference run 3      208.8     104.8     161.1     152.5
+ours (seed 7)        210.5     120.6     166.7     164.4
+references:          S1 = 201.7 Hz, S2 = 117.6 Hz
+```
+
+The first speaker's first turn matches its reference closely. By that speaker's
+second turn the pitch has fallen to roughly the *other* reference's, and the
+second speaker sits between the two throughout. The reference implementation
+does this in every run and ours reproduces the pattern at the same magnitude.
+
+Median F0 is a crude stand-in for speaker identity and this is four runs of one
+configuration with short references, so treat it as "identity drifts across
+turns" rather than as a measured rate. Longer references may do better; the
+model card's own example uses them.
+
+Separately, one take in four ended with a short spurious utterance after the
+script had finished. Too few takes to attribute it to anything.
+
 ## Things worth knowing
 
 - **No duration budget.** The family's `- Tokens:` field is baked to `None` in
