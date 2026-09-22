@@ -97,6 +97,10 @@
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（生成步数）", "label_en": "num_inference_steps", "default": 10, "minimum": 1, "maximum": 100, "step": 1, "precision": 0}
   ],
 
+  "kokoro_tts": [
+    {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (speech rate)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05}
+  ],
+
   "omnivoice": [
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 2.0, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
