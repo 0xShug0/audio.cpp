@@ -44,7 +44,7 @@ runtime::ModelCliInterface cli() {
         {"top_p", "<float>", "Audio nucleus sampling cutoff (default 0.6)."},
         {"top_k", "<int>", "Audio top-k (default 50)."},
         {"repetition_penalty", "<float>", "Audio repetition penalty (default 1.1)."},
-        {"text_chunk_size", "<int>", "Maximum character budget per chunk (default 200)."},
+        {"text_chunk_size", "<int>", "Maximum Unicode codepoints per long-form text chunk (default 200)."},
         {"text_chunk_mode", "default|endline|tag_aware", "Text chunking mode (default 'default')."},
     };
     out.session_options = {
