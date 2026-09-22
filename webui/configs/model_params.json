@@ -390,6 +390,15 @@
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.0, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
   ],
 
+  "moss_tts_v15": [
+    {"name": "instruct", "type": "text", "label": "instruct（音色描述）", "label_en": "instruct (voice description)", "default": "", "placeholder": "参考音频比文字描述更可靠", "placeholder_en": "A reference recording is more reliable than a description."},
+    {"name": "language", "type": "choice", "label": "language（语言）", "label_en": "language", "default": "", "choices": ["", "English", "Chinese"]},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.5, "minimum": 0.0, "maximum": 3.0, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.6, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.1, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
+  ],
+
   "moss_tts_nano": [
     {"name": "do_sample", "type": "bool", "label": "do_sample", "default": true},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.7, "minimum": 0.0, "maximum": 2.5, "step": 0.05},
