@@ -1064,7 +1064,9 @@
         advancedValues = {
           ...advancedValues,
           ar_lora: configured?.['yue2.ar_lora'] ?? '',
-          ar_lora_scale: Number(configured?.['yue2.ar_lora_scale'] ?? 1)
+          ar_lora_scale: Number(configured?.['yue2.ar_lora_scale'] ?? 1),
+          nar_lora: configured?.['yue2.nar_lora'] ?? '',
+          nar_lora_scale: Number(configured?.['yue2.nar_lora_scale'] ?? 1)
         };
       }
       text = '';
