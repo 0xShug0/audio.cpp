@@ -73,31 +73,34 @@ int option_int(
     return value.has_value() ? std::stoi(*value) : fallback;
 }
 
-// Positional, comma separated, the same shape vibevoice takes its speakers in.
-// An EMPTY entry is meaningful: it names a speaker that is not cloned, which is
-// what renders "[S<n>]: None" and is how a dialogue clones one voice and invents
-// the other. So this does not drop blanks the way a path list normally would.
-std::vector<std::string> split_speaker_paths(const std::string & value) {
-    std::vector<std::string> out;
+}  // namespace
+
+std::vector<std::optional<std::string>> parse_speaker_paths(const std::string & value) {
+    std::vector<std::optional<std::string>> out;
+    if (value.empty()) {
+        return out;
+    }
     std::string current;
+    const auto push = [&out](std::string entry) {
+        const auto first = entry.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) {
+            out.emplace_back();          // named, not cloned
+            return;
+        }
+        const auto last = entry.find_last_not_of(" \t\r\n");
+        out.emplace_back(entry.substr(first, last - first + 1));
+    };
     for (const char character : value) {
         if (character == ',') {
-            out.push_back(current);
+            push(current);
             current.clear();
             continue;
         }
         current += character;
     }
-    out.push_back(current);
-    // A trailing comma is a typo, not a speaker. One entirely blank entry at the
-    // end is dropped; interior blanks are kept, because those are the None ones.
-    if (!out.empty() && out.back().empty()) {
-        out.pop_back();
-    }
+    push(current);
     return out;
 }
-
-}  // namespace
 
 MossTtsdSession::MossTtsdSession(
     runtime::TaskSpec task,
@@ -334,12 +337,12 @@ runtime::TaskResult MossTtsdSession::run(const runtime::TaskRequest & request) {
         throw std::runtime_error("MOSS-TTSD request cannot combine voice_samples with voice_ref");
     }
     if (samples_option.has_value()) {
-        for (const auto & path : split_speaker_paths(*samples_option)) {
-            if (path.empty()) {
+        for (const auto & path : parse_speaker_paths(*samples_option)) {
+            if (!path.has_value()) {
                 speakers.emplace_back();
                 continue;
             }
-            const auto wav = engine::audio::read_wav_f32(std::filesystem::path(path));
+            const auto wav = engine::audio::read_wav_f32(std::filesystem::path(*path));
             speakers.emplace_back(encode_reference(
                 runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples}));
         }
@@ -413,6 +416,21 @@ runtime::TaskResult MossTtsdSession::run(const runtime::TaskRequest & request) {
     int64_t prompt_frames = 0;
     if (assistant_audio.has_value() && chunk.frames > 0) {
         prompt_frames = assistant_audio->frames;
+        // ⚠ CHECKED, NOT ASSUMED. The copies below write each codebook's prompt
+        // rows and then the generated rows at a fixed offset into one buffer
+        // sized from these counts. A prompt row longer than `frames`, or fewer
+        // codebooks than the chunk reports, would run past its slice and into
+        // the next one -- or past the end of the buffer on the last codebook.
+        // It holds by construction today; it is not worth finding out the hard
+        // way if that changes.
+        if (static_cast<int64_t>(assistant_audio->codes.size()) < chunk.codebooks) {
+            throw std::runtime_error("MOSS-TTSD prompt audio has fewer codebooks than the generated chunk");
+        }
+        for (int64_t cb = 0; cb < chunk.codebooks; ++cb) {
+            if (static_cast<int64_t>(assistant_audio->codes[static_cast<size_t>(cb)].size()) != prompt_frames) {
+                throw std::runtime_error("MOSS-TTSD prompt audio codebook length does not match its frame count");
+            }
+        }
         decoded.frames = prompt_frames + chunk.frames;
         decoded.codes.assign(static_cast<size_t>(chunk.codebooks * decoded.frames), 0);
         for (int64_t cb = 0; cb < chunk.codebooks; ++cb) {

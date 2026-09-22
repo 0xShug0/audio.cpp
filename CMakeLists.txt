@@ -2943,6 +2943,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(quantize_chunking_test tests/unittests/test_quantize_chunking.cpp)
         add_test(NAME quantize_chunking_test COMMAND quantize_chunking_test)
 
+        add_engine_unittest(moss_ttsd_speakers_test tests/unittests/test_moss_ttsd_speakers.cpp)
+        target_link_libraries(moss_ttsd_speakers_test PRIVATE engine_model_moss_ttsd)
+        add_test(NAME moss_ttsd_speakers_test COMMAND moss_ttsd_speakers_test)
+
         add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
         # So the test can read the specs this repository ships, rather than a
         # copy of them staged somewhere.

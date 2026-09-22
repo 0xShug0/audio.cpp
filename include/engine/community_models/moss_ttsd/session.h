@@ -17,6 +17,20 @@
 
 namespace engine::models::moss_ttsd {
 
+// Splits the `voice_samples` option into one entry per speaker, positional:
+// entry i is [S(i+1)], and an entry with no path is a speaker that is NAMED but
+// not cloned, which renders "[S<n>]: None".
+//
+// ⚠ THE ENTRY COUNT IS THE SPEAKER COUNT, trailing separator included. So
+// "a.wav," is two speakers with the second invented, which is the documented way
+// to clone one voice and not the other. An earlier version discarded a trailing
+// blank as a typo, which silently turned exactly that spelling into a
+// single-speaker prompt -- the one case the option exists to express.
+//
+// Declared here rather than kept in the session's anonymous namespace so the
+// rule can be tested without a model.
+std::vector<std::optional<std::string>> parse_speaker_paths(const std::string & value);
+
 class MossTtsdSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {

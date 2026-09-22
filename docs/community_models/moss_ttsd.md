@@ -35,15 +35,24 @@ the transcript of what those recordings say:
 ```bash
 audiocpp_cli --task clon --family moss_ttsd --model /path/to/MOSS-TTSD-GGUF \
   --backend cuda --language English \
-  --option voice_samples=/path/to/s1.wav,/path/to/s2.wav \
-  --option "reference_text=[S1] This is the first voice. [S2] And this is the second." \
+  --request-option voice_samples=/path/to/s1.wav,/path/to/s2.wav \
+  --request-option "reference_text=[S1] This is the first voice. [S2] And this is the second." \
   --text "[S1] So what did you make of it? [S2] Honestly, I was not expecting that ending." \
   --out dialogue.wav
 ```
 
-**Leave an entry empty to clone one speaker and invent the other.**
-`voice_samples=/path/to/s1.wav,` gives `[S1]` the recording and lets the model
-choose a voice for `[S2]`.
+**The number of entries is the number of speakers**, and an entry with no path
+is a speaker that is named but not cloned:
+
+| `voice_samples=` | speakers |
+|---|---|
+| `s1.wav,s2.wav` | both cloned |
+| `s1.wav,` | `[S1]` cloned, `[S2]` invented |
+| `,s2.wav` | `[S1]` invented, `[S2]` cloned |
+| `s1.wav` | one speaker only — no `[S2]` is implied |
+
+So the trailing separator is meaningful, not a typo: `s1.wav,` and `s1.wav` are
+different prompts.
 
 ### Why `reference_text` matters
 
