@@ -1,7 +1,6 @@
 #include "engine/framework/modules/conv_modules.h"
 #include "tensor_layout_utils.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -545,11 +544,6 @@ core::TensorValue Conv1dModule::build(
     core::TensorValue output;
     if (is_conv1d_pertap_fast_path_eligible(ctx, config_, input) &&
         weight_contiguous.type == GGML_TYPE_F32) {
-        // Make it observable which models take the per-tap path (only when --log is on).
-        engine::debug::trace_log_scalar("conv1d.pertap_fast_path.in_channels", config_.in_channels);
-        engine::debug::trace_log_scalar("conv1d.pertap_fast_path.out_channels", config_.out_channels);
-        engine::debug::trace_log_scalar("conv1d.pertap_fast_path.kernel_size", config_.kernel_size);
-        engine::debug::trace_log_scalar("conv1d.pertap_fast_path.frames", input.shape.dims[2]);
         output = build_conv1d_pertap_fast_path(ctx, config_, input_contiguous, weight_contiguous, output_shape);
     } else if (input.shape.dims[0] == 1) {
         output = core::wrap_tensor(
