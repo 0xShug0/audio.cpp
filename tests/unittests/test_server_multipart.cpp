@@ -140,6 +140,21 @@ void test_parse_multipart_body_rejects_false_closing_prefix() {
     require(parts[1].data == "kept", "EOF closing delimiter remains supported");
 }
 
+void test_parse_multipart_body_transport_padding() {
+    for (const std::string & newline : {std::string("\r\n"), std::string("\n")}) {
+        const std::string body =
+            "--BOUNDARY \t" + newline +
+            "Content-Disposition: form-data; name=\"first\"" + newline + newline +
+            "one" + newline + "--BOUNDARY\t " + newline +
+            "Content-Disposition: form-data; name=\"second\"" + newline + newline +
+            "two" + newline + "--BOUNDARY-- \t" + newline + "epilogue";
+        const auto parts = parse_multipart_body(body, "BOUNDARY");
+        require(parts.size() == 2, "transport padding must not hide multipart records");
+        require(parts[0].name == "first" && parts[0].data == "one", "padded first delimiter");
+        require(parts[1].name == "second" && parts[1].data == "two", "padded closing delimiter");
+    }
+}
+
 void test_parse_multipart_body_no_boundary_match() {
     require(parse_multipart_body("not a multipart body", "BOUNDARY").empty(), "no matching boundary yields no parts");
 }
@@ -153,6 +168,7 @@ int main() {
         test_parse_multipart_body_binary_with_embedded_nul();
         test_parse_multipart_body_only_accepts_delimiter_lines();
         test_parse_multipart_body_rejects_false_closing_prefix();
+        test_parse_multipart_body_transport_padding();
         test_parse_multipart_body_no_boundary_match();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';

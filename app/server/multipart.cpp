@@ -79,6 +79,10 @@ bool is_boundary_line(
     if (body.compare(suffix, 2, "--") == 0) {
         suffix += 2;
     }
+    // RFC 2046 permits transport-added horizontal padding on delimiter lines.
+    while (suffix < body.size() && (body[suffix] == ' ' || body[suffix] == '\t')) {
+        ++suffix;
+    }
     return suffix == body.size() ||
         body.compare(suffix, 2, "\r\n") == 0 ||
         body.compare(suffix, 1, "\n") == 0;
@@ -173,6 +177,9 @@ std::vector<MultipartPart> parse_multipart_body(const std::string & body, const 
     while (true) {
         if (body.compare(pos, 2, "--") == 0) {
             break;
+        }
+        while (pos < body.size() && (body[pos] == ' ' || body[pos] == '\t')) {
+            ++pos;
         }
         if (body.compare(pos, 2, "\r\n") == 0) {
             pos += 2;
