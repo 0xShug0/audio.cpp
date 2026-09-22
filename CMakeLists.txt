@@ -2734,6 +2734,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_engine_unittest(sortformer_v2_schedule_test tests/community_models/sortformer_diar/sortformer_v2_schedule_test.cpp)
     add_test(NAME sortformer_v2_schedule_test COMMAND sortformer_v2_schedule_test)
 
+    # Registered here rather than in the extended block below so it runs in the
+    # linux/mac build workflows (they only set ENGINE_BUILD_TESTS). It is
+    # platform-safe: the Metal timing section skips itself when Metal is absent.
+    add_engine_unittest(conv1d_pertap_fast_path_test tests/unittests/test_conv1d_pertap_fast_path.cpp)
+    add_test(NAME conv1d_pertap_fast_path_test COMMAND conv1d_pertap_fast_path_test)
+
     if(audio8_tts IN_LIST AUDIOCPP_LINKED_MODELS)
         # Regression test for the Falcon-H1 host KV cache append (per-head re-stride).
         add_engine_unittest(audio8_tts_falcon_kv_cache_test tests/unittests/test_audio8_tts_falcon_kv_cache.cpp)
@@ -2977,9 +2983,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)
         add_test(NAME conv_transpose_fast_path_test COMMAND conv_transpose_fast_path_test)
-
-        add_engine_unittest(conv1d_pertap_fast_path_test tests/unittests/test_conv1d_pertap_fast_path.cpp)
-        add_test(NAME conv1d_pertap_fast_path_test COMMAND conv1d_pertap_fast_path_test)
 
         add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
         add_test(NAME depthwise_conv1d_lowering_test COMMAND depthwise_conv1d_lowering_test)
