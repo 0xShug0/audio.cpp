@@ -1,4 +1,4 @@
-#include "engine/community_models/vietneu_tts/speaker_encoder.h"
+#include "engine/community_models/vieneu_v3_turbo/speaker_encoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"
@@ -28,7 +28,7 @@
 #include <utility>
 #include <vector>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -89,7 +89,7 @@ ConvWeights load_conv(
 
 }  // namespace
 
-audio::AudioTensor compute_vietneu_speaker_mel(const runtime::AudioBuffer & audio, int threads) {
+audio::AudioTensor compute_vieneu_speaker_mel(const runtime::AudioBuffer & audio, int threads) {
     engine::audio::MelSpectrogramFrontendConfig config;
     config.sample_rate = kSampleRate;
     config.n_fft = kNfft;
@@ -212,7 +212,7 @@ core::TensorValue attentive_statistics_pool(
 
 }  // namespace
 
-struct VietneuSpeakerEncoderWeights {
+struct VieNeuSpeakerEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     ConvWeights block0;
     std::vector<SERes2NetWeights> blocks;
@@ -225,17 +225,17 @@ struct VietneuSpeakerEncoderWeights {
 
 namespace {
 
-std::shared_ptr<const VietneuSpeakerEncoderWeights> load_weights(
-    const VietneuTTSAssets & assets,
+std::shared_ptr<const VieNeuSpeakerEncoderWeights> load_weights(
+    const VieNeuTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType conv_weight_storage_type) {
     const auto & source = *assets.model_weights;
-    auto weights = std::make_shared<VietneuSpeakerEncoderWeights>();
+    auto weights = std::make_shared<VieNeuSpeakerEncoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "vietneu_tts.speaker_encoder.weights",
+        "vieneu_v3_turbo.speaker_encoder.weights",
         32ull * 1024ull * 1024ull);
     weights->block0 = load_conv(*weights->store, source, "blocks.0.conv", conv_weight_storage_type, 512, 128, 5, 1);
     for (int64_t block = 1; block <= 3; ++block) {
@@ -271,16 +271,16 @@ std::shared_ptr<const VietneuSpeakerEncoderWeights> load_weights(
 
 }  // namespace
 
-class VietneuSpeakerEncoderGraph {
+class VieNeuSpeakerEncoderGraph {
 public:
-    VietneuSpeakerEncoderGraph(
-        std::shared_ptr<const VietneuSpeakerEncoderWeights> weights,
+    VieNeuSpeakerEncoderGraph(
+        std::shared_ptr<const VieNeuSpeakerEncoderWeights> weights,
         int64_t frames,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes)
         : weights_(std::move(weights)),
           frames_(frames),
-          constants_(execution_context.backend(), std::max(1, execution_context.config().threads), "vietneu_tts.speaker_encoder.constants"),
+          constants_(execution_context.backend(), std::max(1, execution_context.config().threads), "vieneu_v3_turbo.speaker_encoder.constants"),
           backend_(execution_context.backend()),
           compute_threads_(std::max(1, execution_context.config().threads)) {
         if (weights_ == nullptr) {
@@ -305,7 +305,7 @@ public:
 
         core::ModuleBuildContext build_ctx{
             ctx_.get(),
-            "vietneu_tts.speaker_encoder",
+            "vieneu_v3_turbo.speaker_encoder",
             execution_context.backend_type(),
         };
         auto input = core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, kFeatureDim, frames_}));
@@ -336,14 +336,14 @@ public:
         }
     }
 
-    ~VietneuSpeakerEncoderGraph() {
+    ~VieNeuSpeakerEncoderGraph() {
         engine::core::release_backend_graph_resources(backend_, graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool matches(const VietneuSpeakerEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
+    bool matches(const VieNeuSpeakerEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
         return weights_.get() == &weights && frames_ >= frames && backend_ == backend && compute_threads_ == std::max(1, threads);
     }
 
@@ -374,7 +374,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const VietneuSpeakerEncoderWeights> weights_;
+    std::shared_ptr<const VieNeuSpeakerEncoderWeights> weights_;
     int64_t frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::ConstantTensorCache constants_;
@@ -386,8 +386,8 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-VietneuSpeakerEncoderRuntime::VietneuSpeakerEncoderRuntime(
-    std::shared_ptr<const VietneuTTSAssets> assets,
+VieNeuSpeakerEncoderRuntime::VieNeuSpeakerEncoderRuntime(
+    std::shared_ptr<const VieNeuTTSAssets> assets,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     assets::TensorStorageType conv_weight_storage_type)
@@ -403,26 +403,26 @@ VietneuSpeakerEncoderRuntime::VietneuSpeakerEncoderRuntime(
     weights_ = load_weights(*assets_, execution_context_->backend(), execution_context_->backend_type(), conv_weight_storage_type);
 }
 
-VietneuSpeakerEncoderRuntime::~VietneuSpeakerEncoderRuntime() = default;
+VieNeuSpeakerEncoderRuntime::~VieNeuSpeakerEncoderRuntime() = default;
 
-VietneuSpeakerFeatures VietneuSpeakerEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
+VieNeuSpeakerFeatures VieNeuSpeakerEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
     const int threads = execution_context_ != nullptr ? std::max(1, execution_context_->config().threads) : 1;
-    auto mel = compute_vietneu_speaker_mel(audio, threads);
+    auto mel = compute_vieneu_speaker_mel(audio, threads);
     if (mel.shape.size() != 3 || mel.shape[1] != kFeatureDim) {
         throw std::runtime_error("VieNeu-TTS speaker frontend produced invalid feature shape");
     }
-    VietneuSpeakerFeatures features;
+    VieNeuSpeakerFeatures features;
     features.values = std::move(mel.values);
     features.mel_bins = mel.shape[1];
     features.frames = mel.shape[2];
     return features;
 }
 
-VietneuSpeakerEmbedding VietneuSpeakerEncoderRuntime::encode(const runtime::AudioBuffer & audio) const {
+VieNeuSpeakerEmbedding VieNeuSpeakerEncoderRuntime::encode(const runtime::AudioBuffer & audio) const {
     return encode_features(extract_features(audio));
 }
 
-VietneuSpeakerEmbedding VietneuSpeakerEncoderRuntime::encode_features(const VietneuSpeakerFeatures & extracted) const {
+VieNeuSpeakerEmbedding VieNeuSpeakerEncoderRuntime::encode_features(const VieNeuSpeakerFeatures & extracted) const {
     if (execution_context_ == nullptr) {
         throw std::runtime_error("VieNeu-TTS speaker encoder execution context is missing");
     }
@@ -434,19 +434,19 @@ VietneuSpeakerEmbedding VietneuSpeakerEncoderRuntime::encode_features(const Viet
     if (graph_ == nullptr || !graph_->matches(*weights_, frames, execution_context_->backend(), threads)) {
         const auto build_start = Clock::now();
         graph_.reset();
-        graph_ = std::make_unique<VietneuSpeakerEncoderGraph>(
+        graph_ = std::make_unique<VieNeuSpeakerEncoderGraph>(
             weights_,
             frames,
             *execution_context_,
             graph_arena_bytes_);
-        debug::timing_log_scalar("vietneu_tts.speaker_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_scalar("vieneu_v3_turbo.speaker_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
     } else {
-        debug::timing_log_scalar("vietneu_tts.speaker_encoder.graph.build_ms", 0.0);
+        debug::timing_log_scalar("vieneu_v3_turbo.speaker_encoder.graph.build_ms", 0.0);
     }
-    VietneuSpeakerEmbedding embedding;
+    VieNeuSpeakerEmbedding embedding;
     embedding.values = graph_->run(features);
     embedding.dims = weights_->embedding_dim;
     return embedding;
 }
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

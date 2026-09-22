@@ -2,13 +2,13 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
-#include "engine/community_models/vietneu_tts/assets.h"
-#include "engine/community_models/vietneu_tts/prompt_tts_voice_clone.h"
-#include "engine/community_models/vietneu_tts/speaker_encoder.h"
-#include "engine/community_models/vietneu_tts/talker.h"
-#include "engine/community_models/vietneu_tts/tokenizer_speech_decoder.h"
-#include "engine/community_models/vietneu_tts/tokenizer_speech_encoder.h"
-#include "engine/community_models/vietneu_tts/tokenizer_text.h"
+#include "engine/community_models/vieneu_v3_turbo/assets.h"
+#include "engine/community_models/vieneu_v3_turbo/prompt_tts_voice_clone.h"
+#include "engine/community_models/vieneu_v3_turbo/speaker_encoder.h"
+#include "engine/community_models/vieneu_v3_turbo/talker.h"
+#include "engine/community_models/vieneu_v3_turbo/tokenizer_speech_decoder.h"
+#include "engine/community_models/vieneu_v3_turbo/tokenizer_speech_encoder.h"
+#include "engine/community_models/vieneu_v3_turbo/tokenizer_text.h"
 
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
@@ -18,16 +18,16 @@
 #include <optional>
 #include <string>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 
-class VietneuTTSSession final
+class VieNeuTTSSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {
 public:
-    VietneuTTSSession(
+    VieNeuTTSSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const VietneuTTSAssets> assets);
+        std::shared_ptr<const VieNeuTTSAssets> assets);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;
@@ -53,13 +53,13 @@ private:
         Qwen3VoiceClonePrompt prompt;
     };
 
-    VietneuTTSRequest make_request(const runtime::TaskRequest & request) const;
+    VieNeuTTSRequest make_request(const runtime::TaskRequest & request) const;
     const Qwen3VoiceClonePrompt & resolve_voice_prompt(
         const Qwen3VoiceCloneInput & input,
-        const VietneuTTSVoiceClonePromptBuilder & prompt_builder);
+        const VieNeuTTSVoiceClonePromptBuilder & prompt_builder);
 
     runtime::TaskSpec task_;
-    std::shared_ptr<const VietneuTTSAssets> assets_;
+    std::shared_ptr<const VieNeuTTSAssets> assets_;
     size_t talker_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
     size_t speech_encoder_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
     size_t speech_decoder_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
@@ -76,15 +76,14 @@ private:
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::F32;
     bool mem_saver_ = false;
     Qwen3TextTokenizer text_tokenizer_;
-    VietneuTalker talker_;
-    std::shared_ptr<const VietneuTalkerWeightsRuntime> talker_weights_;
-    std::shared_ptr<VietneuTalkerStepRuntime> talker_step_;
+    VieNeuTalker talker_;
+    std::shared_ptr<const VieNeuTalkerWeightsRuntime> talker_weights_;
+    std::shared_ptr<VieNeuTalkerStepRuntime> talker_step_;
     core::ExecutionContext voice_prompt_context_;
     std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> moss_speech_decoder_;
-    std::unique_ptr<Qwen3SpeechTokenizerEncoderRuntime> speech_encoder_;
-    std::unique_ptr<VietneuSpeakerEncoderRuntime> speaker_encoder_;
+    std::unique_ptr<VieNeuSpeakerEncoderRuntime> speaker_encoder_;
     runtime::CacheSlots<VoicePromptCacheKey, VoicePromptCacheEntry, VoicePromptCacheKeyEqual> voice_prompt_cache_;
     std::optional<VoicePromptCacheEntry> uncached_voice_prompt_;
 };
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

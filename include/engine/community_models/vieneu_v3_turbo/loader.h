@@ -1,19 +1,19 @@
 #pragma once
 
 #include "engine/framework/runtime/model.h"
-#include "engine/community_models/vietneu_tts/assets.h"
+#include "engine/community_models/vieneu_v3_turbo/assets.h"
 
 #include <filesystem>
 #include <memory>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 
-class VietneuTTSLoadedModel final : public runtime::ILoadedVoiceModel {
+class VieNeuTTSLoadedModel final : public runtime::ILoadedVoiceModel {
 public:
-    VietneuTTSLoadedModel(
+    VieNeuTTSLoadedModel(
         runtime::ModelMetadata metadata,
         runtime::CapabilitySet capabilities,
-        std::shared_ptr<const VietneuTTSAssets> assets);
+        std::shared_ptr<const VieNeuTTSAssets> assets);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -24,10 +24,10 @@ public:
 private:
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
-    std::shared_ptr<const VietneuTTSAssets> assets_;
+    std::shared_ptr<const VieNeuTTSAssets> assets_;
 };
 
-std::unique_ptr<VietneuTTSLoadedModel> load_vietneu_tts_model(const std::filesystem::path & model_path);
-std::shared_ptr<runtime::IVoiceModelLoader> make_vietneu_tts_loader();
+std::unique_ptr<VieNeuTTSLoadedModel> load_vieneu_v3_turbo_model(const std::filesystem::path & model_path);
+std::shared_ptr<runtime::IVoiceModelLoader> make_vieneu_v3_turbo_loader();
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

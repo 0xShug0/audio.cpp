@@ -7,13 +7,13 @@
 #include <string>
 #include <vector>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 
-enum class VietneuTTSVariant {
+enum class VieNeuTTSVariant {
     Base,
 };
 
-struct VietneuTTSGenerationOptions {
+struct VieNeuTTSGenerationOptions {
     int64_t max_new_tokens = 2048;
     bool do_sample = true;
     bool subtalker_do_sample = true;
@@ -32,34 +32,38 @@ enum class Qwen3VoiceCloneMode {
     SpeakerEmbeddingOnly,
 };
 
-struct Qwen3VoiceCloneInput {
-    runtime::AudioBuffer reference_audio;
-    std::string reference_text;
-    Qwen3VoiceCloneMode mode = Qwen3VoiceCloneMode::Icl;
-    std::optional<std::vector<float>> speaker_embedding = std::nullopt;
-};
-
-struct VietneuTTSRequest {
-    std::string text;
-    std::string language = "Auto";
-    std::optional<Qwen3VoiceCloneInput> voice_clone = std::nullopt;
-    VietneuTTSGenerationOptions generation;
-};
-
-struct VietneuTTSResult {
-    runtime::AudioBuffer audio;
-    std::vector<int32_t> codec_codes;
-};
-
 struct Qwen3SpeechCodes {
     std::vector<int32_t> codes;
     int64_t frames = 0;
     int64_t code_groups = 0;
 };
 
-struct VietneuSpeakerEmbedding {
+struct Qwen3VoiceCloneInput {
+    runtime::AudioBuffer reference_audio;
+    std::string reference_text;
+    Qwen3VoiceCloneMode mode = Qwen3VoiceCloneMode::Icl;
+    std::optional<std::vector<float>> speaker_embedding = std::nullopt;
+    // Pre-encoded reference codes (frames x code_groups, row-major). When present they
+    // replace the codec encoder pass, which lets packaged voices (codes + speaker
+    // embedding) run without any reference audio.
+    std::optional<Qwen3SpeechCodes> reference_codes = std::nullopt;
+};
+
+struct VieNeuTTSRequest {
+    std::string text;
+    std::string language = "Auto";
+    std::optional<Qwen3VoiceCloneInput> voice_clone = std::nullopt;
+    VieNeuTTSGenerationOptions generation;
+};
+
+struct VieNeuTTSResult {
+    runtime::AudioBuffer audio;
+    std::vector<int32_t> codec_codes;
+};
+
+struct VieNeuSpeakerEmbedding {
     std::vector<float> values;
     int64_t dims = 0;
 };
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

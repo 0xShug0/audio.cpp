@@ -4,7 +4,7 @@ VieNeu-TTS v3 Turbo generates high-fidelity 48 kHz bilingual (English and Vietna
 
 | Field | Value |
 |---|---|
-| Family | `vietneu_tts` |
+| Family | `vieneu_v3_turbo` |
 | Model directory | `models/VieNeu-TTS-v3-Turbo` |
 | Task | `tts`, `clon` |
 | Modes | `offline` |
@@ -30,7 +30,7 @@ VieNeu-TTS v3 Turbo generates high-fidelity 48 kHz bilingual (English and Vietna
    ```bash
    ./build/linux-cpu-release/bin/audiocpp_cli \
      --task tts \
-     --family vietneu_tts \
+     --family vieneu_v3_turbo \
      --model models/VieNeu-TTS-v3-Turbo/model.gguf \
      --backend cpu \
      --voice-ref assets/resources/sample.wav \

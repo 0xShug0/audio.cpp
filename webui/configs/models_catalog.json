@@ -67,7 +67,7 @@
     { "id": "outetts",                "display_name": "Llama-OuteTTS 1.0 1B (tts 克隆, 社区)",     "display_name_en": "Llama-OuteTTS 1.0 1B (tts + clone, community)", "family": "outetts", "path": "models/Llama-OuteTTS-1.0-1B", "task": "tts", "mode": "offline", "download_id": "outetts_1_0_1b", "min_vram_gb": 4,
       "input_hint": "**OuteTTS 1.0 1B**（社区模型）：23 种语言，DAC 编解码；上传参考音色即克隆。",
       "input_hint_en": "**OuteTTS 1.0 1B** (community): 23 languages, IBM DAC codec. Upload a reference voice to clone." },
-    { "id": "vietneu-tts",            "display_name": "VieNeu-TTS v3 Turbo (tts 越南语, 社区)",    "display_name_en": "VieNeu-TTS v3 Turbo (vi tts, community)", "family": "vietneu_tts", "path": "models/VieNeu-TTS-v3-Turbo", "task": "tts", "mode": "offline", "download_id": "vietneu_tts_v3_turbo", "min_vram_gb": 4,
+    { "id": "vieneu-tts",            "display_name": "VieNeu-TTS v3 Turbo (tts 越南语, 社区)",    "display_name_en": "VieNeu-TTS v3 Turbo (vi tts, community)", "family": "vieneu_v3_turbo", "path": "models/VieNeu-TTS-v3-Turbo", "task": "tts", "mode": "offline", "download_id": "vieneu_v3_turbo_v3_turbo", "min_vram_gb": 4,
       "input_hint": "**VieNeu-TTS v3 Turbo**（社区模型）：越南语 / 英语；上传参考音色即克隆。",
       "input_hint_en": "**VieNeu-TTS v3 Turbo** (community): Vietnamese and English. Upload a reference voice to clone." },
     { "id": "inflect-v2",             "display_name": "Inflect Micro v2 (tts 英语, 社区)",       "display_name_en": "Inflect Micro v2 (en tts, community)", "family": "inflect_v2", "path": "models/Inflect-Micro-v2", "task": "tts", "mode": "offline", "download_id": "inflect_micro_v2", "min_vram_gb": 2,

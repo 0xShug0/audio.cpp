@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/community_models/vietneu_tts/types.h"
+#include "engine/community_models/vieneu_v3_turbo/types.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -11,9 +11,9 @@
 #include <string>
 #include <unordered_map>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 
-struct VietneuTTSTalkerConfig {
+struct VieNeuTTSTalkerConfig {
     int64_t max_position_embeddings = 32768;
     int64_t hidden_size = 0;
     int64_t text_hidden_size = 0;
@@ -39,7 +39,7 @@ struct VietneuTTSTalkerConfig {
     float rope_theta = 1000000.0F;
 };
 
-struct VietneuTTSCodePredictorConfig {
+struct VieNeuTTSCodePredictorConfig {
     int64_t hidden_size = 0;
     int64_t intermediate_size = 0;
     int64_t num_hidden_layers = 0;
@@ -51,7 +51,7 @@ struct VietneuTTSCodePredictorConfig {
     float rope_theta = 1000000.0F;
 };
 
-struct VietneuTTSSpeechTokenizerConfig {
+struct VieNeuTTSSpeechTokenizerConfig {
     std::string model_type;
     int input_sample_rate = 0;
     int output_sample_rate = 0;
@@ -60,27 +60,28 @@ struct VietneuTTSSpeechTokenizerConfig {
     int64_t semantic_codebook_size = 0;
 };
 
-struct VietneuTTSSpeakerEncoderConfig {
+struct VieNeuTTSSpeakerEncoderConfig {
     int64_t embedding_dim = 0;
     int sample_rate = 0;
 };
 
-struct VietneuTTSConfig {
-    VietneuTTSVariant variant = VietneuTTSVariant::Base;
+struct VieNeuTTSConfig {
+    VieNeuTTSVariant variant = VieNeuTTSVariant::Base;
     std::string tts_model_type;
     std::string tts_model_size;
     std::string tokenizer_type;
     int64_t max_new_tokens = 2048;
-    VietneuTTSTalkerConfig talker;
-    VietneuTTSCodePredictorConfig code_predictor;
-    VietneuTTSSpeechTokenizerConfig speech_tokenizer;
-    VietneuTTSSpeakerEncoderConfig speaker_encoder;
+    VieNeuTTSTalkerConfig talker;
+    VieNeuTTSCodePredictorConfig code_predictor;
+    VieNeuTTSSpeechTokenizerConfig speech_tokenizer;
+    VieNeuTTSSpeakerEncoderConfig speaker_encoder;
     int64_t tts_bos_token_id = 0;
     int64_t tts_eos_token_id = 0;
     int64_t tts_pad_token_id = 0;
     int64_t text_prompt_start_token_id = 3;
     int64_t text_prompt_end_token_id = 4;
     int64_t audio_ref_slot_token_id = 7;
+    int64_t default_style_token_id = 16;
     int64_t audio_pad_token_id = 1024;
     int64_t speech_generation_start_token_id = 5;
     bool has_speaker_encoder = false;
@@ -94,13 +95,23 @@ struct VietneuTTSConfig {
     int64_t speaker_embedding_dim = 192;
 };
 
-struct VietneuTTSAssets {
+struct VieNeuTTSAssets {
     assets::ResourceBundle resources;
-    VietneuTTSConfig config;
+    VieNeuTTSConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> speech_tokenizer_weights;
 };
 
-std::shared_ptr<const VietneuTTSAssets> load_vietneu_tts_assets(const std::filesystem::path & model_path);
+// Family name and the legacy alias it was first published under. Packages whose
+// embedded model spec still says `vietneu_tts` (the original community GGUF) keep
+// loading through the alias.
+inline constexpr const char * kFamily = "vieneu_v3_turbo";
+inline constexpr const char * kLegacyFamily = "vietneu_tts";
 
-}  // namespace engine::models::vietneu_tts
+// Resolves the package spec for this family, falling back to the legacy alias when the
+// package (a GGUF with an embedded spec) was built under the old name.
+std::filesystem::path resolve_package_spec_path();
+
+std::shared_ptr<const VieNeuTTSAssets> load_vieneu_v3_turbo_assets(const std::filesystem::path & model_path);
+
+}  // namespace engine::models::vieneu_v3_turbo

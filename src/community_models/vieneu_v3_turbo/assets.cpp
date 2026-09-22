@@ -1,4 +1,4 @@
-#include "engine/community_models/vietneu_tts/assets.h"
+#include "engine/community_models/vieneu_v3_turbo/assets.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace engine::models::vietneu_tts {
+namespace engine::models::vieneu_v3_turbo {
 namespace json = engine::io::json;
 namespace {
 
@@ -18,15 +18,15 @@ int64_t parse_generation_max_new_tokens(const assets::ResourceBundle & resources
     return json::optional_i64(generation, "max_new_tokens", 2048);
 }
 
-VietneuTTSConfig parse_config(const assets::ResourceBundle & resources) {
+VieNeuTTSConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
-    VietneuTTSConfig config;
+    VieNeuTTSConfig config;
 
     config.is_vieneu = true;
     config.tts_model_type = "base";
-    config.variant = VietneuTTSVariant::Base;
+    config.variant = VieNeuTTSVariant::Base;
     config.tts_model_size = json::optional_string(root, "tts_model_size", "1.7B");
-    config.tokenizer_type = "vietneu_tts_tokenizer_12hz";
+    config.tokenizer_type = "vieneu_v3_turbo_tokenizer_12hz";
     config.max_new_tokens = parse_generation_max_new_tokens(resources);
     config.tts_bos_token_id = json::optional_i64(root, "bos_token_id", 1);
     config.tts_eos_token_id = json::optional_i64(root, "eos_token_id", 2);
@@ -34,6 +34,7 @@ VietneuTTSConfig parse_config(const assets::ResourceBundle & resources) {
     config.text_prompt_start_token_id = json::optional_i64(root, "text_prompt_start_token_id", 3);
     config.text_prompt_end_token_id = json::optional_i64(root, "text_prompt_end_token_id", 4);
     config.audio_ref_slot_token_id = json::optional_i64(root, "audio_ref_slot_token_id", 7);
+    config.default_style_token_id = json::optional_i64(root, "default_style_token_id", 16);
     config.audio_pad_token_id = json::optional_i64(root, "audio_pad_token_id", 1024);
     config.speech_generation_start_token_id = json::optional_i64(root, "speech_generation_start_token_id", 5);
     config.local_num_hidden_layers = json::optional_i64(root, "local_num_hidden_layers", 1);
@@ -75,7 +76,7 @@ VietneuTTSConfig parse_config(const assets::ResourceBundle & resources) {
     config.code_predictor.rms_norm_eps = json::optional_f32(root, "rms_norm_eps", config.code_predictor.rms_norm_eps);
 
     // Speech tokenizer
-    config.speech_tokenizer.model_type = "vietneu_tts_tokenizer_12hz";
+    config.speech_tokenizer.model_type = "vieneu_v3_turbo_tokenizer_12hz";
     config.speech_tokenizer.input_sample_rate = 48000;
     config.speech_tokenizer.output_sample_rate = 48000;
     config.speech_tokenizer.num_quantizers = config.talker.num_code_groups;
@@ -85,19 +86,25 @@ VietneuTTSConfig parse_config(const assets::ResourceBundle & resources) {
     return config;
 }
 
-void validate_config(const VietneuTTSConfig & config) {
-    if (config.tokenizer_type != "vietneu_tts_tokenizer_12hz") {
-        throw std::runtime_error("Vietneu TTS currently supports vietneu_tts_tokenizer_12hz");
+void validate_config(const VieNeuTTSConfig & config) {
+    if (config.tokenizer_type != "vieneu_v3_turbo_tokenizer_12hz") {
+        throw std::runtime_error("VieNeu TTS currently supports vieneu_v3_turbo_tokenizer_12hz");
     }
 }
 
 }  // namespace
 
-std::shared_ptr<const VietneuTTSAssets> load_vietneu_tts_assets(const std::filesystem::path & model_path) {
-    auto resources = engine::model_spec::load_resource_bundle(
-        model_path,
-        engine::model_spec::default_spec_path("vietneu_tts"));
-    auto assets = std::make_shared<VietneuTTSAssets>();
+std::filesystem::path resolve_package_spec_path() {
+    try {
+        return engine::model_spec::default_spec_path(kFamily);
+    } catch (const std::exception &) {
+        return engine::model_spec::default_spec_path(kLegacyFamily);
+    }
+}
+
+std::shared_ptr<const VieNeuTTSAssets> load_vieneu_v3_turbo_assets(const std::filesystem::path & model_path) {
+    auto resources = engine::model_spec::load_resource_bundle(model_path, resolve_package_spec_path());
+    auto assets = std::make_shared<VieNeuTTSAssets>();
     assets->config = parse_config(resources);
     validate_config(assets->config);
     assets->model_weights = resources.open_tensor_source("model_weights");
@@ -106,4 +113,4 @@ std::shared_ptr<const VietneuTTSAssets> load_vietneu_tts_assets(const std::files
     return assets;
 }
 
-}  // namespace engine::models::vietneu_tts
+}  // namespace engine::models::vieneu_v3_turbo

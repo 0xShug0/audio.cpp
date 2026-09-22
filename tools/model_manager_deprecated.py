@@ -599,7 +599,7 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
-        id="vietneu_tts_v3_turbo",
+        id="vieneu_v3_turbo_v3_turbo",
         display_name="VieNeu-TTS v3 Turbo Base",
         target_directory="VieNeu-TTS-v3-Turbo",
         source=SnapshotSource(repo_id="phuocnguyen90/VieNeu-TTS-v3-Turbo-GGUF"),
@@ -612,7 +612,7 @@ CATALOG: tuple[ModelPackage, ...] = (
             "special_tokens_map.json",
         ),
         description="Installs VieNeu-TTS v3 Turbo GGUF model and configuration sidecars for C++ inference.",
-        family="vietneu_tts",
+        family="vieneu_v3_turbo",
         tasks=("tts",),
     ),
     ModelPackage(
