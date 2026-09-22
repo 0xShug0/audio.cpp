@@ -15,8 +15,10 @@
 #include <ggml-backend.h>
 #include <ggml.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <optional>
