@@ -1370,6 +1370,62 @@
       ]
     },
     {
+      "id": "yue2_stop_after_abc",
+      "coverage": "YuE2 stop_after=abc score-only route",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "artifact"
+      ],
+      "requests": [
+        {
+          "id": "stop_after_abc",
+          "text": "[Verse]\nThe planner writes the bars before the sound.\nA staff of ink is all the run will keep.\n[Chorus]\nRead the score and stop before the song.\nLeave the rest of it for later on.",
+          "seed": 20260915,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, piano pop, clear lead vocal, gentle bass, 92 BPM",
+            "cot": "full",
+            "stop_after": "abc",
+            "abc_min_tokens": 128,
+            "abc_max_tokens": 512
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_stop_after_semantic",
+      "coverage": "YuE2 stop_after=semantic export-only route without NAR or VAE",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "artifact"
+      ],
+      "requests": [
+        {
+          "id": "stop_after_semantic",
+          "text": "[Verse]\nThe tokens land in order on the page.\nNo decoder turns them into air.\n[Chorus]\nStop the run and keep the list of frames.\nRender it another day.",
+          "seed": 20260916,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.01,
+            "style": "English, indie pop, bright guitar, soft drums, warm lead vocal",
+            "cot": "off",
+            "stop_after": "semantic",
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
       "id": "irodori_tts_500m_emoji_style_clone",
       "coverage": "Irodori-TTS 500M no-reference emoji/style requests and reference clone path in one session",
       "family": "irodori_tts",

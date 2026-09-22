@@ -71,10 +71,17 @@ enum class Yue2CotMode {
     Full,
 };
 
+enum class Yue2StopAfter {
+    Abc,
+    Semantic,
+    Audio,
+};
+
 struct Yue2Request {
     std::string style;
     std::string lyrics;
     Yue2CotMode cot = Yue2CotMode::Full;
+    Yue2StopAfter stop_after = Yue2StopAfter::Audio;
     std::string abc;
     std::vector<float> nar_noise;
     bool export_semantic = false;
@@ -100,6 +107,8 @@ struct Yue2SemanticResult {
 const char * cot_mode_name(Yue2CotMode mode) noexcept;
 Yue2CotMode parse_cot_mode(const std::string & value);
 const char * cot_instruction(Yue2CotMode mode) noexcept;
+const char * stop_after_name(Yue2StopAfter stage) noexcept;
+Yue2StopAfter parse_stop_after(const std::string & value);
 float request_guidance_scale(const Yue2Request & request) noexcept;
 std::string semantic_codes_to_json(const std::vector<int32_t> & codes);
 

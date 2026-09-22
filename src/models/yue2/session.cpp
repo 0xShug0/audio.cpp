@@ -181,6 +181,7 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"abc_file", "path", "Path to ABC score conditioning text.", false},
         {"cot", "off|melody|full", "Planning mode.", false, "off"},
         {"export_semantic", "bool", "Attach the semantic token stream as a result artifact.", false, "false"},
+        {"stop_after", "abc|semantic|audio", "Last stage to run; semantic implies export_semantic.", false, "audio"},
         {"seed", "int", "Generation seed.", false, "1234"},
         {"guidance_scale", "float", "Classifier-free guidance scale (legacy alias: cfg_scale).", false, "1.0", "0.0", "20.0"},
         {"num_inference_steps", "int", "NAR ODE steps.", false, "8", "1"},
