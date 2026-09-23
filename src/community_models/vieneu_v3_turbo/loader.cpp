@@ -73,6 +73,8 @@ runtime::ModelCliInterface cli(const VieNeuTTSAssets &) {
         {"codes_dump_file", "<path>", "Append prompt ids, reference codes and generated codes as text (parity debugging)."},
     };
     out.session_options = {
+        {"vieneu_v3_turbo.g2p_dict", "<path>", "sea_g2p.bin; with it, --text is Vietnamese/English text instead of phonemes."},
+        {"vieneu_v3_turbo.g2p_library", "<path>", "The sea-g2p shared library built with --features capi; found by name when unset."},
         {"vieneu_v3_turbo.mem_saver", "true|false", "Release the talker cached-step graph after each request; default false."},
         {"vieneu_v3_turbo.voice_prompt_cache_slots", "n", "Voice prompt cache slots; default 1."},
     };

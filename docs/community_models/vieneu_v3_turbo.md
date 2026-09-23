@@ -45,15 +45,38 @@ audiocpp_gguf --input model_weights=VieNeu-TTS-v3-Turbo/model.safetensors \
   --output vieneu-v3-turbo-q8_0.gguf
 ```
 
-## Text input: phonemes
+## Text input
 
-The Python package turns text into phonemes with [sea-g2p](https://github.com/pnnbao97/sea-g2p) (Vietnamese normalisation, English code-switching, emotion tags) before the model sees it. That front end is not part of audio.cpp yet, so `--text` must already be phonemes:
+The model reads SEA-G2P phonemes, and the front end that produces them —
+[sea-g2p](https://github.com/pnnbao97/sea-g2p): Vietnamese normalisation of
+numbers, dates, units and abbreviations, English code-switching, emotion cues —
+is a Rust library with a C ABI. Point the session at it and `--text` takes
+ordinary text:
+
+```bash
+# once: build the library (Rust toolchain, nothing added to the audio.cpp build)
+git clone https://github.com/pnnbao97/sea-g2p && cd sea-g2p
+cargo build --release --no-default-features --features capi
+# target/release/{libsea_g2p_rs.so | sea_g2p_rs.dll | libsea_g2p_rs.dylib}
+
+audiocpp_cli --task tts --family vieneu_v3_turbo --model .../vieneu-v3-turbo-q8_0.gguf   --backend cpu --text "Tỉ lệ giải ngân đầu tư công đạt 68,5% kế hoạch năm."   --session-option vieneu_v3_turbo.g2p_dict=/path/to/sea_g2p.bin   --request-option reference_codes_file=.../voices/minh_quan_pro/ref_codes.txt   --request-option speaker_embedding_file=.../voices/minh_quan_pro/speaker.emb.txt   --out out.wav
+```
+
+The library is found by name (next to the binary, or on the search path) unless
+`vieneu_v3_turbo.g2p_library` names it. `sea_g2p.bin` is the dictionary, ~50 MB,
+published with the Python package.
+
+Without those options nothing changes: `--text` is then the phoneme string, which
+is what every earlier version expected.
 
 ```python
 from vieneu_utils.phonemize_text import phonemize_text_with_emotions   # pip install vieneu
 print(phonemize_text_with_emotions("Xin chào thế giới. Đây là bản thử nghiệm."))
 # sˈin tʃˈaː2w tˈeɜ zˈəːɜj. ɗˈəɪ lˌaː2 bˈaː4n tˈy4 ŋˈiɛ6m.
 ```
+
+Both routes run the same code, so they agree character for character — checked on
+dates, times, money, percentages and English words.
 
 ## Voice
 
@@ -137,7 +160,6 @@ text front end rather than as a second copy.
 
 ## Not yet ported
 
-- Text front end (sea-g2p normalisation + phonemisation) — pass phonemes.
 - CAM++ speaker encoder — pass `speaker_embedding_file`.
 - Reference denoiser used at enrollment by the Python engine.
 - Streaming; the enrollment denoiser.

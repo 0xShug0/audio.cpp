@@ -29,6 +29,18 @@ constexpr int64_t kDefaultTextChunkMin = 20;
 /// emitting EOS. Two bounds the worst case at three generations.
 constexpr int64_t kMaxRerolls = 2;
 
+/// Where the text front end comes from, when the caller wants one. Both are
+/// paths: the sea-g2p shared library (empty = look for it by name) and its
+/// `sea_g2p.bin` dictionary.
+std::filesystem::path option_path(
+    const std::unordered_map<std::string, std::string> & options,
+    std::initializer_list<std::string_view> keys) {
+    if (const auto value = runtime::find_option(options, keys)) {
+        return std::filesystem::path(*value);
+    }
+    return {};
+}
+
 // `reference_codes`: the same codes inline, whitespace- or comma-separated and
 // row-major, for embedders that hold a voice in memory rather than on disk (the
 // C API has no way to pass a file that does not exist). `code_groups` values per
@@ -403,6 +415,8 @@ VieNeuTTSSession::VieNeuTTSSession(
     }
     for (const auto & [key, _] : options.options) {
         if (key.rfind("vieneu_v3_turbo.", 0) == 0 &&
+            key != "vieneu_v3_turbo.g2p_dict" &&
+            key != "vieneu_v3_turbo.g2p_library" &&
             key != "vieneu_v3_turbo.talker_graph_arena_mb" &&
             key != "vieneu_v3_turbo.speech_encoder_graph_arena_mb" &&
             key != "vieneu_v3_turbo.speech_decoder_graph_arena_mb" &&
@@ -458,6 +472,18 @@ VieNeuTTSSession::VieNeuTTSSession(
     if (assets_->config.variant == VieNeuTTSVariant::Base && task_.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("VieNeu-TTS base TTS model only supports the Tts task");
     }
+    // A text front end only when asked for: without it the family behaves exactly
+    // as before and `--text` carries phonemes.
+    const auto g2p_dictionary = option_path(options.options, {"vieneu_v3_turbo.g2p_dict", "g2p_dict"});
+    if (!g2p_dictionary.empty()) {
+        text_frontend_ = std::make_unique<TextFrontend>(
+            option_path(options.options, {"vieneu_v3_turbo.g2p_library", "g2p_library"}),
+            g2p_dictionary);
+        debug::log_message(
+            debug::LogLevel::Info,
+            kFamily,
+            "text front end ready: --text may be Vietnamese/English text");
+    }
     if (assets_->config.variant == VieNeuTTSVariant::Base) {
         if (assets_->model_weights->has_tensor("speaker_encoder.layer1.0.weight")) {
             speaker_encoder_ = std::make_unique<VieNeuSpeakerEncoderRuntime>(
@@ -506,10 +532,15 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
     // on its own (see orchestration.h).
     const int64_t min_chunk_chars =
         runtime::parse_int_option(request.options, {"text_chunk_min"}).value_or(kDefaultTextChunkMin);
-    const auto phoneme_chunks = split_phoneme_chunks(
-        request.text_input.has_value() ? request.text_input->text : std::string(),
-        text_chunk_size,
-        min_chunk_chars);
+    // With a front end the request carries text; without one it already carries
+    // phonemes, which is what the model reads either way.
+    std::string phonemes = request.text_input.has_value() ? request.text_input->text : std::string();
+    if (text_frontend_ != nullptr && !phonemes.empty()) {
+        const auto g2p_start = Clock::now();
+        phonemes = text_frontend_->phonemize(phonemes);
+        debug::timing_log_scalar("vieneu_v3_turbo.g2p_ms", engine::debug::elapsed_ms(g2p_start, Clock::now()));
+    }
+    const auto phoneme_chunks = split_phoneme_chunks(phonemes, text_chunk_size, min_chunk_chars);
     if (phoneme_chunks.empty()) {
         throw std::runtime_error("VieNeu-TTS TTS requires non-empty text");
     }
