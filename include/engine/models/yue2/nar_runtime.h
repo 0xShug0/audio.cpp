@@ -22,7 +22,6 @@ public:
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType weight_type,
         size_t weight_context_bytes,
-        size_t graph_arena_bytes,
         bool allow_flash_attention = true,
         int64_t attention_tile_rows = 0);
     ~Yue2NarRuntime();

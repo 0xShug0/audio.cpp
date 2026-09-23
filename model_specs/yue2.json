@@ -362,14 +362,6 @@
         "default": 1536
       },
       {
-        "name": "nar_graph_arena_mb",
-        "type": "int",
-        "description": "NAR acoustic flow graph arena size in MiB.",
-        "required": false,
-        "min": 1,
-        "default": 6144
-      },
-      {
         "name": "vae_graph_arena_mb",
         "type": "int",
         "description": "VAE decode graph arena size in MiB.",

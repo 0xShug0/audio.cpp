@@ -23,6 +23,12 @@ using Clock = std::chrono::steady_clock;
 
 constexpr int64_t kArDecodeChunkTokens = 5120;
 
+// Node cap of the prefix-state graph. Its context is no_alloc, so it only holds
+// tensor headers and the graph object; sizing it from the cap keeps the malloc
+// at ~30 MB instead of the multi-GiB arena, which is a commit-charged
+// allocation on Windows (#656).
+constexpr size_t kPrefixStateGraphNodes = 65536;
+
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
         if (ctx != nullptr) {
@@ -500,7 +506,11 @@ struct Yue2ArRuntime::Impl {
             : owner(&owner),
               steps(steps) {
             const auto & config = owner.assets->config.model;
-            ggml_init_params params{owner.runtime_config.prefill_graph_arena_bytes, nullptr, true};
+            ggml_init_params params{
+                kPrefixStateGraphNodes * ggml_tensor_overhead() +
+                    ggml_graph_overhead_custom(kPrefixStateGraphNodes, false),
+                nullptr,
+                true};
             ctx.reset(ggml_init(params));
             ggml_init_params state_params{
                 ggml_tensor_overhead() * static_cast<size_t>(config.layers * 2),
@@ -558,7 +568,7 @@ struct Yue2ArRuntime::Impl {
                 key_values.push_back(core::make_tensor(state_build, GGML_TYPE_F16, layer.key->shape));
                 value_values.push_back(core::make_tensor(state_build, GGML_TYPE_F16, layer.value->shape));
             }
-            graph = ggml_new_graph_custom(ctx.get(), 65536, false);
+            graph = ggml_new_graph_custom(ctx.get(), kPrefixStateGraphNodes, false);
             for (auto * key : keys) {
                 ggml_build_forward_expand(graph, key);
             }
