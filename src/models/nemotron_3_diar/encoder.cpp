@@ -1,6 +1,7 @@
 #include "engine/models/nemotron_3_diar/encoder.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -19,10 +20,12 @@ constexpr size_t kGraphNodes = 1048576;
 void release_graph(
     ggml_backend_t backend,
     ggml_context * context,
+    ggml_cgraph * graph,
     ggml_backend_graph_plan_t plan,
-    ggml_backend_buffer_t buffer) {
+    ggml_gallocr_t allocator) {
     if (plan != nullptr) core::free_backend_graph_plan(backend, plan);
-    if (buffer != nullptr) ggml_backend_buffer_free(buffer);
+    if (graph != nullptr) core::release_backend_graph_resources(backend, graph, true);
+    if (allocator != nullptr) ggml_gallocr_free(allocator);
     if (context != nullptr) ggml_free(context);
 }
 
@@ -87,12 +90,14 @@ core::TensorValue build_encoder_layer(
 
 void allocate_graph(
     const core::ExecutionContext & execution,
-    ggml_context * context,
     ggml_cgraph * graph,
-    ggml_backend_buffer_t & buffer,
+    ggml_gallocr_t & allocator,
     ggml_backend_graph_plan_t & plan) {
-    buffer = ggml_backend_alloc_ctx_tensors(context, execution.backend());
-    if (buffer == nullptr) throw std::runtime_error("failed to allocate Nemotron diarization graph tensors");
+    allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()));
+    if (!ggml_gallocr_alloc_graph(allocator, graph)) {
+        throw std::runtime_error("failed to allocate Nemotron diarization graph tensors");
+    }
+    debug::trace_log_scalar("nemotron_3_diar.graph_buffer_bytes", ggml_gallocr_get_buffer_size(allocator, 0));
     if (execution.uses_host_graph_plan()) {
         plan = core::create_backend_graph_plan_if_host(execution.backend(), graph);
         if (plan == nullptr) throw std::runtime_error("failed to create Nemotron diarization graph plan");
@@ -101,8 +106,8 @@ void allocate_graph(
 
 }  // namespace
 
-PreEncodeGraph::~PreEncodeGraph() { release_graph(backend, ggml, plan, buffer); }
-EncoderGraph::~EncoderGraph() { release_graph(backend, ggml, plan, buffer); }
+PreEncodeGraph::~PreEncodeGraph() { release_graph(backend, ggml, graph, plan, allocator); }
+EncoderGraph::~EncoderGraph() { release_graph(backend, ggml, graph, plan, allocator); }
 
 void ensure_pre_encode_graph(
     std::unique_ptr<PreEncodeGraph> & graph,
@@ -130,9 +135,11 @@ void ensure_pre_encode_graph(
     next->output = modules::LinearModule({
         config.feature_size * config.subsampling_factor, config.hidden_size, false,
     }).build(ctx, next->input, weights.pre_encode);
+    ggml_set_input(next->input.tensor);
+    ggml_set_output(next->output.tensor);
     next->graph = ggml_new_graph_custom(next->ggml, kGraphNodes, false);
     ggml_build_forward_expand(next->graph, next->output.tensor);
-    allocate_graph(execution, next->ggml, next->graph, next->buffer, next->plan);
+    allocate_graph(execution, next->graph, next->allocator, next->plan);
     graph = std::move(next);
 }
 
@@ -207,9 +214,17 @@ void ensure_encoder_graph(
     output = modules::LinearModule({config.head.hidden_size, config.num_speakers, true})
                  .build(ctx, output, weights.speaker_head);
     next->probabilities = modules::SigmoidModule().build(ctx, output);
+    ggml_set_input(next->input.tensor);
+    ggml_set_input(next->attention_mask.tensor);
+    // These tables are populated once and must survive every graph execution.
+    ggml_set_input(next->rope_cos.tensor);
+    ggml_set_input(next->rope_sin.tensor);
+    ggml_set_output(next->rope_cos.tensor);
+    ggml_set_output(next->rope_sin.tensor);
+    ggml_set_output(next->probabilities.tensor);
     next->graph = ggml_new_graph_custom(next->ggml, kGraphNodes, false);
     ggml_build_forward_expand(next->graph, next->probabilities.tensor);
-    allocate_graph(execution, next->ggml, next->graph, next->buffer, next->plan);
+    allocate_graph(execution, next->graph, next->allocator, next->plan);
     core::write_tensor_f32(
         next->rope_cos,
         rope_table(1, config.encoder.heads, frames, head_dim, config.encoder.rope_theta, true));

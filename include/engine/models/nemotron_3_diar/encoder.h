@@ -2,6 +2,7 @@
 
 #include "engine/models/nemotron_3_diar/assets.h"
 #include "engine/framework/core/execution_context.h"
+#include "ggml-alloc.h"
 
 #include <memory>
 #include <vector>
@@ -15,7 +16,7 @@ struct PreEncodeGraph {
     ggml_context * ggml = nullptr;
     ggml_cgraph * graph = nullptr;
     ggml_backend_graph_plan_t plan = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_gallocr_t allocator = nullptr;
     int threads = 1;
     core::TensorValue input;
     core::TensorValue output;
@@ -29,7 +30,7 @@ struct EncoderGraph {
     ggml_context * ggml = nullptr;
     ggml_cgraph * graph = nullptr;
     ggml_backend_graph_plan_t plan = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_gallocr_t allocator = nullptr;
     int threads = 1;
     core::TensorValue input;
     core::TensorValue attention_mask;
