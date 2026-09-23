@@ -2299,6 +2299,18 @@ if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     target_link_libraries(engine_runtime PRIVATE CUDA::cudart CUDA::cufft)
 endif()
 
+# Windows decodes narrow strings - argv, file paths, console output - with the
+# process code page, and the default is a legacy one: a path holding "Thiền"
+# then names a file that is not there, and converting such a path back to a
+# narrow string throws. This manifest asks the process for UTF-8 instead
+# (Windows 10 1903 and later), which is what every string in this codebase
+# already is.
+function(audiocpp_use_utf8_codepage target)
+    if (MSVC)
+        target_sources(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/audiocpp_utf8.manifest")
+    endif()
+endfunction()
+
 add_executable(audiocpp_cli
     app/common/build_info.cpp
     app/cli/main.cpp
@@ -2314,6 +2326,7 @@ add_executable(audiocpp_cli
 )
 
 target_link_libraries(audiocpp_cli PRIVATE engine_runtime ggml)
+audiocpp_use_utf8_codepage(audiocpp_cli)
 if(AUDIOCPP_STATIC_ESPEAK)
     audiocpp_stage_espeak(audiocpp_cli)
 endif()
@@ -2537,6 +2550,7 @@ add_executable(audiocpp_server
 )
 
 target_link_libraries(audiocpp_server PRIVATE engine_runtime ggml)
+audiocpp_use_utf8_codepage(audiocpp_server)
 if(AUDIOCPP_STATIC_ESPEAK)
     audiocpp_stage_espeak(audiocpp_server)
 endif()
@@ -2558,6 +2572,7 @@ add_executable(audiocpp_gguf
     app/gguf/main.cpp
 )
 target_link_libraries(audiocpp_gguf PRIVATE engine_runtime ggml)
+audiocpp_use_utf8_codepage(audiocpp_gguf)
 target_include_directories(audiocpp_gguf PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_gguf PRIVATE OpenMP::OpenMP_CXX)
@@ -2576,6 +2591,7 @@ add_executable(model_perf
     app/cli/request.cpp
 )
 target_link_libraries(model_perf PRIVATE engine_runtime ggml)
+audiocpp_use_utf8_codepage(model_perf)
 target_include_directories(model_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
