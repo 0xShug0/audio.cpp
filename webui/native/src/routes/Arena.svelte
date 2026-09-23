@@ -93,12 +93,12 @@
     demo_4_woman: 'demo_4_woman'
   };
 
-  $: arenaCatalog = activeCatalog.filter((entry) =>
+  $: arenaCatalog = activeCatalog.filter((entry) => entry.arena !== false && (
     arenaMode === 'tts'
       ? ['tts', 'clon'].includes(entry.task)
       : arenaMode === 'vc'
         ? entry.task === 'vc'
-        : entry.task === 'asr');
+        : entry.task === 'asr'));
   $: if (!arenaModelId || !arenaCatalog.some((entry) => entry.id === arenaModelId)) {
     arenaModelId = arenaCatalog[0]?.id || '';
   }

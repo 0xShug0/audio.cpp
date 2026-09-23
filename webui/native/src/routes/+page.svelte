@@ -252,7 +252,7 @@
 
   function setParameterValue(spec: ParamSpec, value: unknown) {
     advancedValues = { ...advancedValues, [spec.name]: value };
-    if (['yue2', 'liveavatar'].includes(selected?.family || '') && spec.scope === 'session') {
+    if (['auk', 'yue2', 'liveavatar'].includes(selected?.family || '') && spec.scope === 'session') {
       isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
         modelMatchesSelectedPackage(model, selected));
     }
@@ -448,7 +448,8 @@
     selected?.family === 'chatterbox_turbo'
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
-    isFireRedAudioEdit || selected?.family === 'liveavatar';
+    isFireRedAudioEdit || selected?.family === 'liveavatar' ||
+    (selected?.family === 'auk' && selected?.task === 'gen');
   $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
@@ -458,7 +459,7 @@
   $: usesBuiltInVoiceSelector = Boolean(selected?.builtin_voices?.length);
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
+  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task) && selected?.family !== 'auk';
   $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
@@ -1322,6 +1323,7 @@
         if (spec?.scope === 'session') return false;
         if (selected?.family === 'canary_asr' && name === 'target_language' && value === '') return false;
         if (selected?.family === 'universr' && name === 'input_sample_rate' && value === '') return false;
+        if (selected?.family === 'auk' && typeof value === 'string' && value.trim().length === 0) return false;
         if (usesYue2Request && typeof value === 'string' && value.trim().length === 0) return false;
         return true;
       }));
@@ -1329,10 +1331,15 @@
   }
 
   function sessionParameterOptions() {
-    return Object.fromEntries(paramSpecs
+    const options = Object.fromEntries(paramSpecs
       .filter((spec) => spec.scope === 'session')
       .map((spec) => [spec.session_option || spec.name, String(advancedValues[spec.name] ?? spec.default ?? '')])
       .filter(([, value]) => value.length > 0));
+    if (selected?.family === 'auk') {
+      const generator = String(advancedValues.model_gguf || 'auk-base-f32.gguf');
+      options['auk.variant'] = generator.startsWith('auk-flash-') ? 'flash' : 'base';
+    }
+    return options;
   }
 
   function base64Text(value: string): string {
@@ -1777,7 +1784,7 @@
             const resolvedText = requestText();
             if (resolvedText) request.text = resolvedText;
             if (lyrics.trim()) request.lyrics = lyrics;
-            if (!isFireRedAudioEdit) {
+            if (!isFireRedAudioEdit && selected.family !== 'auk') {
               if (usesDurationSecOption) options.duration_sec = duration;
               else request.duration_seconds = duration;
             }
@@ -2323,10 +2330,10 @@
           </div>
         {/if}
 
-        {#if selected.task === 'gen'}
-          {#if modelStudioPanel}
-            <svelte:component
+        {#if modelStudioPanel}
+          <svelte:component
               this={modelStudioPanel}
+              task={selected.task}
               bind:lyrics
               bind:seed
               bind:loraUploading
@@ -2351,11 +2358,12 @@
               setSourceFile={(file: File | null) => sourceFile = file}
               startSourceRecording={() => startRecording('source')}
               stopSourceRecording={stopRecording} />
-          {:else}
-            <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
-            <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
-              aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
-          {/if}
+        {:else if selected.task === 'gen'}
+          <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
+          <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
+            aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
+        {/if}
+        {#if selected.task === 'gen'}
           {#if selected.family === 'ace_step'}
             <div class="media-actions">
               <button type="button" disabled={running || rewritingCaption || (!text.trim() && !lyrics.trim())}
@@ -2493,13 +2501,15 @@
                   on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
                 <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
               </div>
-              <div>
-                <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
-                <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
-                  bind:this={referenceTextInput}
-                  on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
-                <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
-              </div>
+              {#if selected.family !== 'auk'}
+                <div>
+                  <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
+                  <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
+                    bind:this={referenceTextInput}
+                    on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
+                  <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
+                </div>
+              {/if}
             </div>
           {/if}
           {#if !usesBuiltInVoiceSelector || !quickStartVoice}
@@ -2519,11 +2529,13 @@
           {/if}
           {#if !usesBuiltInVoiceSelector || !quickStartVoice}
             <MediaPreview file={voiceFile} kind="audio" label={tr('file.preview')} />
-            <label for="reference">{tr('voice.transcript')}
-              <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
-            </label>
-            <textarea id="reference" rows="2" bind:value={referenceText}
-              placeholder={tr('voice.transcriptPlaceholder')}></textarea>
+            {#if selected.family !== 'auk'}
+              <label for="reference">{tr('voice.transcript')}
+                <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
+              </label>
+              <textarea id="reference" rows="2" bind:value={referenceText}
+                placeholder={tr('voice.transcriptPlaceholder')}></textarea>
+            {/if}
           {/if}
           <!--
             Saved voices keep a named reference recording and transcript for reuse. They are persisted only

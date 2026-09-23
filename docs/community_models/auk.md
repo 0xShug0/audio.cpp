@@ -29,8 +29,8 @@ Pass the directory to `--model`; choose components with the session options
 below. The defaults are Qwen BF16, AuK base F32, and VAE F32. Set
 `auk.variant=flash` to use the upstream fixed four-step AuK-Flash schedule with
 guidance disabled. The Qwen component is Qwen2.5-Omni-3B, not Qwen3.
-There is currently no catalog download package. Model details and instruction
-examples are available from [Tencent AuK](https://huggingface.co/tencent/AuK),
+The native model manager exposes each generator, Qwen, and VAE component as a
+separate download. Model details and instruction examples are available from [Tencent AuK](https://huggingface.co/tencent/AuK),
 [AuK-Flash](https://huggingface.co/tencent/AuK-Flash), and the
 [upstream cookbook](https://github.com/Tencent-Hunyuan/AuK/blob/main/docs/COOKBOOK.md).
 
