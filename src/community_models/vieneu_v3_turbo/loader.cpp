@@ -61,14 +61,15 @@ runtime::ModelCliInterface cli(const VieNeuTTSAssets &) {
         {"top_p", "<float>", "Nucleus limit within the top-k candidates (default 0.95)."},
         {"repetition_penalty", "<float>", "Penalty on codes seen in the recent window of each codebook (default 1.2)."},
         {"repetition_window", "<int>", "Frames each codebook remembers for the penalty (default 64; 0 = unbounded)."},
+        {"babble_retries", "<int>", "Re-generations for a short chunk that kept talking past its text (default 2; 0 disables the guard)."},
+        {"text_chunk_min", "<int>", "Chunks shorter than this many characters join a neighbour (default 20)."},
         {"frame_cap", "true|false", "Cap max_tokens by the phoneme count of the chunk (default true)."},
         {"subtalker_temperature", "<float>", "Acoustic decoder temperature override (defaults to temperature)."},
         {"subtalker_top_k", "<int>", "Acoustic decoder top-k override (defaults to top_k)."},
         {"subtalker_top_p", "<float>", "Acoustic decoder top-p override (defaults to top_p)."},
         {"subtalker_do_sample", "true|false", "Alias of do_sample for the acoustic decoder."},
         {"seed", "<int>", "Sampling seed (random when omitted)."},
-        {"text_chunk_size", "<int>", "Maximum character budget per chunk (default 200)."},
-        {"text_chunk_mode", "default|endline|tag_aware", "Text chunking mode (default 'default')."},
+        {"text_chunk_size", "<int>", "Maximum character budget per chunk of the phoneme string (default 200)."},
         {"codes_dump_file", "<path>", "Append prompt ids, reference codes and generated codes as text (parity debugging)."},
     };
     out.session_options = {

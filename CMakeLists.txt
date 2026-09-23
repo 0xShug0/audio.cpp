@@ -1491,6 +1491,7 @@ audiocpp_add_model(vieneu_v3_turbo
         src/community_models/vieneu_v3_turbo/session.cpp
         src/community_models/vieneu_v3_turbo/loader.cpp
         src/community_models/vieneu_v3_turbo/frame_cap.cpp
+        src/community_models/vieneu_v3_turbo/orchestration.cpp
     INCLUDES
         engine/community_models/vieneu_v3_turbo/loader.h
     LOADERS

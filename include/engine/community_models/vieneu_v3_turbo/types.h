@@ -27,6 +27,9 @@ struct VieNeuTTSGenerationOptions {
     int64_t repetition_window = 64;
     // Cap max_new_tokens by the phoneme count of the chunk (Python `frame_cap`).
     bool frame_cap = true;
+    /// Re-generations allowed for a chunk the babble guard flags; 0 disables it.
+    /// Needs sampling — a greedy retry returns the same frames.
+    int64_t babble_retries = 2;
     // Acoustic-decoder overrides; when left negative they follow the main values.
     float subtalker_temperature = -1.0F;
     int subtalker_top_k = -1;

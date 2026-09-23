@@ -1,6 +1,7 @@
 #include "engine/community_models/vieneu_v3_turbo/session.h"
 
 #include "engine/community_models/vieneu_v3_turbo/frame_cap.h"
+#include "engine/community_models/vieneu_v3_turbo/orchestration.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
@@ -21,6 +22,12 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr int64_t kDefaultTextChunkSize = 200;
+/// A chunk shorter than this joins a neighbour: on its own it reads as a stutter,
+/// and short chunks are also the ones that run away (see the babble guard).
+constexpr int64_t kDefaultTextChunkMin = 20;
+/// Re-generations allowed for a chunk that ran to its ceiling rather than
+/// emitting EOS. Two bounds the worst case at three generations.
+constexpr int64_t kMaxRerolls = 2;
 
 // `reference_codes`: the same codes inline, whitespace- or comma-separated and
 // row-major, for embedders that hold a voice in memory rather than on disk (the
@@ -107,6 +114,20 @@ std::vector<float> parse_speaker_embedding_file(const std::string & filepath) {
         throw std::runtime_error("Speaker embedding file " + filepath + " must contain exactly 192 float values, but got " + std::to_string(vals.size()));
     }
     return vals;
+}
+
+// Interleaved stereo to mono, for the measurements that judge a chunk.
+std::vector<float> mono_samples(const runtime::AudioBuffer & audio) {
+    const int channels = std::max(1, audio.channels);
+    std::vector<float> out(audio.samples.size() / static_cast<size_t>(channels), 0.0F);
+    for (size_t i = 0; i < out.size(); ++i) {
+        float sum = 0.0F;
+        for (int c = 0; c < channels; ++c) {
+            sum += audio.samples[i * static_cast<size_t>(channels) + static_cast<size_t>(c)];
+        }
+        out[i] = sum / static_cast<float>(channels);
+    }
+    return out;
 }
 
 runtime::AudioBuffer decode_moss_audio(
@@ -199,6 +220,9 @@ VieNeuTTSGenerationOptions generation_options_from_request(
     }
     if (const auto value = runtime::find_option(request.options, {"frame_cap"})) {
         options.frame_cap = runtime::parse_bool_option(*value, "frame_cap");
+    }
+    if (const auto value = runtime::parse_int_option(request.options, {"babble_retries"})) {
+        options.babble_retries = std::max<int64_t>(0, *value);
     }
     // The acoustic decoder follows the main sampler unless overridden explicitly.
     if (options.subtalker_temperature < 0.0F) options.subtalker_temperature = options.temperature;
@@ -477,11 +501,19 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
     };
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
-    const auto text_chunk_mode =
-        engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
-    const auto chunk_requests = runtime::chunk_text_request(request, text_chunk_size, text_chunk_mode);
-
-    const VieNeuTTSRequest first_request = make_request(chunk_requests.front());
+    // Sentence-aware cut of the phoneme string, and the seam type between every
+    // pair, so the pauses below can be the ones the model was measured to leave
+    // on its own (see orchestration.h).
+    const int64_t min_chunk_chars =
+        runtime::parse_int_option(request.options, {"text_chunk_min"}).value_or(kDefaultTextChunkMin);
+    const auto phoneme_chunks = split_phoneme_chunks(
+        request.text_input.has_value() ? request.text_input->text : std::string(),
+        text_chunk_size,
+        min_chunk_chars);
+    if (phoneme_chunks.empty()) {
+        throw std::runtime_error("VieNeu-TTS TTS requires non-empty text");
+    }
+    const VieNeuTTSRequest first_request = make_request(request);
     if (!first_request.voice_clone.has_value()) {
         throw std::runtime_error(
             "VieNeu-TTS TTS requires a voice: --voice-ref, reference_codes_file, or "
@@ -497,26 +529,44 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
     double talker_ms = 0.0;
     double decoder_ms = 0.0;
     runtime::AudioBuffer merged_audio;
-    for (const auto & chunk_request : chunk_requests) {
-        VieNeuTTSRequest qwen_request = make_request(chunk_request);
-        if (qwen_request.generation.frame_cap) {
-            // `--text` carries SEA-G2P phonemes; cap the frame budget like the Python
-            // engine so a missed EOS cannot run to the hard ceiling.
-            qwen_request.generation.max_new_tokens = std::min(
-                qwen_request.generation.max_new_tokens,
-                std::max<int64_t>(1, max_expected_frames(qwen_request.text)));
-        }
-        const auto prompt_start = Clock::now();
-        const auto & voice_prompt = resolve_voice_prompt(*qwen_request.voice_clone, prompt_builder);
-        prompt_ms += engine::debug::elapsed_ms(prompt_start, Clock::now());
+    const auto prompt_start = Clock::now();
+    // One voice per request, and the codec that resolves it must not be busy
+    // decoding when a later chunk asks for it.
+    const auto & voice_prompt = resolve_voice_prompt(*first_request.voice_clone, prompt_builder);
+    prompt_ms += engine::debug::elapsed_ms(prompt_start, Clock::now());
+    // Mono tail of the previous chunk, for measuring the pause already there.
+    std::vector<float> previous_tail;
+    const int64_t sample_rate = assets_->config.speech_tokenizer.output_sample_rate;
+    for (size_t chunk_index = 0; chunk_index < phoneme_chunks.size(); ++chunk_index) {
+        VieNeuTTSRequest qwen_request = first_request;
+        qwen_request.text = phoneme_chunks[chunk_index].phonemes;
+        const int64_t frame_limit = qwen_request.generation.frame_cap
+            ? std::min(qwen_request.generation.max_new_tokens,
+                       std::max<int64_t>(1, max_expected_frames(qwen_request.text)))
+            : qwen_request.generation.max_new_tokens;
+        qwen_request.generation.max_new_tokens = frame_limit;
         const auto prefill_start = Clock::now();
         const auto prefill = prompt_builder.build_prefill(qwen_request, voice_prompt);
         prefill_ms += engine::debug::elapsed_ms(prefill_start, Clock::now());
         const auto talker_start = Clock::now();
-        const auto codes = talker_step_->generate(
+        auto codes = talker_step_->generate(
             prefill,
             qwen_request.generation,
             qwen_request.generation.repetition_penalty);
+        // Ran to the ceiling: the chunk never emitted EOS, so its tail is gone
+        // and nothing downstream can tell. Generating it again is worth the wait
+        // — the sampler has moved on, so the retry differs. Greedy decoding is
+        // deterministic, so there is nothing to retry there.
+        if (qwen_request.generation.do_sample) {
+            for (int64_t attempt = 0; attempt < kMaxRerolls && codes.generated_codes.frames >= frame_limit; ++attempt) {
+                auto retry_options = qwen_request.generation;
+                retry_options.seed = qwen_request.generation.seed + static_cast<uint32_t>(attempt) + 1U;
+                auto retry = talker_step_->generate(prefill, retry_options, retry_options.repetition_penalty);
+                if (retry.generated_codes.frames > 0 && retry.generated_codes.frames < codes.generated_codes.frames) {
+                    codes = std::move(retry);
+                }
+            }
+        }
         talker_ms += engine::debug::elapsed_ms(talker_start, Clock::now());
         // Parity hook: `codes_dump_file=<path>` appends the prompt ids, the reference
         // codes and the generated codes as text so a Python reference run can be
@@ -538,10 +588,61 @@ runtime::TaskResult VieNeuTTSSession::run(const runtime::TaskRequest & request) 
             dump << '\n';
         }
         const auto decoder_start = Clock::now();
-        runtime::append_audio_buffer(
-            merged_audio,
-            decode_moss_audio(codes.generated_codes, *moss_speech_decoder_));
+        auto chunk_audio = decode_moss_audio(codes.generated_codes, *moss_speech_decoder_);
         decoder_ms += engine::debug::elapsed_ms(decoder_start, Clock::now());
+
+        // The babble guard: a short chunk that kept talking past its text. It
+        // cannot be seen before decoding — neither the EOS probability nor the
+        // codes warn — so a suspect chunk is generated again and the best
+        // attempt kept.
+        if (qwen_request.generation.do_sample && qwen_request.generation.babble_retries > 0) {
+            auto mono = mono_samples(chunk_audio);
+            auto best = babble_suspect(
+                mono, sample_rate, qwen_request.text, frame_limit, codes.generated_codes.frames);
+            const int64_t retries = best.syllables == 0
+                ? std::min(qwen_request.generation.babble_retries, kBabbleMaxRetriesCue)
+                : std::min(qwen_request.generation.babble_retries, kBabbleMaxRetries);
+            for (int64_t attempt = 0; best.suspect && attempt < retries; ++attempt) {
+                auto retry_options = qwen_request.generation;
+                retry_options.seed = qwen_request.generation.seed + 1000U + static_cast<uint32_t>(attempt);
+                const auto retry_start = Clock::now();
+                auto retry = talker_step_->generate(prefill, retry_options, retry_options.repetition_penalty);
+                talker_ms += engine::debug::elapsed_ms(retry_start, Clock::now());
+                if (retry.generated_codes.frames <= 0) {
+                    continue;
+                }
+                const auto retry_decode_start = Clock::now();
+                auto retry_audio = decode_moss_audio(retry.generated_codes, *moss_speech_decoder_);
+                decoder_ms += engine::debug::elapsed_ms(retry_decode_start, Clock::now());
+                auto retry_mono = mono_samples(retry_audio);
+                const auto candidate = babble_suspect(
+                    retry_mono, sample_rate, qwen_request.text, frame_limit, retry.generated_codes.frames);
+                if (babble_prefer(candidate, best)) {
+                    best = candidate;
+                    chunk_audio = std::move(retry_audio);
+                    mono = std::move(retry_mono);
+                }
+            }
+        }
+
+        // The seam: keep the model's own audio and only pad zeros when the
+        // silence already there falls short of the minimum for this boundary.
+        auto mono = mono_samples(chunk_audio);
+        if (chunk_index > 0) {
+            const double pause = gap_pause_sec(phoneme_chunks[chunk_index].gap_before);
+            const int64_t pad = pause_pad_samples(previous_tail, mono, sample_rate, pause);
+            if (pad > 0) {
+                runtime::AudioBuffer silence;
+                silence.sample_rate = chunk_audio.sample_rate;
+                silence.channels = chunk_audio.channels;
+                silence.samples.assign(static_cast<size_t>(pad * std::max(1, chunk_audio.channels)), 0.0F);
+                runtime::append_audio_buffer(merged_audio, silence);
+            }
+        }
+        // Up to two seconds is all `pause_pad_samples` can use.
+        const size_t keep = std::min<size_t>(mono.size(), static_cast<size_t>(2 * sample_rate));
+        previous_tail.assign(mono.end() - static_cast<std::ptrdiff_t>(keep), mono.end());
+        runtime::append_audio_buffer(merged_audio, chunk_audio);
     }
     release_talker_cached_step_graph();
     runtime::TaskResult result;

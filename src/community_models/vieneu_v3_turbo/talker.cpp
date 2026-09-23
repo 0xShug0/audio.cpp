@@ -451,7 +451,12 @@ PromptEmbeddingState build_prompt_state(
     const VieNeuTTSConfig & root_config,
     const VieNeuTalkerWeights & weights) {
     const auto & config = root_config.talker;
-    if (prefill.input_ids.size() < 8) {
+    // The Qwen3-TTS-style prompt carries a chat template, so fewer than eight ids
+    // meant a malformed request. VieNeu's prompt is `[style, tps, phonemes…, tpe]`,
+    // and a one-syllable chunk ("Được.") is five or six phonemes — exactly the
+    // short chunk the babble guard exists to re-generate, so it must be allowed.
+    const size_t minimum_ids = root_config.is_vieneu ? 1 : 8;
+    if (prefill.input_ids.size() < minimum_ids) {
         throw std::runtime_error("VieNeu-TTS talker prefill input ids are too short");
     }
     const auto tts_special_hidden = lookup_rows(

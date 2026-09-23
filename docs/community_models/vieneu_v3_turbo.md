@@ -15,7 +15,7 @@
 
 ## Model package
 
-GGUF packages published by the model author at [pnnbao-ump/VieNeu-TTS-v3-Turbo-GGUF](https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo-GGUF), built from the current `update/` weights of [pnnbao-ump/VieNeu-TTS-v3-Turbo](https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo) with `audiocpp_gguf` (the model spec, `config.json` and tokenizer sidecars are embedded, so one file is enough):
+GGUF packages published by the model author in the model's own repo, [pnnbao-ump/VieNeu-TTS-v3-Turbo](https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo) under `gguf/`, built from its `update/` weights with `audiocpp_gguf` (the model spec, `config.json` and tokenizer sidecars are embedded, so one file is enough):
 
 | File | Precision | Size |
 |---|---|---|
@@ -96,7 +96,9 @@ Defaults follow `Vieneu.infer()` in the Python package. Use `--request-option na
 | `seed` | random | Sampling seed. |
 | `reference_codes_file` / `speaker_embedding_file` / `speaker_embedding` | — | Voice inputs, see above. |
 | `x_vector_only_mode` | `false` | Ignore reference codes and clone from the speaker embedding alone. |
-| `text_chunk_size` / `text_chunk_mode` | `200` / `default` | Framework chunking of the phoneme string. The Python engine chunks the *text* by sentence (≤ 256 characters) and joins chunks with short pauses; for best results chunk in Python and call once per chunk. |
+| `text_chunk_size` | `200` | Character budget per chunk of the phoneme string. The cut follows paragraphs, then sentences, then minor punctuation, then whitespace. |
+| `text_chunk_min` | `20` | Chunks shorter than this join a neighbour — alone they read as a stutter. |
+| `babble_retries` | `2` | Re-generations for a short chunk that kept talking past its text (`0` disables the guard). |
 | `subtalker_temperature` / `subtalker_top_k` / `subtalker_top_p` | = main | Acoustic decoder overrides. |
 | `codes_dump_file` | — | Parity debugging: appends prompt ids, reference codes and generated codes as text. |
 
@@ -108,12 +110,37 @@ Checked against fp32 references with identical prompt inputs (CPU, `weight_type=
 
 Speed on an Intel Core i5-12400F (6 P-cores, `--threads 6`, q8_0): a 28 s utterance in 8.0 s wall including process start and model load, RTF ≈ 0.29 (0.34 with `--threads 4`); the Python CPU path on the same machine is RTF 0.55–0.62 (fp32 ONNX) / 0.35 (int8 ONNX, needs VNNI).
 
+## Chunking, pauses and the babble guard
+
+A long text is generated chunk by chunk, and the seams are what make the pieces
+sound like one utterance:
+
+- **the cut** follows paragraphs, then sentences (`. ! ? …`), then minor
+  punctuation, then whitespace, packing up to `text_chunk_size` characters of
+  the phoneme string; a chunk under `text_chunk_min` joins a neighbour;
+- **the pause** between two chunks is a minimum, not an insertion: the silence
+  the model already left (tail of one, lead of the next) is measured and only
+  the shortfall is padded with zeros — 0.70 s after a paragraph, 0.50 s after a
+  sentence, 0.30 s otherwise. A longer natural pause is kept;
+- **a chunk that ran to its frame ceiling** never emitted EOS, so its tail is
+  missing; with sampling on it is generated again (up to twice) and the shorter
+  result kept;
+- **the babble guard** catches a short chunk that kept talking past its text
+  ("Được." coming out as "Được không?"): it compares the energy bursts in the
+  decoded audio with the chunk's syllable count, and re-generates a suspect
+  chunk, keeping the best attempt. Measured on the Python engine: ~5% of
+  one-syllable chunks, 8 cases in 480 chunks down to 0.
+
+The text-level rules of the Python engine that need the normaliser — cutting at
+connectives, never between two number words — are not here: they belong with a
+text front end rather than as a second copy.
+
 ## Not yet ported
 
 - Text front end (sea-g2p normalisation + phonemisation) — pass phonemes.
 - CAM++ speaker encoder — pass `speaker_embedding_file`.
 - Reference denoiser used at enrollment by the Python engine.
-- Sentence-based chunking with pause insertion, babble guard / retries, streaming.
+- Streaming; the enrollment denoiser.
 
 ## Credits
 
