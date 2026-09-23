@@ -3050,6 +3050,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
         add_test(NAME cli_request_options_test COMMAND cli_request_options_test)
 
+        add_executable(cli_batch_output_names_test
+            tests/unittests/test_cli_batch_output_names.cpp
+            app/cli/args.cpp
+            app/cli/batch.cpp
+            app/cli/request.cpp
+            app/workflow/file_sink.cpp
+        )
+        target_link_libraries(cli_batch_output_names_test PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(cli_batch_output_names_test PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        add_test(NAME cli_batch_output_names_test COMMAND cli_batch_output_names_test)
+
         add_engine_unittest(file_sink_json_test tests/unittests/test_file_sink_json.cpp)
         target_sources(file_sink_json_test PRIVATE app/workflow/file_sink.cpp)
         add_test(NAME file_sink_json_test COMMAND file_sink_json_test)

@@ -3,6 +3,8 @@
 #include "args.h"
 #include "request.h"
 
+#include "../workflow/file_sink.h"
+
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -11,6 +13,7 @@
 #include <iterator>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace minitts::cli {
@@ -247,6 +250,21 @@ minitts::app::AppBatchRequest build_audio_dir_batch(
     return batch;
 }
 
+// Batch outputs are written under safe_output_name(id), so two distinct ids that
+// sanitize to the same name would silently overwrite each other's results.
+void reject_colliding_output_names(const minitts::app::AppBatchRequest & batch) {
+    std::unordered_map<std::string, std::string> ids_by_output_name;
+    for (const auto & item : batch.requests) {
+        const auto output_name = minitts::app::safe_output_name(item.id);
+        const auto [it, inserted] = ids_by_output_name.emplace(output_name, item.id);
+        if (!inserted) {
+            throw std::runtime_error(
+                "batch request ids '" + it->second + "' and '" + item.id +
+                "' both map to output name '" + output_name + "'; give each request a distinct id");
+        }
+    }
+}
+
 }  // namespace
 
 bool has_batch_input(int argc, char ** argv) {
@@ -279,22 +297,24 @@ minitts::app::AppBatchRequest build_batch_request_from_cli(
         throw std::runtime_error(
             "choose only one of --request-sequence, --batch-text-file, --batch-text-dir, or --batch-audio-dir");
     }
+    minitts::app::AppBatchRequest batch;
     if (request_sequence_path.has_value()) {
-        return build_request_sequence_from_json(*request_sequence_path);
-    }
-    if (batch_text_file.has_value()) {
-        return build_text_file_batch(
+        batch = build_request_sequence_from_json(*request_sequence_path);
+    } else if (batch_text_file.has_value()) {
+        batch = build_text_file_batch(
             *batch_text_file,
             base_request,
             find_arg(argc, argv, "--language").value_or(""));
-    }
-    if (batch_text_dir.has_value()) {
-        return build_text_dir_batch(
+    } else if (batch_text_dir.has_value()) {
+        batch = build_text_dir_batch(
             *batch_text_dir,
             base_request,
             find_arg(argc, argv, "--language").value_or(""));
+    } else {
+        batch = build_audio_dir_batch(*batch_audio_dir, base_request, audio_role);
     }
-    return build_audio_dir_batch(*batch_audio_dir, base_request, audio_role);
+    reject_colliding_output_names(batch);
+    return batch;
 }
 
 }  // namespace minitts::cli
