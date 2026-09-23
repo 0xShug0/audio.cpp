@@ -360,8 +360,6 @@ script for it.
 | `yue2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
 | `yue2.model_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Main model weight storage override. |
 | `yue2.vae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | VAE weight storage override. |
-| `yue2.ar_prefill_graph_arena_mb` | MiB integer >= 1 | `4096` | AR prefix-state graph arena size. |
-| `yue2.nar_graph_arena_mb` | MiB integer >= 1 | `6144` | NAR acoustic flow graph arena size. |
 | `yue2.attention` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |
 | `yue2.attention_tile_rows` | integer >= 0 | `0` | Query rows per tile in the eager NAR attention. The eager lowering holds the whole score matrix, which grows with the square of the song length; `0` splits the query rows into as few equal tiles as keep one tile's scores under 3 GiB, which is what long songs need on drivers that cap a single buffer at 4 GiB. A song whose scores already fit runs as one tile. Ignored by the flash kernel. |
 

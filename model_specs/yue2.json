@@ -328,22 +328,6 @@
         "description": "YuE2 VAE weight storage type.",
         "required": false,
         "default": "native"
-      },
-      {
-        "name": "ar_prefill_graph_arena_mb",
-        "type": "int",
-        "description": "AR prefill graph arena size in MiB.",
-        "required": false,
-        "min": 1,
-        "default": 4096
-      },
-      {
-        "name": "nar_graph_arena_mb",
-        "type": "int",
-        "description": "NAR acoustic flow graph arena size in MiB.",
-        "required": false,
-        "min": 1,
-        "default": 6144
       }
     ],
     "load": []

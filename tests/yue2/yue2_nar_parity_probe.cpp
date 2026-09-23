@@ -158,7 +158,6 @@ engine::assets::TensorStorageType parse_weight_type(const std::string & value) {
          engine::assets::TensorStorageType::Q4_K});
 }
 
-constexpr size_t kMib = 1024ull * 1024ull;
 
 }  // namespace
 
@@ -207,11 +206,8 @@ int main(int argc, char ** argv) {
         }
 
         const auto weight_type = parse_weight_type(arg_value(argc, argv, "--weight-type", "native"));
-        const size_t ar_prefix_state_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--ar-prefill-arena-mb", 4096)) * kMib;
-        const size_t nar_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--nar-arena-mb", 6144)) * kMib;
-
-        engine::models::yue2::Yue2ArRuntime ar(execution, assets, weight_type, ar_prefix_state_arena_bytes);
-        engine::models::yue2::Yue2NarRuntime nar(execution, assets, weight_type, nar_arena_bytes);
+        engine::models::yue2::Yue2ArRuntime ar(execution, assets, weight_type);
+        engine::models::yue2::Yue2NarRuntime nar(execution, assets, weight_type);
 
         std::cout << "prefix_tokens=" << prefix.size() << " codec_frames=" << codec.size()
                   << " ode_steps=" << ode_steps << " context=" << context << " seed=" << seed << "\n";

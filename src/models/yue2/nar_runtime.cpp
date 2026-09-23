@@ -455,17 +455,18 @@ core::TensorValue build_cached_nar_layer(
 
 }  // namespace
 
+// Node cap of the NAR graph; its context is sized from it.
+constexpr size_t kGraphNodeCap = 262144;
+
 struct Yue2NarRuntime::Impl {
     Impl(
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType weight_type,
-        size_t graph_arena_bytes,
         bool allow_flash_attention,
         int64_t attention_tile_rows)
         : execution(execution),
           assets(std::move(assets)),
-          graph_arena_bytes(graph_arena_bytes),
           allow_flash_attention(allow_flash_attention),
           attention_tile_rows(attention_tile_rows) {
         if (!this->assets) {
@@ -497,7 +498,7 @@ struct Yue2NarRuntime::Impl {
                 nullptr,
                 true};
             input_ctx.reset(ggml_init(input_params));
-            ggml_init_params graph_params{owner.graph_arena_bytes, nullptr, true};
+            ggml_init_params graph_params{core::no_alloc_graph_context_bytes(kGraphNodeCap), nullptr, true};
             ctx.reset(ggml_init(graph_params));
             if (!input_ctx || !ctx) {
                 throw std::runtime_error("failed to initialize Yue2 NAR graph context");
@@ -567,7 +568,7 @@ struct Yue2NarRuntime::Impl {
             auto content = engine::modules::SliceModule({1, 1, frames}).build(build, latent);
             output = core::ensure_backend_addressable_layout(build, content);
             ggml_set_output(output.tensor);
-            graph = ggml_new_graph_custom(ctx.get(), 262144, false);
+            graph = ggml_new_graph_custom(ctx.get(), kGraphNodeCap, false);
             ggml_build_forward_expand(graph, output.tensor);
             engine::debug::timing_log_scalar("yue2.nar.graph.build_ms", engine::debug::elapsed_ms(build_start));
             const auto alloc_start = Clock::now();
@@ -754,7 +755,6 @@ struct Yue2NarRuntime::Impl {
 
     core::ExecutionContext & execution;
     std::shared_ptr<const Yue2Assets> assets;
-    size_t graph_arena_bytes = 0;
     bool allow_flash_attention = true;
     int64_t attention_tile_rows = 0;
     std::shared_ptr<const Yue2NarWeights> weights;
@@ -765,14 +765,12 @@ Yue2NarRuntime::Yue2NarRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const Yue2Assets> assets,
     assets::TensorStorageType weight_type,
-    size_t graph_arena_bytes,
     bool allow_flash_attention,
     int64_t attention_tile_rows)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
           weight_type,
-          graph_arena_bytes,
           allow_flash_attention,
           attention_tile_rows)) {}
 

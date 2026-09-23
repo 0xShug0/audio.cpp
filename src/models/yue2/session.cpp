@@ -195,8 +195,6 @@ runtime::ModelCliInterface yue2_cli_interface() {
         {"yue2.vae_gguf", "string", "Yue2 VAE component GGUF file relative to the model root.", false, "yue2-vae-f16.gguf"},
         {"yue2.model_weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "Yue2 main model weight storage type.", false, "native"},
         {"yue2.vae_weight_type", "native|f32|f16|bf16|q8_0|q4_0|q4_k", "Yue2 VAE weight storage type.", false, "native"},
-        {"yue2.ar_prefill_graph_arena_mb", "int", "AR prefix-state graph arena size in MiB.", false, "4096", "1"},
-        {"yue2.nar_graph_arena_mb", "int", "NAR acoustic flow graph arena size in MiB.", false, "6144", "1"},
         {"yue2.attention", "auto|flash|eager", "NAR acoustic-flow attention lowering; auto uses flash except on CUDA sm70 (no kernel) and Intel Vulkan (eager measured faster).", false, "auto"},
         {"yue2.attention_tile_rows", "int", "Query rows per tile in the eager NAR attention; 0 keeps a tile's score matrix under 3 GiB.", false, "0", "0"},
     };
@@ -220,8 +218,6 @@ Yue2Session::Yue2Session(
         assets_,
         parse_weight_type(options, "yue2.model_weight_type", assets::TensorStorageType::Native),
         parse_weight_type(options, "yue2.vae_weight_type", assets::TensorStorageType::Native),
-        runtime::parse_size_mb_option(options.options, {"yue2.ar_prefill_graph_arena_mb"}, 4096ull * 1024ull * 1024ull),
-        runtime::parse_size_mb_option(options.options, {"yue2.nar_graph_arena_mb"}, 6144ull * 1024ull * 1024ull),
         attention_preference_from_options(options),
         runtime::parse_i64_option(options.options, {"yue2.attention_tile_rows"}).value_or(0));
 }

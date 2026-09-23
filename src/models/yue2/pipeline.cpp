@@ -123,8 +123,6 @@ public:
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType model_weight_type,
         assets::TensorStorageType vae_weight_type,
-        size_t ar_prefill_graph_arena_bytes,
-        size_t nar_graph_arena_bytes,
         core::AttentionPreference attention_preference,
         int64_t nar_attention_tile_rows)
         : execution(&execution),
@@ -132,13 +130,10 @@ public:
           tokenizer(this->assets->tiktoken_path),
           model_weight_type(model_weight_type),
           vae_weight_type(vae_weight_type),
-          ar_prefill_graph_arena_bytes(ar_prefill_graph_arena_bytes),
-          nar_graph_arena_bytes(nar_graph_arena_bytes),
           nar_attention_tile_rows(nar_attention_tile_rows) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 pipeline requires assets");
         }
-        (void) this->nar_graph_arena_bytes;
         allow_flash_attention = core::resolve_flash_attention(
             execution.backend(),
             this->assets->config.model.head_dim,
@@ -413,8 +408,7 @@ private:
         ar = std::make_unique<Yue2ArRuntime>(
             *execution,
             assets,
-            model_weight_type,
-            ar_prefill_graph_arena_bytes);
+            model_weight_type);
         engine::debug::timing_log_scalar("yue2.ar.init_ms", engine::debug::elapsed_ms(start));
     }
 
@@ -452,7 +446,6 @@ private:
             *execution,
             assets,
             model_weight_type,
-            nar_graph_arena_bytes,
             allow_flash_attention,
             nar_attention_tile_rows);
         engine::debug::timing_log_scalar("yue2.nar.init_ms", engine::debug::elapsed_ms(start));
@@ -464,8 +457,6 @@ private:
     bool allow_flash_attention = true;
     assets::TensorStorageType model_weight_type = assets::TensorStorageType::Native;
     assets::TensorStorageType vae_weight_type = assets::TensorStorageType::Native;
-    size_t ar_prefill_graph_arena_bytes = 0;
-    size_t nar_graph_arena_bytes = 0;
     int64_t nar_attention_tile_rows = 0;
     std::unique_ptr<codecs::OobleckAudioVaeRuntime> vae;
     std::unique_ptr<Yue2ArRuntime> ar;
@@ -477,8 +468,6 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
     std::shared_ptr<const Yue2Assets> assets,
     assets::TensorStorageType model_weight_type,
     assets::TensorStorageType vae_weight_type,
-    size_t ar_prefill_graph_arena_bytes,
-    size_t nar_graph_arena_bytes,
     core::AttentionPreference attention_preference,
     int64_t nar_attention_tile_rows)
     : impl_(std::make_unique<Impl>(
@@ -486,8 +475,6 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
           std::move(assets),
           model_weight_type,
           vae_weight_type,
-          ar_prefill_graph_arena_bytes,
-          nar_graph_arena_bytes,
           attention_preference,
           nar_attention_tile_rows)) {}
 

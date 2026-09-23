@@ -450,16 +450,17 @@ core::TensorValue view_linear_rows(
 
 }  // namespace
 
+// Node cap of the prefix-state graph; its context is sized from it.
+constexpr size_t kPrefixStateGraphNodeCap = 65536;
+
 struct Yue2ArRuntime::Impl {
     Impl(
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
-        assets::TensorStorageType weight_type,
-        size_t prefix_state_graph_arena_bytes)
+        assets::TensorStorageType weight_type)
         : execution(execution),
           assets(std::move(assets)),
-          weight_type(weight_type),
-          prefix_state_graph_arena_bytes(prefix_state_graph_arena_bytes) {
+          weight_type(weight_type) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 AR runtime requires assets");
         }
@@ -482,7 +483,7 @@ struct Yue2ArRuntime::Impl {
             : owner(&owner),
               steps(steps) {
             const auto & config = owner.assets->config.model;
-            ggml_init_params params{owner.prefix_state_graph_arena_bytes, nullptr, true};
+            ggml_init_params params{core::no_alloc_graph_context_bytes(kPrefixStateGraphNodeCap), nullptr, true};
             ctx.reset(ggml_init(params));
             ggml_init_params state_params{
                 ggml_tensor_overhead() * static_cast<size_t>(config.layers * 2),
@@ -540,7 +541,7 @@ struct Yue2ArRuntime::Impl {
                 key_values.push_back(core::make_tensor(state_build, GGML_TYPE_F16, layer.key->shape));
                 value_values.push_back(core::make_tensor(state_build, GGML_TYPE_F16, layer.value->shape));
             }
-            graph = ggml_new_graph_custom(ctx.get(), 65536, false);
+            graph = ggml_new_graph_custom(ctx.get(), kPrefixStateGraphNodeCap, false);
             for (auto * key : keys) {
                 ggml_build_forward_expand(graph, key);
             }
@@ -932,7 +933,6 @@ struct Yue2ArRuntime::Impl {
     std::shared_ptr<core::BackendWeightStore> generation_store;
     std::unique_ptr<ggml_context, GgmlContextDeleter> generation_view_ctx;
     assets::TensorStorageType weight_type;
-    size_t prefix_state_graph_arena_bytes = 0;
     engine::modules::QwenCausalDecodeRuntimeConfig runtime_config;
     engine::modules::QwenCausalDecodeRuntimeConfig abc_runtime_config;
     engine::modules::QwenCausalDecodeRuntimeConfig semantic_runtime_config;
@@ -951,13 +951,11 @@ struct Yue2ArRuntime::Impl {
 Yue2ArRuntime::Yue2ArRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const Yue2Assets> assets,
-    assets::TensorStorageType weight_type,
-    size_t prefix_state_graph_arena_bytes)
+    assets::TensorStorageType weight_type)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
-          weight_type,
-          prefix_state_graph_arena_bytes)) {}
+          weight_type)) {}
 
 Yue2ArRuntime::~Yue2ArRuntime() = default;
 
