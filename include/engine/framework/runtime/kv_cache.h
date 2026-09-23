@@ -37,6 +37,8 @@ struct TransformerKVCacheOptions {
     // reserved (e.g. prompt / attention sinks); positions stay absolute.
     bool ring_mode = false;
     int64_t ring_pinned_steps = 0;
+    // Device-only users can defer host staging allocation until import_state.
+    bool lazy_import_scratch = false;
 };
 
 class TransformerKVCache {

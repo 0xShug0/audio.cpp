@@ -50,6 +50,8 @@ public:
     HiggsGenerationResult generate(const HiggsGenerationRequest & request);
 
 private:
+    void replace_kv_cache(int64_t steps, bool preserve_state);
+
     struct ReferencePrefixCache {
         std::string reference_text;
         std::vector<int32_t> reference_codes;
@@ -72,6 +74,10 @@ private:
     std::unique_ptr<HiggsARKVCache> ar_kv_cache_;
     std::unique_ptr<HiggsARPrefillGraph> prefill_graph_;
     std::unique_ptr<HiggsARDecodeGraph> decode_graph_;
+    // Keep one previous capacity for repeated requests that grow their cache.
+    // The graph must be destroyed before the cache that it references.
+    std::unique_ptr<HiggsARKVCache> spare_kv_cache_;
+    std::unique_ptr<HiggsARDecodeGraph> spare_decode_graph_;
 };
 
 } // namespace engine::models::higgs_audio_tts
