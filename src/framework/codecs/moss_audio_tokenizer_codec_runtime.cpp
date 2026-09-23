@@ -1506,11 +1506,22 @@ MossAudioTokenizerConfig moss_audio_tokenizer_nano_config() {
         {768, 384, 256, 4, 2, 1024, 800, 2},
         {768, 192, 256, 4, 4, 1024, 500, 2},
     };
+    // ⚠ CONTEXT IS THE RATE BEFORE THE STAGE TIMES THAT STAGE'S OWN DURATION.
+    // Nano's durations are not uniform -- the checkpoint gives 10, 8, 6 and 4
+    // seconds down the decoder -- and the rate at each transformer is the one
+    // *before* its patch, not after. Getting that wrong made every decoder
+    // context exactly twice what it should be, so the decoder attended over
+    // twice the intended window and drifted from the reference as soon as a
+    // sequence outgrew the real one: 111 dB at 43 frames, 12 dB at 171. See
+    // #663. The encoder list below was already right, which is why only the
+    // decode side was affected.
+    //
+    //   50 Hz x 10 s = 500,  100 x 8 = 800,  200 x 6 = 1200,  400 x 4 = 1600
     config.decoder_stages = {
-        {192, 768, 256, 4, 4, 1024, 1000, 2},
-        {384, 768, 256, 4, 2, 1024, 1600, 2},
-        {384, 768, 256, 4, 2, 1024, 2400, 2},
-        {384, 240, 256, 4, 4, 1024, 3200, 240},
+        {192, 768, 256, 4, 4, 1024, 500, 2},
+        {384, 768, 256, 4, 2, 1024, 800, 2},
+        {384, 768, 256, 4, 2, 1024, 1200, 2},
+        {384, 240, 256, 4, 4, 1024, 1600, 240},
     };
     config.encoder_final_patch = 4;
     config.decoder_initial_patch = 4;
