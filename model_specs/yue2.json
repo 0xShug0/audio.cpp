@@ -49,8 +49,8 @@
       {
         "name": "lyrics",
         "type": "string",
-        "description": "Lyrics text. If omitted, the CLI text input is used.",
-        "required": true
+        "description": "Lyrics text. Leave empty for instrumental generation; if omitted, the CLI text input is used.",
+        "required": false
       },
       {
         "name": "cot",

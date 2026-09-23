@@ -282,8 +282,8 @@
 
 <div class="model-form yue2-form">
   <div class="yue2-field wide">
-    <label for="lyrics">{tr('request.lyrics')} <span>{tr('voice.required')}</span></label>
-    <textarea id="lyrics" rows="5" bind:value={lyrics} required aria-required="true"
+    <label for="lyrics">{tr('request.lyrics')} <span>{tr('request.optional')}</span></label>
+    <textarea id="lyrics" rows="5" bind:value={lyrics}
       placeholder="[Verse]&#10;...&#10;[Chorus]&#10;..."></textarea>
   </div>
 
