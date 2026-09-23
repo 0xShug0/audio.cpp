@@ -3300,6 +3300,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(moss_voicegen_codec_encode_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
 
+        add_executable(moss_codec_decode_length_sweep
+            tests/moss_tts_delay/codec_decode_length_sweep.cpp
+        )
+        target_link_libraries(moss_codec_decode_length_sweep PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_codec_decode_length_sweep PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
         add_executable(moss_tts_delay_backbone_parity
             tests/moss_tts_delay/backbone_parity.cpp
         )
