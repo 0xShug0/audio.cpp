@@ -1498,6 +1498,9 @@ audiocpp_add_model(vieneu_v3_turbo
     LOADERS
         engine::models::vieneu_v3_turbo::make_vieneu_v3_turbo_loader
 )
+if(MSVC)
+    target_compile_options(engine_model_vieneu_v3_turbo PRIVATE /utf-8)
+endif()
 
 audiocpp_add_model(qwen3_asr
     SOURCES

@@ -308,6 +308,7 @@
     apollo: 'Apollo',
     universr: 'UniverSR',
     pulsevad: 'PulseVAD',
+    nemotron_3_diar: 'Nemotron 3 Diarization',
     personaplex: 'PersonaPlex'
   };
 

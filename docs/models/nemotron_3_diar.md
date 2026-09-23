@@ -70,6 +70,18 @@ audiocpp_cli --task diar --mode streaming \
 
 ## Latency Profiles
 
+In server streaming mode, use `/v1/audio/transcriptions/live` for live PCM or
+`/v1/audio/transcriptions` with `stream=true` for a WAV upload. Configure the model
+with `task: "diar"`, `mode: "streaming"`, and the desired latency profile in
+`session_options`. See the [server streaming API](../../app/server/README.md#post-v1audiotranscriptionslive)
+for request and response formats.
+
+Streaming emits completed speaker turns. An ongoing turn appears when it ends
+or when the input stream closes, so time to the first turn also depends on the
+speech itself. The final response contains all turns, including the last open
+turn. The buffer latencies below describe model input buffering, not time to a
+completed speaker turn.
+
 All geometry values use 80 ms encoder frames. Input-buffer latency is
 `chunk_len + chunk_right_context`.
 

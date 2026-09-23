@@ -528,6 +528,23 @@ A headerless stream carries no format, so the parameters above are a contract th
 
 Whether partial text actually appears *during* capture is a property of the model, not of this endpoint. Cache-aware streaming models such as `voxtral_realtime` and `nemotron_asr` emit deltas throughout the utterance; buffered models may emit only after enough audio has accumulated.
 
+For a model configured with `task: "diar"`, this route and the file-backed
+`/v1/audio/transcriptions` route with `stream=true` return speaker turns instead
+of text deltas:
+
+```text
+data: {"type":"diarization.delta","speaker_turns":[{"start_sample":5760,"end_sample":52480,"speaker_id":"speaker_0","confidence":0.99}],"sample_rate":16000}
+data: {"type":"diarization.done","speaker_turns":[...],"sample_rate":16000,"timing":{"ttft_ms":3606}}
+data: [DONE]
+```
+
+Each delta contains newly emitted turns. The final event contains the complete
+result, including any turn still open when input ended; do not append it to the
+deltas. TTFT measures the first speaker-turn result, not the first internal
+probability prediction. A model that emits only completed turns waits for a turn
+to end. If no turns are detected, the final array is empty and `ttft_ms` is `null`.
+ASR responses keep their `transcript.text.delta` / `transcript.text.done` format.
+
 The request ends when the client sends the terminating chunk. Closing the connection without one is an error, not an end of speech — a truncated transcript that arrives as a normal `transcript.text.done` would be indistinguishable from the speaker stopping, so the endpoint refuses to produce one. The same applies to a stall past the idle timeout, an oversized chunk, or a malformed frame: each surfaces as an SSE `error` event.
 
 Because the model is held for the length of the request, the body is bounded on several axes:
