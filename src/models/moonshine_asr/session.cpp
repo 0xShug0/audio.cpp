@@ -3,15 +3,50 @@
 #include "engine/models/moonshine_asr/runtime.h"
 #include "engine/models/moonshine_asr/assets.h"
 #include "engine/models/moonshine_asr/weights.h"
+#include "engine/framework/audio/chunking.h"
+#include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/models/silero_vad/session.h"
 
+#include <cmath>
+#include <filesystem>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace engine::models::moonshine_asr {
 namespace {
 
 constexpr const char * kFamily = "moonshine_asr";
+constexpr float kDefaultAudioChunkSeconds = 60.0F;
+
+std::filesystem::path default_vad_model_path() {
+    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+}
+
+int64_t audio_frame_count(const runtime::AudioBuffer & audio) {
+    if (audio.sample_rate <= 0 || audio.channels <= 0) {
+        throw std::runtime_error("Moonshine ASR requires audio with positive sample rate and channel count");
+    }
+    if (audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
+        throw std::runtime_error("Moonshine ASR audio sample count must be divisible by channel count");
+    }
+    return static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels));
+}
+
+void append_transcript_text(runtime::TaskResult & output, const runtime::TaskResult & chunk_result) {
+    if (!chunk_result.text_output.has_value() || chunk_result.text_output->text.empty()) {
+        return;
+    }
+    if (!output.text_output.has_value()) {
+        output.text_output = runtime::Transcript{"", chunk_result.text_output->language};
+    }
+    if (!output.text_output->text.empty()) {
+        output.text_output->text += ' ';
+    }
+    output.text_output->text += chunk_result.text_output->text;
+}
 
 std::shared_ptr<const MoonshineAssets> require_assets(std::shared_ptr<const MoonshineAssets> assets) {
     if (assets == nullptr) {
@@ -28,6 +63,39 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
     return contract;
 }
 
+runtime::SessionOptions require_supported_session_options(
+    runtime::SessionOptions options,
+    const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
+    const auto checked_contract = require_contract(contract);
+    auto validation_options = options;
+    // Older standalone GGUF packages embed a v1 contract that predates VAD
+    // chunking. Keep those packages usable while still rejecting unrelated
+    // unknown session options.
+    if (checked_contract->session_option_keys.find("moonshine_asr.vad_model_path") ==
+        checked_contract->session_option_keys.end()) {
+        validation_options.options.erase("moonshine_asr.vad_model_path");
+    }
+    runtime::validate_spec_backed_session_options(validation_options, *checked_contract, kFamily, "Moonshine ASR");
+    return options;
+}
+
+std::unordered_map<std::string, std::string> normalize_request_options(
+    std::unordered_map<std::string, std::string> options,
+    const engine::model_spec::ModelContract & contract) {
+    auto validation_options = options;
+    // Older standalone GGUF packages embed a v1 contract that predates
+    // Moonshine audio chunking. Validate everything else against the embedded
+    // contract, but allow the runtime to consume these local chunking controls.
+    if (contract.request_option_keys.find("audio_chunk_mode") == contract.request_option_keys.end()) {
+        validation_options.erase("audio_chunk_mode");
+    }
+    if (contract.request_option_keys.find("audio_chunk_duration_sec") == contract.request_option_keys.end()) {
+        validation_options.erase("audio_chunk_duration_sec");
+    }
+    runtime::validate_spec_backed_request_options(validation_options, contract, "Moonshine ASR");
+    return options;
+}
+
 std::unique_ptr<runtime::IVoiceTaskSession> create_moonshine_asr_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options,
@@ -40,6 +108,80 @@ std::unique_ptr<runtime::IVoiceTaskSession> create_moonshine_asr_session(
         std::move(contract));
 }
 
+runtime::TaskResult transcribe_moonshine_asr_with_chunking(
+    const MoonshineAssets & assets,
+    const MoonshineWeights & weights,
+    const engine::core::ExecutionContext & execution_context,
+    const runtime::AudioBuffer & audio,
+    const std::unordered_map<std::string, std::string> & options,
+    const MoonshineRuntimeConfig & runtime_config,
+    runtime::IOfflineVoiceTaskSession * vad_session) {
+    const auto mode = engine::audio::parse_audio_chunk_mode(options);
+    if (mode == engine::audio::AudioChunkMode::None) {
+        return transcribe_moonshine_asr(assets, weights, execution_context, audio, options, runtime_config);
+    }
+    if (mode == engine::audio::AudioChunkMode::QuietEnergy) {
+        throw std::runtime_error("Moonshine ASR supports audio_chunk_mode=auto, fixed, vad, or none");
+    }
+
+    const float seconds =
+        engine::audio::parse_audio_chunk_seconds_override(options).value_or(kDefaultAudioChunkSeconds);
+    if (!std::isfinite(seconds) || seconds <= 0.0F) {
+        throw std::runtime_error("Moonshine ASR audio_chunk_duration_sec must be positive");
+    }
+    const int64_t chunk_samples =
+        static_cast<int64_t>(std::llround(static_cast<double>(seconds) * static_cast<double>(audio.sample_rate)));
+    if (chunk_samples <= 0) {
+        throw std::runtime_error("Moonshine ASR audio_chunk_duration_sec produced an empty chunk");
+    }
+
+    std::vector<runtime::TimeSpan> spans;
+    if (mode == engine::audio::AudioChunkMode::Vad) {
+        if (vad_session == nullptr) {
+            throw std::runtime_error("Moonshine ASR VAD chunking requires a VAD session");
+        }
+        const auto vad_options = engine::audio::VadAudioChunkOptions{
+            chunk_samples,
+            static_cast<int64_t>(std::llround(0.5 * static_cast<double>(audio.sample_rate))),
+            static_cast<int64_t>(std::llround(0.25 * static_cast<double>(audio.sample_rate))),
+        };
+        spans = engine::audio::plan_vad_audio_chunks(audio, *vad_session, vad_options);
+    } else {
+        const auto chunks = engine::audio::plan_audio_chunks(
+            audio_frame_count(audio),
+            engine::audio::AudioChunkSpec{
+                chunk_samples,
+                chunk_samples,
+                engine::audio::AudioChunkPadMode::Zero,
+                engine::audio::AudioChunkTailAlignment::Start,
+                0,
+            });
+        spans.reserve(chunks.size());
+        for (const auto & chunk : chunks) {
+            spans.push_back(runtime::TimeSpan{
+                chunk.output_start_sample,
+                chunk.output_start_sample + chunk.valid_samples,
+            });
+        }
+    }
+    runtime::TaskResult result;
+    result.text_output = runtime::Transcript{"", "en"};
+    for (const auto & span : spans) {
+        auto chunk_options = options;
+        chunk_options["audio_chunk_mode"] = "none";
+        const auto chunk_audio = engine::audio::slice_audio_buffer(audio, span);
+        const auto chunk_result = transcribe_moonshine_asr(
+            assets,
+            weights,
+            execution_context,
+            chunk_audio,
+            chunk_options,
+            runtime_config);
+        append_transcript_text(result, chunk_result);
+    }
+    return result;
+}
+
 }  // namespace
 
 MoonshineSTTSession::MoonshineSTTSession(
@@ -47,18 +189,22 @@ MoonshineSTTSession::MoonshineSTTSession(
     runtime::SessionOptions options,
     std::shared_ptr<const MoonshineAssets> assets,
     std::shared_ptr<const engine::model_spec::ModelContract> contract)
-    : RuntimeSessionBase(options),
+    : RuntimeSessionBase(require_supported_session_options(std::move(options), contract)),
       task_(task),
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))) {
-    runtime::validate_spec_backed_session_options(RuntimeSessionBase::options(), *contract_, kFamily, "Moonshine ASR");
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Moonshine ASR only supports VoiceTaskKind::Asr");
     }
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Moonshine ASR supports offline and streaming sessions");
     }
-    runtime_config_ = make_moonshine_runtime_config(assets_->config, execution_context().backend_type(), options.options);
+    runtime_config_ = make_moonshine_runtime_config(
+        assets_->config,
+        execution_context().backend_type(),
+        RuntimeSessionBase::options().options);
+    vad_model_path_ = runtime::find_option(RuntimeSessionBase::options().options, {"moonshine_asr.vad_model_path"})
+        .value_or(default_vad_model_path().string());
     weights_ = load_moonshine_asr_weights(
         *assets_,
         execution_context().backend(),
@@ -84,7 +230,7 @@ runtime::RunMode MoonshineSTTSession::run_mode() const {
 }
 
 void MoonshineSTTSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Moonshine ASR");
+    (void)normalize_request_options(request.options, *contract_);
     mark_prepared();
 }
 
@@ -96,14 +242,16 @@ runtime::TaskResult MoonshineSTTSession::run(const runtime::TaskRequest & reques
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("Moonshine ASR requires audio input");
     }
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Moonshine ASR");
-    return transcribe_moonshine_asr(
+    auto normalized_request = request;
+    normalized_request.options = normalize_request_options(request.options, *contract_);
+    return transcribe_moonshine_asr_with_chunking(
         *assets_,
         *weights_,
         execution_context(),
-        *request.audio_input,
-        request.options,
-        runtime_config_);
+        *normalized_request.audio_input,
+        normalized_request.options,
+        runtime_config_,
+        engine::audio::parse_audio_chunk_mode(normalized_request.options) == engine::audio::AudioChunkMode::Vad ? &vad_session() : nullptr);
 }
 
 runtime::StreamingPolicy MoonshineSTTSession::streaming_policy() const {
@@ -120,9 +268,10 @@ void MoonshineSTTSession::start_stream(const runtime::TaskRequest & request) {
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Moonshine ASR start_stream() requires a streaming session");
     }
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Moonshine ASR");
+    auto normalized_request = request;
+    normalized_request.options = normalize_request_options(request.options, *contract_);
     reset();
-    streaming_request_ = request;
+    streaming_request_ = std::move(normalized_request);
     streaming_request_.audio_input = std::nullopt;
     streaming_audio_.sample_rate = static_cast<int>(assets_->config.encoder.sample_rate);
     streaming_audio_.channels = 1;
@@ -172,20 +321,41 @@ runtime::TaskResult MoonshineSTTSession::finalize() {
     if (!stream_started_) {
         throw std::runtime_error("Moonshine ASR finalize() requires start_stream()");
     }
-    runtime::validate_spec_backed_request_options(streaming_request_.options, *contract_, "Moonshine ASR");
-    auto result = transcribe_moonshine_asr(
+    streaming_request_.options = normalize_request_options(streaming_request_.options, *contract_);
+    auto result = transcribe_moonshine_asr_with_chunking(
         *assets_,
         *weights_,
         execution_context(),
         streaming_audio_,
         streaming_request_.options,
-        runtime_config_);
+        runtime_config_,
+        engine::audio::parse_audio_chunk_mode(streaming_request_.options) == engine::audio::AudioChunkMode::Vad
+            ? &vad_session()
+            : nullptr);
     reset();
     return result;
 }
 
 runtime::TaskResult MoonshineSTTSession::finish_stream() {
     return finalize();
+}
+
+runtime::IOfflineVoiceTaskSession & MoonshineSTTSession::vad_session() {
+    if (vad_session_ == nullptr) {
+        runtime::ModelLoadRequest load_request;
+        load_request.model_path = vad_model_path_;
+        vad_model_ = engine::models::silero_vad::load_silero_vad_model(load_request);
+        auto session = vad_model_->create_task_session(
+            runtime::TaskSpec{runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
+            runtime::SessionOptions{options().backend, {}});
+        auto * offline = dynamic_cast<runtime::IOfflineVoiceTaskSession *>(session.get());
+        if (offline == nullptr) {
+            throw std::runtime_error("Moonshine ASR VAD helper did not create an offline session");
+        }
+        vad_session_.reset(offline);
+        session.release();
+    }
+    return *vad_session_;
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_moonshine_asr_loader() {

@@ -5,8 +5,13 @@
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/moonshine_asr/runtime.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
+
+namespace engine::runtime {
+class ILoadedVoiceModel;
+}
 
 namespace engine::models::moonshine_asr {
 
@@ -41,11 +46,16 @@ public:
     runtime::TaskResult finish_stream() override;
 
 private:
+    runtime::IOfflineVoiceTaskSession & vad_session();
+
     runtime::TaskSpec task_;
     std::shared_ptr<const MoonshineAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     MoonshineRuntimeConfig runtime_config_;
     std::shared_ptr<const MoonshineWeights> weights_;
+    std::filesystem::path vad_model_path_;
+    std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
+    std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
     runtime::StreamEventCallback stream_event_sink_;
     runtime::AudioBuffer streaming_audio_;
     runtime::TaskRequest streaming_request_;
