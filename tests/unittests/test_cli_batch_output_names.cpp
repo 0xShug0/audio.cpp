@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <random>
 #include <stdexcept>
@@ -279,21 +280,33 @@ void test_existing_validation_preserved(const ScratchDir & scratch) {
 int main() {
     try {
         ScratchDir scratch;
-        test_sanitizer_preconditions();
-        test_text_dir_duplicate_stems_rejected(scratch);
-        test_text_dir_sanitized_names_rejected(scratch);
-        test_audio_dir_sanitized_names_rejected(scratch);
-        test_request_sequence_duplicate_ids_rejected(scratch);
-        test_request_sequence_explicit_vs_fallback_rejected(scratch);
-        test_unique_text_dir_preserved(scratch);
-        test_unique_text_file_preserved(scratch);
-        test_unique_audio_dir_preserved(scratch);
-        test_unique_request_sequence_preserved(scratch);
-        test_existing_validation_preserved(scratch);
+        const std::vector<std::pair<std::string, std::function<void()>>> cases = {
+            {"sanitizer preconditions", [&] { test_sanitizer_preconditions(); }},
+            {"text directory duplicate stems", [&] { test_text_dir_duplicate_stems_rejected(scratch); }},
+            {"text directory sanitized names", [&] { test_text_dir_sanitized_names_rejected(scratch); }},
+            {"audio directory sanitized names", [&] { test_audio_dir_sanitized_names_rejected(scratch); }},
+            {"request sequence duplicate ids", [&] { test_request_sequence_duplicate_ids_rejected(scratch); }},
+            {"request sequence fallback ids", [&] { test_request_sequence_explicit_vs_fallback_rejected(scratch); }},
+            {"unique text directory", [&] { test_unique_text_dir_preserved(scratch); }},
+            {"unique text file", [&] { test_unique_text_file_preserved(scratch); }},
+            {"unique audio directory", [&] { test_unique_audio_dir_preserved(scratch); }},
+            {"unique request sequence", [&] { test_unique_request_sequence_preserved(scratch); }},
+            {"existing validation", [&] { test_existing_validation_preserved(scratch); }},
+        };
+        size_t failures = 0;
+        for (const auto & item : cases) {
+            try {
+                item.second();
+                std::cout << "PASS: " << item.first << "\n";
+            } catch (const std::exception & error) {
+                ++failures;
+                std::cerr << "FAIL: " << item.first << ": " << error.what() << "\n";
+            }
+        }
+        std::cout << (cases.size() - failures) << " passed, " << failures << " failed\n";
+        return failures == 0 ? 0 : 1;
     } catch (const std::exception & error) {
-        std::cerr << "cli_batch_output_names_test failed: " << error.what() << "\n";
+        std::cerr << "cli_batch_output_names_test setup failed: " << error.what() << "\n";
         return 1;
     }
-    std::cout << "cli_batch_output_names_test passed\n";
-    return 0;
 }

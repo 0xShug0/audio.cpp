@@ -3062,6 +3062,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(cli_batch_output_names_test PRIVATE OpenMP::OpenMP_CXX)
         endif()
         add_test(NAME cli_batch_output_names_test COMMAND cli_batch_output_names_test)
+        set_tests_properties(cli_batch_output_names_test PROPERTIES TIMEOUT 30)
 
         add_engine_unittest(file_sink_json_test tests/unittests/test_file_sink_json.cpp)
         target_sources(file_sink_json_test PRIVATE app/workflow/file_sink.cpp)
