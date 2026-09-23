@@ -47,15 +47,16 @@
       "precision": "q8_0",
       "target_directory": "VieNeu-TTS-v3-Turbo-GGUF",
       "files": [
-        "vieneu-v3-turbo-q8_0.gguf",
-        "voices/manifest.json",
-        "voices/minh_quan_pro/ref_codes.txt",
-        "voices/minh_quan_pro/speaker.emb.txt"
+        "gguf/vieneu-v3-turbo-q8_0.gguf",
+        "gguf/voices/manifest.json",
+        "gguf/voices/minh_quan_pro/ref_codes.txt",
+        "gguf/voices/minh_quan_pro/speaker.emb.txt"
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo-GGUF"
-      }
+        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo"
+      },
+      "strip_prefix": "gguf"
     },
     {
       "id": "vieneu_v3_turbo_bf16",
@@ -64,15 +65,16 @@
       "precision": "bf16",
       "target_directory": "VieNeu-TTS-v3-Turbo-GGUF",
       "files": [
-        "vieneu-v3-turbo-bf16.gguf",
-        "voices/manifest.json",
-        "voices/minh_quan_pro/ref_codes.txt",
-        "voices/minh_quan_pro/speaker.emb.txt"
+        "gguf/vieneu-v3-turbo-bf16.gguf",
+        "gguf/voices/manifest.json",
+        "gguf/voices/minh_quan_pro/ref_codes.txt",
+        "gguf/voices/minh_quan_pro/speaker.emb.txt"
       ],
       "download": {
         "kind": "huggingface_snapshot",
-        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo-GGUF"
-      }
+        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo"
+      },
+      "strip_prefix": "gguf"
     },
     {
       "id": "vietneu_tts_v3_turbo_q8_0",
