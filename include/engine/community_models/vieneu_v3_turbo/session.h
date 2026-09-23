@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/session_base.h"
 #include "engine/community_models/vieneu_v3_turbo/assets.h"
 #include "engine/community_models/vieneu_v3_turbo/prompt_tts_voice_clone.h"
+#include "engine/community_models/vieneu_v3_turbo/text_frontend.h"
 #include "engine/community_models/vieneu_v3_turbo/speaker_encoder.h"
 #include "engine/community_models/vieneu_v3_turbo/talker.h"
 #include "engine/community_models/vieneu_v3_turbo/tokenizer_speech_decoder.h"
@@ -61,6 +62,8 @@ private:
 
     static VoicePromptCacheKey voice_prompt_cache_key(const Qwen3VoiceCloneInput & input);
     VieNeuTTSRequest make_request(const runtime::TaskRequest & request) const;
+    std::optional<Qwen3VoiceCloneInput> make_voice_clone_input(
+        const runtime::TaskRequest & request) const;
     const Qwen3VoiceClonePrompt & resolve_voice_prompt(
         const Qwen3VoiceCloneInput & input,
         const VieNeuTTSVoiceClonePromptBuilder & prompt_builder);
@@ -89,6 +92,9 @@ private:
     core::ExecutionContext voice_prompt_context_;
     std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> moss_speech_decoder_;
     std::unique_ptr<VieNeuSpeakerEncoderRuntime> speaker_encoder_;
+    /// Present only when the session was given a sea-g2p library; then `--text`
+    /// may be raw text instead of phonemes.
+    std::unique_ptr<TextFrontend> text_frontend_;
     runtime::CacheSlots<VoicePromptCacheKey, VoicePromptCacheEntry, VoicePromptCacheKeyEqual> voice_prompt_cache_;
     std::optional<VoicePromptCacheEntry> uncached_voice_prompt_;
 };
