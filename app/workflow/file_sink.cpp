@@ -1,6 +1,7 @@
 #include "file_sink.h"
 
 #include "engine/framework/audio/output.h"
+#include "engine/framework/io/json.h"
 
 #include <algorithm>
 #include <cctype>
@@ -22,15 +23,7 @@ struct MetricsAudioView {
 };
 
 std::string quote_json(const std::string & value) {
-    std::string out = "\"";
-    for (char ch : value) {
-        if (ch == '\\' || ch == '"') {
-            out.push_back('\\');
-        }
-        out.push_back(ch);
-    }
-    out.push_back('"');
-    return out;
+    return engine::io::json::stringify_string(value);
 }
 
 std::string speech_segments_to_json(const std::vector<engine::runtime::SpeechSegment> & segments) {
