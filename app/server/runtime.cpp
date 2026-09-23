@@ -657,6 +657,43 @@ std::unordered_map<std::string, std::string> timing_headers(
     };
 }
 
+std::string speaker_turns_json(const std::vector<engine::runtime::SpeakerTurn> & turns) {
+    std::ostringstream out;
+    out << "[";
+    for (size_t i = 0; i < turns.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        const auto & turn = turns[i];
+        out << "{\"start_sample\":" << turn.span.start_sample
+            << ",\"end_sample\":" << turn.span.end_sample
+            << ",\"speaker_id\":" << json_quote(turn.speaker_id)
+            << ",\"confidence\":" << turn.confidence;
+        if (!turn.text.empty()) {
+            out << ",\"text\":" << json_quote(turn.text);
+        }
+        out << "}";
+    }
+    out << "]";
+    return out.str();
+}
+
+std::string diarization_event_json(
+    const std::vector<engine::runtime::SpeakerTurn> & turns,
+    int sample_rate,
+    bool final,
+    const std::optional<double> & ttft_ms = std::nullopt) {
+    std::ostringstream out;
+    out << "{\"type\":\"diarization." << (final ? "done" : "delta")
+        << "\",\"speaker_turns\":" << speaker_turns_json(turns)
+        << ",\"sample_rate\":" << sample_rate;
+    if (final) {
+        out << ",\"timing\":" << (ttft_ms ? ttft_timing_json(*ttft_ms) : "{\"ttft_ms\":null}");
+    }
+    out << "}";
+    return out.str();
+}
+
 // Transcript detail arrays shared by /v1/tasks/run and /v1/audio/transcriptions.
 // ASR models that produce timestamps populate only these fields, so a route that
 // omits them silently discards work the model already did.
@@ -685,22 +722,7 @@ void write_transcript_detail_fields(
     }
     if (!result.speaker_turns.empty()) {
         field("speaker_turns");
-        out << "[";
-        for (size_t i = 0; i < result.speaker_turns.size(); ++i) {
-            if (i != 0) {
-                out << ",";
-            }
-            const auto & turn = result.speaker_turns[i];
-            out << "{\"start_sample\":" << turn.span.start_sample
-                << ",\"end_sample\":" << turn.span.end_sample
-                << ",\"speaker_id\":" << json_quote(turn.speaker_id)
-                << ",\"confidence\":" << turn.confidence;
-            if (!turn.text.empty()) {
-                out << ",\"text\":" << json_quote(turn.text);
-            }
-            out << "}";
-        }
-        out << "]";
+        out << speaker_turns_json(result.speaker_turns);
     }
     if (!result.word_timestamps.empty()) {
         field("words");
@@ -859,7 +881,7 @@ std::string streaming_task_result_json(
     return task_result_json_with_timing(result, ttft_timing_json(require_ttft_ms(ttft_ms)));
 }
 
-std::string stream_event_json(const engine::runtime::StreamEvent & event) {
+std::string stream_event_json(const engine::runtime::StreamEvent & event, bool diarization) {
     std::ostringstream out;
     out << "{";
     bool first = true;
@@ -909,6 +931,10 @@ std::string stream_event_json(const engine::runtime::StreamEvent & event) {
                 << "}";
         }
         out << "]";
+    }
+    if (diarization && !event.speaker_turns.empty()) {
+        field("speaker_turns");
+        out << speaker_turns_json(event.speaker_turns);
     }
     field("is_final");
     out << (event.is_final ? "true" : "false");
@@ -2211,8 +2237,10 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
     const auto started = Clock::now();
     model.session->prepare(engine::runtime::build_preparation_request(request));
     TimedTaskResult timed_result;
+    const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
     const auto sink = [&](const engine::runtime::StreamEvent & event) {
-        if (!timed_result.ttft_ms.has_value() && stream_event_has_output(event)) {
+        if (!timed_result.ttft_ms.has_value() &&
+            (stream_event_has_output(event) || (diarization && !event.speaker_turns.empty()))) {
             timed_result.ttft_ms = elapsed_ms(started);
         }
         if (event_sink) {
@@ -2224,7 +2252,9 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
         : minitts::app::run_streaming_task(*model.streaming, request, sink);
     timed_result.result = std::move(result);
     timed_result.wall_ms = elapsed_ms(started);
-    if (!timed_result.ttft_ms.has_value() && task_result_has_output(timed_result.result)) {
+    if (!timed_result.ttft_ms.has_value() &&
+        (task_result_has_output(timed_result.result) ||
+         (diarization && !timed_result.result.speaker_turns.empty()))) {
         timed_result.ttft_ms = timed_result.wall_ms;
     }
     // Mark activity at completion too (see run_model): idle unload measures from
@@ -2952,11 +2982,23 @@ HttpResponse ServerState::run_transcription_stream(
         throw std::runtime_error("transcription stream=true requires a model configured with mode=streaming");
     }
     LoadedModel * model_ptr = &model;
-    return sse_response([this, model_ptr, request, busy_timeout_ms](HttpStreamWriter & writer) {
+    bool diarization;
+    {
+        std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+        diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
+    }
+    return sse_response([this, model_ptr, request, busy_timeout_ms, diarization](HttpStreamWriter & writer) {
         const auto timed_result = run_streaming_model(
             *model_ptr,
             request,
             [&](const engine::runtime::StreamEvent & event) {
+                if (diarization) {
+                    if (!event.speaker_turns.empty()) {
+                        write_sse(writer, diarization_event_json(
+                            event.speaker_turns, request.audio_input->sample_rate, false));
+                    }
+                    return;
+                }
                 if (!event.partial_text.has_value() || event.partial_text->text.empty()) {
                     return;
                 }
@@ -2967,6 +3009,12 @@ HttpResponse ServerState::run_transcription_stream(
                         "}");
             },
             busy_timeout_ms);
+        if (diarization) {
+            write_sse(writer, diarization_event_json(
+                timed_result.result.speaker_turns, request.audio_input->sample_rate, true, timed_result.ttft_ms));
+            write_sse_done(writer);
+            return;
+        }
         if (!timed_result.result.text_output.has_value()) {
             throw std::runtime_error("streaming transcription result did not contain transcript text");
         }
@@ -3128,6 +3176,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
     // would reach the generic handler and be reported as 500, which tells a client
     // to retry an identical request that cannot ever succeed.
     LoadedModel * model_ptr = nullptr;
+    bool diarization = false;
     int sample_rate = 16000;
     int channels = 1;
     std::optional<int> busy_timeout_ms;
@@ -3150,6 +3199,10 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
                 model.config.id);
         }
         model_ptr = &model;
+        {
+            std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+            diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
+        }
 
         // These two are not merely descriptive: the streaming policy multiplies them
         // into a per-chunk sample count, which sizes a buffer allocated after the model
@@ -3226,7 +3279,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
 
     std::istream * pcm_input = request.body_stream;
     return sse_response(
-        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms](
+        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms, diarization](
             HttpStreamWriter & writer) {
             const minitts::app::AudioStreamFormat format{sample_rate, channels};
             const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
@@ -3235,6 +3288,12 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
                 task_request,
                 audio,
                 [&](const engine::runtime::StreamEvent & event) {
+                    if (diarization) {
+                        if (!event.speaker_turns.empty()) {
+                            write_sse(writer, diarization_event_json(event.speaker_turns, sample_rate, false));
+                        }
+                        return;
+                    }
                     if (!event.partial_text.has_value() || event.partial_text->text.empty()) {
                         return;
                     }
@@ -3245,6 +3304,12 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
                             "}");
                 },
                 busy_timeout_ms);
+            if (diarization) {
+                write_sse(writer, diarization_event_json(
+                    timed_result.result.speaker_turns, sample_rate, true, timed_result.ttft_ms));
+                write_sse_done(writer);
+                return;
+            }
             if (!timed_result.result.text_output.has_value()) {
                 throw std::runtime_error("live transcription result did not contain transcript text");
             }
@@ -3320,14 +3385,19 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
         },
         parse_busy_timeout_override(body));
     std::ostringstream out;
+    std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+    const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
     out << "{\"events\":[";
     for (size_t i = 0; i < events.size(); ++i) {
         if (i != 0) {
             out << ",";
         }
-        out << stream_event_json(events[i]);
+        out << stream_event_json(events[i], diarization);
     }
-    out << "],\"result\":" << streaming_task_result_json(timed_result.result, timed_result.ttft_ms) << "}";
+    const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
+    out << "],\"result\":" << (silent_diarization
+        ? task_result_json_with_timing(timed_result.result, "{\"ttft_ms\":null}")
+        : streaming_task_result_json(timed_result.result, timed_result.ttft_ms)) << "}";
     return json_response(out.str());
 }
 

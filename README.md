@@ -14,7 +14,7 @@ ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gg
 
 > [!IMPORTANT]
 >
-> **2026-09-15 - Release v0.8.1:** YuE2 now supports independent AR and NAR LoRA adapters through the CLI and server, with AR LoRA selection available in the WebUI. This release also adds six new model families: Apollo, UniverSR, PulseVAD, Canary 180M Flash, Cohere Transcribe, and MOSS-Transcribe-Diarize.
+> **2026-09-23 - Release v0.8.2:** Day-zero support for NVIDIA Nemotron 3 Diarization, with streaming and batched inference. AuK and LiveAvatar are now available in the WebUI.
 >
 > **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
