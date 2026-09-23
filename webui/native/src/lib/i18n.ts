@@ -97,7 +97,7 @@ const english: Record<string, string> = {
   'arena.error.noAudio': 'Response did not include audio.',
   'workflow.tts': 'Text to speech',
   'workflow.asr': 'ASR / Transcription',
-  'workflow.music': 'Music generation',
+  'workflow.music': 'Music / video generation',
   'workflow.vc': 'Voice conversion',
   'workflow.sep': 'Source separation',
   'workflow.analysis': 'Audio analysis',

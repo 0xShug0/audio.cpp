@@ -22,6 +22,7 @@
     ]
   },
   "ui": {
+    "recommended_package": "auk_base_f32",
     "tags": [
       "TTS",
       "Edit"
@@ -131,7 +132,143 @@
     "load": []
   },
   "dependencies": [],
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/AuK-Base-and-Flash-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "auk_base_f32",
+      "display_name": "AuK Base F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "auk-base-f32.gguf"
+      ]
+    },
+    {
+      "id": "auk_base_f16",
+      "display_name": "AuK Base F16",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "auk-base-f16.gguf"
+      ]
+    },
+    {
+      "id": "auk_base_q8_0",
+      "display_name": "AuK Base Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "auk-base-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "auk_flash_f32",
+      "display_name": "AuK-Flash F32",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "auk-flash-f32.gguf"
+      ]
+    },
+    {
+      "id": "auk_flash_f16",
+      "display_name": "AuK-Flash F16",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "auk-flash-f16.gguf"
+      ]
+    },
+    {
+      "id": "auk_flash_q8_0",
+      "display_name": "AuK-Flash Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "auk-flash-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "auk_qwen_bf16",
+      "display_name": "AuK Qwen BF16",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "qwen2.5-omni-3b-bf16.gguf"
+      ]
+    },
+    {
+      "id": "auk_qwen_q8_0",
+      "display_name": "AuK Qwen Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "qwen2.5-omni-3b-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "auk_vae_f32",
+      "display_name": "AuK VAE F32",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "AuK-Base-and-Flash-GGUF",
+      "files": [
+        "config/auk-base.yaml",
+        "config/auk-flash.yaml",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "auk-vae-f32.gguf"
+      ]
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

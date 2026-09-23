@@ -25,6 +25,28 @@
     {"name": "num_inference_steps", "type": "number", "label": "Inference steps", "default": 4, "minimum": 1, "step": 1},
     {"name": "guidance_scale", "type": "number", "label": "Guidance scale", "default": 1.5, "minimum": 0, "step": 0.1}
   ],
+  "liveavatar": [
+    {"name": "reference_image_path", "type": "text", "label": "Reference image", "default": ""},
+    {"name": "generation_mode", "type": "choice", "label": "Generation mode", "default": "offline", "choices": ["offline", "liveavatar"]},
+    {"name": "height", "type": "number", "label": "Height", "default": 480, "minimum": 16, "step": 16, "precision": 0},
+    {"name": "width", "type": "number", "label": "Width", "default": 832, "minimum": 16, "step": 16, "precision": 0},
+    {"name": "num_frames", "type": "number", "label": "Frames per clip", "default": 48, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "num_clips", "type": "number", "label": "Maximum clips", "default": 1, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "num_inference_steps", "type": "number", "label": "Denoising steps", "default": 4, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "guidance_scale", "type": "slider", "label": "Guidance scale", "default": 0.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "shift", "type": "slider", "label": "Scheduler shift", "default": 3.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "negative_prompt", "type": "text", "label": "Negative prompt", "default": ""},
+    {"name": "fused_cfg", "type": "bool", "label": "Fused CFG", "default": true},
+    {"name": "sage_attention", "type": "bool", "label": "SageAttention", "default": true},
+    {"name": "memory_saver", "type": "bool", "label": "Memory saver", "default": true},
+    {"name": "denoiser_layerwise", "type": "bool", "label": "Layerwise denoiser", "default": false},
+    {"name": "denoiser_layerwise_batch", "type": "number", "label": "Layerwise batch", "default": 16, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "vae_encoder_chunk_size", "type": "number", "label": "VAE encoder chunk", "default": 16, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "vae_decoder_tile_size", "type": "number", "label": "VAE decoder tile", "default": 0, "minimum": 0, "step": 16, "precision": 0},
+    {"name": "target_cache_blocks", "type": "number", "label": "Target cache blocks", "default": 2, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "vae_cache_f16", "type": "bool", "label": "F16 VAE cache", "default": true},
+    {"name": "denoiser_weight_streaming", "type": "bool", "scope": "session", "session_option": "liveavatar.denoiser_weight_streaming", "label": "Stream denoiser weights", "default": false}
+  ],
   "pulsevad": [
     {"name": "threshold", "type": "slider", "label": "Speech threshold", "default": 0.5, "minimum": 0, "maximum": 1, "step": 0.01},
     {"name": "hop_size_samples", "type": "number", "label": "Hop size (samples)", "default": 1600, "minimum": 1, "step": 1},
@@ -95,6 +117,24 @@
   "chatterbox-vc": [
     {"name": "s3gen_cfg_rate", "type": "slider", "label": "s3gen_cfg_rate（音色引导强度）", "label_en": "s3gen_cfg_rate (voice guidance)", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（生成步数）", "label_en": "num_inference_steps", "default": 10, "minimum": 1, "maximum": 100, "step": 1, "precision": 0}
+  ],
+
+  "kokoro_tts": [
+    {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (speech rate)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05}
+  ],
+
+  "kitten_tts": [
+    {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (speech rate)", "default": 1.0, "minimum": 0.01, "maximum": 2.0, "step": 0.05},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 400, "minimum": 32, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
+  ],
+
+  "piper_tts": [
+    {"name": "speed", "type": "slider", "label": "speed（语速倍率）", "label_en": "speed (speech rate)", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "variation", "type": "slider", "label": "variation（音色变化）", "label_en": "variation", "default": 0.667, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "duration_variation", "type": "slider", "label": "duration_variation（时长变化）", "label_en": "duration_variation", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 280, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
   ],
 
   "omnivoice": [
@@ -234,6 +274,19 @@
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 1, "maximum": 1024, "step": 1, "precision": 0}
   ],
 
+  "auk": [
+    {"name": "model_gguf", "type": "choice", "scope": "session", "session_option": "auk.model_gguf", "label": "model_gguf", "label_en": "Generator weights", "default": "auk-base-f32.gguf", "choices": ["auk-base-f32.gguf", "auk-base-f16.gguf", "auk-base-q8_0.gguf", "auk-flash-f32.gguf", "auk-flash-f16.gguf", "auk-flash-q8_0.gguf"], "info": "Selects Base or AuK-Flash automatically. Reload the model after changing this value."},
+    {"name": "qwen_gguf", "type": "choice", "scope": "session", "session_option": "auk.qwen_gguf", "label": "qwen_gguf", "label_en": "Qwen conditioner", "default": "qwen2.5-omni-3b-bf16.gguf", "choices": ["qwen2.5-omni-3b-bf16.gguf", "qwen2.5-omni-3b-q8_0.gguf"], "info": "Reload the model after changing this value."},
+    {"name": "vae_gguf", "type": "choice", "scope": "session", "session_option": "auk.vae_gguf", "label": "vae_gguf", "label_en": "VAE weights", "default": "auk-vae-f32.gguf", "choices": ["auk-vae-f32.gguf"], "info": "Reload the model after changing this value."},
+    {"name": "attention", "type": "choice", "scope": "session", "session_option": "auk.attention", "label": "attention", "label_en": "Attention", "default": "auto", "choices": ["auto", "flash", "eager"], "info": "Flow-model attention mode. Reload the model after changing this value."},
+    {"name": "mem_saver", "type": "bool", "scope": "session", "session_option": "auk.mem_saver", "label": "mem_saver", "label_en": "Memory saver", "default": false, "info": "Release Qwen and generation weights between stages. Warm requests reload weights and rebuild graphs."},
+    {"name": "instruct", "type": "text", "label": "instruct", "label_en": "Voice description", "default": "", "placeholder": "A warm male voice speaking clear English.", "info": "Optional for TTS only. Without it, text carries the complete upstream instruction."},
+    {"name": "duration_sec", "type": "number", "label": "duration_sec", "label_en": "Output duration (s)", "default": "", "minimum": 0.02, "step": 0.02, "info": "Required for speech generation without reference audio; otherwise the reference duration is used."},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "Sampling steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "Base Euler steps. AuK-Flash always uses its fixed four-step schedule."},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "label_en": "Guidance scale", "default": 2.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1, "info": "Base guidance strength. AuK-Flash disables classifier-free guidance."},
+    {"name": "sway_sampling_coef", "type": "number", "label": "sway_sampling_coef", "label_en": "Sway coefficient", "default": -1.0, "step": 0.1, "info": "Base sampling schedule sway. AuK-Flash uses its fixed time grid."}
+  ],
+
   "yue2": [
     {"name": "ar_lora", "type": "text", "scope": "session", "session_option": "yue2.ar_lora", "label": "ar_lora", "label_en": "AR LoRA adapter", "default": "", "placeholder": "/path/to/ar_lora_inst_v3abc.safetensors", "info": "Unfused AR adapter for score and semantic planning; relative paths resolve against the model root. Reload the model after changing this value."},
     {"name": "ar_lora_scale", "type": "number", "scope": "session", "session_option": "yue2.ar_lora_scale", "label": "ar_lora_scale", "label_en": "AR LoRA strength", "default": 1, "step": 0.1, "info": "Scales the AR adapter deltas; 0 disables it. Reload the model after changing this value."},
@@ -370,6 +423,15 @@
     {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 25, "minimum": 0, "step": 1, "precision": 0},
     {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.0, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
+  ],
+
+  "moss_tts_v15": [
+    {"name": "instruct", "type": "text", "label": "instruct（音色描述）", "label_en": "instruct (voice description)", "default": "", "placeholder": "参考音频比文字描述更可靠", "placeholder_en": "A reference recording is more reliable than a description."},
+    {"name": "language", "type": "choice", "label": "language（语言）", "label_en": "language", "default": "", "choices": ["", "English", "Chinese"]},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.5, "minimum": 0.0, "maximum": 3.0, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.6, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "repetition_penalty", "type": "slider", "label": "repetition_penalty", "default": 1.1, "minimum": 1.0, "maximum": 2.0, "step": 0.01}
   ],
 
   "moss_tts_nano": [

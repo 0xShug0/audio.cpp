@@ -596,14 +596,14 @@ struct LiveAvatarPipelineState::Data {
         if (assets_->config.text_dim != text_config.hidden_size) {
             throw std::runtime_error("LiveAvatar text encoder config does not match model config");
         }
-        engine::modules::HubertEncoderWeightBinding audio_binding;
+        audio_binding = {};
         audio_binding.feature_extractor_layers = "wav2vec2.feature_extractor.conv_layers";
         audio_binding.feature_projection_layer_norm = "wav2vec2.feature_projection.layer_norm";
         audio_binding.feature_projection_projection = "wav2vec2.feature_projection.projection";
         audio_binding.positional_conv = "wav2vec2.encoder.pos_conv_embed.conv";
         audio_binding.encoder_layer_norm = "wav2vec2.encoder.layer_norm";
         audio_binding.encoder_layers = "wav2vec2.encoder.layers";
-        engine::modules::HubertEncoderConfig audio_config;
+        audio_config = {};
         audio_config.record_final_layer_after_final_norm = true;
         audio_encoder = engine::modules::HubertEncoderComponent::load_from_tensor_source(
             assets_->audio_encoder_weights,
@@ -626,6 +626,8 @@ struct LiveAvatarPipelineState::Data {
 
     std::shared_ptr<const LiveAvatarAssets> assets_;
     engine::modules::T5BaseEncoderConfig text_config;
+    engine::modules::HubertEncoderConfig audio_config;
+    engine::modules::HubertEncoderWeightBinding audio_binding;
     engine::modules::HubertEncoderComponent audio_encoder;
     std::unique_ptr<LiveAvatarTextEncoderRuntime> text_encoder;
     std::unique_ptr<LiveAvatarVAERuntime> vae;
@@ -641,19 +643,33 @@ LiveAvatarPipelineState::LiveAvatarPipelineState(
 LiveAvatarPipelineState::~LiveAvatarPipelineState() = default;
 
 std::vector<std::vector<float>> LiveAvatarPipelineState::encode_text_batch(
-    engine::core::ExecutionContext &,
+    engine::core::ExecutionContext & execution,
     const std::vector<std::vector<int32_t>> & input_ids,
     const std::vector<int64_t> & token_counts) {
+    if (!data_->text_encoder) {
+        data_->text_encoder = std::make_unique<LiveAvatarTextEncoderRuntime>(
+            execution,
+            data_->assets_,
+            data_->text_config);
+    }
     const auto out = data_->text_encoder->encode_batch(input_ids, token_counts);
     data_->text_encoder.reset();
     return out;
 }
 
 LiveAvatarPreparedAudio LiveAvatarPipelineState::prepare_audio_buckets(
-    engine::core::ExecutionContext &,
+    engine::core::ExecutionContext & execution,
     const std::vector<float> & audio_hubert_input,
     int64_t batch_frames,
     int64_t audio_layers) {
+    if (data_->audio_encoder.weights() == nullptr) {
+        data_->audio_encoder = engine::modules::HubertEncoderComponent::load_from_tensor_source(
+            data_->assets_->audio_encoder_weights,
+            execution.config(),
+            data_->audio_config,
+            data_->audio_binding);
+        data_->assets_->audio_encoder_weights->release_storage();
+    }
     WanS2VAudioConditionerConfig audio_config;
     audio_config.batch_frames = batch_frames;
     std::vector<int64_t> layers(static_cast<size_t>(audio_layers));
