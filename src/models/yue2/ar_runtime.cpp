@@ -139,13 +139,10 @@ void load_generation_weights(
 engine::modules::QwenCausalDecodeRuntimeConfig make_runtime_config(
     const Yue2ModelConfig & config,
     core::BackendType backend_type,
-    size_t prefill_graph_arena_bytes,
-    size_t decode_graph_arena_bytes,
     int64_t logits_size = 0) {
     engine::modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "yue2.ar";
-    out.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
-    out.decode_graph_arena_bytes = decode_graph_arena_bytes;
+    out.graph_arena_sizing = core::ContextSizing::FromCapacity;
     out.decoder.stack.hidden_size = config.hidden_size;
     out.decoder.stack.layers = config.layers;
     out.decoder.stack.num_attention_heads = config.attention_heads;
@@ -458,41 +455,26 @@ struct Yue2ArRuntime::Impl {
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType weight_type,
-        size_t weight_context_bytes,
-        size_t prefill_graph_arena_bytes,
-        size_t decode_graph_arena_bytes)
+        size_t prefix_state_graph_arena_bytes)
         : execution(execution),
           assets(std::move(assets)),
-          weight_type(weight_type) {
+          weight_type(weight_type),
+          prefix_state_graph_arena_bytes(prefix_state_graph_arena_bytes) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 AR runtime requires assets");
         }
+        const auto & config = this->assets->config.model;
+        const auto & source = *this->assets->model_weights;
         store = std::make_shared<core::BackendWeightStore>(
             execution.backend(),
             execution.backend_type(),
             "yue2.ar.weights",
-            weight_context_bytes);
-        const auto & config = this->assets->config.model;
-        const auto & source = *this->assets->model_weights;
+            core::BackendWeightStore::capacity_for(source));
         runtime_weights = load_prefix_weights(*store, source, config, weight_type);
         store->upload();
-        runtime_config = make_runtime_config(
-            config,
-            execution.backend_type(),
-            prefill_graph_arena_bytes,
-            decode_graph_arena_bytes);
-        abc_runtime_config = make_runtime_config(
-            config,
-            execution.backend_type(),
-            prefill_graph_arena_bytes,
-            decode_graph_arena_bytes,
-            kAbcEndToken + 1);
-        semantic_runtime_config = make_runtime_config(
-            config,
-            execution.backend_type(),
-            prefill_graph_arena_bytes,
-            decode_graph_arena_bytes,
-            kCodecSize + 1);
+        runtime_config = make_runtime_config(config, execution.backend_type());
+        abc_runtime_config = make_runtime_config(config, execution.backend_type(), kAbcEndToken + 1);
+        semantic_runtime_config = make_runtime_config(config, execution.backend_type(), kCodecSize + 1);
     }
 
     struct PrefixStateGraph {
@@ -500,7 +482,7 @@ struct Yue2ArRuntime::Impl {
             : owner(&owner),
               steps(steps) {
             const auto & config = owner.assets->config.model;
-            ggml_init_params params{owner.runtime_config.prefill_graph_arena_bytes, nullptr, true};
+            ggml_init_params params{owner.prefix_state_graph_arena_bytes, nullptr, true};
             ctx.reset(ggml_init(params));
             ggml_init_params state_params{
                 ggml_tensor_overhead() * static_cast<size_t>(config.layers * 2),
@@ -895,7 +877,7 @@ struct Yue2ArRuntime::Impl {
                 execution.backend(),
                 execution.backend_type(),
                 "yue2.ar.generation.weights",
-                64ull * 1024ull * 1024ull);
+                core::BackendWeightStore::capacity_for(source));
             load_generation_weights(runtime_weights, *generation_store, source, config, weight_type);
             generation_store->upload();
             ggml_init_params view_params{ggml_tensor_overhead() * 8, nullptr, true};
@@ -950,6 +932,7 @@ struct Yue2ArRuntime::Impl {
     std::shared_ptr<core::BackendWeightStore> generation_store;
     std::unique_ptr<ggml_context, GgmlContextDeleter> generation_view_ctx;
     assets::TensorStorageType weight_type;
+    size_t prefix_state_graph_arena_bytes = 0;
     engine::modules::QwenCausalDecodeRuntimeConfig runtime_config;
     engine::modules::QwenCausalDecodeRuntimeConfig abc_runtime_config;
     engine::modules::QwenCausalDecodeRuntimeConfig semantic_runtime_config;
@@ -969,16 +952,12 @@ Yue2ArRuntime::Yue2ArRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const Yue2Assets> assets,
     assets::TensorStorageType weight_type,
-    size_t weight_context_bytes,
-    size_t prefill_graph_arena_bytes,
-    size_t decode_graph_arena_bytes)
+    size_t prefix_state_graph_arena_bytes)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
           weight_type,
-          weight_context_bytes,
-          prefill_graph_arena_bytes,
-          decode_graph_arena_bytes)) {}
+          prefix_state_graph_arena_bytes)) {}
 
 Yue2ArRuntime::~Yue2ArRuntime() = default;
 

@@ -207,15 +207,11 @@ int main(int argc, char ** argv) {
         }
 
         const auto weight_type = parse_weight_type(arg_value(argc, argv, "--weight-type", "native"));
-        const size_t weight_context_bytes = static_cast<size_t>(int_arg(argc, argv, "--weight-context-mb", 6144)) * kMib;
-        const size_t ar_prefill_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--ar-prefill-arena-mb", 4096)) * kMib;
-        const size_t ar_decode_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--ar-decode-arena-mb", 1536)) * kMib;
+        const size_t ar_prefix_state_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--ar-prefill-arena-mb", 4096)) * kMib;
         const size_t nar_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--nar-arena-mb", 6144)) * kMib;
 
-        engine::models::yue2::Yue2ArRuntime ar(
-            execution, assets, weight_type, weight_context_bytes, ar_prefill_arena_bytes, ar_decode_arena_bytes);
-        engine::models::yue2::Yue2NarRuntime nar(
-            execution, assets, weight_type, weight_context_bytes, nar_arena_bytes);
+        engine::models::yue2::Yue2ArRuntime ar(execution, assets, weight_type, ar_prefix_state_arena_bytes);
+        engine::models::yue2::Yue2NarRuntime nar(execution, assets, weight_type, nar_arena_bytes);
 
         std::cout << "prefix_tokens=" << prefix.size() << " codec_frames=" << codec.size()
                   << " ode_steps=" << ode_steps << " context=" << context << " seed=" << seed << "\n";

@@ -37,9 +37,7 @@ public:
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType weight_type,
-        size_t weight_context_bytes,
-        size_t prefill_graph_arena_bytes,
-        size_t decode_graph_arena_bytes);
+        size_t prefix_state_graph_arena_bytes);
     ~Yue2ArRuntime();
 
     std::vector<int32_t> generate(

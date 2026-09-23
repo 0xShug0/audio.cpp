@@ -110,15 +110,14 @@ engine::modules::QwenDecoderLayerWeights load_nar_layer(
 std::shared_ptr<const Yue2NarWeights> load_nar_weights(
     const Yue2Assets & assets,
     core::ExecutionContext & execution,
-    size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
     auto weights = std::make_shared<Yue2NarWeights>();
+    const auto & source = *assets.model_weights;
     weights->store = std::make_shared<core::BackendWeightStore>(
         execution.backend(),
         execution.backend_type(),
         "yue2.nar.weights",
-        weight_context_bytes);
-    const auto & source = *assets.model_weights;
+        core::BackendWeightStore::capacity_for(source));
     const auto & config = assets.config.model;
     weights->vae2llm = binding::linear_from_source(
         *weights->store,
@@ -461,7 +460,6 @@ struct Yue2NarRuntime::Impl {
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType weight_type,
-        size_t weight_context_bytes,
         size_t graph_arena_bytes,
         bool allow_flash_attention,
         int64_t attention_tile_rows)
@@ -473,7 +471,7 @@ struct Yue2NarRuntime::Impl {
         if (!this->assets) {
             throw std::runtime_error("Yue2 NAR runtime requires assets");
         }
-        weights = load_nar_weights(*this->assets, execution, weight_context_bytes, weight_type);
+        weights = load_nar_weights(*this->assets, execution, weight_type);
     }
 
     struct Graph {
@@ -767,7 +765,6 @@ Yue2NarRuntime::Yue2NarRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const Yue2Assets> assets,
     assets::TensorStorageType weight_type,
-    size_t weight_context_bytes,
     size_t graph_arena_bytes,
     bool allow_flash_attention,
     int64_t attention_tile_rows)
@@ -775,7 +772,6 @@ Yue2NarRuntime::Yue2NarRuntime(
           execution,
           std::move(assets),
           weight_type,
-          weight_context_bytes,
           graph_arena_bytes,
           allow_flash_attention,
           attention_tile_rows)) {}

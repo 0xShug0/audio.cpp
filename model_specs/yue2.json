@@ -330,22 +330,6 @@
         "default": "native"
       },
       {
-        "name": "model_weight_context_mb",
-        "type": "int",
-        "description": "YuE2 MoT weight context size in MiB.",
-        "required": false,
-        "min": 1,
-        "default": 6144
-      },
-      {
-        "name": "vae_weight_context_mb",
-        "type": "int",
-        "description": "YuE2 VAE weight context size in MiB.",
-        "required": false,
-        "min": 1,
-        "default": 1536
-      },
-      {
         "name": "ar_prefill_graph_arena_mb",
         "type": "int",
         "description": "AR prefill graph arena size in MiB.",
@@ -354,28 +338,12 @@
         "default": 4096
       },
       {
-        "name": "ar_decode_graph_arena_mb",
-        "type": "int",
-        "description": "AR one-token decode graph arena size in MiB.",
-        "required": false,
-        "min": 1,
-        "default": 1536
-      },
-      {
         "name": "nar_graph_arena_mb",
         "type": "int",
         "description": "NAR acoustic flow graph arena size in MiB.",
         "required": false,
         "min": 1,
         "default": 6144
-      },
-      {
-        "name": "vae_graph_arena_mb",
-        "type": "int",
-        "description": "VAE decode graph arena size in MiB.",
-        "required": false,
-        "min": 1,
-        "default": 1536
       }
     ],
     "load": []

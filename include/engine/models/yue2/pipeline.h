@@ -31,12 +31,8 @@ public:
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType model_weight_type,
         assets::TensorStorageType vae_weight_type,
-        size_t model_weight_context_bytes,
-        size_t vae_weight_context_bytes,
         size_t ar_prefill_graph_arena_bytes,
-        size_t ar_decode_graph_arena_bytes,
         size_t nar_graph_arena_bytes,
-        size_t vae_graph_arena_bytes,
         core::AttentionPreference attention_preference = core::AttentionPreference::Auto,
         int64_t nar_attention_tile_rows = 0);
     ~Yue2PipelineRuntime();
