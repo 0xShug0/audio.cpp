@@ -19,7 +19,7 @@ GGUF packages published by the model author at [pnnbao-ump/VieNeu-TTS-v3-Turbo-G
 
 | File | Precision | Size |
 |---|---|---|
-| `vieneu-v3-turbo-q8_0.gguf` | Q8_0 matmuls, bf16 norms / embeddings | 170 MB |
+| `vieneu-v3-turbo-q8_0.gguf` | Q8_0 matmuls, bf16 norms / embeddings, f16 codec | 188 MB |
 | `vieneu-v3-turbo-bf16.gguf` | bf16 | 292 MB |
 | `voices/<id>/{ref_codes.txt,speaker.emb.txt}` | — | the 25 preset voices of the Python SDK as packaged voices (`voices/manifest.json`) |
 
@@ -30,12 +30,18 @@ python tools/model_manager_v2.py install vieneu_v3_turbo_bf16
 
 The original HF layout also loads directly (`--model <dir>` with `model.safetensors`, `config.json`, `tokenizer.json` and `speech_tokenizer/{config.json,model.safetensors}` = `OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano`).
 
+The codec stays at f16 in the Q8_0 package. Quantising it costs 4 dB of SNR
+against the reference decoder on identical codes (32.2 vs 36.0 dB) — audible as a
+faint haze — for 16 MB and no speed, because the codec runs once per chunk rather
+than once per frame; f32 measures the same as f16.
+
 To repack from a safetensors directory:
 
 ```bash
 audiocpp_gguf --input model_weights=VieNeu-TTS-v3-Turbo/model.safetensors \
   --input speech_tokenizer_weights=VieNeu-TTS-v3-Turbo/speech_tokenizer/model.safetensors \
   --root VieNeu-TTS-v3-Turbo --family vieneu_v3_turbo --type q8_0 \
+  --keep-type "speech_tokenizer_weights*=f16" \
   --output vieneu-v3-turbo-q8_0.gguf
 ```
 
@@ -100,7 +106,7 @@ Session options: `vieneu_v3_turbo.weight_type` (`native|f32|f16|bf16|q8_0`), `vi
 
 Checked against fp32 references with identical prompt inputs (CPU, `weight_type=f32`): backbone prefill hidden state max |diff| 6e-7; acoustic-decoder logits identical to a numpy fp32 implementation of the safetensors weights; codec decoder 83 dB SNR on the same codes. With the GGUF packages the acoustic logits deviate by 0.007 (bf16) / 0.02–0.03 (q8_0) on average — smaller than the int8 acoustic graph the Python CPU path ships.
 
-Speed on an Intel Core i5-12400F (6 P-cores, `--threads 6`, q8_0): a 12 s two-sentence utterance in 4.0 s wall including process start and model load, RTF ≈ 0.33; the Python CPU path on the same machine is RTF 0.55–0.62 (fp32 ONNX) / 0.35 (int8 ONNX, needs VNNI).
+Speed on an Intel Core i5-12400F (6 P-cores, `--threads 6`, q8_0): a 28 s utterance in 8.0 s wall including process start and model load, RTF ≈ 0.29 (0.34 with `--threads 4`); the Python CPU path on the same machine is RTF 0.55–0.62 (fp32 ONNX) / 0.35 (int8 ONNX, needs VNNI).
 
 ## Not yet ported
 
