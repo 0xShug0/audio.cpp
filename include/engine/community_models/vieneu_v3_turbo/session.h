@@ -62,6 +62,8 @@ private:
 
     static VoicePromptCacheKey voice_prompt_cache_key(const Qwen3VoiceCloneInput & input);
     VieNeuTTSRequest make_request(const runtime::TaskRequest & request) const;
+    std::optional<Qwen3VoiceCloneInput> make_voice_clone_input(
+        const runtime::TaskRequest & request) const;
     const Qwen3VoiceClonePrompt & resolve_voice_prompt(
         const Qwen3VoiceCloneInput & input,
         const VieNeuTTSVoiceClonePromptBuilder & prompt_builder);

@@ -54,6 +54,7 @@ runtime::ModelCliInterface cli(const VieNeuTTSAssets &) {
         {"reference_codes_file", "<path>", "Pre-encoded reference codes (one frame per line, 16 ints); replaces the codec encoder pass and makes --voice-ref optional."},
         {"reference_text", "<text>", "Transcript of the reference WAV (accepted for compatibility; v3 Turbo does not condition on it)."},
         {"x_vector_only_mode", "true|false", "Clone from the speaker embedding only, without reference codes (default false)."},
+        {"encode_reference_only", "true|false", "Encode --voice-ref into reference codes and return them as an acoustic-tokens artifact without generating audio (default false)."},
         {"max_tokens", "<int>", "Maximum generated frames per chunk, 80 ms each (default 300)."},
         {"do_sample", "true|false", "Sample the acoustic decoder (default true); false = greedy."},
         {"temperature", "<float>", "Sampling temperature for all 16 codebooks (default 0.8)."},
