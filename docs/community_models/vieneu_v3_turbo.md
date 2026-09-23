@@ -30,10 +30,15 @@ python tools/model_manager_v2.py install vieneu_v3_turbo_bf16
 
 The original HF layout also loads directly (`--model <dir>` with `model.safetensors`, `config.json`, `tokenizer.json` and `speech_tokenizer/{config.json,model.safetensors}` = `OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano`).
 
-The codec stays at f16 in the Q8_0 package. Quantising it costs 4 dB of SNR
-against the reference decoder on identical codes (32.2 vs 36.0 dB) — audible as a
-faint haze — for 16 MB and no speed, because the codec runs once per chunk rather
-than once per frame; f32 measures the same as f16.
+The codec stays at f16 in **both** packages, and it is the only tensor group
+that does. Quantising it to Q8_0 costs 4 dB of SNR against the reference decoder
+on identical codes (32.2 vs 36.0 dB) — audible as a faint haze — for 16 MB and no
+speed, because the codec runs once per chunk rather than once per frame. bf16 is
+the wrong shape for it in the other direction: the same 2 bytes, but 7 bits of
+mantissa against f16's 10, and the encoder is sensitive enough to show it. On a
+4.6 s clip, reference codes from the f16 codec agree with the fp32 reference
+encoder on 96.3% of the 912 codes and the bf16 codec on 82.4%, so a bf16 package
+keeps a bf16 backbone and an f16 codec. f32 measures the same as f16.
 
 To repack from a safetensors directory:
 
@@ -44,6 +49,9 @@ audiocpp_gguf --input model_weights=VieNeu-TTS-v3-Turbo/model.safetensors \
   --keep-type "speech_tokenizer_weights*=f16" \
   --output vieneu-v3-turbo-q8_0.gguf
 ```
+
+The bf16 package is the same command with `--type bf16`, and it keeps the same
+`--keep-type`.
 
 ## Text input
 
@@ -98,11 +106,33 @@ audiocpp_cli --task tts --family vieneu_v3_turbo \
 Reference audio instead of packaged codes:
 
 ```bash
-audiocpp_cli --task clon --family vieneu_v3_turbo \
+audiocpp_cli --task clone --family vieneu_v3_turbo \
   --model models/VieNeu-TTS-v3-Turbo-GGUF/vieneu-v3-turbo-q8_0.gguf --backend cpu \
   --text "<phonemes>" --voice-ref voice/ref.wav \
   --request-option speaker_embedding_file=voice/speaker.emb.txt --out out.wav
 ```
+
+## Enrolling a voice
+
+Adding a voice to an application is not a synthesis: what it needs is the
+reference codes, kept on disk, so that every later request is a packaged voice
+(option 2 above) and the clip and the encoder are never touched again.
+
+`encode_reference_only=true` runs the encoder pass and stops. The codes come
+back as an `acoustic_tokens` artifact — int32, row-major, `frames` ×
+`code_groups`, with both in the artifact's metadata:
+
+```bash
+audiocpp_cli --task tts --family vieneu_v3_turbo   --model models/VieNeu-TTS-v3-Turbo-GGUF/vieneu-v3-turbo-q8_0.gguf --backend cpu   --voice-ref voice/ref.wav --request-option encode_reference_only=true   --out-dir voice/
+# voice/vieneu_v3_turbo_reference_codes.json
+```
+
+A normal request that was given `--voice-ref` returns the same artifact
+alongside its audio, so a caller can keep the voice it just paid to derive.
+Codes passed in through `reference_codes` are not echoed back.
+
+The speaker embedding still has to come from elsewhere: the CAM++ encoder is
+not ported (see [Not yet ported](#not-yet-ported)).
 
 ## Options
 
@@ -119,6 +149,7 @@ Defaults follow `Vieneu.infer()` in the Python package. Use `--request-option na
 | `seed` | random | Sampling seed. |
 | `reference_codes_file` / `speaker_embedding_file` / `speaker_embedding` | — | Voice inputs, see above. |
 | `x_vector_only_mode` | `false` | Ignore reference codes and clone from the speaker embedding alone. |
+| `encode_reference_only` | `false` | Encode `--voice-ref` into reference codes, return them as an artifact and generate nothing. |
 | `text_chunk_size` | `200` | Character budget per chunk of the phoneme string. The cut follows paragraphs, then sentences, then minor punctuation, then whitespace. |
 | `text_chunk_min` | `20` | Chunks shorter than this join a neighbour — alone they read as a stutter. |
 | `babble_retries` | `2` | Re-generations for a short chunk that kept talking past its text (`0` disables the guard). |
