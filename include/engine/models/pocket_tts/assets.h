@@ -19,6 +19,7 @@ struct PocketTTSModelConfig {
     float frame_rate = 12.5F;
     float mimi_frame_rate = 12.5F;
     int64_t flow_layers = 6;
+    int64_t flow_depth = 6;
     int64_t flow_dim = 1024;
     int64_t flow_heads = 16;
     int64_t flow_hidden_size = 512;
