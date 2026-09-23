@@ -221,9 +221,6 @@ Yue2Request normalize_request(Yue2Request out) {
     if (out.style.empty()) {
         throw std::runtime_error("Yue2 requires non-empty style");
     }
-    if (out.lyrics.empty()) {
-        throw std::runtime_error("Yue2 requires non-empty lyrics");
-    }
     return out;
 }
 
