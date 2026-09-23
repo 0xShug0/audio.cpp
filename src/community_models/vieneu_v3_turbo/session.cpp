@@ -43,23 +43,35 @@ std::filesystem::path option_path(
 
 // Hand back what the codec encoder just produced. Enrolling a voice costs one
 // encoder pass over the clip; a caller that keeps these codes passes them back
-// through `reference_codes` and never pays for it again - nor has to carry a
-// second copy of the encoder to derive them somewhere else.
+// through `reference_codes_file` and never pays for it again - nor has to carry
+// a second copy of the encoder to derive them somewhere else.
+//
+// The payload is exactly what that option reads: one frame per line,
+// code_groups integers each. A binary payload would be smaller and would land
+// as `<id>.json` full of hex, which is not something this family can be handed
+// back - the round trip has to close for the artifact to be worth anything.
 void append_reference_codes_artifact(
     runtime::TaskResult & result,
     const Qwen3SpeechCodes & codes,
     int64_t sample_rate) {
-    std::vector<std::byte> payload(codes.codes.size() * sizeof(int32_t));
-    if (!codes.codes.empty()) {
-        std::memcpy(payload.data(), codes.codes.data(), payload.size());
+    std::ostringstream text;
+    for (int64_t frame = 0; frame < codes.frames; ++frame) {
+        for (int64_t group = 0; group < codes.code_groups; ++group) {
+            if (group > 0) {
+                text << ' ';
+            }
+            text << codes.codes[static_cast<size_t>(frame * codes.code_groups + group)];
+        }
+        text << '\n';
     }
-    result.output_artifacts.push_back(runtime::make_voice_artifact(
+    result.output_artifacts.push_back(runtime::make_text_artifact(
         runtime::ArtifactKind::AcousticTokens,
         "vieneu_v3_turbo.reference_codes",
-        std::move(payload),
+        text.str(),
         {
-            {"dtype", "int32"},
-            {"layout", "frames_x_code_groups"},
+            // So the CLI writes `<id>.txt` verbatim rather than wrapping it.
+            {"mime", "text/plain"},
+            {"extension", "txt"},
             {"frames", std::to_string(codes.frames)},
             {"code_groups", std::to_string(codes.code_groups)},
             {"sample_rate", std::to_string(sample_rate)},

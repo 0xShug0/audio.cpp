@@ -119,13 +119,28 @@ reference codes, kept on disk, so that every later request is a packaged voice
 (option 2 above) and the clip and the encoder are never touched again.
 
 `encode_reference_only=true` runs the encoder pass and stops. The codes come
-back as an `acoustic_tokens` artifact — int32, row-major, `frames` ×
-`code_groups`, with both in the artifact's metadata:
+back as an `acoustic_tokens` artifact whose payload is the text
+`reference_codes_file` reads — one frame per line, `code_groups` integers each —
+so the file the CLI writes goes straight back in:
 
 ```bash
-audiocpp_cli --task tts --family vieneu_v3_turbo   --model models/VieNeu-TTS-v3-Turbo-GGUF/vieneu-v3-turbo-q8_0.gguf --backend cpu   --voice-ref voice/ref.wav --request-option encode_reference_only=true   --out-dir voice/
-# voice/vieneu_v3_turbo_reference_codes.json
+# once per voice: the clip becomes codes
+audiocpp_cli --task tts --family vieneu_v3_turbo \
+  --model models/VieNeu-TTS-v3-Turbo-GGUF/vieneu-v3-turbo-q8_0.gguf --backend cpu \
+  --voice-ref voice/ref.wav --request-option encode_reference_only=true \
+  --out-dir voice/
+# voice/vieneu_v3_turbo_reference_codes.txt
+
+# from then on: no clip, and no encoder pass
+audiocpp_cli --task tts --family vieneu_v3_turbo \
+  --model models/VieNeu-TTS-v3-Turbo-GGUF/vieneu-v3-turbo-q8_0.gguf --backend cpu \
+  --text "<phonemes>" \
+  --request-option reference_codes_file=voice/vieneu_v3_turbo_reference_codes.txt \
+  --request-option speaker_embedding_file=voice/speaker.emb.txt --out out.wav
 ```
+
+`frames`, `code_groups` and `sample_rate` are in the artifact's metadata, for a
+caller reading it through the API rather than off disk.
 
 A normal request that was given `--voice-ref` returns the same artifact
 alongside its audio, so a caller can keep the voice it just paid to derive.
