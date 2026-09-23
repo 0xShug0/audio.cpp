@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
+#include "engine/framework/debug/trace.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -164,6 +165,13 @@ public:
             throw std::runtime_error("failed to allocate " + name_ + " backend weight buffer");
         }
         ggml_backend_buffer_set_usage(buffer_, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        // The header context is host RAM by construction; the buffer is where
+        // the weights actually landed (device, or a host fallback), by name.
+        debug::timing_log_context_reservation(name_, ctx_.get());
+        debug::timing_log_scalar(
+            name_ + ".buffer_mb",
+            static_cast<double>(ggml_backend_buffer_get_size(buffer_)) / (1024.0 * 1024.0));
+        debug::timing_log_scalar(name_ + ".buffer_name", std::string_view(ggml_backend_buffer_name(buffer_)));
         for (auto & upload : pending_) {
             if (upload.kind == PendingUploadKind::Tensor) {
                 upload.source->set_backend_tensor(

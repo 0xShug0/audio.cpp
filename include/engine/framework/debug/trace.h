@@ -7,6 +7,8 @@
 #include <type_traits>
 #include <vector>
 
+struct ggml_context;
+
 namespace engine::debug {
 
 struct LoggingConfig {
@@ -46,6 +48,11 @@ void timing_log_scalar(const std::string & name, double value);
 void timing_log_scalar(const std::string & name, int64_t value);
 void timing_log_scalar(const std::string & name, uint64_t value);
 void timing_log_scalar(const std::string & name, bool value);
+// Logs `<name>.ctx_reserved_mb` (the ggml_init mem_size, a host allocation
+// made in full up front) and `<name>.ctx_used_mb` (what the tensor headers in
+// it actually take). For a no_alloc context the gap is memory the process
+// charges but never touches; call it once the graph is built.
+void timing_log_context_reservation(const std::string & name, const ggml_context * ctx);
 
 template <typename Integer, std::enable_if_t<std::is_integral_v<Integer> && !std::is_same_v<std::decay_t<Integer>, bool>, int> = 0>
 inline void trace_log_scalar(const std::string & name, Integer value) {

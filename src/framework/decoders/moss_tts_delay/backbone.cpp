@@ -219,6 +219,8 @@ struct MossTtsDelayBackboneRuntime::Impl {
     double step_output_read_ms = 0.0;
     int64_t step_calls = 0;
     double prefill_graph_build_ms = 0.0;
+    size_t prefill_ctx_reserved_bytes = 0;
+    size_t prefill_ctx_used_bytes = 0;
     double prefill_input_upload_ms = 0.0;
     double prefill_graph_compute_ms = 0.0;
     double prefill_output_read_ms = 0.0;
@@ -551,6 +553,8 @@ std::vector<float> MossTtsDelayBackboneRuntime::prefill(
         throw std::runtime_error("failed to allocate MOSS delay backbone prefill graph");
     }
     impl.prefill_graph_build_ms += engine::debug::elapsed_ms(timing_start);
+    impl.prefill_ctx_reserved_bytes = ggml_get_mem_size(graph_ctx.get());
+    impl.prefill_ctx_used_bytes = ggml_used_mem(graph_ctx.get());
 
     timing_start = Clock::now();
     ggml_backend_tensor_set(token_input.tensor, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
@@ -627,12 +631,22 @@ void MossTtsDelayBackboneRuntime::reset_timing() const {
 void MossTtsDelayBackboneRuntime::log_timing() const {
     const auto & impl = *impl_;
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.graph.build_ms", impl.step_graph_build_ms);
+    engine::debug::timing_log_context_reservation("moss_tts_delay.backbone.step.graph", impl.step_ctx.get());
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.input_upload_ms", impl.step_input_upload_ms);
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.mask_upload_ms", impl.step_mask_upload_ms);
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.graph.compute_ms", impl.step_graph_compute_ms);
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.step.output_read_ms", impl.step_output_read_ms);
     engine::debug::trace_log_scalar("moss_tts_delay.backbone.step.calls", impl.step_calls);
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.graph.build_ms", impl.prefill_graph_build_ms);
+    if (impl.prefill_ctx_reserved_bytes > 0) {
+        constexpr double kMiB = 1024.0 * 1024.0;
+        engine::debug::timing_log_scalar(
+            "moss_tts_delay.backbone.prefill.graph.ctx_reserved_mb",
+            static_cast<double>(impl.prefill_ctx_reserved_bytes) / kMiB);
+        engine::debug::timing_log_scalar(
+            "moss_tts_delay.backbone.prefill.graph.ctx_used_mb",
+            static_cast<double>(impl.prefill_ctx_used_bytes) / kMiB);
+    }
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.input_upload_ms", impl.prefill_input_upload_ms);
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.graph.compute_ms", impl.prefill_graph_compute_ms);
     engine::debug::timing_log_scalar("moss_tts_delay.backbone.prefill.output_read_ms", impl.prefill_output_read_ms);
