@@ -830,7 +830,7 @@ The Python-reference side of these tests usually requires more time-consuming se
 
 ## Projects
 
-Last update: 2026-09-17
+Last update: 2026-09-23
 
 Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy to add it here.
 
@@ -845,6 +845,7 @@ Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy 
 - [AudioCppTray](https://github.com/spicchio72/AudioCppTray) is a Windows tray management tool for `audiocpp_server.exe`, with start/stop/restart controls, notifications, log viewing, log rotation, and server configuration shortcuts.
 - [AudioCpp.NET](https://github.com/dongfangzhizhu/AudioCpp.NET) provides .NET 10 bindings for audio.cpp behind a small versioned C ABI shim, shipped as managed, CPU runtime, and CUDA runtime NuGet packages for Windows and Linux.
 - [yovoice](https://github.com/leemysw/yovoice) is a desktop voiceover app for macOS and Windows, built on audio.cpp with support for local text-to-speech, voice cloning, and emotion control.
+- [AudioCpp-Bindings](https://github.com/christopherthompson81/AudioCpp-Bindings) provides .NET bindings over the C ABI merged in #530, an Avalonia desktop app for Linux, macOS and Windows that mirrors the web UI's seven workflows and model manager (with its interface strings imported from the web UI's own language files, so the two read alike in English, Italian, Polish, Russian and Simplified Chinese), and a C# reimplementation of the HTTP API that an existing client can be pointed at unchanged.
 
 
 ## Performance Metrics
