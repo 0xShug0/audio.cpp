@@ -50,6 +50,7 @@ runtime::ModelCliInterface cli(const VieNeuTTSAssets &) {
     out.request_options = {
         {"speaker_embedding_file", "<path>", "Path to a 192-d speaker embedding file (comma-separated floats)."},
         {"speaker_embedding", "<csv>", "Comma-separated list of 192 speaker embedding float values."},
+        {"reference_codes", "<ints>", "Pre-encoded reference codes inline (row-major, 16 per frame, comma- or space-separated) for callers holding a voice in memory."},
         {"reference_codes_file", "<path>", "Pre-encoded reference codes (one frame per line, 16 ints); replaces the codec encoder pass and makes --voice-ref optional."},
         {"reference_text", "<text>", "Transcript of the reference WAV (accepted for compatibility; v3 Turbo does not condition on it)."},
         {"x_vector_only_mode", "true|false", "Clone from the speaker embedding only, without reference codes (default false)."},

@@ -22,6 +22,29 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr int64_t kDefaultTextChunkSize = 200;
 
+// `reference_codes`: the same codes inline, whitespace- or comma-separated and
+// row-major, for embedders that hold a voice in memory rather than on disk (the
+// C API has no way to pass a file that does not exist). `code_groups` values per
+// frame; the count must divide evenly.
+Qwen3SpeechCodes parse_reference_codes_inline(const std::string & text, int64_t code_groups) {
+    Qwen3SpeechCodes out;
+    std::string normalized = text;
+    std::replace(normalized.begin(), normalized.end(), ',', ' ');
+    std::istringstream stream(normalized);
+    int32_t value = 0;
+    while (stream >> value) {
+        out.codes.push_back(value);
+    }
+    if (code_groups <= 0 || out.codes.empty() || out.codes.size() % static_cast<size_t>(code_groups) != 0) {
+        throw std::runtime_error(
+            "VieNeu-TTS reference_codes must hold a whole number of frames of " +
+            std::to_string(code_groups) + " codes");
+    }
+    out.code_groups = code_groups;
+    out.frames = static_cast<int64_t>(out.codes.size()) / code_groups;
+    return out;
+}
+
 // `reference_codes_file`: one frame per line, code_groups integers per line (the layout
 // `numpy.savetxt(codes, fmt="%d")` writes for the Python engine's ref_codes).
 Qwen3SpeechCodes parse_reference_codes_file(const std::string & path) {
@@ -382,10 +405,15 @@ VieNeuTTSSession::VieNeuTTSSession(
         talker_constant_context_bytes_,
         code_predictor_constant_context_bytes_,
         talker_weight_storage_type_);
+    // Two different ceilings: `max_new_tokens` is what a request gets by default
+    // (300 frames, the Python engine's `max_new_frames`), while the session can
+    // serve anything the backbone has positions for — the KV cache grows on
+    // demand, so sizing the guard by the position budget costs nothing and lets a
+    // caller with its own frame budget ask for more.
     talker_step_ = talker_.create_step_runtime(
         talker_weights_,
         assets_->config.talker.max_position_embeddings,
-        assets_->config.max_new_tokens);
+        std::max(assets_->config.max_new_tokens, assets_->config.talker.max_position_embeddings));
     moss_speech_decoder_ = std::make_unique<engine::codecs::MossAudioTokenizerCodecRuntime>(
         assets_->speech_tokenizer_weights,
         execution_context(),
@@ -599,18 +627,23 @@ VieNeuTTSRequest VieNeuTTSSession::make_request(const runtime::TaskRequest & req
             reference_audio = &*request.audio_input;
         }
         const auto reference_codes_file = runtime::find_option(request.options, {"reference_codes_file"});
+        const auto reference_codes_inline = runtime::find_option(request.options, {"reference_codes"});
         const auto speaker_embedding_file = runtime::find_option(request.options, {"speaker_embedding_file"});
         const auto speaker_embedding_csv = runtime::find_option(request.options, {"speaker_embedding"});
         // A voice is either reference audio, pre-encoded reference codes, or - in
         // x-vector-only mode - the speaker embedding on its own.
         if (reference_audio != nullptr || reference_codes_file.has_value() ||
-            speaker_embedding_file.has_value() || speaker_embedding_csv.has_value()) {
+            reference_codes_inline.has_value() || speaker_embedding_file.has_value() ||
+            speaker_embedding_csv.has_value()) {
             Qwen3VoiceCloneInput voice_clone;
             if (reference_audio != nullptr) {
                 voice_clone.reference_audio = *reference_audio;
             }
             if (reference_codes_file.has_value()) {
                 voice_clone.reference_codes = parse_reference_codes_file(*reference_codes_file);
+            } else if (reference_codes_inline.has_value()) {
+                voice_clone.reference_codes =
+                    parse_reference_codes_inline(*reference_codes_inline, assets_->config.talker.num_code_groups);
             }
             if (const auto reference_text = runtime::find_option(
                     request.options,
@@ -639,13 +672,15 @@ VieNeuTTSRequest VieNeuTTSSession::make_request(const runtime::TaskRequest & req
                 }
                 voice_clone.speaker_embedding = vals;
             }
-            bool x_vector_only = reference_audio == nullptr && !reference_codes_file.has_value();
+            bool x_vector_only = reference_audio == nullptr && !reference_codes_file.has_value() &&
+                !reference_codes_inline.has_value();
             if (const auto value = runtime::find_option(
                     request.options,
                     {"x_vector_only_mode"})) {
                 x_vector_only = runtime::parse_bool_option(*value, "x_vector_only_mode");
             }
-            if (!x_vector_only && reference_audio == nullptr && !reference_codes_file.has_value()) {
+            if (!x_vector_only && reference_audio == nullptr && !reference_codes_file.has_value() &&
+                !reference_codes_inline.has_value()) {
                 throw std::runtime_error(
                     "VieNeu-TTS voice cloning needs reference audio (--voice-ref) or "
                     "reference_codes_file; pass x_vector_only_mode=true to clone from the "
