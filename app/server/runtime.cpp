@@ -2819,52 +2819,83 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
                 body, request_base_, model.accepts_language, &file_part->data)));
     }
 
-    BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
-    ensure_model_loaded_locked(model);
-    auto * batched = dynamic_cast<engine::runtime::IBatchedOfflineVoiceTaskSession *>(model.session.get());
-    if (batched == nullptr) {
-        return error_response(
-            400,
-            "configured model does not provide native offline batching: " + model.config.id,
-            "invalid_request_error");
-    }
-    const auto started = Clock::now();
-    model.session->prepare(engine::runtime::build_preparation_request(requests.front()));
-    auto results = batched->run_batch(requests);
-    const double wall_ms = elapsed_ms(started);
-    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
-    if (results.size() != requests.size()) {
-        throw std::runtime_error("batched session returned an unexpected result count");
+    {
+        BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+        ensure_model_loaded_locked(model);
+        if (dynamic_cast<engine::runtime::IBatchedOfflineVoiceTaskSession *>(model.session.get()) == nullptr) {
+            return error_response(
+                400,
+                "configured model does not provide native offline batching: " + model.config.id,
+                "invalid_request_error");
+        }
     }
 
-    double total_audio_duration_ms = 0.0;
-    std::ostringstream out;
-    out << "{\"results\":[";
-    for (size_t index = 0; index < results.size(); ++index) {
-        if (index != 0) {
-            out << ",";
-        }
-        const auto & audio = *requests[index].audio_input;
-        total_audio_duration_ms += audio_duration_ms(audio);
-        out << "{\"filename\":" << json_quote(file_parts[index]->filename)
-            << ",\"text\":"
-            << (results[index].text_output ? json_quote(results[index].text_output->text) : "\"\"");
-        if (results[index].text_output && !results[index].text_output->language.empty()) {
-            out << ",\"language\":" << json_quote(results[index].text_output->language);
-        }
-        write_transcript_detail_fields(out, results[index], [&](const std::string & name) {
-            out << "," << json_quote(name) << ":";
-        });
-        if (!results[index].speech_segments.empty() || !results[index].speaker_turns.empty() ||
-            !results[index].word_timestamps.empty()) {
-            out << ",\"sample_rate\":" << audio.sample_rate;
-        }
-        out << "}";
+    std::vector<std::string> filenames;
+    filenames.reserve(file_parts.size());
+    for (const auto * file_part : file_parts) {
+        filenames.push_back(file_part->filename);
     }
-    out << "],\"timing\":{\"wall_ms\":" << wall_ms
-        << ",\"audio_duration_ms\":" << total_audio_duration_ms
-        << ",\"rtf\":" << audio_rtf(wall_ms, total_audio_duration_ms) << "}}";
-    return json_response(out.str());
+    LoadedModel * model_ptr = &model;
+    return sse_response([
+        this,
+        model_ptr,
+        requests = std::move(requests),
+        filenames = std::move(filenames),
+        busy_timeout_ms](HttpStreamWriter & writer) {
+        BusyGuard::Lock lock = acquire_model_run(*model_ptr, busy_timeout_ms);
+        ensure_model_loaded_locked(*model_ptr);
+        auto * batched = dynamic_cast<engine::runtime::IBatchedOfflineVoiceTaskSession *>(model_ptr->session.get());
+        if (batched == nullptr) {
+            throw std::runtime_error(
+                "configured model does not provide native offline batching: " + model_ptr->config.id);
+        }
+
+        double total_audio_duration_ms = 0.0;
+        for (const auto & request : requests) {
+            total_audio_duration_ms += audio_duration_ms(*request.audio_input);
+        }
+        const auto started = Clock::now();
+        model_ptr->session->prepare(engine::runtime::build_preparation_request(requests.front()));
+        std::vector<bool> completed(requests.size(), false);
+        size_t completed_count = 0;
+        batched->run_batch(requests, [&](size_t index, engine::runtime::TaskResult result) {
+            if (index >= requests.size() || completed[index]) {
+                throw std::runtime_error("batched session returned an invalid result index");
+            }
+            const auto & audio = *requests[index].audio_input;
+            std::ostringstream out;
+            out << "{\"type\":\"batch.transcription.result\",\"index\":" << index
+                << ",\"filename\":" << json_quote(filenames[index])
+                << ",\"text\":"
+                << (result.text_output ? json_quote(result.text_output->text) : "\"\"");
+            if (result.text_output && !result.text_output->language.empty()) {
+                out << ",\"language\":" << json_quote(result.text_output->language);
+            }
+            write_transcript_detail_fields(out, result, [&](const std::string & name) {
+                out << "," << json_quote(name) << ":";
+            });
+            if (!result.speech_segments.empty() || !result.speaker_turns.empty() ||
+                !result.word_timestamps.empty()) {
+                out << ",\"sample_rate\":" << audio.sample_rate;
+            }
+            out << "}";
+            write_sse(writer, out.str());
+            completed[index] = true;
+            ++completed_count;
+        });
+        const double wall_ms = elapsed_ms(started);
+        last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
+        if (completed_count != requests.size()) {
+            throw std::runtime_error("batched session returned an unexpected result count");
+        }
+        std::ostringstream done;
+        done << "{\"type\":\"batch.transcription.done\",\"result_count\":" << completed_count
+             << ",\"timing\":{\"wall_ms\":" << wall_ms
+             << ",\"audio_duration_ms\":" << total_audio_duration_ms
+             << ",\"rtf\":" << audio_rtf(wall_ms, total_audio_duration_ms) << "}}";
+        write_sse(writer, done.str());
+        write_sse_done(writer);
+    });
 }
 
 HttpResponse ServerState::run_transcription(

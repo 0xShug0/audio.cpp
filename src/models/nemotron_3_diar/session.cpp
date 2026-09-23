@@ -309,6 +309,16 @@ runtime::TaskResult Session::run(const runtime::TaskRequest & request) {
 
 std::vector<runtime::TaskResult> Session::run_batch(
     const std::vector<runtime::TaskRequest> & requests) {
+    std::vector<runtime::TaskResult> results(requests.size());
+    run_batch(requests, [&](size_t index, runtime::TaskResult result) {
+        results[index] = std::move(result);
+    });
+    return results;
+}
+
+void Session::run_batch(
+    const std::vector<runtime::TaskRequest> & requests,
+    const runtime::IBatchedOfflineVoiceTaskSession::ResultCallback & on_result) {
     require_prepared("Nemotron 3 diarization run_batch()");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Nemotron 3 diarization run_batch() requires offline mode");
@@ -338,6 +348,21 @@ std::vector<runtime::TaskResult> Session::run_batch(
     const auto full_embeddings = pre_encode(features);
     const int64_t hidden = assets_->model_config.encoder.hidden_size;
     const int64_t chunk_len = streaming_config_.chunk_len;
+    const int64_t speakers = assets_->model_config.num_speakers;
+    std::vector<bool> completed(requests.size(), false);
+    auto finish_row = [&](size_t row) {
+        const int64_t input_samples = static_cast<int64_t>(
+            requests[row].audio_input->samples.size() /
+            static_cast<size_t>(requests[row].audio_input->channels));
+        const int64_t expected_frames = (input_samples + kOutputHopSamples - 1) / kOutputHopSamples;
+        const int64_t frames = std::min<int64_t>(
+            expected_frames, static_cast<int64_t>(probabilities[row].size() / speakers));
+        probabilities[row].resize(static_cast<size_t>(frames * speakers));
+        runtime::TaskResult result;
+        result.speaker_turns = decode_turns(probabilities[row], frames, decoding[row], true);
+        completed[row] = true;
+        on_result(row, std::move(result));
+    };
     for (int64_t start = 0;; start += chunk_len) {
         bool any_active = false;
         int64_t chunk_capacity = 0;
@@ -388,21 +413,17 @@ std::vector<runtime::TaskResult> Session::run_batch(
             chunk_embeddings, static_cast<int64_t>(requests.size()), chunk_capacity,
             chunk_frames, central_frames, left_context_frames, right_context_frames,
             active_states, timelines);
+        for (size_t row = 0; row < requests.size(); ++row) {
+            if (!completed[row] && start + chunk_len >= features.valid_encoder_frames[row]) {
+                finish_row(row);
+            }
+        }
     }
-
-    std::vector<runtime::TaskResult> results(requests.size());
-    const int64_t speakers = assets_->model_config.num_speakers;
     for (size_t row = 0; row < requests.size(); ++row) {
-        const int64_t input_samples = static_cast<int64_t>(
-            requests[row].audio_input->samples.size() /
-            static_cast<size_t>(requests[row].audio_input->channels));
-        const int64_t expected_frames = (input_samples + kOutputHopSamples - 1) / kOutputHopSamples;
-        const int64_t frames = std::min<int64_t>(
-            expected_frames, static_cast<int64_t>(probabilities[row].size() / speakers));
-        probabilities[row].resize(static_cast<size_t>(frames * speakers));
-        results[row].speaker_turns = decode_turns(probabilities[row], frames, decoding[row], true);
+        if (!completed[row]) {
+            finish_row(row);
+        }
     }
-    return results;
 }
 
 runtime::StreamingPolicy Session::streaming_policy() const {

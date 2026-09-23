@@ -461,7 +461,7 @@ silently running each file separately.
 Supply `file` more than once in one multipart request:
 
 ```bash
-curl http://127.0.0.1:8080/v1/batches/transcriptions \
+curl -N http://127.0.0.1:8080/v1/batches/transcriptions \
   -F model=nemotron-3-diar \
   -F file=@/path/to/meeting-a.wav \
   -F file=@/path/to/meeting-b.wav
@@ -469,25 +469,18 @@ curl http://127.0.0.1:8080/v1/batches/transcriptions \
 
 `model` and at least one `file` are required. `language`, `prompt`,
 `busy_timeout_ms`, and a JSON object in `options` are optional and apply to every
-file. The response contains a `results` array in upload order. Each item includes
-its filename and the detailed transcription fields produced by the model, such
-as `speaker_turns`, plus aggregate batch `timing` measured against the combined
-audio duration.
+file. The response is an SSE stream. Each file is published as soon as the model
+finishes it; `index` maps the result back to its upload position. The final event
+contains aggregate batch timing measured against the combined audio duration.
 
-```json
-{
-  "results": [
-    {
-      "filename": "meeting-a.wav",
-      "text": "",
-      "speaker_turns": [
-        {"start_sample": 0, "end_sample": 32000, "speaker_id": "speaker_0", "confidence": 1.0}
-      ],
-      "sample_rate": 16000
-    }
-  ],
-  "timing": {"wall_ms": 145.5, "audio_duration_ms": 70000.0, "rtf": 0.0021}
-}
+```text
+data: {"type":"batch.transcription.result","index":0,"filename":"meeting-a.wav","text":"","speaker_turns":[{"start_sample":0,"end_sample":32000,"speaker_id":"speaker_0","confidence":1.0}],"sample_rate":16000}
+
+data: {"type":"batch.transcription.result","index":1,"filename":"meeting-b.wav","text":"","speaker_turns":[...],"sample_rate":16000}
+
+data: {"type":"batch.transcription.done","result_count":2,"timing":{"wall_ms":145.5,"audio_duration_ms":70000.0,"rtf":0.0021}}
+
+data: [DONE]
 ```
 
 ### `POST /v1/audio/alignments`

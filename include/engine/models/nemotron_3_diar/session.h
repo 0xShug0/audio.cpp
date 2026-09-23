@@ -34,6 +34,9 @@ public:
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
     std::vector<runtime::TaskResult> run_batch(const std::vector<runtime::TaskRequest> & requests) override;
+    void run_batch(
+        const std::vector<runtime::TaskRequest> & requests,
+        const runtime::IBatchedOfflineVoiceTaskSession::ResultCallback & on_result) override;
 
     runtime::StreamingPolicy streaming_policy() const override;
     void start_stream(const runtime::TaskRequest & request) override;

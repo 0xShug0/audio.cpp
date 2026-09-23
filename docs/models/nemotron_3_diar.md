@@ -48,28 +48,18 @@ audiocpp_cli --task diar \
   --backend cuda --audio meeting.wav --turns-out turns.json
 ```
 
-Native batch inference reads all WAV files in one directory and emits one
-speaker-turn file per input:
+The server exposes native batch inference through repeated multipart files:
 
 ```bash
-audiocpp_cli --task diar \
-  --family nemotron_3_diar \
-  --model /path/to/nemotron-3-diarization-preview-f32.gguf \
-  --backend cuda --batch-audio-dir /path/to/wavs \
-  --batch-audio-role audio --turns-out batch/turns.json \
-  --batch-manifest-out batch/manifest.json
-```
-
-The server exposes the same native batch path through repeated multipart files:
-
-```bash
-curl http://127.0.0.1:8080/v1/batches/transcriptions \
+curl -N http://127.0.0.1:8080/v1/batches/transcriptions \
   -F model=nemotron-3-diar \
   -F file=@/path/to/meeting-a.wav \
   -F file=@/path/to/meeting-b.wav
 ```
 
-The response keeps the upload order and returns `speaker_turns` for each file.
+The SSE response emits each file's `speaker_turns` as soon as that result is
+ready. Use its `index` field to map results back to upload order. Aggregate batch
+timing and RTF are included in the final event.
 
 Streaming with an official latency profile:
 
