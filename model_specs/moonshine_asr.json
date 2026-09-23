@@ -16,6 +16,9 @@
     "en"
   ],
   "capabilities": {
+    "asr": [
+      "vad_chunking"
+    ]
   },
   "options": {
     "request": [
@@ -26,6 +29,27 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Long-form audio chunking mode.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum duration of each audio chunk in seconds.",
+        "required": false,
+        "min": 0.02,
+        "default": 60
       }
     ],
     "session": [
@@ -86,6 +110,13 @@
         "required": false,
         "min": 1,
         "default": 512
+      },
+      {
+        "name": "vad_model_path",
+        "type": "path",
+        "description": "Silero VAD model path used by audio_chunk_mode=vad.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
       }
     ],
     "load": []
