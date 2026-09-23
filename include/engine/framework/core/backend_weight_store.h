@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
+#include "engine/framework/core/no_alloc_context.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -44,8 +45,39 @@ public:
         }
     }
 
+    // Sized from a tensor-header count instead of a byte count. The context
+    // never holds tensor data, so this is the whole of what it needs.
+    BackendWeightStore(
+        ggml_backend_t backend,
+        BackendType backend_type,
+        std::string name,
+        TensorCapacity capacity,
+        ggml_backend_buffer_type_t buffer_type = nullptr)
+        : BackendWeightStore(
+              backend,
+              backend_type,
+              name,
+              capacity_bytes(capacity, name),
+              buffer_type) {}
+
+    // Twice the tensors the source holds: room for every one of them plus
+    // as many derived tensors again (make_tensor, f32 uploads), well under a
+    // MiB for any model here. A store that derives more than it loads passes
+    // its own TensorCapacity; running out is a loud ggml abort at load time,
+    // never a silent one.
+    static TensorCapacity capacity_for(const assets::TensorSource & source) {
+        return TensorCapacity{2 * source.tensors().size()};
+    }
+
     BackendWeightStore(const BackendWeightStore &) = delete;
     BackendWeightStore & operator=(const BackendWeightStore &) = delete;
+
+    static size_t capacity_bytes(TensorCapacity capacity, const std::string & name) {
+        if (capacity.tensors == 0) {
+            throw std::runtime_error(name + " tensor capacity must be non-zero");
+        }
+        return no_alloc_tensor_context_bytes(capacity.tensors);
+    }
 
     ~BackendWeightStore() {
         if (buffer_ != nullptr) {

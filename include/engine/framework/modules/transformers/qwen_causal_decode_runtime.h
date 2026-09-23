@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/no_alloc_context.h"
 #include "engine/framework/modules/transformers/qwen_causal_decoder.h"
 #include "engine/framework/runtime/kv_cache.h"
 
@@ -21,6 +22,10 @@ enum class QwenCausalDecodeOutputMode {
 struct QwenCausalDecodeRuntimeConfig {
     std::string trace_name = "qwen_causal_decode";
     QwenCausalDecoderConfig decoder;
+    // ExplicitBytes: the two arena sizes below are used as given (required).
+    // FromCapacity: both are sized by the runtime from its graph node cap;
+    // the two fields must then stay 0.
+    core::ContextSizing graph_arena_sizing = core::ContextSizing::ExplicitBytes;
     size_t prefill_graph_arena_bytes = 0;
     size_t decode_graph_arena_bytes = 0;
     QwenCausalDecodeOutputMode output_mode = QwenCausalDecodeOutputMode::Logits;

@@ -30,8 +30,21 @@ struct GgmlContextDeleter {
 };
 
 void validate_runtime_config(const QwenCausalDecodeRuntimeConfig & config) {
-    if (config.prefill_graph_arena_bytes == 0 || config.decode_graph_arena_bytes == 0) {
-        throw std::runtime_error("QwenCausalDecodeRuntime requires positive graph arena sizes");
+    switch (config.graph_arena_sizing) {
+        case core::ContextSizing::ExplicitBytes:
+            if (config.prefill_graph_arena_bytes == 0 || config.decode_graph_arena_bytes == 0) {
+                throw std::runtime_error("QwenCausalDecodeRuntime requires positive graph arena sizes");
+            }
+            break;
+        case core::ContextSizing::FromCapacity:
+            if (config.prefill_graph_arena_bytes != 0 || config.decode_graph_arena_bytes != 0) {
+                throw std::runtime_error(
+                    "QwenCausalDecodeRuntime graph_arena_sizing=FromCapacity sizes the graph contexts itself; "
+                    "leave prefill_graph_arena_bytes and decode_graph_arena_bytes at 0");
+            }
+            break;
+        default:
+            throw std::runtime_error("QwenCausalDecodeRuntime graph_arena_sizing is not a known ContextSizing");
     }
     if (config.decoder.stack.hidden_size <= 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime requires positive hidden size");
@@ -828,7 +841,7 @@ private:
             }
         }
         const auto build_start = Clock::now();
-        ggml_init_params params{config_.prefill_graph_arena_bytes, nullptr, true};
+        ggml_init_params params{graph_arena_bytes(config_.prefill_graph_arena_bytes), nullptr, true};
         prefill_ctx_.reset(ggml_init(params));
         if (prefill_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize QwenCausalDecodeRuntime prefill graph context");
@@ -859,7 +872,7 @@ private:
         auto decoder_out = build_causal_prefill(ctx, config_, x, positions, weights_, attention_mask);
         prefill_logits_readback_token_ids_ = make_logits_readback_token_ids(prefill_ctx_.get(), config_);
         if (populate_decode_cache) {
-            prefill_graph_ = ggml_new_graph_custom(prefill_ctx_.get(), 65536, false);
+            prefill_graph_ = ggml_new_graph_custom(prefill_ctx_.get(), kGraphNodeCap, false);
         }
         for (size_t layer_index = 0; layer_index < decoder_out.state.layers.size(); ++layer_index) {
             const auto & layer = decoder_out.state.layers[layer_index];
@@ -927,7 +940,7 @@ private:
             ggml_set_output(prefill_hidden_);
         }
         if (!populate_decode_cache) {
-            prefill_graph_ = ggml_new_graph_custom(prefill_ctx_.get(), 65536, false);
+            prefill_graph_ = ggml_new_graph_custom(prefill_ctx_.get(), kGraphNodeCap, false);
         }
         for (auto * key : prefill_keys_) {
             ggml_build_forward_expand(prefill_graph_, key);
@@ -1085,7 +1098,7 @@ private:
 
     void build_batched_prefill_graph(InputKind input_kind, int64_t batch_size, int64_t steps) {
         const auto build_start = Clock::now();
-        ggml_init_params params{config_.prefill_graph_arena_bytes, nullptr, true};
+        ggml_init_params params{graph_arena_bytes(config_.prefill_graph_arena_bytes), nullptr, true};
         batched_prefill_ctx_.reset(ggml_init(params));
         if (batched_prefill_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize QwenCausalDecodeRuntime batched prefill graph context");
@@ -1162,7 +1175,7 @@ private:
                 ggml_dup_tensor(batched_prefill_ctx_.get(), decoder_out.hidden.tensor));
             ggml_set_output(batched_prefill_hidden_);
         }
-        batched_prefill_graph_ = ggml_new_graph_custom(batched_prefill_ctx_.get(), 65536, false);
+        batched_prefill_graph_ = ggml_new_graph_custom(batched_prefill_ctx_.get(), kGraphNodeCap, false);
         for (auto * key : batched_prefill_keys_) {
             ggml_build_forward_expand(batched_prefill_graph_, key);
         }
@@ -1293,7 +1306,7 @@ private:
 
     void build_decode_graph(InputKind input_kind, int64_t cache_steps) {
         const auto build_start = Clock::now();
-        ggml_init_params params{config_.decode_graph_arena_bytes, nullptr, true};
+        ggml_init_params params{graph_arena_bytes(config_.decode_graph_arena_bytes), nullptr, true};
         decode_ctx_.reset(ggml_init(params));
         if (decode_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize QwenCausalDecodeRuntime decode graph context");
@@ -1320,7 +1333,7 @@ private:
             decode_attention_mask_,
             core::TensorShape::from_dims({1, 1, 1, cache_steps}),
             GGML_TYPE_F16);
-        decode_graph_ = ggml_new_graph_custom(decode_ctx_.get(), 65536, false);
+        decode_graph_ = ggml_new_graph_custom(decode_ctx_.get(), kGraphNodeCap, false);
         auto decoder_out = build_causal_decode(
             ctx,
             decode_graph_,
@@ -1411,7 +1424,7 @@ private:
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode supports only DirectSetRows cache update");
         }
         const auto build_start = Clock::now();
-        ggml_init_params params{config_.decode_graph_arena_bytes, nullptr, true};
+        ggml_init_params params{graph_arena_bytes(config_.decode_graph_arena_bytes), nullptr, true};
         batched_decode_ctx_.reset(ggml_init(params));
         if (batched_decode_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize QwenCausalDecodeRuntime batched decode graph context");
@@ -1445,7 +1458,7 @@ private:
             GGML_TYPE_F16,
             core::TensorShape::from_dims({batch_size, 1, 1, cache_steps}));
         batched_decode_attention_mask_ = attention.tensor;
-        batched_decode_graph_ = ggml_new_graph_custom(batched_decode_ctx_.get(), 65536, false);
+        batched_decode_graph_ = ggml_new_graph_custom(batched_decode_ctx_.get(), kGraphNodeCap, false);
         auto decoder_out = build_causal_decode_batched(
             ctx,
             batched_decode_graph_,
@@ -1764,7 +1777,7 @@ private:
 
     void build_block_graph(int64_t chunk) {
         const auto build_start = Clock::now();
-        block_ctx_.reset(ggml_init({config_.prefill_graph_arena_bytes, nullptr, true}));
+        block_ctx_.reset(ggml_init({graph_arena_bytes(config_.prefill_graph_arena_bytes), nullptr, true}));
         if (!block_ctx_) { throw std::runtime_error("Qwen chunked prefill context allocation failed"); }
         core::ModuleBuildContext ctx{block_ctx_.get(), config_.trace_name.c_str(), backend_type_};
         auto input = core::make_tensor(ctx, GGML_TYPE_F32,
@@ -1777,7 +1790,7 @@ private:
         block_mask_ = mask.tensor;
         block_last_ = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, 1);
         for (auto * tensor : {block_input_, block_positions_, block_mask_, block_last_}) { ggml_set_input(tensor); }
-        block_graph_ = ggml_new_graph_custom(ctx.ggml, 65536, false);
+        block_graph_ = ggml_new_graph_custom(ctx.ggml, kGraphNodeCap, false);
         const QwenDecoderLayerModule layer(qwen_decoder_layer_config_from_stack(config_.decoder.stack));
         auto hidden = input;
         for (size_t i = 0; i < weights_.stack.layers.size(); ++i) {
@@ -1888,6 +1901,15 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     QwenCausalDecodeRuntimeConfig config_;
+
+    // Every graph this runtime builds is capped at this many nodes, which
+    // under FromCapacity is all a graph context needs to be sized from.
+    static constexpr size_t kGraphNodeCap = 65536;
+    size_t graph_arena_bytes(size_t explicit_bytes) const {
+        return config_.graph_arena_sizing == core::ContextSizing::FromCapacity
+            ? core::no_alloc_graph_context_bytes(kGraphNodeCap)
+            : explicit_bytes;
+    }
     QwenCausalDecodeRuntimeWeights weights_;
 
     std::unique_ptr<ggml_context, GgmlContextDeleter> prefill_ctx_;

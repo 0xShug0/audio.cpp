@@ -21,6 +21,32 @@
 namespace engine::codecs {
 namespace {
 
+// Node cap of the encode and decode graphs; under FromCapacity the graph
+// contexts are sized from it.
+constexpr size_t kGraphNodeCap = 524288;
+
+void validate_options(const OobleckAudioVaeRuntimeOptions & options) {
+    switch (options.context_sizing) {
+        case core::ContextSizing::ExplicitBytes:
+            break;
+        case core::ContextSizing::FromCapacity:
+            if (options.graph_arena_bytes != 0 || options.weight_context_bytes != 0) {
+                throw std::runtime_error(
+                    "Oobleck audio VAE context_sizing=FromCapacity sizes the contexts itself; "
+                    "set graph_arena_bytes and weight_context_bytes to 0");
+            }
+            break;
+        default:
+            throw std::runtime_error("Oobleck audio VAE context_sizing is not a known ContextSizing");
+    }
+}
+
+size_t graph_arena_bytes(const OobleckAudioVaeRuntimeOptions & options) {
+    return options.context_sizing == core::ContextSizing::FromCapacity
+        ? core::no_alloc_graph_context_bytes(kGraphNodeCap)
+        : options.graph_arena_bytes;
+}
+
 using Clock = std::chrono::steady_clock;
 
 struct GgmlContextDeleter {
@@ -251,11 +277,17 @@ OobleckAudioVaeWeights load_weights(
     const auto total_start = Clock::now();
     const auto channels = channel_plan(config);
     OobleckAudioVaeWeights weights;
-    weights.store = std::make_shared<core::BackendWeightStore>(
-        backend,
-        backend_type,
-        "framework.oobleck_audio_vae.weights",
-        options.weight_context_bytes);
+    weights.store = options.context_sizing == core::ContextSizing::FromCapacity
+        ? std::make_shared<core::BackendWeightStore>(
+              backend,
+              backend_type,
+              "framework.oobleck_audio_vae.weights",
+              core::BackendWeightStore::capacity_for(source))
+        : std::make_shared<core::BackendWeightStore>(
+              backend,
+              backend_type,
+              "framework.oobleck_audio_vae.weights",
+              options.weight_context_bytes);
     const auto bind_start = Clock::now();
     weights.encoder_in_conv = load_wn_conv1d(
         *weights.store,
@@ -429,6 +461,7 @@ struct OobleckAudioVaeRuntime::Impl {
             throw std::runtime_error("Oobleck audio VAE runtime requires tensor source");
         }
         validate_config(this->config);
+        validate_options(this->options);
     }
 
     const OobleckAudioVaeWeights & require_weights() {
@@ -509,7 +542,7 @@ public:
 private:
     void build() {
         const auto start = Clock::now();
-        ggml_init_params params{options_.graph_arena_bytes, nullptr, true};
+        ggml_init_params params{graph_arena_bytes(options_), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("Oobleck audio VAE encode ggml context initialization failed");
@@ -521,7 +554,7 @@ private:
         auto output = build_graph_output(build_ctx);
         output_ = output.tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 524288, false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), kGraphNodeCap, false);
         ggml_build_forward_expand(graph_, output_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
@@ -612,7 +645,7 @@ public:
 private:
     void build() {
         const auto start = Clock::now();
-        ggml_init_params params{options_.graph_arena_bytes, nullptr, true};
+        ggml_init_params params{graph_arena_bytes(options_), nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("Oobleck audio VAE decode ggml context initialization failed");
@@ -625,7 +658,7 @@ private:
         output_ = output.tensor;
         output_frames_ = output.shape.dims[2];
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 524288, false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), kGraphNodeCap, false);
         ggml_build_forward_expand(graph_, output_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {

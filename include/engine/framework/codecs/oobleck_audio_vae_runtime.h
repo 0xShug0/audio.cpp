@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/no_alloc_context.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/runtime/session.h"
 
@@ -30,6 +31,12 @@ struct OobleckAudioVaeConfig {
 };
 
 struct OobleckAudioVaeRuntimeOptions {
+    // ExplicitBytes: the two sizes below are used as given.
+    // FromCapacity: the weight context is sized from the source's tensor
+    // count and the graph contexts from the runtime's node cap; the two
+    // fields must then be set to 0 (they default to the sizes below, so an
+    // opt-in states all three).
+    core::ContextSizing context_sizing = core::ContextSizing::ExplicitBytes;
     size_t graph_arena_bytes = 512ull * 1024ull * 1024ull;
     size_t weight_context_bytes = 1400ull * 1024ull * 1024ull;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
