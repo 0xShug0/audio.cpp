@@ -1,6 +1,7 @@
 #include "file_sink.h"
 
 #include "engine/framework/audio/output.h"
+#include "engine/framework/core/host_memory.h"
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
@@ -289,6 +290,16 @@ void emit_task_metrics(
     double wall_ms,
     const std::string & prefix) {
     std::cout << prefix << ".wall_ms=" << wall_ms << "\n";
+    // Process-wide high-water marks, so in a batch every item reports the
+    // peak reached so far, not its own.
+    const auto peak = engine::core::process_memory_peak();
+    if (peak.rss_bytes > 0) {
+        std::cout << prefix << ".memory.peak_rss_mb=" << (peak.rss_bytes >> 20) << "\n";
+    }
+    if (peak.footprint_bytes > 0) {
+        std::cout << prefix << ".memory.peak_footprint_mb=" << (peak.footprint_bytes >> 20) << "\n";
+        std::cout << prefix << ".memory.peak_footprint_source=" << peak.footprint_source << "\n";
+    }
     const auto audio = select_metrics_audio(result, input_audio);
     if (!audio.has_value()) {
         return;
