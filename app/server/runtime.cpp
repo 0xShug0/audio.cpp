@@ -1213,6 +1213,9 @@ HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_f
     else if (request.method == "POST" && request.path == "/v1/audio/transcriptions/details") {
         response = handle_transcription(request, /*detail=*/true);
     }
+    else if (request.method == "POST" && request.path == "/v1/batches/transcriptions") {
+        response = handle_batch_transcriptions(request);
+    }
     else if (request.method == "POST" && request.path == "/v1/audio/alignments") {
         response = handle_alignment(request);
     }
@@ -2710,6 +2713,158 @@ HttpResponse ServerState::handle_transcription_multipart(
         return run_transcription_stream(model, request, busy_timeout_ms);
     }
     return run_transcription(model, request, busy_timeout_ms, detail);
+}
+
+HttpResponse ServerState::handle_batch_transcriptions(const HttpRequest & request) {
+    std::string content_type;
+    if (const auto it = request.headers.find("content-type"); it != request.headers.end()) {
+        content_type = it->second;
+    }
+    const auto boundary = extract_multipart_boundary(content_type);
+    if (!boundary.has_value()) {
+        return error_response(
+            400,
+            "batch transcription requests must use multipart/form-data",
+            "invalid_request_error");
+    }
+    return handle_batch_transcriptions_multipart(request.body, *boundary);
+}
+
+HttpResponse ServerState::handle_batch_transcriptions_multipart(
+    const std::string & body_text,
+    const std::string & boundary) {
+    const auto parts = parse_multipart_body(body_text, boundary);
+    log_multipart_request_summary_if_enabled(config_, parts);
+
+    std::vector<const MultipartPart *> file_parts;
+    std::string model_id;
+    std::string language;
+    std::string prompt;
+    std::unordered_map<std::string, std::string> options;
+    std::optional<int> busy_timeout_ms;
+    for (const auto & part : parts) {
+        if (part.name == "file") {
+            file_parts.push_back(&part);
+        } else if (part.name == "model") {
+            model_id = part.data;
+        } else if (part.name == "language") {
+            language = part.data;
+        } else if (part.name == "prompt" || part.name == "text") {
+            prompt = part.data;
+        } else if (part.name == "options") {
+            const auto option_fields = engine::io::json::parse(part.data);
+            options = options_from_object(&option_fields);
+        } else if (part.name == "busy_timeout_ms") {
+            try {
+                busy_timeout_ms = std::stoi(part.data);
+            } catch (const std::exception &) {
+                throw std::runtime_error("multipart busy_timeout_ms field must be an integer");
+            }
+            if (*busy_timeout_ms < 0) {
+                throw std::runtime_error("busy_timeout_ms must be >= 0 (0 means no client-side bound)");
+            }
+        }
+    }
+    if (model_id.empty()) {
+        throw std::runtime_error("batch transcription request requires a 'model' field");
+    }
+    if (file_parts.empty()) {
+        throw std::runtime_error("batch transcription request requires at least one 'file' field");
+    }
+    for (const auto * file_part : file_parts) {
+        if (file_part->data.empty()) {
+            throw std::runtime_error("batch transcription files must not be empty");
+        }
+        if (!is_wav_upload_filename(file_part->filename)) {
+            return error_response(
+                400,
+                "only WAV audio uploads are currently supported for batch transcription",
+                "invalid_request_error");
+        }
+    }
+
+    engine::io::json::Value::Object model_fields;
+    model_fields.emplace("model", engine::io::json::Value::make_string(model_id));
+    const auto model_body = engine::io::json::Value::make_object(std::move(model_fields));
+    auto & model = require_model(model_body);
+    if (model_run_mode(model) != engine::runtime::RunMode::Offline) {
+        return error_response(
+            400,
+            "batch transcription requires a model configured with mode=offline",
+            "invalid_request_error");
+    }
+
+    std::vector<engine::runtime::TaskRequest> requests;
+    requests.reserve(file_parts.size());
+    for (const auto * file_part : file_parts) {
+        engine::io::json::Value::Object fields;
+        fields.emplace("model", engine::io::json::Value::make_string(model_id));
+        if (!language.empty()) {
+            fields.emplace("language", engine::io::json::Value::make_string(language));
+        }
+        if (!prompt.empty()) {
+            fields.emplace("text", engine::io::json::Value::make_string(prompt));
+        }
+        engine::io::json::Value::Object option_fields;
+        for (const auto & [key, value] : options) {
+            option_fields.emplace(key, engine::io::json::Value::make_string(value));
+        }
+        if (!option_fields.empty()) {
+            fields.emplace("options", engine::io::json::Value::make_object(std::move(option_fields)));
+        }
+        const auto body = engine::io::json::Value::make_object(std::move(fields));
+        requests.push_back(apply_default_request_options(
+            model,
+            build_openai_transcription_request(
+                body, request_base_, model.accepts_language, &file_part->data)));
+    }
+
+    BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+    ensure_model_loaded_locked(model);
+    auto * batched = dynamic_cast<engine::runtime::IBatchedOfflineVoiceTaskSession *>(model.session.get());
+    if (batched == nullptr) {
+        return error_response(
+            400,
+            "configured model does not provide native offline batching: " + model.config.id,
+            "invalid_request_error");
+    }
+    const auto started = Clock::now();
+    model.session->prepare(engine::runtime::build_preparation_request(requests.front()));
+    auto results = batched->run_batch(requests);
+    const double wall_ms = elapsed_ms(started);
+    last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
+    if (results.size() != requests.size()) {
+        throw std::runtime_error("batched session returned an unexpected result count");
+    }
+
+    double total_audio_duration_ms = 0.0;
+    std::ostringstream out;
+    out << "{\"results\":[";
+    for (size_t index = 0; index < results.size(); ++index) {
+        if (index != 0) {
+            out << ",";
+        }
+        const auto & audio = *requests[index].audio_input;
+        total_audio_duration_ms += audio_duration_ms(audio);
+        out << "{\"filename\":" << json_quote(file_parts[index]->filename)
+            << ",\"text\":"
+            << (results[index].text_output ? json_quote(results[index].text_output->text) : "\"\"");
+        if (results[index].text_output && !results[index].text_output->language.empty()) {
+            out << ",\"language\":" << json_quote(results[index].text_output->language);
+        }
+        write_transcript_detail_fields(out, results[index], [&](const std::string & name) {
+            out << "," << json_quote(name) << ":";
+        });
+        if (!results[index].speech_segments.empty() || !results[index].speaker_turns.empty() ||
+            !results[index].word_timestamps.empty()) {
+            out << ",\"sample_rate\":" << audio.sample_rate;
+        }
+        out << "}";
+    }
+    out << "],\"timing\":{\"wall_ms\":" << wall_ms
+        << ",\"audio_duration_ms\":" << total_audio_duration_ms
+        << ",\"rtf\":" << audio_rtf(wall_ms, total_audio_duration_ms) << "}}";
+    return json_response(out.str());
 }
 
 HttpResponse ServerState::run_transcription(
