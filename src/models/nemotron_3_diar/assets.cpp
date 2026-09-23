@@ -45,7 +45,7 @@ ModelConfig parse_model_config(const assets::ResourceBundle & resources) {
     config.streaming.max_index = streaming.require("max_index").as_i64();
     if (config.num_speakers != 8 || !config.high_resolution ||
         config.encoder.subsampling_factor != config.head.upsample_factor) {
-        throw std::runtime_error("Nemotron 3 Diarization Preview configuration is unsupported");
+        throw std::runtime_error("Nemotron 3 Diarization configuration is unsupported");
     }
     return config;
 }
@@ -93,7 +93,7 @@ std::shared_ptr<ModelWeights> load_weights(
     const auto & config = assets.model_config;
     auto result = std::make_shared<ModelWeights>();
     result->store = std::make_shared<core::BackendWeightStore>(
-        backend, backend_type, "Nemotron 3 Diarization Preview weights", context_bytes);
+        backend, backend_type, "Nemotron 3 Diarization weights", context_bytes);
     auto & store = *result->store;
     const auto hidden = config.encoder.hidden_size;
     const auto intermediate = config.encoder.intermediate_size;

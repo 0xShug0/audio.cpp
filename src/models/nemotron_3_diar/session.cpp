@@ -46,7 +46,7 @@ Session::Session(
       weight_context_bytes_(runtime::parse_size_mb_option(
           options.options, {"nemotron_3_diar.weight_context_mb"}, kDefaultWeightContextBytes)) {
     if (task_.task != runtime::VoiceTaskKind::Diarization) {
-        throw std::runtime_error("Nemotron 3 Diarization Preview only supports diarization");
+        throw std::runtime_error("Nemotron 3 Diarization only supports diarization");
     }
     runtime::validate_spec_backed_session_options(options, *contract_, kFamily, "Nemotron 3 diarization");
     const auto storage = runtime::parse_tensor_storage_option(

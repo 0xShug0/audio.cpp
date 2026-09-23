@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert NVIDIA Nemotron 3 Diarization Preview from its original NeMo checkpoint.
+"""Convert NVIDIA Nemotron 3 Diarization from its original NeMo checkpoint.
 
 The converter reads the official ``.nemo`` archive directly, stages canonical
 Safetensors plus the model/frontend configuration, and can package a
@@ -18,13 +18,10 @@ from pathlib import Path
 from typing import Any
 
 
-SOURCE_REPO = "nvidia/Nemotron-3-Diarization-preview"
-SOURCE_REVISION = "bcd3d20491b7a864c24a0abf65d8ed6b157c5e81"
-SOURCE_LICENSE = "nvidia-software-and-model-evaluation-license"
-SOURCE_LICENSE_URL = (
-    "https://www.nvidia.com/en-us/agreements/enterprise-software/"
-    "nvidia-software-and-model-evaluation-license/"
-)
+SOURCE_REPO = "nvidia/Nemotron-3-Diarization"
+SOURCE_REVISION = "723e19c601d99b7e58fba6a14e32153e0afe48d9"
+SOURCE_LICENSE = "openmdw-1.1"
+SOURCE_LICENSE_URL = "https://openmdw.ai/license/1-1/"
 
 
 def sha256(path: Path) -> str:
@@ -79,7 +76,7 @@ def assert_model_shape(config: dict[str, Any]) -> None:
         if actual != expected
     ]
     if mismatches:
-        raise ValueError("not the expected Nemotron 3 Diarization Preview architecture: " + "; ".join(mismatches))
+        raise ValueError("not the expected Nemotron 3 Diarization architecture: " + "; ".join(mismatches))
 
 
 def processor_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -106,7 +103,7 @@ def model_config(config: dict[str, Any], source_hash: str) -> dict[str, Any]:
     pre = config["preprocessor"]
     return {
         "model_type": "nemotron_3_diar",
-        "architectures": ["Nemotron3DiarizationPreview"],
+        "architectures": ["Nemotron3Diarization"],
         "audiocpp_family": "nemotron_3_diar",
         "source_model": SOURCE_REPO,
         "source_revision": SOURCE_REVISION,
@@ -188,8 +185,8 @@ def convert(checkpoint: Path, output_dir: Path) -> None:
             destination = source_name
         if not isinstance(value, torch.Tensor):
             raise TypeError(f"expected tensor for {source_name}, got {type(value).__name__}")
-        if value.dtype != torch.float32:
-            raise ValueError(f"expected fp32 tensor for {source_name}, got {value.dtype}")
+        if value.dtype not in (torch.float32, torch.float16, torch.bfloat16):
+            raise ValueError(f"unsupported tensor dtype for {source_name}: {value.dtype}")
         tensor = value.detach().cpu().contiguous()
         tensors[destination] = tensor
         manifest.append({
@@ -200,7 +197,7 @@ def convert(checkpoint: Path, output_dir: Path) -> None:
         })
 
     save_file(tensors, str(output_dir / "model.safetensors"), metadata={
-        "format": "nemotron-3-diarization-preview-audiocpp-staging",
+        "format": "nemotron-3-diarization-audiocpp-staging",
         "source_repo": SOURCE_REPO,
         "source_revision": SOURCE_REVISION,
     })

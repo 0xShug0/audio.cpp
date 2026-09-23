@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "family": "nemotron_3_diar",
-  "display_name": "Nemotron 3 Diarization Preview",
-  "description": "NVIDIA eight-speaker streaming diarization preview model with arrival-order speaker identities and configurable latency profiles.",
+  "display_name": "Nemotron 3 Diarization",
+  "description": "NVIDIA eight-speaker streaming diarization model with arrival-order speaker identities and configurable latency profiles.",
   "category": "speech_analysis",
   "status": "supported",
   "tasks": [
@@ -133,7 +133,7 @@
     ]
   },
   "ui": {
-    "recommended_package": "nemotron_3_diar_f32_local",
+    "recommended_package": "nemotron_3_diar_bf16",
     "tags": [
       "Diar",
       "Stream",
@@ -147,22 +147,23 @@
   },
   "package_defaults": {
     "download": {
-      "kind": "unsupported",
-      "reason": "The NVIDIA evaluation license prohibits redistribution; request access and convert the checkpoint locally."
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/Nemotron-3-Diarization-GGUF",
+      "revision": "main",
+      "gated": false
     }
   },
   "packages": [
     {
-      "id": "nemotron_3_diar_f32_local",
-      "display_name": "Nemotron 3 Diarization Preview F32 local GGUF",
+      "id": "nemotron_3_diar_bf16",
+      "display_name": "Nemotron 3 Diarization BF16 GGUF",
       "default": true,
       "format": "gguf",
-      "precision": "f32",
-      "target_directory": "Nemotron-3-Diarization-preview-GGUF",
+      "precision": "bf16",
+      "target_directory": "Nemotron-3-Diarization-GGUF",
       "files": [
-        "Nemotron-3-Diarization-preview-GGUF/nemotron-3-diarization-preview-f32.gguf"
-      ],
-      "strip_prefix": "Nemotron-3-Diarization-preview-GGUF"
+        "nemotron-3-diarization-bf16.gguf"
+      ]
     }
   ],
   "sources": [

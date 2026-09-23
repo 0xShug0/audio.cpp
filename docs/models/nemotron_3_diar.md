@@ -1,7 +1,7 @@
-# Nemotron 3 Diarization Preview
+# Nemotron 3 Diarization
 
 `nemotron_3_diar` provides native audio.cpp inference for
-[NVIDIA Nemotron 3 Diarization Preview](https://huggingface.co/nvidia/Nemotron-3-Diarization-preview).
+[NVIDIA Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization).
 It identifies up to eight speakers by arrival order and supports offline,
 native-batch, and continuous streaming inference.
 
@@ -14,12 +14,10 @@ native-batch, and continuous streaming inference.
 | Modes | `offline`, `streaming` |
 | Input | 16 kHz WAV audio |
 | Output | Speaker turns through `--turns-out` |
-| Weights | Local F32 GGUF conversion |
+| Weights | BF16 GGUF |
 
-The checkpoint is distributed under the [NVIDIA Software and Model Evaluation
-License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-and-model-evaluation-license/).
-The package spec therefore does not advertise a downloadable GGUF. Request
-access to the original checkpoint and convert it locally.
+The checkpoint is distributed under [OpenMDW-1.1](https://openmdw.ai/license/1-1/).
+GGUF weights are packaged in [Nemotron-3-Diarization-GGUF](https://huggingface.co/audio-cpp/Nemotron-3-Diarization-GGUF).
 
 ## Convert
 
@@ -27,10 +25,10 @@ Build `audiocpp_gguf`, then convert the original `.nemo` archive:
 
 ```bash
 python tests/nemotron_3_diar/convert_gguf.py \
-  --checkpoint /path/to/Nemotron-3-Diarization-preview.nemo \
-  --output-dir /path/to/Nemotron-3-Diarization-preview-GGUF/staging \
+  --checkpoint /path/to/Nemotron-3-Diarization.nemo \
+  --output-dir /path/to/staging \
   --converter /path/to/audiocpp_gguf \
-  --gguf-output /path/to/Nemotron-3-Diarization-preview-GGUF/nemotron-3-diarization-preview-f32.gguf \
+  --gguf-output /path/to/Nemotron-3-Diarization-GGUF/nemotron-3-diarization-bf16.gguf \
   --type orig
 ```
 
@@ -44,7 +42,7 @@ Offline:
 ```bash
 audiocpp_cli --task diar \
   --family nemotron_3_diar \
-  --model /path/to/nemotron-3-diarization-preview-f32.gguf \
+  --model /path/to/nemotron-3-diarization-bf16.gguf \
   --backend cuda --audio meeting.wav --turns-out turns.json
 ```
 
@@ -58,15 +56,14 @@ curl -N http://127.0.0.1:8080/v1/batches/transcriptions \
 ```
 
 The SSE response emits each file's `speaker_turns` as soon as that result is
-ready. Use its `index` field to map results back to upload order. Aggregate batch
-timing and RTF are included in the final event.
+ready. Use its `index` field to map results back to upload order.
 
 Streaming with an official latency profile:
 
 ```bash
 audiocpp_cli --task diar --mode streaming \
   --family nemotron_3_diar \
-  --model /path/to/nemotron-3-diarization-preview-f32.gguf \
+  --model /path/to/nemotron-3-diarization-bf16.gguf \
   --backend cuda --audio meeting.wav --turns-out turns.json \
   --session-option nemotron_3_diar.latency_profile=low
 ```
