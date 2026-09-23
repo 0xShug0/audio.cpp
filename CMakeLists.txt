@@ -1595,6 +1595,23 @@ audiocpp_add_model(sortformer_diar_v2
         engine::community_models::sortformer_diar::make_sortformer_diar_v2_loader
 )
 
+audiocpp_add_model(nemotron_3_diar
+    SOURCES
+        src/models/nemotron_3_diar/assets.cpp
+        src/models/nemotron_3_diar/frontend.cpp
+        src/models/nemotron_3_diar/streaming.cpp
+        src/models/nemotron_3_diar/encoder.cpp
+        src/models/nemotron_3_diar/session.cpp
+    INCLUDES
+        engine/models/nemotron_3_diar/assets.h
+        engine/models/nemotron_3_diar/frontend.h
+        engine/models/nemotron_3_diar/streaming.h
+        engine/models/nemotron_3_diar/encoder.h
+        engine/models/nemotron_3_diar/session.h
+    LOADERS
+        engine::models::nemotron_3_diar::make_nemotron_3_diar_loader
+)
+
 audiocpp_add_model(stable_audio
     SOURCES
         src/models/stable_audio/assets.cpp

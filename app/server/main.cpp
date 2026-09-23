@@ -138,6 +138,8 @@ void print_help() {
         << "       raw PCM in a chunked body, speech audio deltas as SSE on the same connection\n"
         << "  POST /v1/audio/transcriptions\n"
         << "       fields: file, model, language, prompt, stream\n"
+        << "  POST /v1/batches/transcriptions\n"
+        << "       fields: repeated file, model, language, prompt, options\n"
         << "  POST /v1/audio/alignments\n"
         << "       fields: file, model, text, language\n"
         << "       OpenAI-style streaming: speech stream_format=sse|audio, transcription stream=true\n"

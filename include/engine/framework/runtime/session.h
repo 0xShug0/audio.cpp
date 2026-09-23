@@ -256,6 +256,24 @@ public:
     virtual TaskResult run(const TaskRequest & request) = 0;
 };
 
+class IBatchedOfflineVoiceTaskSession : public virtual IVoiceTaskSession {
+public:
+    using ResultCallback = std::function<void(size_t, TaskResult)>;
+
+    ~IBatchedOfflineVoiceTaskSession() override = default;
+
+    virtual std::vector<TaskResult> run_batch(const std::vector<TaskRequest> & requests) = 0;
+
+    virtual void run_batch(
+        const std::vector<TaskRequest> & requests,
+        const ResultCallback & on_result) {
+        auto results = run_batch(requests);
+        for (size_t index = 0; index < results.size(); ++index) {
+            on_result(index, std::move(results[index]));
+        }
+    }
+};
+
 class IStreamingVoiceTaskSession : public virtual IVoiceTaskSession {
 public:
     ~IStreamingVoiceTaskSession() override = default;

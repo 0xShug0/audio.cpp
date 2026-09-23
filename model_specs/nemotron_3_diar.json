@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "family": "nemotron_3_diar",
+  "display_name": "Nemotron 3 Diarization Preview",
+  "description": "NVIDIA eight-speaker streaming diarization preview model with arrival-order speaker identities and configurable latency profiles.",
+  "category": "speech_analysis",
+  "status": "supported",
+  "tasks": [
+    "diar"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "multilingual"
+  ],
+  "capabilities": {
+    "diar": [
+      "speaker_turns"
+    ]
+  },
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "speaker_threshold",
+        "type": "float",
+        "description": "Speaker activity threshold used for turn decoding.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      },
+      {
+        "name": "speaker_min_frames",
+        "type": "int",
+        "description": "Minimum decoded turn duration in 10 ms output frames.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "speaker_pad_frames",
+        "type": "int",
+        "description": "Padding applied to decoded turns in 10 ms output frames.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "latency_profile",
+        "type": "enum",
+        "description": "Official streaming latency profile.",
+        "values": [
+          "very_high",
+          "low",
+          "very_low",
+          "ultra_low",
+          "custom"
+        ],
+        "required": false,
+        "default": "very_high"
+      },
+      {
+        "name": "spkcache_len",
+        "type": "int",
+        "description": "Speaker-cache length in 80 ms encoder frames for the custom profile.",
+        "required": false,
+        "min": 16
+      },
+      {
+        "name": "fifo_len",
+        "type": "int",
+        "description": "FIFO length in 80 ms encoder frames for the custom profile.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "chunk_len",
+        "type": "int",
+        "description": "Chunk length in 80 ms encoder frames for the custom profile.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "chunk_right_context",
+        "type": "int",
+        "description": "Future context in 80 ms encoder frames for the custom profile.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "spkcache_update_period",
+        "type": "int",
+        "description": "FIFO-to-cache update period in 80 ms encoder frames for the custom profile.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "graph_arena_mb",
+        "type": "int",
+        "description": "Inference graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Default model weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "ui": {
+    "recommended_package": "nemotron_3_diar_f32_local",
+    "tags": [
+      "Diar",
+      "Stream",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/nemotron_3_diar.md",
+      "docs/speech_analysis.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "unsupported",
+      "reason": "The NVIDIA evaluation license prohibits redistribution; request access and convert the checkpoint locally."
+    }
+  },
+  "packages": [
+    {
+      "id": "nemotron_3_diar_f32_local",
+      "display_name": "Nemotron 3 Diarization Preview F32 local GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Nemotron-3-Diarization-preview-GGUF",
+      "files": [
+        "Nemotron-3-Diarization-preview-GGUF/nemotron-3-diarization-preview-f32.gguf"
+      ],
+      "strip_prefix": "Nemotron-3-Diarization-preview-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor": "model:processor_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor": "model:processor_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

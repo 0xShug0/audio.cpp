@@ -119,6 +119,7 @@ Model weights keep the license of their original release, which is separate from
 | **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
 | **moonshine_asr** | ASR | en | Moonshine Streaming Tiny/Small/Medium | GGUF Q8, Stream |
 | **moss_transcribe_diarize** | ASR | auto, 50+ languages | MOSS-Transcribe-Diarize with speaker labels and timestamps | GGUF BF16/Q8/Q4_K, Stream |
+| **nemotron_3_diar** | Diar | multilingual | NVIDIA Nemotron 3 Diarization Preview with eight-speaker arrival-order diarization | GGUF F32, Batch, Stream |
 | **nemotron_asr** | ASR | 100+ ASR prompt codes incl. auto | Nemotron 3.5 ASR Streaming 0.6B | GGUF 16/Q8, Stream |
 | **niagara_asr** | ASR | en | Niagara 19M Batch English<br>Niagara 38M Batch English | GGUF F32 |
 | **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B<br>Qwen3-ASR-1.7B-hf | GGUF 16/Q8, Stream |

@@ -94,6 +94,7 @@ Status labels:
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_transcribe_diarize` | Done | --- | Pass | --- | Pass |
 | `muscriptor` | Done | Pass | Pass | --- | --- |
+| `nemotron_3_diar` | Done | --- | Pass | --- | --- |
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |
 | `neutts` | Done | Pass | --- | Pass | --- |
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |

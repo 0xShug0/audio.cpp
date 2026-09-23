@@ -186,6 +186,9 @@ private:
     HttpResponse handle_transcription_json(const std::string & body_text, bool detail = false);
     HttpResponse handle_transcription_multipart(
         const std::string & body_text, const std::string & boundary, bool detail = false);
+    HttpResponse handle_batch_transcriptions(const HttpRequest & request);
+    HttpResponse handle_batch_transcriptions_multipart(
+        const std::string & body_text, const std::string & boundary);
     HttpResponse run_transcription(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
