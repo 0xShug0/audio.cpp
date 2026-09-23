@@ -65,17 +65,41 @@ AppBatchResult run_offline_batch(
     AppBatchResult out;
     out.prepare_ms = to_ms(Clock::now() - prepare_start);
     out.results.reserve(batch.requests.size());
-    for (const auto & item : batch.requests) {
+    if (auto * batched = dynamic_cast<engine::runtime::IBatchedOfflineVoiceTaskSession *>(&session)) {
+        std::vector<engine::runtime::TaskRequest> requests;
+        requests.reserve(batch.requests.size());
+        for (const auto & item : batch.requests) {
+            requests.push_back(item.request);
+        }
         const auto run_start = Clock::now();
-        auto result = offline.run(item.request);
+        auto results = batched->run_batch(requests);
         const double wall_ms = to_ms(Clock::now() - run_start);
-        out.results.push_back(AppRequestResult{
-            item.id,
-            std::move(result),
-            wall_ms,
-        });
-        if (on_result) {
-            on_result(out.results.size() - 1, out.results.back());
+        if (results.size() != batch.requests.size()) {
+            throw std::runtime_error("batched session returned an unexpected result count");
+        }
+        for (size_t index = 0; index < results.size(); ++index) {
+            out.results.push_back(AppRequestResult{
+                batch.requests[index].id,
+                std::move(results[index]),
+                wall_ms,
+            });
+            if (on_result) {
+                on_result(index, out.results.back());
+            }
+        }
+    } else {
+        for (const auto & item : batch.requests) {
+            const auto run_start = Clock::now();
+            auto result = offline.run(item.request);
+            const double wall_ms = to_ms(Clock::now() - run_start);
+            out.results.push_back(AppRequestResult{
+                item.id,
+                std::move(result),
+                wall_ms,
+            });
+            if (on_result) {
+                on_result(out.results.size() - 1, out.results.back());
+            }
         }
     }
     out.session_wall_ms = to_ms(Clock::now() - session_start);

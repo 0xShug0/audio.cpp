@@ -256,6 +256,13 @@ public:
     virtual TaskResult run(const TaskRequest & request) = 0;
 };
 
+class IBatchedOfflineVoiceTaskSession : public virtual IVoiceTaskSession {
+public:
+    ~IBatchedOfflineVoiceTaskSession() override = default;
+
+    virtual std::vector<TaskResult> run_batch(const std::vector<TaskRequest> & requests) = 0;
+};
+
 class IStreamingVoiceTaskSession : public virtual IVoiceTaskSession {
 public:
     ~IStreamingVoiceTaskSession() override = default;
