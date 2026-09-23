@@ -313,8 +313,16 @@ std::vector<runtime::TimeSpan> plan_vad_audio_chunks(
     }
     runtime::TaskRequest vad_request;
     vad_request.audio_input = audio;
-    vad_session.prepare(runtime::build_preparation_request(vad_request));
-    const auto vad_result = vad_session.run(vad_request);
+    runtime::TaskResult vad_result;
+    try {
+        vad_session.prepare(runtime::build_preparation_request(vad_request));
+        vad_result = vad_session.run(vad_request);
+    } catch (const std::runtime_error & error) {
+        throw std::runtime_error(
+            std::string("VAD audio chunking failed: ") + error.what() +
+            ". If the input sample rate is unsupported, resample to a rate supported by the VAD model, "
+            "or select another audio_chunk_mode supported by the ASR model.");
+    }
     return plan_vad_audio_chunks(
         vad_result.speech_segments,
         static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels)),
