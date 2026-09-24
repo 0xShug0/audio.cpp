@@ -1,11 +1,13 @@
 #include "engine/models/nemotron_3_diar/session.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <numeric>
 #include <stdexcept>
 #include <utility>
@@ -27,6 +29,29 @@ std::shared_ptr<const T> require_value(std::shared_ptr<const T> value, const cha
 
 std::string speaker_id(int64_t speaker) {
     return "speaker_" + std::to_string(speaker);
+}
+
+bool wants_frame_probabilities(const std::unordered_map<std::string, std::string> & options) {
+    const auto value = runtime::find_option(options, {"return_frame_probabilities"});
+    return value.has_value() && runtime::parse_bool_option(*value, "return_frame_probabilities");
+}
+
+// Raw little-endian F32 speaker activity, frame-major [frames, speakers], at
+// the native 10 ms output cadence.
+runtime::VoiceArtifact frame_probability_artifact(
+    const std::vector<float> & probabilities, int64_t frames, int64_t speakers) {
+    std::vector<std::byte> payload(static_cast<size_t>(frames * speakers) * sizeof(float));
+    std::memcpy(payload.data(), probabilities.data(), payload.size());
+    return runtime::make_voice_artifact(
+        runtime::ArtifactKind::DiarizationState, "speaker_probabilities", std::move(payload),
+        {{"extension", "f32"},
+         {"mime", "application/octet-stream"},
+         {"dtype", "f32"},
+         {"layout", "frames,speakers"},
+         {"frames", std::to_string(frames)},
+         {"speakers", std::to_string(speakers)},
+         {"frame_hop_samples", std::to_string(kOutputHopSamples)},
+         {"sample_rate", std::to_string(kSampleRate)}});
 }
 
 }  // namespace
@@ -61,6 +86,12 @@ Session::Session(
         *assets_, execution_context().backend(), execution_context().backend_type(),
         storage, weight_context_bytes_);
     assets_->model_weights->release_storage();
+    use_flash_attention_ = core::resolve_flash_attention(
+        execution_context().backend(),
+        assets_->model_config.encoder.hidden_size / assets_->model_config.encoder.heads,
+        core::parse_attention_preference(
+            runtime::find_option(options.options, {"nemotron_3_diar.attention"}).value_or("auto"),
+            "nemotron_3_diar.attention"));
     stream_scheduler_ = std::make_unique<StreamScheduler>(
         assets_->feature_config, streaming_config_, assets_->model_config.encoder.subsampling_factor);
 }
@@ -113,11 +144,12 @@ std::vector<float> Session::encode(
     const std::vector<int64_t> & valid_frames) {
     ensure_encoder_graph(
         encoder_graph_, execution_context(), *assets_, *weights_, graph_arena_bytes_,
-        batch, frames);
+        batch, frames, use_flash_attention_);
     core::write_tensor_f32(encoder_graph_->input, embeddings);
     core::write_tensor_f16(
         encoder_graph_->attention_mask,
         attention_mask(valid_frames, frames));
+    core::write_tensor_f32(encoder_graph_->frame_mask, frame_mask(valid_frames, frames));
     core::set_backend_threads(execution_context().backend(), encoder_graph_->threads);
     if (core::compute_backend_graph(
             execution_context().backend(), encoder_graph_->graph, encoder_graph_->plan) != GGML_STATUS_SUCCESS) {
@@ -354,12 +386,15 @@ void Session::run_batch(
         const int64_t input_samples = static_cast<int64_t>(
             requests[row].audio_input->samples.size() /
             static_cast<size_t>(requests[row].audio_input->channels));
-        const int64_t expected_frames = (input_samples + kOutputHopSamples - 1) / kOutputHopSamples;
+        const int64_t expected_frames = input_samples / kOutputHopSamples;
         const int64_t frames = std::min<int64_t>(
             expected_frames, static_cast<int64_t>(probabilities[row].size() / speakers));
         probabilities[row].resize(static_cast<size_t>(frames * speakers));
         runtime::TaskResult result;
         result.speaker_turns = decode_turns(probabilities[row], frames, decoding[row], true);
+        if (wants_frame_probabilities(requests[row].options)) {
+            result.output_artifacts.push_back(frame_probability_artifact(probabilities[row], frames, speakers));
+        }
         completed[row] = true;
         on_result(row, std::move(result));
     };
@@ -501,13 +536,16 @@ runtime::TaskResult Session::finalize() {
     if (!stream_started_) throw std::runtime_error("Nemotron 3 diarization has no active stream");
     process_stream_windows(stream_scheduler_->finalize());
     const int64_t speakers = assets_->model_config.num_speakers;
-    const int64_t expected_frames = (stream_samples_ + kOutputHopSamples - 1) / kOutputHopSamples;
+    const int64_t expected_frames = stream_samples_ / kOutputHopSamples;
     const int64_t frames = std::min<int64_t>(
         expected_frames, static_cast<int64_t>(stream_probabilities_.size() / speakers));
     stream_probabilities_.resize(static_cast<size_t>(frames * speakers));
     runtime::TaskResult result;
     result.speaker_turns = decode_turns(
         stream_probabilities_, frames, decode_config(stream_request_.options), true);
+    if (wants_frame_probabilities(stream_request_.options)) {
+        result.output_artifacts.push_back(frame_probability_artifact(stream_probabilities_, frames, speakers));
+    }
     stream_started_ = false;
     return result;
 }

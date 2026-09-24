@@ -34,6 +34,7 @@ struct EncoderGraph {
     int threads = 1;
     core::TensorValue input;
     core::TensorValue attention_mask;
+    core::TensorValue frame_mask;
     core::TensorValue rope_cos;
     core::TensorValue rope_sin;
     core::TensorValue probabilities;
@@ -56,9 +57,11 @@ void ensure_encoder_graph(
     const ModelWeights & weights,
     size_t arena_bytes,
     int64_t batch,
-    int64_t frames);
+    int64_t frames,
+    bool use_flash_attention);
 
 std::vector<float> rope_table(int64_t batch, int64_t heads, int64_t frames, int64_t head_dim, float theta, bool cosine);
 std::vector<float> attention_mask(const std::vector<int64_t> & lengths, int64_t frames);
+std::vector<float> frame_mask(const std::vector<int64_t> & lengths, int64_t frames);
 
 }  // namespace engine::models::nemotron_3_diar

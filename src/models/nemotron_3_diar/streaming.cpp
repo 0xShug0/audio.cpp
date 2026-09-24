@@ -144,7 +144,7 @@ int64_t StreamScheduler::available_mel_frames(bool final_flush) const noexcept {
     if (logical_audio_end_samples_ < frontend_.n_fft / 2) return 0;
     const int64_t samples = logical_audio_end_samples_ - frontend_.n_fft / 2;
     return final_flush
-        ? (samples + frontend_.hop_length - 1) / frontend_.hop_length
+        ? samples / frontend_.hop_length
         : samples / frontend_.hop_length + 1;
 }
 
@@ -229,7 +229,14 @@ std::vector<StreamWindow> StreamScheduler::finalize() {
     if (!started_ || audio_received_samples_ == 0) return {};
     const int64_t actual_end = audio_received_samples_;
     const int64_t tail = frontend_.n_fft / 2;
-    audio_.insert(audio_.end(), static_cast<size_t>(tail), 0.0F);
+    // A geometric decay makes the synthetic samples exactly zero after
+    // pre-emphasis, matching torch.stft's constant padding of the emphasized
+    // signal; plain zeros would leak a -preemph * x[N-1] impulse.
+    float sample = audio_.empty() ? 0.0F : audio_.back();
+    for (int64_t i = 0; i < tail; ++i) {
+        sample *= frontend_.preemphasis;
+        audio_.push_back(sample);
+    }
     audio_received_samples_ += tail;
     logical_audio_end_samples_ = actual_end + tail;
     return drain(true);

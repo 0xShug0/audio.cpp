@@ -36,7 +36,8 @@ core::TensorValue build_attention(
     const core::TensorValue & cos,
     const core::TensorValue & sin,
     const EncoderLayerWeights & weights,
-    const EncoderConfig & config) {
+    const EncoderConfig & config,
+    bool use_flash_attention) {
     const int64_t head_dim = config.hidden_size / config.heads;
     auto qkv = modules::LinearModule({config.hidden_size, 3 * config.hidden_size, false})
                    .build(ctx, input, {*weights.attention.qkv_weight, std::nullopt});
@@ -54,7 +55,8 @@ core::TensorValue build_attention(
     auto value = make_heads(2 * config.hidden_size);
     auto context = modules::GroupedQueryAttentionModule({
         head_dim,
-        modules::GroupedQueryAttentionLowering::FlashGroupedViewKV,
+        use_flash_attention ? modules::GroupedQueryAttentionLowering::FlashGroupedViewKV
+                            : modules::GroupedQueryAttentionLowering::ManualRepeat,
         GGML_PREC_F32,
         modules::AttentionCausality::NonCausal,
     }).build(ctx, query, key, value, mask);
@@ -73,11 +75,12 @@ core::TensorValue build_encoder_layer(
     const core::TensorValue & cos,
     const core::TensorValue & sin,
     const EncoderLayerWeights & weights,
-    const EncoderConfig & config) {
+    const EncoderConfig & config,
+    bool use_flash_attention) {
     auto normalized = modules::LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
                           .build(ctx, input, weights.norm1);
     auto output = modules::AddModule().build(
-        ctx, input, build_attention(ctx, normalized, mask, cos, sin, weights, config));
+        ctx, input, build_attention(ctx, normalized, mask, cos, sin, weights, config, use_flash_attention));
     normalized = modules::LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
                      .build(ctx, output, weights.norm2);
     auto feed_forward = modules::LinearModule({config.hidden_size, config.intermediate_size, true})
@@ -150,7 +153,8 @@ void ensure_encoder_graph(
     const ModelWeights & weights,
     size_t arena_bytes,
     int64_t batch,
-    int64_t frames) {
+    int64_t frames,
+    bool use_flash_attention) {
     if (graph != nullptr && graph->batch == batch && graph->frames == frames && graph->backend == execution.backend()) return;
     graph.reset();
     auto next = std::make_unique<EncoderGraph>();
@@ -167,6 +171,8 @@ void ensure_encoder_graph(
     next->input = core::make_tensor(
         ctx, GGML_TYPE_F32,
         core::TensorShape::from_dims({batch, frames, config.encoder.hidden_size}));
+    next->frame_mask = core::make_tensor(
+        ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, frames, 1}));
     next->attention_mask = core::make_tensor(
         ctx, GGML_TYPE_F16,
         core::TensorShape::from_dims({batch, 1, frames, frames}));
@@ -183,13 +189,17 @@ void ensure_encoder_graph(
     for (size_t index = 0; index < weights.layers.size(); ++index) {
         output = build_encoder_layer(
             ctx, output, next->attention_mask, next->rope_cos, next->rope_sin,
-            weights.layers[index], config.encoder);
+            weights.layers[index], config.encoder, use_flash_attention);
     }
     output = modules::LayerNormModule({
         config.encoder.hidden_size, config.encoder.layer_norm_eps, true, true,
     }).build(ctx, output, weights.final_norm);
     output = modules::LinearModule({config.encoder.hidden_size, config.head.hidden_size, true})
                  .build(ctx, output, weights.encoder_projection);
+    // Zero padded frames so the subpixel convolution at the last valid
+    // frame sees zero padding, as in an unpadded forward.
+    output = core::wrap_tensor(
+        ggml_mul(ctx.ggml, output.tensor, next->frame_mask.tensor), output.shape, GGML_TYPE_F32);
     output = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, output);
     output = modules::Conv1dModule({
         config.head.hidden_size,
@@ -216,6 +226,7 @@ void ensure_encoder_graph(
     next->probabilities = modules::SigmoidModule().build(ctx, output);
     ggml_set_input(next->input.tensor);
     ggml_set_input(next->attention_mask.tensor);
+    ggml_set_input(next->frame_mask.tensor);
     // These tables are populated once and must survive every graph execution.
     ggml_set_input(next->rope_cos.tensor);
     ggml_set_input(next->rope_sin.tensor);
@@ -267,6 +278,15 @@ std::vector<float> attention_mask(const std::vector<int64_t> & lengths, int64_t 
                            static_cast<size_t>(frames) + static_cast<size_t>(key)] = -10000.0F;
             }
         }
+    }
+    return values;
+}
+
+std::vector<float> frame_mask(const std::vector<int64_t> & lengths, int64_t frames) {
+    std::vector<float> values(lengths.size() * static_cast<size_t>(frames), 0.0F);
+    for (size_t batch = 0; batch < lengths.size(); ++batch) {
+        std::fill_n(values.begin() + static_cast<std::ptrdiff_t>(batch * static_cast<size_t>(frames)),
+            std::clamp<int64_t>(lengths[batch], 0, frames), 1.0F);
     }
     return values;
 }

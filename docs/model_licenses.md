@@ -81,6 +81,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `moss_tts_v15` | [OpenMOSS-Team/MOSS-TTS-v1.5](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5) | Apache-2.0 | Yes | | 2026-09-22 |
 | `moss_voicegen` | [OpenMOSS-Team/MOSS-VoiceGenerator](https://huggingface.co/OpenMOSS-Team/MOSS-VoiceGenerator) | Apache-2.0 | Yes | | 2026-09-21 |
 | `muscriptor` | [MuScriptor/muscriptor-small](https://huggingface.co/MuScriptor/muscriptor-small) | CC-BY-NC-4.0 | No | | 2026-09-21 |
+| `nemotron_3_diar` | [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) | Yes | | 2026-09-24 |
 | `nemotron_asr` | [nvidia/nemotron-3.5-asr-streaming-0.6b](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) | Yes | | 2026-09-21 |
 | `neutts` | [neuphonic/neutts-2e](https://huggingface.co/neuphonic/neutts-2e) | [NeuTTS Open License v1.0](https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE) | Conditional | Commercial use is licensed only while yearly revenue stays under USD 5M. | 2026-09-21 |
 | `niagara_asr` | [abr-ai/niagara-19m-batch.en](https://huggingface.co/abr-ai/niagara-19m-batch.en)<br>[abr-ai/niagara-38m-batch.en](https://huggingface.co/abr-ai/niagara-38m-batch.en) | [Applied Brain Research Open License v1.1](https://www.appliedbrainresearch.com/license) | Conditional | Any use while yearly gross revenue, including affiliates, stays under USD 1M; above that, non-commercial research only. | 2026-09-21 |
