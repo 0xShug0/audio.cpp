@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace engine::io {
@@ -32,6 +33,10 @@ struct SafeTensorWriteEntry {
 };
 
 SafeTensorIndex load_safetensors_index(const std::filesystem::path & path);
+// The bytes of a safetensors file; metadata becomes the string map `__metadata__`.
+std::vector<unsigned char> encode_safetensors(
+    const std::vector<SafeTensorWriteEntry> & entries,
+    const std::vector<std::pair<std::string, std::string>> & metadata = {});
 void write_safetensors_file(
     const std::filesystem::path & path,
     const std::vector<SafeTensorWriteEntry> & entries);

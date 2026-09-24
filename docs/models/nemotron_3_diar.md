@@ -91,6 +91,15 @@ All geometry values use 80 ms encoder frames. Input-buffer latency is
 | `low` | 1.04 s | 264 | 264 | 9 | 4 | 222 |
 | `very_low` | 0.64 s | 264 | 264 | 6 | 2 | 222 |
 | `ultra_low` | 0.32 s | 264 | 264 | 3 | 1 | 222 |
+| `asr_la13` | 1.12 s | 264 | 264 | 14 | 0 | 222 |
+| `asr_la6` | 0.56 s | 264 | 264 | 7 | 0 | 222 |
+| `asr_la3` | 0.32 s | 264 | 264 | 4 | 0 | 222 |
+| `asr_la0` | 0.08 s | 264 | 264 | 1 | 0 | 222 |
+
+The `asr_laN` profiles match `nemotron_asr` speaker masking at ASR lookahead
+*N*: one ASR chunk of *N* + 1 frames per step and no right context, as in
+NeMo's multitalker pipeline.
+`asr_la0` processes one 80 ms frame per step and is slow.
 
 Use `custom` to set the five geometry controls directly.
 
@@ -112,7 +121,7 @@ Use these with `--request-option`.
 | `speaker_threshold` | `0.0` to `1.0` | `0.5` | Speaker activity threshold. |
 | `speaker_min_frames` | integer >= 0 | `0` | Minimum turn duration in 10 ms output frames. |
 | `speaker_pad_frames` | integer >= 0 | `0` | Padding around turns in 10 ms output frames. |
-| `return_frame_probabilities` | `true`, `false` | `false` | Attach the raw 10 ms speaker-activity timeline as the `speaker_probabilities` artifact: little-endian F32, `[frames, 8]`. With `--out-dir`, the CLI writes it to `speaker_probabilities.f32`. |
+| `return_frame_probabilities` | `true`, `false` | `false` | Attach the raw 10 ms speaker-activity timeline as the `speaker_probabilities` artifact. With `--out-dir`, the CLI writes `speaker_probabilities.safetensors`. It holds one F32 tensor `speaker_probabilities` `[frames, 8]` and string metadata: `format_version`, `source_family`, `frames`, `speakers`, `frame_hop_samples`, `sample_rate`, `latency_profile`, and the five geometry values. |
 
 ## Session Options
 
@@ -120,7 +129,7 @@ Use these with `--session-option nemotron_3_diar.<name>=<value>`.
 
 | Option | Value | Default | Description |
 |---|---|---:|---|
-| `latency_profile` | `very_high`, `low`, `very_low`, `ultra_low`, `custom` | `very_high` | Streaming geometry preset. |
+| `latency_profile` | `very_high`, `low`, `very_low`, `ultra_low`, `asr_la0`, `asr_la3`, `asr_la6`, `asr_la13`, `custom` | `very_high` | Streaming geometry preset. |
 | `spkcache_len` | integer >= 16 | checkpoint value | Speaker-cache length for `custom`. |
 | `fifo_len` | integer >= 0 | checkpoint value | FIFO length for `custom`. |
 | `chunk_len` | integer >= 1 | checkpoint value | Processing chunk length for `custom`. |

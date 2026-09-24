@@ -87,6 +87,7 @@ private:
     std::unique_ptr<PreEncodeGraph> pre_encode_graph_;
     std::unique_ptr<EncoderGraph> encoder_graph_;
     StreamingConfig streaming_config_;
+    std::string latency_profile_;
     std::unique_ptr<StreamScheduler> stream_scheduler_;
     std::unique_ptr<AoscState> stream_state_;
     runtime::TaskRequest stream_request_;

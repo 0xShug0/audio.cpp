@@ -36,18 +36,33 @@ bool wants_frame_probabilities(const std::unordered_map<std::string, std::string
     return value.has_value() && runtime::parse_bool_option(*value, "return_frame_probabilities");
 }
 
-// Raw little-endian F32 speaker activity, frame-major [frames, speakers], at
-// the native 10 ms output cadence.
+// Native 10 ms speaker activity [frames, speakers] as a safetensors file. The
+// metadata records the streaming geometry so nemotron_asr can pick the matching
+// lookahead for speaker-masked transcription.
 runtime::VoiceArtifact frame_probability_artifact(
-    const std::vector<float> & probabilities, int64_t frames, int64_t speakers) {
-    std::vector<std::byte> payload(static_cast<size_t>(frames * speakers) * sizeof(float));
-    std::memcpy(payload.data(), probabilities.data(), payload.size());
+    const std::vector<float> & probabilities,
+    int64_t frames,
+    int64_t speakers,
+    const std::string & latency_profile,
+    const StreamingConfig & geometry) {
+    auto payload = encode_speaker_probabilities_safetensors(
+        probabilities, frames, speakers,
+        {{"format_version", "1"},
+         {"source_family", kFamily},
+         {"frames", std::to_string(frames)},
+         {"speakers", std::to_string(speakers)},
+         {"frame_hop_samples", std::to_string(kOutputHopSamples)},
+         {"sample_rate", std::to_string(kSampleRate)},
+         {"latency_profile", latency_profile},
+         {"spkcache_len", std::to_string(geometry.spkcache_len)},
+         {"fifo_len", std::to_string(geometry.fifo_len)},
+         {"chunk_len", std::to_string(geometry.chunk_len)},
+         {"chunk_right_context", std::to_string(geometry.chunk_right_context)},
+         {"spkcache_update_period", std::to_string(geometry.spkcache_update_period)}});
     return runtime::make_voice_artifact(
         runtime::ArtifactKind::DiarizationState, "speaker_probabilities", std::move(payload),
-        {{"extension", "f32"},
+        {{"extension", "safetensors"},
          {"mime", "application/octet-stream"},
-         {"dtype", "f32"},
-         {"layout", "frames,speakers"},
          {"frames", std::to_string(frames)},
          {"speakers", std::to_string(speakers)},
          {"frame_hop_samples", std::to_string(kOutputHopSamples)},
@@ -66,6 +81,8 @@ Session::Session(
       assets_(require_value(std::move(assets), "assets")),
       contract_(require_value(std::move(contract), "model contract")),
       streaming_config_(streaming_profile(assets_->model_config.streaming, options.options)),
+      latency_profile_(runtime::find_option(
+          options.options, {"nemotron_3_diar.latency_profile"}).value_or("very_high")),
       graph_arena_bytes_(runtime::parse_size_mb_option(
           options.options, {"nemotron_3_diar.graph_arena_mb"}, kDefaultGraphArenaBytes)),
       weight_context_bytes_(runtime::parse_size_mb_option(
@@ -393,7 +410,8 @@ void Session::run_batch(
         runtime::TaskResult result;
         result.speaker_turns = decode_turns(probabilities[row], frames, decoding[row], true);
         if (wants_frame_probabilities(requests[row].options)) {
-            result.output_artifacts.push_back(frame_probability_artifact(probabilities[row], frames, speakers));
+            result.output_artifacts.push_back(frame_probability_artifact(
+                probabilities[row], frames, speakers, latency_profile_, streaming_config_));
         }
         completed[row] = true;
         on_result(row, std::move(result));
@@ -544,7 +562,8 @@ runtime::TaskResult Session::finalize() {
     result.speaker_turns = decode_turns(
         stream_probabilities_, frames, decode_config(stream_request_.options), true);
     if (wants_frame_probabilities(stream_request_.options)) {
-        result.output_artifacts.push_back(frame_probability_artifact(stream_probabilities_, frames, speakers));
+        result.output_artifacts.push_back(frame_probability_artifact(
+            stream_probabilities_, frames, speakers, latency_profile_, streaming_config_));
     }
     stream_started_ = false;
     return result;

@@ -1,6 +1,11 @@
 #include "engine/models/nemotron_3_diar/streaming.h"
 
+#include "engine/framework/io/safetensors.h"
+
 #include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -56,12 +61,58 @@ void test_tail_is_silent_after_preemphasis() {
     }
 }
 
+// The asr_laN profiles mirror NeMo configure_diar_streaming for an ASR lookahead of N.
+void test_asr_profiles() {
+    for (const int64_t lookahead : {0LL, 3LL, 6LL, 13LL}) {
+        const auto config = streaming_profile(
+            StreamingConfig{}, {{"nemotron_3_diar.latency_profile", "asr_la" + std::to_string(lookahead)}});
+        require(config.chunk_len == lookahead + 1 && config.chunk_right_context == 0 &&
+                    config.spkcache_len == 264 && config.fifo_len == 264 && config.spkcache_update_period == 222,
+            "asr_la" + std::to_string(lookahead) + " geometry");
+    }
+    bool rejected = false;
+    try {
+        (void) streaming_profile(StreamingConfig{}, {{"nemotron_3_diar.latency_profile", "asr_la1"}});
+    } catch (const std::runtime_error &) {
+        rejected = true;
+    }
+    require(rejected, "asr_la1 must be rejected");
+}
+
+// The artifact bytes must read back through the framework safetensors reader.
+void test_safetensors_round_trip() {
+    const int64_t frames = 5;
+    const int64_t speakers = 8;
+    std::vector<float> probabilities(static_cast<size_t>(frames * speakers));
+    for (size_t i = 0; i < probabilities.size(); ++i) probabilities[i] = static_cast<float>(i) / 64.0F;
+    const auto bytes = encode_speaker_probabilities_safetensors(
+        probabilities, frames, speakers, {{"format_version", "1"}, {"latency_profile", "asr_la13"}});
+    const auto path = std::filesystem::temp_directory_path() / "nemotron_3_diar_probabilities_test.safetensors";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    const auto index = engine::io::load_safetensors_index(path);
+    require(index.header_bytes % 8 == 0, "header is not 8-byte aligned");
+    require(index.metadata.at("format_version") == "1" && index.metadata.at("latency_profile") == "asr_la13",
+        "metadata mismatch");
+    const auto & tensor = index.tensors.at("speaker_probabilities");
+    require(tensor.dtype == "F32" && tensor.shape == std::vector<int64_t>{frames, speakers}, "tensor header mismatch");
+    std::vector<float> read(probabilities.size());
+    require(tensor.data_end - tensor.data_begin == read.size() * sizeof(float), "data size mismatch");
+    std::memcpy(read.data(), bytes.data() + index.header_bytes + tensor.data_begin, read.size() * sizeof(float));
+    require(read == probabilities, "data mismatch");
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
     try {
         test_final_frame_count();
         test_tail_is_silent_after_preemphasis();
+        test_asr_profiles();
+        test_safetensors_round_trip();
     } catch (const std::exception & error) {
         std::cerr << "nemotron_3_diar_streaming_test failed: " << error.what() << "\n";
         return 1;

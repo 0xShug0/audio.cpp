@@ -51,7 +51,7 @@
       {
         "name": "return_frame_probabilities",
         "type": "bool",
-        "description": "Attach the raw 10 ms speaker-activity timeline as the speaker_probabilities artifact (F32, frames x speakers).",
+        "description": "Attach the raw 10 ms speaker-activity timeline as the speaker_probabilities.safetensors artifact (F32 [frames, speakers] plus streaming-geometry metadata), the input for nemotron_asr speaker tagging.",
         "required": false,
         "default": false
       }
@@ -60,12 +60,16 @@
       {
         "name": "latency_profile",
         "type": "enum",
-        "description": "Official streaming latency profile.",
+        "description": "Streaming latency profile: the official very_high, low, very_low and ultra_low presets, asr_la0/3/6/13 for nemotron_asr speaker masking at that ASR lookahead, or custom.",
         "values": [
           "very_high",
           "low",
           "very_low",
           "ultra_low",
+          "asr_la0",
+          "asr_la3",
+          "asr_la6",
+          "asr_la13",
           "custom"
         ],
         "required": false,

@@ -1,6 +1,7 @@
 #include "engine/models/nemotron_3_diar/streaming.h"
 
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/io/safetensors.h"
 #include "engine/framework/runtime/options.h"
 
 #include <algorithm>
@@ -75,6 +76,14 @@ StreamingConfig streaming_profile(
         result.chunk_len = 3;
         result.chunk_right_context = 1;
         result.spkcache_update_period = 222;
+    } else if (profile == "asr_la0" || profile == "asr_la3" || profile == "asr_la6" || profile == "asr_la13") {
+        // Nemotron 3.5 ASR speaker-tagging geometry (NeMo configure_diar_streaming):
+        // one ASR chunk of lookahead + 1 encoder frames per step and no right context.
+        result.spkcache_len = 264;
+        result.fifo_len = 264;
+        result.chunk_len = std::stoll(profile.substr(6)) + 1;
+        result.chunk_right_context = 0;
+        result.spkcache_update_period = 222;
     } else if (profile == "custom") {
         result.spkcache_len = option_or(
             options, "nemotron_3_diar.spkcache_len", result.spkcache_len);
@@ -95,6 +104,24 @@ StreamingConfig streaming_profile(
         throw std::runtime_error("invalid Nemotron 3 diarization streaming geometry");
     }
     return result;
+}
+
+std::vector<std::byte> encode_speaker_probabilities_safetensors(
+    const std::vector<float> & probabilities,
+    int64_t frames,
+    int64_t speakers,
+    const std::vector<std::pair<std::string, std::string>> & metadata) {
+    if (frames < 0 || speakers <= 0 ||
+        probabilities.size() != static_cast<size_t>(frames * speakers)) {
+        throw std::invalid_argument("speaker probability timeline shape mismatch");
+    }
+    engine::io::SafeTensorWriteEntry entry{"speaker_probabilities", "F32", {frames, speakers}, {}};
+    const auto * data = reinterpret_cast<const unsigned char *>(probabilities.data());
+    entry.data.assign(data, data + probabilities.size() * sizeof(float));
+    const auto bytes = engine::io::encode_safetensors({entry}, metadata);
+    std::vector<std::byte> out(bytes.size());
+    std::memcpy(out.data(), bytes.data(), bytes.size());
+    return out;
 }
 
 StreamScheduler::StreamScheduler(
