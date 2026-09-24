@@ -461,106 +461,76 @@ NemotronDecodedText NemotronDecoderRuntime::decode(
     return out;
 }
 
-NemotronDecodedText NemotronDecoderRuntime::decode_streaming(
-    const NemotronDecodeOptions & options,
-    const std::function<bool(NemotronEncodedAudio &)> & next_chunk,
-    const NemotronTextDeltaCallback & on_text_delta) {
-    if (!next_chunk) {
-        throw std::runtime_error("Nemotron ASR streaming decoder requires a chunk producer");
-    }
-    const auto wall_start = Clock::now();
+NemotronDecoderStreamState NemotronDecoderRuntime::make_stream_state(
+    const NemotronDecodeOptions & options) {
     ensure_graph();
-    engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
+    ensure_joint_graph();
+    engine::core::set_backend_threads(
+        execution_context_->backend(), execution_context_->config().threads);
     const auto & config = assets_->config;
-    const int64_t max_tokens = options.max_tokens > 0
-        ? options.max_tokens
-        : (std::numeric_limits<int64_t>::max() / 4);
-    hidden_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
-    cell_scratch_.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
+    hidden_scratch_.assign(
+        static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
+    cell_scratch_.assign(
+        static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
     decoder_cache_scratch_.assign(static_cast<size_t>(config.decoder_hidden_size), 0.0f);
 
-    std::vector<float> encoded_values;
-    int64_t encoded_valid_frames = 0;
-    int64_t encoded_hidden_size = 0;
-    bool stream_exhausted = false;
-    auto append_next_chunk = [&]() -> bool {
-        NemotronEncodedAudio chunk;
-        if (!next_chunk(chunk)) {
-            stream_exhausted = true;
-            return false;
-        }
-        if (chunk.valid_frames <= 0 || chunk.hidden_size != config.decoder_hidden_size) {
-            throw std::runtime_error("Nemotron ASR streaming decoder received invalid encoded chunk");
-        }
-        if (encoded_hidden_size == 0) {
-            encoded_hidden_size = chunk.hidden_size;
-        } else if (encoded_hidden_size != chunk.hidden_size) {
-            throw std::runtime_error("Nemotron ASR streaming decoder chunk hidden size mismatch");
-        }
-        encoded_values.insert(
-            encoded_values.end(),
-            chunk.values.begin(),
-            chunk.values.begin() + static_cast<std::ptrdiff_t>(chunk.valid_frames * chunk.hidden_size));
-        encoded_valid_frames += chunk.valid_frames;
-        return true;
-    };
-    if (!append_next_chunk()) {
-        throw std::runtime_error("Nemotron ASR streaming decoder received no encoded chunks");
+    NemotronDecoderStreamState state;
+    state.options = options;
+    state.input_token = static_cast<int32_t>(config.blank_token_id);
+    state.decoded.token_ids.reserve(4096);
+    state.decoded.durations.reserve(4096);
+    state.decoded.token_ids.push_back(state.input_token);
+    state.decoded.durations.push_back(0);
+    return state;
+}
+
+void NemotronDecoderRuntime::decode_stream_chunk(
+    const NemotronEncodedAudio & encoded,
+    NemotronDecoderStreamState & state) {
+    if (encoded.valid_frames <= 0 ||
+        encoded.hidden_size != assets_->config.decoder_hidden_size) {
+        throw std::runtime_error("Nemotron ASR streaming decoder received invalid encoded chunk");
     }
-
-    NemotronDecodedText out;
-    out.token_ids.reserve(4096);
-    out.durations.reserve(out.token_ids.capacity());
-    out.token_ids.push_back(static_cast<int32_t>(config.blank_token_id));
-    out.durations.push_back(0);
-    std::string emitted_text;
-
+    const auto wall_start = Clock::now();
+    const auto & config = assets_->config;
+    const int64_t max_tokens = state.options.max_tokens > 0
+        ? state.options.max_tokens
+        : (std::numeric_limits<int64_t>::max() / 4);
     int64_t frame_index = 0;
-    int64_t symbols_at_frame = 0;
-    int32_t input_token = static_cast<int32_t>(config.blank_token_id);
-    bool decoder_cache_initialized = false;
-    while (static_cast<int64_t>(out.token_ids.size()) - 1 < max_tokens) {
-        while (frame_index >= encoded_valid_frames && !stream_exhausted) {
-            append_next_chunk();
-        }
-        if (frame_index >= encoded_valid_frames) {
-            break;
-        }
-
-        const float * frame = encoded_values.data() + static_cast<std::ptrdiff_t>(frame_index * encoded_hidden_size);
-        const int32_t token = run_step(input_token, frame, decoder_cache_initialized);
-        decoder_cache_initialized = true;
-        out.token_ids.push_back(token);
+    while (frame_index < encoded.valid_frames &&
+           static_cast<int64_t>(state.decoded.token_ids.size()) - 1 < max_tokens) {
+        const float * frame = encoded.values.data() +
+            static_cast<std::ptrdiff_t>(frame_index * encoded.hidden_size);
+        const int32_t token = run_step(
+            state.input_token, frame, state.decoder_cache_initialized);
+        state.decoder_cache_initialized = true;
+        state.decoded.token_ids.push_back(token);
         const bool blank = token == static_cast<int32_t>(config.blank_token_id);
         if (!blank) {
-            ++symbols_at_frame;
+            ++state.symbols_at_frame;
         }
-        const bool force_advance = symbols_at_frame >= config.max_symbols_per_step;
+        const bool force_advance = state.symbols_at_frame >= config.max_symbols_per_step;
         if (blank || force_advance) {
             ++frame_index;
-            symbols_at_frame = 0;
-            out.durations.push_back(1);
+            ++state.encoded_frames;
+            state.symbols_at_frame = 0;
+            state.decoded.durations.push_back(1);
         } else {
-            out.durations.push_back(0);
+            state.decoded.durations.push_back(0);
         }
-        if (on_text_delta && !blank) {
-            const auto current_text = decode_text(out.token_ids, options.keep_language_tags);
-            if (current_text.size() > emitted_text.size() &&
-                current_text.compare(0, emitted_text.size(), emitted_text) == 0) {
-                on_text_delta(current_text.substr(emitted_text.size()));
-                emitted_text = current_text;
-            } else if (current_text != emitted_text) {
-                on_text_delta(current_text);
-                emitted_text = current_text;
-            }
-        }
-        input_token = token;
+        state.input_token = token;
     }
-    out.text = decode_text(out.token_ids, options.keep_language_tags);
+    state.decoded.text = decode_text(
+        state.decoded.token_ids, state.options.keep_language_tags);
+    debug::timing_log_scalar(
+        "nemotron_asr.decoder.stream_ms",
+        engine::debug::elapsed_ms(wall_start, Clock::now()));
+}
+
+NemotronDecodedText NemotronDecoderRuntime::stream_result(
+    const NemotronDecoderStreamState & state) const {
+    NemotronDecodedText out = state.decoded;
     out.token_timestamps = build_token_timestamps(*assets_, out.token_ids, out.durations);
-    debug::timing_log_scalar("nemotron_asr.decoder_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
-    debug::trace_log_scalar("nemotron_asr.decoder.tokens", out.token_ids.size());
-    debug::trace_log_scalar("nemotron_asr.decoder.encoded_valid_frames", encoded_valid_frames);
     return out;
 }
 

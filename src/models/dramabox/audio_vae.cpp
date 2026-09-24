@@ -2,6 +2,7 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/mel_spectrogram_frontend.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
@@ -171,54 +172,25 @@ std::vector<float> reference_log_mel(
     float ref_duration,
     int threads,
     int64_t & frames_out) {
-    const auto planar = stereo_resampled_reference(audio_buffer, static_cast<int>(config.audio_vae.sample_rate), ref_duration);
-    const int64_t samples = static_cast<int64_t>(planar.size()) / 2;
-    const audio::STFTConfig stft_config{
-        config.audio_vae.n_fft,
-        config.audio_vae.hop_length,
-        config.audio_vae.n_fft,
-        true,
-        audio::STFTPadMode::Reflect,
-        audio::STFTFamily::Default,
-    };
-    const auto & window = audio::get_cached_stft_window(stft_config);
-    auto magnitude = audio::STFT().compute_magnitude(
-        planar,
-        window,
-        2,
-        samples,
-        stft_config,
-        static_cast<size_t>(std::max(1, threads)));
-    frames_out = magnitude.shape[2];
-    const auto filterbank = audio::MelFilterbank().build(
-        audio::MelFilterbankConfig{
-            config.audio_vae.sample_rate,
-            config.audio_vae.n_fft,
-            config.audio_vae.mel_bins,
-            0.0F,
-            static_cast<float>(config.audio_vae.sample_rate) / 2.0F,
-            true,
-        });
-    auto mel = audio::MelFilterbank().compute_custom(
-        magnitude.values,
-        2,
-        magnitude.shape[1],
-        magnitude.shape[2],
-        filterbank);
-    for (float & value : mel.values) {
-        value = std::log(std::max(value, 1.0e-5F));
-    }
-    std::vector<float> out(static_cast<size_t>(2 * frames_out * config.audio_vae.mel_bins), 0.0F);
-    for (int64_t c = 0; c < 2; ++c) {
-        for (int64_t m = 0; m < config.audio_vae.mel_bins; ++m) {
-            for (int64_t t = 0; t < frames_out; ++t) {
-                const size_t src = static_cast<size_t>(((c * config.audio_vae.mel_bins + m) * frames_out) + t);
-                const size_t dst = static_cast<size_t>((c * frames_out + t) * config.audio_vae.mel_bins + m);
-                out[dst] = mel.values[src];
-            }
-        }
-    }
-    return out;
+    const auto planar = stereo_resampled_reference(
+        audio_buffer, static_cast<int>(config.audio_vae.sample_rate), ref_duration);
+    audio::MelSpectrogramFrontendConfig mel;
+    mel.sample_rate = config.audio_vae.sample_rate;
+    mel.n_fft = config.audio_vae.n_fft;
+    mel.hop_length = config.audio_vae.hop_length;
+    mel.win_length = config.audio_vae.n_fft;
+    mel.n_mels = config.audio_vae.mel_bins;
+    mel.mel_fmax = static_cast<float>(config.audio_vae.sample_rate) / 2.0f;
+    mel.window = audio::MelHannWindow::Symmetric;
+    mel.stft_center = true;
+    mel.waveform_padding = audio::MelWaveformPadding::None;
+    mel.filterbank_projection = audio::MelFilterbankProjection::DenseLongDouble;
+    mel.layout = audio::MelOutputLayout::TimeMajor;
+    const auto frontend = audio::get_cached_mel_spectrogram_frontend(mel);
+    auto features = frontend->extract_planar(
+        planar, 2, static_cast<size_t>(std::max(1, threads)));
+    frames_out = features.frames;
+    return std::move(features.values);
 }
 
 DramaBoxAudioVaeDecoderWeights load_dramabox_audio_vae_decoder_weights(

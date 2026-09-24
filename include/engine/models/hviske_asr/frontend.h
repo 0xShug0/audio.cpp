@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/hviske_asr/assets.h"
 
@@ -24,9 +24,7 @@ public:
     HviskeFrontendFeatures extract(const engine::runtime::AudioBuffer & audio) const;
 
 private:
-    std::shared_ptr<const HviskeASRAssets> assets_;
-    engine::audio::SparseMelFilterbank filterbank_;
-    std::vector<float> window_;
+    engine::audio::NemoMelFrontend frontend_;
 };
 
 }  // namespace engine::models::hviske_asr

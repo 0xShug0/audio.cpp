@@ -383,6 +383,11 @@ VoxCPM1SessionBase::run_streaming_request(
         "VoxCPM1 run_streaming requires a streaming session");
   }
   validate_request(request);
+  // Declared before release_guard on purpose: the decoder's streaming graph is
+  // built against this state's tensors, and release_guard drops that graph via
+  // decoder_->release_runtime_memory(). Reverse destruction order then frees
+  // the graph before the state it points into, on return and on exceptions.
+  AudioVAEStreamingDecodeState streaming_state;
   auto release_runtime_memory = [this](VoxCPM1SessionBase *self) {
     if (self != nullptr) {
       self->release_request_runtime_memory();
@@ -426,7 +431,6 @@ VoxCPM1SessionBase::run_streaming_request(
   // Carry AudioVAE decoder convolution state across streamed patches so the
   // boundary between consecutive chunks stays continuous instead of resetting.
   bool use_streaming_decode = decoder_->supports_streaming_decode();
-  AudioVAEStreamingDecodeState streaming_state;
   if (use_streaming_decode) {
     use_streaming_decode =
         decoder_->initialize_streaming_decode_state(streaming_state);

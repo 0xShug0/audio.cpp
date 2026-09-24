@@ -35,7 +35,8 @@ runtime::ModelCliInterface cli(const SupertonicAssets &) {
     out.request_options = {
         {"voice_id", "M1|M2|M3|M4|M5|F1|F2|F3|F4|F5", "Preset voice style id, default M1; also exposed as --voice-id."},
         {"num_inference_steps", "n", "Flow denoising steps, default 8."},
-        {"speaking_rate", "float", "Speech speed multiplier, default 1.05."},
+        {"speed", "float", "Speech speed multiplier, default 1.05."},
+        {"speaking_rate", "float", "Alias for speed."},
         {"seed", "n", "Noise seed, default 1234."},
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Long-form text chunking mode."},
     };

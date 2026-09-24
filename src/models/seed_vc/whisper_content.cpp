@@ -1,6 +1,7 @@
 #include "engine/models/seed_vc/whisper_content.h"
 
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/mel_spectrogram_frontend.h"
 #include "engine/framework/audio/waveform_ops.h"
 
 #include <algorithm>
@@ -10,59 +11,30 @@
 #include <vector>
 
 namespace engine::models::seed_vc {
-namespace {
 
 std::vector<float> compute_whisper_log_mel(const std::vector<float> & waveform_16k, size_t threads) {
-    constexpr int64_t kSampleRate = 16000;
-    constexpr int64_t kNfft = 400;
-    constexpr int64_t kHop = 160;
-    constexpr int64_t kMels = 80;
     constexpr int64_t kOutputFrames = 3000;
-    const engine::audio::STFTConfig stft_config{
-        kNfft,
-        kHop,
-        kNfft,
-        true,
-        engine::audio::STFTPadMode::Reflect,
-        engine::audio::STFTFamily::Kokoro,
-    };
-    const auto & window = engine::audio::get_cached_stft_window(stft_config);
-    const auto magnitude = engine::audio::STFT().compute_magnitude(
-        waveform_16k,
-        window,
-        1,
-        static_cast<int64_t>(waveform_16k.size()),
-        stft_config,
-        threads);
-    const int64_t freq_bins = magnitude.shape[1];
-    const int64_t stft_frames = magnitude.shape[2];
-    if (freq_bins != (kNfft / 2 + 1) || stft_frames <= kOutputFrames) {
+    if (1 + static_cast<int64_t>(waveform_16k.size()) / 160 <= kOutputFrames) {
         throw std::runtime_error("Seed-VC Whisper frontend STFT shape mismatch");
     }
-    static const auto mel_filter = engine::audio::MelFilterbank().build(
-        engine::audio::MelFilterbankConfig{kSampleRate, kNfft, kMels, 0.0F, 0.0F, true});
-    std::vector<float> log_mel(static_cast<size_t>(kMels * kOutputFrames), 0.0F);
-    float max_log = -std::numeric_limits<float>::infinity();
-    for (int64_t mel = 0; mel < kMels; ++mel) {
-        for (int64_t frame = 0; frame < kOutputFrames; ++frame) {
-            float sum = 0.0F;
-            for (int64_t freq = 0; freq < freq_bins; ++freq) {
-                const float mag = magnitude.values[static_cast<size_t>(freq * stft_frames + frame)];
-                sum += mel_filter.values[static_cast<size_t>(mel * freq_bins + freq)] * mag * mag;
-            }
-            const float value = std::log10(std::max(sum, 1.0e-10F));
-            log_mel[static_cast<size_t>(mel * kOutputFrames + frame)] = value;
-            max_log = std::max(max_log, value);
-        }
-    }
-    const float floor = max_log - 8.0F;
-    for (float & value : log_mel) {
-        value = (std::max(value, floor) + 4.0F) / 4.0F;
-    }
-    return log_mel;
+    engine::audio::MelSpectrogramFrontendConfig config;
+    config.sample_rate = 16000;
+    config.n_fft = 400;
+    config.hop_length = 160;
+    config.win_length = 400;
+    config.n_mels = 80;
+    config.stft_center = true;
+    config.waveform_padding = engine::audio::MelWaveformPadding::None;
+    config.spectrum_mode = engine::audio::MelSpectrumMode::PowerDuringProjection;
+    config.value_transform = engine::audio::MelValueTransform::Log10;
+    config.log_floor = 1.0e-10;
+    config.max_frames = kOutputFrames;
+    config.log_dynamic_range = 8.0f;
+    config.log_shift = 4.0f;
+    config.log_divisor = 4.0f;
+    return engine::audio::get_cached_mel_spectrogram_frontend(config)
+        ->extract_mono(waveform_16k, threads).values;
 }
-
-}  // namespace
 
 SeedVcWhisperContentEncoder::SeedVcWhisperContentEncoder(
     std::shared_ptr<const engine::assets::TensorSource> source,

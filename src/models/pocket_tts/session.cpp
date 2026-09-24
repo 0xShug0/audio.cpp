@@ -27,7 +27,6 @@ namespace {
 constexpr int64_t kCpuPromptCapacityFloor = 32;
 constexpr int64_t kCpuGenerationCapacityFloor = 160;
 constexpr int64_t kGenerationCapacityQuantum = 16;
-constexpr int64_t kDefaultTextChunkSize = 256;
 constexpr int64_t kDefaultVoiceStateCacheSlots = 4;
 
 int64_t next_power_of_two(int64_t value) {
@@ -74,6 +73,7 @@ FlowLMConfig make_flow_config(const PocketTTSAssets & manifest) {
         manifest.model_config.flow_layers,
         1.0e-5F,
         1.0e-6F,
+        manifest.model_config.flow_depth,
     };
 }
 
@@ -144,8 +144,7 @@ void apply_session_generation_options(
             {"max_tokens", "pocket_tts.max_tokens"})) {
         generation_request.max_tokens = *max_tokens;
     }
-    generation_request.text_chunk_size =
-        engine::text::parse_text_chunk_size_override(options).value_or(kDefaultTextChunkSize);
+    generation_request.text_chunk_size = engine::text::parse_text_chunk_size_override(options);
     if (const auto temperature = runtime::parse_float_option(options, {"temperature", "pocket_tts.temperature"})) {
         generation_request.temperature = *temperature;
     }
@@ -175,8 +174,7 @@ void apply_request_generation_options(
             {"max_tokens", "pocket_tts.max_tokens"})) {
         generation_request.max_tokens = *max_tokens;
     }
-    generation_request.text_chunk_size =
-        engine::text::parse_text_chunk_size_override(options).value_or(kDefaultTextChunkSize);
+    generation_request.text_chunk_size = engine::text::parse_text_chunk_size_override(options);
 }
 
 GenerationRequest build_generation_request(const runtime::TaskRequest & request, float default_temperature) {
@@ -248,6 +246,29 @@ void validate_generation_request(const GenerationRequest & request) {
     if (request.temperature <= 0.0F) {
         throw std::runtime_error("PocketTTS temperature must be positive");
     }
+}
+
+// An explicit text_chunk_size keeps the character budget it always meant. Otherwise the text
+// is cut like the reference cuts it: on sentence boundaries, at most max_tokens tokens per
+// chunk. The streaming path used to pass max_tokens (50) as a CHARACTER budget, which cut
+// nearly every sentence in two, and the offline path used 256 characters.
+std::vector<std::string> split_generation_text(
+    const TextConditioner & text_conditioner,
+    const PocketTTSAssets & manifest,
+    const GenerationRequest & request) {
+    if (request.text_chunk_size.has_value()) {
+        return engine::text::split_text_chunks(request.text, *request.text_chunk_size);
+    }
+    return text_conditioner.split_into_sentence_chunks(manifest, request.text, request.max_tokens);
+}
+
+void trace_text_chunking(const char * prefix, const GenerationRequest & request, size_t chunk_count) {
+    const std::string key = std::string(prefix) +
+        (request.text_chunk_size.has_value() ? "text_chunk_size" : "max_tokens");
+    engine::debug::trace_log_scalar(
+        key,
+        request.text_chunk_size.has_value() ? *request.text_chunk_size : static_cast<int64_t>(request.max_tokens));
+    engine::debug::trace_log_scalar(std::string(prefix) + "text_chunk_count", static_cast<int64_t>(chunk_count));
 }
 
 int estimate_max_steps(const PocketTTSAssets & manifest, int64_t token_count) {
@@ -787,9 +808,7 @@ void PocketTTSSession::start_stream(const runtime::TaskRequest & request) {
     reset();
     stream_request_ = effective_request_for_run(request);
     validate_generation_request(stream_request_);
-    const int64_t streaming_chunk_size =
-        engine::text::parse_text_chunk_size_override(request.options).value_or(stream_request_.max_tokens);
-    stream_text_chunks_ = engine::text::split_text_chunks(stream_request_.text, streaming_chunk_size);
+    stream_text_chunks_ = split_generation_text(text_conditioner_, *manifest_, stream_request_);
     if (stream_text_chunks_.empty()) {
         throw std::runtime_error("PocketTTS streaming text chunking produced no segments");
     }
@@ -799,8 +818,7 @@ void PocketTTSSession::start_stream(const runtime::TaskRequest & request) {
     audio_decoder_.reset_streaming_state();
     stream_started_at_ = std::chrono::steady_clock::now();
     stream_started_ = true;
-    engine::debug::trace_log_scalar("pocket_tts.streaming.text_chunk_size", streaming_chunk_size);
-    engine::debug::trace_log_scalar("pocket_tts.streaming.text_chunk_count", static_cast<int64_t>(stream_text_chunks_.size()));
+    trace_text_chunking("pocket_tts.streaming.", stream_request_, stream_text_chunks_.size());
 }
 
 std::optional<runtime::StreamEvent> PocketTTSSession::next_stream_event() {
@@ -946,8 +964,7 @@ void PocketTTSSession::prepare_generation(const GenerationRequest & request) {
         return;
     }
     const auto & manifest = *manifest_;
-    const int64_t text_chunk_size = request.text_chunk_size.value_or(kDefaultTextChunkSize);
-    const auto chunks = engine::text::split_text_chunks(request.text, text_chunk_size);
+    const auto chunks = split_generation_text(text_conditioner_, manifest, request);
     for (const auto & chunk : chunks) {
         const TextConditioningResult text_state = text_conditioner_.prepare(manifest, weights_->host, chunk);
         const AcousticGenerationConfig acoustic_config = resolve_acoustic_generation_config(
@@ -982,10 +999,8 @@ GenerationResult PocketTTSSession::generate(const GenerationRequest & request) {
     const auto & manifest = *manifest_;
 
     const auto started_inference = std::chrono::steady_clock::now();
-    const int64_t text_chunk_size = request.text_chunk_size.value_or(kDefaultTextChunkSize);
-    const auto chunks = engine::text::split_text_chunks(request.text, text_chunk_size);
-    engine::debug::trace_log_scalar("pocket_tts.text_chunk_size", text_chunk_size);
-    engine::debug::trace_log_scalar("pocket_tts.text_chunk_count", static_cast<int64_t>(chunks.size()));
+    const auto chunks = split_generation_text(text_conditioner_, manifest, request);
+    trace_text_chunking("pocket_tts.", request, chunks.size());
     const auto voice_plan = resolve_voice_conditioning_plan(model_dir_, request);
 
     VoiceConditioningResult voice_state;

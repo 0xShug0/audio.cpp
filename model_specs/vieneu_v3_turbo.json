@@ -1,0 +1,147 @@
+{
+  "family": "vieneu_v3_turbo",
+  "display_name": "VieNeu-TTS v3 Turbo",
+  "description": "On-device Vietnamese/English TTS (48 kHz) with instant voice cloning from 3-5 s of reference audio, by Phạm Nguyễn Ngọc Bảo (pnnbao97). Takes SEA-G2P phonemes as text input.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "vi",
+    "en"
+  ],
+  "capabilities": {
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "vieneu_v3_turbo_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/vieneu_v3_turbo.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "packages": [
+    {
+      "id": "vieneu_v3_turbo_q8_0",
+      "display_name": "VieNeu-TTS v3 Turbo Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VieNeu-TTS-v3-Turbo-GGUF",
+      "files": [
+        "gguf/vieneu-v3-turbo-q8_0.gguf",
+        "gguf/voices/manifest.json",
+        "gguf/voices/minh_quan_pro/ref_codes.txt",
+        "gguf/voices/minh_quan_pro/speaker.emb.txt"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo"
+      },
+      "strip_prefix": "gguf"
+    },
+    {
+      "id": "vieneu_v3_turbo_bf16",
+      "display_name": "VieNeu-TTS v3 Turbo BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "VieNeu-TTS-v3-Turbo-GGUF",
+      "files": [
+        "gguf/vieneu-v3-turbo-bf16.gguf",
+        "gguf/voices/manifest.json",
+        "gguf/voices/minh_quan_pro/ref_codes.txt",
+        "gguf/voices/minh_quan_pro/speaker.emb.txt"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo"
+      },
+      "strip_prefix": "gguf"
+    },
+    {
+      "id": "vietneu_tts_v3_turbo_q8_0",
+      "display_name": "VieNeu-TTS v3 Turbo Q8_0 GGUF (first community port, July 2026 weights)",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VieNeu-TTS-v3-Turbo-GGUF-2026-07",
+      "files": [
+        "model.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "phuocnguyen90/VieNeu-TTS-v3-Turbo-GGUF"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "optional_files": {
+        "generation_config": "model:generation_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "speech_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "speech_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "speech_tokenizer_config": "model:speech_tokenizer/config.json"
+      },
+      "optional_files": {
+        "generation_config": "model:generation_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json",
+        "special_tokens_map": "model:special_tokens_map.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "speech_tokenizer_weights": "model:speech_tokenizer/model.safetensors"
+      }
+    }
+  ]
+}

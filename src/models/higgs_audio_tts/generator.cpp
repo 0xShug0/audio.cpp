@@ -169,6 +169,40 @@ HiggsGenerator::HiggsGenerator(std::shared_ptr<const HiggsAssets> assets,
     }
 }
 
+void HiggsGenerator::replace_kv_cache(int64_t steps, bool preserve_state) {
+    if (ar_->backend_type() != core::BackendType::Cuda) {
+        const auto state = preserve_state ? ar_kv_cache_->export_state() : runtime::TransformerKVState{};
+        decode_graph_.reset();
+        ar_kv_cache_ = std::make_unique<HiggsARKVCache>(ar_, steps);
+        if (preserve_state) {
+            ar_kv_cache_->import_state(state);
+        }
+        return;
+    }
+    std::unique_ptr<HiggsARKVCache> next_cache;
+    std::unique_ptr<HiggsARDecodeGraph> next_graph;
+    // Match the original capacity exactly: changing attention tensor sizes or
+    // retaining a different reference prefix can change sampled audio. One
+    // spare lets repeated requests reuse allocation and graph capture safely.
+    if (spare_kv_cache_ && spare_kv_cache_->can_run(*ar_, steps) &&
+        spare_kv_cache_->cache_steps() == steps) {
+        next_cache = std::move(spare_kv_cache_);
+        next_graph = std::move(spare_decode_graph_);
+    } else {
+        spare_decode_graph_.reset();
+        spare_kv_cache_.reset();
+        next_cache = std::make_unique<HiggsARKVCache>(ar_, steps);
+    }
+    if (preserve_state) {
+        next_cache->retain_prefix(0);
+        next_cache->copy_from(*ar_kv_cache_);
+    }
+    spare_decode_graph_ = std::move(decode_graph_);
+    spare_kv_cache_ = std::move(ar_kv_cache_);
+    ar_kv_cache_ = std::move(next_cache);
+    decode_graph_ = std::move(next_graph);
+}
+
 void HiggsGenerator::prepare(const HiggsGenerationRequest & request) {
     const auto & config = assets_->config;
     const bool has_reference = request.reference_frames > 0 || !request.reference_codes.empty();
@@ -359,8 +393,7 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
         ar_kv_cache_ == nullptr || !ar_kv_cache_->can_run(*ar_, initial_cache_steps) ||
         ar_kv_cache_->cache_steps() != initial_cache_steps;
     if (cache_rebuild) {
-        decode_graph_.reset();
-        ar_kv_cache_ = std::make_unique<HiggsARKVCache>(ar_, initial_cache_steps);
+        replace_kv_cache(initial_cache_steps, false);
         reference_kv_ready_ = false;
     }
     const bool reference_kv_cache_hit =
@@ -458,19 +491,18 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     while (!state.generation_done && result.delayed_frames < request.options.max_tokens) {
         if (ar_kv_cache_->valid_steps() >= ar_kv_cache_->cache_steps()) {
             decode_timing_total.add(decode_graph_->timing());
-            const auto kv_state = ar_kv_cache_->export_state();
             const int64_t grown_cache_steps =
                 std::min(max_cache_steps,
                          std::max(ar_kv_cache_->cache_steps() * 2, ar_kv_cache_->valid_steps() + 1));
             if (grown_cache_steps <= ar_kv_cache_->cache_steps()) {
                 throw std::runtime_error("Higgs TTS AR cache cannot grow");
             }
-            decode_graph_.reset();
-            ar_kv_cache_ = std::make_unique<HiggsARKVCache>(ar_, grown_cache_steps);
-            ar_kv_cache_->import_state(kv_state);
+            replace_kv_cache(grown_cache_steps, true);
             engine::debug::trace_log_scalar("higgs_audio_tts.generator.kv_cache_grown_steps", grown_cache_steps);
-            decode_graph_ = std::make_unique<HiggsARDecodeGraph>(
-                ar_, ar_kv_cache_->cache_steps(), *ar_kv_cache_, ar_decode_graph_arena_bytes_);
+            if (decode_graph_ == nullptr) {
+                decode_graph_ = std::make_unique<HiggsARDecodeGraph>(
+                    ar_, ar_kv_cache_->cache_steps(), *ar_kv_cache_, ar_decode_graph_arena_bytes_);
+            }
             decode_graph_->begin_decode_run();
         }
         HiggsARDecodeInput input;

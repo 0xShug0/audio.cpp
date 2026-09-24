@@ -49,8 +49,8 @@
       {
         "name": "lyrics",
         "type": "string",
-        "description": "Lyrics text. If omitted, the CLI text input is used.",
-        "required": true
+        "description": "Lyrics text. Leave empty for instrumental generation; if omitted, the CLI text input is used.",
+        "required": false
       },
       {
         "name": "cot",
@@ -65,6 +65,18 @@
         "default": "full"
       },
       {
+        "name": "stop_after",
+        "type": "enum",
+        "values": [
+          "abc",
+          "semantic",
+          "audio"
+        ],
+        "description": "Last stage to run. abc writes the generated score only; semantic also writes the semantic token export; audio renders the full song.",
+        "required": false,
+        "default": "audio"
+      },
+      {
         "name": "abc",
         "type": "string",
         "description": "External ABC score text for melody/full routes.",
@@ -77,10 +89,29 @@
         "required": false
       },
       {
+        "name": "semantic_prefix",
+        "type": "string",
+        "description": "JSON array of semantic codec indices to force as the start of the music stream.",
+        "required": false
+      },
+      {
+        "name": "semantic_prefix_file",
+        "type": "string",
+        "description": "Path to a JSON array of semantic codec indices to force as the start of the music stream.",
+        "required": false
+      },
+      {
         "name": "nar_noise_file",
         "type": "string",
         "description": "Path to a raw float32 noise file for NAR generation, shaped [frames,64].",
         "required": false
+      },
+      {
+        "name": "export_semantic",
+        "type": "bool",
+        "description": "Attach the semantic token stream as a semantic artifact (JSON array of codec indices); default false.",
+        "required": false,
+        "default": false
       },
       {
         "name": "guidance_scale",
@@ -211,15 +242,28 @@
     ],
     "session": [
       {
-        "name": "lora",
+        "name": "ar_lora",
         "type": "string",
         "description": "Unfused AR LoRA safetensors file. Absolute path or relative to the model root. Requires session reload.",
         "required": false
       },
       {
-        "name": "lora_scale",
+        "name": "ar_lora_scale",
         "type": "float",
         "description": "AR LoRA delta scale; zero disables the adapter. Requires session reload.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "nar_lora",
+        "type": "string",
+        "description": "Unfused NAR adapter safetensors file. Absolute path or relative to the model root. Requires session reload.",
+        "required": false
+      },
+      {
+        "name": "nar_lora_scale",
+        "type": "float",
+        "description": "NAR LoRA delta scale; full vae2llm/llm2vae replacements are unscaled. Zero disables the entire adapter. Requires session reload.",
         "required": false,
         "default": 1.0
       },

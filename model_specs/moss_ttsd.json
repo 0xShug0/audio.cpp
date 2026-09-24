@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "family": "moss_ttsd",
+  "display_name": "MOSS-TTSD",
+  "description": "8B delay-pattern dialogue TTS: speaker-tagged conversation in one take, with per-speaker zero-shot voice cloning. 24 kHz, 16 codebooks.",
+  "category": "community",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "capabilities": {
+    "tts": [
+      "speaker_reference",
+      "multi_speaker",
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference",
+      "multi_speaker"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "audio_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "audio_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "audio_tokenizer": "audio_tokenizer"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "audio_tokenizer:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors.index.json",
+        "audio_tokenizer_weights": "audio_tokenizer:model.safetensors.index.json"
+      }
+    }
+  ],
+  "options": {
+    "request": [
+      {
+        "name": "voice_samples",
+        "type": "string",
+        "required": false,
+        "description": "Per-speaker reference WAV paths, comma separated and positional: the first is [S1], the second [S2]. Leave an entry empty to let that speaker be invented rather than cloned. Cannot be combined with voice_ref."
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "required": false,
+        "description": "What the reference recordings say, speaker-tagged. Prepended to the dialogue so the continuation carries on from words it has already spoken."
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "required": false,
+        "description": "Full language name; the model does not understand codes like 'en'."
+      },
+      {
+        "name": "instruct",
+        "type": "string",
+        "required": false,
+        "description": "Free-text direction for the delivery."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "required": false,
+        "min": 0,
+        "description": "Reproduces a take exactly."
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "required": false,
+        "min": 0.0,
+        "default": 1.5,
+        "description": "Audio sampling temperature."
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "required": false,
+        "min": 0.0,
+        "default": 0.6,
+        "description": "Audio nucleus sampling cutoff."
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "required": false,
+        "min": 0,
+        "default": 50,
+        "description": "Audio top-k."
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "required": false,
+        "min": 0.0,
+        "default": 1.1,
+        "description": "Audio repetition penalty."
+      },
+      {
+        "name": "max_frames",
+        "type": "int",
+        "required": false,
+        "min": 0,
+        "description": "Ceiling on generated codec frames at 12.5/s; 0 derives one from the dialogue length."
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native",
+        "description": "Backbone and head weight storage; default native, which keeps a GGUF package's own type. Forcing bf16 dequantises a quantised package and costs the VRAM the quantisation was meant to save. f16 is rejected: this backbone produces NaN in it."
+      }
+    ],
+    "load": []
+  },
+  "ui": {
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/moss_ttsd.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ],
+    "recommended_package": "moss_ttsd_q8_0_codec_f16"
+  },
+  "packages": [
+    {
+      "id": "moss_ttsd_q8_0_codec_f16",
+      "display_name": "MOSS-TTSD Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTSD-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "christopherthompson81/MOSS-TTSD-GGUF"
+      },
+      "files": [
+        "moss_ttsd_q8_0_codec_f16.gguf"
+      ]
+    },
+    {
+      "id": "moss_ttsd_q4_k_codec_f16",
+      "display_name": "MOSS-TTSD Q4_K GGUF (f16 heads)",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MOSS-TTSD-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "christopherthompson81/MOSS-TTSD-GGUF"
+      },
+      "files": [
+        "moss_ttsd_q4_k_codec_f16.gguf"
+      ]
+    },
+    {
+      "id": "moss_ttsd_bf16_codec_f16",
+      "display_name": "MOSS-TTSD BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-TTSD-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "christopherthompson81/MOSS-TTSD-GGUF"
+      },
+      "files": [
+        "moss_ttsd_bf16_codec_f16.gguf"
+      ]
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "christopherthompson81/MOSS-TTS-v1.5-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "dependencies": []
+}

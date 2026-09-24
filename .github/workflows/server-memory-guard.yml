@@ -50,6 +50,7 @@ jobs:
         run: |
           cmake -S . -B build `
             -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_CXX_FLAGS="/utf-8 /EHsc" `
             -DAUDIOCPP_VERSION=ci `
             -DENGINE_BUILD_TESTS=ON `
             -DENGINE_BUILD_EXTENDED_TESTS=ON `

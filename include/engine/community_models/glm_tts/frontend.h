@@ -19,10 +19,6 @@ struct GlmTTSFbankFeatures {
     int64_t dims = 80;
 };
 
-std::vector<float> glm_tts_audio_mono_resampled(
-    const runtime::AudioBuffer & audio,
-    int sample_rate);
-
 GlmTTSMelFeatures compute_glm_tts_prompt_mel(
     const runtime::AudioBuffer & audio);
 

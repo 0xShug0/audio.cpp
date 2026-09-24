@@ -4,9 +4,15 @@
 #include "engine/framework/modules/linear_module.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace engine::modules {
+
+enum class T5BaseFeedForwardKind {
+    Relu,
+    GatedGeluTanh,
+};
 
 struct T5BaseEncoderConfig {
     int64_t hidden_size = 0;
@@ -18,6 +24,8 @@ struct T5BaseEncoderConfig {
     int64_t relative_attention_num_buckets = 32;
     int64_t relative_attention_max_distance = 128;
     float rms_norm_eps = 1.0e-6F;
+    T5BaseFeedForwardKind feed_forward_kind = T5BaseFeedForwardKind::Relu;
+    bool shared_relative_position_bias = true;
 };
 
 struct T5BaseEncoderLayerWeights {
@@ -29,6 +37,8 @@ struct T5BaseEncoderLayerWeights {
     LinearWeights o_proj;
     LinearWeights wi_proj;
     LinearWeights wo_proj;
+    LinearWeights gate_proj;
+    std::optional<core::TensorValue> relative_attention_bias;
 };
 
 struct T5BaseEncoderWeights {
@@ -57,7 +67,6 @@ public:
         const core::TensorValue & relative_position_buckets,
         const core::TensorValue & additive_attention_mask,
         const T5BaseEncoderWeights & weights) const;
-
 private:
     T5BaseEncoderConfig config_;
 };

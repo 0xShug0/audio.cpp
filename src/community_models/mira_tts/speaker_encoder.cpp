@@ -2,6 +2,7 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/mel_spectrogram_frontend.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -455,26 +456,24 @@ std::vector<float> prepare_reference(const runtime::AudioBuffer & audio) {
     return fixed;
 }
 
-std::vector<float> extract_mel(const runtime::AudioBuffer & audio, size_t threads) {
-    const auto waveform = prepare_reference(audio);
-    const engine::audio::STFTConfig stft{
-        1024, 320, 640, true,
-        engine::audio::STFTPadMode::Reflect,
-        // torch.hann_window defaults to periodic=true in upstream MiraTTS.
-        engine::audio::STFTFamily::Kokoro};
-    const auto & window = engine::audio::get_cached_stft_window(stft);
-    const auto magnitude = engine::audio::STFT().compute_magnitude(
-        waveform, window, 1, kReferenceSamples, stft, threads);
-    const int64_t frames = magnitude.shape.at(2);
-    auto mel = engine::audio::MelFilterbank().compute(
-        magnitude.values, 1, 513, frames,
-        engine::audio::MelFilterbankConfig{
-            16000, 1024, 128, 10.0F, 8000.0F, true});
-    // AudioTensor is [B, mel, frames], which is already the graph's BCT layout.
-    return std::move(mel.values);
-}
-
 }  // namespace
+
+std::vector<float> compute_mira_reference_mel(const runtime::AudioBuffer & audio, size_t threads) {
+    const auto waveform = prepare_reference(audio);
+    engine::audio::MelSpectrogramFrontendConfig config;
+    config.sample_rate = 16000;
+    config.n_fft = 1024;
+    config.hop_length = 320;
+    config.win_length = 640;
+    config.n_mels = 128;
+    config.mel_fmin = 10.0f;
+    config.mel_fmax = 8000.0f;
+    config.stft_center = true;
+    config.waveform_padding = engine::audio::MelWaveformPadding::None;
+    config.filterbank_projection = engine::audio::MelFilterbankProjection::DenseLongDouble;
+    config.value_transform = engine::audio::MelValueTransform::None;
+    return get_cached_mel_spectrogram_frontend(config)->extract_mono(waveform, threads).values;
+}
 
 struct MiraSpeakerEncoder::Impl {
     Impl(
@@ -523,7 +522,7 @@ struct MiraSpeakerEncoder::Impl {
     }
 
     std::vector<int32_t> encode(const runtime::AudioBuffer & audio) {
-        auto mel = extract_mel(audio, static_cast<size_t>(
+        auto mel = compute_mira_reference_mel(audio, static_cast<size_t>(
             std::max(1, execution.config().threads)));
         if (mel.size() % 128 != 0) {
             throw std::runtime_error("MiraTTS mel feature shape mismatch");

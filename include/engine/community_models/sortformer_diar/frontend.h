@@ -8,6 +8,8 @@
 
 namespace engine::community_models::sortformer_diar {
 
+audio::NemoMelFrontend make_sortformer_v2_frontend(const SortformerV2Assets & assets);
+
 struct SortformerV2FeatureBatch {
     int64_t frames = 0;
     int64_t valid_frames = 0;

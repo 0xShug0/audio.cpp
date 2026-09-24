@@ -30,7 +30,7 @@
     "theme.light": "浅色",
     "workflow.tts": "文本转语音",
     "workflow.asr": "ASR / 转录",
-    "workflow.music": "音乐生成",
+    "workflow.music": "音乐 / 视频生成",
     "workflow.vc": "语音转换",
     "workflow.sep": "音源分离",
     "workflow.analysis": "音频分析",

@@ -6,11 +6,14 @@
 #include <array>
 #include <vector>
 #include <map>
+#include <atomic>
+#include <chrono>
 #include <thread>
 #include <mutex>
 #include <future>
 #include <queue>
 #include <condition_variable>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -34,6 +37,10 @@
 
 std::mutex lock;
 std::vector<std::pair<std::string, std::string>> shader_fnames;
+// Set when a shader fails to compile or yields no SPIR-V, so the build stops at
+// generation rather than at a link error that points nowhere useful. Written
+// from the compile threads, so it has to be atomic.
+std::atomic<bool> generation_failed{false};
 std::locale c_locale("C");
 
 std::string GLSLC = "glslc";
@@ -78,7 +85,46 @@ enum MatMulIdType {
 
 namespace {
 
-void execute_command(std::vector<std::string>& command, std::string& stdout_str, std::string& stderr_str) {
+// ⚠ ONLY A RESOURCE SHORTAGE IS WORTH RETRYING. "The compiler could not be started" covers two
+// unrelated situations: the machine is momentarily out of memory, file descriptors or process
+// slots, which clears on its own; and the compiler is missing or the invocation is malformed,
+// which never will. Retrying the second wastes five attempts and four concurrency halvings before
+// reporting a failure that was knowable at once -- and on Windows a missing glslc lands here,
+// because CreateProcess reports it to the caller rather than to a child that has already forked.
+struct spawn_resource_error : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+#ifdef _WIN32
+bool is_resource_exhaustion(DWORD error_code) {
+    return error_code == ERROR_NOT_ENOUGH_MEMORY || error_code == ERROR_OUTOFMEMORY ||
+           error_code == ERROR_NO_SYSTEM_RESOURCES || error_code == ERROR_TOO_MANY_OPEN_FILES;
+}
+#else
+bool is_resource_exhaustion(int error_code) {
+    return error_code == ENOMEM || error_code == EAGAIN ||
+           error_code == EMFILE || error_code == ENFILE;
+}
+#endif
+
+// Raises the retryable type for a resource shortage and the plain one otherwise, so the caller can
+// tell them apart by catch clause rather than by parsing a message. Reads the platform's own error
+// state, which every call site sets immediately before calling.
+[[noreturn]] void throw_spawn_failure(const char * what) {
+#ifdef _WIN32
+    const DWORD error_code = GetLastError();
+    const std::string detail = std::string(what) + ": win32 error " + std::to_string(error_code);
+#else
+    const int error_code = errno;
+    const std::string detail = std::string(what) + ": " + strerror(error_code);
+#endif
+    if (is_resource_exhaustion(error_code)) {
+        throw spawn_resource_error(detail);
+    }
+    throw std::runtime_error(detail);
+}
+
+int execute_command(std::vector<std::string>& command, std::string& stdout_str, std::string& stderr_str) {
 #ifdef _WIN32
     HANDLE stdout_read, stdout_write;
     HANDLE stderr_read, stderr_write;
@@ -86,12 +132,12 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
 
     if (!CreatePipe(&stdout_read, &stdout_write, &sa, 0) ||
         !SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0)) {
-        throw std::runtime_error("Failed to create stdout pipe");
+        throw_spawn_failure("failed to create stdout pipe");
     }
 
     if (!CreatePipe(&stderr_read, &stderr_write, &sa, 0) ||
         !SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT, 0)) {
-        throw std::runtime_error("Failed to create stderr pipe");
+        throw_spawn_failure("failed to create stderr pipe");
     }
 
     PROCESS_INFORMATION pi;
@@ -107,7 +153,7 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
     }
 
     if (!CreateProcessA(NULL, cmd.data(), NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-        throw std::runtime_error("Failed to create process");
+        throw_spawn_failure("failed to create process");
     }
 
     CloseHandle(stdout_write);
@@ -127,20 +173,40 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
     CloseHandle(stdout_read);
     CloseHandle(stderr_read);
     WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    return (int)exit_code;
 #else
     int stdout_pipe[2];
     int stderr_pipe[2];
 
-    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
-        throw std::runtime_error("Failed to create pipes");
+    // ⚠ CLOSE WHAT WE OPENED BEFORE THROWING. These failures are retried by the caller, so a
+    // descriptor leaked here is not lost once -- it is lost again on every attempt, and leaking
+    // under EMFILE turns a transient shortage into the permanent one it was mistaken for.
+    if (pipe(stdout_pipe) != 0) {
+        throw_spawn_failure("failed to create stdout pipe");
+    }
+    if (pipe(stderr_pipe) != 0) {
+        const int pipe_errno = errno;
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        errno = pipe_errno;
+        throw_spawn_failure("failed to create stderr pipe");
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        std::cerr << strerror(errno) << "\n";
-        throw std::runtime_error("Failed to fork process");
+        // The reason travels in the exception rather than to stderr, so the caller's retry line
+        // says what actually went wrong instead of pairing a bare errno string with a generic one.
+        const int fork_errno = errno;
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
+        errno = fork_errno;
+        throw_spawn_failure("failed to fork process");
     }
 
     std::vector<char*> argv;
@@ -175,7 +241,9 @@ void execute_command(std::vector<std::string>& command, std::string& stdout_str,
 
         close(stdout_pipe[0]);
         close(stderr_pipe[0]);
-        waitpid(pid, nullptr, 0);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
 #endif
 }
@@ -314,14 +382,46 @@ void decrement_compile_count(uint32_t * count) {
 
 using compile_count_guard = std::unique_ptr<uint32_t, decltype(&decrement_compile_count)>;
 
+// The cap on concurrent compiles. Starts where it always did and only ever comes DOWN, when the
+// machine tells us it cannot start another process -- see note_spawn_pressure(). Guarded by
+// compile_count_mutex, like compile_count itself.
+static uint32_t compile_slot_cap = 0;
+
 compile_count_guard acquire_compile_slot() {
     // wait until fewer than N compiles are in progress.
     // 16 is an arbitrary limit, the goal is to avoid "failed to create pipe" errors.
-    uint32_t N = std::max(1u, std::min(16u, std::thread::hardware_concurrency()));
     std::unique_lock<std::mutex> guard(compile_count_mutex);
-    compile_count_cond.wait(guard, [N] { return compile_count < N; });
+    if (compile_slot_cap == 0) {
+        compile_slot_cap = std::max(1u, std::min(16u, std::thread::hardware_concurrency()));
+    }
+    compile_count_cond.wait(guard, [] { return compile_count < compile_slot_cap; });
     compile_count++;
     return compile_count_guard(&compile_count, &decrement_compile_count);
+}
+
+// ⚠ BACK OFF THE WHOLE GENERATOR, NOT JUST THIS SHADER. A failure to START a process is a
+// statement about the machine, so retrying that one shader while the others keep piling on is
+// how a transient shortage becomes a build failure -- which is what CI showed: one shader ran
+// out of memory and then every remaining one did, in sequence.
+//
+// Halving holds the useful property that repeated pressure converges on serial compilation
+// rather than oscillating, and the cap never rises again: within a single run, evidence that
+// the machine could not take the load does not expire.
+void note_spawn_pressure() {
+    std::lock_guard<std::mutex> guard(compile_count_mutex);
+    if (compile_slot_cap > 1) {
+        compile_slot_cap = std::max(1u, compile_slot_cap / 2);
+        std::cerr << ("shader compile concurrency reduced to " + std::to_string(compile_slot_cap) +
+                      " after a failure to start the compiler\n") << std::flush;
+    }
+}
+
+// A shader is usable only if its SPIR-V exists and is non-empty. A zero-byte
+// file is what an interrupted or silently-failed compile leaves behind.
+static bool spv_is_usable(const std::string & path) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    return !ec && size > 0;
 }
 
 void string_to_spv_func(std::string name, std::string in_path, std::string out_path, std::map<std::string, std::string> defines, bool coopmat, bool dep_file, compile_count_guard slot) {
@@ -365,19 +465,95 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
 
     std::string stdout_str, stderr_str;
     try {
-        // std::cout << "Executing command: ";
-        // for (const auto& part : cmd) {
-        //     std::cout << part << " ";
-        // }
-        // std::cout << std::endl;
+        // A compile can report success and still leave no SPIR-V behind. That
+        // has been observed in CI, and because the generated header declares
+        // every shader unconditionally, the gap only surfaces at link as an
+        // undefined reference to a generated symbol, long after the cause is
+        // visible. Judge by the exit code first, then by the artefact, and
+        // retry an empty result before giving up.
+        constexpr int max_attempts = 5;
+        int exit_code = 0;
+        bool produced = false;
+        // Set when the compiler could not be STARTED, as opposed to started and
+        // failed. Empty once an attempt manages to run the process.
+        std::string spawn_error;
 
-        execute_command(cmd, stdout_str, stderr_str);
-        if (!stderr_str.empty()) {
-            std::cerr << "cannot compile " << name << "\n\n";
+        for (int attempt = 1; attempt <= max_attempts && !produced; ++attempt) {
+            stdout_str.clear();
+            stderr_str.clear();
+            spawn_error.clear();
+
+            // Drop any earlier artefact first, so a compile that reports
+            // success without writing cannot be credited to a stale file.
+            std::error_code ec;
+            std::filesystem::remove(out_path, ec);
+
+            try {
+                exit_code = execute_command(cmd, stdout_str, stderr_str);
+            } catch (const spawn_resource_error & spawn_failure) {
+                // ⚠ THE PROCESS NEVER STARTED, AND THAT IS A RESOURCE STATE, NOT A BAD SHADER.
+                // fork() returns ENOMEM ("Cannot allocate memory") when the machine is under
+                // memory pressure, and this generator runs as one ninja target among many: the
+                // C++ compiles of this very build are what exhausts the memory. Treating it as
+                // a permanent failure fails the whole build over a condition that clears itself
+                // as soon as a neighbouring translation unit finishes. Observed in CI on the
+                // Nix (vulkan) job, where every remaining shader died this way in sequence.
+                spawn_error = spawn_failure.what();
+                note_spawn_pressure();
+            }
+
+            if (spawn_error.empty()) {
+                if (exit_code != 0 || !stderr_str.empty()) {
+                    break;
+                }
+                produced = spv_is_usable(out_path);
+            }
+
+            if (!produced && attempt < max_attempts) {
+                // Composed first and written once: several compile threads report at the same
+                // moment, and a chain of << from each interleaves into unreadable lines.
+                std::cerr << ("shader " + name + " " +
+                              (spawn_error.empty() ? std::string("produced no SPIR-V") : spawn_error) +
+                              "; retrying (" + std::to_string(attempt + 1) + "/" +
+                              std::to_string(max_attempts) + ")\n") << std::flush;
+                // ⚠ BACKOFF GROWS, unlike the flat 100ms an empty artefact needed. Memory
+                // pressure lasts as long as the neighbouring compile does, so the wait has to
+                // be able to outlast one: 250ms, 500ms, 1s, 2s. Every slot that hit the same
+                // wall backs off with it, which is what frees the machine to make progress.
+                // \u26a0 GIVE THE SLOT BACK BEFORE WAITING. The permit is acquired once per shader and
+                // was held across the whole retry sequence, so a lowered cap governed only shaders
+                // that had not started yet: the tasks already running -- the very ones that just
+                // exhausted the machine -- kept their permits and retried in lockstep, straight into
+                // the same wall. Releasing here makes the reduced cap apply to the retries too, and
+                // re-acquiring after the wait means a task resumes only when the generator is back
+                // under its limit.
+                slot.reset();
+                std::this_thread::sleep_for(std::chrono::milliseconds(250 << (attempt - 1)));
+                slot = acquire_compile_slot();
+            }
+        }
+
+        if (!spawn_error.empty()) {
+            std::cerr << ("cannot compile " + name + ": " + spawn_error + " after " +
+                          std::to_string(max_attempts) + " attempts\n") << std::flush;
+            generation_failed = true;
+            return;
+        }
+
+        if (exit_code != 0 || !stderr_str.empty()) {
+            std::cerr << "cannot compile " << name << " (exit code " << exit_code << ")\n\n";
             for (const auto& part : cmd) {
                 std::cerr << part << " ";
             }
             std::cerr << "\n\n" << stderr_str << std::endl;
+            generation_failed = true;
+            return;
+        }
+
+        if (!produced) {
+            std::cerr << "cannot compile " << name << ": no SPIR-V produced after "
+                      << max_attempts << " attempts (" << out_path << ")" << std::endl;
+            generation_failed = true;
             return;
         }
 
@@ -397,6 +573,7 @@ void string_to_spv_func(std::string name, std::string in_path, std::string out_p
         shader_fnames.push_back(std::make_pair(name, out_path));
     } catch (const std::exception& e) {
         std::cerr << "Error executing command for " << name << ": " << e.what() << std::endl;
+        generation_failed = true;
     }
 }
 
@@ -1050,6 +1227,12 @@ void write_output_files() {
         if (input_filepath != "") {
             std::string data = read_binary_file(path);
             if (data.empty()) {
+                // The declaration above is already written, so skipping the
+                // definition leaves a symbol declared and never defined, which
+                // surfaces much later as an undefined reference at link.
+                std::cerr << "ERROR: shader '" << name << "' produced no SPIR-V ("
+                          << path << ")\n";
+                generation_failed = true;
                 continue;
             }
 
@@ -1194,7 +1377,22 @@ int main(int argc, char** argv) {
 
     process_shaders();
 
+    // Stop before writing anything. A partial header and source carry fresh
+    // timestamps, so a second build would find them newer than their inputs
+    // and link the gap rather than regenerate it.
+    if (generation_failed) {
+        std::cerr << "shader generation failed; see errors above" << std::endl;
+        return EXIT_FAILURE;
+    }
+
     write_output_files();
+
+    // The embed step has its own way to fail: a shader that compiled but whose
+    // artefact is unreadable by the time it is read back.
+    if (generation_failed) {
+        std::cerr << "shader generation failed; see errors above" << std::endl;
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }

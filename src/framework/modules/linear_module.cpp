@@ -91,6 +91,9 @@ core::TensorValue LinearModule::build(
     if (config_.precision != GGML_PREC_DEFAULT) {
         ggml_mul_mat_set_prec(projected_raw, config_.precision);
     }
+    if (config_.cuda_nvfp4_f16_activation_lowering) {
+        ggml_mul_mat_set_lowering(projected_raw, GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION);
+    }
     core::TensorValue projected = core::wrap_tensor(
         projected_raw,
         core::TensorShape::from_dims({matrix_input_shape.at(0), config_.out_features}),

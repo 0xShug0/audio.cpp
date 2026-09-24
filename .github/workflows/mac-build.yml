@@ -31,6 +31,9 @@ jobs:
           python3 tools/check_loader_catalog_sync.py --self-test
           python3 tools/check_loader_catalog_sync.py
 
+      - name: Check build helper scripts
+        run: ./scripts/check_build_scripts.sh
+
       - name: Configure
         run: |
           cmake -S . -B "$BUILD_DIR" \

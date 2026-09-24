@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/models/niagara_asr/assets.h"
-#include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/mel_spectrogram_frontend.h"
 #include "engine/framework/runtime/session.h"
 
 #include <memory>
@@ -23,8 +23,7 @@ public:
 
 private:
     std::shared_ptr<const NiagaraAsrAssets> assets_;
-    std::vector<float> window_;
-    engine::audio::AudioTensor mel_filterbank_;
+    std::shared_ptr<const engine::audio::MelSpectrogramFrontend> frontend_;
 };
 
 }  // namespace engine::models::niagara_asr

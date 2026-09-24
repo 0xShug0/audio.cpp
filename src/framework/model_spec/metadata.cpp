@@ -240,7 +240,8 @@ runtime::CapabilitySet capabilities_from_spec(const json::Value & spec) {
     out.supports_style_condition =
         has_capability(*capabilities, "style_control") || has_capability(*capabilities, "emotion_control");
     out.supports_timestamps =
-        has_capability(*capabilities, "word_timestamps") || has_capability(*capabilities, "segments");
+        has_capability(*capabilities, "word_timestamps") || has_capability(*capabilities, "segments") ||
+        has_capability(*capabilities, "speech_segments");
     return out;
 }
 

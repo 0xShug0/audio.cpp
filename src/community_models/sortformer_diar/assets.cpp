@@ -1,4 +1,5 @@
 #include "engine/community_models/sortformer_diar/assets.h"
+#include "engine/community_models/sortformer_diar/frontend.h"
 
 #include "engine/framework/model_spec/package.h"
 
@@ -108,6 +109,7 @@ std::shared_ptr<const SortformerV2Assets> load_sortformer_v2_assets(
             "preprocessor.fb",
             {assets->feature_config.num_mel_bins, expected_bins});
     }
+    assets->frontend = std::make_shared<audio::NemoMelFrontend>(make_sortformer_v2_frontend(*assets));
     return assets;
 }
 

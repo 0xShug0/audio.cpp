@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/core/backend.h"
 
 #include <filesystem>
@@ -41,5 +42,9 @@ int parse_int_arg(int argc, char ** argv, const std::string & name, int fallback
 std::optional<float> parse_optional_float_arg(int argc, char ** argv, const std::string & name);
 std::optional<std::filesystem::path> optional_path_arg(int argc, char ** argv, const std::string & name);
 engine::core::BackendType parse_backend(const std::string & value);
+engine::audio::WavSampleFormat parse_wav_sample_format(const std::string & value);
+// WAV writer settings for --out and --out-dir audio. With no --out-format this is the default
+// 16-bit hard-clipped output every route has always written.
+engine::audio::WavWriteOptions wav_write_options_from_cli(int argc, char ** argv);
 
 }  // namespace minitts::cli

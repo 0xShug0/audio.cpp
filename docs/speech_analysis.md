@@ -4,8 +4,10 @@
 |---|---|---|---|
 | Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
+| PulseVAD | `pulsevad` | `vad` | [PulseVAD](models/pulsevad.md) |
 | Sortformer Diarization | `sortformer_diar` | `diar` | [Sortformer Diarization](#sortformer-diarization) |
 | Sortformer Diarization v2.1 | `sortformer_diar_v2` | `diar` | [Sortformer Diarization v2.1](#sortformer-diarization-v21) |
+| Nemotron 3 Diarization | `nemotron_3_diar` | `diar` | [Model guide](models/nemotron_3_diar.md) |
 | MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
 | Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3.md#qwen3-forced-aligner) |
 

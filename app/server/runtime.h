@@ -81,6 +81,8 @@ private:
         // contract omits it would reject the whole request over an option
         // nobody set. Resolved once at registration for the same cost reason.
         bool accepts_language = true;
+        bool accepts_speed = true;
+        bool accepts_speaking_rate = true;
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;
@@ -184,6 +186,9 @@ private:
     HttpResponse handle_transcription_json(const std::string & body_text, bool detail = false);
     HttpResponse handle_transcription_multipart(
         const std::string & body_text, const std::string & boundary, bool detail = false);
+    HttpResponse handle_batch_transcriptions(const HttpRequest & request);
+    HttpResponse handle_batch_transcriptions_multipart(
+        const std::string & body_text, const std::string & boundary);
     HttpResponse run_transcription(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,

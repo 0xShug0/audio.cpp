@@ -108,7 +108,8 @@ TransformerKVCache::TransformerKVCache(
     if (keys.size() != values.size()) {
         throw std::runtime_error("TransformerKVCache key/value layer counts must match");
     }
-    const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
+    const size_t cache_elems = options_.lazy_import_scratch
+        ? 0 : static_cast<size_t>(cache_steps_ * step_elems_);
     layers_.reserve(keys.size());
     for (size_t layer = 0; layer < keys.size(); ++layer) {
         validate_cache_tensor(keys[layer], options_);
@@ -159,6 +160,9 @@ void TransformerKVCache::import_state(const TransformerKVState & state) {
             throw std::runtime_error("TransformerKVCache source tensors do not match valid_steps * step_elems");
         }
         if (cache_steps_ > 0) {
+            const size_t cache_elems = static_cast<size_t>(cache_steps_ * step_elems_);
+            cache.import_key_scratch.resize(cache_elems);
+            cache.import_value_scratch.resize(cache_elems);
             std::fill(cache.import_key_scratch.begin(), cache.import_key_scratch.end(), 0.0F);
             std::fill(cache.import_value_scratch.begin(), cache.import_value_scratch.end(), 0.0F);
             if (keep_elems > 0) {

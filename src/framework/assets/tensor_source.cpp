@@ -27,6 +27,10 @@ namespace {
 
 constexpr int64_t kParallelF32ConvertElements = 1ll << 20;
 constexpr int64_t kF32ConvertChunkElements = 1ll << 16;
+// Quantization chunks are whole ROWS, so this is a budget rounded down to a row
+// count rather than an exact split. A row of a large tensor is a few thousand
+// elements, which puts a chunk in the same size range as the conversions above.
+constexpr int64_t kQuantizeChunkElements = 1ll << 20;
 
 bool tensor_type_override_matches(std::string_view name, std::string_view pattern) {
     if (pattern.empty()) {
@@ -100,7 +104,8 @@ bool raw_dtype_matches_ggml_type(std::string_view dtype, ggml_type type) {
            (normalized == "q4_k" && type == GGML_TYPE_Q4_K) ||
            (normalized == "q5_k" && type == GGML_TYPE_Q5_K) ||
            (normalized == "q6_k" && type == GGML_TYPE_Q6_K) ||
-           (normalized == "q8_0" && type == GGML_TYPE_Q8_0);
+           (normalized == "q8_0" && type == GGML_TYPE_Q8_0) ||
+           (normalized == "nvfp4" && type == GGML_TYPE_NVFP4);
 }
 
 ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
@@ -123,6 +128,7 @@ ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
     if (normalized == "q4_k") return GGML_TYPE_Q4_K;
     if (normalized == "q5_k") return GGML_TYPE_Q5_K;
     if (normalized == "q6_k") return GGML_TYPE_Q6_K;
+    if (normalized == "nvfp4") return GGML_TYPE_NVFP4;
     throw std::runtime_error("unsupported tensor dtype for GGUF: " + std::string(dtype));
 }
 
@@ -188,15 +194,45 @@ std::vector<std::byte> quantize_f32_rows(
         throw std::runtime_error("quantized tensor shape does not match F32 value count: " + std::string(name));
     }
     std::vector<std::byte> bytes(static_cast<size_t>(rows) * ggml_row_size(type, elements_per_row));
-    const size_t written = ggml_quantize_chunk(
-        type,
-        values.data(),
-        bytes.data(),
-        0,
-        rows,
-        elements_per_row,
-        nullptr);
-    if (written != bytes.size()) {
+
+    // ⚠ ROWS IN PARALLEL. ggml_quantize_chunk takes an ELEMENT offset and writes
+    // at (offset / n_per_row) * row_size, so a chunk reads and writes only its
+    // own rows and the slices never touch. This is the whole cost of a
+    // conversion -- a k-quant searches per block -- and left serial it pegged
+    // one core while the other fifteen idled: bf16, which only changes format,
+    // took 37s on an 8B model where q4_k took over seventeen minutes of CPU.
+    //
+    // ggml_quantize_init is called inside ggml_quantize_chunk and takes a
+    // critical section, so it is safe from several threads; calling it once here
+    // keeps the workers from queueing on it.
+    ggml_quantize_init(type);
+
+    // Chunked by a row count rather than by a thread count, and with no
+    // num_threads clause, so OMP_NUM_THREADS still decides how many run -- the
+    // same arrangement the f32 conversions above use. Sizing the split to the
+    // hardware instead would quietly override a caller who had limited it.
+    const int64_t rows_per_chunk = std::max<int64_t>(1, kQuantizeChunkElements / elements_per_row);
+    const int64_t chunks = (rows + rows_per_chunk - 1) / rows_per_chunk;
+
+    std::vector<size_t> written(static_cast<size_t>(chunks), 0);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(chunks > 1)
+#endif
+    for (int64_t chunk = 0; chunk < chunks; ++chunk) {
+        const int64_t first_row = chunk * rows_per_chunk;
+        const int64_t count = std::min(rows_per_chunk, rows - first_row);
+        written[static_cast<size_t>(chunk)] = ggml_quantize_chunk(
+            type,
+            values.data(),
+            bytes.data(),
+            first_row * elements_per_row,
+            count,
+            elements_per_row,
+            nullptr);
+    }
+
+    const size_t total = std::accumulate(written.begin(), written.end(), size_t{0});
+    if (total != bytes.size()) {
         throw std::runtime_error("quantized tensor byte size mismatch: " + std::string(name));
     }
     return bytes;
@@ -1405,6 +1441,9 @@ TensorStorageType parse_tensor_storage_type(std::string_view value) {
     if (normalized == "q8_0") {
         return TensorStorageType::Q8_0;
     }
+    if (normalized == "nvfp4") {
+        return TensorStorageType::NVFP4;
+    }
     throw std::runtime_error("unsupported tensor storage type: " + std::string(value));
 }
 
@@ -1440,6 +1479,8 @@ ggml_type ggml_type_for_tensor_storage(TensorStorageType storage_type) {
             return GGML_TYPE_Q6_K;
         case TensorStorageType::Q8_0:
             return GGML_TYPE_Q8_0;
+        case TensorStorageType::NVFP4:
+            return GGML_TYPE_NVFP4;
     }
     throw std::runtime_error("unknown tensor storage type");
 }
@@ -1487,6 +1528,9 @@ TensorStorageType tensor_storage_type_for_dtype(std::string_view dtype) {
     }
     if (normalized == "q8_0") {
         return TensorStorageType::Q8_0;
+    }
+    if (normalized == "nvfp4") {
+        return TensorStorageType::NVFP4;
     }
     throw std::runtime_error("unsupported native tensor dtype: " + std::string(dtype));
 }
@@ -1542,8 +1586,14 @@ std::shared_ptr<const TensorSource> make_prefixed_tensor_source(
 
 namespace {
 
+// `with_contents == false` validates the same metadata but skips copying each
+// sidecar's bytes out of the blob -- 38 MB for the Kokoro package, per call, when
+// the caller only wants the names. Validation is deliberately not skipped with it:
+// a caller that reads the names of a malformed package must fail the way a caller
+// that reads its contents does.
 std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
-    const std::filesystem::path & path) {
+    const std::filesystem::path & path,
+    bool with_contents) {
     ggml_context * tensor_context = nullptr;
     gguf_context * gguf = gguf_init_from_file(
         path.string().c_str(), gguf_init_params{true, &tensor_context});
@@ -1605,10 +1655,12 @@ std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
                 }
                 std::string content;
                 const size_t length = static_cast<size_t>(offsets[i + 1] - offsets[i]);
-                if (length > 0) content.assign(data + offsets[i], length);
+                if (with_contents && length > 0) content.assign(data + offsets[i], length);
                 result.emplace_back(normalized.generic_string(), std::move(content));
             } else {
-                result.emplace_back(normalized.generic_string(), gguf_get_arr_str(gguf, contents_key, i));
+                result.emplace_back(
+                    normalized.generic_string(),
+                    with_contents ? std::string(gguf_get_arr_str(gguf, contents_key, i)) : std::string());
             }
         }
     } catch (...) {
@@ -1624,7 +1676,15 @@ std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
 }  // namespace
 
 bool gguf_has_embedded_sidecars(const std::filesystem::path & path) {
-    return !read_gguf_embedded_sidecars(path).empty();
+    return !read_gguf_embedded_sidecars(path, false).empty();
+}
+
+std::vector<std::string> gguf_embedded_sidecar_names(const std::filesystem::path & path) {
+    const auto sidecars = read_gguf_embedded_sidecars(path, false);
+    std::vector<std::string> names;
+    names.reserve(sidecars.size());
+    for (const auto & sidecar : sidecars) names.push_back(sidecar.first);
+    return names;
 }
 
 std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::filesystem::path & path) {
@@ -1674,7 +1734,7 @@ std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::fi
 
 std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & path) {
     const auto canonical = std::filesystem::weakly_canonical(path);
-    const auto sidecars = read_gguf_embedded_sidecars(canonical);
+    const auto sidecars = read_gguf_embedded_sidecars(canonical, true);
     if (sidecars.empty()) {
         throw std::runtime_error("GGUF does not contain embedded model sidecars: " + canonical.string());
     }

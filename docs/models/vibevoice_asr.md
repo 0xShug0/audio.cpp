@@ -6,6 +6,7 @@ audio.cpp supports two VibeVoice ASR families:
 |---|---|---|---|
 | VibeVoice ASR | `vibevoice_asr` | offline | `vibevoice_asr_q8_0` |
 | VibeVoice ASR Streaming 7B | `vibevoice_asr_streaming` | offline, streaming | `vibevoice_asr_streaming_7b_q8_0` |
+| VibeVoice ASR Streaming 1.5B | `vibevoice_asr_streaming` | offline, streaming | `vibevoice_asr_streaming_1_5b_q8_0` |
 
 ## VibeVoice ASR
 
@@ -88,7 +89,7 @@ audiocpp_gguf.exe --input models\VibeVoice-ASR\model.safetensors.index.json --ou
 Configuration and tokenizer assets are embedded by default, so the output
 directory may contain only `model.gguf`.
 
-Options:
+### Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
@@ -107,7 +108,12 @@ Options:
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 | `--segments-out` | JSON path | not set | Write structured ASR segments when produced. |
 | `--turns-out` | JSON path | not set | Write speaker turns when produced. |
-| `--session-option vibevoice_asr.vad_model_path=<path>` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `vibevoice_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
 
 ## VibeVoice ASR Streaming 7B
 
@@ -205,12 +211,11 @@ ffmpeg -hide_banner -loglevel error -i input.wav -f s16le -ac 1 -ar 16000 - \
       'http://127.0.0.1:8080/v1/audio/transcriptions/live?model=vibevoice-streaming-7b&sample_rate=16000&channels=1&sample_format=s16le'
 ```
 
-Common request options:
+### Common Options (use directly)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--language` | language label | `auto` | ASR language label. |
-| `--request-option context=<text>` | text | empty string | Extra context or hotwords injected into the streaming prompt. |
 | `--max-tokens` | integer | `256` | Maximum generated transcript tokens per chunk. |
 | `--temperature` | float | `0` | Sampling temperature; `0` uses deterministic decoding. |
 | `--top-p` | float | `1` | Nucleus sampling probability. |
@@ -219,7 +224,18 @@ Common request options:
 | `--repetition-penalty` | float | `1` | Generation repetition penalty. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline audio chunking mode. |
 | `--audio-chunk-seconds` | float seconds | `1200` | Offline chunk duration for fixed and VAD chunking. |
-| `--session-option vibevoice_asr_streaming.max_history_steps=<n>` | integer | `0` (uncapped) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `context` | text | empty string | Extra context or hotwords injected into the streaming prompt. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `vibevoice_asr_streaming.max_history_steps` | integer | `0` (uncapped) | Rolling window for decoder history, in steps. Refer to [Long streams](#long-streams-and-the-history-window). |
 
 ### Long streams and the history window
 
@@ -252,3 +268,86 @@ because removed context is not available. The window size also causes very
 small differences in results because the model calculates in a different
 sequence. For reproducible results, do not change the binary or the window
 size.
+
+## VibeVoice ASR Streaming 1.5B
+
+The 1.5B checkpoint is the smaller sibling of the streaming 7B and runs through
+the **same loader with no code changes**: the layer count, hidden size, and head
+counts are all read from the checkpoint's own `config.json`, and the tensor names
+are identical. It is a drop-in smaller package, not a separate family.
+
+| Field | Value |
+|---|---|
+| Family | `vibevoice_asr_streaming` |
+| Model package | `vibevoice_asr_streaming_1_5b_q8_0` |
+| Model directory | `models/VibeVoice-ASR-Streaming-1.5B-GGUF` |
+| GGUF repo | <https://huggingface.co/christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF> |
+| Upstream weights | <https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B> |
+| Task, modes, output, timestamps | As the streaming 7B above |
+
+Sizes, and word error rate on the four LibriSpeech clips in
+`assets/asr_validation/librispeech/`, greedy decode:
+
+| Package | GGUF size | WER (CUDA) | WER (CPU) |
+|---|---:|---:|---:|
+| `vibevoice_asr_streaming_7b_q4_k` | 5.86 GB | 4.35% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_bf16` | 5.64 GB | 4.35% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_q8_0` | 3.34 GB | 5.80% | 4.35% |
+| `vibevoice_asr_streaming_1_5b_q4_k` | 2.12 GB | 7.25% | 5.80% |
+
+> [!NOTE]
+> **A WER number for a quantized package is only meaningful with its backend.**
+> CPU and CUDA quantize activations differently in upstream ggml — Q4_K weights
+> meet `Q8_K` activations on CPU (one scale per 256) and `Q8_1` on CUDA (scale
+> and sum per 32), and Q8_0 weights meet `Q8_0` against `Q8_1`. The two backends
+> therefore differ slightly but deterministically on every quantized matmul.
+> BF16 quantizes no activations, which is why its two columns agree exactly.
+>
+> On these clips the whole effect is one fragile word, where CPU hears the
+> correct "cutter" and CUDA hears "country". This is expected upstream behavior,
+> not an audio.cpp defect. The 7B not flipping here is four clips, not immunity.
+
+> [!WARNING]
+> Four clips is 69 words. One substitution moves the number by 1.4 points, so
+> these separate "works and is in the right class" from "broken" and nothing
+> finer. The like-for-like pair is the two `q4_k` rows: at equal quantization the
+> 7B is ahead on both backends. Do not read the tie between 7B Q4_K and 1.5B BF16
+> as parity -- different clips happen to sum to the same total.
+
+Install:
+
+```bash
+python3 tools/model_manager_v2.py install vibevoice_asr_streaming_1_5b_q8_0
+```
+
+Offline CLI, identical to the 7B apart from the model path:
+
+```bash
+audiocpp_cli --task asr \
+  --family vibevoice_asr_streaming \
+  --model models/VibeVoice-ASR-Streaming-1.5B-GGUF/vibevoice-asr-streaming-1.5b-q8_0.gguf \
+  --backend cuda \
+  --threads 8 \
+  --audio assets/resources/sample_16k.wav \
+  --text-out transcript.txt \
+  --turns-out speaker_turns.json \
+  --metrics \
+  --log
+```
+
+Convert from safetensors:
+
+```bash
+audiocpp_gguf --input model.safetensors.index.json \
+              --output vibevoice-asr-streaming-1.5b-q8_0.gguf \
+              --type q8_0 --family vibevoice_asr_streaming --root sidecars
+```
+
+### The padded vocabulary differs, and that is fine
+
+`embed_tokens` is `(151936, 1536)` here against `(152064, 3584)` in the 7B: the
+7B's vocabulary row count is padded, the 1.5B's is not. Nothing breaks, because
+the shape is validated against the `vocab_size` in the same checkpoint's config.
+It would only matter to code that treats the 7B's padded count as a constant --
+a shared tokenizer bundle, or a logits slice sized for the 7B -- so keep that in
+mind when adding anything that spans both sizes.

@@ -51,18 +51,36 @@ struct GgmlContextDeleter {
 // The official Breeze-TTS 2 inference runs the backbone and depth decoder with
 // bf16 activations and a bf16 KV cache. Pure fp32 activations measurably drift
 // into degenerate trajectories on some prompts (mispronunciations, repetition
-// collapse), so match the reference bf16 behavior on GPU backends.
+// collapse), which is why CUDA/HIP/Vulkan match the reference bf16 behavior by
+// default. Metal needs the fused round-to-bf16 unary op to make that affordable,
+// and even with it the casts cost a visible share of the AR loop there, so on
+// Metal the reference path stays opt-in (`bf16_activations=on`).
+bool bf16_reference_enabled(Bf16ActivationMode mode, core::BackendType backend_type) {
+    switch (mode) {
+        case Bf16ActivationMode::On:
+            return true;
+        case Bf16ActivationMode::Off:
+            return false;
+        case Bf16ActivationMode::Auto:
+            break;
+    }
+    return backend_type != core::BackendType::Metal;
+}
+
+bool gpu_bf16_capable(core::BackendType backend_type) {
+    return backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
+           backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal;
+}
+
 modules::QwenDecoderActivationCastPolicy breeze_bf16_activation_policy(core::BackendType backend_type) {
     modules::QwenDecoderActivationCastPolicy policy;
-    if (backend_type != core::BackendType::Cuda && backend_type != core::BackendType::Hip &&
-        backend_type != core::BackendType::Vulkan) {
+    if (!gpu_bf16_capable(backend_type)) {
         return policy;
     }
     policy.enabled = true;
     policy.type = GGML_TYPE_BF16;
-    // CUDA/HIP/Vulkan implement the fused round-to-bf16 unary op.
-    policy.fused_round = backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan;
+    // CUDA/HIP/Vulkan/Metal all implement the fused round-to-bf16 unary op.
+    policy.fused_round = true;
     policy.after_input_norm = true;
     policy.after_qkv_projection = true;
     policy.after_qk_norm = true;
@@ -83,7 +101,8 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     const BreezeTTSConfig & config,
     core::BackendType backend_type,
     size_t graph_arena_bytes,
-    bool allow_flash_attention = true) {
+    bool allow_flash_attention = true,
+    bool bf16_reference = true) {
     modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "breeze_tts.backbone";
     out.prefill_graph_arena_bytes = graph_arena_bytes;
@@ -113,14 +132,18 @@ modules::QwenCausalDecodeRuntimeConfig backbone_config(
     }
     out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan) {
+    if (gpu_bf16_capable(backend_type)) {
         // BF16 KV cache matches the reference implementation, but flash
         // attention only accelerates bf16 cache with native bf16 MMA
-        // (sm_80+); on older parts it is ~3x slower, so only HIP uses it.
+        // (sm_80+); on older parts it is ~3x slower, so only HIP always uses it.
+        // Metal uses bf16 only on the reference bf16 path (bf16_activations=on).
         out.decoder.static_cache_type =
-            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
-        out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
+            (backend_type == core::BackendType::Hip ||
+             (backend_type == core::BackendType::Metal && bf16_reference))
+                ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+        if (bf16_reference) {
+            out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
+        }
     }
     out.decoder.logits_size = config.lm_head_size;
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
@@ -138,7 +161,8 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     const BreezeTTSConfig & config,
     core::BackendType backend_type,
     size_t graph_arena_bytes,
-    bool allow_flash_attention = true) {
+    bool allow_flash_attention = true,
+    bool bf16_reference = true) {
     modules::QwenCausalDecodeRuntimeConfig out;
     out.trace_name = "breeze_tts.depth_decoder";
     out.prefill_graph_arena_bytes = graph_arena_bytes;
@@ -167,13 +191,16 @@ modules::QwenCausalDecodeRuntimeConfig depth_config(
     }
     out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
-        backend_type == core::BackendType::Vulkan) {
-        // See backbone_config: only HIP uses a bf16 KV cache; CUDA and Vulkan
-        // keep F16.
+    if (gpu_bf16_capable(backend_type)) {
+        // See backbone_config: only HIP always uses a bf16 KV cache; Metal joins
+        // it on the reference bf16 path, CUDA and Vulkan keep F16.
         out.decoder.static_cache_type =
-            backend_type == core::BackendType::Hip ? GGML_TYPE_BF16 : GGML_TYPE_F16;
-        out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
+            (backend_type == core::BackendType::Hip ||
+             (backend_type == core::BackendType::Metal && bf16_reference))
+                ? GGML_TYPE_BF16 : GGML_TYPE_F16;
+        if (bf16_reference) {
+            out.decoder.stack.activation_cast = breeze_bf16_activation_policy(backend_type);
+        }
     }
     out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
     out.output_mode = modules::QwenCausalDecodeOutputMode::Hidden;
@@ -736,7 +763,8 @@ struct BreezeGeneratorRuntime::Impl {
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type,
-        core::AttentionPreference attention_preference = core::AttentionPreference::Auto)
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto,
+        Bf16ActivationMode bf16_activations = Bf16ActivationMode::Auto)
         : assets(std::move(assets)),
           execution(execution),
           tokenizer(this->assets),
@@ -757,8 +785,12 @@ struct BreezeGeneratorRuntime::Impl {
             execution.backend(), config.depth_head_dim, attention_preference);
         engine::debug::trace_log_scalar("breeze_tts.attention.allow_backbone_flash", allow_backbone_flash);
         engine::debug::trace_log_scalar("breeze_tts.attention.allow_depth_flash", allow_depth_flash);
-        backbone_runtime_config = backbone_config(config, execution.backend_type(), graph_arena_bytes, allow_backbone_flash);
-        depth_runtime_config = depth_config(config, execution.backend_type(), graph_arena_bytes, allow_depth_flash);
+        const bool bf16_reference = bf16_reference_enabled(bf16_activations, execution.backend_type());
+        engine::debug::trace_log_scalar("breeze_tts.bf16_activations", bf16_reference);
+        backbone_runtime_config = backbone_config(
+            config, execution.backend_type(), graph_arena_bytes, allow_backbone_flash, bf16_reference);
+        depth_runtime_config = depth_config(
+            config, execution.backend_type(), graph_arena_bytes, allow_depth_flash, bf16_reference);
         weights = load_weights(*this->assets, execution, weight_context_bytes, storage_type, backbone_runtime_config);
         backbone_cond = std::make_unique<modules::QwenCausalDecodeRuntime>(execution, backbone_runtime_config, weights->backbone);
         backbone_uncond = std::make_unique<modules::QwenCausalDecodeRuntime>(execution, backbone_runtime_config, weights->backbone);
@@ -1437,9 +1469,16 @@ BreezeGeneratorRuntime::BreezeGeneratorRuntime(
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
     engine::assets::TensorStorageType storage_type,
-    engine::core::AttentionPreference attention_preference)
+    engine::core::AttentionPreference attention_preference,
+    Bf16ActivationMode bf16_activations)
     : impl_(std::make_unique<Impl>(
-          std::move(assets), execution, graph_arena_bytes, weight_context_bytes, storage_type, attention_preference)) {}
+          std::move(assets),
+          execution,
+          graph_arena_bytes,
+          weight_context_bytes,
+          storage_type,
+          attention_preference,
+          bf16_activations)) {}
 
 BreezeGeneratorRuntime::~BreezeGeneratorRuntime() = default;
 

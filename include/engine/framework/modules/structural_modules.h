@@ -63,6 +63,7 @@ private:
 
 struct ConcatConfig {
     int axis = 0;
+    bool cuda_contiguous_4d_lowering = false;
 };
 
 class ConcatModule {

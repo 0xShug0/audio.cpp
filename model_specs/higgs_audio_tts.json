@@ -32,6 +32,7 @@
       "GGUF"
     ],
     "docs": [
+      "docs/models/higgs_audio_tts.md",
       "docs/tts.md",
       "docs/gguf.md"
     ]

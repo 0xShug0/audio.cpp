@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "family": "piper_tts",
+  "display_name": "Piper TTS",
+  "description": "Native VITS inference for Piper text-to-speech voices using the shared eSpeak-ng frontend.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier; larger values produce faster speech.",
+        "required": false,
+        "min": 0.5,
+        "max": 2.0,
+        "default": 1.0
+      },
+      {
+        "name": "variation",
+        "type": "float",
+        "description": "Acoustic latent noise scale.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.667
+      },
+      {
+        "name": "duration_variation",
+        "type": "float",
+        "description": "Stochastic duration noise scale.",
+        "required": false,
+        "min": 0.0,
+        "max": 2.0,
+        "default": 0.8
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Non-negative generation seed.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form chunk.",
+        "required": false,
+        "min": 1,
+        "default": 280
+      }
+    ],
+    "session": [
+      {
+        "name": "espeak_library_path",
+        "type": "path",
+        "description": "Optional explicit path to the eSpeak-ng shared library.",
+        "required": false
+      },
+      {
+        "name": "espeak_data_path",
+        "type": "path",
+        "description": "Optional explicit path to espeak-ng-data.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "piper_lessac_medium_orig",
+      "display_name": "Piper Lessac Medium Original-Dtype GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Piper-TTS-GGUF",
+      "files": [
+        "Piper-TTS-GGUF/piper-en-us-lessac-medium-orig.gguf"
+      ],
+      "strip_prefix": "Piper-TTS-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "piper_lessac_medium_orig",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/tts.md",
+      "docs/community_models/piper_tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

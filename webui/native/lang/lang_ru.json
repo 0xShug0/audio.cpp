@@ -30,7 +30,7 @@
     "theme.light": "Светлая",
     "workflow.tts": "Синтез речи",
     "workflow.asr": "ASR / Распознавание",
-    "workflow.music": "Генерация музыки",
+    "workflow.music": "Генерация музыки и видео",
     "workflow.vc": "Преобразование голоса",
     "workflow.sep": "Разделение источников",
     "workflow.analysis": "Анализ аудио",

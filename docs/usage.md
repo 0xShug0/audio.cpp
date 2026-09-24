@@ -35,10 +35,11 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--language` | language-aware models | Language code. |
 | `--out` | single-primary-output models | Output file path, such as WAV for audio tasks or MIDI/JSON for MuScriptor. |
 | `--out-dir` | multi-output or batch models | Output directory. |
+| `--out-format` | audio outputs written by `--out` / `--out-dir` | WAV sample format: `pcm16` (default), `pcm24`, or `float32`. `float32` keeps samples above full scale instead of clipping them. |
 | `--segments-out` | VAD | Speech segments JSON. |
 | `--vad-chunks-out` | offline VAD | VAD-based audio chunk windows JSON. |
 | `--turns-out` | diarization | Speaker turns JSON. |
-| `--words-out` | ASR/alignment | Word timestamps JSON. |
+| `--words-out` | ASR/alignment | Word timestamps JSON. Sets `return_timestamps`. For `kokoro_tts` the entries are phoneme groups, not written words — read [its page](models/kokoro_tts.md#phoneme-group-timings) before joining them to text. |
 | `--audio-chunk-seconds` | ASR | Split long audio before model inference, where supported. |
 | `--audio-chunk-mode` | ASR/alignment | `auto`, `fixed`, `vad`, or `none`, where supported. |
 

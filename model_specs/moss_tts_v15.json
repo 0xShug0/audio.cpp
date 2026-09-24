@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "family": "moss_tts_v15",
+  "display_name": "MOSS-TTS-v1.5",
+  "description": "8B delay-pattern MOSS-TTS: zero-shot voice cloning from a short reference, 24 kHz, with an explicit duration budget.",
+  "category": "community",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "capabilities": {
+    "tts": [
+      "speaker_reference",
+      "style_control",
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "audio_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "audio_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "audio_tokenizer": "audio_tokenizer"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_merges": "model:merges.txt",
+        "audio_tokenizer_config": "audio_tokenizer:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors.index.json",
+        "audio_tokenizer_weights": "audio_tokenizer:model.safetensors.index.json"
+      }
+    }
+  ],
+  "options": {
+    "request": [
+      {
+        "name": "instruct",
+        "type": "string",
+        "required": false,
+        "description": "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."
+      },
+      {
+        "name": "tokens",
+        "type": "int",
+        "min": 1,
+        "required": false,
+        "description": "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field."
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "required": false,
+        "description": "Full language name; the model does not understand codes like 'en'."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "required": false,
+        "description": "Reproduces a take exactly."
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "required": false,
+        "description": "Audio sampling temperature."
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "required": false,
+        "description": "Audio nucleus sampling cutoff."
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "required": false,
+        "description": "Audio top-k."
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "required": false,
+        "description": "Audio repetition penalty."
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk; default 200.",
+        "required": false,
+        "min": 1,
+        "default": 200
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native",
+        "description": "Backbone and head weight storage; default native, which keeps a GGUF package's own type. Forcing bf16 dequantises a quantised package and costs the VRAM the quantisation was meant to save. f16 is rejected: this backbone produces NaN in it."
+      }
+    ],
+    "load": []
+  },
+  "ui": {
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/moss_tts_v15.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ],
+    "recommended_package": "moss_tts_v15_q8_0_codec_f16"
+  },
+  "packages": [
+    {
+      "id": "moss_tts_v15_q8_0_codec_f16",
+      "display_name": "MOSS-TTS-v1.5 Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-TTS-v1.5-GGUF",
+      "files": [
+        "moss_tts_v15_q8_0_codec_f16.gguf"
+      ]
+    },
+    {
+      "id": "moss_tts_v15_q4_k_codec_f16",
+      "display_name": "MOSS-TTS-v1.5 Q4_K GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "MOSS-TTS-v1.5-GGUF",
+      "files": [
+        "moss_tts_v15_q4_k_codec_f16.gguf"
+      ]
+    },
+    {
+      "id": "moss_tts_v15_bf16_codec_f16",
+      "display_name": "MOSS-TTS-v1.5 BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-TTS-v1.5-GGUF",
+      "files": [
+        "moss_tts_v15_bf16_codec_f16.gguf"
+      ]
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "christopherthompson81/MOSS-TTS-v1.5-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "dependencies": []
+}

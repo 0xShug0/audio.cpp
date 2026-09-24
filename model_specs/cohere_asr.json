@@ -1,0 +1,198 @@
+{
+  "family": "cohere_asr",
+  "schema_version": 1,
+  "display_name": "Cohere Transcribe",
+  "description": "Cohere multilingual speech transcription with punctuation control.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "it",
+    "pt",
+    "nl",
+    "pl",
+    "el",
+    "ar",
+    "ja",
+    "zh",
+    "vi",
+    "ko"
+  ],
+  "capabilities": {},
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Input audio language.",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "pnc",
+        "type": "bool",
+        "description": "Generate punctuation and capitalization.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens per audio chunk.",
+        "required": false,
+        "min": 1,
+        "max": 1014,
+        "default": 256
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Long-form audio chunking mode.",
+        "values": [
+          "auto",
+          "quiet_energy",
+          "fixed",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum duration of each audio chunk in seconds.",
+        "required": false,
+        "min": 0.04,
+        "max": 35,
+        "default": 35
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage type.",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k",
+          "i8"
+        ],
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cpu",
+      "cuda"
+    ]
+  },
+  "ui": {
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/cohere_asr.md"
+    ],
+    "recommended_package": "cohere_transcribe_bf16"
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "cohere_transcribe_bf16",
+      "display_name": "Cohere Transcribe GGUF BF16",
+      "default": true,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Cohere-Transcribe-GGUF",
+      "files": [
+        "Cohere-Transcribe-GGUF/cohere-transcribe-03-2026-bf16.gguf"
+      ],
+      "strip_prefix": "Cohere-Transcribe-GGUF"
+    },
+    {
+      "id": "cohere_transcribe_q8_0",
+      "display_name": "Cohere Transcribe GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Cohere-Transcribe-GGUF",
+      "files": [
+        "Cohere-Transcribe-GGUF/cohere-transcribe-03-2026-q8_0.gguf"
+      ],
+      "strip_prefix": "Cohere-Transcribe-GGUF"
+    },
+    {
+      "id": "cohere_transcribe_q4_0",
+      "display_name": "Cohere Transcribe GGUF Q4_0",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "Cohere-Transcribe-GGUF",
+      "files": [
+        "Cohere-Transcribe-GGUF/cohere-transcribe-03-2026-q4_0.gguf"
+      ],
+      "strip_prefix": "Cohere-Transcribe-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:tokenizer.model"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    }
+  ]
+}
