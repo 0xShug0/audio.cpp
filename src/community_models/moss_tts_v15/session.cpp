@@ -157,7 +157,8 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
         execution_context(),
         backbone_graph_arena_bytes_,
         backbone_weight_context_bytes_,
-        weight_storage_type_);
+        weight_storage_type_,
+        execution_context().backend_type() == core::BackendType::Cpu ? GGML_TYPE_F32 : GGML_TYPE_F16);
     heads_ = std::make_unique<decoders::MossTtsDelayHeadsRuntime>(
         assets_->config,
         assets_->model_weights,
