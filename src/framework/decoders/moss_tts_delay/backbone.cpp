@@ -372,6 +372,7 @@ void MossTtsDelayBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     runtime::TransformerKVCacheOptions cache_options;
     cache_options.allow_f16_storage = impl.cache_type == GGML_TYPE_F16;
     cache_options.allow_bf16_storage = impl.cache_type == GGML_TYPE_BF16;
+    cache_options.lazy_import_scratch = true;
     impl.step_cache = runtime::TransformerKVCache(
         cache_steps,
         config.num_key_value_heads * config.head_dim,

@@ -151,6 +151,10 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
     codebook_spec.tensor_prefix = "emb_ext";
     codebooks_ = std::make_unique<engine::modules::MultiCodebookEmbedding>(*assets_->model_weights, codebook_spec);
 
+    const auto backend_type = execution_context().backend_type();
+    const bool use_f16 = backend_type == core::BackendType::Cuda ||
+                         backend_type == core::BackendType::Vulkan ||
+                         backend_type == core::BackendType::Metal;
     backbone_ = std::make_unique<decoders::MossTtsDelayBackboneRuntime>(
         assets_->config,
         assets_->model_weights,
@@ -158,7 +162,7 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
         backbone_graph_arena_bytes_,
         backbone_weight_context_bytes_,
         weight_storage_type_,
-        execution_context().backend_type() == core::BackendType::Cpu ? GGML_TYPE_F32 : GGML_TYPE_F16);
+        use_f16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
     heads_ = std::make_unique<decoders::MossTtsDelayHeadsRuntime>(
         assets_->config,
         assets_->model_weights,
@@ -175,9 +179,7 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
             codec_graph_arena_bytes_,
             codec_graph_arena_bytes_,
             false,
-            execution_context().backend_type() == core::BackendType::Cpu
-                ? assets::TensorStorageType::F32
-                : assets::TensorStorageType::F16,
+            use_f16 ? assets::TensorStorageType::F16 : assets::TensorStorageType::F32,
         },
         engine::codecs::moss_audio_tokenizer_v1_config());
     codec_->prepare_decoder();
