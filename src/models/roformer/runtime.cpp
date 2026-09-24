@@ -54,6 +54,7 @@ struct FeedForwardWeights {
 struct AttentionWeights {
     core::TensorValue norm;
     LinearWeights qkv;
+    std::optional<LinearWeights> qkv_gates;
     LinearWeights q;
     LinearWeights k;
     LinearWeights v;
@@ -85,11 +86,20 @@ struct MaskBandWeights {
     std::vector<LinearWeights> layers;
 };
 
+struct MaskGroupWeights {
+    int64_t first_band = 0;
+    int64_t band_count = 0;
+    int64_t output_dim = 0;
+    LinearWeights projection;
+};
+
 struct MelBandWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     std::vector<BandSplitWeights> band_split;
     std::vector<AxialTransformerWeights> layers;
     std::vector<MaskBandWeights> mask_bands;
+    std::optional<LinearWeights> mask_first_batched;
+    std::vector<MaskGroupWeights> mask_groups;
     core::TensorValue final_norm;
 };
 
@@ -145,7 +155,29 @@ MelBandWeights load_mel_band_weights(
 
                 TransformerLayerWeights block;
                 block.attention.norm = weights.store->load_f32_tensor(source, attn_prefix + ".norm.gamma", {config.dim});
-                if (config.fused_qkv) {
+                const bool pack_qkv_gates = backend_type == core::BackendType::Cuda &&
+                    config.family == kBsRoformerFamily && config.fused_qkv &&
+                    (storage_type != assets_ns::TensorStorageType::Native ||
+                        source.require_metadata(attn_prefix + ".to_qkv.weight").dtype ==
+                        source.require_metadata(attn_prefix + ".to_gates.weight").dtype);
+                if (pack_qkv_gates) {
+                    // These projections share the same normalized input. Append
+                    // native weight rows to reuse its CUDA quantization and GEMM
+                    // launch, keeping the gate bias separate from Q/K/V.
+                    const int64_t qkv_dim = 3 * config.heads * config.dim_head;
+                    auto packed = source.require_tensor(
+                        attn_prefix + ".to_qkv.weight", storage_type, {qkv_dim, config.dim});
+                    auto gate_weight = source.require_tensor(
+                        attn_prefix + ".to_gates.weight", storage_type, {config.heads, config.dim});
+                    packed.bytes.insert(packed.bytes.end(), gate_weight.bytes.begin(), gate_weight.bytes.end());
+                    LinearWeights projection;
+                    projection.weight = weights.store->make_tensor(
+                        core::TensorShape::from_dims({qkv_dim + config.heads, config.dim}),
+                        packed.type, packed.bytes.data(), packed.bytes.size());
+                    block.attention.qkv_gates = std::move(projection);
+                    block.attention.gates.bias = weights.store->load_f32_tensor(
+                        source, attn_prefix + ".to_gates.bias", {config.heads});
+                } else if (config.fused_qkv) {
                     block.attention.qkv = binding::linear_from_source(
                         *weights.store,
                         source,
@@ -159,7 +191,10 @@ MelBandWeights load_mel_band_weights(
                     block.attention.k = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_k", storage_type, config.heads * config.dim_head, config.dim, false);
                     block.attention.v = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_v", storage_type, config.heads * config.dim_head, config.dim, false);
                 }
-                block.attention.gates = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_gates", storage_type, config.heads, config.dim, true);
+                if (!pack_qkv_gates) {
+                    block.attention.gates = binding::linear_from_source(
+                        *weights.store, source, attn_prefix + ".to_gates", storage_type, config.heads, config.dim, true);
+                }
                 block.attention.out = binding::linear_from_source(*weights.store, source, attn_prefix + ".to_out.0", storage_type, config.dim, config.heads * config.dim_head, false);
 
                 block.feed_forward.norm = weights.store->load_f32_tensor(source, ff_prefix + ".0.gamma", {config.dim});
@@ -191,9 +226,96 @@ MelBandWeights load_mel_band_weights(
         weights.layers.push_back(std::move(axial));
     }
 
-    weights.mask_bands.reserve(static_cast<size_t>(config.band_input_dims.size()));
     const int hidden_dim = config.dim * config.mlp_expansion_factor;
-    for (size_t band = 0; band < config.band_input_dims.size(); ++band) {
+    // BS-RoFormer's first mask projection has the same shape for every band.
+    // Pack the original weight bytes so one batched matmul can replace the
+    // independent per-band matmul launches without requantizing the model.
+    bool batch_mask_first = backend_type == core::BackendType::Cuda &&
+        config.family == kBsRoformerFamily && config.mask_estimator_linear_layers == 2;
+    if (batch_mask_first && storage_type == assets_ns::TensorStorageType::Native) {
+        // Mixed-precision GGUFs can choose a different dtype per tensor. Keep
+        // their existing per-band path unless each packed group is uniform.
+        std::string first_dtype;
+        std::string group_dtype;
+        int64_t previous_dim = -1;
+        for (size_t band = 0; band < config.band_input_dims.size(); ++band) {
+            const std::string prefix = "mask_estimators.0.to_freqs." + std::to_string(band) + ".0.";
+            const auto first = source.require_metadata(prefix + "0.weight").dtype;
+            if (band == 0) first_dtype = first;
+            if (first != first_dtype) batch_mask_first = false;
+            const int64_t dim = config.band_input_dims[band];
+            const auto second = source.require_metadata(prefix + "2.weight").dtype;
+            if (dim != previous_dim) group_dtype = second;
+            if (second != group_dtype) batch_mask_first = false;
+            previous_dim = dim;
+        }
+    }
+    if (batch_mask_first) {
+        std::vector<std::byte> packed_weights;
+        std::vector<float> packed_bias;
+        ggml_type weight_type = GGML_TYPE_F32;
+        for (size_t band = 0; band < config.band_input_dims.size(); ++band) {
+            const std::string prefix = "mask_estimators.0.to_freqs." + std::to_string(band) + ".0.0";
+            auto tensor = source.require_tensor(
+                prefix + ".weight", storage_type, {hidden_dim, config.dim});
+            if (band == 0) {
+                weight_type = tensor.type;
+            } else if (tensor.type != weight_type) {
+                throw std::runtime_error("BS-RoFormer batched mask weights must share a dtype");
+            }
+            packed_weights.insert(packed_weights.end(), tensor.bytes.begin(), tensor.bytes.end());
+            auto bias = source.require_f32(prefix + ".bias", {hidden_dim});
+            packed_bias.insert(packed_bias.end(), bias.begin(), bias.end());
+        }
+        LinearWeights first;
+        first.weight = weights.store->make_tensor(
+            core::TensorShape::from_dims({config.num_bands, hidden_dim, config.dim}),
+            weight_type, packed_weights.data(), packed_weights.size());
+        first.bias = weights.store->make_f32(
+            core::TensorShape::from_dims({config.num_bands, 1, hidden_dim}),
+            std::move(packed_bias));
+        weights.mask_first_batched = std::move(first);
+
+        for (size_t start = 0; start < config.band_input_dims.size();) {
+            const int64_t output_dim = config.band_input_dims[start] * 2;
+            size_t end = start + 1;
+            while (end < config.band_input_dims.size() &&
+                   config.band_input_dims[end] * 2 == output_dim) {
+                ++end;
+            }
+            std::vector<std::byte> group_weights;
+            std::vector<float> group_bias;
+            ggml_type group_type = GGML_TYPE_F32;
+            for (size_t band = start; band < end; ++band) {
+                const std::string prefix = "mask_estimators.0.to_freqs." +
+                    std::to_string(band) + ".0.2";
+                auto tensor = source.require_tensor(
+                    prefix + ".weight", storage_type, {output_dim, hidden_dim});
+                if (band == start) {
+                    group_type = tensor.type;
+                } else if (tensor.type != group_type) {
+                    throw std::runtime_error("BS-RoFormer grouped mask weights must share a dtype");
+                }
+                group_weights.insert(group_weights.end(), tensor.bytes.begin(), tensor.bytes.end());
+                auto bias = source.require_f32(prefix + ".bias", {output_dim});
+                group_bias.insert(group_bias.end(), bias.begin(), bias.end());
+            }
+            MaskGroupWeights group;
+            group.first_band = static_cast<int64_t>(start);
+            group.band_count = static_cast<int64_t>(end - start);
+            group.output_dim = output_dim;
+            group.projection.weight = weights.store->make_tensor(
+                core::TensorShape::from_dims({group.band_count, output_dim, hidden_dim}),
+                group_type, group_weights.data(), group_weights.size());
+            group.projection.bias = weights.store->make_f32(
+                core::TensorShape::from_dims({group.band_count, 1, output_dim}),
+                std::move(group_bias));
+            weights.mask_groups.push_back(std::move(group));
+            start = end;
+        }
+    }
+    weights.mask_bands.reserve(static_cast<size_t>(config.band_input_dims.size()));
+    for (size_t band = 0; !batch_mask_first && band < config.band_input_dims.size(); ++band) {
         const std::string prefix = "mask_estimators.0.to_freqs." + std::to_string(band) + ".0";
         MaskBandWeights band_weights;
         band_weights.layers.reserve(static_cast<size_t>(config.mask_estimator_linear_layers));
@@ -260,8 +382,9 @@ core::TensorValue build_reference_rms_norm(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     int64_t hidden_size,
-    const core::TensorValue & weight) {
-    return modules::RMSNormModule({hidden_size, 1e-12f, true, false}).build(
+    const core::TensorValue & weight,
+    bool preserve_input_layout = false) {
+    return modules::RMSNormModule({hidden_size, 1e-12f, true, false, preserve_input_layout}).build(
         ctx,
         input,
         binding::norm_data(ctx, weight));
@@ -334,34 +457,56 @@ core::TensorValue build_attention(
     const modules::LinearModule gate_proj(binding::linear_config(config.dim, config.heads, true));
     const modules::LinearModule out_proj(binding::linear_config(config.heads * config.dim_head, config.dim, false));
 
-    auto x = build_reference_rms_norm(ctx, input, config.dim, weights.norm);
+    auto x = build_reference_rms_norm(ctx, input, config.dim, weights.norm,
+        ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily);
     core::TensorValue q;
     core::TensorValue k;
     core::TensorValue v;
+    core::TensorValue qk;
+    core::TensorValue gates;
+    const bool packed_qk_rope = ctx.backend_type == core::BackendType::Cuda &&
+        config.family == kBsRoformerFamily && config.fused_qkv;
     if (config.fused_qkv) {
         const int64_t inner = config.heads * config.dim_head;
         const modules::LinearModule qkv_proj(
-            binding::linear_config(config.dim, 3 * inner, false));
-        auto qkv = qkv_proj.build(
-            ctx,
-            x,
-            binding::linear_data(
-                ctx, weights.qkv.weight, weights.qkv.bias));
-        q = modules::SliceModule({2, 0, inner}).build(ctx, qkv);
-        k = modules::SliceModule({2, inner, inner}).build(ctx, qkv);
+            binding::linear_config(config.dim, 3 * inner + (weights.qkv_gates ? config.heads : 0), false));
+        const auto & projection = weights.qkv_gates ? *weights.qkv_gates : weights.qkv;
+        auto qkv = qkv_proj.build(ctx, x, binding::linear_data(ctx, projection.weight, projection.bias));
+        if (weights.qkv_gates) {
+            gates = modules::SliceModule({2, 3 * inner, config.heads}).build(ctx, qkv);
+            gates = core::wrap_tensor(ggml_add(ctx.ggml, gates.tensor, weights.gates.bias->tensor), gates.shape, GGML_TYPE_F32);
+        }
         v = modules::SliceModule({2, 2 * inner, inner}).build(ctx, qkv);
+        if (packed_qk_rope) {
+            qk = modules::SliceModule({2, 0, 2 * inner}).build(ctx, qkv);
+        } else {
+            q = modules::SliceModule({2, 0, inner}).build(ctx, qkv);
+            k = modules::SliceModule({2, inner, inner}).build(ctx, qkv);
+        }
     } else {
         q = q_proj.build(ctx, x, binding::linear_data(ctx, weights.q.weight, weights.q.bias));
         k = k_proj.build(ctx, x, binding::linear_data(ctx, weights.k.weight, weights.k.bias));
         v = v_proj.build(ctx, x, binding::linear_data(ctx, weights.v.weight, weights.v.bias));
     }
-    auto gates = gate_proj.build(ctx, x, binding::linear_data(ctx, weights.gates.weight, weights.gates.bias));
+    if (!weights.qkv_gates) {
+        gates = gate_proj.build(ctx, x, binding::linear_data(ctx, weights.gates.weight, weights.gates.bias));
+    }
 
-    q = reshape_heads(ctx, q, config.heads, config.dim_head);
-    k = reshape_heads(ctx, k, config.heads, config.dim_head);
     v = reshape_heads(ctx, v, config.heads, config.dim_head);
-    q = modules::RoPEModule({config.dim_head, GGML_ROPE_TYPE_NORMAL, config.rope_theta}).build(ctx, q, positions);
-    k = modules::RoPEModule({config.dim_head, GGML_ROPE_TYPE_NORMAL, config.rope_theta}).build(ctx, k, positions);
+    if (packed_qk_rope) {
+        // Q and K have identical positions and RoPE parameters. Treat them
+        // as twice as many heads, then split the result into strided views.
+        qk = reshape_heads(ctx, qk, 2 * config.heads, config.dim_head);
+        qk = modules::RoPEModule({config.dim_head, GGML_ROPE_TYPE_NORMAL, config.rope_theta})
+            .build(ctx, qk, positions);
+        q = modules::SliceModule({2, 0, config.heads}).build(ctx, qk);
+        k = modules::SliceModule({2, config.heads, config.heads}).build(ctx, qk);
+    } else {
+        q = reshape_heads(ctx, q, config.heads, config.dim_head);
+        k = reshape_heads(ctx, k, config.heads, config.dim_head);
+        q = modules::RoPEModule({config.dim_head, GGML_ROPE_TYPE_NORMAL, config.rope_theta}).build(ctx, q, positions);
+        k = modules::RoPEModule({config.dim_head, GGML_ROPE_TYPE_NORMAL, config.rope_theta}).build(ctx, k, positions);
+    }
 
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
@@ -409,13 +554,42 @@ core::TensorValue build_transformer_branch(
     const RoformerArchitectureConfig & config) {
     auto x = input;
     for (const auto & layer : weights.layers) {
-        x = modules::AddModule{}.build(ctx, x, build_attention(ctx, x, positions, layer.attention, config));
+        auto attention = build_attention(ctx, x, positions, layer.attention, config);
+        if (ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily &&
+            !ggml_is_contiguous(x.tensor)) {
+            // The CUDA add kernel reads the permuted residual directly. The
+            // generic Add module would first materialize another full copy.
+            x = core::wrap_tensor(ggml_add(ctx.ggml, x.tensor, attention.tensor), x.shape, GGML_TYPE_F32);
+        } else {
+            x = modules::AddModule{}.build(ctx, x, attention);
+        }
         x = modules::AddModule{}.build(ctx, x, build_feed_forward(ctx, x, layer.feed_forward, config));
     }
     if (config.transformer_output_norm) {
         return build_reference_rms_norm(ctx, x, config.dim, weights.norm);
     }
     return x;
+}
+
+core::TensorValue axial_branch_input(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const RoformerArchitectureConfig & config) {
+    core::validate_rank_between(input, 4, 4, "RoFormer axial input");
+    if (input.shape.dims[0] != 1) {
+        throw std::runtime_error("RoFormer axial input requires a singleton leading dimension");
+    }
+    const auto shape = core::TensorShape::from_dims(
+        {input.shape.dims[1], input.shape.dims[2], input.shape.dims[3]});
+    if (ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily) {
+        // Remove only the singleton dimension; preserve the time/band strides.
+        // CUDA RMSNorm materializes its normalized output in the required order,
+        // and the residual add also accepts this view without a preceding copy.
+        auto * t = input.tensor;
+        auto * view = ggml_view_3d(ctx.ggml, t, t->ne[0], t->ne[1], t->ne[2], t->nb[1], t->nb[2], 0);
+        return core::wrap_tensor(view, shape, input.type);
+    }
+    return core::reshape_tensor(ctx, ensure_contiguous(ctx, input), shape);
 }
 
 core::TensorValue build_band_split(
@@ -429,7 +603,9 @@ core::TensorValue build_band_split(
     for (size_t band = 0; band < weights.band_split.size(); ++band) {
         const int64_t dim_in = config.band_input_dims[band];
         auto band_input = modules::SliceModule({2, offset, dim_in}).build(ctx, input);
-        band_input = build_reference_rms_norm(ctx, band_input, dim_in, weights.band_split[band].norm);
+        // CUDA RMSNorm can also read a band's rows directly from the spectrum.
+        band_input = build_reference_rms_norm(ctx, band_input, dim_in, weights.band_split[band].norm,
+            ctx.backend_type == core::BackendType::Cuda && config.family == kBsRoformerFamily);
         band_input = modules::LinearModule(binding::linear_config(dim_in, config.dim, true))
                          .build(ctx, band_input, binding::linear_data(ctx, weights.band_split[band].proj.weight, weights.band_split[band].proj.bias));
         band_input = core::reshape_tensor(
@@ -460,38 +636,68 @@ core::TensorValue build_mask_output(
     const core::TensorValue & input,
     const MelBandWeights & weights,
     const RoformerArchitectureConfig & config) {
+    core::TensorValue batched_hidden;
+    if (weights.mask_first_batched.has_value()) {
+        auto band_major = modules::TransposeModule({{0, 2, 1, 3}, input.shape.rank}).build(ctx, input);
+        band_major = core::reshape_tensor(
+            ctx, ensure_contiguous(ctx, band_major),
+            core::TensorShape::from_dims({config.num_bands, input.shape.dims[1], config.dim}));
+        const auto hidden_shape = core::TensorShape::from_dims({
+            config.num_bands, input.shape.dims[1], config.dim * config.mlp_expansion_factor});
+        auto * projected = ggml_mul_mat(
+            ctx.ggml, weights.mask_first_batched->weight.tensor, band_major.tensor);
+        auto * biased = ggml_add(ctx.ggml, projected, weights.mask_first_batched->bias->tensor);
+        batched_hidden = modules::TanhModule{}.build(
+            ctx, core::wrap_tensor(biased, hidden_shape, GGML_TYPE_F32));
+    }
     std::vector<core::TensorValue> outputs;
-    outputs.reserve(weights.mask_bands.size());
-    for (size_t band = 0; band < weights.mask_bands.size(); ++band) {
-        auto band_input = modules::SliceModule({2, static_cast<int64_t>(band), 1}).build(ctx, input);
-        band_input = core::reshape_tensor(
-            ctx,
-            ensure_contiguous(ctx, band_input),
-            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.dim}));
-        const auto & band_weights = weights.mask_bands[band];
-        auto hidden = band_input;
-        int64_t in_dim = config.dim;
-        for (size_t layer = 0; layer < band_weights.layers.size(); ++layer) {
-            const bool last = layer + 1 == band_weights.layers.size();
-            const int64_t out_dim = last
-                ? config.band_input_dims[band] * 2
-                : config.dim * config.mlp_expansion_factor;
-            hidden = modules::LinearModule(
-                         binding::linear_config(in_dim, out_dim, true))
-                         .build(
-                             ctx,
-                             hidden,
-                             binding::linear_data(
-                                 ctx,
-                                 band_weights.layers[layer].weight,
-                                 band_weights.layers[layer].bias));
-            if (!last) {
-                hidden = modules::TanhModule{}.build(ctx, hidden);
-            }
-            in_dim = out_dim;
+    outputs.reserve(config.band_input_dims.size());
+    if (weights.mask_first_batched.has_value()) {
+        for (const auto & group : weights.mask_groups) {
+            auto group_input = modules::SliceModule({0, group.first_band, group.band_count})
+                .build(ctx, batched_hidden);
+            group_input = ensure_contiguous(ctx, group_input);
+            const auto projected_shape = core::TensorShape::from_dims({
+                group.band_count, input.shape.dims[1], group.output_dim});
+            auto * projected = ggml_mul_mat(
+                ctx.ggml, group.projection.weight.tensor, group_input.tensor);
+            auto * biased = ggml_add(ctx.ggml, projected, group.projection.bias->tensor);
+            auto grouped_output = modules::GLUModule{}.build(
+                ctx, core::wrap_tensor(biased, projected_shape, GGML_TYPE_F32));
+            grouped_output = modules::TransposeModule({{1, 0, 2, 3}, grouped_output.shape.rank})
+                .build(ctx, grouped_output);
+            grouped_output = core::reshape_tensor(ctx, ensure_contiguous(ctx, grouped_output),
+                core::TensorShape::from_dims({1, input.shape.dims[1],
+                    group.band_count * group.output_dim / 2}));
+            outputs.push_back(grouped_output);
         }
-        hidden = modules::GLUModule{}.build(ctx, hidden);
-        outputs.push_back(hidden);
+    } else {
+        for (size_t band = 0; band < weights.mask_bands.size(); ++band) {
+            auto band_input = modules::SliceModule({2, static_cast<int64_t>(band), 1}).build(ctx, input);
+            band_input = core::reshape_tensor(
+                ctx, ensure_contiguous(ctx, band_input),
+                core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.dim}));
+            const auto & band_weights = weights.mask_bands[band];
+            auto hidden = band_input;
+            int64_t in_dim = config.dim;
+            for (size_t layer = 0; layer < band_weights.layers.size(); ++layer) {
+                const bool last = layer + 1 == band_weights.layers.size();
+                const int64_t out_dim = last
+                    ? config.band_input_dims[band] * 2
+                    : config.dim * config.mlp_expansion_factor;
+                hidden = modules::LinearModule(
+                             binding::linear_config(in_dim, out_dim, true))
+                             .build(ctx, hidden, binding::linear_data(
+                                 ctx, band_weights.layers[layer].weight,
+                                 band_weights.layers[layer].bias));
+                if (!last) {
+                    hidden = modules::TanhModule{}.build(ctx, hidden);
+                }
+                in_dim = out_dim;
+            }
+            hidden = modules::GLUModule{}.build(ctx, hidden);
+            outputs.push_back(hidden);
+        }
     }
 
     while (outputs.size() > 1) {
@@ -671,22 +877,14 @@ public:
         core::TensorValue x = build_band_split(build_ctx, input, weights_, config);
         for (const auto & layer : weights_.layers) {
             x = modules::TransposeModule({{0, 2, 1, 3}, x.shape.rank}).build(build_ctx, x);
-            x = core::reshape_tensor(
-                build_ctx,
-                ensure_contiguous(build_ctx, x),
-                core::TensorShape::from_dims({config.num_bands, config.chunk_frames, config.dim}));
+            x = axial_branch_input(build_ctx, x, config);
             x = build_transformer_branch(build_ctx, x, time_positions, layer.time_branch, config);
             x = core::reshape_tensor(
                 build_ctx,
                 ensure_contiguous(build_ctx, x),
                 core::TensorShape::from_dims({1, config.num_bands, config.chunk_frames, config.dim}));
             x = modules::TransposeModule({{0, 2, 1, 3}, x.shape.rank}).build(build_ctx, x);
-            x = ensure_contiguous(build_ctx, x);
-
-            x = core::reshape_tensor(
-                build_ctx,
-                x,
-                core::TensorShape::from_dims({config.chunk_frames, config.num_bands, config.dim}));
+            x = axial_branch_input(build_ctx, x, config);
             x = build_transformer_branch(build_ctx, x, freq_positions, layer.freq_branch, config);
             x = core::reshape_tensor(
                 build_ctx,
