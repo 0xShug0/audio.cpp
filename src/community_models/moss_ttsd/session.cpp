@@ -179,10 +179,13 @@ void MossTtsdSession::prepare(const runtime::SessionPreparationRequest &) {
         engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
             codec_weight_context_bytes_, codec_graph_arena_bytes_, codec_graph_arena_bytes_, false,
             use_f16 ? assets::TensorStorageType::F16 : assets::TensorStorageType::F32,
-            // ⚠ THE ENCODER STAYS F32, UNLIKE moss_tts_v15. This model continues directly from the
-            // reference's codes, and an f16 encoder changes 5-14% of the finer codebooks. Over 26
-            // seeds that produced silence or a re-spoken prompt 3 times, against none at f32.
-            assets::TensorStorageType::F32,
+            // ⚠ THE ENCODER COMPUTES AT F32, UNLIKE moss_tts_v15. This model continues directly
+            // from the reference's codes, and an f16 encoder changes 5-14% of the finer codebooks.
+            // Over 26 seeds that produced silence or a re-spoken prompt 3 times, against none at
+            // f32. Holding the weights at their stored type and widening them in the graph gives
+            // the same f32 values -- the widening is exact -- without keeping an f32 copy resident.
+            use_f16 ? assets::TensorStorageType::Native : assets::TensorStorageType::F32,
+            use_f16,
         },
         engine::codecs::moss_audio_tokenizer_v1_config());
     codec_->prepare_decoder();
