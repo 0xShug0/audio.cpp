@@ -74,6 +74,7 @@ FlowLMConfig make_flow_config(const PocketTTSAssets & manifest) {
         manifest.model_config.flow_layers,
         1.0e-5F,
         1.0e-6F,
+        manifest.model_config.flow_depth,
     };
 }
 

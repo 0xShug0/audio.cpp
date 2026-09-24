@@ -156,7 +156,7 @@ PocketTTSBackendFlowWeights load_backend_flow_weights(
         const std::string prefix = "flow_lm.transformer.layers." + std::to_string(layer) + ".";
         weights.transformer_layers.push_back(load_backend_transformer_layer(store, source, prefix, storage_type));
     }
-    weights.flow_net = load_backend_flow_net_weights(store, source, config.flow_layers, storage_type);
+    weights.flow_net = load_backend_flow_net_weights(store, source, config.flow_depth, storage_type);
     weights.out_norm = binding::norm_from_named_source(store, source, "flow_lm.out_norm.weight", "flow_lm.out_norm.bias");
     weights.out_eos = binding::linear_from_named_source(store, source, "flow_lm.out_eos.weight", "flow_lm.out_eos.bias", storage_type);
     weights.speaker_proj_weight =
