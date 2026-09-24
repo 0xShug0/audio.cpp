@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 
 #include <algorithm>
 #include <cmath>
@@ -498,11 +499,18 @@ void VoxtralRealtimeSession::take_stream_delta(runtime::StreamEvent & event) {
     // Partials carry only the text decoded since the last one, as the other streaming ASR sessions
     // already emit. Restating the transcript is quadratic in its length and hands a consumer of
     // transcript.text.delta text it was already given.
-    if (streaming_published_bytes_ >= streaming_text_.size()) {
+    //
+    // Tekken pieces are raw byte strings, and a character the vocabulary has no whole token for is
+    // emitted as several single-byte tokens -- a plain emoji is four. A chunk can end between them,
+    // so publish only up to the last complete UTF-8 sequence and leave the tail for the chunk that
+    // completes it. Only the last few bytes are inspected, so this stays O(1) in transcript length.
+    const size_t publishable = runtime::transcript_publishable_end(streaming_text_);
+    if (streaming_published_bytes_ >= publishable) {
         return;
     }
-    event.partial_text = runtime::Transcript{streaming_text_.substr(streaming_published_bytes_), ""};
-    streaming_published_bytes_ = streaming_text_.size();
+    event.partial_text = runtime::Transcript{
+        streaming_text_.substr(streaming_published_bytes_, publishable - streaming_published_bytes_), ""};
+    streaming_published_bytes_ = publishable;
 }
 
 }  // namespace engine::models::voxtral_realtime
