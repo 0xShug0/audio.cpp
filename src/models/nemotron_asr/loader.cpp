@@ -1,6 +1,7 @@
 #include "engine/models/nemotron_asr/loader.h"
 
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/nemotron_asr/session.h"
 
 #include <stdexcept>
@@ -69,21 +70,7 @@ public:
             request.model_path,
             package_spec,
             engine::model_spec::ResourceKind::Tensors);
-        inspection.cli.request_options = {
-            {"language", "code", "ASR prompt language such as en-US, da-DK, or auto."},
-            {"lookahead_tokens", "n", "Chunk-limited encoder right context; supported values come from processor_config."},
-            {"max_tokens", "n", "Maximum RNNT generated tokens; 0 uses the model-derived limit."},
-            {"keep_language_tags", "bool", "Keep language tag tokens in decoded text."},
-        };
-        inspection.cli.session_options = {
-            {"nemotron_asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared matmul weight storage type."},
-            {"nemotron_asr.matmul_weight_type", "native|f32|f16|bf16|q8_0", "Encoder and decoder matmul weight storage type."},
-            {"nemotron_asr.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},
-            {"nemotron_asr.weight_context_mb", "mb", "Weight context arena size."},
-            {"nemotron_asr.encoder_graph_arena_mb", "mb", "Encoder graph arena size."},
-            {"nemotron_asr.decoder_graph_arena_mb", "mb", "Decoder graph arena size."},
-            {"nemotron_asr.mem_saver", "true|false", "Release the offline encoder graph after each offline request; default false."},
-        };
+        inspection.cli = runtime::require_model_contract(family())->cli;
         return inspection;
     }
 
@@ -97,10 +84,12 @@ public:
 NemotronASRLoadedModel::NemotronASRLoadedModel(
     runtime::ModelMetadata metadata,
     runtime::CapabilitySet capabilities,
-    std::shared_ptr<const NemotronASRAssets> assets)
+    std::shared_ptr<const NemotronASRAssets> assets,
+    std::shared_ptr<const model_spec::ModelContract> contract)
     : metadata_(std::move(metadata)),
       capabilities_(std::move(capabilities)),
-      assets_(std::move(assets)) {}
+      assets_(std::move(assets)),
+      contract_(std::move(contract)) {}
 
 const runtime::ModelMetadata & NemotronASRLoadedModel::metadata() const noexcept {
     return metadata_;
@@ -120,17 +109,18 @@ std::unique_ptr<runtime::IVoiceTaskSession> NemotronASRLoadedModel::create_task_
         throw std::runtime_error("Nemotron ASR only supports offline and streaming sessions");
     }
     if (task.mode == runtime::RunMode::Streaming) {
-        return std::make_unique<NemotronASRStreamingSession>(task, options, assets_);
+        return std::make_unique<NemotronASRStreamingSession>(task, options, assets_, contract_);
     }
-    return std::make_unique<NemotronASROfflineSession>(task, options, assets_);
+    return std::make_unique<NemotronASROfflineSession>(task, options, assets_, contract_);
 }
 
 std::unique_ptr<NemotronASRLoadedModel> load_nemotron_asr_model(const std::filesystem::path & model_path) {
     auto assets = load_nemotron_asr_assets(model_path);
-        return std::make_unique<NemotronASRLoadedModel>(
+    return std::make_unique<NemotronASRLoadedModel>(
         metadata(*assets),
         capabilities(*assets),
-        std::move(assets));
+        std::move(assets),
+        runtime::require_model_contract("nemotron_asr"));
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_nemotron_asr_loader() {

@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <chrono>
@@ -103,9 +104,11 @@ NemotronFrontendFeatures slice_features(const NemotronFrontendFeatures & in, int
 NemotronASRSessionBase::NemotronASRSessionBase(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const NemotronASRAssets> assets)
+    std::shared_ptr<const NemotronASRAssets> assets,
+    std::shared_ptr<const model_spec::ModelContract> contract)
     : RuntimeSessionBase(options),
       task_(task),
+      contract_(std::move(contract)),
       assets_(require_assets(std::move(assets))),
       weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"nemotron_asr.weight_context_mb"}, kDefaultWeightContextBytes)),
       encoder_graph_arena_bytes_(runtime::parse_size_mb_option(options.options, {"nemotron_asr.encoder_graph_arena_mb"}, kDefaultEncoderGraphArenaBytes)),
@@ -125,19 +128,10 @@ NemotronASRSessionBase::NemotronASRSessionBase(
     }
     validate_matmul_weight_storage(matmul_weight_storage_type_, "nemotron_asr.weight_type");
     validate_conv_weight_storage(conv_weight_storage_type_, "nemotron_asr.conv_weight_type");
-    for (const auto & [key, value] : options.options) {
-        (void)value;
-        if (key.rfind("nemotron_asr.", 0) == 0 &&
-            key != "nemotron_asr.weight_context_mb" &&
-            key != "nemotron_asr.encoder_graph_arena_mb" &&
-            key != "nemotron_asr.decoder_graph_arena_mb" &&
-            key != "nemotron_asr.weight_type" &&
-            key != "nemotron_asr.matmul_weight_type" &&
-            key != "nemotron_asr.conv_weight_type" &&
-            key != "nemotron_asr.mem_saver") {
-            throw std::runtime_error("unknown Nemotron ASR session option: " + key);
-        }
+    if (contract_ == nullptr) {
+        throw std::runtime_error("Nemotron ASR session requires a model contract");
     }
+    runtime::validate_spec_backed_session_options(options, *contract_, "nemotron_asr", "Nemotron ASR");
     weights_ = load_nemotron_asr_weights(
         *assets_,
         execution_context().backend(),
@@ -174,8 +168,9 @@ runtime::RunMode NemotronASRSessionBase::run_mode_impl() const {
 NemotronASROfflineSession::NemotronASROfflineSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const NemotronASRAssets> assets)
-    : NemotronASRSessionBase(task, std::move(options), std::move(assets)) {}
+    std::shared_ptr<const NemotronASRAssets> assets,
+    std::shared_ptr<const model_spec::ModelContract> contract)
+    : NemotronASRSessionBase(task, std::move(options), std::move(assets), std::move(contract)) {}
 
 std::string NemotronASROfflineSession::family() const {
     return family_impl();
@@ -194,6 +189,7 @@ void NemotronASROfflineSession::prepare(const runtime::SessionPreparationRequest
     if (!request.audio.has_value()) {
         throw std::runtime_error("Nemotron ASR prepare() requires an audio contract");
     }
+    validate_request_options(request.options);
     const int64_t lookahead = lookahead_for_options(request.options);
     const int64_t frames = frontend_frames_for_samples(
         request.audio->max_input_samples,
@@ -209,6 +205,11 @@ void NemotronASROfflineSession::prepare(const runtime::SessionPreparationRequest
     debug::trace_log_scalar("nemotron_asr.prepare.max_input_samples", request.audio->max_input_samples);
     debug::trace_log_scalar("nemotron_asr.prepare.lookahead_tokens", lookahead);
     debug::trace_log_scalar("nemotron_asr.prepare.streaming", false);
+}
+
+void NemotronASRSessionBase::validate_request_options(
+    const std::unordered_map<std::string, std::string> & options) const {
+    runtime::validate_spec_backed_request_options(options, *contract_, "Nemotron ASR");
 }
 
 int64_t NemotronASRSessionBase::prompt_id_for_request(const runtime::TaskRequest & request) const {
@@ -265,6 +266,7 @@ runtime::TaskResult NemotronASROfflineSession::run(const runtime::TaskRequest & 
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("Nemotron ASR run() requires audio_input");
     }
+    validate_request_options(request.options);
     const auto wall_start = Clock::now();
     const auto config_start = Clock::now();
     const int64_t prompt_id = prompt_id_for_request(request);
@@ -306,8 +308,9 @@ runtime::TaskResult NemotronASROfflineSession::run(const runtime::TaskRequest & 
 NemotronASRStreamingSession::NemotronASRStreamingSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const NemotronASRAssets> assets)
-    : NemotronASRSessionBase(task, std::move(options), std::move(assets)) {}
+    std::shared_ptr<const NemotronASRAssets> assets,
+    std::shared_ptr<const model_spec::ModelContract> contract)
+    : NemotronASRSessionBase(task, std::move(options), std::move(assets), std::move(contract)) {}
 
 std::string NemotronASRStreamingSession::family() const {
     return family_impl();
@@ -326,6 +329,7 @@ void NemotronASRStreamingSession::prepare(const runtime::SessionPreparationReque
     if (!request.audio.has_value()) {
         throw std::runtime_error("Nemotron ASR streaming prepare() requires an audio contract");
     }
+    validate_request_options(request.options);
     streaming_options_ = request.options;
     streaming_language_ = request.text.has_value() ? request.text->language : "";
     const int64_t lookahead = lookahead_for_options(streaming_options_);
@@ -355,6 +359,7 @@ runtime::StreamingPolicy NemotronASRStreamingSession::streaming_policy() const {
 
 void NemotronASRStreamingSession::start_stream(const runtime::TaskRequest & request) {
     require_prepared("Nemotron ASR start_stream()");
+    validate_request_options(request.options);
     reset();
     streaming_options_ = request.options;
     streaming_language_ = request.text_input.has_value() ? request.text_input->language : "";
