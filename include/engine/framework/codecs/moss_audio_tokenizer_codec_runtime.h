@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace engine::codecs {
@@ -85,6 +86,9 @@ struct MossAudioTokenizerCodecRuntimeOptions {
     size_t decoder_graph_arena_bytes = 1536ull * 1024ull * 1024ull;
     bool separate_encoder_context = false;
     assets::TensorStorageType transformer_weight_storage_type = assets::TensorStorageType::F32;
+    // Overrides the above for the encoder only. A family that continues directly from the
+    // reference's codes can be more sensitive to the encoder's precision than to the decoder's.
+    std::optional<assets::TensorStorageType> encoder_transformer_weight_storage_type;
 };
 
 class MossAudioTokenizerCodecRuntime {

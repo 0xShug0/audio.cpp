@@ -1588,7 +1588,8 @@ struct MossAudioTokenizerCodecRuntime::Impl {
                 encoder_execution_context(),
                 options.weight_context_bytes,
                 options.encoder_graph_arena_bytes,
-                options.transformer_weight_storage_type,
+                options.encoder_transformer_weight_storage_type.value_or(
+                    options.transformer_weight_storage_type),
                 config);
         }
         return *encoder;
