@@ -9,6 +9,7 @@
 namespace {
 
 using engine::runtime::PartialTextPublisher;
+using engine::runtime::transcript_publishable_end;
 using engine::test::require_eq;
 
 // What a consumer assembles by appending every delta, which is the contract:
@@ -127,6 +128,21 @@ void test_empty_and_ascii_edges() {
     require_eq(publisher.publish("a"), std::string("a"), "single byte");
 }
 
+// voxtral_realtime keeps its own byte offset and calls this directly, so pin it
+// down on its own: the emoji split below is how Tekken byte tokens emit one.
+void test_publishable_end_stops_before_an_incomplete_tail() {
+    const std::string emoji = "\xF0\x9F\x98\x80";  // U+1F600, four bytes
+    for (std::size_t n = 1; n < emoji.size(); ++n) {
+        require_eq(transcript_publishable_end("hi " + emoji.substr(0, n)), std::size_t{3},
+                   "incomplete emoji held");
+    }
+    require_eq(transcript_publishable_end("hi " + emoji), std::size_t{7}, "complete emoji");
+    require_eq(transcript_publishable_end("\xC3"), std::size_t{0}, "lone two-byte lead");
+    require_eq(transcript_publishable_end("\xC3\xA9"), std::size_t{2}, "complete two-byte");
+    require_eq(transcript_publishable_end("abc"), std::size_t{3}, "ascii");
+    require_eq(transcript_publishable_end(""), std::size_t{0}, "empty");
+}
+
 }  // namespace
 
 int main() {
@@ -142,6 +158,7 @@ int main() {
         test_shrinking_transcript_publishes_nothing();
         test_reset_forgets_the_published_prefix();
         test_empty_and_ascii_edges();
+        test_publishable_end_stops_before_an_incomplete_tail();
         std::cout << "partial_text_test passed\n";
     } catch (const std::exception & ex) {
         std::cerr << "partial_text_test failed: " << ex.what() << "\n";
