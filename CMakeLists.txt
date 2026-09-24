@@ -478,6 +478,7 @@ add_library(engine_core OBJECT
     src/framework/decoders/moss_tts_delay/config.cpp
     src/framework/decoders/moss_tts_delay/delay_decoder.cpp
     src/framework/decoders/moss_tts_delay/heads.cpp
+    src/framework/decoders/moss_tts_delay/prompt.cpp
     src/framework/decoders/tdt_decoder_runner.cpp
     src/framework/decoders/tdt_decoder_greedy_customized.cpp
     src/framework/decoders/tdt_decoder_greedy_duration_loop.cpp
@@ -1056,6 +1057,18 @@ audiocpp_add_model(moss
     ALIASES
         moss_tts_local
         moss_tts_nano
+)
+
+audiocpp_add_model(moss_ttsd
+    SOURCES
+        src/community_models/moss_ttsd/assets.cpp
+        src/community_models/moss_ttsd/prompt.cpp
+        src/community_models/moss_ttsd/session.cpp
+        src/community_models/moss_ttsd/loader.cpp
+    INCLUDES
+        engine/community_models/moss_ttsd/loader.h
+    LOADERS
+        engine::models::moss_ttsd::make_moss_ttsd_loader
 )
 
 audiocpp_add_model(moss_tts_v15
@@ -2935,6 +2948,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(quantize_chunking_test tests/unittests/test_quantize_chunking.cpp)
         add_test(NAME quantize_chunking_test COMMAND quantize_chunking_test)
 
+        add_engine_unittest(moss_ttsd_speakers_test tests/unittests/test_moss_ttsd_speakers.cpp)
+        target_link_libraries(moss_ttsd_speakers_test PRIVATE engine_model_moss_ttsd)
+        add_test(NAME moss_ttsd_speakers_test COMMAND moss_ttsd_speakers_test)
+
         add_engine_unittest(model_spec_system_test tests/unittests/test_model_spec_system.cpp)
         # So the test can read the specs this repository ships, rather than a
         # copy of them staged somewhere.
@@ -3348,6 +3365,15 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(moss_tts_v15_prompt_parity PRIVATE engine_runtime ggml)
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(moss_tts_v15_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+
+        add_executable(moss_ttsd_prompt_parity
+            tests/moss_ttsd/prompt_parity.cpp
+            src/community_models/moss_ttsd/prompt.cpp
+        )
+        target_link_libraries(moss_ttsd_prompt_parity PRIVATE engine_runtime ggml)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(moss_ttsd_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
         endif()
 
 

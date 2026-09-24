@@ -67,6 +67,19 @@ void MossTtsDelayDecoder::seed_prompt_codes(const int32_t * codes, int64_t rows)
     }
 }
 
+void MossTtsDelayDecoder::begin_continuation(int64_t prompt_audio_frames) {
+    if (prompt_audio_frames <= 0) {
+        return;
+    }
+    in_audio_ = true;
+    // audio_length_ counts audio ROWS, and the first of them is the audio-start
+    // row that carries no codes -- so frames_so_far is audio_length_ - 1. Adding
+    // one here makes the decoder agree with the prefix about how much audio has
+    // already been emitted, which is what keeps every codebook started and the
+    // length bounds measuring the same thing they would in a fresh take.
+    audio_length_ = prompt_audio_frames + 1;
+}
+
 int32_t MossTtsDelayDecoder::sample_code(std::vector<float> & logits, int64_t codebook) {
     std::vector<int32_t> previous;
     if (sampling_.audio_repetition_penalty != 1.0F) {
