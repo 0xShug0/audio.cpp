@@ -99,6 +99,50 @@
         "description": "Request a streaming run; must be false for offline sessions.",
         "required": false,
         "default": false
+      },
+      {
+        "name": "speaker_probabilities",
+        "type": "path",
+        "description": "nemotron_3_diar speaker_probabilities.safetensors for the same audio (diarize with return_frame_probabilities=true). Setting it enables speaker-tagged output: speaker turns with text and a SegLST artifact.",
+        "required": false
+      },
+      {
+        "name": "speaker_mode",
+        "type": "enum",
+        "values": [
+          "masked",
+          "attribution"
+        ],
+        "description": "masked runs one ASR stream per active speaker on speaker-masked features (NeMo masked multitalker ASR) and transcribes overlapping speech; attribution assigns each word of one transcript to the most active speaker and is cheaper.",
+        "required": false,
+        "default": "masked"
+      },
+      {
+        "name": "speaker_mask",
+        "type": "enum",
+        "values": [
+          "mel",
+          "audio"
+        ],
+        "description": "Masked mode only: mask log-mel features (NeMo mask_features) or zero the waveform of inactive 80 ms frames.",
+        "required": false,
+        "default": "mel"
+      },
+      {
+        "name": "speaker_segment_gap_sec",
+        "type": "float",
+        "description": "Start a new segment for a speaker after a pause longer than this; default 1.0 (NeMo sent_break_sec).",
+        "required": false,
+        "min": 0.0,
+        "default": 1.0
+      },
+      {
+        "name": "speaker_segment_max_sec",
+        "type": "float",
+        "description": "Streaming only: force-close a speaker-turn event after this many seconds; the final result keeps the full segments. Default 10.",
+        "required": false,
+        "min": 0.001,
+        "default": 10.0
       }
     ],
     "session": [

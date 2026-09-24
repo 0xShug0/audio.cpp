@@ -98,7 +98,8 @@ All geometry values use 80 ms encoder frames. Input-buffer latency is
 
 The `asr_laN` profiles match `nemotron_asr` speaker masking at ASR lookahead
 *N*: one ASR chunk of *N* + 1 frames per step and no right context, as in
-NeMo's multitalker pipeline.
+NeMo's multitalker pipeline. See
+[speaker-tagged transcription](../asr.md#speaker-tagged-transcription).
 `asr_la0` processes one 80 ms frame per step and is slow.
 
 Use `custom` to set the five geometry controls directly.
@@ -121,7 +122,7 @@ Use these with `--request-option`.
 | `speaker_threshold` | `0.0` to `1.0` | `0.5` | Speaker activity threshold. |
 | `speaker_min_frames` | integer >= 0 | `0` | Minimum turn duration in 10 ms output frames. |
 | `speaker_pad_frames` | integer >= 0 | `0` | Padding around turns in 10 ms output frames. |
-| `return_frame_probabilities` | `true`, `false` | `false` | Attach the raw 10 ms speaker-activity timeline as the `speaker_probabilities` artifact. With `--out-dir`, the CLI writes `speaker_probabilities.safetensors`. It holds one F32 tensor `speaker_probabilities` `[frames, 8]` and string metadata: `format_version`, `source_family`, `frames`, `speakers`, `frame_hop_samples`, `sample_rate`, `latency_profile`, and the five geometry values. |
+| `return_frame_probabilities` | `true`, `false` | `false` | Attach the raw 10 ms speaker-activity timeline as the `speaker_probabilities` artifact. With `--out-dir`, the CLI writes `speaker_probabilities.safetensors`. It holds one F32 tensor `speaker_probabilities` `[frames, 8]` and string metadata: `format_version`, `source_family`, `frames`, `speakers`, `frame_hop_samples`, `sample_rate`, `latency_profile`, and the five geometry values. `nemotron_asr` reads this file for speaker-tagged transcription. |
 
 ## Session Options
 

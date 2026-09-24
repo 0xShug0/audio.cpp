@@ -7,9 +7,12 @@
 #include "engine/models/nemotron_asr/decoder.h"
 #include "engine/models/nemotron_asr/encoder.h"
 #include "engine/models/nemotron_asr/frontend.h"
+#include "engine/models/nemotron_asr/masked_asr.h"
+#include "engine/models/nemotron_asr/speaker_tagging.h"
 #include "engine/models/nemotron_asr/weights.h"
 
 #include <chrono>
+#include <optional>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -35,6 +38,13 @@ protected:
     int64_t lookahead_for_options(const std::unordered_map<std::string, std::string> & options) const;
     NemotronDecodeOptions decode_options_for_request(const runtime::TaskRequest & request) const;
     void validate_request_options(const std::unordered_map<std::string, std::string> & options) const;
+    std::optional<SpeakerTaggingOptions> speaker_tagging_for_options(
+        const std::unordered_map<std::string, std::string> & options) const;
+    // Masked mode picks its lookahead from the diarizer file (plan D6) and warns
+    // when the masks cannot be NeMo-exact.
+    int64_t masked_lookahead(
+        const std::unordered_map<std::string, std::string> & options,
+        const SpeakerProbabilities & probabilities) const;
     runtime::TaskSpec task_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
     std::shared_ptr<const NemotronASRAssets> assets_;
@@ -95,6 +105,8 @@ private:
     runtime::StreamEvent process_available_chunks(bool flush_tail);
     void process_feature_chunk(const NemotronFrontendFeatures & features);
     runtime::StreamEvent publish_stream_update();
+    // Attribution mode: attribute the words that can no longer grow.
+    std::vector<runtime::SpeakerTurn> attribute_stream_words(bool final);
 
     runtime::StreamEventCallback stream_event_sink_;
     runtime::PartialTextPublisher partials_;
@@ -111,6 +123,11 @@ private:
     bool stream_started_ = false;
     bool finalized_ = false;
     std::chrono::steady_clock::time_point stream_wall_start_{};
+    std::optional<SpeakerTaggingOptions> stream_tagging_;
+    std::optional<SpeakerProbabilities> stream_speaker_probabilities_;
+    std::unique_ptr<SpeakerSegmentBuilder> stream_segments_;
+    std::unique_ptr<MaskedSpeakerStreams> masked_streams_;
+    size_t stream_attributed_words_ = 0;
 };
 
 }  // namespace engine::models::nemotron_asr
