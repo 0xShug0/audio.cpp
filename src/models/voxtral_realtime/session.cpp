@@ -331,6 +331,10 @@ runtime::TaskResult VoxtralRealtimeSession::finalize() {
     }
     // Any partial this last pass produces has already gone to the sink.
     (void) process_available_stream_chunks();
+    // take_stream_delta holds back a character whose byte tokens have not all been decoded. If the
+    // audio ran out first, no token will ever complete it: drop those bytes rather than publish
+    // them, so the transcript is valid UTF-8 and the partials still concatenate to it exactly.
+    streaming_text_.resize(runtime::transcript_publishable_end(streaming_text_));
     streaming_result_ = runtime::TaskResult{};
     streaming_result_.text_output = runtime::Transcript{streaming_text_, ""};
     stream_started_ = false;
