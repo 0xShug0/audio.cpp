@@ -29,7 +29,7 @@ Upstream: [LiquidAI/LFM2.5-Audio-1.5B](https://huggingface.co/LiquidAI/LFM2.5-Au
 | `tts` | `Perform TTS. Use the {US,UK} {male,female} voice.` (`Perform TTS in japanese.` for the JP model) | Sequential, audio output |
 | `s2s` | `Respond with interleaved text and audio.` | Interleaved text and audio |
 
-## Proposed packaging
+## Packaging
 
 Liquid AI already publishes llama.cpp-format GGUFs in [LiquidAI/LFM2.5-Audio-1.5B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-GGUF) and [LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF). The same repositories ship `llama-liquid-audio` runners that consume these files, built from [ggml-org/llama.cpp#18641](https://github.com/ggml-org/llama.cpp/pull/18641), which is not merged upstream yet. Each quantization has four files, where `<model>` is `LFM2.5-Audio-1.5B` or `LFM2.5-Audio-1.5B-JP`:
 
@@ -40,7 +40,16 @@ Liquid AI already publishes llama.cpp-format GGUFs in [LiquidAI/LFM2.5-Audio-1.5
 | `vocoder-<model>-<quant>.gguf` | Depth transformer, detokenizer input embedding, ISTFT window |
 | `tokenizer-<model>-<quant>.gguf` | Detokenizer backbone and output head |
 
-The proposal is for `lfm2_audio` packages to point at these repositories, pinned to revisions, instead of publishing separate GGUFs. `--model` would take the main `.gguf` file, and the loader would resolve the three sibling files.
+`lfm2_audio` packages will point at these repositories, pinned to revisions, instead of publishing separate GGUFs. Loading will follow `auk`: `--model` takes the package directory, and a session option picks each component file, so quantizations can be mixed without modifying the upstream GGUFs.
+
+| Session option (planned) | Selects |
+|---|---|
+| `lfm2_audio.model_gguf` | `<model>-<quant>.gguf` |
+| `lfm2_audio.mmproj_gguf` | `mmproj-<model>-<quant>.gguf` |
+| `lfm2_audio.vocoder_gguf` | `vocoder-<model>-<quant>.gguf` |
+| `lfm2_audio.detokenizer_gguf` | `tokenizer-<model>-<quant>.gguf` |
+
+Paths are relative to the package directory, and each option has a default. The model manager will offer each component quantization as its own download into the same directory.
 
 ## Quantization
 
@@ -63,7 +72,8 @@ Each milestone is gated on stage-by-stage parity against liquid-audio, with exac
 
 | Milestone | Scope | Status |
 |---|---|---|
-| M0 | This page, the packaging proposal, and questions for maintainers | in progress |
-| M1 | ASR: load `LlamaBpeTokenizer` from GGUF `tokenizer.ggml.*` metadata (small, separate framework pull request), then model spec v1, loader, mel frontend, encoder and adapter, LFM2 hybrid backbone, sequential text generation, audio chunking | not started |
+| M0 | This page, the packaging plan, and questions for maintainers | done |
+| M1 | ASR: model spec v1, loader with the component options above, a model-local tokenizer adapter that reads the GGUF `tokenizer.ggml.*` metadata, mel frontend, encoder and adapter, LFM2 hybrid backbone, sequential text generation, audio chunking | not started |
 | M2 | TTS: depth transformer, detokenizer and ISTFT, built-in voices, long-form text through the framework text chunker | not started |
 | M3 | Speech-to-speech: interleaved generation and a streaming session (follow-up pull request) | not started |
+| M4 | Server: `POST /v1/audio/speech/live?return_text=true` streams the text along with the audio; without it the route stays audio-only (separate pull request) | not started |
