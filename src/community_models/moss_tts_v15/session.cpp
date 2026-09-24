@@ -174,6 +174,9 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
             codec_graph_arena_bytes_,
             codec_graph_arena_bytes_,
             false,
+            execution_context().backend_type() == core::BackendType::Cpu
+                ? assets::TensorStorageType::F32
+                : assets::TensorStorageType::F16,
         },
         engine::codecs::moss_audio_tokenizer_v1_config());
     codec_->prepare_decoder();
