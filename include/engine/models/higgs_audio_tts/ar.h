@@ -114,6 +114,7 @@ public:
     void reset();
     void retain_prefix(int64_t prefix_steps);
     void import_state(const runtime::TransformerKVState & state);
+    void copy_from(const HiggsARKVCache & source);
     runtime::TransformerKVState export_state() const;
     void advance_after_direct_append(int64_t steps);
     const core::TensorValue & key_tensor(size_t layer) const;

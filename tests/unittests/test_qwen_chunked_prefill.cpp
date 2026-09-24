@@ -73,7 +73,7 @@ int main(int argc, char ** argv) {
             w.mlp.down_proj = {tensor({64, 128}), std::nullopt};
             weights.stack.layers.push_back(w);
         }
-        std::array<std::array<engine::core::TensorValue, 4>, 3> import_tensors;
+        std::array<std::array<engine::core::TensorValue, 6>, 3> import_tensors;
         const std::array<ggml_type, 3> import_types{GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16};
         for (size_t type = 0; type < import_types.size(); ++type) {
             for (auto & value : import_tensors[type]) {
@@ -94,7 +94,9 @@ int main(int argc, char ** argv) {
             options.allow_bf16_storage = true;
             engine::runtime::TransformerKVCache legacy(9, 4, {values[0]}, {values[1]}, options);
             engine::runtime::TransformerKVCache device_zero(9, 4, {values[2]}, {values[3]}, options);
-            for (int steps : {5, 2, 0}) {
+            options.lazy_import_scratch = true;
+            engine::runtime::TransformerKVCache lazy(9, 4, {values[4]}, {values[5]}, options);
+            for (int steps : {0, 5, 2, 0, 9}) {
                 engine::runtime::TransformerKVState state;
                 state.current_end = steps;
                 state.layers.resize(1);
@@ -102,6 +104,17 @@ int main(int argc, char ** argv) {
                 state.layers[0].key = pattern(steps * 4, .4f);
                 state.layers[0].value = pattern(steps * 4, -.7f);
                 legacy.import_state(state);
+                lazy.import_state(state);
+                if (lazy.current_end() != legacy.current_end() || lazy.valid_steps() != legacy.valid_steps()) {
+                    throw std::runtime_error("lazy cache import changed positions");
+                }
+                for (size_t kind = 0; kind < 2; ++kind) {
+                    const auto bytes = ggml_nbytes(values[kind].tensor);
+                    std::vector<unsigned char> expected(bytes), actual(bytes);
+                    ggml_backend_tensor_get(values[kind].tensor, expected.data(), 0, bytes);
+                    ggml_backend_tensor_get(values[kind + 4].tensor, actual.data(), 0, bytes);
+                    if (actual != expected) { throw std::runtime_error("lazy cache import changed values or tail"); }
+                }
                 device_zero.import_state(state);
                 device_zero.clear_on_backend();
                 for (size_t kind = 0; kind < 2; ++kind) {

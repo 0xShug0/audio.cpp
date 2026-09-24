@@ -472,6 +472,7 @@ struct HiggsARKVCache::Impl {
         }
         runtime::TransformerKVCacheOptions cache_options;
         cache_options.allow_f16_storage = true;
+        cache_options.lazy_import_scratch = runtime->backend_type() == core::BackendType::Cuda;
         cache = runtime::TransformerKVCache(
             cache_steps,
             config.text.num_key_value_heads * dim,
@@ -495,6 +496,13 @@ struct HiggsARKVCache::Impl {
     }
 
     void reset() {
+        if (runtime->backend_type() == core::BackendType::Cuda) {
+            // All KV tensors are F16: a device clear has exactly the same
+            // values as importing zero-filled F32 scratch through the host.
+            ggml_backend_buffer_clear(buffer, 0);
+            cache.retain_prefix(0);
+            return;
+        }
         runtime::TransformerKVState state;
         state.current_end = 0;
         state.layers.resize(cache_layer_count);
@@ -556,6 +564,45 @@ void HiggsARKVCache::retain_prefix(int64_t prefix_steps) {
 
 void HiggsARKVCache::import_state(const runtime::TransformerKVState & state) {
     impl_->import_state(state);
+}
+
+void HiggsARKVCache::copy_from(const HiggsARKVCache & source) {
+    if (impl_->runtime.get() != source.impl_->runtime.get() || valid_steps() != 0 ||
+        source.current_end() != source.valid_steps() || cache_steps() < source.valid_steps()) {
+        throw std::runtime_error("Higgs TTS AR cache copy requires an empty, compatible destination");
+    }
+    if (impl_->runtime->backend_type() != core::BackendType::Cuda) {
+        import_state(source.export_state());
+        return;
+    }
+    // Match import_state's zero-filled unused tail, including masked lanes.
+    ggml_backend_buffer_clear(impl_->buffer, 0);
+    const int64_t steps = source.valid_steps();
+    if (steps == 0) {
+        return;
+    }
+    // Growth keeps the same F16 KV values. Copy only the populated prefix on
+    // the device instead of expanding it to F32 on the host and uploading it.
+    ggml_init_params params{4 * impl_->cache_layer_count * ggml_tensor_overhead(), nullptr, true};
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx(ggml_init(params));
+    if (ctx == nullptr) {
+        throw std::runtime_error("failed to initialize Higgs TTS AR cache copy views");
+    }
+    const auto copy_prefix = [&](const core::TensorValue & from, const core::TensorValue & to) {
+        const int64_t elements = steps * from.tensor->ne[0] * from.tensor->ne[1];
+        auto * src = ggml_view_1d(ctx.get(), from.tensor, elements, 0);
+        auto * dst = ggml_view_1d(ctx.get(), to.tensor, elements, 0);
+        if (ggml_backend_view_init(src) != GGML_STATUS_SUCCESS ||
+            ggml_backend_view_init(dst) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("failed to initialize Higgs TTS AR cache copy buffers");
+        }
+        ggml_backend_tensor_copy(src, dst);
+    };
+    for (size_t layer = 0; layer < impl_->cache_layer_count; ++layer) {
+        copy_prefix(source.key_tensor(layer), key_tensor(layer));
+        copy_prefix(source.value_tensor(layer), value_tensor(layer));
+    }
+    advance_after_direct_append(steps);
 }
 
 runtime::TransformerKVState HiggsARKVCache::export_state() const {
