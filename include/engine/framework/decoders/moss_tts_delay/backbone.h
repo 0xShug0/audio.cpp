@@ -28,7 +28,8 @@ public:
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
-        assets::TensorStorageType weight_storage_type);
+        assets::TensorStorageType weight_storage_type,
+        ggml_type cache_type = GGML_TYPE_F32);
     ~MossTtsDelayBackboneRuntime();
 
     MossTtsDelayBackboneRuntime(const MossTtsDelayBackboneRuntime &) = delete;

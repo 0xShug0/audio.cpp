@@ -120,10 +120,11 @@ inline TransformerWeights load_transformer(
     const CodecWeights & codec_weights,
     const TransformerSpec & spec,
     const std::string & stack_prefix,
-    int64_t module_index) {
+    int64_t module_index,
+    assets::TensorStorageType weight_storage_type) {
     const std::string prefix = stack_prefix + "." + std::to_string(module_index);
     const auto load = [&](const std::string & name, std::initializer_list<int64_t> shape) {
-        return store.load_tensor(codec_weights.source_for(name), name, assets::TensorStorageType::F32, shape);
+        return store.load_tensor(codec_weights.source_for(name), name, weight_storage_type, shape);
     };
     const auto load_f32 = [&](const std::string & name, std::initializer_list<int64_t> shape) {
         return store.load_f32_tensor(codec_weights.source_for(name), name, shape);
@@ -485,6 +486,7 @@ public:
         core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         size_t graph_arena_bytes,
+        assets::TensorStorageType weight_storage_type,
         MossAudioTokenizerConfig config = moss_audio_tokenizer_v2_config());
     ~MossAudioTokenizerEncoder();
 
@@ -515,6 +517,7 @@ public:
         core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         size_t graph_arena_bytes,
+        assets::TensorStorageType weight_storage_type,
         MossAudioTokenizerConfig config = moss_audio_tokenizer_v2_config());
     ~MossAudioTokenizerDecoder();
 
@@ -945,6 +948,7 @@ MossAudioTokenizerEncoder::MossAudioTokenizerEncoder(
     core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
     size_t graph_arena_bytes,
+    assets::TensorStorageType weight_storage_type,
     MossAudioTokenizerConfig config)
     : impl_(std::make_unique<Impl>()) {
     impl_->backend = execution_context.backend();
@@ -970,7 +974,12 @@ MossAudioTokenizerEncoder::MossAudioTokenizerEncoder(
         const int64_t module_index =
             config.encoder_module_start + static_cast<int64_t>(index) * config.encoder_module_stride;
         impl_->transformers.push_back(cd::load_transformer(
-            *impl_->store, weights, to_encoder_transformer_spec(config.encoder_stages[index]), "encoder", module_index));
+            *impl_->store,
+            weights,
+            to_encoder_transformer_spec(config.encoder_stages[index]),
+            "encoder",
+            module_index,
+            weight_storage_type));
     }
     impl_->store->upload();
 }
@@ -1241,6 +1250,7 @@ MossAudioTokenizerDecoder::MossAudioTokenizerDecoder(
     core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
     size_t graph_arena_bytes,
+    assets::TensorStorageType weight_storage_type,
     MossAudioTokenizerConfig config)
     : impl_(std::make_unique<Impl>()) {
     impl_->backend = execution_context.backend();
@@ -1265,7 +1275,12 @@ MossAudioTokenizerDecoder::MossAudioTokenizerDecoder(
         const int64_t module_index =
             config.decoder_module_start + static_cast<int64_t>(index) * config.decoder_module_stride;
         impl_->transformers.push_back(cd::load_transformer(
-            *impl_->store, weights, to_decoder_transformer_spec(config.decoder_stages[index]), "decoder", module_index));
+            *impl_->store,
+            weights,
+            to_decoder_transformer_spec(config.decoder_stages[index]),
+            "decoder",
+            module_index,
+            weight_storage_type));
     }
     impl_->store->upload();
 }
@@ -1573,6 +1588,7 @@ struct MossAudioTokenizerCodecRuntime::Impl {
                 encoder_execution_context(),
                 options.weight_context_bytes,
                 options.encoder_graph_arena_bytes,
+                options.transformer_weight_storage_type,
                 config);
         }
         return *encoder;
@@ -1586,6 +1602,7 @@ struct MossAudioTokenizerCodecRuntime::Impl {
                 decode_context,
                 options.weight_context_bytes,
                 options.decoder_graph_arena_bytes,
+                options.transformer_weight_storage_type,
                 config);
         }
         return *decoder;

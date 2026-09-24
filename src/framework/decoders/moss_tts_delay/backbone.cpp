@@ -164,7 +164,9 @@ modules::QwenDecoderLayerWeights qwen_layer_weights(const VoiceGenBackboneLayerW
     return out;
 }
 
-modules::QwenDecoderLayerConfig qwen_layer_config(const MossTtsDelayBackboneConfig & config) {
+modules::QwenDecoderLayerConfig qwen_layer_config(
+    const MossTtsDelayBackboneConfig & config,
+    ggml_type cache_type) {
     modules::QwenDecoderLayerConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
@@ -178,6 +180,10 @@ modules::QwenDecoderLayerConfig qwen_layer_config(const MossTtsDelayBackboneConf
     out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
     out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
     out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    if (cache_type != GGML_TYPE_F32) {
+        out.runtime.static_cache.set_rows_mode =
+            modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    }
     return out;
 }
 
@@ -191,6 +197,7 @@ struct MossTtsDelayBackboneRuntime::Impl {
     core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
     size_t graph_arena_bytes = 0;
+    ggml_type cache_type = GGML_TYPE_F32;
     MossTtsDelayBackboneWeights weights;
 
     // Cached-generation step graph (built once by begin_generation, reused every step).
@@ -250,7 +257,8 @@ MossTtsDelayBackboneRuntime::MossTtsDelayBackboneRuntime(
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
     size_t weight_context_bytes,
-    assets::TensorStorageType weight_storage_type)
+    assets::TensorStorageType weight_storage_type,
+    ggml_type cache_type)
     : impl_(std::make_unique<Impl>()) {
     if (weights == nullptr) {
         throw std::runtime_error("MOSS delay backbone requires model weights");
@@ -262,6 +270,7 @@ MossTtsDelayBackboneRuntime::MossTtsDelayBackboneRuntime(
     impl_->backend_type = execution_context.backend_type();
     impl_->threads = execution_context.config().threads;
     impl_->graph_arena_bytes = graph_arena_bytes;
+    impl_->cache_type = cache_type;
     impl_->weights = load_backbone_weights(
         config,
         *weights,
@@ -312,17 +321,17 @@ void MossTtsDelayBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     cache_values.reserve(static_cast<size_t>(config.num_hidden_layers));
 
     impl.step_graph = ggml_new_graph_custom(gctx, 65536, false);
-    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
+    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config, impl.cache_type));
 
     auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                  .build(ctx, token_input, weights.embed_tokens);
     x = modules::AddModule{}.build(ctx, x, bias_input);
     for (const auto & layer : weights.layers) {
         auto cache_key = core::make_tensor(
-            ctx, GGML_TYPE_F32,
+            ctx, impl.cache_type,
             core::TensorShape::from_dims({1, cache_steps, config.num_key_value_heads, dim}));
         auto cache_value = core::make_tensor(
-            ctx, GGML_TYPE_F32,
+            ctx, impl.cache_type,
             core::TensorShape::from_dims({1, cache_steps, config.num_key_value_heads, dim}));
         cache_keys.push_back(cache_key);
         cache_values.push_back(cache_value);
@@ -360,11 +369,16 @@ void MossTtsDelayBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     impl.step_cache_slot = cache_slot.tensor;
     impl.step_mask = attention_mask.tensor;
     impl.step_hidden = hidden.tensor;
+    runtime::TransformerKVCacheOptions cache_options;
+    cache_options.allow_f16_storage = impl.cache_type == GGML_TYPE_F16;
+    cache_options.allow_bf16_storage = impl.cache_type == GGML_TYPE_BF16;
+    cache_options.lazy_import_scratch = true;
     impl.step_cache = runtime::TransformerKVCache(
         cache_steps,
         config.num_key_value_heads * config.head_dim,
         std::move(cache_keys),
-        std::move(cache_values));
+        std::move(cache_values),
+        cache_options);
     impl.mask_host.assign(static_cast<size_t>(cache_steps), ggml_fp32_to_fp16(kMaskedAttentionBias));
     impl.step_graph_build_ms += engine::debug::elapsed_ms(graph_build_start);
 }
@@ -378,24 +392,8 @@ void MossTtsDelayBackboneRuntime::begin_generation(int64_t max_positions) const 
         impl.release_step_graph();
         build_step_graph(max_positions);
     }
-    // Zero the caches so not-yet-written (masked) rows can never inject NaNs into the softmax.
-    const auto & config = impl.config.backbone;
-    const size_t elems =
-        static_cast<size_t>(impl.step_cache.cache_steps() * config.num_key_value_heads * config.head_dim);
-    const std::vector<float> zeros(elems, 0.0F);
-    for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
-        ggml_backend_tensor_set(
-            impl.step_cache.key_tensor(static_cast<size_t>(layer)).tensor,
-            zeros.data(),
-            0,
-            elems * sizeof(float));
-        ggml_backend_tensor_set(
-            impl.step_cache.value_tensor(static_cast<size_t>(layer)).tensor,
-            zeros.data(),
-            0,
-            elems * sizeof(float));
-    }
-    impl.step_cache.retain_prefix(0);
+    // Zero not-yet-written rows so masked cache entries can never inject NaNs.
+    impl.step_cache.clear_on_backend();
 }
 
 std::vector<float> MossTtsDelayBackboneRuntime::step(int32_t token_id, const std::vector<float> & audio_bias_row) const {
@@ -501,7 +499,7 @@ std::vector<float> MossTtsDelayBackboneRuntime::prefill(
     std::vector<core::TensorValue> layer_values;
     layer_keys.reserve(impl.weights.layers.size());
     layer_values.reserve(impl.weights.layers.size());
-    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
+    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config, impl.cache_type));
     for (const auto & layer : impl.weights.layers) {
         auto out = layer_module.build(
             ctx,
