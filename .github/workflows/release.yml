@@ -473,7 +473,7 @@ jobs:
         include:
           - cuda: '12.4.1'
             label: '12.4'
-            cuda_archs: '70;75;80;86;89;90'
+            cuda_archs: '61-virtual;70;75;80;86;89;90'
           - cuda: '13.3.0'
             label: '13.3'
             cuda_archs: '75;80;86;89;90;120'
