@@ -47,6 +47,13 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "return_frame_probabilities",
+        "type": "bool",
+        "description": "Attach the raw 10 ms speaker-activity timeline as the speaker_probabilities artifact (F32, frames x speakers).",
+        "required": false,
+        "default": false
       }
     ],
     "session": [
@@ -98,6 +105,14 @@
         "description": "FIFO-to-cache update period in 80 ms encoder frames for the custom profile.",
         "required": false,
         "min": 1
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "values": ["auto", "flash", "eager"],
+        "description": "Encoder attention lowering; auto uses flash attention where the backend supports it.",
+        "required": false,
+        "default": "auto"
       },
       {
         "name": "graph_arena_mb",
@@ -163,6 +178,16 @@
       "target_directory": "Nemotron-3-Diarization-GGUF",
       "files": [
         "nemotron-3-diarization-bf16.gguf"
+      ]
+    },
+    {
+      "id": "nemotron_3_diar_q8_0",
+      "display_name": "Nemotron 3 Diarization Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Nemotron-3-Diarization-GGUF",
+      "files": [
+        "nemotron-3-diarization-q8_0.gguf"
       ]
     }
   ],

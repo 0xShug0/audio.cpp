@@ -97,6 +97,7 @@ private:
     bool stream_started_ = false;
     size_t graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
     size_t weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
+    bool use_flash_attention_ = true;
 };
 
 }  // namespace engine::models::nemotron_3_diar

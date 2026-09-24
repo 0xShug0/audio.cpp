@@ -44,11 +44,14 @@ def load_checkpoint(source: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         if config_member is None or weights_member is None:
             raise SystemExit(f"NeMo archive is missing model_config.yaml or model_weights.ckpt: {source}")
         config = yaml.safe_load(config_member.read().decode("utf-8"))
-        with tempfile.NamedTemporaryFile(suffix=".ckpt") as checkpoint:
+        # delete=False: Windows cannot reopen a NamedTemporaryFile while it is open.
+        with tempfile.NamedTemporaryFile(suffix=".ckpt", delete=False) as checkpoint:
             while block := weights_member.read(16 * 1024 * 1024):
                 checkpoint.write(block)
-            checkpoint.flush()
+        try:
             loaded = torch.load(checkpoint.name, map_location="cpu", weights_only=False)
+        finally:
+            Path(checkpoint.name).unlink(missing_ok=True)
     state = loaded.get("state_dict", loaded)
     if not isinstance(state, dict) or not state:
         raise ValueError("checkpoint did not contain a non-empty state dictionary")

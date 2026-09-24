@@ -42,7 +42,8 @@ FeatureBatch compute_features(
     for (const auto & item : audio) {
         auto features = assets.frontend->extract_audio(
             item.samples, item.sample_rate, item.channels,
-            {true, audio::ValidFrameRule::CeilHops},
+            // NeMo FilterbankFeatures.get_seq_len: floor(samples / hop) valid frames.
+            {true, audio::ValidFrameRule::FloorHops},
             static_cast<size_t>(std::max<int64_t>(1, threads)));
         maximum_frames = std::max(maximum_frames, features.valid_frames);
         rows.push_back({features.valid_frames, std::move(features.values)});
