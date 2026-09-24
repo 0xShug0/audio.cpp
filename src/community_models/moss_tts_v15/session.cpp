@@ -151,6 +151,13 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
     codebook_spec.tensor_prefix = "emb_ext";
     codebooks_ = std::make_unique<engine::modules::MultiCodebookEmbedding>(*assets_->model_weights, codebook_spec);
 
+    // 16-bit storage for the cache and the codec is measured on CUDA only. Hip, Vulkan
+    // and Metal keep F32 until someone runs the same comparison there: prefill writes its
+    // F32 K/V into the cache with ggml_cpy into a strided 4-D view, and a backend missing
+    // that conversion fails at graph compute rather than at graph build. Widening this is
+    // one enum per backend, after measuring it.
+    const bool narrow_storage = execution_context().backend_type() == core::BackendType::Cuda;
+
     backbone_ = std::make_unique<decoders::MossTtsDelayBackboneRuntime>(
         assets_->config,
         assets_->model_weights,
@@ -158,7 +165,7 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
         backbone_graph_arena_bytes_,
         backbone_weight_context_bytes_,
         weight_storage_type_,
-        execution_context().backend_type() == core::BackendType::Cpu ? GGML_TYPE_F32 : GGML_TYPE_F16);
+        narrow_storage ? GGML_TYPE_F16 : GGML_TYPE_F32);
     heads_ = std::make_unique<decoders::MossTtsDelayHeadsRuntime>(
         assets_->config,
         assets_->model_weights,
@@ -175,9 +182,7 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
             codec_graph_arena_bytes_,
             codec_graph_arena_bytes_,
             false,
-            execution_context().backend_type() == core::BackendType::Cpu
-                ? assets::TensorStorageType::F32
-                : assets::TensorStorageType::F16,
+            narrow_storage ? assets::TensorStorageType::F16 : assets::TensorStorageType::F32,
         },
         engine::codecs::moss_audio_tokenizer_v1_config());
     codec_->prepare_decoder();
