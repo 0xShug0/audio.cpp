@@ -440,6 +440,7 @@ public:
         }
         position_ids_ = modules::qwen_position_ids(prompt_steps_);
         debug::timing_log_scalar("greedy_qwen_decoder.prefill.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_context_reservation("greedy_qwen_decoder.prefill.graph", ctx_.get());
         debug::trace_log_scalar("greedy_qwen_decoder.prefill_prompt_steps", prompt_steps_);
     }
 
@@ -575,6 +576,7 @@ public:
         }
         attention_mask_values_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-INFINITY));
         debug::timing_log_scalar("greedy_qwen_decoder.decode.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_context_reservation("greedy_qwen_decoder.decode.graph", ctx_.get());
         debug::trace_log_scalar("greedy_qwen_decoder.decode_cache_steps", cache_steps_);
     }
 

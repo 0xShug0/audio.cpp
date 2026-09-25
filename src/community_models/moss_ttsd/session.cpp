@@ -155,9 +155,16 @@ void MossTtsdSession::prepare(const runtime::SessionPreparationRequest &) {
     codebook_spec.tensor_prefix = "emb_ext";
     codebooks_ = std::make_unique<engine::modules::MultiCodebookEmbedding>(*assets_->model_weights, codebook_spec);
 
+    // Same GPU opt-in as moss_tts_v15: the packages store the codec at f16, so loading the decoder
+    // at f32 only doubles its VRAM. The f16 KV cache is bit-identical on output.
+    const auto backend_type = execution_context().backend_type();
+    const bool use_f16 = backend_type == core::BackendType::Cuda ||
+                         backend_type == core::BackendType::Vulkan ||
+                         backend_type == core::BackendType::Metal;
     backbone_ = std::make_unique<decoders::MossTtsDelayBackboneRuntime>(
         assets_->config, assets_->model_weights, execution_context(),
-        backbone_graph_arena_bytes_, backbone_weight_context_bytes_, weight_storage_type_);
+        backbone_graph_arena_bytes_, backbone_weight_context_bytes_, weight_storage_type_,
+        use_f16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
     heads_ = std::make_unique<decoders::MossTtsDelayHeadsRuntime>(
         assets_->config, assets_->model_weights, execution_context(),
         heads_graph_arena_bytes_, heads_weight_context_bytes_, weight_storage_type_);
@@ -171,6 +178,14 @@ void MossTtsdSession::prepare(const runtime::SessionPreparationRequest &) {
         assets_->audio_tokenizer_weights, execution_context(), config.num_codebooks,
         engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
             codec_weight_context_bytes_, codec_graph_arena_bytes_, codec_graph_arena_bytes_, false,
+            use_f16 ? assets::TensorStorageType::F16 : assets::TensorStorageType::F32,
+            // ⚠ THE ENCODER COMPUTES AT F32, UNLIKE moss_tts_v15. This model continues directly
+            // from the reference's codes, and an f16 encoder changes 5-14% of the finer codebooks.
+            // Over 26 seeds that produced silence or a re-spoken prompt 3 times, against none at
+            // f32. Holding the weights at their stored type and widening them in the graph gives
+            // the same f32 values -- the widening is exact -- without keeping an f32 copy resident.
+            use_f16 ? assets::TensorStorageType::Native : assets::TensorStorageType::F32,
+            use_f16,
         },
         engine::codecs::moss_audio_tokenizer_v1_config());
     codec_->prepare_decoder();

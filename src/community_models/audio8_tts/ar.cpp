@@ -1986,10 +1986,9 @@ std::vector<float> build_falcon_embedding_step(
 }  // namespace
 
 // Copies a backend-resident weight tensor byte-for-byte (same ggml type and
-// dimensions) so it can live on a second backend: the fast AR graph runs on a
-// dedicated CPU backend while the slow path and codec stay on the GPU (the
-// per-step fast AR submit+sync latency dominates on GPU backends, while CPU
-// computes the same graph several times faster). q8_0/f32/f16 all copy
+// dimensions) so it can live on a second backend: on Metal, the fast AR graph
+// runs on a dedicated CPU backend while the slow path and codec stay on Metal
+// to avoid per-step submit+sync latency. q8_0/f32/f16 all copy
 // losslessly — the point is backend placement, not conversion.
 core::TensorValue schedule_tensor_copy(
     ggml_context * dst_ctx,
@@ -2026,12 +2025,9 @@ public:
         backend_type_ = core::backend_type(backend_);
         ArkttsARWeights loaded =
             load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type);
-        if (backend_type_ != core::BackendType::Cpu) {
-            // Fast AR is submit+sync latency bound on GPU backends (one graph
-            // submission per generated codebook token); the same graph computes
-            // several times faster on CPU. Give it a dedicated CPU backend and
-            // move the fast-layer weights over, leaving slow path + codec on
-            // the GPU backend.
+        if (backend_type_ == core::BackendType::Metal) {
+            // Fast AR is submit+sync latency bound on Metal. Use a dedicated
+            // CPU backend there; other backends retain their selected device.
             core::BackendConfig fast_backend_config;
             fast_backend_config.type = core::BackendType::Cpu;
             fast_backend_config.threads = threads_;
@@ -2106,14 +2102,13 @@ public:
     }
 
     // Backend hosting the fast AR graph: a dedicated CPU backend when the main
-    // backend is a GPU, otherwise the main backend itself.
+    // backend is Metal, otherwise the main backend itself.
     ggml_backend_t fast_backend() const noexcept {
         return fast_backend_ != nullptr ? fast_backend_ : backend_;
     }
 
-    // Falcon-H1 per-token steps run on the dedicated CPU backend when the main
-    // backend is a GPU one (dispatch-latency bound there); identical tensors
-    // otherwise, so this is always the right backend for falcon_forward_step.
+    // Falcon-H1 per-token steps use the dedicated CPU backend on Metal,
+    // otherwise the selected backend.
     ggml_backend_t falcon_step_backend() const noexcept {
         return fast_backend_ != nullptr ? fast_backend_ : backend_;
     }
