@@ -37,6 +37,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `chatterbox_turbo` | [ResembleAI/chatterbox-turbo](https://huggingface.co/ResembleAI/chatterbox-turbo) | MIT | Yes | | 2026-09-21 |
 | `citrinet_asr` | [nvidia/stt_en_citrinet_256_ls](https://huggingface.co/nvidia/stt_en_citrinet_256_ls) | CC-BY-4.0 | Yes | | 2026-09-21 |
 | `cohere_asr` | [CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026) | Apache-2.0 | Yes | | 2026-09-21 |
+| `gigaam_asr` | [ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3), [ai-sage/GigaAM-Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) | MIT | Yes | | 2026-09-25 |
 | `confucius4_r2t2` | [netease-youdao/Confucius4-R2T2](https://huggingface.co/netease-youdao/Confucius4-R2T2) | [NetEase Youdao Model License](https://github.com/netease-youdao/Confucius4-R2T2/blob/master/MODEL_LICENSE) | Conditional | A separate license is needed above RMB 1 billion yearly revenue or 100 million monthly users. The model and its outputs may not be used to improve other commercial AI models. | 2026-09-21 |
 | `confucius4_tts` | [netease-youdao/Confucius4-TTS](https://huggingface.co/netease-youdao/Confucius4-TTS) | Apache-2.0 | Yes | | 2026-09-21 |
 | `controlfoley` | [YJX-Xiaomi/ControlFoley](https://huggingface.co/YJX-Xiaomi/ControlFoley) | CC-BY-NC-4.0 | No | | 2026-09-21 |

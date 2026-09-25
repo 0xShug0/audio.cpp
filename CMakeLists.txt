@@ -1436,6 +1436,20 @@ audiocpp_add_model(nemotron_asr
         engine::models::nemotron_asr::make_nemotron_asr_loader
 )
 
+audiocpp_add_model(gigaam_asr
+    SOURCES
+        src/models/gigaam_asr/assets.cpp
+        src/models/gigaam_asr/conformer.cpp
+        src/models/gigaam_asr/frontend.cpp
+        src/models/gigaam_asr/weights.cpp
+        src/models/gigaam_asr/runtime.cpp
+        src/models/gigaam_asr/session.cpp
+    INCLUDES
+        engine/models/gigaam_asr/model.h
+    LOADERS
+        engine::models::gigaam_asr::make_gigaam_asr_loader
+)
+
 audiocpp_add_model(cohere_asr
     SOURCES
         src/models/cohere_asr/assets.cpp
