@@ -374,7 +374,10 @@ SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
     return index;
 }
 
-std::vector<unsigned char> encode_safetensors(
+namespace {
+
+// Validates the entries and returns the header JSON padded to 8 bytes.
+std::string safetensors_header(
     const std::vector<SafeTensorWriteEntry> & entries,
     const std::vector<std::pair<std::string, std::string>> & metadata) {
     if (entries.empty()) {
@@ -428,21 +431,35 @@ std::vector<unsigned char> encode_safetensors(
 
     std::string header = header_stream.str();
     header.append((8 - (header.size() % 8)) % 8, ' ');
+    return header;
+}
 
-    std::ostringstream out(std::ios::binary);
-    write_u64_le(out, static_cast<uint64_t>(header.size()));
-    out.write(header.data(), static_cast<std::streamsize>(header.size()));
+}  // namespace
+
+std::vector<unsigned char> encode_safetensors(
+    const std::vector<SafeTensorWriteEntry> & entries,
+    const std::vector<std::pair<std::string, std::string>> & metadata) {
+    const std::string header = safetensors_header(entries, metadata);
+    size_t total = 8 + header.size();
     for (const auto & entry : entries) {
-        out.write(reinterpret_cast<const char *>(entry.data.data()), static_cast<std::streamsize>(entry.data.size()));
+        total += entry.data.size();
     }
-    const std::string bytes = out.str();
-    return std::vector<unsigned char>(bytes.begin(), bytes.end());
+    std::vector<unsigned char> out;
+    out.reserve(total);
+    for (int i = 0; i < 8; ++i) {
+        out.push_back(static_cast<unsigned char>((static_cast<uint64_t>(header.size()) >> (8 * i)) & 0xffu));
+    }
+    out.insert(out.end(), header.begin(), header.end());
+    for (const auto & entry : entries) {
+        out.insert(out.end(), entry.data.begin(), entry.data.end());
+    }
+    return out;
 }
 
 void write_safetensors_file(
     const std::filesystem::path & path,
     const std::vector<SafeTensorWriteEntry> & entries) {
-    const auto bytes = encode_safetensors(entries);
+    const std::string header = safetensors_header(entries, {});
     const auto parent = path.parent_path();
     if (!parent.empty()) {
         std::filesystem::create_directories(parent);
@@ -451,7 +468,13 @@ void write_safetensors_file(
     if (!output) {
         throw std::runtime_error("failed to open safetensors output file: " + path.string());
     }
-    output.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    write_u64_le(output, static_cast<uint64_t>(header.size()));
+    output.write(header.data(), static_cast<std::streamsize>(header.size()));
+    for (const auto & entry : entries) {
+        output.write(
+            reinterpret_cast<const char *>(entry.data.data()),
+            static_cast<std::streamsize>(entry.data.size()));
+    }
 }
 
 }  // namespace engine::io
