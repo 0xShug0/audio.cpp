@@ -3030,8 +3030,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 lfm2_audio_tokenizer_test)
                 add_engine_unittest(${lfm2_audio_test} tests/community_models/lfm2_audio/${lfm2_audio_test}.cpp)
                 target_include_directories(${lfm2_audio_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+                target_compile_definitions(${lfm2_audio_test} PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
                 add_test(NAME ${lfm2_audio_test} COMMAND ${lfm2_audio_test})
             endforeach()
+
+            if (ENGINE_ENABLE_CUDA)
+                add_engine_unittest(lfm2_audio_cuda_test tests/community_models/lfm2_audio/lfm2_audio_cuda_test.cpp)
+                target_include_directories(lfm2_audio_cuda_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+                add_test(NAME lfm2_audio_cuda_test COMMAND lfm2_audio_cuda_test)
+                set_tests_properties(lfm2_audio_cuda_test PROPERTIES SKIP_RETURN_CODE 77)
+            endif()
         endif()
 
         add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)

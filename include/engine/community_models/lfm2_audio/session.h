@@ -15,6 +15,7 @@
 #include "engine/framework/runtime/session_base.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -44,6 +45,8 @@ private:
     };
 
     RequestOptions parse_request_options(const runtime::TaskRequest & request) const;
+    std::vector<runtime::TimeSpan> plan_chunks(const runtime::TaskRequest & request, const std::vector<float> & samples);
+    runtime::IOfflineVoiceTaskSession & vad_session();
     std::string transcribe(const std::vector<float> & samples, const RequestOptions & options);
 
     runtime::TaskSpec task_;
@@ -56,6 +59,9 @@ private:
     Lfm2BackboneRuntime backbone_;
     std::string language_;
     Lfm2AsrPrompt prompt_;
+    std::filesystem::path vad_model_path_;
+    std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
+    std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
 };
 
 }  // namespace engine::community_models::lfm2_audio

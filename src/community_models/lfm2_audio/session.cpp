@@ -1,11 +1,13 @@
 #include "engine/community_models/lfm2_audio/session.h"
 
 #include "engine/framework/audio/chunking.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/models/silero_vad/session.h"
 
 #include <algorithm>
 #include <chrono>
@@ -110,28 +112,13 @@ void append_chunk_text(std::string & merged, std::string chunk) {
     merged += chunk;
 }
 
-std::vector<runtime::TimeSpan> plan_chunks(const runtime::TaskRequest & request, int64_t samples) {
-    const auto mode = audio::parse_audio_chunk_mode(request.options);
-    if (mode == audio::AudioChunkMode::None) {
-        return {{0, samples}};
-    }
-
-    if (mode != audio::AudioChunkMode::Auto && mode != audio::AudioChunkMode::Fixed) {
-        throw std::runtime_error("LFM2-Audio supports audio_chunk_mode=auto, fixed, or none");
-    }
-
-    const float seconds = audio::parse_audio_chunk_seconds_override(request.options).value_or(kDefaultChunkSeconds);
-    if (!std::isfinite(seconds) || seconds < kMinChunkSeconds) {
-        throw std::runtime_error("LFM2-Audio audio_chunk_seconds must be at least 1");
-    }
-
-    const auto chunk_samples = static_cast<int64_t>(std::llround(static_cast<double>(seconds) * kSampleRate));
+// Fixed chunks of audio_chunk_seconds. A short tail joins the previous chunk.
+std::vector<runtime::TimeSpan> plan_fixed_chunks(int64_t samples, int64_t chunk_samples) {
     std::vector<runtime::TimeSpan> spans;
     for (const auto & chunk : audio::plan_audio_chunks(samples, {chunk_samples, chunk_samples})) {
         spans.push_back({chunk.output_start_sample, chunk.output_start_sample + chunk.valid_samples});
     }
 
-    // A short tail joins the previous chunk.
     const auto min_samples = static_cast<int64_t>(kMinChunkSeconds * kSampleRate);
     if (spans.size() > 1 && spans.back().end_sample - spans.back().start_sample < min_samples) {
         spans.pop_back();
@@ -141,9 +128,15 @@ std::vector<runtime::TimeSpan> plan_chunks(const runtime::TaskRequest & request,
     return spans;
 }
 
-// Stage dumps for parity work against the reference. TODO: drop before upstreaming.
+std::filesystem::path default_vad_model_path() {
+    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+}
+
+// Set LFM2_AUDIO_DUMP_DIR to write each stage (features, adapter output,
+// prompt ids, first logits, tokens) as raw f32/i32 for stage-by-stage
+// comparison against the reference implementation.
 void debug_dump(const char * name, const void * data, size_t bytes) {
-    const char * dir = std::getenv("LFM2_AUDIO_DEBUG_DIR");
+    const char * dir = std::getenv("LFM2_AUDIO_DUMP_DIR");
     if (dir == nullptr || *dir == '\0') {
         return;
     }
@@ -168,7 +161,9 @@ Lfm2AudioSession::Lfm2AudioSession(
       encoder_(components_->mmproj, components_->encoder, execution_context()),
       backbone_(components_->model, components_->backbone, execution_context()),
       language_(model_language(*components_)),
-      prompt_(make_lfm2_asr_prompt(tokenizer_, language_)) {
+      prompt_(make_lfm2_asr_prompt(tokenizer_, language_)),
+      vad_model_path_(runtime::find_option(RuntimeSessionBase::options().options, {"lfm2_audio.vad_model_path"})
+                          .value_or(default_vad_model_path().string())) {
     components_->model->release_storage();
     components_->mmproj->release_storage();
 }
@@ -206,6 +201,63 @@ Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const r
     return out;
 }
 
+// liquid-audio transcribes the whole input, so auto does too when it fits one
+// chunk. Longer audio is split at pauses found by the bundled Silero VAD, as
+// the other ASR families do (vad mode forces that); silence between the spans
+// is not transcribed, so it cannot come back as words. fixed cuts at the
+// chunk length regardless.
+std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
+    const runtime::TaskRequest & request, const std::vector<float> & samples) {
+    const auto total = static_cast<int64_t>(samples.size());
+    const auto mode = audio::parse_audio_chunk_mode(request.options);
+    if (mode == audio::AudioChunkMode::None) {
+        return {{0, total}};
+    }
+
+    if (mode != audio::AudioChunkMode::Auto && mode != audio::AudioChunkMode::Fixed && mode != audio::AudioChunkMode::Vad) {
+        throw std::runtime_error("LFM2-Audio supports audio_chunk_mode=auto, fixed, vad, or none");
+    }
+
+    const float seconds = audio::parse_audio_chunk_seconds_override(request.options).value_or(kDefaultChunkSeconds);
+    if (!std::isfinite(seconds) || seconds < kMinChunkSeconds) {
+        throw std::runtime_error("LFM2-Audio audio_chunk_seconds must be at least 1");
+    }
+
+    const auto chunk_samples = static_cast<int64_t>(std::llround(static_cast<double>(seconds) * kSampleRate));
+    if (mode == audio::AudioChunkMode::Auto && total <= chunk_samples) {
+        return {{0, total}};
+    }
+
+    // Without the bundled model, auto falls back to fixed chunks; vad requires it.
+    if (mode == audio::AudioChunkMode::Fixed ||
+        (mode == audio::AudioChunkMode::Auto && !io::is_existing_directory(vad_model_path_))) {
+        return plan_fixed_chunks(total, chunk_samples);
+    }
+
+    const audio::VadAudioChunkOptions options{chunk_samples, kSampleRate / 2, kSampleRate / 4};
+    return audio::plan_vad_audio_chunks(runtime::AudioBuffer{kSampleRate, 1, samples}, vad_session(), options);
+}
+
+runtime::IOfflineVoiceTaskSession & Lfm2AudioSession::vad_session() {
+    if (vad_session_ == nullptr) {
+        runtime::ModelLoadRequest load_request;
+        load_request.model_path = vad_model_path_;
+        vad_model_ = engine::models::silero_vad::load_silero_vad_model(load_request);
+        auto session = vad_model_->create_task_session(
+            {runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
+            runtime::SessionOptions{RuntimeSessionBase::options().backend, {}});
+        auto * offline = dynamic_cast<runtime::IOfflineVoiceTaskSession *>(session.get());
+        if (offline == nullptr) {
+            throw std::runtime_error("LFM2-Audio VAD session does not support offline execution");
+        }
+
+        session.release();
+        vad_session_.reset(offline);
+    }
+
+    return *vad_session_;
+}
+
 std::string Lfm2AudioSession::transcribe(const std::vector<float> & samples, const RequestOptions & options) {
     const auto features = features_.extract(samples);
     debug_dump("mel.f32", features.values.data(), features.values.size() * sizeof(float));
@@ -240,7 +292,7 @@ runtime::TaskResult Lfm2AudioSession::run(const runtime::TaskRequest & request) 
     const auto samples = lfm2_audio_mono_16k(*request.audio_input);
 
     std::string text;
-    for (const auto & span : plan_chunks(request, static_cast<int64_t>(samples.size()))) {
+    for (const auto & span : plan_chunks(request, samples)) {
         const std::vector<float> chunk(samples.begin() + span.start_sample, samples.begin() + span.end_sample);
         append_chunk_text(text, transcribe(chunk, options));
     }
@@ -282,12 +334,9 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_lfm2_audio_loader() {
                 return false;
             }
 
-            try {
-                (void)load_lfm2_audio_assets(request.model_path);
-                return true;
-            } catch (const std::exception &) {
-                return false;
-            }
+            // An incomplete package is still claimed, so load() reports what
+            // is missing instead of the registry finding no loader at all.
+            return has_lfm2_audio_component(request.model_path);
         }
 
         runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {

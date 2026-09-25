@@ -5,6 +5,7 @@
 #include <gguf.h>
 
 #include <algorithm>
+#include <cctype>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -125,6 +126,12 @@ private:
     std::unique_ptr<gguf_context, Deleter> ctx_;
 };
 
+bool has_gguf_extension(const std::filesystem::path & path) {
+    auto extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return std::tolower(c); });
+    return extension == ".gguf";
+}
+
 bool is_backbone_gguf(const std::filesystem::path & path) {
     return GgufMetadata(path).find_str("general.architecture") == "lfm2";
 }
@@ -139,7 +146,7 @@ std::vector<std::string> list_gguf_files(const std::filesystem::path & root, boo
     std::vector<std::string> names;
     std::error_code error;
     for (const auto & entry : std::filesystem::directory_iterator(root, error)) {
-        if (!entry.is_regular_file() || entry.path().extension() != ".gguf") {
+        if (!entry.is_regular_file() || !has_gguf_extension(entry.path())) {
             continue;
         }
 
@@ -166,13 +173,13 @@ std::string join(const std::vector<std::string> & values) {
 
 std::filesystem::path resolve_component(
     const std::filesystem::path & root, const char * option_name, const std::string & value) {
-    const std::filesystem::path relative(value);
-    if (value.empty() || relative.is_absolute()) {
-        throw std::runtime_error(std::string(option_name) + " must be a nonempty path relative to the model directory");
+    const auto relative = std::filesystem::path(value).lexically_normal();
+    if (value.empty() || relative.is_absolute() || (!relative.empty() && *relative.begin() == "..")) {
+        throw std::runtime_error(std::string(option_name) + " must be a nonempty path inside the model directory");
     }
 
     const auto path = root / relative;
-    if (!io::is_existing_file(path) || path.extension() != ".gguf") {
+    if (!io::is_existing_file(path) || !has_gguf_extension(path)) {
         throw std::runtime_error(std::string(option_name) + " must name an existing GGUF file: " + path.string());
     }
 
@@ -238,6 +245,10 @@ Lfm2BackboneConfig read_backbone_config(const GgufMetadata & meta, const assets:
         throw std::runtime_error("LFM2-Audio head_count_kv must list one value per layer");
     }
 
+    if (std::none_of(config.kv_heads.begin(), config.kv_heads.end(), [](int64_t heads) { return heads > 0; })) {
+        throw std::runtime_error("LFM2-Audio backbone has no attention layer");
+    }
+
     if (config.num_attention_heads <= 0 || config.hidden_size % config.num_attention_heads != 0) {
         throw std::runtime_error("LFM2-Audio attention head count does not divide the hidden size");
     }
@@ -280,7 +291,7 @@ std::shared_ptr<const Lfm2AudioAssets> load_lfm2_audio_assets(const std::filesys
     auto assets = std::make_shared<Lfm2AudioAssets>();
     if (io::is_existing_directory(model_path)) {
         assets->model_root = model_path;
-    } else if (io::is_existing_file(model_path) && model_path.extension() == ".gguf") {
+    } else if (io::is_existing_file(model_path) && has_gguf_extension(model_path)) {
         assets->model_root = model_path.parent_path().empty() ? std::filesystem::path(".") : model_path.parent_path();
         assets->default_model_gguf = model_path.filename().string();
         if (!is_backbone_gguf(model_path)) {
@@ -310,6 +321,29 @@ std::shared_ptr<const Lfm2AudioAssets> load_lfm2_audio_assets(const std::filesys
     }
 
     return assets;
+}
+
+bool has_lfm2_audio_component(const std::filesystem::path & model_path) {
+    const auto is_component = [](const std::filesystem::path & path) {
+        try {
+            return has_gguf_extension(path) && (is_backbone_gguf(path) || is_encoder_gguf(path));
+        } catch (const std::exception &) {
+            return false;  // an unreadable file is not ours to report
+        }
+    };
+
+    if (io::is_existing_file(model_path)) {
+        return is_component(model_path);
+    }
+
+    std::error_code error;
+    for (const auto & entry : std::filesystem::directory_iterator(model_path, error)) {
+        if (entry.is_regular_file() && is_component(entry.path())) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 std::shared_ptr<const Lfm2AudioComponents> load_lfm2_audio_components(

@@ -449,6 +449,13 @@ void test_requests_are_independent(Fixture & fixture) {
     require_eq(run(short_case.prompt, short_case.audio, 6), short_expected, "short after long");
     require_eq(run(same_length, no_audio, 10), same_length_expected, "text after audio");
     require_eq(run(long_case.prompt, long_case.audio, 24), long_expected, "long again");
+
+    // A request sized to the whole context leaves a decode cache far larger
+    // than the next request needs; that one gets a fresh graph and the same
+    // tokens.
+    const auto rest_of_context = fixture.shape.context - static_cast<int64_t>(long_case.prompt.input_ids.size());
+    (void)runtime->generate(long_case.prompt, long_case.audio, {rest_of_context, {}});
+    require_eq(run(short_case.prompt, short_case.audio, 6), short_expected, "short after a full-context request");
 }
 
 void test_rejects_bad_requests(Fixture & fixture) {

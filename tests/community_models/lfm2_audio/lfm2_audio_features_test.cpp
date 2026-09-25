@@ -2,6 +2,7 @@
 #include "lfm2_audio_test_package.h"
 #include "test_assert.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -110,6 +111,17 @@ void test_near_log_floor() {
     }
 }
 
+// Digital silence: every frame of every bin is the same, so the features are
+// exactly zero. With float32 statistics the rounding in the mean, divided by
+// the 1e-5 std, came out near +-1, and the model read words into it.
+void test_digital_silence() {
+    for (const size_t seconds : {1, 5, 30}) {
+        const auto features = Lfm2AudioFeatureExtractor(kMels, 1).extract(std::vector<float>(16000 * seconds, 0.0f));
+        const bool zero = std::all_of(features.values.begin(), features.values.end(), [](float v) { return v == 0.0f; });
+        require(zero, std::to_string(seconds) + " s of zeros must give zero features");
+    }
+}
+
 void test_normalization() {
     const auto features = Lfm2AudioFeatureExtractor(kMels, 1).extract(test_signal());
     const int64_t valid = features.frames - 1;
@@ -161,6 +173,7 @@ int main() {
     try {
         test_matches_reference();
         test_near_log_floor();
+        test_digital_silence();
         test_normalization();
         test_frame_count();
         test_threads_do_not_change_features();

@@ -82,6 +82,12 @@ struct Lfm2AudioComponents {
 
 std::shared_ptr<const Lfm2AudioAssets> load_lfm2_audio_assets(const std::filesystem::path & model_path);
 
+// Whether `model_path` (a directory or a GGUF file) holds any LFM2-Audio
+// component: an LFM2 backbone or an lfm2a mmproj GGUF, complete or not. The
+// loader claims such paths so that load_lfm2_audio_assets can say what is
+// missing. Never throws.
+bool has_lfm2_audio_component(const std::filesystem::path & model_path);
+
 // Resolves the backbone and mmproj GGUFs. An empty name means the default:
 // the only backbone GGUF in the model root, and "mmproj-<backbone file>" or
 // else the only mmproj GGUF.

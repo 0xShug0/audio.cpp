@@ -60,7 +60,8 @@ void write_gguf(const std::filesystem::path & path, gguf_context * ctx, const st
 
 // An LFM2 backbone with 3 layers (short-conv, attention, short-conv), width 8
 // and a 4-token vocabulary.
-void write_backbone(const std::filesystem::path & path, const std::string & language = "en", bool merges = true) {
+void write_backbone(
+    const std::filesystem::path & path, const std::string & language = "en", bool merges = true, bool attention = true) {
     auto ctx = new_gguf();
     gguf_set_val_str(ctx.get(), "general.architecture", "lfm2");
     set_str_array(ctx.get(), "general.languages", {language});
@@ -72,7 +73,7 @@ void write_backbone(const std::filesystem::path & path, const std::string & lang
     gguf_set_val_u32(ctx.get(), "lfm2.shortconv.l_cache", 3);
     gguf_set_val_f32(ctx.get(), "lfm2.attention.layer_norm_rms_epsilon", 1e-5f);
     gguf_set_val_f32(ctx.get(), "lfm2.rope.freq_base", 1e6f);
-    const int32_t kv_heads[] = {0, 1, 0};
+    const int32_t kv_heads[] = {0, attention ? 1 : 0, 0};
     gguf_set_arr_data(ctx.get(), "lfm2.attention.head_count_kv", GGUF_TYPE_INT32, kv_heads, 3);
     gguf_set_val_str(ctx.get(), "tokenizer.ggml.model", "gpt2");
     gguf_set_val_str(ctx.get(), "tokenizer.ggml.pre", "lfm2");
@@ -275,6 +276,38 @@ void test_rejects_bad_choices() {
     std::filesystem::remove_all(no_heads);
 }
 
+void test_file_names() {
+    // Extensions are case-insensitive, like the framework's GGUF reader.
+    const auto upper = fresh_directory("audiocpp_lfm2_audio_upper_test");
+    write_backbone(upper / "Model-F16.GGUF");
+    write_mmproj(upper / "mmproj-Model-F16.GGUF");
+    const auto components = load_lfm2_audio_components(*load_lfm2_audio_assets(upper), "", "");
+    require_eq(components->model_path, upper / "Model-F16.GGUF", "uppercase backbone");
+    std::filesystem::remove_all(upper);
+
+    // Component options name files inside the model directory.
+    const auto root = write_package("audiocpp_lfm2_audio_escape_test");
+    const auto nested = root / "nested";
+    std::filesystem::create_directories(nested);
+    write_mmproj(nested / "mmproj-Model-F16.gguf");
+    const auto assets = load_lfm2_audio_assets(root);
+    require_eq(load_lfm2_audio_components(*assets, "Model-F16.gguf", "nested/mmproj-Model-F16.gguf")->mmproj_path,
+        root / "nested" / "mmproj-Model-F16.gguf", "a subdirectory");
+    require_throws_with([&] { (void)load_lfm2_audio_components(*assets, "../Model-F16.gguf", ""); },
+        "inside the model directory", "a path leaving the model directory");
+    require_throws_with([&] { (void)load_lfm2_audio_components(*assets, "nested/../../Model-F16.gguf", ""); },
+        "inside the model directory", "a path leaving it through a subdirectory");
+    std::filesystem::remove_all(root);
+
+    // A backbone without attention layers would leave the decoder no KV cache.
+    const auto no_attention = fresh_directory("audiocpp_lfm2_audio_no_attention_test");
+    write_backbone(no_attention / "Model-F16.gguf", "en", true, false);
+    write_mmproj(no_attention / "mmproj-Model-F16.gguf");
+    require_throws_with([&] { (void)load_lfm2_audio_components(*load_lfm2_audio_assets(no_attention), "", ""); },
+        "no attention layer", "a backbone without attention layers");
+    std::filesystem::remove_all(no_attention);
+}
+
 // The loader probes directories of other models, which must not look like an
 // LFM2-Audio package.
 void test_rejects_other_packages() {
@@ -298,6 +331,7 @@ int main() {
         test_selects_components();
         test_single_unpaired_mmproj();
         test_rejects_bad_choices();
+        test_file_names();
         test_rejects_other_packages();
         std::cout << "lfm2_audio_assets_test: PASS\n";
         return 0;

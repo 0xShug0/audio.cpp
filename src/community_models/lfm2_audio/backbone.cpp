@@ -40,6 +40,7 @@ constexpr size_t kWeightContextBytes = 16ull * 1024ull * 1024ull;
 constexpr size_t kPrefillArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr size_t kDecodeArenaBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 32768;
+constexpr int64_t kMaxRetainedPrefillSteps = 1024;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept { ggml_free(ctx); }
@@ -47,6 +48,10 @@ struct GgmlContextDeleter {
 
 struct GgmlGallocrDeleter {
     void operator()(ggml_gallocr_t alloc) const noexcept { ggml_gallocr_free(alloc); }
+};
+
+struct GgmlBufferDeleter {
+    void operator()(ggml_backend_buffer_t buffer) const noexcept { ggml_backend_buffer_free(buffer); }
 };
 
 struct ShortConvWeights {
@@ -445,7 +450,7 @@ public:
         ggml_build_forward_expand(graph_, logits_);
         core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio decode graph");
 
-        buffer_ = ggml_backend_alloc_ctx_tensors(g, execution.backend());
+        buffer_.reset(ggml_backend_alloc_ctx_tensors(g, execution.backend()));
         if (buffer_ == nullptr) {
             throw runtime::CapacityError(
                 "LFM2-Audio decode graph does not fit in device memory at " + std::to_string(cache_steps) + " cache steps");
@@ -455,14 +460,13 @@ public:
         mask_scratch_.assign(static_cast<size_t>(cache_steps), ggml_fp32_to_fp16(-INFINITY));
     }
 
-    ~DecodeGraph() {
-        core::release_backend_graph_resources(execution_.backend(), graph_, true);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
-    }
+    ~DecodeGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
 
-    [[nodiscard]] bool can_run(int64_t required_steps) const { return cache_steps_ >= required_steps; }
+    // Every step attends over the whole cache, so a cache sized for an
+    // unusually long request is replaced rather than reused.
+    [[nodiscard]] bool fits(int64_t required_steps) const {
+        return cache_steps_ >= required_steps && cache_steps_ <= 2 * required_steps;
+    }
 
     void import_state(const PrefillState & state) {
         cache_.import_state(state.kv);
@@ -514,7 +518,7 @@ private:
     std::vector<ggml_fp16_t> mask_scratch_;
     runtime::TransformerKVCache cache_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, GgmlBufferDeleter> buffer_;
 };
 
 // A backend that overflows or computes garbage shows up as NaN logits, and
@@ -604,11 +608,17 @@ Lfm2GenerationResult Lfm2BackboneRuntime::generate(
     }
 
     auto state = impl_->prefill->run(prompt, audio);
+    // The graph holds steps^2 attention scores per head. Only graphs the size
+    // of a default 30 s chunk are worth keeping for the next request.
+    if (steps > kMaxRetainedPrefillSteps) {
+        impl_->prefill.reset();
+    }
+
     debug::timing_log_scalar("lfm2_audio.prefill.ms", engine::debug::elapsed_ms(prefill_start));
 
     // The last generated token is never fed back, hence the - 1.
     const int64_t required = steps + options.max_new_tokens - 1;
-    if (impl_->decode == nullptr || !impl_->decode->can_run(required)) {
+    if (impl_->decode == nullptr || !impl_->decode->fits(required)) {
         impl_->decode.reset();
         impl_->decode = std::make_unique<DecodeGraph>(impl_->weights, config, impl_->execution, std::max<int64_t>(required, steps + 1));
     }

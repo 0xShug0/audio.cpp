@@ -4,6 +4,7 @@
 // final "\n" spells a fixed word and then emits <|im_end|>. That makes the
 // transcript predictable while the encoder, prefill and decode all run.
 #include "engine/community_models/lfm2_audio/session.h"
+#include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session.h"
 #include "lfm2_audio_test_package.h"
@@ -99,8 +100,12 @@ runtime::ModelLoadRequest load_request(const std::filesystem::path & root) {
     return request;
 }
 
+const std::filesystem::path kRepoRoot = ENGINE_REPO_ROOT;
+const std::filesystem::path kVadModel = kRepoRoot / "assets" / "framework" / "models" / "silero_vad";
+
 std::unique_ptr<runtime::IOfflineVoiceTaskSession> open_session(
     const std::filesystem::path & root, std::unordered_map<std::string, std::string> session_options = {}) {
+    session_options.emplace("lfm2_audio.vad_model_path", kVadModel.string());
     const auto model = lfm2::make_lfm2_audio_loader()->load(load_request(root));
     runtime::SessionOptions options;
     options.backend = {engine::core::BackendType::Cpu, 0, 2};
@@ -213,20 +218,56 @@ void test_chunking(const Package & package) {
     auto session = open_session(package.root);
     const auto audio = tone(3.0);
     require_eq(transcribe(*session, request(audio)), std::string("hi"), "default chunks");
-    require_eq(transcribe(*session, request(audio, {{"audio_chunk_seconds", "1"}})), std::string("hi hi hi"),
-        "1 s chunks");
     require_eq(transcribe(*session, request(audio, {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}})),
         std::string("hi hi hi"), "fixed 1 s chunks");
     require_eq(transcribe(*session, request(audio, {{"audio_chunk_mode", "none"}, {"audio_chunk_seconds", "1"}})),
         std::string("hi"), "no chunks");
     // A tail under a second joins the previous chunk; alone, 3 ms would fail
     // the features and half a second is at best a cut-off word.
-    require_eq(transcribe(*session, request(tone(2.003), {{"audio_chunk_seconds", "1"}})), std::string("hi hi"),
-        "a 3 ms tail");
-    require_eq(transcribe(*session, request(tone(2.5), {{"audio_chunk_seconds", "1"}})), std::string("hi hi"),
-        "a 0.5 s tail");
+    const std::unordered_map<std::string, std::string> fixed_1s = {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}};
+    require_eq(transcribe(*session, request(tone(2.003), fixed_1s)), std::string("hi hi"), "a 3 ms tail");
+    require_eq(transcribe(*session, request(tone(2.5), fixed_1s)), std::string("hi hi"), "a 0.5 s tail");
+    // auto takes input that fits one chunk whole, as liquid-audio does.
     require_eq(transcribe(*session, request(tone(0.5), {{"audio_chunk_seconds", "1"}})), std::string("hi"),
-        "audio shorter than one chunk");
+        "auto on audio shorter than one chunk");
+}
+
+// 3.5 s of LibriSpeech speech followed by `silence_seconds` of zeros, and the
+// same again when `twice`.
+runtime::AudioBuffer speech(double silence_seconds, bool twice = false) {
+    const auto wav = engine::audio::read_wav_f32(
+        kRepoRoot / "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav");
+    runtime::AudioBuffer out{wav.sample_rate, 1, {}};
+    for (int i = 0; i < (twice ? 2 : 1); ++i) {
+        out.samples.insert(out.samples.end(), wav.samples.begin(), wav.samples.end());
+        out.samples.insert(out.samples.end(), static_cast<size_t>(silence_seconds * wav.sample_rate), 0.0f);
+    }
+
+    return out;
+}
+
+// Longer input is split at pauses, and silence between the speech is not
+// transcribed; the synthetic model says "hi" once per chunk.
+void test_vad_chunking(const Package & package) {
+    auto session = open_session(package.root);
+    const auto two_utterances = speech(3.0, true);
+    require_eq(transcribe(*session, request(two_utterances, {{"audio_chunk_mode", "vad"}})), std::string("hi hi"),
+        "vad on two utterances");
+    require_eq(transcribe(*session, request(two_utterances, {{"audio_chunk_seconds", "5"}})), std::string("hi hi"),
+        "auto on input longer than a chunk");
+    require_eq(transcribe(*session, request(speech(30.0))), std::string("hi"), "a long silent tail");
+    require_eq(transcribe(*session, request(tone(35.0, 16000) , {{"audio_chunk_mode", "vad"}})), std::string(""),
+        "a tone without speech");
+    auto silence = tone(35.0);
+    std::fill(silence.samples.begin(), silence.samples.end(), 0.0f);
+    require_eq(transcribe(*session, request(silence)), std::string(""), "35 s of silence");
+
+    // Without the model, auto falls back to fixed chunks and vad fails.
+    auto no_vad = open_session(package.root, {{"lfm2_audio.vad_model_path", (package.root / "missing").string()}});
+    require_eq(transcribe(*no_vad, request(tone(3.0), {{"audio_chunk_seconds", "1"}})), std::string("hi hi hi"),
+        "auto without the VAD model");
+    require_throws_with([&] { (void)no_vad->run(request(tone(3.0), {{"audio_chunk_mode", "vad"}})); }, "missing",
+        "vad without the VAD model");
 }
 
 void test_selects_backbone() {
@@ -289,8 +330,8 @@ void test_multibyte_transcript() {
     write_package(package.root, "日", "Model-F16.gguf", options);
     auto session = open_session(package.root);
     require_eq(transcribe(*session, request(tone(1.0))), std::string("日"), "a three-byte character");
-    require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_seconds", "1"}})), std::string("日日日"),
-        "Japanese chunks");
+    require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}})),
+        std::string("日日日"), "Japanese chunks");
 }
 
 // <|audio_start|> would switch liquid-audio to audio output, so it ends the
@@ -321,11 +362,23 @@ void test_loader(const Package & package) {
     other_family.family_hint = "vibeasr";
     require(!loader->can_load(other_family), "the loader must decline another family");
 
+    // An incomplete package is still claimed, so loading it says what is missing.
     const Package broken("audiocpp_lfm2_audio_session_broken_test");
     write_package(broken.root, "hi");
     std::filesystem::remove(broken.root / "mmproj-Model-F16.gguf");
-    require(!loader->can_load(load_request(broken.root)), "a package without an mmproj");
-    require_throws_with([&] { (void)loader->load(load_request(broken.root)); }, "mmproj", "loading a package without an mmproj");
+    auto no_hint = load_request(broken.root);
+    no_hint.family_hint.reset();
+    require(loader->can_load(no_hint), "a package without an mmproj is still LFM2-Audio's");
+    require_throws_with([&] { (void)loader->load(no_hint); }, "no mmproj GGUF", "loading a package without an mmproj");
+
+    const Package unrelated("audiocpp_lfm2_audio_session_unrelated_test");
+    lfm2_audio_test::GgufWriter other;
+    other.set("general.architecture", "llama");
+    other.add("weight", lfm2_audio_test::Tensor{{4}, {0.0f, 0.0f, 0.0f, 0.0f}});
+    other.write(unrelated.root / "model.gguf");
+    auto unrelated_request = load_request(unrelated.root);
+    unrelated_request.family_hint.reset();
+    require(!loader->can_load(unrelated_request), "a directory without LFM2-Audio files");
 }
 
 }  // namespace
@@ -338,6 +391,7 @@ int main() {
         test_audio_inputs(package);
         test_request_options(package);
         test_chunking(package);
+        test_vad_chunking(package);
         test_selects_backbone();
         test_japanese_checkpoint();
         test_checkpoint_metadata();

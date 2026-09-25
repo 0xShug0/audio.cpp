@@ -115,7 +115,10 @@ audio::AudioTensor slaney_filterbank(int64_t n_mels) {
 
 // The log guard (+2^-24), the per-feature normalization (std + 1e-5), the
 // frame count and the zeroed last frame are NemoMelFrontend's NeMo mode, which
-// follows FilterbankFeatures and normalize_batch.
+// follows FilterbankFeatures and normalize_batch. The statistics are taken in
+// double: over digital silence every frame of a bin is equal, and float32
+// rounding in the mean, divided by the 1e-5 std, would turn into features near
+// +-1 that the model transcribes as words.
 audio::NemoMelFrontend make_frontend(int64_t n_mels) {
     audio::NemoMelFrontendConfig config;
     config.sample_rate = kSampleRate;
@@ -125,7 +128,7 @@ audio::NemoMelFrontend make_frontend(int64_t n_mels) {
     config.window = audio::MelWindow::FromArgument;
     config.mel_bank = audio::MelBank::FromArgument;
     config.mel_path = audio::MelPath::LogMelSpectrogram;
-    config.norm = audio::MelNorm::PerBinF32;
+    config.norm = audio::MelNorm::PerBinF64;
     config.layout = audio::MelLayout::FeatureMajor;
 
     return audio::NemoMelFrontend(config, symmetric_hann_window(kWindowLength), slaney_filterbank(n_mels));

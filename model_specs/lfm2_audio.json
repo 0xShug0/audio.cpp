@@ -36,10 +36,11 @@
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Audio chunking mode: auto and fixed both cut audio_chunk_seconds chunks; none transcribes the whole input at once.",
+        "description": "Audio chunking mode. auto transcribes input up to audio_chunk_seconds whole and splits longer input at pauses found by the bundled VAD (fixed chunks when the VAD model is absent); vad always splits at pauses and skips silence; fixed cuts every audio_chunk_seconds; none transcribes the whole input at once.",
         "values": [
           "auto",
           "fixed",
+          "vad",
           "none"
         ],
         "required": false,
@@ -48,7 +49,7 @@
       {
         "name": "audio_chunk_seconds",
         "type": "float",
-        "description": "Chunk duration in seconds, at least 1. A final piece shorter than 1 second joins the previous chunk.",
+        "description": "Longest chunk in seconds, at least 1. With fixed chunks, a final piece shorter than 1 second joins the previous chunk.",
         "required": false,
         "min": 1,
         "default": 30
@@ -68,6 +69,13 @@
         "description": "Audio encoder (mmproj) GGUF, relative to the model directory. Defaults to mmproj-<backbone GGUF name>, or else the directory's only mmproj GGUF.",
         "required": false,
         "default": ""
+      },
+      {
+        "name": "vad_model_path",
+        "type": "string",
+        "description": "Path to the Silero VAD model directory used by automatic audio chunking.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
       }
     ],
     "load": []
