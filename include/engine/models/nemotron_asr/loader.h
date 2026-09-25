@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/models/nemotron_asr/assets.h"
 
@@ -13,7 +14,8 @@ public:
     NemotronASRLoadedModel(
         runtime::ModelMetadata metadata,
         runtime::CapabilitySet capabilities,
-        std::shared_ptr<const NemotronASRAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets,
+        std::shared_ptr<const model_spec::ModelContract> contract);
 
     const runtime::ModelMetadata & metadata() const noexcept override;
     const runtime::CapabilitySet & capabilities() const noexcept override;
@@ -25,6 +27,7 @@ private:
     runtime::ModelMetadata metadata_;
     runtime::CapabilitySet capabilities_;
     std::shared_ptr<const NemotronASRAssets> assets_;
+    std::shared_ptr<const model_spec::ModelContract> contract_;
 };
 
 std::unique_ptr<NemotronASRLoadedModel> load_nemotron_asr_model(const std::filesystem::path & model_path);

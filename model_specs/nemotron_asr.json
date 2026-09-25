@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "family": "nemotron_asr",
   "display_name": "Nemotron 3.5 ASR",
   "description": "NVIDIA 600M streaming ASR model for low-latency and batch transcription across 40 language-locales, with native punctuation, capitalization, automatic language detection, and configurable chunk sizes.",
@@ -54,6 +55,110 @@
     "zh-CN"
   ],
   "capabilities": {},
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "ASR prompt language such as en-US, da-DK, or auto; default is the model's default prompt.",
+        "required": false
+      },
+      {
+        "name": "lookahead_tokens",
+        "type": "int",
+        "description": "Chunk-limited encoder right context in 80 ms frames; supported values and the default come from processor_config (0, 3, 6 or 13; default 3 for the published model).",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum RNNT generated tokens; 0 or omitted uses the model-derived limit.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "keep_language_tags",
+        "type": "bool",
+        "description": "Keep language tag tokens in decoded text; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Return token timestamps; set by the CLI for --words-out. Token timestamps are always computed.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "streaming",
+        "type": "bool",
+        "description": "Request a streaming run; must be false for offline sessions.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared matmul weight storage type; default native.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "description": "Encoder and decoder matmul weight storage type (native, f32, f16, bf16 or q8_0); defaults to weight_type.",
+        "preset": "weight_type_full",
+        "required": false
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage type (native, f32 or f16); default native.",
+        "preset": "weight_type_conv",
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Weight context arena size in MiB; default 3072.",
+        "required": false,
+        "min": 1,
+        "default": 3072
+      },
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Encoder graph arena size in MiB; default 1024.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release the offline encoder graph after each offline request; default false.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
   "runtime": {
     "tags": [
       "gguf",

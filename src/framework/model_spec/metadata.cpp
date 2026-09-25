@@ -309,6 +309,13 @@ std::optional<ModelContract> model_contract(std::string_view family) {
     return contract_from_spec(spec);
 }
 
+std::optional<ModelContract> find_model_contract(std::string_view family) {
+    if (!engine::model_spec::find_contract_spec_path(family).has_value()) {
+        return std::nullopt;
+    }
+    return model_contract(family);
+}
+
 std::optional<runtime::CapabilitySet> advertised_capabilities(std::string_view family) {
     const auto spec = load_spec_for_family(family);
     if (spec.find("schema_version") == nullptr || spec.find("capabilities") == nullptr) {

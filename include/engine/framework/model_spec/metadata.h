@@ -46,6 +46,9 @@ struct ModelContract {
 };
 
 [[nodiscard]] std::optional<ModelContract> model_contract(std::string_view family);
+// nullopt when only a legacy embedded spec exists, so a family migrating to spec-backed
+// options can keep its pre-migration validation for older GGUFs.
+[[nodiscard]] std::optional<ModelContract> find_model_contract(std::string_view family);
 [[nodiscard]] std::optional<runtime::CapabilitySet> advertised_capabilities(std::string_view family);
 [[nodiscard]] std::optional<runtime::ModelMetadata> model_metadata(std::string_view family);
 [[nodiscard]] std::optional<runtime::ModelCliInterface> cli_interface(std::string_view family);

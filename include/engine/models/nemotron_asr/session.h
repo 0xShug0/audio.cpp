@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/partial_text.h"
 #include "engine/models/nemotron_asr/assets.h"
@@ -21,7 +22,8 @@ public:
     NemotronASRSessionBase(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const NemotronASRAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets,
+        std::shared_ptr<const model_spec::ModelContract> contract);
     ~NemotronASRSessionBase() override;
 
 protected:
@@ -32,7 +34,9 @@ protected:
     int64_t prompt_id_for_request(const runtime::TaskRequest & request) const;
     int64_t lookahead_for_options(const std::unordered_map<std::string, std::string> & options) const;
     NemotronDecodeOptions decode_options_for_request(const runtime::TaskRequest & request) const;
+    void validate_request_options(const std::unordered_map<std::string, std::string> & options) const;
     runtime::TaskSpec task_;
+    std::shared_ptr<const model_spec::ModelContract> contract_;
     std::shared_ptr<const NemotronASRAssets> assets_;
     std::shared_ptr<const NemotronWeights> weights_;
     size_t weight_context_bytes_ = 3072ull * 1024ull * 1024ull;
@@ -55,7 +59,8 @@ public:
     NemotronASROfflineSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const NemotronASRAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets,
+        std::shared_ptr<const model_spec::ModelContract> contract);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;
@@ -71,7 +76,8 @@ public:
     NemotronASRStreamingSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const NemotronASRAssets> assets);
+        std::shared_ptr<const NemotronASRAssets> assets,
+        std::shared_ptr<const model_spec::ModelContract> contract);
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;
