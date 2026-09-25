@@ -648,6 +648,12 @@ struct ggml_backend_cuda_buffer_context {
     }
 
     ~ggml_backend_cuda_buffer_context() {
+        // MINITTS_CUDA_FREE_OWN_DEVICE:
+        // cudaFree must run with the allocating device current. The server loads
+        // and unloads models on different worker threads, and CUDA's current
+        // device is per-thread, so without this an unload frees a device-N
+        // pointer while device 0 is current and aborts with a CUDA error.
+        ggml_cuda_set_device(device);
         CUDA_CHECK(cudaFree(dev_ptr));
     }
 };
@@ -918,6 +924,8 @@ struct ggml_backend_cuda_split_buffer_context {
                     }
                 }
                 if (extra->data_device[id] != nullptr) {
+                    // MINITTS_CUDA_FREE_OWN_DEVICE: free with the owning device current.
+                    ggml_cuda_set_device(id);
                     CUDA_CHECK(cudaFree(extra->data_device[id]));
                 }
             }
