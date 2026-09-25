@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "family": "sam_audio",
+  "display_name": "SAM Audio",
+  "description": "Prompt-conditioned audio separation.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {},
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_video_path",
+        "type": "path",
+        "description": "Masked video identifying the target source; frames are matched to audio by nearest timestamp. Requires libav runtime libraries. Mutually exclusive with reference_image_path.",
+        "required": false
+      },
+      {
+        "name": "reference_image_path",
+        "type": "path",
+        "description": "Masked RGB image identifying the target sound source, used as a constant visual prompt throughout the recording. Mask unwanted regions before supplying the image.",
+        "required": false
+      },
+      {
+        "name": "anchors",
+        "type": "string",
+        "description": "Optional JSON array of time spans: [[\"+\", start_seconds, end_seconds], [\"-\", start_seconds, end_seconds]]. Positive spans identify the target; negative spans identify sounds to exclude.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Random seed; -1 selects a random seed.",
+        "min": -1,
+        "max": 4294967295,
+        "default": 42,
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Midpoint integration steps; each step evaluates the denoiser twice.",
+        "min": 1,
+        "default": 16,
+        "required": false
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/SAM-Audio-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "sam_audio_small_f32",
+      "display_name": "SAM Audio Small F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-small-f32.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "sam_audio_small_f32",
+    "tags": [
+      "S2S",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/sam_audio.md",
+      "docs/audio_tools.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "t5_config": "model:t5_config.json",
+        "tokenizer": "model:tokenizer/spiece.model"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:"
+        }
+      }
+    }
+  ]
+}

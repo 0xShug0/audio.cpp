@@ -26,6 +26,7 @@ struct T5BaseEncoderConfig {
     float rms_norm_eps = 1.0e-6F;
     T5BaseFeedForwardKind feed_forward_kind = T5BaseFeedForwardKind::Relu;
     bool shared_relative_position_bias = true;
+    bool flash_attention = false;
 };
 
 struct T5BaseEncoderLayerWeights {
