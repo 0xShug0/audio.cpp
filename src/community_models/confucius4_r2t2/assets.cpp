@@ -216,12 +216,11 @@ std::shared_ptr<const assets::TensorSource> open_model_weights(
     return resources.open_tensor_source("weights");
 }
 
-/// R2T2 runs f32/f16/bf16/q8_0 weights. ggml's 4-bit and k-quant kernels are
-/// not validated for this graph — a Q4_K checkpoint loads and then decodes to
-/// an empty transcript — so reject lower precisions at load time with the fix
-/// in the message instead of failing silently at inference time.
+/// Restrict R2T2 checkpoints to the storage types validated for this graph so
+/// unsupported quantizations fail at load time instead of during inference.
 void validate_checkpoint_weight_types(const assets::TensorSource & source) {
-    static constexpr std::array<std::string_view, 4> kSupported = {"f32", "f16", "bf16", "q8_0"};
+    static constexpr std::array<std::string_view, 7> kSupported = {
+        "f32", "f16", "bf16", "q8_0", "q2_k", "q4_k", "q6_k"};
     for (const auto & meta : source.tensors()) {
         if (meta.name.size() < 7 || meta.name.compare(meta.name.size() - 7, 7, ".weight") != 0) {
             continue;
@@ -234,8 +233,8 @@ void validate_checkpoint_weight_types(const assets::TensorSource & source) {
             continue;
         }
         throw std::runtime_error(
-            "R2T2 ASR supports f32/f16/bf16/q8_0 weights, but tensor '" + meta.name + "' is " + meta.dtype +
-            ". Reconvert the checkpoint with --type q8_0 (or f16).");
+            "R2T2 ASR supports f32/f16/bf16/q8_0/q2_k/q4_k/q6_k weights, but tensor '" + meta.name + "' is " +
+            meta.dtype + ". Reconvert the checkpoint with a supported type.");
     }
 }
 
