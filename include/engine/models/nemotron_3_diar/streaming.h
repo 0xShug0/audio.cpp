@@ -3,8 +3,11 @@
 #include "engine/models/nemotron_3_diar/assets.h"
 #include "engine/framework/runtime/session.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace engine::models::nemotron_3_diar {
@@ -83,5 +86,13 @@ private:
 StreamingConfig streaming_profile(
     const StreamingConfig & model_defaults,
     const std::unordered_map<std::string, std::string> & options);
+
+// Serializes a [frames, speakers] F32 timeline as a safetensors file holding one
+// tensor, "speaker_probabilities", with the given string __metadata__ entries.
+std::vector<std::byte> encode_speaker_probabilities_safetensors(
+    const std::vector<float> & probabilities,
+    int64_t frames,
+    int64_t speakers,
+    const std::vector<std::pair<std::string, std::string>> & metadata);
 
 }  // namespace engine::models::nemotron_3_diar
