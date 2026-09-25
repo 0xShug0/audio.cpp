@@ -128,10 +128,24 @@ NemotronASRSessionBase::NemotronASRSessionBase(
     }
     validate_matmul_weight_storage(matmul_weight_storage_type_, "nemotron_asr.weight_type");
     validate_conv_weight_storage(conv_weight_storage_type_, "nemotron_asr.conv_weight_type");
-    if (contract_ == nullptr) {
-        throw std::runtime_error("Nemotron ASR session requires a model contract");
+    if (contract_ != nullptr) {
+        runtime::validate_spec_backed_session_options(options, *contract_, "nemotron_asr", "Nemotron ASR");
+    } else {
+        // Legacy embedded spec without a v1 contract: the pre-migration whitelist.
+        for (const auto & [key, value] : options.options) {
+            (void)value;
+            if (key.rfind("nemotron_asr.", 0) == 0 &&
+                key != "nemotron_asr.weight_context_mb" &&
+                key != "nemotron_asr.encoder_graph_arena_mb" &&
+                key != "nemotron_asr.decoder_graph_arena_mb" &&
+                key != "nemotron_asr.weight_type" &&
+                key != "nemotron_asr.matmul_weight_type" &&
+                key != "nemotron_asr.conv_weight_type" &&
+                key != "nemotron_asr.mem_saver") {
+                throw std::runtime_error("unknown Nemotron ASR session option: " + key);
+            }
+        }
     }
-    runtime::validate_spec_backed_session_options(options, *contract_, "nemotron_asr", "Nemotron ASR");
     weights_ = load_nemotron_asr_weights(
         *assets_,
         execution_context().backend(),
@@ -209,7 +223,10 @@ void NemotronASROfflineSession::prepare(const runtime::SessionPreparationRequest
 
 void NemotronASRSessionBase::validate_request_options(
     const std::unordered_map<std::string, std::string> & options) const {
-    runtime::validate_spec_backed_request_options(options, *contract_, "Nemotron ASR");
+    // Without a v1 contract (legacy embedded spec), request options stay unvalidated as before.
+    if (contract_ != nullptr) {
+        runtime::validate_spec_backed_request_options(options, *contract_, "Nemotron ASR");
+    }
 }
 
 int64_t NemotronASRSessionBase::prompt_id_for_request(const runtime::TaskRequest & request) const {

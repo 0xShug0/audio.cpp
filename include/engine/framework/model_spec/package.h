@@ -32,6 +32,9 @@ private:
 [[nodiscard]] std::filesystem::path default_spec_path(std::string_view family);
 [[nodiscard]] std::filesystem::path default_package_spec_path(std::string_view family);
 [[nodiscard]] std::filesystem::path default_contract_spec_path(std::string_view family);
+// Like default_contract_spec_path, but returns nullopt instead of throwing when the active
+// GGUF embeds a legacy (pre-v1) spec and no schema-v1 contract is available anywhere.
+[[nodiscard]] std::optional<std::filesystem::path> find_contract_spec_path(std::string_view family);
 
 [[nodiscard]] engine::io::json::Value load_spec(const std::filesystem::path & spec_path);
 [[nodiscard]] engine::io::json::Value load_contract_spec(const std::filesystem::path & spec_path);

@@ -1,7 +1,7 @@
 #include "engine/models/nemotron_asr/loader.h"
 
 #include "engine/framework/model_spec/package.h"
-#include "engine/framework/runtime/spec_backed_model.h"
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/models/nemotron_asr/session.h"
 
 #include <stdexcept>
@@ -9,6 +9,34 @@
 
 namespace engine::models::nemotron_asr {
 namespace {
+
+// Compatibility for GGUFs that embed a pre-v1 spec when no v1 contract is available:
+// the options and help from before the spec migration.
+runtime::ModelCliInterface legacy_cli() {
+    runtime::ModelCliInterface cli;
+    cli.request_options = {
+        {"language", "code", "ASR prompt language such as en-US, da-DK, or auto."},
+        {"lookahead_tokens", "n", "Chunk-limited encoder right context; supported values come from processor_config."},
+        {"max_tokens", "n", "Maximum RNNT generated tokens; 0 uses the model-derived limit."},
+        {"keep_language_tags", "bool", "Keep language tag tokens in decoded text."},
+    };
+    cli.session_options = {
+        {"nemotron_asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared matmul weight storage type."},
+        {"nemotron_asr.matmul_weight_type", "native|f32|f16|bf16|q8_0", "Encoder and decoder matmul weight storage type."},
+        {"nemotron_asr.conv_weight_type", "native|f32|f16", "Convolution weight storage type."},
+        {"nemotron_asr.weight_context_mb", "mb", "Weight context arena size."},
+        {"nemotron_asr.encoder_graph_arena_mb", "mb", "Encoder graph arena size."},
+        {"nemotron_asr.decoder_graph_arena_mb", "mb", "Decoder graph arena size."},
+        {"nemotron_asr.mem_saver", "true|false", "Release the offline encoder graph after each offline request; default false."},
+    };
+    return cli;
+}
+
+// nullptr when only a legacy embedded spec exists; sessions then keep the legacy validation.
+std::shared_ptr<const model_spec::ModelContract> find_contract() {
+    auto contract = model_spec::find_model_contract("nemotron_asr");
+    return contract ? std::make_shared<const model_spec::ModelContract>(std::move(*contract)) : nullptr;
+}
 
 runtime::ModelMetadata metadata(const NemotronASRAssets & assets) {
     runtime::ModelMetadata out;
@@ -70,7 +98,8 @@ public:
             request.model_path,
             package_spec,
             engine::model_spec::ResourceKind::Tensors);
-        inspection.cli = runtime::require_model_contract(family())->cli;
+        const auto contract = find_contract();
+        inspection.cli = contract ? contract->cli : legacy_cli();
         return inspection;
     }
 
@@ -120,7 +149,7 @@ std::unique_ptr<NemotronASRLoadedModel> load_nemotron_asr_model(const std::files
         metadata(*assets),
         capabilities(*assets),
         std::move(assets),
-        runtime::require_model_contract("nemotron_asr"));
+        find_contract());
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_nemotron_asr_loader() {
