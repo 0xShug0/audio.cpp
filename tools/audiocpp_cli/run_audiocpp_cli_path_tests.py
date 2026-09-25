@@ -216,6 +216,7 @@ def request_to_args(request: dict[str, Any], repo_root: Path) -> list[str]:
         ("guidance_scale", "--guidance-scale"),
         ("num_inference_steps", "--num-inference-steps"),
         ("text_chunk_size", "--text-chunk-size"),
+        ("text_chunk_mode", "--text-chunk-mode"),
         ("use_prosody_code", "--use-prosody-code"),
         ("predict_target_prosody", "--predict-target-prosody"),
         ("use_pitch_shift", "--use-pitch-shift"),
@@ -402,7 +403,8 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
     if len(requests) != 1:
         raise RuntimeError(f"streaming case {case['id']} must contain exactly one request")
     command.extend(request_to_args(requests[0], REPO_ROOT))
-    command.extend(["--chunk-size", str(case.get("chunk_size", 512))])
+    if "chunk_size" in case:
+        command.extend(["--chunk-size", str(case["chunk_size"])])
     if "audio" in outputs:
         command.extend(["--out", str(case_dir / "outputs" / "stream.wav")])
     if "named_audio" in outputs:
@@ -419,10 +421,23 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
 def verify_case(case: dict[str, Any], case_dir: Path, stdout: str) -> None:
     outputs = set(case.get("outputs", []))
     wavs = list((case_dir / "outputs").rglob("*.wav"))
-    if "audio" in outputs and not any(path.stat().st_size > 44 for path in wavs):
+    final_audio = case.get("final_audio")
+    audio_wavs = [path for path in wavs if path.name == final_audio] if final_audio else wavs
+    if "audio" in outputs and not any(path.stat().st_size > 44 for path in audio_wavs):
         raise RuntimeError(f"{case['id']} did not produce a non-empty wav")
-    if "named_audio" in outputs and len([path for path in wavs if path.stat().st_size > 44]) < 1:
-        raise RuntimeError(f"{case['id']} did not produce named wav outputs")
+    if "named_audio" in outputs:
+        named_wavs = [
+            path for path in wavs
+            if path.stat().st_size > 44 and (final_audio is None or path.name != final_audio)
+        ]
+        minimum_named = int(case.get("min_named_audio", 1))
+        if minimum_named < 1:
+            raise RuntimeError(f"{case['id']} min_named_audio must be positive")
+        if len(named_wavs) < minimum_named:
+            raise RuntimeError(
+                f"{case['id']} produced {len(named_wavs)} named wav outputs; "
+                f"expected at least {minimum_named}"
+            )
     if "text" in outputs:
         text_outputs = extract_text_outputs(case, stdout)
         if not text_outputs:

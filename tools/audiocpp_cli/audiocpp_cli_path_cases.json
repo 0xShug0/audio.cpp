@@ -1087,6 +1087,33 @@
       ]
     },
     {
+      "id": "zipvoice_streaming_clone",
+      "coverage": "ZipVoice chunk-streaming voice-clone path with reference conditioning, named text chunks, and final merged audio",
+      "family": "zipvoice",
+      "model": "models/ZipVoice-Distill-GGUF/zipvoice-distill-orig.gguf",
+      "task": "clon",
+      "mode": "streaming",
+      "outputs": [
+        "audio",
+        "named_audio"
+      ],
+      "final_audio": "stream.wav",
+      "min_named_audio": 2,
+      "requests": [
+        {
+          "id": "streaming_clone",
+          "text": "This ZipVoice streaming path test checks that the CLI can emit multiple text chunks while preserving the reference voice and producing one merged final waveform.",
+          "voice_ref": "assets/resources/sample.wav",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years.",
+          "text_chunk_size": 64,
+          "text_chunk_mode": "word_budget",
+          "seed": 666,
+          "guidance_scale": 3.0,
+          "num_inference_steps": 8
+        }
+      ]
+    },
+    {
       "id": "higgs_audio_tts_voice_clone_chunked",
       "coverage": "Higgs Audio v3 voice clone path with framework text chunking, AR generation, and codec decode",
       "family": "higgs_audio_tts",

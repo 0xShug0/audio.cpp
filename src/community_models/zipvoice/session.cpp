@@ -9,9 +9,11 @@
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -94,7 +96,9 @@ std::shared_ptr<const ZipVoiceAssets> load_assets(const std::filesystem::path & 
     return holder;
 }
 
-class ZipVoiceSession final : public runtime::IOfflineVoiceTaskSession {
+class ZipVoiceSession final
+    : public runtime::IOfflineVoiceTaskSession
+    , public runtime::IStreamingVoiceTaskSession {
 public:
     ZipVoiceSession(
         const runtime::TaskSpec & task,
@@ -110,6 +114,14 @@ public:
         }
         if (contract_ == nullptr) {
             throw std::runtime_error("zipvoice session requires a model contract");
+        }
+        if (task_kind_ != runtime::VoiceTaskKind::Tts &&
+            task_kind_ != runtime::VoiceTaskKind::VoiceCloning) {
+            throw std::runtime_error("ZipVoice supports TTS and voice cloning sessions only");
+        }
+        if (run_mode_ != runtime::RunMode::Offline &&
+            run_mode_ != runtime::RunMode::Streaming) {
+            throw std::runtime_error("ZipVoice supports offline and streaming sessions only");
         }
         runtime::validate_spec_backed_session_options(options, *contract_, kFamily, "ZipVoice");
         // Vocos resolution order (f5_tts pattern):
@@ -166,6 +178,10 @@ public:
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        if (run_mode_ != runtime::RunMode::Offline) {
+            throw std::runtime_error("ZipVoice run requires an offline session");
+        }
+        validate_request(request);
         const auto budget = text::parse_text_chunk_size_override(request.options).value_or(128);
         if (budget <= 0) throw std::invalid_argument("zipvoice: text_chunk_size must be positive");
         const auto mode = text::parse_text_chunk_mode_override(request.options).value_or(text::TextChunkMode::Default);
@@ -181,7 +197,90 @@ public:
         return result;
     }
 
-    runtime::TaskResult run_chunk(const runtime::TaskRequest & request) {
+    runtime::StreamingPolicy streaming_policy() const override {
+        runtime::StreamingPolicy policy;
+        policy.input = runtime::StreamingInputKind::None;
+        policy.output = runtime::StreamingOutputKind::PullEvents;
+        return policy;
+    }
+
+    void start_stream(const runtime::TaskRequest & request) override {
+        if (run_mode_ != runtime::RunMode::Streaming) {
+            throw std::runtime_error("ZipVoice start_stream requires a streaming session");
+        }
+        reset();
+        validate_request(request);
+        const auto budget = text::parse_text_chunk_size_override(request.options).value_or(128);
+        if (budget <= 0) throw std::invalid_argument("zipvoice: text_chunk_size must be positive");
+        const auto mode = text::parse_text_chunk_mode_override(request.options).value_or(text::TextChunkMode::Default);
+        stream_text_chunks_ = text::split_text_chunks(
+            request.text_input->text, budget, mode);
+        if (stream_text_chunks_.empty()) {
+            throw std::invalid_argument("zipvoice: empty text chunks");
+        }
+        stream_request_ = request;
+        stream_started_ = true;
+    }
+
+    std::optional<runtime::StreamEvent> next_stream_event() override {
+        if (!stream_started_) {
+            throw std::runtime_error("ZipVoice streaming has not been started");
+        }
+        if (!stream_request_.has_value() || stream_chunk_index_ >= stream_text_chunks_.size()) {
+            return std::nullopt;
+        }
+        const auto chunk_index = stream_chunk_index_;
+        auto chunk_request = *stream_request_;
+        chunk_request.text_input->text = stream_text_chunks_[chunk_index];
+        auto result = run_chunk(chunk_request);
+        auto chunk_audio = std::move(*result.audio_output);
+        runtime::append_audio_buffer(stream_merged_audio_, chunk_audio);
+        ++stream_chunk_index_;
+
+        runtime::StreamEvent event;
+        event.named_audio_outputs.push_back({
+            "chunk_" + std::to_string(chunk_index),
+            std::move(chunk_audio),
+            {},
+        });
+        return event;
+    }
+
+    void set_stream_event_sink(runtime::StreamEventCallback sink) override {
+        (void) sink;
+    }
+
+    runtime::TaskResult finish_stream() override {
+        if (!stream_started_) {
+            throw std::runtime_error("ZipVoice streaming has not been started");
+        }
+        while (next_stream_event().has_value()) {
+        }
+        runtime::TaskResult result;
+        result.audio_output = std::move(stream_merged_audio_);
+        reset();
+        return result;
+    }
+
+    void reset() override {
+        stream_request_.reset();
+        stream_text_chunks_.clear();
+        stream_merged_audio_ = runtime::AudioBuffer{};
+        stream_chunk_index_ = 0;
+        stream_started_ = false;
+    }
+
+    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override {
+        (void) chunk;
+        throw std::runtime_error("ZipVoice streaming does not consume audio chunks");
+    }
+
+    runtime::TaskResult finalize() override {
+        return finish_stream();
+    }
+
+private:
+    void validate_request(const runtime::TaskRequest & request) const {
         if (!request.text_input.has_value() || request.text_input->text.empty()) {
             throw std::runtime_error("zipvoice requires input text");
         }
@@ -195,6 +294,12 @@ public:
             throw std::runtime_error(
                 "zipvoice requires reference_text (transcript of the reference audio)");
         }
+    }
+
+    runtime::TaskResult run_chunk(const runtime::TaskRequest & request) {
+        validate_request(request);
+        const runtime::AudioBuffer * ref = reference_audio(request);
+        const auto ref_text_it = request.options.find("reference_text");
 
         ZipVoiceSynthesisRequest req;
         req.text = request.text_input->text;
@@ -244,7 +349,6 @@ public:
         return result;
     }
 
-private:
     runtime::VoiceTaskKind task_kind_;
     runtime::RunMode run_mode_;
     std::shared_ptr<const ZipVoiceAssets> assets_;
@@ -256,6 +360,11 @@ private:
     std::string espeak_library_path_;
     std::string espeak_data_path_;
     ZipVoiceComputeDevice device_;
+    std::optional<runtime::TaskRequest> stream_request_;
+    std::vector<std::string> stream_text_chunks_;
+    runtime::AudioBuffer stream_merged_audio_;
+    std::size_t stream_chunk_index_ = 0;
+    bool stream_started_ = false;
 };
 
 }  // namespace

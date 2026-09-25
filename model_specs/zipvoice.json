@@ -10,7 +10,8 @@
     "clone"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "en",
@@ -18,7 +19,8 @@
   ],
   "runtime": {
     "tags": [
-      "server"
+      "server",
+      "stream"
     ]
   },
   "capabilities": {
@@ -33,6 +35,22 @@
         "type": "string",
         "description": "Transcript matching the reference voice audio; required for zero-shot cloning.",
         "required": true
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per generated text chunk; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "preset": "text_chunk_mode_full",
+        "required": false,
+        "default": "word_budget"
       },
       {
         "name": "guidance_scale",
