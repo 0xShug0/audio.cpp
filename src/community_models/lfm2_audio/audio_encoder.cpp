@@ -320,6 +320,7 @@ struct Lfm2FastConformerEncoderRuntime::Impl {
 
         auto * graph = ggml_new_graph_custom(gctx, kGraphNodes, false);
         ggml_build_forward_expand(graph, x.tensor);
+        core::validate_backend_graph_supported(execution.backend(), graph, "LFM2-Audio encoder graph");
 
         std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator(
             ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));

@@ -67,9 +67,22 @@ struct LayerWeights {
 struct BackboneWeights {
     std::unique_ptr<core::BackendWeightStore> store;
     TensorValue token_embedding;  // [vocab, hidden], also the output head
+    TensorValue token_lookup;     // token_embedding, or an F16 copy (see load_weights)
     modules::NormWeights final_norm;
     std::vector<LayerWeights> layers;
 };
+
+// Whether the backend has a get_rows kernel for this tensor type.
+bool backend_gathers(ggml_backend_t backend, ggml_type type) {
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx(ggml_init({4 * ggml_tensor_overhead(), nullptr, true}));
+    if (ctx == nullptr) {
+        throw std::runtime_error("failed to initialize the LFM2-Audio op probe context");
+    }
+
+    auto * table = ggml_new_tensor_2d(ctx.get(), type, ggml_blck_size(type), 1);
+    auto * ids = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
+    return ggml_backend_supports_op(backend, ggml_get_rows(ctx.get(), table, ids));
+}
 
 BackboneWeights load_weights(
     const assets::TensorSource & source, const Lfm2BackboneConfig & config, core::ExecutionContext & execution) {
@@ -83,6 +96,12 @@ BackboneWeights load_weights(
     const int64_t hd = config.head_dim;
 
     out.token_embedding = store.load_tensor(source, "token_embd.weight", native, {config.vocab_size, d});
+    // ggml's CUDA get_rows has no K-quant kernels, and Liquid's Q4_0 packages
+    // store token_embd as Q6_K, so there the lookup reads an F16 copy. (llama.cpp
+    // keeps its input embedding on the CPU instead.)
+    out.token_lookup = backend_gathers(execution.backend(), out.token_embedding.tensor->type)
+        ? out.token_embedding
+        : store.load_tensor(source, "token_embd.weight", assets::TensorStorageType::F16, {config.vocab_size, d});
     out.final_norm = {store.load_f32_tensor(source, "token_embd_norm.weight", {d}), std::nullopt};
 
     for (int64_t layer = 0; layer < config.num_layers(); ++layer) {
@@ -218,7 +237,7 @@ public:
         token_ids_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, steps);
         ggml_set_input(token_ids_);
         auto x = modules::EmbeddingModule({config.vocab_size, d})
-                     .build(ctx, core::wrap_tensor(token_ids_, TensorShape::from_dims({steps}), GGML_TYPE_I32), weights.token_embedding);
+                     .build(ctx, core::wrap_tensor(token_ids_, TensorShape::from_dims({steps}), GGML_TYPE_I32), weights.token_lookup);
 
         if (audio_tokens > 0) {
             audio_embeddings_ = ggml_new_tensor_2d(g, GGML_TYPE_F32, d, audio_tokens);
@@ -272,6 +291,7 @@ public:
         for (auto * t : keys_) ggml_build_forward_expand(graph_, t);
         for (auto * t : values_) ggml_build_forward_expand(graph_, t);
         for (auto * t : conv_tails_) ggml_build_forward_expand(graph_, t);
+        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio prefill graph");
 
         allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
         if (allocator_ == nullptr || !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) {
@@ -373,7 +393,7 @@ public:
         mask_ = ggml_new_tensor_4d(g, GGML_TYPE_F16, cache_steps, 1, 1, 1);
 
         auto x = modules::EmbeddingModule({config.vocab_size, d})
-                     .build(ctx, core::wrap_tensor(token_, TensorShape::from_dims({1}), GGML_TYPE_I32), weights.token_embedding);
+                     .build(ctx, core::wrap_tensor(token_, TensorShape::from_dims({1}), GGML_TYPE_I32), weights.token_lookup);
         x = core::reshape_tensor(ctx, x, TensorShape::from_dims({1, 1, d}));
 
         const auto positions = core::wrap_tensor(positions_, TensorShape::from_dims({1}), GGML_TYPE_I32);
@@ -423,6 +443,7 @@ public:
         logits_ = logits_from_last_step(ctx, x, weights, config).tensor;
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
+        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio decode graph");
 
         buffer_ = ggml_backend_alloc_ctx_tensors(g, execution.backend());
         if (buffer_ == nullptr) {
