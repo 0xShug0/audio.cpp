@@ -1191,10 +1191,12 @@ HTDemucsWeights load_weights(
         config.embedding_scale);
 
     const int transformer_in_channels = config.channels * static_cast<int>(std::pow(config.growth, config.depth - 1));
-    out.channel_upsampler = binding::conv1d_from_source(*out.store, source, "channel_upsampler", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
-    out.channel_downsampler = binding::conv1d_from_source(*out.store, source, "channel_downsampler", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
-    out.channel_upsampler_t = binding::conv1d_from_source(*out.store, source, "channel_upsampler_t", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
-    out.channel_downsampler_t = binding::conv1d_from_source(*out.store, source, "channel_downsampler_t", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
+    if (config.has_channel_sampler) {
+        out.channel_upsampler = binding::conv1d_from_source(*out.store, source, "channel_upsampler", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
+        out.channel_downsampler = binding::conv1d_from_source(*out.store, source, "channel_downsampler", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
+        out.channel_upsampler_t = binding::conv1d_from_source(*out.store, source, "channel_upsampler_t", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
+        out.channel_downsampler_t = binding::conv1d_from_source(*out.store, source, "channel_downsampler_t", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
+    }
 
     if (config.transformer_layers > 0) {
         CrossTransformerWeights tr;
@@ -1462,29 +1464,34 @@ public:
 
         const int64_t freq_channels = x.shape.dims[1];
         const int64_t time_channels = xt.shape.dims[1];
-        if (!weights_.channel_upsampler.has_value() || !weights_.transformer.has_value()) {
+        if (!weights_.transformer.has_value()) {
             throw std::runtime_error("HTDemucs graph requires transformer weights");
         }
-        auto x_flat = flatten_freq_time_python_order(ctx, x);
-        x_flat = modules::Conv1dModule({
-            freq_channels,
-            config_.bottom_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_upsampler->bias.has_value(),
-        }).build(ctx, x_flat, binding::conv1d_data(ctx, weights_.channel_upsampler->weight, weights_.channel_upsampler->bias));
-        x = unflatten_freq_time_python_order(ctx, x_flat, saved.back().shape.dims[2], saved.back().shape.dims[3]);
-        xt = modules::Conv1dModule({
-            time_channels,
-            config_.bottom_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_upsampler_t->bias.has_value(),
-        }).build(ctx, xt, binding::conv1d_data(ctx, weights_.channel_upsampler_t->weight, weights_.channel_upsampler_t->bias));
+        if (config_.has_channel_sampler) {
+            if (!weights_.channel_upsampler.has_value()) {
+                throw std::runtime_error("HTDemucs graph requires channel upsampler weights");
+            }
+            auto x_flat = flatten_freq_time_python_order(ctx, x);
+            x_flat = modules::Conv1dModule({
+                freq_channels,
+                config_.bottom_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_upsampler->bias.has_value(),
+            }).build(ctx, x_flat, binding::conv1d_data(ctx, weights_.channel_upsampler->weight, weights_.channel_upsampler->bias));
+            x = unflatten_freq_time_python_order(ctx, x_flat, saved.back().shape.dims[2], saved.back().shape.dims[3]);
+            xt = modules::Conv1dModule({
+                time_channels,
+                config_.bottom_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_upsampler_t->bias.has_value(),
+            }).build(ctx, xt, binding::conv1d_data(ctx, weights_.channel_upsampler_t->weight, weights_.channel_upsampler_t->bias));
+        }
 
         const auto freq_pos_host = create_2d_sin_embedding(config_.bottom_channels, static_cast<int>(x.shape.dims[2]), static_cast<int>(x.shape.dims[3]), config_.transformer_max_period);
         auto freq_pos = constants_->make_f32(
@@ -1521,27 +1528,32 @@ public:
         xf = core::reshape_tensor(ctx, ensure_contiguous(ctx, xf), core::TensorShape::from_dims({1, x.shape.dims[3], x.shape.dims[2], config_.bottom_channels}));
         xf = modules::TransposeModule({{0, 3, 2, 1}, xf.shape.rank}).build(ctx, xf);
         xtf = modules::TransposeModule({{0, 2, 1}, xtf.shape.rank}).build(ctx, xtf);
-        xf = flatten_freq_time_python_order(ctx, xf);
-        xf = modules::Conv1dModule({
-            config_.bottom_channels,
-            freq_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_downsampler->bias.has_value(),
-        }).build(ctx, xf, binding::conv1d_data(ctx, weights_.channel_downsampler->weight, weights_.channel_downsampler->bias));
-        x = unflatten_freq_time_python_order(ctx, xf, saved.back().shape.dims[2], saved.back().shape.dims[3]);
+        if (config_.has_channel_sampler) {
+            xf = flatten_freq_time_python_order(ctx, xf);
+            xf = modules::Conv1dModule({
+                config_.bottom_channels,
+                freq_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_downsampler->bias.has_value(),
+            }).build(ctx, xf, binding::conv1d_data(ctx, weights_.channel_downsampler->weight, weights_.channel_downsampler->bias));
+            x = unflatten_freq_time_python_order(ctx, xf, saved.back().shape.dims[2], saved.back().shape.dims[3]);
 
-        xt = modules::Conv1dModule({
-            config_.bottom_channels,
-            time_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_downsampler_t->bias.has_value(),
-        }).build(ctx, xtf, binding::conv1d_data(ctx, weights_.channel_downsampler_t->weight, weights_.channel_downsampler_t->bias));
+            xt = modules::Conv1dModule({
+                config_.bottom_channels,
+                time_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_downsampler_t->bias.has_value(),
+            }).build(ctx, xtf, binding::conv1d_data(ctx, weights_.channel_downsampler_t->weight, weights_.channel_downsampler_t->bias));
+        } else {
+            x = xf;
+            xt = xtf;
+        }
 
         for (int idx = 0; idx < config_.depth; ++idx) {
             auto skip = saved.back();

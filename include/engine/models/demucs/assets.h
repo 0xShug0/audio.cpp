@@ -49,6 +49,7 @@ struct HTDemucsConfig {
     int dconv_comp = 0;
     float dconv_init = 0.0f;
     int bottom_channels = 0;
+    bool has_channel_sampler = false;
     int transformer_layers = 0;
     float transformer_hidden_scale = 0.0f;
     int transformer_heads = 0;

@@ -108,6 +108,14 @@ HTDemucsConfig parse_config(const assets::ResourceBundle & resources) {
         throw std::runtime_error("HTDemucs native runtime currently supports only cac path with wiener_iters=0");
     }
 
+    // In the original Demucs code, bottom_channels=0 means no channel up/down-sampler
+    // layers are created, and the transformer operates directly on channels * growth^(depth-1).
+    // Normalize bottom_channels so the pipeline can use it uniformly for transformer dimensions.
+    config.has_channel_sampler = config.bottom_channels > 0;
+    if (!config.has_channel_sampler) {
+        config.bottom_channels = config.channels * static_cast<int>(std::pow(config.growth, config.depth - 1));
+    }
+
     config.segment_samples = static_cast<int64_t>(std::llround(static_cast<double>(config.sample_rate) * config.segment_seconds));
     config.stft_freq_bins = config.n_fft / 2;
     config.stft_frames = static_cast<int>(std::ceil(static_cast<double>(config.segment_samples) / static_cast<double>(config.hop_length)));
