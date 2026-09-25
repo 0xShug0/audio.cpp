@@ -5,7 +5,8 @@
 // greedily. The short-conv blocks keep a rolling conv state and the attention
 // blocks a KV cache between decode steps.
 //
-// Reference: transformers Lfm2Model, used by liquid-audio's LFM2AudioModel.
+// Reference: Lfm2Model in transformers 4.56 models/lfm2/modeling_lfm2.py,
+// which liquid-audio's LFM2AudioModel (model/lfm2_audio.py) wraps.
 
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
@@ -31,6 +32,8 @@ struct Lfm2GenerationOptions {
 
 struct Lfm2GenerationResult {
     std::vector<int32_t> tokens;  // without the stop token
+    // False when max_new_tokens ran out before a stop token.
+    bool stopped = false;
     std::vector<float> prefill_logits;
 };
 

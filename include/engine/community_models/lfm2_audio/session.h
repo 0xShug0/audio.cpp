@@ -1,8 +1,9 @@
 #pragma once
 
 // Offline ASR session for LFM2.5-Audio: audio -> FastConformer -> adapter ->
-// LFM2 backbone, prompted and decoded the way liquid-audio's
-// generate_sequential does it for "Perform ASR.".
+// LFM2 backbone, prompted with the ASR system prompt from liquid-audio's
+// README and decoded greedily like LFM2AudioModel.generate_sequential
+// (model/lfm2_audio.py).
 
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
@@ -50,6 +51,7 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<const Lfm2AudioComponents> components_;
     Lfm2TextTokenizer tokenizer_;
+    Lfm2AudioFeatureExtractor features_;
     Lfm2FastConformerEncoderRuntime encoder_;
     Lfm2BackboneRuntime backbone_;
     std::string language_;

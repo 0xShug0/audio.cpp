@@ -5,6 +5,7 @@
 // embedding space.
 
 #include "engine/community_models/lfm2_audio/assets.h"
+#include "engine/framework/audio/nemo_mel_frontend.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <cstdint>
@@ -27,6 +28,23 @@ struct Lfm2AudioEmbeddings {
     std::vector<float> values;
 };
 
+// The checkpoint's preprocessor, liquid-audio's copy of NeMo's
+// AudioToMelSpectrogramPreprocessor (model/conformer/processor.py). It has no
+// weights.
+class Lfm2AudioFeatureExtractor {
+public:
+    Lfm2AudioFeatureExtractor(int64_t n_mels, int threads);
+
+    // Mono 16 kHz samples in. Like the reference, the frame count is
+    // samples / hop + 1 and the last frame is zero.
+    [[nodiscard]] Lfm2AudioFeatures extract(const std::vector<float> & samples) const;
+
+private:
+    int64_t n_mels_;
+    size_t threads_;
+    audio::NemoMelFrontend frontend_;
+};
+
 class Lfm2FastConformerEncoderRuntime {
 public:
     Lfm2FastConformerEncoderRuntime(
@@ -37,10 +55,6 @@ public:
 
     Lfm2FastConformerEncoderRuntime(const Lfm2FastConformerEncoderRuntime &) = delete;
     Lfm2FastConformerEncoderRuntime & operator=(const Lfm2FastConformerEncoderRuntime &) = delete;
-
-    // Mono 16 kHz samples in, NeMo features out. Like the reference, the frame
-    // count is samples / hop + 1 and the last frame is zero.
-    [[nodiscard]] Lfm2AudioFeatures extract_features(const std::vector<float> & samples) const;
 
     // One embedding per 8 feature frames, rounded up.
     Lfm2AudioEmbeddings encode(const Lfm2AudioFeatures & features);

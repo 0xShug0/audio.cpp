@@ -28,7 +28,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum number of generated transcript tokens per audio chunk.",
+        "description": "Maximum number of generated transcript tokens per audio chunk; a chunk that needs more fails the request.",
         "required": false,
         "min": 1,
         "default": 512
@@ -36,7 +36,7 @@
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Audio chunking mode: auto, fixed, or none.",
+        "description": "Audio chunking mode: auto and fixed both cut audio_chunk_seconds chunks; none transcribes the whole input at once.",
         "values": [
           "auto",
           "fixed",
@@ -48,9 +48,9 @@
       {
         "name": "audio_chunk_seconds",
         "type": "float",
-        "description": "Fixed chunk duration in seconds.",
+        "description": "Chunk duration in seconds, at least 1. A final piece shorter than 1 second joins the previous chunk.",
         "required": false,
-        "min": 0.001,
+        "min": 1,
         "default": 30
       }
     ],
@@ -65,7 +65,7 @@
       {
         "name": "mmproj_gguf",
         "type": "string",
-        "description": "Audio encoder (mmproj) GGUF, relative to the model directory. Defaults to mmproj-<backbone GGUF name>.",
+        "description": "Audio encoder (mmproj) GGUF, relative to the model directory. Defaults to mmproj-<backbone GGUF name>, or else the directory's only mmproj GGUF.",
         "required": false,
         "default": ""
       }

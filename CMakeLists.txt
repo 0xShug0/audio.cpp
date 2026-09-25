@@ -3019,6 +3019,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_test(NAME sheetsage_processing_test COMMAND sheetsage_processing_test --log)
         endif()
 
+        if(lfm2_audio IN_LIST AUDIOCPP_LINKED_MODELS)
+            foreach(lfm2_audio_test IN ITEMS
+                lfm2_audio_assets_test
+                lfm2_audio_backbone_test
+                lfm2_audio_features_test
+                lfm2_audio_session_test
+                lfm2_audio_tokenizer_test)
+                add_engine_unittest(${lfm2_audio_test} tests/community_models/lfm2_audio/${lfm2_audio_test}.cpp)
+                target_include_directories(${lfm2_audio_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+                add_test(NAME ${lfm2_audio_test} COMMAND ${lfm2_audio_test})
+            endforeach()
+        endif()
+
         add_engine_unittest(midi_file_test tests/unittests/test_midi_file.cpp)
         add_test(NAME midi_file_test COMMAND midi_file_test)
 
@@ -3420,6 +3433,21 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             # Same story as the encoder probe, plus the 993 MB decoder: exits 125
             # (skip) unless both converted GGUFs sit in models/vibeasr/.
             set_tests_properties(test_vibeasr_asr PROPERTIES
+                SKIP_RETURN_CODE 125
+                TIMEOUT 600
+            )
+        endif()
+
+        if (lfm2_audio IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(test_lfm2_audio_asr tests/lfm2_audio/test_lfm2_audio_asr.cpp)
+            target_compile_definitions(test_lfm2_audio_asr PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+            target_link_libraries(test_lfm2_audio_asr PRIVATE engine_runtime ggml)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_lfm2_audio_asr PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+            add_test(NAME test_lfm2_audio_asr COMMAND test_lfm2_audio_asr)
+            # Needs Liquid's GGUFs in models/lfm2_audio/; exits 125 (skip) without them.
+            set_tests_properties(test_lfm2_audio_asr PROPERTIES
                 SKIP_RETURN_CODE 125
                 TIMEOUT 600
             )

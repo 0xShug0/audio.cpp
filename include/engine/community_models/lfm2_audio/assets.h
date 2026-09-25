@@ -6,7 +6,9 @@
 // component through a session option, so quantizations can be mixed without
 // renaming the published files.
 //
-// Reference implementation: https://github.com/Liquid4All/liquid-audio
+// Reference implementation: liquid-audio v1.3.0,
+// https://github.com/Liquid4All/liquid-audio/tree/v1.3.0. File paths in the
+// lfm2_audio comments are relative to its src/liquid_audio/.
 
 #include "engine/framework/assets/tensor_source.h"
 
@@ -81,7 +83,8 @@ struct Lfm2AudioComponents {
 std::shared_ptr<const Lfm2AudioAssets> load_lfm2_audio_assets(const std::filesystem::path & model_path);
 
 // Resolves the backbone and mmproj GGUFs. An empty name means the default:
-// the only backbone GGUF in the model root, and "mmproj-<backbone file>".
+// the only backbone GGUF in the model root, and "mmproj-<backbone file>" or
+// else the only mmproj GGUF.
 std::shared_ptr<const Lfm2AudioComponents> load_lfm2_audio_components(
     const Lfm2AudioAssets & assets,
     const std::string & model_gguf,
