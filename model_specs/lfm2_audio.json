@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "family": "lfm2_audio",
+  "display_name": "LFM2.5-Audio",
+  "description": "Liquid AI's LFM2.5-Audio: a FastConformer audio encoder feeding an LFM2 hybrid short-conv/attention backbone, loaded from the llama.cpp-format GGUF components Liquid publishes. ASR only for now.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "ja"
+  ],
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Must match the checkpoint's language (en or ja) when given; each published checkpoint transcribes one language.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum number of generated transcript tokens per audio chunk.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode: auto, fixed, or none.",
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_seconds",
+        "type": "float",
+        "description": "Fixed chunk duration in seconds.",
+        "required": false,
+        "min": 0.001,
+        "default": 30
+      }
+    ],
+    "session": [
+      {
+        "name": "model_gguf",
+        "type": "string",
+        "description": "Backbone GGUF, relative to the model directory. Defaults to the directory's only backbone GGUF.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "mmproj_gguf",
+        "type": "string",
+        "description": "Audio encoder (mmproj) GGUF, relative to the model directory. Defaults to mmproj-<backbone GGUF name>.",
+        "required": false,
+        "default": ""
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cpu",
+      "metal",
+      "cuda"
+    ]
+  },
+  "packages": [],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [],
+    "summary": "LFM2.5-Audio transcription (English and Japanese checkpoints) from Liquid's published GGUFs."
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {},
+      "optional_files": {},
+      "tensors": {}
+    }
+  ]
+}

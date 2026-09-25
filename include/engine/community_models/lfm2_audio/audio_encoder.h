@@ -1,0 +1,53 @@
+#pragma once
+
+// LFM2.5-Audio audio input path: NeMo log-mel features, the FastConformer
+// encoder and the adapter MLP that maps encoder frames into the backbone's
+// embedding space.
+
+#include "engine/community_models/lfm2_audio/assets.h"
+#include "engine/framework/core/execution_context.h"
+
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+namespace engine::community_models::lfm2_audio {
+
+// Feature-major log-mel features, [n_mels][frames].
+struct Lfm2AudioFeatures {
+    int64_t n_mels = 0;
+    int64_t frames = 0;
+    std::vector<float> values;
+};
+
+// Adapter output, row-major [tokens][hidden_size].
+struct Lfm2AudioEmbeddings {
+    int64_t tokens = 0;
+    int64_t hidden_size = 0;
+    std::vector<float> values;
+};
+
+class Lfm2FastConformerEncoderRuntime {
+public:
+    Lfm2FastConformerEncoderRuntime(
+        std::shared_ptr<const assets::TensorSource> source,
+        const Lfm2FastConformerEncoderConfig & config,
+        core::ExecutionContext & execution);
+    ~Lfm2FastConformerEncoderRuntime();
+
+    Lfm2FastConformerEncoderRuntime(const Lfm2FastConformerEncoderRuntime &) = delete;
+    Lfm2FastConformerEncoderRuntime & operator=(const Lfm2FastConformerEncoderRuntime &) = delete;
+
+    // Mono 16 kHz samples in, NeMo features out. Like the reference, the frame
+    // count is samples / hop + 1 and the last frame is zero.
+    [[nodiscard]] Lfm2AudioFeatures extract_features(const std::vector<float> & samples) const;
+
+    // One embedding per 8 feature frames, rounded up.
+    Lfm2AudioEmbeddings encode(const Lfm2AudioFeatures & features);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+}  // namespace engine::community_models::lfm2_audio

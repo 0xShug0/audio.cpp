@@ -2266,6 +2266,19 @@ audiocpp_add_model(vibeasr
         engine::community_models::vibeasr::make_vibeasr_loader
 )
 
+audiocpp_add_model(lfm2_audio
+    SOURCES
+        src/community_models/lfm2_audio/assets.cpp
+        src/community_models/lfm2_audio/tokenizer.cpp
+        src/community_models/lfm2_audio/audio_encoder.cpp
+        src/community_models/lfm2_audio/backbone.cpp
+        src/community_models/lfm2_audio/session.cpp
+    INCLUDES
+        engine/community_models/lfm2_audio/session.h
+    LOADERS
+        engine::community_models::lfm2_audio::make_lfm2_audio_loader
+)
+
 set(AUDIOCPP_ENABLED_MODELS "")
 if (AUDIOCPP_MODEL_SET STREQUAL "full")
     set(AUDIOCPP_ENABLED_MODELS ${AUDIOCPP_MODEL_TARGETS})
