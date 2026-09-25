@@ -5,6 +5,7 @@
 // README and decoded greedily like LFM2AudioModel.generate_sequential
 // (model/lfm2_audio.py).
 
+#include "engine/community_models/lfm2_audio/asr_inputs.h"
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
 #include "engine/community_models/lfm2_audio/backbone.h"
@@ -43,7 +44,6 @@ private:
     };
 
     RequestOptions parse_request_options(const runtime::TaskRequest & request) const;
-    std::vector<float> to_mono_16k(const runtime::AudioBuffer & audio) const;
     std::string transcribe(const std::vector<float> & samples, const RequestOptions & options);
 
     runtime::TaskSpec task_;
@@ -55,9 +55,7 @@ private:
     Lfm2FastConformerEncoderRuntime encoder_;
     Lfm2BackboneRuntime backbone_;
     std::string language_;
-    std::vector<int32_t> prompt_prefix_;
-    std::vector<int32_t> prompt_suffix_;
-    std::vector<int32_t> stop_token_ids_;
+    Lfm2AsrPrompt prompt_;
 };
 
 }  // namespace engine::community_models::lfm2_audio

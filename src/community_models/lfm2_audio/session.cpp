@@ -1,8 +1,6 @@
 #include "engine/community_models/lfm2_audio/session.h"
 
 #include "engine/framework/audio/chunking.h"
-#include "engine/framework/audio/conversion.h"
-#include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/text.h"
@@ -31,8 +29,6 @@ constexpr float kDefaultChunkSeconds = 30.0f;
 // for the features. The spec's min for audio_chunk_seconds matches; the
 // framework does not enforce spec bounds, so plan_chunks does.
 constexpr float kMinChunkSeconds = 1.0f;
-// Never looked up: the audio embeddings overwrite these rows before prefill.
-constexpr int32_t kAudioPlaceholderId = 0;
 
 const engine::model_spec::ModelContract & require_contract(
     const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
@@ -92,14 +88,6 @@ std::string model_language(const Lfm2AudioComponents & components) {
     }
 
     throw std::runtime_error("LFM2-Audio has an ASR prompt for en or ja checkpoints, not general.languages = [" + listed + "]");
-}
-
-std::string asr_system_prompt(const std::string & language) {
-    return language == "ja" ? "Perform ASR in japanese." : "Perform ASR.";
-}
-
-void append(std::vector<int32_t> & out, const std::vector<int32_t> & ids) {
-    out.insert(out.end(), ids.begin(), ids.end());
 }
 
 bool is_ascii_alnum(unsigned char value) {
@@ -179,31 +167,8 @@ Lfm2AudioSession::Lfm2AudioSession(
       features_(components_->encoder.n_mels, execution_context().config().threads),
       encoder_(components_->mmproj, components_->encoder, execution_context()),
       backbone_(components_->model, components_->backbone, execution_context()),
-      language_(model_language(*components_)) {
-    // The prompt pieces below spell these; without them the tokenizer would
-    // quietly split the markup into bytes.
-    for (const char * token : {"<|startoftext|>", "<|im_start|>", "<|im_end|>"}) {
-        (void)tokenizer_.require_token_id(token);
-    }
-
-    // liquid-audio's ChatState (processor.py) encodes each piece on its own, so
-    // the prompt is assembled from the same pieces rather than from one string.
-    for (const char * piece : {"<|startoftext|>", "<|im_start|>system\n"}) {
-        append(prompt_prefix_, tokenizer_.encode(piece));
-    }
-    append(prompt_prefix_, tokenizer_.encode(asr_system_prompt(language_)));
-    for (const char * piece : {"<|im_end|>\n", "<|im_start|>user\n"}) {
-        append(prompt_prefix_, tokenizer_.encode(piece));
-    }
-
-    for (const char * piece : {"<|im_end|>\n", "<|im_start|>assistant\n"}) {
-        append(prompt_suffix_, tokenizer_.encode(piece));
-    }
-
-    // <|audio_start|> would switch generate_sequential to audio output, which
-    // ASR does not produce.
-    stop_token_ids_ = {tokenizer_.require_token_id("<|im_end|>"), tokenizer_.require_token_id("<|audio_start|>")};
-
+      language_(model_language(*components_)),
+      prompt_(make_lfm2_asr_prompt(tokenizer_, language_)) {
     components_->model->release_storage();
     components_->mmproj->release_storage();
 }
@@ -241,29 +206,6 @@ Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const r
     return out;
 }
 
-std::vector<float> Lfm2AudioSession::to_mono_16k(const runtime::AudioBuffer & audio) const {
-    if (audio.samples.empty() || audio.channels <= 0) {
-        throw std::runtime_error("LFM2-Audio requires non-empty audio");
-    }
-
-    // One NaN or Inf sample turns every feature of its chunk into NaN, and the
-    // encoder's first ReLU maps NaN to 0 (ggml_vec_relu_f32), so the chunk would
-    // be transcribed from constant input without an error.
-    if (!std::all_of(audio.samples.begin(), audio.samples.end(), [](float value) { return std::isfinite(value); })) {
-        throw std::runtime_error("LFM2-Audio input audio has non-finite samples");
-    }
-
-    auto mono = audio::mixdown_interleaved_to_mono_average(audio.samples, audio.channels);
-    if (audio.sample_rate == kSampleRate) {
-        return mono;
-    }
-
-    // liquid-audio's ChatState.add_audio uses torchaudio.functional.resample
-    // on float32 audio.
-    return audio::resample_mono_torchaudio_sinc_hann(
-        mono, audio.sample_rate, kSampleRate, audio::torchaudio_sinc_hann_float32_options());
-}
-
 std::string Lfm2AudioSession::transcribe(const std::vector<float> & samples, const RequestOptions & options) {
     const auto features = features_.extract(samples);
     debug_dump("mel.f32", features.values.data(), features.values.size() * sizeof(float));
@@ -271,17 +213,10 @@ std::string Lfm2AudioSession::transcribe(const std::vector<float> & samples, con
     const auto audio = encoder_.encode(features);
     debug_dump("adapter.f32", audio.values.data(), audio.values.size() * sizeof(float));
 
-    Lfm2Prompt prompt;
-    prompt.input_ids = prompt_prefix_;
-    for (int64_t i = 0; i < audio.tokens; ++i) {
-        prompt.audio_positions.push_back(static_cast<int32_t>(prompt.input_ids.size()));
-        prompt.input_ids.push_back(kAudioPlaceholderId);
-    }
-
-    append(prompt.input_ids, prompt_suffix_);
+    const auto prompt = prompt_.with_audio(audio.tokens);
     debug_dump("prompt_ids.i32", prompt.input_ids.data(), prompt.input_ids.size() * sizeof(int32_t));
 
-    const auto result = backbone_.generate(prompt, audio, {options.max_tokens, stop_token_ids_});
+    const auto result = backbone_.generate(prompt, audio, {options.max_tokens, prompt_.stop_token_ids});
     if (!result.stopped) {
         throw std::runtime_error("LFM2-Audio reached max_tokens before the end of the transcript; increase max_tokens");
     }
@@ -302,7 +237,7 @@ runtime::TaskResult Lfm2AudioSession::run(const runtime::TaskRequest & request) 
 
     const auto wall_start = std::chrono::steady_clock::now();
     const auto options = parse_request_options(request);
-    const auto samples = to_mono_16k(*request.audio_input);
+    const auto samples = lfm2_audio_mono_16k(*request.audio_input);
 
     std::string text;
     for (const auto & span : plan_chunks(request, static_cast<int64_t>(samples.size()))) {

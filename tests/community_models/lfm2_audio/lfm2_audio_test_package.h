@@ -15,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -84,29 +85,38 @@ public:
         gguf_set_arr_str(ctx_.get(), key, data.data(), data.size());
     }
 
-    void add(const std::string & name, const Tensor & tensor) { tensors_.emplace_back(name, tensor); }
+    // `type` other than F32 is stored quantized; see quantize_round_trip.
+    void add(const std::string & name, const Tensor & tensor, ggml_type type = GGML_TYPE_F32) {
+        tensors_.push_back({name, tensor, type});
+    }
 
-    void add(const TensorMap & tensors) {
+    void add(const TensorMap & tensors, const std::map<std::string, ggml_type> & types = {}) {
         for (const auto & [name, tensor] : tensors) {
-            add(name, tensor);
+            const auto type = types.find(name);
+            add(name, tensor, type == types.end() ? GGML_TYPE_F32 : type->second);
         }
     }
 
     void write(const std::filesystem::path & path) {
         size_t bytes = 1024 * 1024;
         for (const auto & entry : tensors_) {
-            bytes += entry.second.values.size() * sizeof(float) + ggml_tensor_overhead();
+            bytes += entry.tensor.values.size() * sizeof(float) + ggml_tensor_overhead();
         }
 
         std::unique_ptr<ggml_context, void (*)(ggml_context *)> data_ctx(ggml_init({bytes, nullptr, false}), ggml_free);
-        for (const auto & [name, tensor] : tensors_) {
+        for (const auto & [name, tensor, type] : tensors_) {
             // ggml lists dimensions innermost first.
             const std::vector<int64_t> ne(tensor.shape.rbegin(), tensor.shape.rend());
-            auto * t = ggml_new_tensor(data_ctx.get(), GGML_TYPE_F32, static_cast<int>(ne.size()), ne.data());
+            auto * t = ggml_new_tensor(data_ctx.get(), type, static_cast<int>(ne.size()), ne.data());
             engine::test::require(
                 static_cast<size_t>(ggml_nelements(t)) == tensor.values.size(), "tensor " + name + " has the wrong size");
             ggml_set_name(t, name.c_str());
-            std::copy(tensor.values.begin(), tensor.values.end(), static_cast<float *>(t->data));
+            if (type == GGML_TYPE_F32) {
+                std::copy(tensor.values.begin(), tensor.values.end(), static_cast<float *>(t->data));
+            } else {
+                ggml_quantize_chunk(type, tensor.values.data(), t->data, 0, ggml_nrows(t), ne[0], nullptr);
+            }
+
             gguf_add_tensor(ctx_.get(), t);
         }
 
@@ -118,9 +128,26 @@ private:
         void operator()(gguf_context * ctx) const noexcept { gguf_free(ctx); }
     };
 
+    struct Entry {
+        std::string name;
+        Tensor tensor;
+        ggml_type type;
+    };
+
     std::unique_ptr<gguf_context, Deleter> ctx_;
-    std::vector<std::pair<std::string, Tensor>> tensors_;
+    std::vector<Entry> tensors_;
 };
+
+// The values a `type` tensor holds after quantizing `values` in rows of
+// `row_size`, so a reference can run on exactly what ggml sees.
+inline std::vector<float> quantize_round_trip(const std::vector<float> & values, int64_t row_size, ggml_type type) {
+    const int64_t rows = static_cast<int64_t>(values.size()) / row_size;
+    std::vector<uint8_t> packed(ggml_row_size(type, row_size) * static_cast<size_t>(rows));
+    ggml_quantize_chunk(type, values.data(), packed.data(), 0, rows, row_size, nullptr);
+    std::vector<float> out(values.size());
+    ggml_get_type_traits(type)->to_float(packed.data(), out.data(), static_cast<int64_t>(values.size()));
+    return out;
+}
 
 inline Tensor make_tensor(const std::string & name, std::vector<int64_t> shape, const Fill & fill) {
     size_t count = 1;
@@ -154,6 +181,70 @@ struct TextVocab {
     std::vector<int32_t> types;
     std::vector<std::string> merges;
 };
+
+// GPT-2's byte-to-unicode table, which byte-level BPE vocabularies use to
+// spell bytes as printable characters.
+inline std::vector<std::string> byte_tokens() {
+    std::vector<int> printable;
+    for (int b = '!'; b <= '~'; ++b) printable.push_back(b);
+    for (int b = 0xA1; b <= 0xAC; ++b) printable.push_back(b);
+    for (int b = 0xAE; b <= 0xFF; ++b) printable.push_back(b);
+    std::vector<int> codepoint(256, -1);
+    for (const int b : printable) codepoint[static_cast<size_t>(b)] = b;
+    int next = 256;
+    for (auto & cp : codepoint) {
+        if (cp < 0) cp = next++;
+    }
+
+    std::vector<std::string> out;
+    for (const int cp : codepoint) {
+        std::string utf8;
+        if (cp < 0x80) {
+            utf8.push_back(static_cast<char>(cp));
+        } else {
+            utf8.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+
+        out.push_back(utf8);
+    }
+
+    return out;
+}
+
+// A byte-level vocabulary laid out like LFM2's: the control tokens the ASR
+// prompt uses, the 256 byte tokens, one merge, and "assistant" as a
+// user-defined token (the real vocabulary has it as id 64015).
+inline TextVocab byte_level_vocabulary() {
+    constexpr int32_t kControl = 3;
+    constexpr int32_t kUserDefined = 4;
+    TextVocab vocab;
+    for (const char * special :
+         {"<|pad|>", "<|startoftext|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|audio_start|>", "<|text_end|>"}) {
+        vocab.tokens.push_back(special);
+        vocab.types.push_back(kControl);
+    }
+
+    for (const auto & token : byte_tokens()) {
+        vocab.tokens.push_back(token);
+        vocab.types.push_back(1);
+    }
+
+    vocab.merges = {"Ġ A"};
+    vocab.tokens.push_back("ĠA");
+    vocab.types.push_back(1);
+    vocab.tokens.push_back("assistant");
+    vocab.types.push_back(kUserDefined);
+    return vocab;
+}
+
+inline int64_t token_id(const TextVocab & vocab, const std::string & token) {
+    for (size_t i = 0; i < vocab.tokens.size(); ++i) {
+        if (vocab.tokens[i] == token) return static_cast<int64_t>(i);
+    }
+
+    throw std::runtime_error("no token " + token);
+}
 
 struct BackboneShape {
     int64_t hidden = 16;
@@ -206,7 +297,8 @@ inline void write_backbone(
     const BackboneShape & shape,
     const TextVocab & vocab,
     const TensorMap & tensors,
-    const std::vector<std::string> & languages = {"en"}) {
+    const std::vector<std::string> & languages = {"en"},
+    const std::map<std::string, ggml_type> & types = {}) {
     GgufWriter gguf;
     gguf.set("general.architecture", "lfm2");
     if (!languages.empty()) {
@@ -229,7 +321,7 @@ inline void write_backbone(
     gguf.set_str_array("tokenizer.ggml.merges", vocab.merges);
     gguf.set_i32_array("tokenizer.ggml.token_type", vocab.types);
 
-    gguf.add(tensors);
+    gguf.add(tensors, types);
     gguf.write(path);
 }
 

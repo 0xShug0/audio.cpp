@@ -25,82 +25,30 @@ namespace lfm2 = engine::community_models::lfm2_audio;
 namespace runtime = engine::runtime;
 using engine::test::require;
 using engine::test::require_eq;
+using lfm2_audio_test::byte_level_vocabulary;
+using lfm2_audio_test::byte_tokens;
 using lfm2_audio_test::require_throws_with;
-
-constexpr int32_t kControl = 3;
-
-// GPT-2's byte-to-unicode table, which byte-level BPE vocabularies use to
-// spell bytes as printable characters.
-std::vector<std::string> byte_tokens() {
-    std::vector<int> printable;
-    for (int b = '!'; b <= '~'; ++b) printable.push_back(b);
-    for (int b = 0xA1; b <= 0xAC; ++b) printable.push_back(b);
-    for (int b = 0xAE; b <= 0xFF; ++b) printable.push_back(b);
-    std::vector<int> codepoint(256, -1);
-    for (const int b : printable) codepoint[static_cast<size_t>(b)] = b;
-    int next = 256;
-    for (auto & cp : codepoint) {
-        if (cp < 0) cp = next++;
-    }
-
-    std::vector<std::string> out;
-    for (const int cp : codepoint) {
-        std::string utf8;
-        if (cp < 0x80) {
-            utf8.push_back(static_cast<char>(cp));
-        } else {
-            utf8.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            utf8.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        }
-
-        out.push_back(utf8);
-    }
-
-    return out;
-}
-
-const std::vector<std::string> kSpecials = {
-    "<|pad|>", "<|startoftext|>", "<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|audio_start|>", "<|text_end|>"};
-
-lfm2_audio_test::TextVocab vocabulary() {
-    lfm2_audio_test::TextVocab vocab;
-    for (const auto & special : kSpecials) {
-        vocab.tokens.push_back(special);
-        vocab.types.push_back(kControl);
-    }
-
-    for (const auto & token : byte_tokens()) {
-        vocab.tokens.push_back(token);
-        vocab.types.push_back(1);
-    }
-
-    vocab.merges = {"Ġ A"};
-    vocab.tokens.push_back("ĠA");
-    vocab.types.push_back(1);
-    return vocab;
-}
-
-int64_t token_id(const lfm2_audio_test::TextVocab & vocab, const std::string & token) {
-    for (size_t i = 0; i < vocab.tokens.size(); ++i) {
-        if (vocab.tokens[i] == token) return static_cast<int64_t>(i);
-    }
-
-    throw std::runtime_error("no token " + token);
-}
+using lfm2_audio_test::token_id;
 
 // Chain c0 -> c1 -> ... where c0 = "\n" and the last link is <|im_end|>:
 // row(c_k) = 4^k (e_{k-1} + e_k). The query c_k scores c_{k+1} at 4^(k+1),
 // itself at 2 * 4^k, and every other row at most 4^(k-1) (others are zero).
 lfm2_audio_test::TensorMap backbone_weights(
-    const lfm2_audio_test::BackboneShape & shape, const lfm2_audio_test::TextVocab & vocab, const std::string & word) {
+    const lfm2_audio_test::BackboneShape & shape,
+    const lfm2_audio_test::TextVocab & vocab,
+    const std::string & word,
+    const std::string & stop_token) {
     auto tensors = lfm2_audio_test::backbone_tensors(shape, static_cast<int64_t>(vocab.tokens.size()),
         [](const std::string & name, size_t count) {
             const bool is_norm = name.find("norm") != std::string::npos;
             return std::vector<float>(count, is_norm ? 1.0f : 0.0f);
         });
+    // One byte token per byte of the word, so non-ASCII characters span
+    // several tokens. The word's bytes must all differ.
+    const auto bytes = byte_tokens();
     std::vector<std::string> chain = {"Ċ"};
-    for (const char ch : word) chain.emplace_back(1, ch);
-    chain.emplace_back("<|im_end|>");
+    for (const char ch : word) chain.push_back(bytes[static_cast<unsigned char>(ch)]);
+    chain.push_back(stop_token);
     auto & table = tensors.at("token_embd.weight");
     float scale = 1.0f;
     for (size_t k = 0; k < chain.size(); ++k, scale *= 4.0f) {
@@ -115,6 +63,7 @@ lfm2_audio_test::TensorMap backbone_weights(
 struct PackageOptions {
     std::vector<std::string> languages = {"en"};
     bool nan_adapter = false;
+    std::string stop_token = "<|im_end|>";
     std::vector<std::string> missing_tokens;
 };
 
@@ -124,14 +73,14 @@ void write_package(const std::filesystem::path & root, const std::string & word,
                    const PackageOptions & options = {}) {
     lfm2_audio_test::BackboneShape shape;
     shape.context = 2048;  // room for the default 512-token budget
-    auto vocab = vocabulary();
+    auto vocab = byte_level_vocabulary();
     for (const auto & token : options.missing_tokens) {
         const auto index = static_cast<std::ptrdiff_t>(token_id(vocab, token));
         vocab.tokens.erase(vocab.tokens.begin() + index);
         vocab.types.erase(vocab.types.begin() + index);
     }
 
-    lfm2_audio_test::write_backbone(root / model_name, shape, vocab, backbone_weights(shape, vocab, word), options.languages);
+    lfm2_audio_test::write_backbone(root / model_name, shape, vocab, backbone_weights(shape, vocab, word, options.stop_token), options.languages);
 
     lfm2_audio_test::EncoderShape encoder;
     encoder.output = shape.hidden;
@@ -331,6 +280,29 @@ void test_checkpoint_metadata() {
         "a vocabulary without <|im_start|>");
 }
 
+// "日" is three byte tokens; decoding must put the character back together,
+// and chunks of Japanese text join without spaces.
+void test_multibyte_transcript() {
+    const Package package("audiocpp_lfm2_audio_session_bytes_test");
+    PackageOptions options;
+    options.languages = {"ja"};
+    write_package(package.root, "日", "Model-F16.gguf", options);
+    auto session = open_session(package.root);
+    require_eq(transcribe(*session, request(tone(1.0))), std::string("日"), "a three-byte character");
+    require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_seconds", "1"}})), std::string("日日日"),
+        "Japanese chunks");
+}
+
+// <|audio_start|> would switch liquid-audio to audio output, so it ends the
+// transcript just like <|im_end|>.
+void test_audio_start_stops() {
+    const Package package("audiocpp_lfm2_audio_session_audio_start_test");
+    PackageOptions options;
+    options.stop_token = "<|audio_start|>";
+    write_package(package.root, "hi", "Model-F16.gguf", options);
+    require_eq(transcribe(*open_session(package.root), request(tone(1.0))), std::string("hi"), "<|audio_start|>");
+}
+
 // NaN audio embeddings would reach the logits; the request must fail rather
 // than return the empty transcript that argmax over NaN decodes to.
 void test_numeric_failure_is_an_error() {
@@ -369,6 +341,8 @@ int main() {
         test_selects_backbone();
         test_japanese_checkpoint();
         test_checkpoint_metadata();
+        test_multibyte_transcript();
+        test_audio_start_stops();
         test_numeric_failure_is_an_error();
         test_loader(package);
         std::cout << "lfm2_audio_session_test: PASS\n";

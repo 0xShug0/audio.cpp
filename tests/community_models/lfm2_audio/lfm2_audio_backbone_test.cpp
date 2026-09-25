@@ -9,7 +9,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <functional>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -76,19 +78,26 @@ public:
         return matvec(weight("token_embd.weight"), rms_norm(xs.back(), weight("token_embd_norm.weight")));
     }
 
-    // Greedy decoding with a check that no step is a near tie, where float
-    // rounding alone could pick a different token.
+    // Greedy decoding with a check that no step is a near tie (closer than
+    // `min_margin`), where float rounding alone could pick a different token.
+    // With `stop_at_tie`, a near tie ends the sequence instead.
     [[nodiscard]] std::vector<int32_t> greedy(
         const lfm2::Lfm2Prompt & prompt,
         const lfm2::Lfm2AudioEmbeddings & audio,
         int64_t max_new_tokens,
-        const std::vector<int32_t> & stop_token_ids = {}) const {
+        const std::vector<int32_t> & stop_token_ids = {},
+        double min_margin = 1e-3,
+        bool stop_at_tie = false) const {
         auto xs = embed(prompt, audio);
         std::vector<int32_t> out;
 
         for (int64_t step = 0; step < max_new_tokens; ++step) {
             const auto values = logits(xs);
-            const auto token = argmax_with_margin(values);
+            if (stop_at_tie && margin(values) <= min_margin) {
+                break;
+            }
+
+            const auto token = argmax_with_margin(values, min_margin);
             if (std::find(stop_token_ids.begin(), stop_token_ids.end(), token) != stop_token_ids.end()) {
                 break;
             }
@@ -239,14 +248,20 @@ private:
         return out;
     }
 
-    static int32_t argmax_with_margin(const Vector & values) {
+    static double margin(const Vector & values) {
+        std::vector<double> sorted(values);
+        std::partial_sort(sorted.begin(), sorted.begin() + 2, sorted.end(), std::greater<>());
+        return sorted[0] - sorted[1];
+    }
+
+    static int32_t argmax_with_margin(const Vector & values, double min_margin) {
         std::vector<size_t> order(values.size());
         for (size_t i = 0; i < order.size(); ++i) {
             order[i] = i;
         }
 
         std::partial_sort(order.begin(), order.begin() + 2, order.end(), [&](size_t a, size_t b) { return values[a] > values[b]; });
-        require(values[order[0]] - values[order[1]] > 1e-3,
+        require(values[order[0]] - values[order[1]] > min_margin,
             "the reference has a near tie between tokens " + std::to_string(order[0]) + " and " +
                 std::to_string(order[1]) + "; pick another seed");
         return static_cast<int32_t>(order[0]);
@@ -263,8 +278,19 @@ struct Fixture {
     lfm2::Lfm2BackboneConfig config;
     engine::core::ExecutionContext execution{engine::core::BackendConfig{engine::core::BackendType::Cpu, 0, 2}};
 
-    Fixture() : path(lfm2_audio_test::fresh_directory("audiocpp_lfm2_audio_backbone_test") / "backbone.gguf") {
-        weights = lfm2_audio_test::backbone_tensors(shape, kVocab, lfm2_audio_test::random_fill(7));
+    Fixture() : Fixture("audiocpp_lfm2_audio_backbone_test", BackboneShape{}, 7, {}) {}
+
+    // `types` stores those tensors quantized; the reference then runs on their
+    // dequantized values.
+    Fixture(const std::string & name, BackboneShape shape_in, uint64_t seed, const std::map<std::string, ggml_type> & types,
+            float weight_scale = 0.3f)
+        : shape(std::move(shape_in)), path(lfm2_audio_test::fresh_directory(name) / "backbone.gguf") {
+        weights = lfm2_audio_test::backbone_tensors(shape, kVocab, lfm2_audio_test::random_fill(seed, weight_scale));
+        for (const auto & [tensor_name, type] : types) {
+            auto & tensor = weights.at(tensor_name);
+            tensor.values = lfm2_audio_test::quantize_round_trip(tensor.values, tensor.shape.back(), type);
+        }
+
         lfm2_audio_test::TextVocab vocab;
         for (int64_t i = 0; i < kVocab; ++i) {
             vocab.tokens.push_back("t" + std::to_string(i));
@@ -272,7 +298,7 @@ struct Fixture {
         }
 
         vocab.merges = {"t 1"};
-        lfm2_audio_test::write_backbone(path, shape, vocab, weights);
+        lfm2_audio_test::write_backbone(path, shape, vocab, weights, {"en"}, types);
 
         config.vocab_size = kVocab;
         config.hidden_size = shape.hidden;
@@ -312,11 +338,11 @@ struct AudioPrompt {
 
 // A prompt with `audio_tokens` audio rows starting at position 2, like the
 // session's system and user turns around the audio.
-AudioPrompt audio_prompt(int64_t length, int64_t audio_tokens, uint64_t seed) {
+AudioPrompt audio_prompt(int64_t length, int64_t audio_tokens, uint64_t seed, int64_t hidden = 16) {
     AudioPrompt out{text_prompt(length, seed), {}};
     out.audio.tokens = audio_tokens;
-    out.audio.hidden_size = 16;
-    out.audio.values = lfm2_audio_test::Random(seed + 1).uniform(static_cast<size_t>(audio_tokens * 16), 1.0f);
+    out.audio.hidden_size = hidden;
+    out.audio.values = lfm2_audio_test::Random(seed + 1).uniform(static_cast<size_t>(audio_tokens * hidden), 1.0f);
     for (int64_t i = 0; i < audio_tokens; ++i) {
         out.prompt.audio_positions.push_back(static_cast<int32_t>(2 + i));
         out.prompt.input_ids[static_cast<size_t>(2 + i)] = 0;
@@ -334,7 +360,8 @@ std::string ids(const std::vector<int32_t> & values) {
     return out.str();
 }
 
-void require_logits_close(const std::vector<float> & actual, const Vector & expected, const std::string & label) {
+void require_logits_close(
+    const std::vector<float> & actual, const Vector & expected, const std::string & label, double tolerance = 1e-4) {
     require_eq(actual.size(), expected.size(), label + " logits size");
     double scale = 1.0;
     for (const double value : expected) {
@@ -343,7 +370,7 @@ void require_logits_close(const std::vector<float> & actual, const Vector & expe
 
     for (size_t i = 0; i < actual.size(); ++i) {
         const double diff = std::fabs(static_cast<double>(actual[i]) - expected[i]);
-        require(diff <= 1e-4 * scale,
+        require(diff <= tolerance * scale,
             label + " logit " + std::to_string(i) + ": expected " + std::to_string(expected[i]) + ", got " +
                 std::to_string(actual[i]));
     }
@@ -486,6 +513,53 @@ void test_rejects_bad_requests(Fixture & fixture) {
         "a request after the rejected ones");
 }
 
+// Liquid's quantized packages store the matrices as Q8_0 or Q4_0, and the
+// Q4_0 ones keep the token embedding, which is also the output head, as Q6_K.
+// The reference runs on the dequantized weights, so what is left is ggml
+// quantizing the activations inside its quantized matmuls.
+// Liquid's quantized packages store the matrices as Q8_0 or Q4_0, and the
+// Q4_0 ones keep the token embedding, which is also the output head, as Q6_K.
+// The reference runs on the dequantized weights, so what is left is ggml
+// quantizing the activations inside its quantized matmuls: about 2% of the
+// largest logit here, against order 100% for a transposed or misread tensor.
+void test_quantized_weights() {
+    BackboneShape shape;
+    shape.hidden = 256;  // Q6_K rows are 256 wide
+    shape.intermediate = 512;
+    shape.heads = 4;
+    for (const ggml_type matrix_type : {GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
+        std::map<std::string, ggml_type> types = {{"token_embd.weight", GGML_TYPE_Q6_K}};
+        for (const auto & [name, tensor] : lfm2_audio_test::backbone_tensors(shape, kVocab, lfm2_audio_test::random_fill(1))) {
+            if (tensor.shape.size() == 2 && name != "token_embd.weight" && name.find("shortconv.conv") == std::string::npos) {
+                types[name] = matrix_type;
+            }
+        }
+
+        // Weights scaled for width 256, so small errors do not grow layer by layer.
+        Fixture fixture("audiocpp_lfm2_audio_backbone_quant_test", shape, 21, types, 0.075f);
+        auto runtime = fixture.runtime();
+        const auto reference = fixture.reference();
+        const auto c = audio_prompt(12, 4, 32, shape.hidden);
+        const auto result = runtime->generate(c.prompt, c.audio, {8, {}});
+        const auto expected = reference.logits(reference.embed(c.prompt, c.audio));
+
+        const std::string label = ggml_type_name(matrix_type);
+        require_logits_close(result.prefill_logits, expected, label + " prefill", 6e-2);
+
+        double scale = 1.0;
+        for (const double value : expected) {
+            scale = std::max(scale, std::fabs(value));
+        }
+
+        // Tokens up to the reference's first near tie, where the activation
+        // rounding could legitimately go either way.
+        const auto clear = reference.greedy(c.prompt, c.audio, 8, {}, 0.1 * scale, true);
+        require(clear.size() >= 3, label + ": the reference ties within 3 tokens; pick another seed");
+        const std::vector<int32_t> ours(result.tokens.begin(), result.tokens.begin() + static_cast<std::ptrdiff_t>(clear.size()));
+        require_eq(ids(ours), ids(clear), label + " greedy tokens");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -496,6 +570,7 @@ int main() {
         test_stops(fixture);
         test_requests_are_independent(fixture);
         test_rejects_bad_requests(fixture);
+        test_quantized_weights();
         std::cout << "lfm2_audio_backbone_test: PASS\n";
         return 0;
     } catch (const std::exception & error) {

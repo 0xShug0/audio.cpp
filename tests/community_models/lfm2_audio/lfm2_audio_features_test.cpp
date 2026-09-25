@@ -1,4 +1,5 @@
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
+#include "lfm2_audio_test_package.h"
 #include "test_assert.h"
 
 #include <cmath>
@@ -74,6 +75,41 @@ void test_matches_reference() {
     }
 }
 
+// Noise just above the 2^-24 log floor, so every bin varies by about 0.01.
+// There, normalizing with std + 1e-5 (NeMo) instead of sqrt(var + 1e-5)
+// moves the values by 0.1 to 1, and log(max(x, guard)) instead of
+// log(x + guard) moves them further.
+void test_near_log_floor() {
+    lfm2_audio_test::Random random(3);
+    std::vector<float> samples(16000);
+    for (auto & sample : samples) {
+        sample = random.uniform(3e-5f);
+    }
+    const auto features = Lfm2AudioFeatureExtractor(kMels, 1).extract(samples);
+
+    // liquid-audio 1.3.0's ChatState.add_audio on the same samples. Bins with a
+    // std of 0.01-0.012, where sqrt(var + 1e-5) moves these by 0.11 to 0.24 and
+    // float rounding in the log stays well under the tolerance.
+    struct Expected {
+        int64_t bin;
+        int64_t frame;
+        float value;
+    };
+    const Expected expected[] = {
+        {67, 65, 5.791136f},
+        {68, 18, 4.063290f},
+        {69, 81, 4.607155f},
+        {70, 81, 4.619960f},
+        {71, 51, 3.896761f},
+        {74, 37, 3.126717f},
+    };
+
+    for (const auto & e : expected) {
+        require_close(at(features, e.bin, e.frame), e.value, 2e-3f,
+            "near-floor features[" + std::to_string(e.bin) + "][" + std::to_string(e.frame) + "]");
+    }
+}
+
 void test_normalization() {
     const auto features = Lfm2AudioFeatureExtractor(kMels, 1).extract(test_signal());
     const int64_t valid = features.frames - 1;
@@ -124,6 +160,7 @@ void test_threads_do_not_change_features() {
 int main() {
     try {
         test_matches_reference();
+        test_near_log_floor();
         test_normalization();
         test_frame_count();
         test_threads_do_not_change_features();
