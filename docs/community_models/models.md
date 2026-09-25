@@ -22,7 +22,7 @@ Practical expectations:
 | **echo_tts** | TTS, voice cloning | en | Tym [@5uck1ess](https://github.com/5uck1ess), [@dignome](https://github.com/dignome) | [Echo-TTS](echo_tts.md) 44.1 kHz zero-shot voice cloning: 2.8B diffusion transformer in 80-D PCA space, decoded by the Fish S1-DAC autoencoder. Byte-level text, no phonemiser, no reference transcript |
 | **f5_tts** | TTS, voice cloning | en, ar (Habibi) | Community | [F5-TTS](f5_tts.md) flow-matching DiT — M0 scaffolding, aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, voice cloning | zh, en | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](glm_tts.md) zero-shot synthesis and voice cloning support |
-| **zipvoice** | TTS, voice cloning | zh, en | Community | [ZipVoice](zipvoice.md) k2-fsa TTSZipformer flow-matching zero-shot cloning with Vocos vocoder; distilled 8-step and base variants, hosted GGUF package |
+| **zipvoice** | TTS, voice cloning | zh, en | Community | [ZipVoice](zipvoice.md) k2-fsa TTSZipformer flow-matching zero-shot cloning with Vocos vocoder; distilled 8-step and base variants, hosted GGUF package; text-chunk streaming |
 | **granite5asr** | ASR | en | Community | [IBM Granite Speech 5.0 470M TurboCTC](granite5asr.md) ultra-fast Conformer-CTC ASR with Shaw relative positional embeddings and ByteLevel BPE |
 | **inflect_v2** | TTS | en | Community | [Inflect Micro v2 and Nano v2](inflect_v2.md) native FP32 offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |

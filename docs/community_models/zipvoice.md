@@ -77,13 +77,31 @@ audiocpp_cli --task clon --family zipvoice \
     --text "要合成的文本。" --out out.wav
 ```
 
+Chunk streaming uses the same text-splitting path as offline long-form synthesis. Each
+`chunk_<index>` event is a complete ZipVoice synthesis for one text chunk; `finish_stream()`
+returns the concatenated 24 kHz waveform. It reduces time-to-first-event for long text, but
+it is not frame-level or token-level streaming.
+
+```bash
+audiocpp_cli --task clon --family zipvoice --mode streaming \
+    --model /models/ZipVoice-Distill-GGUF/zipvoice-distill-orig.gguf \
+    --voice-ref prompt.wav --reference-text "Reference transcript." \
+    --text "A longer request is split into text chunks and emitted as named audio events." \
+    --text-chunk-size 64 --out streamed.wav
+```
+
+GGUF packages created before streaming support may embed the older offline contract. Regenerate
+those packages with the current `model_specs/zipvoice.json`, or pass
+`--model-spec-override model_specs/zipvoice.json` when inspecting/loading them.
+
 The text frontend is fixed to the EmiliaTokenizer pipeline (zh/en/mixed; the upstream
 default): `tokenizer` is no longer a session option. Session options: `zipvoice.vocos_path`
 (only for safetensors checkpoints without a bundled vocoder), `zipvoice.espeak_library_path`,
 `zipvoice.espeak_data_path`, `zipvoice.num_inference_steps`, `zipvoice.guidance_scale`,
 `zipvoice.t_shift`. Requests accept `reference_text` (required), `guidance_scale`,
 `num_inference_steps`, `t_shift`, `speed`, `feat_scale`, `target_rms`, `seed`, `lang` (espeak
-voice for English segments), and `token_ids`/`prompt_token_ids` to bypass the frontend entirely
+voice for English segments), `text_chunk_size`, `text_chunk_mode`, and
+`token_ids`/`prompt_token_ids` to bypass the frontend entirely
 (direct API callers can also still select the espeak/simple frontends through
 `ZipVoiceSynthesisRequest::tokenizer`).
 
