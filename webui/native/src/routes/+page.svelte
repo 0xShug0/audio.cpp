@@ -464,7 +464,8 @@
   $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
-  $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
+  $: referenceTextRequired = (requiresRequestOption(selected, 'reference_text') &&
+    !(allowsQuickStartVoice && quickStartVoice)) ||
     (Boolean(voiceFile) && isQwenBase);
   $: quickStartVoices = server && !server.ui_management
     ? Array.from(new Set([
