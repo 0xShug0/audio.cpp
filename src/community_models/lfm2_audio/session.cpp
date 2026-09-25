@@ -201,11 +201,14 @@ Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const r
     return out;
 }
 
-// liquid-audio transcribes the whole input, so auto does too when it fits one
-// chunk. Longer audio is split at pauses found by the bundled Silero VAD, as
-// the other ASR families do (vad mode forces that); silence between the spans
-// is not transcribed, so it cannot come back as words. fixed cuts at the
-// chunk length regardless.
+// liquid-audio transcribes the whole input in one pass, which holds up to
+// about a minute: on joined LibriSpeech test-clean clips its WER is 2% at
+// 60 s, 9% at 90 s (dropped words) and over 80% from 120 s (repetition).
+// auto therefore keeps input that fits one chunk whole, like liquid-audio,
+// and splits longer audio at pauses found by the bundled Silero VAD, as the
+// other ASR families do (vad mode forces that). That stays at 1-2% WER up to
+// 180 s; silence between the spans is not transcribed, so it cannot come back
+// as words. fixed cuts at the chunk length regardless (2.4-2.9%: words get cut).
 std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
     const runtime::TaskRequest & request, const std::vector<float> & samples) {
     const auto total = static_cast<int64_t>(samples.size());

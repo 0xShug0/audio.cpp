@@ -187,6 +187,12 @@
     {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec", "default": 30, "minimum": 0.001, "step": 1}
   ],
 
+  "lfm2_audio": [
+    {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "default": "auto", "choices": ["auto", "vad", "fixed", "none"], "info_en": "auto keeps audio up to audio_chunk_seconds whole and splits longer audio at pauses; none transcribes it in one pass, which the model handles up to about a minute."},
+    {"name": "audio_chunk_seconds", "type": "number", "label": "audio_chunk_seconds", "default": 30, "minimum": 1, "step": 1},
+    {"name": "max_tokens", "type": "number", "label": "max_tokens", "default": 512, "minimum": 1, "step": 1, "precision": 0, "info_en": "Transcript tokens allowed per chunk; a chunk that needs more fails the request."}
+  ],
+
   "confucius4_r2t2": [
     {"name": "chunk_size_ms", "type": "slider", "scope": "session", "session_option": "confucius4_r2t2.chunk_size_ms", "label": "chunk_size_ms（流式分块毫秒）", "label_en": "chunk_size_ms (streaming chunk, ms)", "default": 320, "minimum": 80, "maximum": 2000, "step": 10, "precision": 0, "info": "80-2000ms：越小延迟越低；320ms 在 Apple Silicon 上延迟与速度较均衡。", "info_en": "80-2000 ms. Lower means lower latency; 320 ms balances latency and speed on Apple Silicon."},
     {"name": "unfixed_chunk_num", "type": "number", "scope": "session", "session_option": "confucius4_r2t2.unfixed_chunk_num", "label": "unfixed_chunk_num（前 N 块不用稳定前缀）", "label_en": "unfixed_chunk_num (leading chunks without prefix)", "default": 2, "minimum": 0, "maximum": 10, "step": 1, "precision": 0, "info": "开头若干块不使用已识别文本作为前缀提示。", "info_en": "Leading chunks that decode without a stable-prefix prompt."},

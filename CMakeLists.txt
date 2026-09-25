@@ -3456,7 +3456,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 target_link_libraries(test_lfm2_audio_asr PRIVATE OpenMP::OpenMP_CXX)
             endif()
             add_test(NAME test_lfm2_audio_asr COMMAND test_lfm2_audio_asr)
-            # Needs Liquid's GGUFs in models/lfm2_audio/; exits 125 (skip) without them.
+            # Needs the lfm2_audio_1_5b_f16 package in models/; exits 125 (skip) without it.
             set_tests_properties(test_lfm2_audio_asr PROPERTIES
                 SKIP_RETURN_CODE 125
                 TIMEOUT 600

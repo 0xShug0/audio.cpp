@@ -9,8 +9,8 @@
 //   registry.
 //
 // --model is the directory of LiquidAI/LFM2.5-Audio-1.5B-GGUF (default
-// models/lfm2_audio); --model-gguf picks the backbone. Skips with 125 when the
-// files are not there.
+// models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install);
+// --model-gguf picks the backbone. Skips with 125 when the files are not there.
 #include "engine/community_models/lfm2_audio/asr_inputs.h"
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
@@ -306,7 +306,7 @@ void check_transcripts(
 }  // namespace
 
 int main(int argc, char ** argv) {
-    const std::filesystem::path model_dir = arg_value(argc, argv, "--model", repo_path("models/lfm2_audio").string());
+    const std::filesystem::path model_dir = arg_value(argc, argv, "--model", repo_path("models/LFM2.5-Audio-1.5B-GGUF").string());
     const std::string model_gguf = arg_value(argc, argv, "--model-gguf", "LFM2.5-Audio-1.5B-F16.gguf");
     const std::filesystem::path spec_override =
         arg_value(argc, argv, "--model-spec-override", repo_path("model_specs").string());
@@ -322,7 +322,7 @@ int main(int argc, char ** argv) {
         std::fprintf(
             stderr,
             "SKIP: test_lfm2_audio_asr needs %s and its mmproj- file in '%s'.\n"
-            "      hf download LiquidAI/LFM2.5-Audio-1.5B-GGUF --local-dir models/lfm2_audio\n",
+            "      python3 tools/model_manager_v2.py install lfm2_audio_1_5b_f16 --models-root models\n",
             model_gguf.c_str(),
             model_dir.string().c_str());
         return kExitSkip;

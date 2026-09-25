@@ -88,14 +88,138 @@
       "cuda"
     ]
   },
-  "packages": [],
+  "packages": [
+    {
+      "id": "lfm2_audio_1_5b_q8_0",
+      "display_name": "LFM2.5-Audio-1.5B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "LFM2.5-Audio-1.5B-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-Q8_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-GGUF",
+        "revision": "7d525f883a077e20afb782f2ff618edcae0e39e4",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_f16",
+      "display_name": "LFM2.5-Audio-1.5B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "LFM2.5-Audio-1.5B-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-F16.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-F16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-GGUF",
+        "revision": "7d525f883a077e20afb782f2ff618edcae0e39e4",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_q4_0",
+      "display_name": "LFM2.5-Audio-1.5B Q4_0 GGUF",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "LFM2.5-Audio-1.5B-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-Q4_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-GGUF",
+        "revision": "7d525f883a077e20afb782f2ff618edcae0e39e4",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_q8_0",
+      "display_name": "LFM2.5-Audio-1.5B-JP Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-Q8_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-Q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_f16",
+      "display_name": "LFM2.5-Audio-1.5B-JP F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-F16.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-F16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_f32",
+      "display_name": "LFM2.5-Audio-1.5B-JP F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-F32.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-F32.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_q4_0",
+      "display_name": "LFM2.5-Audio-1.5B-JP Q4_0 GGUF",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-Q4_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-Q4_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    }
+  ],
   "dependencies": [],
   "ui": {
     "tags": [
       "ASR",
       "GGUF"
     ],
-    "docs": [],
+    "recommended_package": "lfm2_audio_1_5b_q8_0",
+    "docs": [
+      "docs/community_models/lfm2_audio.md"
+    ],
     "summary": "LFM2.5-Audio transcription (English and Japanese checkpoints) from Liquid's published GGUFs."
   },
   "sources": [
