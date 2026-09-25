@@ -1,5 +1,7 @@
 #include "engine/framework/debug/trace.h"
 
+#include <ggml.h>
+
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -345,6 +347,15 @@ void timing_log_scalar(const std::string & name, uint64_t value) {
         return;
     }
     timing_log_scalar(name, std::to_string(value));
+}
+
+void timing_log_context_reservation(const std::string & name, const ggml_context * ctx) {
+    if (!timing_log_enabled() || ctx == nullptr) {
+        return;
+    }
+    constexpr double kMiB = 1024.0 * 1024.0;
+    timing_log_scalar(name + ".ctx_reserved_mb", static_cast<double>(ggml_get_mem_size(ctx)) / kMiB);
+    timing_log_scalar(name + ".ctx_used_mb", static_cast<double>(ggml_used_mem(ctx)) / kMiB);
 }
 
 void timing_log_scalar(const std::string & name, bool value) {

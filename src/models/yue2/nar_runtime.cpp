@@ -572,6 +572,7 @@ struct Yue2NarRuntime::Impl {
             graph = ggml_new_graph_custom(ctx.get(), 262144, false);
             ggml_build_forward_expand(graph, output.tensor);
             engine::debug::timing_log_scalar("yue2.nar.graph.build_ms", engine::debug::elapsed_ms(build_start));
+            engine::debug::timing_log_context_reservation("yue2.nar.graph", ctx.get());
             const auto alloc_start = Clock::now();
             input_buffer = ggml_backend_alloc_ctx_tensors(input_ctx.get(), owner.execution.backend());
             gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(owner.execution.backend()));

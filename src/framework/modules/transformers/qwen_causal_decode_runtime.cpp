@@ -968,6 +968,7 @@ private:
         debug::timing_log_scalar(
             config_.trace_name + ".prefill.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_context_reservation(config_.trace_name + ".prefill.graph", prefill_ctx_.get());
         debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
     }
 
@@ -1202,6 +1203,7 @@ private:
         debug::timing_log_scalar(
             config_.trace_name + ".batched_prefill.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_context_reservation(config_.trace_name + ".batched_prefill.graph", batched_prefill_ctx_.get());
     }
 
     QwenCausalBatchedPrefillResult run_batched_prefill() {
@@ -1376,6 +1378,7 @@ private:
         debug::timing_log_scalar(
             config_.trace_name + ".decode.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_context_reservation(config_.trace_name + ".decode.graph", decode_ctx_.get());
         debug::trace_log_scalar(config_.trace_name + ".decode.cache_steps", cache_steps);
     }
 
@@ -1505,6 +1508,7 @@ private:
         debug::timing_log_scalar(
             config_.trace_name + ".batched_decode.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_context_reservation(config_.trace_name + ".batched_decode.graph", batched_decode_ctx_.get());
     }
 
     void ensure_decode_started() const {
@@ -1814,6 +1818,7 @@ private:
         block_steps_ = chunk;
         debug::timing_log_scalar(config_.trace_name + ".block_prefill.graph.build_ms",
                                  engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::timing_log_context_reservation(config_.trace_name + ".block_prefill.graph", block_ctx_.get());
     }
 
     void release_block_graph() {

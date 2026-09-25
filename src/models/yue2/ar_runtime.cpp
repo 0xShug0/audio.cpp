@@ -580,6 +580,7 @@ struct Yue2ArRuntime::Impl {
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
             ggml_backend_tensor_set(attention_mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));
             engine::debug::timing_log_scalar("yue2.ar.prefix_state.graph.build_ms", engine::debug::elapsed_ms(build_start));
+            engine::debug::timing_log_context_reservation("yue2.ar.prefix_state.graph", ctx.get());
         }
 
         ~PrefixStateGraph() {
