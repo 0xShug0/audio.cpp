@@ -432,6 +432,28 @@ LinearWeights packed_attention_projection_range(
     return {weight, bias};
 }
 
+// ggml's flash attention kernel only supports specific head dimensions.
+// When the model's head_dim is not in this set, fall back to the manual
+// matmul + softmax + matmul attention path (the same one used on CPU).
+bool flash_attn_supports_head_dim(int64_t head_dim) {
+    switch (head_dim) {
+    case 40:
+    case 64:
+    case 72:
+    case 80:
+    case 96:
+    case 112:
+    case 128:
+    case 192:
+    case 256:
+    case 320:
+    case 512:
+    case 576:
+        return true;
+    default:
+        return false;
+    }
+}
 core::TensorValue build_self_attention_flash(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -471,7 +493,7 @@ core::TensorValue build_self_attention_flash(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     core::TensorValue context;
-    if (ctx.backend_type == core::BackendType::Cuda) {
+    if (ctx.backend_type == core::BackendType::Cuda && flash_attn_supports_head_dim(head_dim)) {
         q_heads = ensure_contiguous(ctx, q_heads);
         k_heads = ensure_contiguous(ctx, k_heads);
         v_heads = ensure_contiguous(ctx, v_heads);
@@ -558,7 +580,7 @@ core::TensorValue build_cross_attention_flash(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     core::TensorValue context;
-    if (ctx.backend_type == core::BackendType::Cuda) {
+    if (ctx.backend_type == core::BackendType::Cuda && flash_attn_supports_head_dim(head_dim)) {
         q_heads = ensure_contiguous(ctx, q_heads);
         k_heads = ensure_contiguous(ctx, k_heads);
         v_heads = ensure_contiguous(ctx, v_heads);
