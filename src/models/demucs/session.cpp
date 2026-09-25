@@ -9,15 +9,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
 namespace engine::models::demucs {
 namespace {
-
-constexpr const char * kFamily = "htdemucs";
 
 std::shared_ptr<const HTDemucsAssets> require_assets(std::shared_ptr<const HTDemucsAssets> assets) {
     if (assets == nullptr) {
@@ -91,15 +91,18 @@ HTDemucsSession::HTDemucsSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
     std::shared_ptr<const HTDemucsAssets> assets,
-    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    std::shared_ptr<const engine::model_spec::ModelContract> contract,
+    std::string family_name)
     : RuntimeSessionBase(runtime::apply_option_v1_compatibility(
           std::move(options),
-          {{"weight_type", "htdemucs.weight_type"}},
+          std::vector<runtime::OptionV1CompatibilityAlias>{
+              {"weight_type", std::string(family_name) + ".weight_type"}},
           "HTDemucs")),
       task_(std::move(task)),
       assets_(require_assets(std::move(assets))),
-      contract_(require_contract(std::move(contract))) {
-    runtime::validate_spec_backed_session_options(RuntimeSessionBase::options(), *contract_, kFamily, "HTDemucs");
+      contract_(require_contract(std::move(contract))),
+      family_name_(std::move(family_name)) {
+    runtime::validate_spec_backed_session_options(RuntimeSessionBase::options(), *contract_, family_name_, "HTDemucs");
     if (task_.task != runtime::VoiceTaskKind::SourceSeparation) {
         throw std::runtime_error("HTDemucs models only support --task sep");
     }
@@ -116,7 +119,7 @@ HTDemucsSession::HTDemucsSession(
             : assets::TensorStorageType::Native);
     weight_storage_type_ = option_weight_type(
         RuntimeSessionBase::options(),
-        "htdemucs.weight_type",
+        family_name_ + ".weight_type",
         default_weight_storage);
     pipeline_ = std::make_unique<HTDemucsPipeline>(assets_->submodels.front(), execution_context(), weight_storage_type_);
     const auto & config = pipeline_->config();
@@ -133,7 +136,7 @@ HTDemucsSession::HTDemucsSession(
 HTDemucsSession::~HTDemucsSession() = default;
 
 std::string HTDemucsSession::family() const {
-    return kFamily;
+    return family_name_;
 }
 
 runtime::VoiceTaskKind HTDemucsSession::task_kind() const {
@@ -167,7 +170,7 @@ void HTDemucsSession::prepare(const runtime::SessionPreparationRequest & request
 
 runtime::TaskResult HTDemucsSession::run(const runtime::TaskRequest & request) {
     require_prepared("HTDemucs run()");
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "HTDemucs");
+    runtime::validate_spec_backed_request_options(request.options, *contract_, family_name_);
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("HTDemucs run() requires audio_input");
     }
@@ -275,13 +278,13 @@ runtime::TaskResult HTDemucsSession::run(const runtime::TaskRequest & request) {
         }
         result.named_audio_outputs.push_back(std::move(named));
     }
-    debug::timing_log_scalar("htdemucs.normalize_ms", debug::elapsed_ms(normalize_start, normalize_end));
-    debug::timing_log_scalar("htdemucs.chunk_copy_ms", chunk_copy_ms);
-    debug::timing_log_scalar("htdemucs.frontend_ms", frontend_ms);
-    debug::timing_log_scalar("htdemucs.graph.total_ms", graph_ms);
-    debug::timing_log_scalar("htdemucs.graph.rebuild_ms", graph_rebuild_ms);
-    debug::timing_log_scalar("htdemucs.postprocess_ms", postprocess_ms);
-    debug::timing_log_scalar("htdemucs.merge_ms", merge_ms);
+    debug::timing_log_scalar(family_name_ + ".normalize_ms", debug::elapsed_ms(normalize_start, normalize_end));
+    debug::timing_log_scalar(family_name_ + ".chunk_copy_ms", chunk_copy_ms);
+    debug::timing_log_scalar(family_name_ + ".frontend_ms", frontend_ms);
+    debug::timing_log_scalar(family_name_ + ".graph.total_ms", graph_ms);
+    debug::timing_log_scalar(family_name_ + ".graph.rebuild_ms", graph_rebuild_ms);
+    debug::timing_log_scalar(family_name_ + ".postprocess_ms", postprocess_ms);
+    debug::timing_log_scalar(family_name_ + ".merge_ms", merge_ms);
     debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(wall_start));
     return result;
 }
@@ -290,8 +293,10 @@ runtime::TaskResult HTDemucsSession::run(const runtime::TaskRequest & request) {
 // loader wiring stays beside the session it constructs.
 std::shared_ptr<runtime::IVoiceModelLoader> make_htdemucs_loader() {
     runtime::SpecBackedVoiceModelConfig<HTDemucsAssets> config;
-    config.family = kFamily;
-    config.load_assets = load_htdemucs_assets;
+    config.family = "htdemucs";
+    config.load_assets = [](const std::filesystem::path & path) {
+        return load_htdemucs_assets(path, "htdemucs");
+    };
     config.create_session = [](const runtime::TaskSpec & task,
                                 const runtime::SessionOptions & options,
                                 std::shared_ptr<const HTDemucsAssets> assets,
@@ -300,7 +305,29 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_htdemucs_loader() {
             task,
             options,
             std::move(assets),
-            std::move(contract));
+            std::move(contract),
+            "htdemucs");
+    };
+    return runtime::make_spec_backed_voice_loader(std::move(config));
+}
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_htdemucs_6stems_loader() {
+    runtime::SpecBackedVoiceModelConfig<HTDemucsAssets> config;
+    config.family = "htdemucs_6stems";
+    config.aliases = {"htdemucs_6s"};
+    config.load_assets = [](const std::filesystem::path & path) {
+        return load_htdemucs_assets(path, "htdemucs_6stems");
+    };
+    config.create_session = [](const runtime::TaskSpec & task,
+                                const runtime::SessionOptions & options,
+                                std::shared_ptr<const HTDemucsAssets> assets,
+                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        return std::make_unique<HTDemucsSession>(
+            task,
+            options,
+            std::move(assets),
+            std::move(contract),
+            "htdemucs_6stems");
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }

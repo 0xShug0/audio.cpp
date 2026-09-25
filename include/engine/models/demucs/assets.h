@@ -83,6 +83,8 @@ struct HTDemucsAssets {
 };
 
 void validate_demucs_weight_storage_type(assets::TensorStorageType storage_type);
-std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(
+    const std::filesystem::path & model_path,
+    std::string_view family = "htdemucs");
 
 }  // namespace engine::models::demucs

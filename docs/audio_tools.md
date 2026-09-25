@@ -358,6 +358,37 @@ Schema-v1 option compatibility:
 |---|---|---|
 | `weight_type` | `htdemucs.weight_type` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
 
+### HTDemucs 6-stem
+
+HTDemucs_6stems extends separation to six stems: drums, bass, vocals, other, guitar, and piano. It uses the same Hybrid Transformer Demucs architecture with a different checkpoint (`5c90dfd2`) that was trained for six-source separation.
+
+| Field | Value |
+|---|---|
+| Family | `htdemucs_6stems` (alias: `htdemucs_6s`) |
+| Model directory | `models/htdemucs_6stems` |
+| Task | `sep` |
+| Modes | `offline` |
+| Input | 44.1 kHz music mixture WAV through `--audio` |
+| Output | Stem files under `--out-dir` |
+| Stems | Drums, bass, vocals, other, guitar, piano |
+
+```bash
+audiocpp_cli --task sep --family htdemucs_6stems --model models/htdemucs_6stems --backend cuda --audio song_44k.wav --out-dir stems_6
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | 44.1 kHz WAV path | required | Input music mixture. |
+| `--out-dir` | directory | required | Directory for separated stems. |
+| `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+| `--session-option htdemucs_6stems.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | backend-dependent | Weight storage type. Defaults to `f32` for host graph planning, `f16` on CUDA, and `native` otherwise. |
+
+Schema-v1 option compatibility:
+
+| Legacy/session input | Schema-v1 option | Notes |
+|---|---|---|
+| `weight_type` | `htdemucs_6stems.weight_type` | Accepted as a compatibility alias for direct session-option callers. Prefer the family-prefixed form. |
+
 ## BS-RoFormer
 
 BS-RoFormer separates vocals from a 44.1 kHz music mixture using explicit,

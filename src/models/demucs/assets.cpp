@@ -140,9 +140,11 @@ void validate_demucs_weight_storage_type(assets::TensorStorageType storage_type)
     }
 }
 
-std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(const std::filesystem::path & model_path) {
+std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(
+    const std::filesystem::path & model_path,
+    std::string_view family) {
     auto out = std::make_shared<HTDemucsAssets>();
-    out->resources = engine::model_spec::load_resource_bundle_for_family(model_path, "htdemucs");
+    out->resources = engine::model_spec::load_resource_bundle_for_family(model_path, std::string(family));
     out->manifest = parse_package_manifest(out->resources);
     out->submodels.push_back(load_submodel(out->resources));
     return out;
