@@ -107,6 +107,9 @@ private:
     runtime::StreamEvent publish_stream_update();
     // Attribution mode: attribute the words that can no longer grow.
     std::vector<runtime::SpeakerTurn> attribute_stream_words(bool final);
+    // Masked mode: the newly finished segments as speaker turns and as
+    // "speaker_k: words" lines appended to the transcript.
+    runtime::StreamEvent take_masked_event(bool final);
 
     runtime::StreamEventCallback stream_event_sink_;
     runtime::PartialTextPublisher partials_;
@@ -127,6 +130,7 @@ private:
     std::optional<SpeakerProbabilities> stream_speaker_probabilities_;
     std::unique_ptr<SpeakerSegmentBuilder> stream_segments_;
     std::unique_ptr<MaskedSpeakerStreams> masked_streams_;
+    std::string masked_text_;
     size_t stream_attributed_words_ = 0;
 };
 

@@ -525,6 +525,7 @@ void NemotronASRStreamingSession::reset() {
     stream_speaker_probabilities_.reset();
     stream_segments_.reset();
     masked_streams_.reset();
+    masked_text_.clear();
     stream_attributed_words_ = 0;
 }
 
@@ -549,9 +550,7 @@ runtime::StreamEvent NemotronASRStreamingSession::process_audio_chunk(const runt
     if (masked_streams_ != nullptr) {
         masked_streams_->push_audio(chunk.samples.data(), chunk.samples.size());
         masked_streams_->process(false);
-        runtime::StreamEvent event;
-        event.speaker_turns = segments_to_turns(
-            masked_streams_->segments().take_events(masked_streams_->stream_time(), false));
+        auto event = take_masked_event(false);
         if (stream_event_sink_ && !event.speaker_turns.empty()) {
             stream_event_sink_(event);
             return {};
@@ -585,6 +584,17 @@ std::vector<runtime::SpeakerTurn> NemotronASRStreamingSession::attribute_stream_
         stream_time = std::min(stream_time, static_cast<double>(words[ready].first_frame) * kSpeakerFrameSeconds);
     }
     return segments_to_turns(stream_segments_->take_events(stream_time, final));
+}
+
+runtime::StreamEvent NemotronASRStreamingSession::take_masked_event(bool final) {
+    const auto pieces = masked_streams_->segments().take_events(masked_streams_->stream_time(), final);
+    runtime::StreamEvent event;
+    if (pieces.empty()) return event;
+    event.speaker_turns = segments_to_turns(pieces);
+    const auto lines = segments_to_lines(pieces);
+    masked_text_ += lines;
+    event.partial_text = runtime::Transcript{lines, streaming_language_};
+    return event;
 }
 
 runtime::StreamEvent NemotronASRStreamingSession::publish_stream_update() {
@@ -736,15 +746,13 @@ runtime::TaskResult NemotronASRStreamingSession::finalize() {
     }
     if (masked_streams_ != nullptr) {
         masked_streams_->process(true);
-        auto & segments = masked_streams_->segments();
-        if (stream_event_sink_) {
-            runtime::StreamEvent event;
-            event.speaker_turns = segments_to_turns(segments.take_events(masked_streams_->stream_time(), true));
-            if (!event.speaker_turns.empty()) stream_event_sink_(event);
-        }
+        const auto event = take_masked_event(true);
+        if (stream_event_sink_ && !event.speaker_turns.empty()) stream_event_sink_(event);
         runtime::TaskResult result;
         result.text_output = runtime::Transcript{"", streaming_language_};
-        attach_speaker_outputs(result, segments.segments(), true);
+        attach_speaker_outputs(result, masked_streams_->segments().segments(), true);
+        // The streamed lines, in the order segments finished, so the deltas add up to it.
+        result.text_output->text = masked_text_;
         finalized_ = true;
         stream_started_ = false;
         return result;

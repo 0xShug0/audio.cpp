@@ -323,12 +323,16 @@ Outputs:
   so on, like the diarizer;
 - a `seglst` artifact (`seglst.json` with `--out-dir`) in the SegLST format used
   by NeMo and meeteval: `session_id`, `speaker`, `start_time`, `end_time`, `words`;
-- in masked mode, the transcript text as time-ordered `speaker_k: words` lines.
+- in masked mode, the transcript text as `speaker_k: words` lines: in start
+  time order offline, in the order segments finish when streaming.
 
 A segment ends when its speaker pauses for more than `speaker_segment_gap_sec`.
 In streaming, finished segments arrive as speaker-turn events and never change
 afterwards. A segment longer than `speaker_segment_max_sec` arrives as several
-events. The final result keeps the full segments.
+events. In masked mode each event also carries its lines as partial text, so
+the server's `transcript.text.delta` events are append-only and add up to the
+final transcript. The final speaker turns and SegLST keep the full segments in
+start time order.
 
 Validation: on four AMI test meetings (92 min, 14,837 words), masked mode
 scores 32.64% cpWER against 32.61% for NeMo Python's masked pipeline, and
@@ -340,9 +344,11 @@ Limitations:
 - The diarizer file must describe the same audio: `floor(samples / 160)` frames.
 - Offline attribution uses the offline encoder graph, which needs a lot of
   memory for long files. Use `--mode streaming` for long recordings.
-- Sometimes NeMo decodes a sentence-final punctuation mark only when the speaker
-  talks again. The final result then adds it to the earlier segment, but the
-  streaming event for that segment was already sent without it.
+- A speaker's stream pauses while that speaker is silent, so the last token of
+  a segment (often a punctuation mark or the end of a word) can arrive only when
+  the speaker talks again. The final speaker turns and SegLST add it to the
+  earlier segment; the streamed event and text were already sent without it.
+  On a 1 h 48 min recording this affected 2% of the words.
 
 ## Parakeet-TDT
 
