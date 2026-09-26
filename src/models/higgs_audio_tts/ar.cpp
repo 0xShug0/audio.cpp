@@ -11,6 +11,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
+#include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
@@ -973,9 +974,25 @@ struct HiggsARPrefillGraph::Impl {
         ggml_set_output(logits_output);
         ggml_build_forward_expand(graph, logits_output);
 
-        buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), runtime->backend());
-        if (buffer == nullptr) {
-            throw std::runtime_error("failed to allocate Higgs TTS AR prefill graph");
+        if (runtime->backend_type() == core::BackendType::Cuda && target_cache != nullptr) {
+            // Prefill intermediates are needed only until their last consumer.
+            // Reuse their storage across layers instead of reserving the sum
+            // of every tensor in the prompt graph. The externally owned KV
+            // cache remains live independently of this graph allocator.
+            for (auto * input : {text_tokens, fused_code_ids, text_gate, code_gate,
+                                 positions, attention_mask}) {
+                ggml_set_input(input);
+            }
+            graph_allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime->backend())));
+            if (graph_allocator == nullptr ||
+                !ggml_gallocr_alloc_graph(graph_allocator.get(), graph)) {
+                throw std::runtime_error("failed to allocate Higgs TTS AR prefill graph");
+            }
+        } else {
+            buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), runtime->backend());
+            if (buffer == nullptr) {
+                throw std::runtime_error("failed to allocate Higgs TTS AR prefill graph");
+            }
         }
         text_token_values.assign(static_cast<size_t>(run_steps), 0);
         fused_code_id_values.assign(static_cast<size_t>(run_steps * config.audio.num_codebooks), 0);
@@ -1374,6 +1391,7 @@ struct HiggsARPrefillGraph::Impl {
     std::vector<ggml_fp16_t> attention_mask_values;
     ggml_cgraph * graph = nullptr;
     ggml_backend_buffer_t buffer = nullptr;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator{nullptr, ggml_gallocr_free};
 };
 
 HiggsARPrefillGraph::HiggsARPrefillGraph(
