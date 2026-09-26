@@ -4,6 +4,7 @@
 #include "lfm2_audio_test_package.h"
 #include "test_assert.h"
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -96,6 +97,25 @@ void test_istft_inverts_stft() {
 
     require_throws_with([&] { (void)lfm2::lfm2_audio_istft(log_magnitude_phase, rows + 1, window, hop); }, "does not match the window",
         "a spectrum of the wrong size");
+
+    // Streamed in uneven pieces, the rows give exactly the one-call samples.
+    for (const int64_t piece : {int64_t{1}, int64_t{3}, int64_t{7}}) {
+        lfm2::Lfm2StreamingIstft stream(window, hop);
+        std::vector<float> streamed;
+        for (int64_t row = 0; row < rows; row += piece) {
+            const int64_t count = std::min(piece, rows - row);
+            const std::vector<float> part(log_magnitude_phase.begin() + row * 2 * bins, log_magnitude_phase.begin() + (row + count) * 2 * bins);
+            const auto samples = stream.push(part, count);
+            // A sample is final once no later window reaches it.
+            require(static_cast<int64_t>(streamed.size() + samples.size()) == std::max<int64_t>(0, (row + count) * hop - pad),
+                "streamed samples after " + std::to_string(row + count) + " rows");
+            streamed.insert(streamed.end(), samples.begin(), samples.end());
+        }
+
+        const auto rest = stream.finish();
+        streamed.insert(streamed.end(), rest.begin(), rest.end());
+        require(streamed == out, "ISTFT in pieces of " + std::to_string(piece) + " rows gives the one-call samples");
+    }
 }
 
 }  // namespace

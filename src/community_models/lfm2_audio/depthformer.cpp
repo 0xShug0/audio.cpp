@@ -141,6 +141,8 @@ public:
         for (int64_t layer = 0; layer < config.num_layers; ++layer) {
             keys.push_back(core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, steps, config.num_kv_heads, config.head_dim})));
             values.push_back(core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, steps, config.num_kv_heads, config.head_dim})));
+            caches_.push_back(keys.back().tensor);
+            caches_.push_back(values.back().tensor);
         }
 
         const modules::DecoderLayerModule layer_module(layer_config(config));
@@ -194,8 +196,6 @@ public:
             throw std::runtime_error("LFM2-Audio depthformer graphs do not fit in device memory");
         }
 
-        // Later slots of the cache are masked, but a masked NaN still poisons
-        // the attention sum, so start from zeros.
         ggml_backend_buffer_clear(buffer_.get(), 0);
 
         std::vector<ggml_fp16_t> scratch;
@@ -220,6 +220,12 @@ public:
         }
 
         ggml_backend_tensor_set(hidden_, hidden.data(), 0, hidden.size() * sizeof(float));
+        // Each frame starts from an empty cache, as _sample_audio_frame's
+        // does, so no frame or earlier request reaches it through the masked
+        // slots.
+        for (auto * cache : caches_) {
+            ggml_backend_tensor_memset(cache, 0, 0, ggml_nbytes(cache));
+        }
         core::set_backend_threads(execution_.backend(), std::max(1, execution_.config().threads));
 
         std::vector<int32_t> codes;
@@ -266,6 +272,7 @@ private:
     core::ExecutionContext & execution_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * hidden_ = nullptr;
+    std::vector<ggml_tensor *> caches_;
     std::vector<Step> steps_;
     std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, GgmlBufferDeleter> buffer_;
 };
