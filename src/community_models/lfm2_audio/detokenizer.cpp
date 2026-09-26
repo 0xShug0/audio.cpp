@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -40,6 +41,7 @@ constexpr size_t kGraphNodes = 8192;
 // Graph sizes are rounded up to this many frames, so utterances of similar
 // length reuse one graph; the padding frames only follow the real ones.
 constexpr int64_t kGraphFrameStep = 16;
+constexpr size_t kKeptGraphs = 3;
 
 struct DetokenizerWeights {
     std::unique_ptr<core::BackendWeightStore> store;
@@ -216,13 +218,19 @@ struct Lfm2DetokenizerRuntime::Impl {
         }
     }
 
+    // A stream alternates between a short graph at the start of each turn and
+    // a steady one, and offline decoding needs its own; a few are kept.
     ChunkGraph & graph(int64_t frames) {
-        if (chunk == nullptr || chunk->frames() != frames) {
-            chunk.reset();
-            chunk = std::make_unique<ChunkGraph>(weights, config, execution, frames);
+        auto it = graphs.find(frames);
+        if (it == graphs.end()) {
+            if (graphs.size() >= kKeptGraphs) {
+                graphs.erase(graphs.begin());
+            }
+
+            it = graphs.emplace(frames, std::make_unique<ChunkGraph>(weights, config, execution, frames)).first;
         }
 
-        return *chunk;
+        return *it->second;
     }
 
     std::shared_ptr<const assets::TensorSource> detokenizer;
@@ -232,7 +240,7 @@ struct Lfm2DetokenizerRuntime::Impl {
     DetokenizerWeights weights;
     int64_t context_frames = 0;
     int64_t chunk_frames = 0;
-    std::unique_ptr<ChunkGraph> chunk;
+    std::map<int64_t, std::unique_ptr<ChunkGraph>> graphs;
 };
 
 Lfm2DetokenizerRuntime::Lfm2DetokenizerRuntime(
@@ -245,11 +253,11 @@ Lfm2DetokenizerRuntime::Lfm2DetokenizerRuntime(
 
 Lfm2DetokenizerRuntime::~Lfm2DetokenizerRuntime() = default;
 
-std::vector<float> Lfm2DetokenizerRuntime::spectrum(const std::vector<std::vector<int32_t>> & frames) {
+std::vector<float> Lfm2DetokenizerRuntime::spectrum(const std::vector<std::vector<int32_t>> & frames, int64_t first_frame) {
     const auto & config = impl_->config;
     const auto total = static_cast<int64_t>(frames.size());
-    if (total == 0) {
-        throw std::runtime_error("LFM2-Audio detokenizer needs at least one audio frame");
+    if (first_frame < 0 || first_frame >= total) {
+        throw std::runtime_error("LFM2-Audio detokenizer needs at least one new audio frame");
     }
 
     std::vector<int32_t> rows;
@@ -269,21 +277,23 @@ std::vector<float> Lfm2DetokenizerRuntime::spectrum(const std::vector<std::vecto
         }
     }
 
-    // The first chunk starts at frame 0 and keeps everything. Each later one
-    // reruns context_frames of the previous one, whose output only warms the
-    // state up, and keeps the rest. A chunk that runs past the end is padded
-    // with row 0; causal layers do not let the padding reach earlier steps.
+    // Each chunk starts context_frames before the first frame it keeps, or at
+    // frame 0, where the reference starts too; the frames before that only
+    // warm the state up. A chunk that runs past the end is padded with row 0;
+    // causal layers do not let the padding reach earlier steps.
     const auto start_time = std::chrono::steady_clock::now();
+    const auto chunk_start = [&](int64_t kept) { return std::max<int64_t>(0, kept - impl_->context_frames); };
     // 128 frames is 768 steps, and the attention scores stay under 40 MB a layer.
     const int64_t max_frames = impl_->context_frames + impl_->chunk_frames;
-    const int64_t chunk_frames = std::min(max_frames, (total + kGraphFrameStep - 1) / kGraphFrameStep * kGraphFrameStep);
+    const int64_t needed = total - chunk_start(first_frame);
+    const int64_t chunk_frames = std::min(max_frames, (needed + kGraphFrameStep - 1) / kGraphFrameStep * kGraphFrameStep);
     auto & graph = impl_->graph(chunk_frames);
     const int64_t row_width = config.upsample * config.output_size;
 
     std::vector<float> out;
-    out.reserve(static_cast<size_t>(total * row_width));
-    for (int64_t kept = 0; kept < total;) {
-        const int64_t first = kept == 0 ? 0 : kept - impl_->context_frames;
+    out.reserve(static_cast<size_t>((total - first_frame) * row_width));
+    for (int64_t kept = first_frame; kept < total;) {
+        const int64_t first = chunk_start(kept);
         std::vector<int32_t> chunk_rows(static_cast<size_t>(chunk_frames * config.codebooks), 0);
         const int64_t available = std::min(chunk_frames, total - first);
         std::copy_n(rows.begin() + first * config.codebooks, available * config.codebooks, chunk_rows.begin());
@@ -304,11 +314,27 @@ std::vector<float> Lfm2DetokenizerRuntime::decode(const std::vector<std::vector<
     return lfm2_audio_istft(values, static_cast<int64_t>(frames.size()) * config.upsample, impl_->weights.window, config.hop_length);
 }
 
-std::vector<float> lfm2_audio_istft(
-    const std::vector<float> & spectrum, int64_t rows, const std::vector<float> & window, int64_t hop_length) {
-    const auto n_fft = static_cast<int64_t>(window.size());
-    const int64_t bins = n_fft / 2 + 1;
-    if (rows <= 0 || hop_length <= 0 || hop_length > n_fft || spectrum.size() != static_cast<size_t>(rows * 2 * bins)) {
+const std::vector<float> & Lfm2DetokenizerRuntime::window() const {
+    return impl_->weights.window;
+}
+
+const Lfm2DetokenizerConfig & Lfm2DetokenizerRuntime::config() const {
+    return impl_->config;
+}
+
+Lfm2StreamingIstft::Lfm2StreamingIstft(std::vector<float> window, int64_t hop_length)
+    : window_(std::move(window)),
+      n_fft_(static_cast<int64_t>(window_.size())),
+      hop_(hop_length),
+      pad_((n_fft_ - hop_length) / 2) {
+    if (n_fft_ < 2 || hop_ <= 0 || hop_ > n_fft_) {
+        throw std::runtime_error("LFM2-Audio ISTFT hop must be positive and at most the window length");
+    }
+}
+
+std::vector<float> Lfm2StreamingIstft::push(const std::vector<float> & spectrum, int64_t rows) {
+    const int64_t bins = n_fft_ / 2 + 1;
+    if (rows <= 0 || spectrum.size() != static_cast<size_t>(rows * 2 * bins)) {
         throw std::runtime_error("LFM2-Audio ISTFT input does not match the window");
     }
 
@@ -321,39 +347,72 @@ std::vector<float> lfm2_audio_istft(
     }
 
     // irfft with norm="backward" scales by 1 / n_fft.
-    std::vector<float> framed(static_cast<size_t>(rows * n_fft));
+    std::vector<float> framed(static_cast<size_t>(rows * n_fft_));
     audio::real_fft_inverse(
-        {static_cast<size_t>(rows), static_cast<size_t>(n_fft)},
+        {static_cast<size_t>(rows), static_cast<size_t>(n_fft_)},
         {static_cast<std::ptrdiff_t>(bins * sizeof(std::complex<float>)), static_cast<std::ptrdiff_t>(sizeof(std::complex<float>))},
-        {static_cast<std::ptrdiff_t>(n_fft * sizeof(float)), static_cast<std::ptrdiff_t>(sizeof(float))},
+        {static_cast<std::ptrdiff_t>(n_fft_ * sizeof(float)), static_cast<std::ptrdiff_t>(sizeof(float))},
         1,
         complex_spectrum.data(),
         framed.data(),
-        1.0f / static_cast<float>(n_fft));
+        1.0f / static_cast<float>(n_fft_));
 
-    const int64_t output_size = (rows - 1) * hop_length + n_fft;
-    std::vector<float> folded(static_cast<size_t>(output_size), 0.0f);
-    std::vector<float> envelope(static_cast<size_t>(output_size), 0.0f);
+    // Windowed overlap-add, row by row in order, as one call over all rows
+    // would do it.
+    const int64_t end = (rows_ + rows - 1) * hop_ + n_fft_;
+    folded_.resize(static_cast<size_t>(end - base_), 0.0f);
+    envelope_.resize(static_cast<size_t>(end - base_), 0.0f);
     for (int64_t row = 0; row < rows; ++row) {
-        const int64_t start = row * hop_length;
-        for (int64_t i = 0; i < n_fft; ++i) {
-            const float w = window[static_cast<size_t>(i)];
-            folded[static_cast<size_t>(start + i)] += framed[static_cast<size_t>(row * n_fft + i)] * w;
-            envelope[static_cast<size_t>(start + i)] += w * w;
+        const int64_t start = (rows_ + row) * hop_ - base_;
+        for (int64_t i = 0; i < n_fft_; ++i) {
+            const float w = window_[static_cast<size_t>(i)];
+            folded_[static_cast<size_t>(start + i)] += framed[static_cast<size_t>(row * n_fft_ + i)] * w;
+            envelope_[static_cast<size_t>(start + i)] += w * w;
         }
     }
 
-    const int64_t pad = (n_fft - hop_length) / 2;
-    std::vector<float> out(static_cast<size_t>(output_size - 2 * pad));
-    for (size_t i = 0; i < out.size(); ++i) {
-        const float denominator = envelope[i + static_cast<size_t>(pad)];
+    rows_ += rows;
+    // Every later row starts at rows_ * hop or after, so what lies before is
+    // final; the output starts pad samples into the overlap-add.
+    return emit(rows_ * hop_ - pad_);
+}
+
+std::vector<float> Lfm2StreamingIstft::finish() {
+    return emit(rows_ * hop_);
+}
+
+std::vector<float> Lfm2StreamingIstft::emit(int64_t until) {
+    std::vector<float> out;
+    if (until <= emitted_) {
+        return out;
+    }
+
+    out.reserve(static_cast<size_t>(until - emitted_));
+    for (int64_t i = emitted_; i < until; ++i) {
+        const auto index = static_cast<size_t>(i + pad_ - base_);
+        const float denominator = envelope_[index];
         if (!(denominator > 1e-11f)) {
             throw std::runtime_error("LFM2-Audio ISTFT window envelope is zero");
         }
 
-        out[i] = folded[i + static_cast<size_t>(pad)] / denominator;
+        out.push_back(folded_[index] / denominator);
     }
 
+    // Drop what has been emitted; later rows only add past it.
+    const int64_t drop = until + pad_ - base_;
+    folded_.erase(folded_.begin(), folded_.begin() + drop);
+    envelope_.erase(envelope_.begin(), envelope_.begin() + drop);
+    base_ += drop;
+    emitted_ = until;
+    return out;
+}
+
+std::vector<float> lfm2_audio_istft(
+    const std::vector<float> & spectrum, int64_t rows, const std::vector<float> & window, int64_t hop_length) {
+    Lfm2StreamingIstft istft(window, hop_length);
+    auto out = istft.push(spectrum, rows);
+    const auto rest = istft.finish();
+    out.insert(out.end(), rest.begin(), rest.end());
     return out;
 }
 

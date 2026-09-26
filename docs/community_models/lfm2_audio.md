@@ -14,7 +14,7 @@ reference implementation: [liquid-audio](https://github.com/Liquid4All/liquid-au
 |---|---|
 | Family | `lfm2_audio` |
 | Tasks | `asr`, `tts` |
-| Mode | `offline` |
+| Modes | `offline`; `streaming` for TTS |
 | Languages | `en` (`LFM2.5-Audio-1.5B`), `ja` (`LFM2.5-Audio-1.5B-JP`); each checkpoint transcribes and speaks its own language |
 | ASR input | WAV at any sample rate; channels are averaged and the audio is resampled to 16 kHz |
 | TTS output | 24 kHz mono speech |
@@ -127,6 +127,38 @@ curl http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
   -d '{"model": "lfm2-audio-tts", "input": "The next train leaves in ten minutes.", "voice": "us_female"}' -o speech.wav
 ```
 
+### Streaming TTS
+
+With `--mode streaming` (CLI) or `"mode": "streaming"` (server entry), speech
+comes out as it is generated. Like liquid-audio's demo, each audio frame is
+decoded as soon as the depthformer picks it: the detokenizer is causal, so a
+frame needs only the 17 frames before it, and the ISTFT releases a sample once
+no later window reaches it. Each event carries one frame (80 ms,
+`stream_frames_per_event` to change it), plus a last 20 ms event per text
+chunk; the events add up to the offline speech for the same seed.
+
+```bash
+curl -N http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
+  -d '{"model": "lfm2-audio-tts-stream", "input": "The next train leaves in ten minutes.", "voice": "us_female", "stream": true}'
+```
+
+The response is server-sent events with base64 16-bit PCM deltas at 24 kHz;
+`"stream_format": "audio"` returns the raw PCM instead.
+
+Time to the first audio and real-time factor through the server, for a
+two-sentence English text (about 14 s of speech) and a Japanese one (8.5 s):
+
+| Backend | First audio, F16 / Q8_0 / Q4_0 / JP F32 | RTF, 1 frame per event | RTF, 4 frames per event |
+|---|---|---|---|
+| CUDA, NVIDIA A10 | 31 / 26 / 24 / 44 ms | 0.12-0.23 | 0.09-0.21 |
+| Metal, Apple M3 Ultra | 44 / 41 / 38 / 55 ms | 0.20-0.31 | 0.16-0.27 |
+| CPU, Apple M3 Ultra, 16 threads | 153 / 97 / 109 / 334 ms | 0.33-0.89 | 0.22-0.64 |
+
+In these runs the streamed audio differed from offline by 1e-4 to 6e-3
+(relative RMS), the detokenizer's arithmetic in graphs of other sizes; CLI runs
+with other texts and seeds reached 1.5e-2 on the CPU and 4.7e-2 on CUDA, with
+the same frames.
+
 ## Request Options (use with `--request-option`)
 
 | Option | Task | Default | Meaning |
@@ -140,6 +172,7 @@ curl http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
 | `seed` | TTS | Random | Sampling seed; text chunk i uses seed + i. |
 | `text_chunk_mode` | TTS | `japanese` for JP, else `default` | How long text is split; see [Long text](#long-text). |
 | `text_chunk_size` | TTS | `200` | Unicode codepoints per text chunk. |
+| `stream_frames_per_event` | TTS streaming | `1` | Audio frames (80 ms) per streaming event. |
 
 Each task rejects the other task's options.
 
@@ -293,7 +326,7 @@ gather rows from, so on CUDA the backbone also keeps a 256 MiB F16 copy of it.
 ## Limitations
 
 - Speech-to-speech is planned.
-- Offline only, no streaming.
+- ASR is offline only; TTS also streams.
 - TTS speaks with the built-in voices only; there is no voice cloning.
 - On CPU, quantized weights run without repacked kernels. On Apple Silicon,
   llama.cpp transcribes the same Q4_0 files up to 1.8x faster.

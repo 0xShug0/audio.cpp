@@ -10,6 +10,8 @@
 #include "engine/community_models/lfm2_audio/tokenizer.h"
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,9 +50,39 @@ struct Lfm2Speech {
     bool ended = false;                        // false when max_frames ran out
 };
 
-// Text tokens are greedy, as in the reference, until <|audio_start|>; then
-// the depthformer picks a frame per step until a frame opens with the
-// end-of-audio code. Throws if the turn ends with no speech.
+// generate_sequential for speech, one audio frame at a time, which is how
+// liquid-audio's demo streams: text tokens are greedy, as in the reference,
+// until <|audio_start|>; then the depthformer picks a frame per step until a
+// frame opens with the end-of-audio code. The backbone and depthformer are
+// borrowed and must outlive the generator; one generator runs at a time.
+class Lfm2SpeechGenerator {
+public:
+    Lfm2SpeechGenerator(
+        Lfm2BackboneRuntime & backbone,
+        Lfm2DepthformerRuntime & depthformer,
+        const Lfm2TextTokenizer & tokenizer,
+        Lfm2Prompt prompt,
+        int32_t end_of_audio,
+        const Lfm2SpeechOptions & options);
+    ~Lfm2SpeechGenerator();
+
+    Lfm2SpeechGenerator(const Lfm2SpeechGenerator &) = delete;
+    Lfm2SpeechGenerator & operator=(const Lfm2SpeechGenerator &) = delete;
+
+    // The next frame, or nothing once the speech has ended or max_frames ran
+    // out (ended() tells which). The first call runs the prompt. Throws if the
+    // turn ends with no speech.
+    std::optional<std::vector<int32_t>> next_frame();
+
+    [[nodiscard]] bool ended() const;
+    [[nodiscard]] const std::vector<int32_t> & text_tokens() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+// All frames of one turn.
 Lfm2Speech generate_lfm2_speech(
     Lfm2BackboneRuntime & backbone,
     Lfm2DepthformerRuntime & depthformer,

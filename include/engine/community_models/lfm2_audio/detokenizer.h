@@ -34,13 +34,18 @@ public:
     Lfm2DetokenizerRuntime(const Lfm2DetokenizerRuntime &) = delete;
     Lfm2DetokenizerRuntime & operator=(const Lfm2DetokenizerRuntime &) = delete;
 
-    // The head output, row-major [frames * upsample][output_size]: the
-    // log-magnitudes of the n_fft / 2 + 1 bins, then their phases. `frames`
-    // holds one code per codebook for each frame, each below codebook_size.
-    std::vector<float> spectrum(const std::vector<std::vector<int32_t>> & frames);
+    // The head output for frames[first_frame:], row-major
+    // [frames * upsample][output_size]: the log-magnitudes of the n_fft / 2 + 1
+    // bins, then their phases. `frames` holds one code per codebook for each
+    // frame, each below codebook_size; the frames before first_frame are the
+    // context, so a stream can decode each new frame as it comes.
+    std::vector<float> spectrum(const std::vector<std::vector<int32_t>> & frames, int64_t first_frame = 0);
 
     // Mono audio at config.sample_rate, hop_length samples per spectrum row.
     std::vector<float> decode(const std::vector<std::vector<int32_t>> & frames);
+
+    [[nodiscard]] const std::vector<float> & window() const;
+    [[nodiscard]] const Lfm2DetokenizerConfig & config() const;
 
 private:
     struct Impl;
@@ -51,6 +56,33 @@ private:
 // exp(log-magnitude) * e^(i phase), windowed overlap-add, (n_fft - hop) / 2
 // samples trimmed at each end and division by the window envelope. Unlike the
 // framework's Vocos ISTFT, the magnitude is not clamped, as in the reference.
+//
+// Rows can come in pieces: a sample is final once every window over it has
+// been added, and pieces give the same samples as one call.
+class Lfm2StreamingIstft {
+public:
+    Lfm2StreamingIstft(std::vector<float> window, int64_t hop_length);
+
+    // Adds `rows` spectrum rows and returns the samples they complete.
+    std::vector<float> push(const std::vector<float> & spectrum, int64_t rows);
+
+    // The remaining samples, once no rows follow: hop_length per row in all.
+    std::vector<float> finish();
+
+private:
+    std::vector<float> emit(int64_t until);
+
+    std::vector<float> window_;
+    int64_t n_fft_ = 0;
+    int64_t hop_ = 0;
+    int64_t pad_ = 0;
+    int64_t rows_ = 0;
+    int64_t emitted_ = 0;
+    int64_t base_ = 0;  // overlap-add index of folded_[0]
+    std::vector<float> folded_;
+    std::vector<float> envelope_;
+};
+
 std::vector<float> lfm2_audio_istft(
     const std::vector<float> & spectrum, int64_t rows, const std::vector<float> & window, int64_t hop_length);
 

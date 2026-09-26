@@ -54,6 +54,11 @@ constexpr size_t kPrefillArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr size_t kDecodeArenaBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 32768;
 constexpr int64_t kMaxRetainedPrefillSteps = 1024;
+// Every decode step attends over the whole cache, and on some CPUs the result
+// changes in the last bits with the cache's length; sampled speech then
+// diverges. So a request's cache length depends only on the request: its step
+// budget rounded up to this.
+constexpr int64_t kCacheStepGranule = 256;
 
 struct BackboneWeights {
     std::unique_ptr<core::BackendWeightStore> store;
@@ -375,13 +380,12 @@ public:
         core::release_backend_graph_resources(execution_.backend(), hidden_graph_, true);
     }
 
-    // Every step attends over the whole cache, so a cache sized for an
-    // unusually long request is replaced rather than reused.
-    [[nodiscard]] bool fits(int64_t required_steps) const {
-        return cache_steps_ >= required_steps && cache_steps_ <= 2 * required_steps;
-    }
+    [[nodiscard]] int64_t cache_steps() const noexcept { return cache_steps_; }
 
+    // Starts from zeros, so nothing an earlier request left in the masked
+    // slots can reach this one.
     void import_state(const PrefillState & state) {
+        ggml_backend_buffer_clear(buffer_.get(), 0);
         cache_.import_state(state.kv);
         if (state.conv_tails.size() != conv_tails_.size()) {
             throw std::runtime_error("LFM2-Audio conv state does not match the decode graph");
@@ -571,9 +575,10 @@ std::vector<float> Lfm2BackboneRuntime::start(const Lfm2Prompt & prompt, const L
     debug::timing_log_scalar("lfm2_audio.prefill.ms", engine::debug::elapsed_ms(prefill_start));
 
     const int64_t required = steps + max_steps;
-    if (impl_->decode == nullptr || !impl_->decode->fits(required)) {
+    const int64_t cache_steps = (std::max<int64_t>(required, steps + 1) + kCacheStepGranule - 1) / kCacheStepGranule * kCacheStepGranule;
+    if (impl_->decode == nullptr || impl_->decode->cache_steps() != cache_steps) {
         impl_->decode.reset();
-        impl_->decode = std::make_unique<DecodeGraph>(impl_->weights, config, impl_->execution, std::max<int64_t>(required, steps + 1));
+        impl_->decode = std::make_unique<DecodeGraph>(impl_->weights, config, impl_->execution, cache_steps);
     }
 
     impl_->decode->import_state(state);

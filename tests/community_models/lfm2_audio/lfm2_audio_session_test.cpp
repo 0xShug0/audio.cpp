@@ -500,6 +500,18 @@ void test_loader(const Package & package) {
     auto unrelated_request = load_request(unrelated.root);
     unrelated_request.family_hint.reset();
     require(!loader->can_load(unrelated_request), "a directory without LFM2-Audio files");
+
+    // Streaming is for speech output, and speech output needs the vocoder and
+    // detokenizer files, which this package does not have.
+    const auto model = loader->load(load_request(package.root));
+    runtime::SessionOptions options;
+    options.backend = {engine::core::BackendType::Cpu, 0, 2};
+    require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Asr, runtime::RunMode::Streaming}, options); },
+        "ASR runs offline only", "a streaming ASR session");
+    require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Tts, runtime::RunMode::Offline}, options); },
+        "cannot pick the vocoder GGUF", "a TTS session without the vocoder file");
+    require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline}, options); },
+        "supports the asr and tts tasks", "another task");
 }
 
 }  // namespace

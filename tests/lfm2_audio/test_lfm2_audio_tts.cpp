@@ -6,7 +6,8 @@
 // - the backbone output that feeds the depthformer, the first frame's
 //   depthformer logits, the greedy frames, and the detokenizer's head output
 //   and waveform for the reference frames;
-// - end-to-end speech through the registry, transcribed back by the ASR task.
+// - end-to-end speech through the registry, transcribed back by the ASR task,
+//   and streamed.
 //
 // --model is the directory of LiquidAI/LFM2.5-Audio-1.5B-GGUF (default
 // models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install);
@@ -283,11 +284,12 @@ std::unique_ptr<engine::runtime::IVoiceTaskSession> open_session(
     engine::runtime::ILoadedVoiceModel & model,
     engine::runtime::VoiceTaskKind task,
     const std::string & model_gguf,
-    const engine::core::BackendConfig & backend) {
+    const engine::core::BackendConfig & backend,
+    engine::runtime::RunMode mode = engine::runtime::RunMode::Offline) {
     engine::runtime::SessionOptions options;
     options.backend = backend;
     options.options["lfm2_audio.model_gguf"] = model_gguf;
-    auto session = model.create_task_session({task, engine::runtime::RunMode::Offline}, options);
+    auto session = model.create_task_session({task, mode}, options);
     if (auto * offline = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(session.get())) {
         offline->prepare({});
     }
@@ -325,17 +327,26 @@ void check_round_trip(
         const char * temperature;
     };
 
-    for (const auto & sampling : {Sampling{"greedy", "0"}, Sampling{"sampled", "0.8"}}) {
+    const auto speech_request = [](const char * temperature) {
         engine::runtime::TaskRequest request;
         request.text_input = engine::runtime::Transcript{kText, "en"};
         request.voice = engine::runtime::VoiceCondition{engine::runtime::VoiceReference{std::nullopt, std::string(kVoice)}, std::nullopt};
-        request.options["temperature"] = sampling.temperature;
+        request.options["temperature"] = temperature;
         request.options["seed"] = "1234";
-        const auto speech = run(*tts, request);
+        return request;
+    };
+
+    std::vector<float> greedy_speech;
+    for (const auto & sampling : {Sampling{"greedy", "0"}, Sampling{"sampled", "0.8"}}) {
+        const auto speech = run(*tts, speech_request(sampling.temperature));
         const bool has_audio = speech.audio_output.has_value() && speech.audio_output->sample_rate == 24000 && !speech.audio_output->samples.empty();
         checks.expect(has_audio, std::string(sampling.label) + " speech is 24 kHz audio");
         if (!has_audio) {
             continue;
+        }
+
+        if (std::string(sampling.label) == "greedy") {
+            greedy_speech = speech.audio_output->samples;
         }
 
         const double seconds = static_cast<double>(speech.audio_output->samples.size()) / 24000.0;
@@ -371,6 +382,45 @@ void check_round_trip(
     rejects([](auto & r) { r.text_input->language = "ja"; }, "speaks en", "another language");
     rejects([](auto & r) { r.options["audio_chunk_mode"] = "vad"; }, "does not take request option audio_chunk_mode", "an ASR option");
     rejects([](auto & r) { r.text_input->text = "  "; }, "requires text_input", "empty text");
+
+    // Streaming, one frame per event by default: the events add up to the
+    // offline speech, up to the detokenizer's arithmetic in graphs of other
+    // sizes. The other sessions go first, so one set of weights is loaded.
+    tts.reset();
+    asr.reset();
+    auto streaming_session = open_session(*model, engine::runtime::VoiceTaskKind::Tts, model_gguf, backend, engine::runtime::RunMode::Streaming);
+    auto * streaming = dynamic_cast<engine::runtime::IStreamingVoiceTaskSession *>(streaming_session.get());
+    checks.expect(streaming != nullptr, "the TTS session streams");
+    if (streaming != nullptr && !greedy_speech.empty()) {
+        streaming->start_stream(speech_request("0"));
+        std::vector<float> streamed;
+        size_t events = 0;
+        while (auto event = streaming->next_stream_event()) {
+            ++events;
+            if (event->audio_output.has_value()) {
+                streamed.insert(streamed.end(), event->audio_output->samples.begin(), event->audio_output->samples.end());
+            }
+        }
+
+        const auto finished = streaming->finish_stream();
+        checks.expect(finished.audio_output.has_value() && finished.audio_output->samples == streamed, "the stream's result is its events");
+        // One event per frame, and one for the last 20 ms, which the ISTFT
+        // completes once end-of-audio shows no frame follows.
+        checks.expect(events == greedy_speech.size() / 1920 + 1, "one event per frame and one for the tail", std::to_string(events) + " events");
+        checks.expect(streamed.size() == greedy_speech.size(), "streamed speech has the offline length", std::to_string(streamed.size()));
+        if (streamed.size() == greedy_speech.size()) {
+            double difference = 0.0;
+            double energy = 0.0;
+            for (size_t i = 0; i < streamed.size(); ++i) {
+                difference += (static_cast<double>(streamed[i]) - greedy_speech[i]) * (static_cast<double>(streamed[i]) - greedy_speech[i]);
+                energy += static_cast<double>(greedy_speech[i]) * greedy_speech[i];
+            }
+
+            // Measured with F16: 1.2e-4 on Metal, 3e-4 to 6e-4 on CPUs, 5.7e-3 on
+            // CUDA, whose kernels change with the graph size.
+            checks.expect_close(std::sqrt(difference / energy), 0.0, 0.02, "streamed against offline speech, relative RMS difference");
+        }
+    }
 }
 
 }  // namespace

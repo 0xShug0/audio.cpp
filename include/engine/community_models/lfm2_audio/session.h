@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -73,7 +74,12 @@ private:
     bool reached_max_tokens_ = false;
 };
 
-class Lfm2AudioTtsSession final : public runtime::RuntimeSessionBase, public runtime::IOfflineVoiceTaskSession {
+// Streaming TTS pulls events: each carries the audio of the next
+// stream_frames_per_event frames, decoded as they come, the way liquid-audio's
+// demo decodes each frame; together they are the offline speech.
+class Lfm2AudioTtsSession final : public runtime::RuntimeSessionBase,
+                                  public runtime::IOfflineVoiceTaskSession,
+                                  public runtime::IStreamingVoiceTaskSession {
 public:
     Lfm2AudioTtsSession(
         runtime::TaskSpec task,
@@ -88,16 +94,31 @@ public:
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
+    runtime::StreamingPolicy streaming_policy() const override;
+    void start_stream(const runtime::TaskRequest & request) override;
+    std::optional<runtime::StreamEvent> next_stream_event() override;
+    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
+    runtime::TaskResult finish_stream() override;
+    void reset() override;
+    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
+    runtime::TaskResult finalize() override;
+
 private:
     struct RequestOptions {
         std::string system_prompt;
         Lfm2SpeechOptions speech;
         int64_t text_chunk_size = 0;
         text::TextChunkMode text_chunk_mode = text::TextChunkMode::Default;
+        int64_t stream_frames_per_event = 0;
+        uint64_t seed = 0;
+        std::vector<std::string> texts;  // the text chunks, one turn each
     };
 
-    RequestOptions parse_request_options(const runtime::TaskRequest & request) const;
-    std::vector<float> speak(const std::string & text, const RequestOptions & options, uint64_t seed);
+    struct Stream;
+
+    RequestOptions parse_request(const runtime::TaskRequest & request) const;
+    std::unique_ptr<Lfm2SpeechGenerator> start_turn(const RequestOptions & options, size_t turn);
+    std::vector<float> speak(const RequestOptions & options, size_t turn);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const Lfm2AudioAssets> assets_;
@@ -109,6 +130,7 @@ private:
     Lfm2DepthformerRuntime depthformer_;
     Lfm2DetokenizerRuntime detokenizer_;
     std::string language_;
+    std::unique_ptr<Stream> stream_;
 };
 
 }  // namespace engine::community_models::lfm2_audio

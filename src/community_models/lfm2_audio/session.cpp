@@ -41,6 +41,8 @@ constexpr float kMinChunkSeconds = 1.0f;
 // speech, and at most about 30 s of Japanese.
 constexpr int64_t kDefaultMaxFrames = 512;
 constexpr int64_t kDefaultTextChunkSize = 200;
+// Frames per streaming event: liquid-audio's demo decodes every frame.
+constexpr int64_t kDefaultStreamFramesPerEvent = 1;
 
 const engine::model_spec::ModelContract & require_contract(
     const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
@@ -72,8 +74,10 @@ runtime::SessionOptions validate_session_setup(
         throw std::runtime_error("LFM2-Audio session created for the wrong task");
     }
 
-    if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("LFM2-Audio currently supports offline sessions only");
+    // Streaming is speech output only; ASR takes whole files.
+    if (task.mode != runtime::RunMode::Offline && !(kind == runtime::VoiceTaskKind::Tts && task.mode == runtime::RunMode::Streaming)) {
+        throw std::runtime_error(kind == runtime::VoiceTaskKind::Tts ? "LFM2-Audio TTS runs offline or streaming"
+                                                                      : "LFM2-Audio ASR runs offline only");
     }
 
     runtime::validate_spec_backed_session_options(options, contract, kFamily, kModelName);
@@ -100,6 +104,17 @@ void reject_options(const runtime::TaskRequest & request, std::initializer_list<
         if (request.options.count(name) != 0) {
             throw std::runtime_error(std::string("LFM2-Audio ") + task + " does not take request option " + name);
         }
+    }
+}
+
+// A turn has to end on end-of-audio, with speech before it.
+void check_turn_end(const Lfm2SpeechGenerator & generator, size_t frames) {
+    if (!generator.ended()) {
+        throw std::runtime_error("LFM2-Audio reached max_tokens before the end of the speech; increase max_tokens or lower text_chunk_size");
+    }
+
+    if (frames == 0) {
+        throw std::runtime_error("LFM2-Audio produced no speech for the text");
     }
 }
 
@@ -235,7 +250,7 @@ void Lfm2AudioSession::prepare(const runtime::SessionPreparationRequest & reques
 
 Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const runtime::TaskRequest & request) const {
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
-    reject_options(request, {"temperature", "top_k", "seed", "text_chunk_mode", "text_chunk_size"}, "ASR");
+    reject_options(request, {"temperature", "top_k", "seed", "text_chunk_mode", "text_chunk_size", "stream_frames_per_event"}, "ASR");
 
     RequestOptions out;
     out.max_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"}, out.max_tokens);
@@ -415,11 +430,15 @@ void Lfm2AudioTtsSession::prepare(const runtime::SessionPreparationRequest & req
     mark_prepared();
 }
 
-Lfm2AudioTtsSession::RequestOptions Lfm2AudioTtsSession::parse_request_options(const runtime::TaskRequest & request) const {
+Lfm2AudioTtsSession::RequestOptions Lfm2AudioTtsSession::parse_request(const runtime::TaskRequest & request) const {
+    if (!request.text_input.has_value() || io::trim_ascii_whitespace(request.text_input->text).empty()) {
+        throw std::runtime_error("LFM2-Audio TTS requires text_input");
+    }
+
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
     reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds"}, "TTS");
 
-    std::string language = request.text_input.has_value() ? request.text_input->language : "";
+    std::string language = request.text_input->language;
     if (const auto option = runtime::find_option(request.options, {"language"})) {
         language = *option;
     }
@@ -451,57 +470,176 @@ Lfm2AudioTtsSession::RequestOptions Lfm2AudioTtsSession::parse_request_options(c
     out.text_chunk_size = text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     out.text_chunk_mode = text::parse_text_chunk_mode_override(request.options)
                               .value_or(language_ == "ja" ? text::TextChunkMode::Japanese : text::TextChunkMode::Default);
+    out.stream_frames_per_event =
+        runtime::parse_positive_i64_option(request.options, {"stream_frames_per_event"}, kDefaultStreamFramesPerEvent);
+    out.seed = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
+
+    // Each chunk is its own turn with the same voice prompt, as liquid-audio
+    // would speak it.
+    for (const auto & chunk : runtime::chunk_text_request(request, out.text_chunk_size, out.text_chunk_mode)) {
+        out.texts.push_back(chunk.text_input->text);
+    }
+
     return out;
 }
 
-std::vector<float> Lfm2AudioTtsSession::speak(const std::string & text, const RequestOptions & options, uint64_t seed) {
-    const auto prompt = make_lfm2_tts_prompt(tokenizer_, options.system_prompt, text);
+// Turn i samples with seed + i, so each chunk is reproducible on its own and
+// streaming gives the frames offline does.
+std::unique_ptr<Lfm2SpeechGenerator> Lfm2AudioTtsSession::start_turn(const RequestOptions & options, size_t turn) {
+    auto prompt = make_lfm2_tts_prompt(tokenizer_, options.system_prompt, options.texts.at(turn));
     debug_dump("prompt_ids.i32", prompt.input_ids.data(), prompt.input_ids.size() * sizeof(int32_t));
 
     auto speech_options = options.speech;
-    speech_options.sampling.seed = seed;
-    const auto speech = generate_lfm2_speech(backbone_, depthformer_, tokenizer_, prompt, output_->depthformer.end_of_audio(), speech_options);
-    if (!speech.ended) {
-        throw std::runtime_error("LFM2-Audio reached max_tokens before the end of the speech; increase max_tokens or lower text_chunk_size");
-    }
+    speech_options.sampling.seed = options.seed + turn;
+    return std::make_unique<Lfm2SpeechGenerator>(
+        backbone_, depthformer_, tokenizer_, std::move(prompt), output_->depthformer.end_of_audio(), speech_options);
+}
 
-    if (speech.frames.empty()) {
-        throw std::runtime_error("LFM2-Audio produced no speech for the text");
-    }
-
+std::vector<float> Lfm2AudioTtsSession::speak(const RequestOptions & options, size_t turn) {
+    const auto generator = start_turn(options, turn);
+    std::vector<std::vector<int32_t>> frames;
     std::vector<int32_t> codes;
-    for (const auto & frame : speech.frames) {
-        codes.insert(codes.end(), frame.begin(), frame.end());
+    while (auto frame = generator->next_frame()) {
+        codes.insert(codes.end(), frame->begin(), frame->end());
+        frames.push_back(std::move(*frame));
     }
 
+    check_turn_end(*generator, frames.size());
     debug_dump("audio_codes.i32", codes.data(), codes.size() * sizeof(int32_t));
-    debug::trace_log_scalar("lfm2_audio.session.audio_frames", static_cast<int64_t>(speech.frames.size()));
-    return detokenizer_.decode(speech.frames);
+    debug::trace_log_scalar("lfm2_audio.session.audio_frames", static_cast<int64_t>(frames.size()));
+    return detokenizer_.decode(frames);
 }
 
 runtime::TaskResult Lfm2AudioTtsSession::run(const runtime::TaskRequest & request) {
     require_prepared("LFM2-Audio run()");
-    if (!request.text_input.has_value() || io::trim_ascii_whitespace(request.text_input->text).empty()) {
-        throw std::runtime_error("LFM2-Audio TTS requires text_input");
-    }
-
     const auto wall_start = std::chrono::steady_clock::now();
-    const auto options = parse_request_options(request);
-    const uint64_t seed = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
+    const auto options = parse_request(request);
 
-    // Each chunk is its own turn with the same voice prompt, as liquid-audio
-    // would speak it, and gets its own seed so chunks are reproducible.
     runtime::AudioBuffer audio;
-    uint64_t chunk_index = 0;
-    for (const auto & chunk : runtime::chunk_text_request(request, options.text_chunk_size, options.text_chunk_mode)) {
-        const auto samples = speak(chunk.text_input->text, options, seed + chunk_index++);
-        runtime::append_audio_buffer(audio, runtime::AudioBuffer{output_->detokenizer_config.sample_rate, 1, samples});
+    for (size_t turn = 0; turn < options.texts.size(); ++turn) {
+        runtime::append_audio_buffer(audio, runtime::AudioBuffer{output_->detokenizer_config.sample_rate, 1, speak(options, turn)});
     }
 
     runtime::TaskResult result;
     result.audio_output = std::move(audio);
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
+}
+
+// One turn at a time: its frames so far, decoded as they come, and the ISTFT
+// that turns their rows into final samples.
+struct Lfm2AudioTtsSession::Stream {
+    RequestOptions options;
+    size_t next_turn = 0;
+    std::unique_ptr<Lfm2SpeechGenerator> generator;
+    std::vector<std::vector<int32_t>> frames;
+    std::unique_ptr<Lfm2StreamingIstft> istft;
+    runtime::AudioBuffer audio;  // everything emitted
+};
+
+runtime::StreamingPolicy Lfm2AudioTtsSession::streaming_policy() const {
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::None;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    return policy;
+}
+
+void Lfm2AudioTtsSession::start_stream(const runtime::TaskRequest & request) {
+    require_prepared("LFM2-Audio start_stream()");
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("LFM2-Audio start_stream() needs a streaming session");
+    }
+
+    reset();
+    auto stream = std::make_unique<Stream>();
+    stream->options = parse_request(request);
+    stream->audio.sample_rate = output_->detokenizer_config.sample_rate;
+    stream->audio.channels = 1;
+    stream_ = std::move(stream);
+}
+
+// The detokenizer is causal and the ISTFT only waits for the windows that
+// overlap a sample, so each event's samples are final: the events add up to
+// what run() returns for the same seed.
+std::optional<runtime::StreamEvent> Lfm2AudioTtsSession::next_stream_event() {
+    if (stream_ == nullptr) {
+        throw std::runtime_error("LFM2-Audio streaming has not been started");
+    }
+
+    auto & st = *stream_;
+    const auto & config = output_->detokenizer_config;
+    std::vector<float> samples;
+    while (samples.empty()) {
+        if (st.generator == nullptr) {
+            if (st.next_turn == st.options.texts.size()) {
+                return std::nullopt;
+            }
+
+            st.generator = start_turn(st.options, st.next_turn++);
+            st.frames.clear();
+            st.istft = std::make_unique<Lfm2StreamingIstft>(detokenizer_.window(), config.hop_length);
+        }
+
+        const size_t first_new = st.frames.size();
+        bool turn_over = false;
+        while (st.frames.size() - first_new < static_cast<size_t>(st.options.stream_frames_per_event)) {
+            auto frame = st.generator->next_frame();
+            if (!frame.has_value()) {
+                turn_over = true;
+                break;
+            }
+
+            st.frames.push_back(std::move(*frame));
+        }
+
+        if (st.frames.size() > first_new) {
+            const auto rows = static_cast<int64_t>(st.frames.size() - first_new) * config.upsample;
+            samples = st.istft->push(detokenizer_.spectrum(st.frames, static_cast<int64_t>(first_new)), rows);
+        }
+
+        if (turn_over) {
+            check_turn_end(*st.generator, st.frames.size());
+            const auto rest = st.istft->finish();
+            samples.insert(samples.end(), rest.begin(), rest.end());
+            st.generator.reset();
+        }
+    }
+
+    runtime::AudioBuffer chunk{config.sample_rate, 1, std::move(samples)};
+    runtime::append_audio_buffer(st.audio, chunk);
+    runtime::StreamEvent event;
+    event.audio_output = std::move(chunk);
+    return event;
+}
+
+void Lfm2AudioTtsSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
+    // PullEvents drivers forward what next_stream_event returns; pushing here
+    // too would deliver every event twice.
+    (void)sink;
+}
+
+runtime::TaskResult Lfm2AudioTtsSession::finish_stream() {
+    if (stream_ == nullptr) {
+        throw std::runtime_error("LFM2-Audio streaming has not been started");
+    }
+
+    runtime::TaskResult result;
+    result.audio_output = std::move(stream_->audio);
+    reset();
+    return result;
+}
+
+void Lfm2AudioTtsSession::reset() {
+    stream_.reset();
+}
+
+runtime::StreamEvent Lfm2AudioTtsSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
+    (void)chunk;
+    throw std::runtime_error("LFM2-Audio TTS does not take streamed audio input");
+}
+
+runtime::TaskResult Lfm2AudioTtsSession::finalize() {
+    return {};
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_lfm2_audio_loader() {
