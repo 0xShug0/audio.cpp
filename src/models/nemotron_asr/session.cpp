@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -97,6 +98,24 @@ NemotronFrontendFeatures slice_features(const NemotronFrontendFeatures & in, int
             out.values.begin() + static_cast<std::ptrdiff_t>(t * in.feature_dim));
     }
     return out;
+}
+
+void attribute_word(SpeakerSegmentBuilder & builder, const SpeakerProbabilities & probabilities, const TaggedWord & word) {
+    builder.append_word(
+        attribute_speaker(probabilities, word), word.text,
+        static_cast<double>(word.first_frame) * kSpeakerFrameSeconds,
+        static_cast<double>(word.last_frame + 1) * kSpeakerFrameSeconds);
+}
+
+void attach_speaker_outputs(runtime::TaskResult & result, const std::vector<SpeakerSegment> & segments, bool masked) {
+    result.speaker_turns = segments_to_turns(segments);
+    result.output_artifacts.push_back(runtime::make_text_artifact(
+        runtime::ArtifactKind::TranscriptAlignment, "seglst", seglst_json(segments, "session_0"),
+        // SegLST is JSON (RFC 6839 +json suffix); the CLI writes it as seglst.json.
+        {{"extension", "json"}, {"mime", "application/seglst+json"}}));
+    if (masked && result.text_output.has_value()) {
+        result.text_output->text = segments_to_lines(segments);
+    }
 }
 
 }  // namespace
@@ -210,7 +229,10 @@ void NemotronASROfflineSession::prepare(const runtime::SessionPreparationRequest
         request.audio->channels,
         request.audio->sample_rate,
         assets_->config.frontend);
-    if (frames > 0 && !mem_saver_) {
+    // Masked speaker tagging runs chunked streams and never uses the offline graph.
+    const auto tagging = speaker_tagging_for_options(request.options);
+    const bool masked = tagging.has_value() && tagging->masked;
+    if (frames > 0 && !mem_saver_ && !masked) {
         encoder_->prepare_capacity(frames, assets_->config.frontend.feature_size, lookahead);
     }
     decoder_->prepare();
@@ -227,6 +249,50 @@ void NemotronASRSessionBase::validate_request_options(
     if (contract_ != nullptr) {
         runtime::validate_spec_backed_request_options(options, *contract_, "Nemotron ASR");
     }
+}
+
+std::optional<SpeakerTaggingOptions> NemotronASRSessionBase::speaker_tagging_for_options(
+    const std::unordered_map<std::string, std::string> & options) const {
+    const auto path = runtime::find_option(options, {"speaker_probabilities"});
+    if (!path.has_value()) {
+        for (const char * key : {"speaker_mode", "speaker_mask", "speaker_segment_gap_sec", "speaker_segment_max_sec"}) {
+            if (options.count(key) != 0) {
+                throw std::runtime_error(std::string("Nemotron ASR ") + key + " requires speaker_probabilities");
+            }
+        }
+        return std::nullopt;
+    }
+    SpeakerTaggingOptions out;
+    out.probabilities = *path;
+    const auto mode = runtime::find_option(options, {"speaker_mode"}).value_or("masked");
+    if (mode != "attribution" && mode != "masked") {
+        throw std::runtime_error("Nemotron ASR speaker_mode must be attribution or masked");
+    }
+    out.masked = mode == "masked";
+    const auto mask = runtime::find_option(options, {"speaker_mask"}).value_or("mel");
+    if (mask != "mel" && mask != "audio") {
+        throw std::runtime_error("Nemotron ASR speaker_mask must be mel or audio");
+    }
+    out.audio_mask = mask == "audio";
+    if (const auto value = runtime::parse_finite_float_option(options, {"speaker_segment_gap_sec"})) out.gap_sec = *value;
+    if (const auto value = runtime::parse_finite_float_option(options, {"speaker_segment_max_sec"})) out.max_event_sec = *value;
+    if (out.gap_sec < 0.0 || out.max_event_sec <= 0.0) {
+        throw std::runtime_error("Nemotron ASR speaker_segment_gap_sec must be >= 0 and speaker_segment_max_sec > 0");
+    }
+    return out;
+}
+
+int64_t NemotronASRSessionBase::masked_lookahead(
+    const std::unordered_map<std::string, std::string> & options,
+    const SpeakerProbabilities & probabilities) const {
+    std::optional<int64_t> requested;
+    if (options.count("lookahead_tokens") != 0) requested = lookahead_for_options(options);
+    const auto choice = resolve_masked_lookahead(
+        probabilities.metadata, requested, assets_->config.encoder.supported_lookahead_tokens);
+    for (const auto & warning : choice.warnings) {
+        std::cerr << "[warning][nemotron_asr] " << warning << "\n";
+    }
+    return choice.lookahead;
 }
 
 int64_t NemotronASRSessionBase::prompt_id_for_request(const runtime::TaskRequest & request) const {
@@ -298,9 +364,28 @@ runtime::TaskResult NemotronASROfflineSession::run(const runtime::TaskRequest & 
     debug::trace_log_scalar("nemotron_asr.prompt_id", prompt_id);
     debug::trace_log_scalar("nemotron_asr.lookahead_tokens", lookahead);
     debug::trace_log_scalar("nemotron_asr.streaming", streaming);
+    const auto tagging = speaker_tagging_for_options(request.options);
+    std::optional<SpeakerProbabilities> speaker_probabilities;
+    auto waveform = frontend_.prepare_waveform(*request.audio_input);
+    if (tagging.has_value()) {
+        speaker_probabilities = load_speaker_probabilities(tagging->probabilities);
+        require_speaker_probability_rows(*speaker_probabilities, static_cast<int64_t>(waveform.size()));
+        if (tagging->masked) {
+            MaskedSpeakerStreams streams(
+                *encoder_, *decoder_, frontend_, *speaker_probabilities, *tagging, prompt_id,
+                masked_lookahead(request.options, *speaker_probabilities), decode_options);
+            streams.push_audio(std::move(waveform));
+            streams.process(true);
+            runtime::TaskResult result;
+            result.text_output = runtime::Transcript{"", request.text_input.has_value() ? request.text_input->language : ""};
+            attach_speaker_outputs(result, streams.segments().segments(), true);
+            debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
+            return result;
+        }
+    }
 
     NemotronDecodedText decoded;
-    const auto frontend = frontend_.extract(*request.audio_input, true);
+    const auto frontend = frontend_.extract_waveform(waveform, true);
     const auto encoded = encoder_->encode(frontend, prompt_id, lookahead);
     decoded = decoder_->decode(encoded, decode_options);
     if (mem_saver_) {
@@ -318,6 +403,13 @@ runtime::TaskResult NemotronASROfflineSession::run(const runtime::TaskRequest & 
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{decoded.text, language};
     result.word_timestamps = std::move(decoded.token_timestamps);
+    if (tagging.has_value()) {
+        SpeakerSegmentBuilder builder(tagging->gap_sec, tagging->max_event_sec);
+        for (const auto & word : group_words(result.word_timestamps)) {
+            attribute_word(builder, *speaker_probabilities, word);
+        }
+        attach_speaker_outputs(result, builder.segments(), false);
+    }
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     return result;
 }
@@ -388,6 +480,19 @@ void NemotronASRStreamingSession::start_stream(const runtime::TaskRequest & requ
     config_request.options = streaming_options_;
     prompt_id_ = prompt_id_for_request(config_request);
     lookahead_ = lookahead_for_options(streaming_options_);
+    stream_tagging_ = speaker_tagging_for_options(streaming_options_);
+    if (stream_tagging_.has_value()) {
+        stream_speaker_probabilities_ = load_speaker_probabilities(stream_tagging_->probabilities);
+        if (stream_tagging_->masked) {
+            masked_streams_ = std::make_unique<MaskedSpeakerStreams>(
+                *encoder_, *decoder_, frontend_, *stream_speaker_probabilities_, *stream_tagging_, prompt_id_,
+                masked_lookahead(streaming_options_, *stream_speaker_probabilities_),
+                decode_options_for_request(config_request));
+        } else {
+            stream_segments_ = std::make_unique<SpeakerSegmentBuilder>(
+                stream_tagging_->gap_sec, stream_tagging_->max_event_sec);
+        }
+    }
     encoder_stream_state_ = encoder_->make_stream_state();
     decoder_stream_state_ = decoder_->make_stream_state(
         decode_options_for_request(config_request));
@@ -416,6 +521,12 @@ void NemotronASRStreamingSession::reset() {
     finalized_ = false;
     stream_wall_start_ = {};
     partials_.reset();
+    stream_tagging_.reset();
+    stream_speaker_probabilities_.reset();
+    stream_segments_.reset();
+    masked_streams_.reset();
+    masked_text_.clear();
+    stream_attributed_words_ = 0;
 }
 
 runtime::StreamEvent NemotronASRStreamingSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
@@ -435,9 +546,19 @@ runtime::StreamEvent NemotronASRStreamingSession::process_audio_chunk(const runt
     if (chunk.start_sample != received_samples_) {
         throw std::runtime_error("Nemotron ASR streaming chunks must be contiguous");
     }
+    received_samples_ += static_cast<int64_t>(chunk.samples.size());
+    if (masked_streams_ != nullptr) {
+        masked_streams_->push_audio(chunk.samples.data(), chunk.samples.size());
+        masked_streams_->process(false);
+        auto event = take_masked_event(false);
+        if (stream_event_sink_ && !event.speaker_turns.empty()) {
+            stream_event_sink_(event);
+            return {};
+        }
+        return event;
+    }
     streaming_waveform_.insert(
         streaming_waveform_.end(), chunk.samples.begin(), chunk.samples.end());
-    received_samples_ += static_cast<int64_t>(chunk.samples.size());
     return process_available_chunks(false);
 }
 
@@ -449,13 +570,45 @@ void NemotronASRStreamingSession::process_feature_chunk(
     ++chunks_processed_;
 }
 
+std::vector<runtime::SpeakerTurn> NemotronASRStreamingSession::attribute_stream_words(bool final) {
+    // ponytail: rebuilds every token timestamp per chunk, O(tokens) each; make it incremental if long streams show it.
+    const auto words = group_words(decoder_->stream_result(decoder_stream_state_).token_timestamps);
+    // The newest word can still grow, so it waits for the next word (or the end).
+    const size_t ready = final || words.empty() ? words.size() : words.size() - 1;
+    for (; stream_attributed_words_ < ready; ++stream_attributed_words_) {
+        attribute_word(*stream_segments_, *stream_speaker_probabilities_, words[stream_attributed_words_]);
+    }
+    double stream_time = static_cast<double>(decoder_stream_state_.encoded_frames) * kSpeakerFrameSeconds;
+    if (ready < words.size()) {
+        // A held-back word may still extend the latest segment; do not close it by pause.
+        stream_time = std::min(stream_time, static_cast<double>(words[ready].first_frame) * kSpeakerFrameSeconds);
+    }
+    return segments_to_turns(stream_segments_->take_events(stream_time, final));
+}
+
+runtime::StreamEvent NemotronASRStreamingSession::take_masked_event(bool final) {
+    const auto pieces = masked_streams_->segments().take_events(masked_streams_->stream_time(), final);
+    runtime::StreamEvent event;
+    if (pieces.empty()) return event;
+    event.speaker_turns = segments_to_turns(pieces);
+    const auto lines = segments_to_lines(pieces);
+    masked_text_ += lines;
+    event.partial_text = runtime::Transcript{lines, streaming_language_};
+    return event;
+}
+
 runtime::StreamEvent NemotronASRStreamingSession::publish_stream_update() {
     runtime::StreamEvent event;
+    if (stream_segments_ != nullptr) {
+        event.speaker_turns = attribute_stream_words(false);
+    }
     auto delta = partials_.publish(decoder_stream_state_.decoded.text);
-    if (delta.empty()) {
+    if (delta.empty() && event.speaker_turns.empty()) {
         return event;
     }
-    event.partial_text = runtime::Transcript{std::move(delta), streaming_language_};
+    if (!delta.empty()) {
+        event.partial_text = runtime::Transcript{std::move(delta), streaming_language_};
+    }
     if (stream_event_sink_) {
         stream_event_sink_(event);
         return {};
@@ -485,6 +638,10 @@ runtime::StreamEvent NemotronASRStreamingSession::process_available_chunks(
                 combined.partial_text = runtime::Transcript{"", streaming_language_};
             }
             combined.partial_text->text += event.partial_text->text;
+        }
+        if (!stream_event_sink_) {
+            combined.speaker_turns.insert(
+                combined.speaker_turns.end(), event.speaker_turns.begin(), event.speaker_turns.end());
         }
     };
     auto pad_features = [](NemotronFrontendFeatures features, int64_t frames) {
@@ -584,11 +741,33 @@ runtime::TaskResult NemotronASRStreamingSession::finalize() {
     if (received_samples_ == 0) {
         throw std::runtime_error("Nemotron ASR finalize requires streamed audio");
     }
+    if (stream_speaker_probabilities_.has_value()) {
+        require_speaker_probability_rows(*stream_speaker_probabilities_, received_samples_);
+    }
+    if (masked_streams_ != nullptr) {
+        masked_streams_->process(true);
+        const auto event = take_masked_event(true);
+        if (stream_event_sink_ && !event.speaker_turns.empty()) stream_event_sink_(event);
+        runtime::TaskResult result;
+        result.text_output = runtime::Transcript{"", streaming_language_};
+        attach_speaker_outputs(result, masked_streams_->segments().segments(), true);
+        // The streamed lines, in the order segments finished, so the deltas add up to it.
+        result.text_output->text = masked_text_;
+        finalized_ = true;
+        stream_started_ = false;
+        return result;
+    }
     (void) process_available_chunks(true);
     auto decoded = decoder_->stream_result(decoder_stream_state_);
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{decoded.text, streaming_language_};
     result.word_timestamps = std::move(decoded.token_timestamps);
+    if (stream_segments_ != nullptr) {
+        runtime::StreamEvent event;
+        event.speaker_turns = attribute_stream_words(true);
+        if (stream_event_sink_ && !event.speaker_turns.empty()) stream_event_sink_(event);
+        attach_speaker_outputs(result, stream_segments_->segments(), false);
+    }
     finalized_ = true;
     stream_started_ = false;
     streaming_waveform_.clear();

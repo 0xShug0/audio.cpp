@@ -262,6 +262,93 @@ audiocpp_cli --task asr --family nemotron_asr --model models/nemotron-3.5-asr-st
 | `--words-out` | JSON path | not set | Write token timestamp output when produced. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 | `--session-option nemotron_asr.mem_saver=true\|false` | bool | `false` | Release the offline encoder graph after each offline request. |
+| `--request-option speaker_probabilities=<path>` | path | not set | Speaker-tagged output from a `nemotron_3_diar` file; see below. |
+| `--request-option speaker_mode=masked\|attribution` | enum | `masked` | How speakers are assigned; see below. |
+| `--request-option speaker_mask=mel\|audio` | enum | `mel` | Masked mode only: mask log-mel features, or zero the audio of inactive frames. |
+| `--request-option speaker_segment_gap_sec=<s>` | float | `1.0` | Start a new segment for a speaker after a longer pause. |
+| `--request-option speaker_segment_max_sec=<s>` | float | `10.0` | Streaming only: split speaker-turn events after this long. |
+
+### Speaker-tagged transcription
+
+Nemotron ASR can label its transcript by speaker with the speaker activity from
+[Nemotron 3 Diarization](models/nemotron_3_diar.md). Run the two models one after
+the other on the same audio file:
+
+```bash
+# 1. Diarize. The asr_la13 profile matches the ASR lookahead of 13.
+audiocpp_cli --task diar --family nemotron_3_diar --mode streaming \
+  --model models/Nemotron-3-Diarization-GGUF/nemotron-3-diarization-bf16.gguf --audio meeting.wav \
+  --session-option nemotron_3_diar.latency_profile=asr_la13 \
+  --request-option return_frame_probabilities=true --out-dir diar
+
+# 2. Transcribe by speaker. The lookahead comes from the diarizer file.
+audiocpp_cli --task asr --family nemotron_asr --model models/nemotron-3.5-asr-streaming-0.6b \
+  --audio meeting.wav --request-option speaker_probabilities=diar/speaker_probabilities.safetensors \
+  --turns-out turns.json --out-dir asr
+```
+
+Both commands also run with `--mode streaming`. The ASR step reads the
+diarizer file as it goes, so streaming uses a precomputed file, not a live
+diarizer.
+
+There are two modes:
+
+- `masked` (default) runs one ASR stream per active speaker. Each stream hears
+  only its speaker: the features of the other frames are masked, as in NeMo's
+  masked multitalker ASR. Overlapping speech is transcribed for each speaker.
+  It costs more compute when several speakers are active.
+- `attribution` transcribes the audio once and gives each word to the speaker
+  with the highest activity around it. It cannot transcribe two speakers at
+  once, but it is cheaper and accepts a file from any diarizer profile;
+  `very_high` gives the best diarization.
+
+In masked mode the masks are exact only when the diarizer ran with the profile
+that matches the ASR lookahead:
+
+| ASR lookahead | Diarizer profile |
+|---:|---|
+| 13 | `asr_la13` |
+| 6 | `asr_la6` |
+| 3 | `asr_la3` |
+| 0 | `asr_la0` |
+
+The ASR reads the lookahead from the file. An explicit `lookahead_tokens` wins.
+If the file does not match a lookahead (for example `very_high`), masked mode
+uses 13. Both cases print a warning. A smaller lookahead lowers latency and
+accuracy.
+
+Outputs:
+
+- speaker turns with text (`--turns-out`), labelled `speaker_0`, `speaker_1`, and
+  so on, like the diarizer;
+- a `seglst` artifact (`seglst.json` with `--out-dir`) in the SegLST format used
+  by NeMo and meeteval: `session_id`, `speaker`, `start_time`, `end_time`, `words`;
+- in masked mode, the transcript text as `speaker_k: words` lines: in start
+  time order offline, in the order segments finish when streaming.
+
+A segment ends when its speaker pauses for more than `speaker_segment_gap_sec`.
+In streaming, finished segments arrive as speaker-turn events and never change
+afterwards. A segment longer than `speaker_segment_max_sec` arrives as several
+events. In masked mode each event also carries its lines as partial text, so
+the server's `transcript.text.delta` events are append-only and add up to the
+final transcript. The final speaker turns and SegLST keep the full segments in
+start time order.
+
+Validation: on four AMI test meetings (92 min, 14,837 words), masked mode
+scores 32.64% cpWER against 32.61% for NeMo Python's masked pipeline, and
+attribution scores 35.73%. With NeMo's own diarizer output as input, masked
+mode reproduces NeMo's SegLST segment for segment on CPU.
+
+Limitations:
+
+- The diarizer file must describe the same audio: `floor(samples / 160)` frames.
+- Offline attribution uses the offline encoder graph, which needs a lot of
+  memory for long files. Use `--mode streaming` for long recordings.
+- A speaker's stream pauses while that speaker is silent, so the last token of
+  a segment (often a punctuation mark or the end of a word) can arrive only when
+  the speaker talks again. The final speaker turns and SegLST add it to the
+  earlier segment; the streamed event and text were already sent without it.
+  On a 1 h 48 min recording this affected 2% of the words.
 
 ## Parakeet-TDT
 

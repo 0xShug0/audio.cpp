@@ -1428,6 +1428,8 @@ audiocpp_add_model(nemotron_asr
         src/models/nemotron_asr/encoder.cpp
         src/models/nemotron_asr/decoder.cpp
         src/models/nemotron_asr/session.cpp
+        src/models/nemotron_asr/speaker_tagging.cpp
+        src/models/nemotron_asr/masked_asr.cpp
         src/models/nemotron_asr/loader.cpp
         src/models/nemotron_asr/weights.cpp
     INCLUDES
@@ -2783,6 +2785,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
     add_engine_unittest(sortformer_v2_schedule_test tests/community_models/sortformer_diar/sortformer_v2_schedule_test.cpp)
     add_test(NAME sortformer_v2_schedule_test COMMAND sortformer_v2_schedule_test)
+
+    # Links both families: the test reads the file nemotron_3_diar writes.
+    if(nemotron_asr IN_LIST AUDIOCPP_LINKED_MODELS AND nemotron_3_diar IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(nemotron_asr_speaker_tagging_test tests/nemotron_asr/speaker_tagging_test.cpp)
+        add_test(NAME nemotron_asr_speaker_tagging_test COMMAND nemotron_asr_speaker_tagging_test)
+    endif()
 
     if(nemotron_3_diar IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(nemotron_3_diar_streaming_test tests/nemotron_3_diar/streaming_schedule_test.cpp)

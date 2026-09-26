@@ -29,6 +29,16 @@ struct NemotronEncoderStreamState {
     const void * backend_cache_owner = nullptr;
 };
 
+// One speaker's cache-aware stream in NeMo's pad_and_drop_preencoded layout
+// (masked speaker-tagged ASR): the K/V and convolution caches live in backend
+// tensors owned by this state, so several speakers can share one graph.
+struct NemotronEncoderSpeakerCaches;
+struct NemotronEncoderSpeakerState {
+    std::shared_ptr<NemotronEncoderSpeakerCaches> caches;
+    int64_t attention_seen_frames = 0;
+    int64_t attention_cached_frames = 0;
+};
+
 class NemotronEncoderRuntime {
 public:
     NemotronEncoderRuntime(
@@ -48,6 +58,16 @@ public:
         int64_t prompt_id,
         int64_t lookahead_tokens,
         NemotronEncoderStreamState & state);
+    // One pad_and_drop step for several speakers in one graph (batch = rows). Each row
+    // holds pre-encode cache frames followed by the new frames; the subsampling runs
+    // statelessly over all of them and the first drop_extra_pre_encoded encoder frames
+    // are dropped. Rows share the frame count and have their own caches and masks.
+    std::vector<NemotronEncodedAudio> encode_pad_and_drop_batch(
+        const std::vector<const NemotronFrontendFeatures *> & features,
+        int64_t prompt_id,
+        int64_t lookahead_tokens,
+        const std::vector<NemotronEncoderSpeakerState *> & states);
+    int64_t pad_and_drop_cache_frames() const;
 
 private:
     struct Graph;
@@ -58,7 +78,9 @@ private:
         int64_t feature_dim,
         int64_t lookahead_tokens,
         int64_t prefix_frames,
-        bool first_chunk);
+        bool first_chunk,
+        bool raw_cache = false,
+        int64_t rows = 1);
     const std::vector<float> & relative_positional_encoding(int64_t frames);
 
     std::shared_ptr<const NemotronASRAssets> assets_;
