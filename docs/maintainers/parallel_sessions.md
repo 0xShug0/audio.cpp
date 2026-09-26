@@ -108,3 +108,6 @@ support for every model or backend.
 The [benchmark report](../reports/common_model_slots.md) compares one through
 four shared slots with actual independent single-slot server instances, including
 generation time, memory, output parity and reproduction commands.
+The [Vulkan report](../reports/common_model_slots_vulkan.md) records single-slot
+compatibility, same-backend WAV parity and two reproduced upstream extended-test
+failures. Vulkan parallel execution remains disabled.

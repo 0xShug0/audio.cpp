@@ -1,5 +1,8 @@
 # Concurrent slots for one loaded model
 
+Follow-up: [Vulkan compatibility validation](common_model_slots_vulkan.md)
+includes real same-backend inference and the complete local Vulkan test results.
+
 The server previously serialized requests through one mutable session per model.
 Removing that lock would let requests overwrite the same graphs, KV/reference
 caches, callbacks and sampler state. Running multiple server instances avoids
