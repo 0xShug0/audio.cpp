@@ -302,6 +302,10 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
+        model.slots = engine::io::json::optional_i32(item, "slots", 1);
+        if (model.slots < 1 || model.slots > static_cast<int>(engine::runtime::kMaxParallelSessions)) {
+            throw std::runtime_error("model slots must be between 1 and 16");
+        }
         if (item.find("busy_timeout_ms") != nullptr) {
             const auto busy_timeout_ms = engine::io::json::optional_i32(item, "busy_timeout_ms", 0);
             if (busy_timeout_ms < 0) {

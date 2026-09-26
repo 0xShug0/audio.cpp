@@ -159,7 +159,48 @@ or in `server.json`:
 > [!WARNING]
 > CORS support is experimental and intended for trusted local web apps only. Do not expose a server with CORS enabled on an untrusted network. With CORS enabled, any browser page can send requests to the local server and consume local CPU/GPU resources.
 
-Set top-level `"busy_timeout_ms"` to bound how long a request waits for a model that is already running. Each model serializes its requests on an internal lock, so a second request normally queues behind the first. A GPU call that wedges cannot be cancelled from userspace, so without a bound every subsequent request would park a worker thread forever. When the current inference has held the lock past this timeout, a new request fails fast with HTTP 503 (`server_busy`) instead of queuing; streaming requests that have already sent headers surface the same condition as a `{"type":"error"}` stream event. The value must exceed the slowest legitimate single inference (music generation can take minutes). Defaults to `300000` (5 minutes); set `0` to disable the guard and restore unbounded waiting. The `--busy-timeout-ms <ms>` command-line flag overrides the config value.
+### Experimental parallel model slots
+
+Set `"slots": 2` on a model entry to let two HTTP requests execute concurrently
+against one loaded model. The default is `1`; values from 1 through 16 are
+accepted. The common framework supports offline, streaming and native-batch sessions
+through an explicit model capability. Currently **Higgs Audio v3 TTS on CUDA
+in offline mode** is the only enabled model/backend combination. Unsupported
+combinations continue to work with one slot and reject larger configurations.
+See [the adapter guide](../../docs/maintainers/parallel_sessions.md) to add
+parallel support to another model.
+See [the measured comparison](../../docs/reports/common_model_slots.md) for
+1–4 slots versus independent server instances, including time and VRAM.
+
+```json
+{
+  "id": "higgs",
+  "family": "higgs_audio_tts",
+  "path": "models/higgs-audio-v3-tts.gguf",
+  "task": "tts",
+  "mode": "offline",
+  "slots": 2
+}
+```
+
+Slots share the immutable AR and codec weights. Each has its own backend
+execution context, graphs, KV cache, reference cache and sampler state. Requests
+lease any free slot and queue when all slots are occupied. `GET /v1/models`
+reports configured `slots`, current `active_slots`, `queued_requests`, and
+`max_parallel_slots` (the model/backend capability after loading; `null` while
+unloaded). The capability is an upper bound, not a VRAM reservation. Unload, eviction and
+reconfiguration take an exclusive lease and cannot free an active slot.
+
+This is concurrent session execution; it does not combine tokens from different
+requests into a single continuous batch. More slots can improve total throughput
+while increasing individual request latency and peak VRAM. Start with two slots
+and measure your workload. With the Higgs prefill allocation improvement, the
+tested Polish sentence peaked at about 6.95 GiB including the shared model with
+four active slots on an RTX 3090. Other prompt lengths and models use different
+amounts of working memory. Warm each slot before comparing output/timing because
+reference and graph caches are private to each slot.
+
+Set top-level `"busy_timeout_ms"` to bound how long a request waits for a model that is already running. By default each model runs one request at a time. With multiple slots, requests queue only when every slot is occupied. A GPU call that wedges cannot be cancelled from userspace, so without a bound every subsequent request would park a worker thread forever. When every occupied request slot has exceeded this timeout, a new request fails fast with HTTP 503 (`server_busy`) instead of queuing; streaming requests that have already sent headers surface the same condition as a `{"type":"error"}` stream event. The value must exceed the slowest legitimate single inference (music generation can take minutes). Defaults to `300000` (5 minutes); set `0` to disable the guard and restore unbounded waiting. The `--busy-timeout-ms <ms>` command-line flag overrides the config value.
 
 The bound is resolved in three layers, since model runtimes differ by orders of magnitude (a short TTS clip versus minutes of music generation):
 

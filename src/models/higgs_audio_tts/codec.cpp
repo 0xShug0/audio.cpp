@@ -1461,7 +1461,8 @@ HiggsCodecRuntime::HiggsCodecRuntime(std::shared_ptr<const HiggsAssets> assets,
                                      size_t weight_context_bytes,
                                      size_t decode_graph_arena_bytes,
                                      size_t encode_graph_arena_bytes,
-                                     assets::TensorStorageType weight_storage_type)
+                                     assets::TensorStorageType weight_storage_type,
+                                     std::shared_ptr<const HiggsCodecWeights> shared_weights)
     : assets_(std::move(assets)), backend_(execution.backend()),
       backend_type_(execution.backend_type()), threads_(std::max(1, execution.config().threads)),
       decode_graph_arena_bytes_(decode_graph_arena_bytes),
@@ -1473,7 +1474,7 @@ HiggsCodecRuntime::HiggsCodecRuntime(std::shared_ptr<const HiggsAssets> assets,
     if (assets_->weights == nullptr) {
         throw std::runtime_error("Higgs TTS codec runtime requires tensor source");
     }
-    weights_ = std::make_shared<HiggsCodecWeights>(load_higgs_codec_decode_weights(
+    weights_ = shared_weights ? std::move(shared_weights) : std::make_shared<HiggsCodecWeights>(load_higgs_codec_decode_weights(
         *assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
     if (decode_graph_arena_bytes_ == 0) {
         throw std::runtime_error("Higgs TTS codec decode graph arena bytes must be non-zero");

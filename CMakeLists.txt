@@ -2812,6 +2812,25 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_TESTS)
+        add_executable(server_single_slot_compat_test tests/unittests/test_server_busy_guard.cpp)
+        target_compile_definitions(server_single_slot_compat_test PRIVATE AUDIOCPP_TEST_MODEL_SLOTS)
+        target_include_directories(server_single_slot_compat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(server_single_slot_compat_test PRIVATE Threads::Threads)
+        add_test(NAME server_single_slot_compat_test COMMAND server_single_slot_compat_test)
+        set_tests_properties(server_single_slot_compat_test PROPERTIES TIMEOUT 60)
+
+        add_executable(server_model_slots_test tests/unittests/test_server_model_slots.cpp)
+        target_include_directories(server_model_slots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(server_model_slots_test PRIVATE Threads::Threads)
+        add_test(NAME server_model_slots_test COMMAND server_model_slots_test)
+        set_tests_properties(server_model_slots_test PROPERTIES TIMEOUT 60)
+
+        add_executable(session_pool_test tests/unittests/test_session_pool.cpp)
+        target_include_directories(session_pool_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        target_link_libraries(session_pool_test PRIVATE ggml-base Threads::Threads)
+        add_test(NAME session_pool_test COMMAND session_pool_test)
+        set_tests_properties(session_pool_test PROPERTIES TIMEOUT 60)
+
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
             add_engine_unittest(kokoro_g2p_probe tests/kokoro_tts/kokoro_g2p_probe.cpp)

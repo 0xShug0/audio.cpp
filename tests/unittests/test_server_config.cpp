@@ -625,10 +625,28 @@ void test_model_memory_estimator() {
     }
 }
 
+void test_model_slots() {
+    const auto root = make_temp_root();
+    for (int slots : {1, 2, 16, 0, -1, 17}) {
+        const auto text = std::string(R"({"models":[{"id":"higgs","family":"higgs_audio_tts","path":"model.gguf","slots":)")
+            + std::to_string(slots) + "}]}";
+        bool rejected = false;
+        try {
+            const auto config = minitts::server::load_server_config(write_config(root, "slots.json", text));
+            require(config.models.front().slots == slots, "slots value was not preserved");
+        } catch (const std::runtime_error &) { rejected = true; }
+        require(rejected == (slots < 1 || slots > 16), "invalid slots value accepted or valid slots rejected");
+    }
+    const auto config = minitts::server::load_server_config(write_config(root, "default-slots.json",
+        R"({"models":[{"id":"higgs","family":"higgs_audio_tts","path":"model.gguf"}]})"));
+    require(config.models.front().slots == 1, "default slots must remain one");
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_model_slots();
         test_inline_default_and_named_presets();
         test_builtin_utility_model_paths();
         test_default_preset_name();
