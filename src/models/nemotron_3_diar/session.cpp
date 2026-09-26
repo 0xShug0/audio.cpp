@@ -36,6 +36,31 @@ bool wants_frame_probabilities(const std::unordered_map<std::string, std::string
     return value.has_value() && runtime::parse_bool_option(*value, "return_frame_probabilities");
 }
 
+void validate_request_options(
+    const std::unordered_map<std::string, std::string> & options,
+    const model_spec::ModelContract & contract) {
+    auto validation_options = options;
+    // Published GGUFs embed a v1 contract from before frame-probability export.
+    // The runtime consumes this option locally; keep validating every other key.
+    if (contract.request_option_keys.find("return_frame_probabilities") == contract.request_option_keys.end()) {
+        validation_options.erase("return_frame_probabilities");
+    }
+    runtime::validate_spec_backed_request_options(
+        validation_options, contract, "Nemotron 3 diarization");
+}
+
+void validate_session_options(
+    const runtime::SessionOptions & options,
+    const model_spec::ModelContract & contract) {
+    auto validation_options = options;
+    // The same published contract predates the model-local attention selector.
+    if (contract.session_option_keys.find("nemotron_3_diar.attention") == contract.session_option_keys.end()) {
+        validation_options.options.erase("nemotron_3_diar.attention");
+    }
+    runtime::validate_spec_backed_session_options(
+        validation_options, contract, kFamily, "Nemotron 3 diarization");
+}
+
 // Native 10 ms speaker activity [frames, speakers] as a safetensors file. The
 // metadata records the streaming geometry so nemotron_asr can pick the matching
 // lookahead for speaker-masked transcription.
@@ -90,7 +115,7 @@ Session::Session(
     if (task_.task != runtime::VoiceTaskKind::Diarization) {
         throw std::runtime_error("Nemotron 3 Diarization only supports diarization");
     }
-    runtime::validate_spec_backed_session_options(options, *contract_, kFamily, "Nemotron 3 diarization");
+    validate_session_options(options, *contract_);
     const auto storage = runtime::parse_tensor_storage_option(
         options.options,
         "nemotron_3_diar.weight_type",
@@ -381,7 +406,7 @@ void Session::run_batch(
     std::vector<runtime::AudioBuffer> audio;
     audio.reserve(requests.size());
     for (const auto & request : requests) {
-        runtime::validate_spec_backed_request_options(request.options, *contract_, "Nemotron 3 diarization");
+        validate_request_options(request.options, *contract_);
         if (!request.audio_input.has_value() || request.audio_input->sample_rate != kSampleRate ||
             request.audio_input->channels <= 0) {
             throw std::runtime_error("Nemotron 3 diarization requires 16 kHz audio input");
@@ -494,7 +519,7 @@ void Session::start_stream(const runtime::TaskRequest & request) {
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Nemotron 3 diarization start_stream() requires streaming mode");
     }
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Nemotron 3 diarization");
+    validate_request_options(request.options, *contract_);
     reset();
     stream_request_ = request;
     stream_request_.audio_input.reset();
