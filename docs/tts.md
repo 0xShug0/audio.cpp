@@ -34,6 +34,7 @@
 | Kokoro 82M | `kokoro_tts` | `tts` | [Kokoro 82M](models/kokoro_tts.md) |
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
 | KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](community_models/kitten_tts.md) |
+| LFM2.5-Audio | `lfm2_audio` | `asr`, `tts` | [LFM2.5-Audio](community_models/lfm2_audio.md) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |

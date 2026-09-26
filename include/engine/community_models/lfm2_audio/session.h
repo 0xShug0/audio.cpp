@@ -1,15 +1,20 @@
 #pragma once
 
-// Offline ASR session for LFM2.5-Audio: audio -> FastConformer -> adapter ->
-// LFM2 backbone, prompted with the ASR system prompt from liquid-audio's
-// README and decoded greedily like LFM2AudioModel.generate_sequential
-// (model/lfm2_audio.py).
+// LFM2.5-Audio sessions. ASR: audio -> FastConformer -> adapter -> LFM2
+// backbone, prompted with the ASR system prompt from liquid-audio's README
+// and decoded greedily like LFM2AudioModel.generate_sequential
+// (model/lfm2_audio.py). TTS: text -> backbone -> depthformer, one audio
+// frame per step, -> detokenizer -> 24 kHz audio.
 
 #include "engine/community_models/lfm2_audio/asr_inputs.h"
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
 #include "engine/community_models/lfm2_audio/backbone.h"
+#include "engine/community_models/lfm2_audio/depthformer.h"
+#include "engine/community_models/lfm2_audio/detokenizer.h"
 #include "engine/community_models/lfm2_audio/tokenizer.h"
+#include "engine/community_models/lfm2_audio/tts.h"
+#include "engine/framework/text/chunking.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
@@ -66,6 +71,44 @@ private:
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
     std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
     bool reached_max_tokens_ = false;
+};
+
+class Lfm2AudioTtsSession final : public runtime::RuntimeSessionBase, public runtime::IOfflineVoiceTaskSession {
+public:
+    Lfm2AudioTtsSession(
+        runtime::TaskSpec task,
+        runtime::SessionOptions options,
+        std::shared_ptr<const Lfm2AudioAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
+    ~Lfm2AudioTtsSession() override;
+
+    std::string family() const override;
+    runtime::VoiceTaskKind task_kind() const override;
+    runtime::RunMode run_mode() const override;
+    void prepare(const runtime::SessionPreparationRequest & request) override;
+    runtime::TaskResult run(const runtime::TaskRequest & request) override;
+
+private:
+    struct RequestOptions {
+        std::string system_prompt;
+        Lfm2SpeechOptions speech;
+        int64_t text_chunk_size = 0;
+        text::TextChunkMode text_chunk_mode = text::TextChunkMode::Default;
+    };
+
+    RequestOptions parse_request_options(const runtime::TaskRequest & request) const;
+    std::vector<float> speak(const std::string & text, const RequestOptions & options, uint64_t seed);
+
+    runtime::TaskSpec task_;
+    std::shared_ptr<const Lfm2AudioAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    std::shared_ptr<const Lfm2AudioComponents> components_;
+    std::shared_ptr<const Lfm2AudioOutputComponents> output_;
+    Lfm2TextTokenizer tokenizer_;
+    Lfm2BackboneRuntime backbone_;
+    Lfm2DepthformerRuntime depthformer_;
+    Lfm2DetokenizerRuntime detokenizer_;
+    std::string language_;
 };
 
 }  // namespace engine::community_models::lfm2_audio
