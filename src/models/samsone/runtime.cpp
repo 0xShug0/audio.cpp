@@ -293,41 +293,52 @@ private:
     }
 
     void build_auxiliary_graphs() {
-        ggml_.reset(ggml_init({8 * 1024 * 1024, nullptr, true}));
-        if (!ggml_) {
-            throw std::runtime_error("SAMSONE auxiliary graph context allocation failed");
+        projector_ggml_.reset(ggml_init({8 * 1024 * 1024, nullptr, true}));
+        if (!projector_ggml_) {
+            throw std::runtime_error("SAMSONE projector graph context allocation failed");
         }
-        core::ModuleBuildContext ctx{ggml_.get(), "samsone.auxiliary", execution_.backend_type()};
-        auto projector_input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({kAudioTokens, kWhisperChannels}));
+        core::ModuleBuildContext projector_ctx{projector_ggml_.get(), "samsone.projector", execution_.backend_type()};
+        auto projector_input = core::make_tensor(projector_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({kAudioTokens, kWhisperChannels}));
         projector_input_ = projector_input;
-        auto residual = modules::LinearModule({kWhisperChannels, assets_->config.hidden_size, false}).build(ctx, projector_input, projector_linear1_);
-        auto hidden = modules::GeluModule{}.build(ctx, residual);
-        hidden = modules::LinearModule({assets_->config.hidden_size, assets_->config.hidden_size, false}).build(ctx, hidden, projector_linear2_);
-        hidden = modules::AddModule{}.build(ctx, residual, hidden);
-        projector_output_ = modules::LayerNormModule({assets_->config.hidden_size, 1.0e-5F, true, true}).build(ctx, hidden, projector_norm_).tensor;
+        auto residual = modules::LinearModule({kWhisperChannels, assets_->config.hidden_size, false}).build(projector_ctx, projector_input, projector_linear1_);
+        auto hidden = modules::GeluModule{}.build(projector_ctx, residual);
+        hidden = modules::LinearModule({assets_->config.hidden_size, assets_->config.hidden_size, false}).build(projector_ctx, hidden, projector_linear2_);
+        hidden = modules::AddModule{}.build(projector_ctx, residual, hidden);
+        projector_output_ = modules::LayerNormModule({assets_->config.hidden_size, 1.0e-5F, true, true}).build(projector_ctx, hidden, projector_norm_).tensor;
         ggml_set_input(projector_input_.tensor);
         ggml_set_output(projector_output_);
+        projector_graph_ = ggml_new_graph_custom(projector_ggml_.get(), 512, false);
+        ggml_build_forward_expand(projector_graph_, projector_output_);
+        projector_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend())));
+        if (!projector_allocator_ || !ggml_gallocr_alloc_graph(projector_allocator_.get(), projector_graph_)) {
+            throw std::runtime_error("SAMSONE projector graph allocation failed");
+        }
+        core::prepare_host_graph_plan(execution_, projector_graph_, projector_plan_);
 
-        auto ids = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({kLookupCapacity}));
+        lookup_ggml_.reset(ggml_init({8 * 1024 * 1024, nullptr, true}));
+        if (!lookup_ggml_) {
+            throw std::runtime_error("SAMSONE embedding graph context allocation failed");
+        }
+        core::ModuleBuildContext lookup_ctx{lookup_ggml_.get(), "samsone.embedding", execution_.backend_type()};
+        auto ids = core::make_tensor(lookup_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({kLookupCapacity}));
         lookup_input_ = ids;
-        lookup_output_ = modules::EmbeddingModule({assets_->config.vocab_size, assets_->config.hidden_size}).build(ctx, ids, token_embedding_).tensor;
+        lookup_output_ = modules::EmbeddingModule({assets_->config.vocab_size, assets_->config.hidden_size}).build(lookup_ctx, ids, token_embedding_).tensor;
         ggml_set_input(lookup_input_.tensor);
         ggml_set_output(lookup_output_);
+        lookup_graph_ = ggml_new_graph_custom(lookup_ggml_.get(), 512, false);
+        ggml_build_forward_expand(lookup_graph_, lookup_output_);
+        lookup_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend())));
+        if (!lookup_allocator_ || !ggml_gallocr_alloc_graph(lookup_allocator_.get(), lookup_graph_)) {
+            throw std::runtime_error("SAMSONE embedding graph allocation failed");
+        }
+        core::prepare_host_graph_plan(execution_, lookup_graph_, lookup_plan_);
 
         separator_values_ = core::read_tensor_f32(separator_.tensor);
-        graph_ = ggml_new_graph_custom(ggml_.get(), 512, false);
-        ggml_build_forward_expand(graph_, projector_output_);
-        ggml_build_forward_expand(graph_, lookup_output_);
-        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend())));
-        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) {
-            throw std::runtime_error("SAMSONE auxiliary graph allocation failed");
-        }
-        core::prepare_host_graph_plan(execution_, graph_, plan_);
     }
 
     std::vector<float> project(const std::vector<float> & pooled) {
         core::write_tensor_f32(projector_input_, pooled);
-        if (core::compute_graph(execution_, graph_, plan_, "samsone.projector") != GGML_STATUS_SUCCESS) {
+        if (core::compute_graph(execution_, projector_graph_, projector_plan_, "samsone.projector") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("SAMSONE projector graph compute failed");
         }
         return core::read_tensor_f32(projector_output_);
@@ -340,7 +351,7 @@ private:
         std::vector<int32_t> padded(kLookupCapacity, 0);
         std::copy(ids.begin(), ids.end(), padded.begin());
         core::write_tensor_i32(lookup_input_, padded);
-        if (core::compute_graph(execution_, graph_, plan_, "samsone.embed") != GGML_STATUS_SUCCESS) {
+        if (core::compute_graph(execution_, lookup_graph_, lookup_plan_, "samsone.embed") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("SAMSONE token embedding graph compute failed");
         }
         auto values = core::read_tensor_f32(lookup_output_);
@@ -349,13 +360,20 @@ private:
     }
 
     void release_auxiliary_graphs() {
-        if (graph_) {
-            core::release_backend_graph_resources(execution_.backend(), graph_, true);
+        if (lookup_graph_) {
+            core::release_backend_graph_resources(execution_.backend(), lookup_graph_, true);
         }
-        allocator_.reset();
-        ggml_.reset();
-        plan_.reset();
-        graph_ = nullptr;
+        lookup_allocator_.reset();
+        lookup_ggml_.reset();
+        lookup_plan_.reset();
+        lookup_graph_ = nullptr;
+        if (projector_graph_) {
+            core::release_backend_graph_resources(execution_.backend(), projector_graph_, true);
+        }
+        projector_allocator_.reset();
+        projector_ggml_.reset();
+        projector_plan_.reset();
+        projector_graph_ = nullptr;
     }
 
     std::shared_ptr<const SamsoneAssets> assets_;
@@ -373,12 +391,16 @@ private:
     modules::LinearWeights projector_linear1_;
     modules::LinearWeights projector_linear2_;
     modules::NormWeights projector_norm_;
-    std::unique_ptr<ggml_context, ContextDeleter> ggml_;
-    std::unique_ptr<ggml_gallocr, AllocatorDeleter> allocator_;
-    core::HostGraphPlan plan_;
-    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<ggml_context, ContextDeleter> projector_ggml_;
+    std::unique_ptr<ggml_gallocr, AllocatorDeleter> projector_allocator_;
+    core::HostGraphPlan projector_plan_;
+    ggml_cgraph * projector_graph_ = nullptr;
     core::TensorValue projector_input_;
     ggml_tensor * projector_output_ = nullptr;
+    std::unique_ptr<ggml_context, ContextDeleter> lookup_ggml_;
+    std::unique_ptr<ggml_gallocr, AllocatorDeleter> lookup_allocator_;
+    core::HostGraphPlan lookup_plan_;
+    ggml_cgraph * lookup_graph_ = nullptr;
     core::TensorValue lookup_input_;
     ggml_tensor * lookup_output_ = nullptr;
 };
