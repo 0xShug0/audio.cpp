@@ -336,6 +336,22 @@ void check_stage_numbers(
 
     checks.expect_close(chunk_difference, 0.0, 0.1, "chunked detokenizer against one pass, largest difference");
 
+    // A stream decodes a frame at a time from the state the frames before it
+    // left; that must give the one-pass rows too.
+    one_pass.start_stream();
+    std::vector<float> streamed_head;
+    for (const auto & frame : long_frames) {
+        const auto rows = one_pass.stream({frame});
+        streamed_head.insert(streamed_head.end(), rows.begin(), rows.end());
+    }
+
+    double stream_difference = streamed_head.size() == one_pass_head.size() ? 0.0 : INFINITY;
+    for (size_t i = 0; i < std::min(streamed_head.size(), one_pass_head.size()); ++i) {
+        stream_difference = std::max(stream_difference, std::fabs(static_cast<double>(streamed_head[i]) - one_pass_head[i]));
+    }
+
+    checks.expect_close(stream_difference, 0.0, 0.1, "detokenizer stream against one pass, largest difference");
+
     const auto wave = detokenizer.decode(kFrames);
     checks.expect(wave.size() == kWaveSamples, "waveform length", std::to_string(wave.size()));
     if (wave.size() == kWaveSamples) {

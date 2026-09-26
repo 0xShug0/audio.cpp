@@ -38,7 +38,9 @@ reference implementation: [liquid-audio](https://github.com/Liquid4All/liquid-au
   turn. After `<|audio_start|>` each backbone step yields one 80 ms audio
   frame: a 6-layer depthformer predicts its 8 codes one codebook at a time,
   and the frame goes back into the backbone as the sum of its code embeddings,
-  until a frame starts with the end-of-audio code.
+  until a frame starts with the end-of-audio code. A frame that picks
+  end-of-audio for another codebook goes back in too but has no sound, so, as
+  in liquid-audio's demo, it is not decoded.
 - S2S: liquid-audio's interleaved generation. The system prompt `Respond with
   interleaved text and audio.` and the user's audio as the user turn; the reply
   alternates 6 text tokens and 12 audio frames (9 for the JP checkpoint, whose
@@ -156,13 +158,14 @@ curl http://127.0.0.1:8080/v1/tasks/run -H 'Content-Type: application/json' \
 
 With `--mode streaming` (CLI) or `"mode": "streaming"` (server entry), speech
 comes out as it is generated. Like liquid-audio's demo, each audio frame is
-decoded as soon as the depthformer picks it: the detokenizer is causal, so a
-frame needs only the 17 frames before it, and the ISTFT releases a sample once
-no later window reaches it. Each event carries one frame (80 ms,
-`stream_frames_per_event` to change it), plus a last 20 ms event per text
-chunk; the events add up to the offline speech for the same seed. A text chunk
-that reaches `max_tokens` ends its speech there, streamed as offline, with the
-same warning.
+decoded as soon as the depthformer picks it. The detokenizer is causal and
+carries each layer's state from frame to frame (the attention layers' last 29
+keys and values and the short-conv layers' last inputs), so a frame costs
+only its own six steps, and the ISTFT releases a sample once no later window
+reaches it. Each event carries one frame (80 ms, `stream_frames_per_event` to
+change it), plus a last 20 ms event per text chunk; the events add up to the
+offline speech for the same seed. A text chunk that reaches `max_tokens` ends
+its speech there, streamed as offline, with the same warning.
 
 ```bash
 curl -N http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
@@ -173,18 +176,18 @@ The response is server-sent events with base64 16-bit PCM deltas at 24 kHz;
 `"stream_format": "audio"` returns the raw PCM instead.
 
 Time to the first audio and real-time factor through the server, for a
-two-sentence English text (about 14 s of speech) and a Japanese one (8.5 s):
+two-sentence English text (6.5 s of speech) and a Japanese one (8.5 s):
 
 | Backend | First audio, F16 / Q8_0 / Q4_0 / JP F32 | RTF, 1 frame per event | RTF, 4 frames per event |
 |---|---|---|---|
-| CUDA, NVIDIA A10 | 31 / 26 / 24 / 44 ms | 0.12-0.23 | 0.09-0.21 |
-| Metal, Apple M3 Ultra | 44 / 41 / 38 / 55 ms | 0.20-0.31 | 0.16-0.27 |
-| CPU, Apple M3 Ultra, 16 threads | 153 / 97 / 109 / 334 ms | 0.33-0.89 | 0.22-0.64 |
+| CUDA, NVIDIA A10 | 39 / 27 / 24 / 45 ms | 0.09-0.21 | 0.09-0.21 |
+| Metal, Apple M3 Ultra | 40 / 37 / 35 / 52 ms | 0.19-0.29 | 0.19-0.27 |
+| CPU, Apple M3 Ultra, 16 threads | 150 / 106 / 113 / 308 ms | 0.18-0.57 | 0.18-0.57 |
 
-In these runs the streamed audio differed from offline by 1e-4 to 6e-3
-(relative RMS), the detokenizer's arithmetic in graphs of other sizes; CLI runs
-with other texts and seeds reached 1.5e-2 on the CPU and 4.7e-2 on CUDA, with
-the same frames.
+A frame per event costs no more than four, and streaming about what offline
+speech does. In these runs the streamed audio differed from offline by 5e-4 to
+5e-3 (relative RMS), the detokenizer's arithmetic in graphs of other sizes;
+runs with other texts and seeds can differ more.
 
 ### Streaming S2S
 
@@ -343,8 +346,10 @@ The detokenizer's log-magnitudes reach 4.7, a magnitude of 114, which the
 framework's Vocos ISTFT would clamp at 100, so the ISTFT here is the
 reference's. Long audio is detokenized in chunks that overlap by the model's
 receptive field (97 steps); with F32 weights the chunked output matches one
-pass to 3e-5. `test_lfm2_audio_tts` checks the prompt, the stage numbers, the
-greedy frames, the chunking, a round trip through ASR, greedy and sampled, and
+pass to 3e-5. A stream carries each layer's state instead, and with F32
+weights its waveform matches one pass to 1e-6 (relative RMS).
+`test_lfm2_audio_tts` checks the prompt, the stage numbers, the greedy frames,
+the chunking, the stream, a round trip through ASR, greedy and sampled, and
 speech cut off at `max_tokens`, offline and streamed; it runs when
 `lfm2_audio_1_5b_f16` is installed in `models/`.
 

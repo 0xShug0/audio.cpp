@@ -576,13 +576,13 @@ runtime::TaskResult Lfm2AudioTtsSession::run(const runtime::TaskRequest & reques
     return result;
 }
 
-// One turn at a time: its frames so far, decoded as they come, and the ISTFT
-// that turns their rows into final samples.
+// One turn at a time: its frames, decoded as they come by the detokenizer's
+// stream, and the ISTFT that turns their rows into final samples.
 struct Lfm2AudioTtsSession::Stream {
     RequestOptions options;
     size_t next_turn = 0;
     std::unique_ptr<Lfm2SpeechGenerator> generator;
-    std::vector<std::vector<int32_t>> frames;
+    size_t turn_frames = 0;
     std::unique_ptr<Lfm2StreamingIstft> istft;
     runtime::AudioBuffer audio;  // everything emitted
 };
@@ -627,29 +627,31 @@ std::optional<runtime::StreamEvent> Lfm2AudioTtsSession::next_stream_event() {
             }
 
             st.generator = start_turn(st.options, st.next_turn++);
-            st.frames.clear();
+            st.turn_frames = 0;
+            detokenizer_.start_stream();
             st.istft = std::make_unique<Lfm2StreamingIstft>(detokenizer_.window(), config.hop_length);
         }
 
-        const size_t first_new = st.frames.size();
+        std::vector<std::vector<int32_t>> frames;
         bool turn_over = false;
-        while (st.frames.size() - first_new < static_cast<size_t>(st.options.stream_frames_per_event)) {
+        while (frames.size() < static_cast<size_t>(st.options.stream_frames_per_event)) {
             auto frame = st.generator->next_frame();
             if (!frame.has_value()) {
                 turn_over = true;
                 break;
             }
 
-            st.frames.push_back(std::move(*frame));
+            frames.push_back(std::move(*frame));
         }
 
-        if (st.frames.size() > first_new) {
-            const auto rows = static_cast<int64_t>(st.frames.size() - first_new) * config.upsample;
-            samples = st.istft->push(detokenizer_.spectrum(st.frames, static_cast<int64_t>(first_new)), rows);
+        if (!frames.empty()) {
+            st.turn_frames += frames.size();
+            const auto rows = static_cast<int64_t>(frames.size()) * config.upsample;
+            samples = st.istft->push(detokenizer_.stream(frames), rows);
         }
 
         if (turn_over) {
-            if (check_turn_end(*st.generator, st.frames.size(), st.next_turn - 1, st.options.texts.size(), st.options.speech.max_frames)) {
+            if (check_turn_end(*st.generator, st.turn_frames, st.next_turn - 1, st.options.texts.size(), st.options.speech.max_frames)) {
                 reached_max_tokens_ = true;
             }
 
@@ -806,14 +808,15 @@ runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & reque
     const auto options = parse_request(request);
     const auto generator = start_reply(options, *request.audio_input);
 
-    // The frame that ends the audio is a marker, not sound.
+    // The frame that ends the audio is a marker, not sound, and so is one that
+    // picked end-of-audio for another codebook (lfm2_speaks).
     const int32_t end_of_audio = output_->depthformer.end_of_audio();
     std::vector<int32_t> tokens;
     std::vector<std::vector<int32_t>> frames;
     while (auto step = generator->next()) {
         if (step->codes.empty()) {
             tokens.push_back(step->token);
-        } else if (step->codes.front() != end_of_audio) {
+        } else if (lfm2_speaks(step->codes, end_of_audio)) {
             frames.push_back(std::move(step->codes));
         }
     }
@@ -829,17 +832,18 @@ runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & reque
     return result;
 }
 
-// The user's audio as it comes, then the reply: its frames so far, decoded as
-// they come, the ISTFT that turns their rows into final samples, and its text.
+// The user's audio as it comes, then the reply: its frames, decoded as they
+// come by the detokenizer's stream, the ISTFT that turns their rows into final
+// samples, and its text.
 struct Lfm2AudioChatSession::Stream {
     RequestOptions options;
     runtime::AudioBuffer input;
     std::unique_ptr<Lfm2InterleavedGenerator> generator;
     bool done = false;
-    std::vector<std::vector<int32_t>> frames;
+    size_t frames = 0;
     std::unique_ptr<Lfm2StreamingIstft> istft;
-    std::vector<int32_t> tokens;
-    size_t text_sent = 0;      // bytes of the decoded text already in events
+    std::string text;            // the reply's text so far
+    size_t text_sent = 0;        // bytes of it already in events
     runtime::AudioBuffer audio;  // everything emitted
 };
 
@@ -912,13 +916,15 @@ std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
         }
 
         st.generator = start_reply(st.options, st.input);
+        detokenizer_.start_stream();
         st.istft = std::make_unique<Lfm2StreamingIstft>(detokenizer_.window(), config.hop_length);
     }
 
     const int32_t end_of_audio = output_->depthformer.end_of_audio();
-    const size_t first_new = st.frames.size();
+    std::vector<std::vector<int32_t>> frames;
+    std::vector<int32_t> tokens;
     bool reply_over = false;
-    while (st.frames.size() - first_new < static_cast<size_t>(st.options.stream_frames_per_event)) {
+    while (frames.size() < static_cast<size_t>(st.options.stream_frames_per_event)) {
         auto step = st.generator->next();
         if (!step.has_value()) {
             reply_over = true;
@@ -926,30 +932,32 @@ std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
         }
 
         if (step->codes.empty()) {
-            st.tokens.push_back(step->token);
-        } else if (step->codes.front() != end_of_audio) {
-            st.frames.push_back(std::move(step->codes));
+            tokens.push_back(step->token);
+        } else if (lfm2_speaks(step->codes, end_of_audio)) {
+            frames.push_back(std::move(step->codes));
         }
     }
 
     std::vector<float> samples;
-    if (st.frames.size() > first_new) {
-        const auto rows = static_cast<int64_t>(st.frames.size() - first_new) * config.upsample;
-        samples = st.istft->push(detokenizer_.spectrum(st.frames, static_cast<int64_t>(first_new)), rows);
+    if (!frames.empty()) {
+        st.frames += frames.size();
+        const auto rows = static_cast<int64_t>(frames.size()) * config.upsample;
+        samples = st.istft->push(detokenizer_.stream(frames), rows);
     }
 
     if (reply_over) {
-        check_reply_end(*st.generator, st.frames.size());
+        check_reply_end(*st.generator, st.frames);
         const auto rest = st.istft->finish();
         samples.insert(samples.end(), rest.begin(), rest.end());
         st.done = true;
     }
 
+    // Tokens are bytes, so their text adds up token by token.
     runtime::StreamEvent event;
-    const auto text = tokenizer_.decode(st.tokens);
-    const size_t whole = whole_utf8_prefix(text);
+    st.text += tokenizer_.decode(tokens);
+    const size_t whole = whole_utf8_prefix(st.text);
     if (whole > st.text_sent) {
-        event.partial_text = runtime::Transcript{text.substr(st.text_sent, whole - st.text_sent), language_};
+        event.partial_text = runtime::Transcript{st.text.substr(st.text_sent, whole - st.text_sent), language_};
         st.text_sent = whole;
     }
 
@@ -974,7 +982,7 @@ runtime::TaskResult Lfm2AudioChatSession::finish_stream() {
 
     runtime::TaskResult result;
     result.audio_output = std::move(stream_->audio);
-    result.text_output = runtime::Transcript{tokenizer_.decode(stream_->tokens), language_};
+    result.text_output = runtime::Transcript{stream_->text, language_};
     reset();
     return result;
 }

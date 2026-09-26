@@ -36,6 +36,10 @@ void append(std::vector<int32_t> & out, const std::vector<int32_t> & ids) {
 
 }  // namespace
 
+bool lfm2_speaks(const std::vector<int32_t> & codes, int32_t end_of_audio) {
+    return std::find(codes.begin(), codes.end(), end_of_audio) == codes.end();
+}
+
 int32_t lfm2_greedy(const std::vector<float> & logits) {
     if (!std::all_of(logits.begin(), logits.end(), [](float value) { return std::isfinite(value); })) {
         throw std::runtime_error("LFM2-Audio backbone produced non-finite logits");
@@ -199,29 +203,36 @@ std::optional<std::vector<int32_t>> Lfm2SpeechGenerator::next_frame() {
         s.start();
     }
 
-    // The frame after the last one never needs the backbone step it would
-    // take to feed it back.
-    if (s.frames == s.options.max_frames) {
-        s.finished = true;
-        return std::nullopt;
+    while (true) {
+        // The frame after the last one never needs the backbone step it
+        // would take to feed it back.
+        if (s.frames == s.options.max_frames) {
+            s.finished = true;
+            return std::nullopt;
+        }
+
+        auto codes = s.depthformer.frame(s.hidden, [&](int64_t, std::vector<float> & logits) { return s.sampler.pick(logits); });
+
+        // A frame whose first code is end-of-audio ends the speech; the
+        // reference sets its other codes to end-of-audio and does not decode it.
+        if (codes.front() == s.end_of_audio) {
+            s.finished = true;
+            s.ended = true;
+            return std::nullopt;
+        }
+
+        ++s.frames;
+        if (s.frames < s.options.max_frames) {
+            s.hidden = s.backbone.step_audio(codes, Lfm2StepOutput::Hidden);
+        }
+
+        // End-of-audio picked for another codebook has no sound: the
+        // reference feeds the frame back like any other, and its demo skips
+        // it when decoding (demo/chat.py).
+        if (lfm2_speaks(codes, s.end_of_audio)) {
+            return codes;
+        }
     }
-
-    auto codes = s.depthformer.frame(s.hidden, [&](int64_t, std::vector<float> & logits) { return s.sampler.pick(logits); });
-
-    // A frame whose first code is end-of-audio ends the speech; the reference
-    // sets its other codes to end-of-audio and does not decode it.
-    if (codes.front() == s.end_of_audio) {
-        s.finished = true;
-        s.ended = true;
-        return std::nullopt;
-    }
-
-    ++s.frames;
-    if (s.frames < s.options.max_frames) {
-        s.hidden = s.backbone.step_audio(codes, Lfm2StepOutput::Hidden);
-    }
-
-    return codes;
 }
 
 bool Lfm2SpeechGenerator::ended() const {

@@ -7,6 +7,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/runtime/errors.h"
 
@@ -18,6 +19,8 @@
 #include <chrono>
 #include <cmath>
 #include <complex>
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -37,6 +40,7 @@ using lfm2_blocks::GgmlGallocrDeleter;
 
 constexpr size_t kWeightContextBytes = 4ull * 1024ull * 1024ull;
 constexpr size_t kGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kStreamArenaBytes = 8ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 8192;
 // Graph sizes are rounded up to this many frames, so utterances of similar
 // length reuse one graph; the padding frames only follow the real ones.
@@ -94,6 +98,51 @@ int64_t receptive_field(const Lfm2DetokenizerConfig & config) {
     return steps;
 }
 
+// Embedding rows of the frames' codes, each checked against its codebook.
+std::vector<int32_t> embedding_rows(const std::vector<std::vector<int32_t>> & frames, const Lfm2DetokenizerConfig & config) {
+    std::vector<int32_t> rows;
+    rows.reserve(frames.size() * static_cast<size_t>(config.codebooks));
+    for (const auto & frame : frames) {
+        if (static_cast<int64_t>(frame.size()) != config.codebooks) {
+            throw std::runtime_error("LFM2-Audio detokenizer frame needs one code per codebook");
+        }
+
+        for (int64_t codebook = 0; codebook < config.codebooks; ++codebook) {
+            const int32_t code = frame[static_cast<size_t>(codebook)];
+            if (code < 0 || code >= config.codebook_size) {
+                throw std::runtime_error("LFM2-Audio detokenizer code " + std::to_string(code) + " is outside the codebook");
+            }
+
+            rows.push_back(static_cast<int32_t>(codebook * config.codebook_size + code));
+        }
+    }
+
+    return rows;
+}
+
+// FusedEmbedding: the mean over each frame's codebooks, then nearest-exact
+// upsampling, which at an integer factor repeats each frame. [1, steps, hidden].
+TensorValue frame_steps(
+    ggml_context * g, const DetokenizerWeights & weights, ggml_tensor * rows, const Lfm2DetokenizerConfig & config, int64_t frames) {
+    const int64_t d = config.lfm.hidden_size;
+    const int64_t steps = frames * config.upsample;
+    auto * x = ggml_get_rows(g, weights.code_embedding.tensor, rows);
+    x = ggml_reshape_3d(g, x, d, config.codebooks, frames);
+    x = ggml_mean(g, ggml_cont(g, ggml_permute(g, x, 1, 0, 2, 3)));
+    x = ggml_reshape_3d(g, x, d, 1, frames);
+    x = ggml_repeat(g, x, ggml_new_tensor_3d(g, GGML_TYPE_F32, d, config.upsample, frames));
+    return core::wrap_tensor(ggml_reshape_3d(g, ggml_cont(g, x), d, steps, 1), TensorShape::from_dims({1, steps, d}), GGML_TYPE_F32);
+}
+
+// Final norm and the head: log-magnitude and phase for each step.
+ggml_tensor * head_rows(
+    core::ModuleBuildContext & ctx, const TensorValue & hidden, const DetokenizerWeights & weights, const Lfm2DetokenizerConfig & config) {
+    const auto normed = lfm2_blocks::rms_norm(ctx, hidden, weights.final_norm, config.lfm);
+    return modules::LinearModule({config.lfm.hidden_size, config.output_size, true})
+        .build(ctx, normed, {weights.head_weight, weights.head_bias})
+        .tensor;
+}
+
 // The detokenizer's attention mask: step q sees steps q - window + 1 .. q.
 std::vector<float> sliding_window_mask(int64_t steps, int64_t window) {
     std::vector<float> mask(static_cast<size_t>(steps * steps), -INFINITY);
@@ -118,7 +167,6 @@ public:
 
         auto * g = ctx_.get();
         core::ModuleBuildContext ctx{g, "lfm2_audio.detokenizer", execution.backend_type()};
-        const int64_t d = config.lfm.hidden_size;
 
         rows_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, frames * config.codebooks);
         positions_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, steps_);
@@ -127,21 +175,11 @@ public:
         ggml_set_input(positions_);
         ggml_set_input(mask_);
 
-        // FusedEmbedding: the mean over the frame's codebooks, then
-        // nearest-exact upsampling, which at an integer factor repeats each
-        // frame.
-        auto * x = ggml_get_rows(g, weights.code_embedding.tensor, rows_);
-        x = ggml_reshape_3d(g, x, d, config.codebooks, frames);
-        x = ggml_mean(g, ggml_cont(g, ggml_permute(g, x, 1, 0, 2, 3)));
-        x = ggml_reshape_3d(g, x, d, 1, frames);
-        x = ggml_repeat(g, x, ggml_new_tensor_3d(g, GGML_TYPE_F32, d, config.upsample, frames));
-        auto hidden = core::wrap_tensor(ggml_reshape_3d(g, ggml_cont(g, x), d, steps_, 1), TensorShape::from_dims({1, steps_, d}), GGML_TYPE_F32);
-
+        auto hidden = frame_steps(g, weights, rows_, config, frames);
         const auto positions = core::wrap_tensor(positions_, TensorShape::from_dims({steps_}), GGML_TYPE_I32);
         const auto mask = core::wrap_tensor(mask_, TensorShape::from_dims({steps_, steps_}), GGML_TYPE_F32);
         hidden = lfm2_blocks::build_sequence(ctx, hidden, positions, weights.layers, config.lfm, mask);
-        hidden = lfm2_blocks::rms_norm(ctx, hidden, weights.final_norm, config.lfm);
-        output_ = modules::LinearModule({d, config.output_size, true}).build(ctx, hidden, {weights.head_weight, weights.head_bias}).tensor;
+        output_ = head_rows(ctx, hidden, weights, config);
         ggml_set_output(output_);
 
         graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
@@ -198,6 +236,144 @@ private:
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator_;
 };
 
+// One frame of a stream through every layer, continuing from the state the
+// frames before it left: each attention layer's last sliding_window - 1 keys
+// and values (the most it looks back) and each short-conv layer's last
+// kernel - 1 inputs. The graph moves that state on as it runs.
+class StreamGraph {
+public:
+    StreamGraph(const DetokenizerWeights & weights, const Lfm2DetokenizerConfig & config, core::ExecutionContext & execution)
+        : config_(config), execution_(execution), steps_(config.upsample), past_(config.sliding_window - 1) {
+        ctx_.reset(ggml_init({kStreamArenaBytes, nullptr, true}));
+        if (ctx_ == nullptr) {
+            throw std::runtime_error("failed to initialize the LFM2-Audio detokenizer stream context");
+        }
+
+        auto * g = ctx_.get();
+        core::ModuleBuildContext ctx{g, "lfm2_audio.detokenizer.stream", execution.backend_type()};
+        const int64_t d = config.lfm.hidden_size;
+        const int64_t k = config.lfm.conv_kernel_size;
+        const int64_t keys = past_ + steps_;
+
+        rows_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, config.codebooks);
+        positions_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, steps_);
+        mask_ = ggml_new_tensor_2d(g, GGML_TYPE_F32, keys, steps_);
+
+        auto x = frame_steps(g, weights, rows_, config, 1);
+        const auto positions = core::wrap_tensor(positions_, TensorShape::from_dims({steps_}), GGML_TYPE_I32);
+        const auto mask = core::wrap_tensor(mask_, TensorShape::from_dims({steps_, keys}), GGML_TYPE_F32);
+
+        std::vector<std::pair<ggml_tensor *, ggml_tensor *>> updates;  // next state, state
+        for (int64_t layer = 0; layer < config.lfm.num_layers(); ++layer) {
+            const auto & w = weights.layers[static_cast<size_t>(layer)];
+            if (w.attention) {
+                const TensorShape state_shape =
+                    TensorShape::from_dims({1, past_, config.lfm.kv_heads[static_cast<size_t>(layer)], config.lfm.head_dim});
+                const auto past_keys = core::make_tensor(ctx, GGML_TYPE_F32, state_shape);
+                const auto past_values = core::make_tensor(ctx, GGML_TYPE_F32, state_shape);
+                const auto out = modules::DecoderLayerModule(lfm2_blocks::attention_layer_config(config.lfm, layer))
+                                     .build(ctx, x, positions, w.decoder, past_keys, past_values, mask);
+                x = out.output;
+
+                // The window moves on by this frame's steps.
+                for (const auto & [state, fresh] : {std::pair{past_keys, out.key}, std::pair{past_values, out.value}}) {
+                    const auto all = modules::ConcatModule({1}).build(ctx, state, fresh);
+                    updates.emplace_back(lfm2_blocks::contiguous(ctx, modules::SliceModule({1, steps_, past_}).build(ctx, all)).tensor, state.tensor);
+                }
+
+                continue;
+            }
+
+            const auto tail = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, d, k - 1}));
+            const auto in = lfm2_blocks::short_conv_input(ctx, lfm2_blocks::rms_norm(ctx, x, w.decoder.input_norm, config.lfm), w.conv, d);
+            const auto window = modules::ConcatModule({2}).build(ctx, tail, in.conv_in);
+            const auto conv = core::wrap_tensor(
+                ggml_ssm_conv(g, window.tensor, lfm2_blocks::conv_kernel(ctx, w.conv, config.lfm).tensor),
+                TensorShape::from_dims({1, steps_, d}),
+                GGML_TYPE_F32);
+            x = lfm2_blocks::short_conv_output(ctx, x, conv, in.gate, w.conv, d);
+            x = lfm2_blocks::feed_forward(ctx, x, w, config.lfm);
+            updates.emplace_back(lfm2_blocks::contiguous(ctx, modules::SliceModule({2, steps_, k - 1}).build(ctx, window)).tensor, tail.tensor);
+        }
+
+        output_ = head_rows(ctx, x, weights, config);
+        ggml_set_output(output_);
+
+        // The state is overwritten once everything that reads it has run.
+        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        ggml_build_forward_expand(graph_, output_);
+        for (const auto & [next, state] : updates) {
+            ggml_build_forward_expand(graph_, ggml_cpy(g, next, state));
+        }
+
+        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio detokenizer stream graph");
+
+        // Every tensor has its own memory, so the state lasts from run to run.
+        buffer_.reset(ggml_backend_alloc_ctx_tensors(g, execution.backend()));
+        if (buffer_ == nullptr) {
+            throw runtime::CapacityError("LFM2-Audio detokenizer stream graph does not fit in device memory");
+        }
+
+        reset();
+    }
+
+    ~StreamGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
+
+    // A stream starts from zeros, as a sequence does.
+    void reset() {
+        ggml_backend_buffer_clear(buffer_.get(), 0);
+        frames_ = 0;
+    }
+
+    // The next frame's embedding rows in, its steps' head output back.
+    std::vector<float> run(const std::vector<int32_t> & rows) {
+        // A step sees the steps up to sliding_window - 1 before it; the
+        // state's slots before the stream began hold nothing.
+        const int64_t first_step = frames_ * steps_;
+        const int64_t keys = past_ + steps_;
+        std::vector<float> mask(static_cast<size_t>(steps_ * keys), -INFINITY);
+        for (int64_t q = 0; q < steps_; ++q) {
+            for (int64_t key = 0; key < keys; ++key) {
+                const int64_t at = first_step - past_ + key;
+                if (at >= 0 && at <= first_step + q && first_step + q - at < config_.sliding_window) {
+                    mask[static_cast<size_t>(q * keys + key)] = 0.0f;
+                }
+            }
+        }
+
+        const auto positions = modules::decoder_position_ids(steps_, first_step);
+        ggml_backend_tensor_set(rows_, rows.data(), 0, rows.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
+
+        core::set_backend_threads(execution_.backend(), std::max(1, execution_.config().threads));
+        const ggml_status status = core::compute_backend_graph(execution_.backend(), graph_);
+        ggml_backend_synchronize(execution_.backend());
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("LFM2-Audio detokenizer stream graph compute failed");
+        }
+
+        ++frames_;
+        std::vector<float> out(static_cast<size_t>(steps_ * config_.output_size));
+        ggml_backend_tensor_get(output_, out.data(), 0, out.size() * sizeof(float));
+        return out;
+    }
+
+private:
+    const Lfm2DetokenizerConfig & config_;
+    core::ExecutionContext & execution_;
+    int64_t steps_ = 0;
+    int64_t past_ = 0;
+    int64_t frames_ = 0;  // frames the stream has decoded
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    ggml_tensor * rows_ = nullptr;
+    ggml_tensor * positions_ = nullptr;
+    ggml_tensor * mask_ = nullptr;
+    ggml_tensor * output_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+    std::unique_ptr<ggml_backend_buffer, lfm2_blocks::GgmlBufferDeleter> buffer_;
+};
+
 }  // namespace
 
 struct Lfm2DetokenizerRuntime::Impl {
@@ -218,20 +394,28 @@ struct Lfm2DetokenizerRuntime::Impl {
         }
     }
 
-    // A stream alternates between a short graph at the start of each turn and
-    // a steady one, and offline decoding needs its own; a few are kept.
+    // Utterances of different lengths use graphs of different sizes; the
+    // most recently used few are kept.
     ChunkGraph & graph(int64_t frames) {
         auto it = graphs.find(frames);
         if (it == graphs.end()) {
             if (graphs.size() >= kKeptGraphs) {
-                graphs.erase(graphs.begin());
+                graphs.erase(std::min_element(graphs.begin(), graphs.end(), [](const auto & a, const auto & b) {
+                    return a.second.last_use < b.second.last_use;
+                }));
             }
 
-            it = graphs.emplace(frames, std::make_unique<ChunkGraph>(weights, config, execution, frames)).first;
+            it = graphs.emplace(frames, KeptGraph{std::make_unique<ChunkGraph>(weights, config, execution, frames), 0}).first;
         }
 
-        return *it->second;
+        it->second.last_use = ++uses;
+        return *it->second.graph;
     }
+
+    struct KeptGraph {
+        std::unique_ptr<ChunkGraph> graph;
+        uint64_t last_use = 0;
+    };
 
     std::shared_ptr<const assets::TensorSource> detokenizer;
     std::shared_ptr<const assets::TensorSource> vocoder;
@@ -240,7 +424,9 @@ struct Lfm2DetokenizerRuntime::Impl {
     DetokenizerWeights weights;
     int64_t context_frames = 0;
     int64_t chunk_frames = 0;
-    std::map<int64_t, std::unique_ptr<ChunkGraph>> graphs;
+    std::map<int64_t, KeptGraph> graphs;
+    uint64_t uses = 0;
+    std::unique_ptr<StreamGraph> stream;
 };
 
 Lfm2DetokenizerRuntime::Lfm2DetokenizerRuntime(
@@ -260,22 +446,7 @@ std::vector<float> Lfm2DetokenizerRuntime::spectrum(const std::vector<std::vecto
         throw std::runtime_error("LFM2-Audio detokenizer needs at least one new audio frame");
     }
 
-    std::vector<int32_t> rows;
-    rows.reserve(frames.size() * static_cast<size_t>(config.codebooks));
-    for (const auto & frame : frames) {
-        if (static_cast<int64_t>(frame.size()) != config.codebooks) {
-            throw std::runtime_error("LFM2-Audio detokenizer frame needs one code per codebook");
-        }
-
-        for (int64_t codebook = 0; codebook < config.codebooks; ++codebook) {
-            const int32_t code = frame[static_cast<size_t>(codebook)];
-            if (code < 0 || code >= config.codebook_size) {
-                throw std::runtime_error("LFM2-Audio detokenizer code " + std::to_string(code) + " is outside the codebook");
-            }
-
-            rows.push_back(static_cast<int32_t>(codebook * config.codebook_size + code));
-        }
-    }
+    const auto rows = embedding_rows(frames, config);
 
     // Each chunk starts context_frames before the first frame it keeps, or at
     // frame 0, where the reference starts too; the frames before that only
@@ -314,6 +485,35 @@ std::vector<float> Lfm2DetokenizerRuntime::decode(const std::vector<std::vector<
     return lfm2_audio_istft(values, static_cast<int64_t>(frames.size()) * config.upsample, impl_->weights.window, config.hop_length);
 }
 
+void Lfm2DetokenizerRuntime::start_stream() {
+    if (impl_->stream == nullptr) {
+        impl_->stream = std::make_unique<StreamGraph>(impl_->weights, impl_->config, impl_->execution);
+    } else {
+        impl_->stream->reset();
+    }
+}
+
+std::vector<float> Lfm2DetokenizerRuntime::stream(const std::vector<std::vector<int32_t>> & frames) {
+    if (impl_->stream == nullptr) {
+        throw std::runtime_error("LFM2-Audio detokenizer stream has not been started");
+    }
+
+    const auto & config = impl_->config;
+    const auto rows = embedding_rows(frames, config);
+    const auto start_time = std::chrono::steady_clock::now();
+    std::vector<float> out;
+    out.reserve(frames.size() * static_cast<size_t>(config.upsample * config.output_size));
+    for (size_t frame = 0; frame < frames.size(); ++frame) {
+        const std::vector<int32_t> frame_rows(
+            rows.begin() + static_cast<std::ptrdiff_t>(frame) * config.codebooks, rows.begin() + static_cast<std::ptrdiff_t>(frame + 1) * config.codebooks);
+        const auto values = impl_->stream->run(frame_rows);
+        out.insert(out.end(), values.begin(), values.end());
+    }
+
+    debug::timing_log_scalar("lfm2_audio.detokenizer.stream_ms", engine::debug::elapsed_ms(start_time));
+    return out;
+}
+
 const std::vector<float> & Lfm2DetokenizerRuntime::window() const {
     return impl_->weights.window;
 }
@@ -333,6 +533,11 @@ Lfm2StreamingIstft::Lfm2StreamingIstft(std::vector<float> window, int64_t hop_le
 }
 
 std::vector<float> Lfm2StreamingIstft::push(const std::vector<float> & spectrum, int64_t rows) {
+    // finish() has emitted every sample, past where new rows would add.
+    if (finished_) {
+        throw std::runtime_error("LFM2-Audio ISTFT takes no rows after finish()");
+    }
+
     const int64_t bins = n_fft_ / 2 + 1;
     if (rows <= 0 || spectrum.size() != static_cast<size_t>(rows * 2 * bins)) {
         throw std::runtime_error("LFM2-Audio ISTFT input does not match the window");
@@ -378,6 +583,7 @@ std::vector<float> Lfm2StreamingIstft::push(const std::vector<float> & spectrum,
 }
 
 std::vector<float> Lfm2StreamingIstft::finish() {
+    finished_ = true;
     return emit(rows_ * hop_);
 }
 
