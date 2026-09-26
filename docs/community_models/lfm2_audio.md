@@ -257,24 +257,24 @@ it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
 
 Real-time factor through `audiocpp_server` (processing time divided by audio
 length, model loaded; short = three sentences of 3-7 s, long = the 345 s
-long-form text):
+long-form text; the CPU runs used 16 threads):
 
 | Backend | EN F16 short / long | EN Q8_0 short / long | EN Q4_0 short / long | JP F32 short |
 |---|---|---|---|---|
 | CUDA, NVIDIA A10 | 0.19 / 0.15 | 0.16 / 0.13 | 0.16 / 0.086 | 0.21 |
-| Metal, Apple M3 Max | 0.38-0.55 / 0.35 | 0.44-0.84 / 0.56 | 0.19-0.37 / 0.32 | |
-| CPU, Apple M3 Max, 10 threads | 1.2-1.3 | 0.8 | 0.4-0.9 | |
+| Metal, Apple M3 Ultra | 0.21 / 0.21 | 0.18 / 0.18 | 0.15 / 0.15 | 0.26 |
+| CPU, Linux x86-64 | 0.42 / 0.41 | 0.29 / 0.30 | 0.22 | 0.65 |
+| CPU, Apple M3 Ultra | 0.32 | 0.22 | 0.17 | 0.56 |
 
-The M3 Max is a laptop, and repeated runs varied by up to 2x; the ranges are
-the fastest and slowest runs. Each frame takes a backbone step and eight
-small depthformer steps: on GPUs per-step overhead dominates, so the weights'
-size matters little, while on the CPU each frame reads the backbone once and
-the depthformer eight times, and F16 is slower than real time. Transcribed
-back by the ASR task, the long-form speech scored 1.4-1.9% WER with every
-package on CUDA and Metal, mostly homophones and spellings such as "their"
-and "harbour"; the two Japanese test sentences came back exactly.
+Each frame takes a backbone step and eight small depthformer steps. On GPUs
+per-step overhead dominates, so the weights' size matters little; on the CPU
+each frame reads the backbone once and the depthformer eight times, which
+shows in F16. Transcribed back by the ASR task, the long-form speech scored
+1.4-1.9% WER on every backend and package measured, mostly homophones and
+spellings such as "their" and "harbour"; the two Japanese test sentences came
+back exactly.
 
-With the Q4_0 package on Metal, the server's memory footprint was 1.17 GB and
+With the Q4_0 package on Metal on an Apple M3 Max, the server's footprint was 1.17 GB and
 stayed within 4 MB of that over 12 requests alternating 2.5 s and 57 s of
 speech.
 
