@@ -81,8 +81,18 @@ public:
 
     // Prefill bounded blocks directly into the token-decode cache on the backend.
     // No host KV export/import; subsequent decode_token calls continue this state.
+    // keep_prefix_steps: the caller guarantees the first rows of `embeddings`
+    // equal those of the previous prefill on this runtime; their cached K/V
+    // rows are retained and only the remainder is computed. Falls back to a
+    // full prefill when the cache no longer holds that prefix.
     QwenCausalDecodeStepResult prefill_embeddings_into_cache(
-        const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps);
+        const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps,
+        int64_t keep_prefix_steps = 0);
+    // How many of keep_prefix_steps the next prefill_embeddings_into_cache call
+    // with these arguments would actually retain (0 when the cache would be
+    // cleared or rebuilt), so the caller can skip preparing kept rows.
+    int64_t retainable_prefix_steps(
+        int64_t steps, int64_t cache_steps, int64_t chunk_steps, int64_t keep_prefix_steps) const;
 
     QwenCausalBatchedPrefillResult prefill_tokens_batched(
         const std::vector<int32_t> & token_ids,

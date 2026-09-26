@@ -612,9 +612,33 @@ public:
         return run_batched_prefill();
     }
 
+    // Padding writes only unused future slots; those slots stay masked until overwritten.
+    static int64_t padded_prefill_capacity(int64_t steps, int64_t cache_steps, int64_t keep, int64_t chunk) {
+        return std::max(cache_steps, keep + ((steps - keep + chunk - 1) / chunk) * chunk);
+    }
+
+    // The kept prefix rows must still be resident: the same token decode
+    // graph, enough capacity so the graph is not rebuilt, and at least that
+    // many valid rows. At least one row is always recomputed for the logits.
+    int64_t retainable_prefix_steps(
+        int64_t steps, int64_t cache_steps, int64_t chunk_steps, int64_t keep_prefix_steps) const {
+        const int64_t keep = std::min(keep_prefix_steps, steps - 1);
+        if (keep <= 0) {
+            return 0;
+        }
+        const int64_t chunk = std::min(steps - keep, chunk_steps);
+        if (decode_graph_ == nullptr || decode_input_kind_ != InputKind::Token ||
+            decode_cache_steps_ < padded_prefill_capacity(steps, cache_steps, keep, chunk) ||
+            decode_cache_.valid_steps() < keep) {
+            return 0;
+        }
+        return keep;
+    }
+
     QwenCausalDecodeStepResult prefill_embeddings_into_cache(
-        const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps) {
-        if (steps <= 0 || chunk_steps <= 0 || cache_steps < steps ||
+        const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps,
+        int64_t keep_prefix_steps) {
+        if (steps <= 0 || chunk_steps <= 0 || cache_steps < steps || keep_prefix_steps < 0 ||
             embeddings.size() != static_cast<size_t>(steps * config_.decoder.stack.hidden_size)) {
             throw std::runtime_error("Qwen chunked prefill has invalid dimensions");
         }
@@ -623,20 +647,24 @@ public:
             !config_.logits_readback_token_ids.empty()) {
             throw std::runtime_error("Qwen chunked prefill requires DirectSetRows and full last-token readback");
         }
-        const int64_t chunk = std::min(steps, chunk_steps);
-        // Padding writes only unused future slots; those slots stay masked until overwritten.
-        const int64_t capacity = std::max(cache_steps, ((steps + chunk - 1) / chunk) * chunk);
-        ensure_decode_token_graph(capacity);
+        const int64_t keep = retainable_prefix_steps(steps, cache_steps, chunk_steps, keep_prefix_steps);
+        const int64_t chunk = std::min(steps - keep, chunk_steps);
+        ensure_decode_token_graph(padded_prefill_capacity(steps, cache_steps, keep, chunk));
         if (block_steps_ != chunk) {
             release_block_graph();
             build_block_graph(chunk);
         }
-        decode_cache_.clear_on_backend();
+        if (keep == 0) {
+            decode_cache_.clear_on_backend();
+        } else {
+            decode_cache_.retain_prefix(keep);
+        }
+        debug::trace_log_scalar(config_.trace_name + ".block_prefill.kept_steps", keep);
         const int64_t width = config_.decoder.stack.hidden_size;
         std::vector<float> input(static_cast<size_t>(chunk * width));
         std::vector<ggml_fp16_t> mask(static_cast<size_t>(chunk * decode_cache_steps_));
         const auto masked = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
-        for (int64_t offset = 0; offset < steps; offset += chunk) {
+        for (int64_t offset = keep; offset < steps; offset += chunk) {
             const int64_t count = std::min(chunk, steps - offset);
             std::fill(input.begin(), input.end(), 0.f);
             std::copy_n(embeddings.data() + offset * width, count * width, input.data());
@@ -2017,8 +2045,14 @@ QwenCausalBatchedPrefillResult QwenCausalDecodeRuntime::prefill_embeddings_batch
 }
 
 QwenCausalDecodeStepResult QwenCausalDecodeRuntime::prefill_embeddings_into_cache(
-    const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps) {
-    return impl_->prefill_embeddings_into_cache(embeddings, steps, cache_steps, chunk_steps);
+    const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps,
+    int64_t keep_prefix_steps) {
+    return impl_->prefill_embeddings_into_cache(embeddings, steps, cache_steps, chunk_steps, keep_prefix_steps);
+}
+
+int64_t QwenCausalDecodeRuntime::retainable_prefix_steps(
+    int64_t steps, int64_t cache_steps, int64_t chunk_steps, int64_t keep_prefix_steps) const {
+    return impl_->retainable_prefix_steps(steps, cache_steps, chunk_steps, keep_prefix_steps);
 }
 
 void QwenCausalDecodeRuntime::start_decode_tokens(

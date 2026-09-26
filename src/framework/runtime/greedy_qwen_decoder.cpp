@@ -673,7 +673,11 @@ struct GreedyQwenDecoderRuntime::Impl {
     std::unique_ptr<PromptEmbeddingGraph> embedding_graph;
     std::unique_ptr<modules::QwenCausalDecodeRuntime> reusable_decoder;
 
-    std::vector<int32_t> generate_reusing_graphs(const GreedyQwenDecoderRuntime::Prompt & prompt, int64_t max_new_tokens) {
+    std::vector<int32_t> generate_reusing_graphs(
+        const GreedyQwenDecoderRuntime::Prompt & prompt,
+        int64_t max_new_tokens,
+        int64_t cached_prefix_steps,
+        int64_t capacity_bucket) {
         const auto & spec = weights->spec();
         if (!reusable_decoder) {
             modules::QwenCausalDecodeRuntimeConfig config;
@@ -694,20 +698,40 @@ struct GreedyQwenDecoderRuntime::Impl {
         if (!embedding_graph) {
             embedding_graph = std::make_unique<PromptEmbeddingGraph>(weights);
         }
-        auto embeddings = embedding_graph->run(prompt.input_ids);
         const int64_t width = spec.decoder.stack.hidden_size;
-        for (size_t i = 0; i < prompt.injection.positions.size(); ++i) {
-            std::copy_n(prompt.injection.values.data() + i * width, width,
-                        embeddings.data() + prompt.injection.positions[i] * width);
-        }
         const int64_t steps = static_cast<int64_t>(prompt.input_ids.size());
         const int64_t required = steps + max_new_tokens;
         // Grow in bounded capacity buckets, keeping only one decode and one
         // block-prefill graph. A new prompt clears KV on device, not via a
         // host export/import of every layer.
-        const int64_t capacity = std::min(spec.max_position_embeddings, (required + 127) / 128 * 128);
+        const int64_t capacity = std::min(
+            spec.max_position_embeddings, (required + capacity_bucket - 1) / capacity_bucket * capacity_bucket);
+        // Incremental prompts size the block to the recomputed suffix (at most
+        // 256 rows, split evenly) so no padded rows are computed; the legacy
+        // path keeps its fixed 64-step block.
+        const auto block_steps_for = [&](int64_t rows) {
+            if (cached_prefix_steps <= 0) {
+                return int64_t{64};
+            }
+            const int64_t blocks = (rows + 255) / 256;
+            return std::min<int64_t>(256, ((rows + blocks - 1) / blocks + 7) / 8 * 8);
+        };
+        const int64_t kept = reusable_decoder->retainable_prefix_steps(
+            steps, capacity, block_steps_for(steps - cached_prefix_steps), cached_prefix_steps);
+        // Only rows past the kept prefix are uploaded; the rest stay zero.
+        std::vector<float> embeddings(static_cast<size_t>(steps * width), 0.0F);
+        const auto suffix = embedding_graph->run(
+            std::vector<int32_t>(prompt.input_ids.begin() + kept, prompt.input_ids.end()));
+        std::copy(suffix.begin(), suffix.end(), embeddings.begin() + kept * width);
+        for (size_t i = 0; i < prompt.injection.positions.size(); ++i) {
+            if (prompt.injection.positions[i] >= kept) {
+                std::copy_n(prompt.injection.values.data() + i * width, width,
+                            embeddings.data() + prompt.injection.positions[i] * width);
+            }
+        }
         const auto start = Clock::now();
-        auto logits = reusable_decoder->prefill_embeddings_into_cache(embeddings, steps, capacity, 64).logits;
+        auto logits = reusable_decoder->prefill_embeddings_into_cache(
+            embeddings, steps, capacity, block_steps_for(steps - kept), kept).logits;
         debug::timing_log_scalar("greedy_qwen_decoder.reusable.prefill_ms", engine::debug::elapsed_ms(start));
         std::vector<int32_t> out;
         for (int64_t step = 0; step < max_new_tokens; ++step) {
@@ -742,8 +766,12 @@ GreedyQwenDecoderRuntime::GreedyQwenDecoderRuntime(
 
 GreedyQwenDecoderRuntime::~GreedyQwenDecoderRuntime() = default;
 
-std::vector<int32_t> GreedyQwenDecoderRuntime::generate(const Prompt & prompt, int64_t max_new_tokens, bool reuse_graphs) {
-    const auto & spec = impl_->weights->spec();
+namespace {
+
+void validate_generate_request(
+    const GreedyQwenDecoderSpec & spec,
+    const GreedyQwenDecoderRuntime::Prompt & prompt,
+    int64_t max_new_tokens) {
     if (prompt.input_ids.empty()) {
         throw std::runtime_error("greedy Qwen decoder prompt is empty");
     }
@@ -765,8 +793,28 @@ std::vector<int32_t> GreedyQwenDecoderRuntime::generate(const Prompt & prompt, i
             throw std::runtime_error("greedy Qwen decoder injection position is out of range");
         }
     }
+}
+
+}  // namespace
+
+std::vector<int32_t> GreedyQwenDecoderRuntime::generate_incremental(
+    const Prompt & prompt,
+    int64_t max_new_tokens,
+    int64_t cached_prefix_steps) {
+    validate_generate_request(impl_->weights->spec(), prompt, max_new_tokens);
+    if (cached_prefix_steps < 0 || cached_prefix_steps > static_cast<int64_t>(prompt.input_ids.size())) {
+        throw std::runtime_error("greedy Qwen decoder cached prefix exceeds the prompt");
+    }
+    return impl_->generate_reusing_graphs(prompt, max_new_tokens, cached_prefix_steps, /*capacity_bucket=*/512);
+}
+
+std::vector<int32_t> GreedyQwenDecoderRuntime::generate(const Prompt & prompt, int64_t max_new_tokens, bool reuse_graphs) {
+    const auto & spec = impl_->weights->spec();
+    validate_generate_request(spec, prompt, max_new_tokens);
+    const int64_t prompt_steps = static_cast<int64_t>(prompt.input_ids.size());
+    const auto & injection = prompt.injection;
     if (reuse_graphs) {
-        return impl_->generate_reusing_graphs(prompt, max_new_tokens);
+        return impl_->generate_reusing_graphs(prompt, max_new_tokens, /*cached_prefix_steps=*/0, /*capacity_bucket=*/128);
     }
     if (impl_->prefill_graph == nullptr || !impl_->prefill_graph->matches(prompt_steps, injection.tokens)) {
         impl_->prefill_graph.reset();

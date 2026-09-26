@@ -112,7 +112,9 @@ R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
     decoder_prompt.injection.positions = prompt.audio_token_positions;
 
     R2T2ASRGeneratedTokens out;
-    out.token_ids = impl_->runtime.generate(decoder_prompt, options.max_new_tokens, options.reuse_graphs);
+    out.token_ids = options.incremental_prefill
+        ? impl_->runtime.generate_incremental(decoder_prompt, options.max_new_tokens, options.cached_prefix_steps)
+        : impl_->runtime.generate(decoder_prompt, options.max_new_tokens, options.reuse_graphs);
     return out;
 }
 
