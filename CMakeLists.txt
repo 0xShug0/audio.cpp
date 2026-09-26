@@ -2333,6 +2333,10 @@ audiocpp_add_model(lfm2_audio
         src/community_models/lfm2_audio/tokenizer.cpp
         src/community_models/lfm2_audio/audio_encoder.cpp
         src/community_models/lfm2_audio/backbone.cpp
+        src/community_models/lfm2_audio/lfm2_blocks.cpp
+        src/community_models/lfm2_audio/depthformer.cpp
+        src/community_models/lfm2_audio/detokenizer.cpp
+        src/community_models/lfm2_audio/tts.cpp
         src/community_models/lfm2_audio/session.cpp
     INCLUDES
         engine/community_models/lfm2_audio/session.h
@@ -3169,7 +3173,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 lfm2_audio_encoder_test
                 lfm2_audio_features_test
                 lfm2_audio_session_test
-                lfm2_audio_tokenizer_test)
+                lfm2_audio_tokenizer_test
+                lfm2_audio_tts_test)
                 add_engine_unittest(${lfm2_audio_test} tests/community_models/lfm2_audio/${lfm2_audio_test}.cpp)
                 target_include_directories(${lfm2_audio_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
                 target_compile_definitions(${lfm2_audio_test} PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -3628,10 +3633,24 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 target_link_libraries(test_lfm2_audio_asr PRIVATE OpenMP::OpenMP_CXX)
             endif()
             add_test(NAME test_lfm2_audio_asr COMMAND test_lfm2_audio_asr)
+
             # Needs the lfm2_audio_1_5b_f16 package in models/; exits 125 (skip) without it.
             set_tests_properties(test_lfm2_audio_asr PROPERTIES
                 SKIP_RETURN_CODE 125
                 TIMEOUT 600
+            )
+
+            add_executable(test_lfm2_audio_tts tests/lfm2_audio/test_lfm2_audio_tts.cpp)
+            target_compile_definitions(test_lfm2_audio_tts PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+            target_link_libraries(test_lfm2_audio_tts PRIVATE engine_runtime ggml)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_lfm2_audio_tts PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+            add_test(NAME test_lfm2_audio_tts COMMAND test_lfm2_audio_tts)
+            # Needs the lfm2_audio_1_5b_f16 package in models/; exits 125 (skip) without it.
+            set_tests_properties(test_lfm2_audio_tts PROPERTIES
+                SKIP_RETURN_CODE 125
+                TIMEOUT 900
             )
         endif()
 

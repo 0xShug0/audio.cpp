@@ -377,8 +377,10 @@ export const catalog = (rawCatalog.models as CatalogEntry[]).flatMap((entry) => 
     required_request_options: spec?.options?.request
       ?.filter((option) => option.required === true)
       .map((option) => option.name),
-    builtin_voices: spec?.ui?.builtin_voices,
-    default_voice: spec?.ui?.default_voice
+    // A catalog entry may narrow the family's voices, e.g. one checkpoint of
+    // a family that speaks with a single voice.
+    builtin_voices: entry.builtin_voices ?? spec?.ui?.builtin_voices,
+    default_voice: entry.default_voice ?? spec?.ui?.default_voice
   }];
 });
 

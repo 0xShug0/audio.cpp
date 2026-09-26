@@ -1,10 +1,11 @@
 #pragma once
 
 // LFM2.5-Audio assets. The model ships as llama.cpp-format GGUF components in
-// one directory: the LFM2 backbone with its text tokenizer, and an mmproj file
-// with the FastConformer encoder and the audio adapter. The session picks each
-// component through a session option, so quantizations can be mixed without
-// renaming the published files.
+// one directory: the LFM2 backbone with its text tokenizer, an mmproj file
+// with the FastConformer encoder and the audio adapter, and for speech output
+// a vocoder file (depthformer) and a tokenizer file (audio detokenizer). The
+// session picks each component through a session option, so quantizations can
+// be mixed without renaming the published files.
 //
 // Reference implementation: liquid-audio v1.3.0,
 // https://github.com/Liquid4All/liquid-audio/tree/v1.3.0. File paths in the
@@ -53,6 +54,43 @@ struct Lfm2FastConformerEncoderConfig {
     float layer_norm_eps = 1e-5f;
 };
 
+// The depthformer in the vocoder GGUF: from the backbone's hidden state it
+// predicts the codes of one audio frame, one codebook after another
+// (LFM2AudioModel._sample_audio_frame, model/lfm2_audio.py). Its blocks are
+// pre-norm GQA attention with QK-norm and interleaved RoPE, then SwiGLU, with
+// no final norm (RawLMBackbone(has_embedding=False), model/transformer.py).
+struct Lfm2DepthformerConfig {
+    int64_t input_size = 0;  // the backbone hidden size
+    int64_t hidden_size = 0;
+    int64_t num_layers = 0;
+    int64_t num_heads = 0;
+    int64_t num_kv_heads = 0;
+    int64_t head_dim = 0;
+    int64_t intermediate_size = 0;
+    int64_t codebooks = 0;
+    int64_t audio_vocab_size = 0;  // the codes plus end-of-audio, which is the last
+    float rms_norm_eps = 1e-5f;
+    float rope_theta = 1e6f;
+
+    [[nodiscard]] int32_t end_of_audio() const noexcept { return static_cast<int32_t>(audio_vocab_size - 1); }
+};
+
+// The audio detokenizer (detokenizer.py): the mean of the frame's code
+// embeddings, repeated `upsample` times, an LFM2 hybrid with causal
+// sliding-window attention, and a linear head to log-magnitude and phase for
+// an ISTFT.
+struct Lfm2DetokenizerConfig {
+    Lfm2BackboneConfig lfm;  // vocab_size unused
+    int64_t sliding_window = 0;
+    int64_t output_size = 0;
+    int64_t codebooks = 0;
+    int64_t codebook_size = 0;
+    int64_t upsample = 0;
+    int64_t n_fft = 0;
+    int64_t hop_length = 0;
+    int sample_rate = 0;
+};
+
 struct Lfm2TextVocabulary {
     std::vector<std::string> tokens;
     std::vector<std::string> merges;
@@ -95,5 +133,25 @@ std::shared_ptr<const Lfm2AudioComponents> load_lfm2_audio_components(
     const Lfm2AudioAssets & assets,
     const std::string & model_gguf,
     const std::string & mmproj_gguf);
+
+// The components speech output adds: the vocoder GGUF (depthformer and the
+// detokenizer's code embedding) and the detokenizer GGUF. The backbone's
+// audio-frame input embedding stays in the mmproj file.
+struct Lfm2AudioOutputComponents {
+    std::filesystem::path vocoder_path;
+    std::filesystem::path detokenizer_path;
+    std::shared_ptr<const assets::TensorSource> vocoder;
+    std::shared_ptr<const assets::TensorSource> detokenizer;
+    Lfm2DepthformerConfig depthformer;
+    Lfm2DetokenizerConfig detokenizer_config;
+};
+
+// An empty name means "vocoder-<backbone file>" / "tokenizer-<backbone file>",
+// or else the only vocoder- / tokenizer- GGUF in the model root.
+std::shared_ptr<const Lfm2AudioOutputComponents> load_lfm2_audio_output_components(
+    const Lfm2AudioAssets & assets,
+    const Lfm2AudioComponents & components,
+    const std::string & vocoder_gguf,
+    const std::string & detokenizer_gguf);
 
 }  // namespace engine::community_models::lfm2_audio
