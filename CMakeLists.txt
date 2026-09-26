@@ -866,6 +866,17 @@ if(MSVC)
     target_compile_options(engine_model_kitten_tts PRIVATE /utf-8)
 endif()
 
+audiocpp_add_model(samsone
+    SOURCES
+        src/models/samsone/assets.cpp
+        src/models/samsone/runtime.cpp
+        src/models/samsone/session.cpp
+    INCLUDES
+        engine/models/samsone/session.h
+    LOADERS
+        engine::models::samsone::make_samsone_loader
+)
+
 audiocpp_add_model(f5_tts
     SOURCES
         src/community_models/f5_tts/session.cpp
