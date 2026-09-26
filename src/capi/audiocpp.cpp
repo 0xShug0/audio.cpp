@@ -12,6 +12,7 @@
  */
 
 #include "audiocpp.h"
+#include "engine/framework/io/filesystem.h"
 
 #include "engine/framework/runtime/task_vocabulary.h"
 
@@ -311,7 +312,7 @@ audiocpp_status audiocpp_registry_create(const char * config_path, audiocpp_regi
     return guard([&] {
         auto handle = std::make_unique<audiocpp_registry>();
         auto config = config_path != nullptr
-            ? std::optional<std::filesystem::path>(std::filesystem::path(config_path))
+            ? std::optional<std::filesystem::path>(engine::io::path_from_utf8(config_path))
             : std::nullopt;
         handle->registry = std::make_shared<rt::ModelRegistry>(rt::make_default_registry(config));
         handle->families = handle->registry->families();
@@ -361,7 +362,7 @@ audiocpp_status audiocpp_model_load(audiocpp_registry * registry,
     return guard([&] {
         auto handle = std::make_unique<audiocpp_model>();
         handle->registry = registry->registry;
-        handle->load_request.model_path = std::filesystem::path(model_path);
+        handle->load_request.model_path = engine::io::path_from_utf8(model_path);
         if (family_hint != nullptr) {
             handle->load_request.family_hint = std::string(family_hint);
         }
@@ -370,7 +371,7 @@ audiocpp_status audiocpp_model_load(audiocpp_registry * registry,
             if (config->weight_id != nullptr) handle->load_request.weight_id = std::string(config->weight_id);
             if (config->model_spec_override != nullptr) {
                 handle->load_request.model_spec_override =
-                    std::filesystem::path(config->model_spec_override);
+                    engine::io::path_from_utf8(config->model_spec_override);
             }
         }
         handle->load_request.options = option_map(options);

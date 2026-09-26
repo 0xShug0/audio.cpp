@@ -1,4 +1,5 @@
 #include "request.h"
+#include "engine/framework/io/filesystem.h"
 
 #include "args.h"
 
@@ -282,7 +283,7 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
             // The samples stay empty; the streaming driver pulls them from stdin instead.
             request.audio_input = engine::runtime::AudioBuffer{input_rate, input_channels, {}};
         } else {
-            request.audio_input = read_audio_buffer(std::filesystem::path(*audio_path));
+            request.audio_input = read_audio_buffer(engine::io::path_from_utf8(*audio_path));
         }
     }
     engine::runtime::VoiceCondition voice;
@@ -297,7 +298,7 @@ engine::runtime::TaskRequest build_request_from_cli(int argc, char ** argv) {
         if (!voice.speaker.has_value()) {
             voice.speaker = engine::runtime::VoiceReference{};
         }
-        voice.speaker->audio = read_audio_buffer(std::filesystem::path(*voice_ref));
+        voice.speaker->audio = read_audio_buffer(engine::io::path_from_utf8(*voice_ref));
         has_voice = true;
     }
     engine::runtime::StyleCondition style;
