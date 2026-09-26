@@ -388,7 +388,8 @@ HiggsARRuntime::HiggsARRuntime(
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type,
-    core::AttentionPreference attention_preference)
+    core::AttentionPreference attention_preference,
+    std::shared_ptr<const HiggsARWeights> shared_weights)
     : assets_(std::move(assets)),
       backend_(execution.backend()),
       backend_type_(execution.backend_type()),
@@ -405,7 +406,7 @@ HiggsARRuntime::HiggsARRuntime(
     if (assets_->weights == nullptr) {
         throw std::runtime_error("Higgs TTS AR runtime requires tensor source");
     }
-    weights_ = std::make_shared<HiggsARWeights>(
+    weights_ = shared_weights ? std::move(shared_weights) : std::make_shared<HiggsARWeights>(
         load_higgs_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
 }
 

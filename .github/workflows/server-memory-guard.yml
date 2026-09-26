@@ -1,7 +1,7 @@
-name: server-memory-guard cross-platform
+name: server lifecycle cross-platform
 
-# Verifies the server memory-management changes (--idle-unload-ms and
-# --min-free-memory-mb) compile and the config unit tests pass on all three
+# Verifies server memory management and parallel-session lifecycle changes
+# compile and the focused unit tests pass on all three
 # desktop platforms. GPU backends are disabled here: the changes themselves are
 # backend-agnostic (they query memory through ggml_backend_dev_memory), and the
 # existing linux/mac/windows workflows already cover CUDA/Vulkan/Metal builds.
@@ -15,6 +15,12 @@ on:
       - "include/engine/framework/core/backend.h"
       - "src/framework/core/backend.cpp"
       - "tests/unittests/test_server_config.cpp"
+      - "include/engine/framework/runtime/parallel_session.h"
+      - "include/engine/framework/runtime/session_pool.h"
+      - "include/engine/framework/runtime/session.h"
+      - "tests/unittests/test_server_model_slots.cpp"
+      - "tests/unittests/test_session_pool.cpp"
+      - "tests/unittests/test_server_busy_guard.cpp"
       - ".github/workflows/server-memory-guard.yml"
 
 jobs:
@@ -62,24 +68,24 @@ jobs:
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
-          cmake --build build --target audiocpp_server server_config_test --parallel "$(nproc)"
+          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test server_model_slots_test session_pool_test --parallel "$(nproc)"
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
-          cmake --build build --target audiocpp_server server_config_test --parallel "$(sysctl -n hw.logicalcpu)"
+          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test server_model_slots_test session_pool_test --parallel "$(sysctl -n hw.logicalcpu)"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake --build build --config Release --target audiocpp_server server_config_test --parallel
+          cmake --build build --config Release --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test server_model_slots_test session_pool_test --parallel
 
-      - name: Run server_config_test (Linux/macOS)
+      - name: Run server lifecycle tests (Linux/macOS)
         if: runner.os != 'Windows'
-        run: ./build/bin/server_config_test
+        run: ctest --test-dir build --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|server_model_slots_test|session_pool_test)$' --parallel 4
 
-      - name: Run server_config_test (Windows)
+      - name: Run server lifecycle tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\build\bin\Release\server_config_test.exe
+        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|server_model_slots_test|session_pool_test)$' --parallel 4

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "busy_guard.h"
+#include "model_slots.h"
 #include "config.h"
 #include "frontend.h"
 #include "http.h"
@@ -13,6 +13,7 @@
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/session_pool.h"
 
 #include <atomic>
 #include <cstdint>
@@ -59,9 +60,10 @@ private:
         ServerModelConfig config;
         engine::runtime::TaskSpec task;
         std::unique_ptr<engine::runtime::ILoadedVoiceModel> model;
-        std::unique_ptr<engine::runtime::IVoiceTaskSession> session;
-        engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
-        engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
+        std::unique_ptr<engine::runtime::VoiceTaskSessionPool> sessions;
+        // Zero means unknown (not loaded); status reads this without touching
+        // session pointers that may be concurrently unloaded.
+        std::atomic<size_t> parallel_capacity{0};
         std::atomic<bool> loaded{false};
         // Steady-clock ms of the most recent load or run of this model. Orders
         // eviction when max_loaded_models forces an unload: the least recently
@@ -83,9 +85,9 @@ private:
         bool accepts_language = true;
         bool accepts_speed = true;
         bool accepts_speaking_rate = true;
-        // Serializes runs on this model and bounds how long a caller waits for its
-        // turn; see BusyGuard.
-        BusyGuard busy;
+        // Leases isolated sessions to requests; management requires all slots idle.
+        ModelSlots busy;
+        std::mutex initialization_mutex;
 
         // Release the loaded model and session from memory (frees VRAM on GPU backends).
         // The next request will trigger a reload via ensure_model_loaded_locked().
@@ -95,7 +97,7 @@ private:
     // Acquire the model's run guard. `request_timeout_ms` is the caller-supplied
     // override, clamped by this model's configured ceiling. Throws ServerBusyError
     // (-> HTTP 503) once the effective timeout has elapsed.
-    BusyGuard::Lock acquire_model_run(LoadedModel & model, std::optional<int> request_timeout_ms);
+    ModelSlots::Lock acquire_model_run(LoadedModel & model, std::optional<int> request_timeout_ms, bool exclusive = false);
 
     // Server policy for this model: its own busy_timeout_ms if set, else the
     // top-level config value.

@@ -191,6 +191,8 @@ ServerModelConfig model_config_from_json(
     model.task = engine::io::json::optional_string(body, "task", model.task);
     model.mode = engine::io::json::optional_string(body, "mode", model.mode);
     model.lazy = lazy;
+    model.slots = engine::io::json::optional_i32(body, "slots", 1);
+    if (model.slots < 1 || model.slots > static_cast<int>(engine::runtime::kMaxParallelSessions)) { throw std::runtime_error("model slots must be between 1 and 16"); }
     if (const auto * value = body.find("model_spec_override")) {
         model.model_spec_override = resolve_path(request_base, value->as_string());
     }
@@ -1313,6 +1315,7 @@ void ServerState::load_models() {
 std::unique_ptr<ServerState::LoadedModel> ServerState::make_model(ServerModelConfig config) {
     auto loaded = std::make_unique<LoadedModel>();
     loaded->config = std::move(config);
+    loaded->busy.configure(loaded->config.slots);
     loaded->task = engine::runtime::TaskSpec{
         engine::runtime::parse_voice_task_kind(loaded->config.task),
         engine::runtime::parse_run_mode(loaded->config.mode),
@@ -1367,13 +1370,14 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
     }
 
     if (existing != nullptr) {
-        BusyGuard::Lock run_lock = acquire_model_run(*existing, std::nullopt);
+        ModelSlots::Lock run_lock = acquire_model_run(*existing, std::nullopt, true);
         std::unique_lock<std::shared_mutex> metadata_lock(existing->metadata_mutex);
         const bool changed =
             existing->config.path != requested.path ||
             existing->config.family != requested.family ||
             existing->config.task != requested.task ||
             existing->config.mode != requested.mode ||
+            existing->config.slots != requested.slots ||
             existing->config.load_options != requested.load_options ||
             existing->config.session_options != requested.session_options ||
             existing->config.model_spec_override != requested.model_spec_override;
@@ -1382,6 +1386,7 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
             existing->voice_presets.clear();
             existing->default_voice_preset.reset();
             existing->config = std::move(requested);
+            existing->busy.configure(existing->config.slots);
             existing->task = engine::runtime::TaskSpec{
                 engine::runtime::parse_voice_task_kind(existing->config.task),
                 engine::runtime::parse_run_mode(existing->config.mode),
@@ -1389,6 +1394,10 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
             load_voice_presets(*existing);
             refresh_model_option_flags(*existing);
         }
+        // Status takes models_mutex_ before metadata_mutex. Loading may need
+        // models_mutex_ for eviction, so release metadata before entering it.
+        // The exclusive model lease still protects the configuration and pool.
+        metadata_lock.unlock();
         ensure_model_loaded_locked(*existing);
         return json_response(
             "{\"id\":" + json_quote(existing->config.id) +
@@ -1438,7 +1447,7 @@ HttpResponse ServerState::handle_model_unload(const std::string & body_text) {
         }
         model = models_.at(found->second).get();
     }
-    BusyGuard::Lock run_lock = acquire_model_run(*model, std::nullopt);
+    ModelSlots::Lock run_lock = acquire_model_run(*model, std::nullopt, true);
     model->unload();
     return json_response("{\"id\":" + json_quote(id) + ",\"loaded\":false}");
 }
@@ -1859,7 +1868,7 @@ void ServerState::evict_for_model_limit(const LoadedModel & loading) {
     {
         std::lock_guard<std::mutex> state_lock(models_mutex_);
         for (const auto & model : models_) {
-            if (model.get() != &loading && model->session != nullptr) {
+            if (model.get() != &loading && model->loaded.load()) {
                 resident.push_back(model.get());
             }
         }
@@ -1895,9 +1904,10 @@ void ServerState::evict_for_model_limit(const LoadedModel & loading) {
 }
 
 void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
+    std::lock_guard<std::mutex> init_lock(model.initialization_mutex);
     last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
     model.last_used_ms.store(steady_now_ms(), std::memory_order_relaxed);
-    if (model.session != nullptr) {
+    if (model.sessions != nullptr) {
         return;
     }
     // Serialize the whole "evict -> memory check -> load" sequence only when a guard
@@ -1956,18 +1966,11 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
 
     auto loaded_model = registry.load(load_request);
     auto session = loaded_model->create_task_session(model.task, session_options);
-    auto * offline = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(session.get());
-    auto * streaming = dynamic_cast<engine::runtime::IStreamingVoiceTaskSession *>(session.get());
-    if (model.task.mode == engine::runtime::RunMode::Offline && offline == nullptr) {
-        throw std::runtime_error("configured model does not provide offline execution: " + model.config.id);
-    }
-    if (model.task.mode == engine::runtime::RunMode::Streaming && streaming == nullptr) {
-        throw std::runtime_error("configured model does not provide streaming execution: " + model.config.id);
-    }
+    auto sessions = std::make_unique<engine::runtime::VoiceTaskSessionPool>(
+        std::move(session), static_cast<size_t>(model.config.slots));
     model.model = std::move(loaded_model);
-    model.session = std::move(session);
-    model.offline = offline;
-    model.streaming = streaming;
+    model.parallel_capacity.store(sessions->capacity());
+    model.sessions = std::move(sessions);
     model.loaded.store(true);
 }
 
@@ -2185,9 +2188,9 @@ engine::runtime::RunMode ServerState::model_run_mode(const LoadedModel & model) 
     return model.task.mode;
 }
 
-BusyGuard::Lock ServerState::acquire_model_run(
+ModelSlots::Lock ServerState::acquire_model_run(
     LoadedModel & model,
-    std::optional<int> request_timeout_ms) {
+    std::optional<int> request_timeout_ms, bool exclusive) {
     int timeout_ms = 0;
     std::string model_id;
     {
@@ -2197,21 +2200,23 @@ BusyGuard::Lock ServerState::acquire_model_run(
             request_timeout_ms);
         model_id = model.config.id;
     }
-    return model.busy.acquire(timeout_ms, model_id);
+    return exclusive ? model.busy.acquire(timeout_ms, model_id) : model.busy.acquire_run(timeout_ms, model_id);
 }
 
 ServerState::TimedTaskResult ServerState::run_model(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
     std::optional<int> busy_timeout_ms) {
-    BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+    ModelSlots::Lock lock = acquire_model_run(model, busy_timeout_ms);
     ensure_model_loaded_locked(model);
-    if (model.offline == nullptr) {
+    auto & session = model.sessions->at(lock.slot());
+    auto * offline = model.sessions->get<engine::runtime::IOfflineVoiceTaskSession>(lock.slot());
+    if (offline == nullptr) {
         throw std::runtime_error("configured model does not provide offline execution: " + model.config.id);
     }
     const auto started = Clock::now();
-    model.session->prepare(engine::runtime::build_preparation_request(request));
-    auto result = model.offline->run(request);
+    session.prepare(engine::runtime::build_preparation_request(request));
+    auto result = offline->run(request);
     // Mark activity at completion too: idle unload must measure from when the
     // request finished, not when it started, or a long inference would look idle
     // (and be unloaded) the moment it returns.
@@ -2229,13 +2234,15 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
     const minitts::app::AudioChunkStream * audio,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
     std::optional<int> busy_timeout_ms) {
-    BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+    ModelSlots::Lock lock = acquire_model_run(model, busy_timeout_ms);
     ensure_model_loaded_locked(model);
-    if (model.streaming == nullptr) {
+    auto & session = model.sessions->at(lock.slot());
+    auto * streaming = model.sessions->get<engine::runtime::IStreamingVoiceTaskSession>(lock.slot());
+    if (streaming == nullptr) {
         throw std::runtime_error("configured model does not provide streaming execution: " + model.config.id);
     }
     const auto started = Clock::now();
-    model.session->prepare(engine::runtime::build_preparation_request(request));
+    session.prepare(engine::runtime::build_preparation_request(request));
     TimedTaskResult timed_result;
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
     const auto sink = [&](const engine::runtime::StreamEvent & event) {
@@ -2248,8 +2255,8 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
         }
     };
     auto result = audio != nullptr
-        ? minitts::app::run_streaming_task(*model.streaming, request, sink, *audio)
-        : minitts::app::run_streaming_task(*model.streaming, request, sink);
+        ? minitts::app::run_streaming_task(*streaming, request, sink, *audio)
+        : minitts::app::run_streaming_task(*streaming, request, sink);
     timed_result.result = std::move(result);
     timed_result.wall_ms = elapsed_ms(started);
     if (!timed_result.ttft_ms.has_value() &&
@@ -2850,9 +2857,9 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
     }
 
     {
-        BusyGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+        ModelSlots::Lock lock = acquire_model_run(model, busy_timeout_ms);
         ensure_model_loaded_locked(model);
-        if (dynamic_cast<engine::runtime::IBatchedOfflineVoiceTaskSession *>(model.session.get()) == nullptr) {
+        if (model.sessions->get<engine::runtime::IBatchedOfflineVoiceTaskSession>(lock.slot()) == nullptr) {
             return error_response(
                 400,
                 "configured model does not provide native offline batching: " + model.config.id,
@@ -2872,9 +2879,9 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
         requests = std::move(requests),
         filenames = std::move(filenames),
         busy_timeout_ms](HttpStreamWriter & writer) {
-        BusyGuard::Lock lock = acquire_model_run(*model_ptr, busy_timeout_ms);
+        ModelSlots::Lock lock = acquire_model_run(*model_ptr, busy_timeout_ms);
         ensure_model_loaded_locked(*model_ptr);
-        auto * batched = dynamic_cast<engine::runtime::IBatchedOfflineVoiceTaskSession *>(model_ptr->session.get());
+        auto * batched = model_ptr->sessions->get<engine::runtime::IBatchedOfflineVoiceTaskSession>(lock.slot());
         if (batched == nullptr) {
             throw std::runtime_error(
                 "configured model does not provide native offline batching: " + model_ptr->config.id);
@@ -2885,7 +2892,7 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
             total_audio_duration_ms += audio_duration_ms(*request.audio_input);
         }
         const auto started = Clock::now();
-        model_ptr->session->prepare(engine::runtime::build_preparation_request(requests.front()));
+        model_ptr->sessions->at(lock.slot()).prepare(engine::runtime::build_preparation_request(requests.front()));
         std::vector<bool> completed(requests.size(), false);
         size_t completed_count = 0;
         batched->run_batch(requests, [&](size_t index, engine::runtime::TaskResult result) {
@@ -3473,12 +3480,18 @@ std::string ServerState::models_json(bool include_session_options) const {
         }
         const auto & model = *models_[i];
         std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+        const auto slot_state = model.busy.state();
+        const auto parallel_capacity = model.parallel_capacity.load();
         out << "{\"id\":" << json_quote(model.config.id)
             << ",\"object\":\"model\""
             << ",\"owned_by\":\"engine\""
             << ",\"family\":" << json_quote(model.config.family)
             << ",\"task\":" << json_quote(engine::runtime::to_string(model.task.task))
             << ",\"mode\":" << json_quote(engine::runtime::to_string(model.task.mode))
+            << ",\"slots\":" << model.config.slots
+            << ",\"active_slots\":" << slot_state.active
+            << ",\"queued_requests\":" << slot_state.waiting_requests
+            << ",\"max_parallel_slots\":" << (parallel_capacity ? std::to_string(parallel_capacity) : "null")
             << ",\"loaded\":" << (model.loaded.load() ? "true" : "false")
             << ",\"path\":" << json_quote(model.config.path.string());
         if (include_session_options) {
@@ -3501,9 +3514,8 @@ std::string ServerState::get_allowed_origin(const HttpRequest & request) const {
 }
 
 void ServerState::LoadedModel::unload() {
-    offline = nullptr;
-    streaming = nullptr;
-    session.reset();
+    sessions.reset();
+    parallel_capacity.store(0);
     model.reset();
     loaded.store(false);
 }
@@ -3535,7 +3547,7 @@ void ServerState::unload_idle_models() {
     {
         std::lock_guard<std::mutex> state_lock(models_mutex_);
         for (const auto & model : models_) {
-            if (model->session != nullptr) {
+            if (model->loaded.load()) {
                 resident.push_back(model.get());
             }
         }
@@ -3627,17 +3639,23 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
             return error_response(400, "each element of 'model_ids' must be a string", "invalid_request_error");
         }
         const std::string id = id_val.as_string();
-        const auto it = model_index_.find(id);
-        if (it == model_index_.end()) {
+        LoadedModel * model = nullptr;
+        {
+            std::lock_guard<std::mutex> state_lock(models_mutex_);
+            const auto it = model_index_.find(id);
+            if (it != model_index_.end()) {
+                model = models_.at(it->second).get();
+            }
+        }
+        if (model == nullptr) {
             not_found.push_back(id);
             continue;
         }
-        LoadedModel & model = *models_.at(it->second);
-        // Only unload if the model is currently loaded in memory. Acquire the busy
-        // lock for the duration of the unload so no inference starts mid-operation.
-        if (model.session != nullptr) {
-            [[maybe_unused]] BusyGuard::Lock lock = model.busy.acquire(0, model.config.id);
-            model.unload();
+        // Drain even a first load that has not published its pool yet. Model
+        // objects remain registered, so the pointer is stable after lookup.
+        [[maybe_unused]] ModelSlots::Lock lock = model->busy.acquire(0, id);
+        if (model->loaded.load()) {
+            model->unload();
             unloaded.push_back(id);
         }
     }
@@ -3660,12 +3678,21 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
 
 HttpResponse ServerState::handle_unload_all_models() {
     std::vector<std::string> unloaded;
-
-    for (auto & model : models_) {
-        if (model->session != nullptr) {
-            [[maybe_unused]] BusyGuard::Lock lock = model->busy.acquire(0, model->config.id);
+    std::vector<std::pair<std::string, LoadedModel *>> registered;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        for (const auto & model : models_) {
+            std::shared_lock<std::shared_mutex> metadata_lock(model->metadata_mutex);
+            registered.emplace_back(model->config.id, model.get());
+        }
+    }
+    // Never hold the model-list mutex while waiting for inference: a lazy
+    // first load can need it for eviction before it publishes loaded=true.
+    for (const auto & [id, model] : registered) {
+        [[maybe_unused]] ModelSlots::Lock lock = model->busy.acquire(0, id);
+        if (model->loaded.load()) {
             model->unload();
-            unloaded.push_back(model->config.id);
+            unloaded.push_back(id);
         }
     }
 
