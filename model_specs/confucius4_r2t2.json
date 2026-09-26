@@ -105,6 +105,23 @@
       }
     },
     {
+      "id": "confucius4_r2t2_q4_k_m",
+      "display_name": "Confucius4-R2T2 Q4_K_M GGUF",
+      "description": "Community Q4_K_M quantization by NairoDorian (Hugging Face: Nairod785), pinned to a fixed revision; quantization report in QUANTIZATION.md. Quantized derivative work of netease-youdao/Confucius4-R2T2 under the NetEase Youdao Model Use License - see LICENSE, LICENSE_zh and NOTICE in the download repo.",
+      "format": "gguf",
+      "precision": "q4_k_m",
+      "target_directory": "Confucius4-R2T2-Q4_K_M-GGUF",
+      "files": [
+        "r2t2-q4_k_m.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Nairod785/Confucius4-R2T2-Q4_K_M-GGUF",
+        "revision": "b1ea19256fb77a8d8ab7b091dc75378e15952605",
+        "gated": false
+      }
+    },
+    {
       "id": "confucius4_r2t2_safetensors",
       "display_name": "Confucius4-R2T2 (HF safetensors)",
       "format": "safetensors",
