@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a released SAMSONE checkpoint to a standalone BF16 GGUF."""
+"""Convert a released SAMSONE checkpoint to a standalone GGUF."""
 
 from __future__ import annotations
 
@@ -75,6 +75,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--text-model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--type", choices=("bf16", "q8_0"), default="bf16")
     args = parser.parse_args()
 
     checkpoint = args.checkpoint.resolve()
@@ -138,7 +139,7 @@ def main() -> None:
                     "--input", f"weights={source}",
                     "--root", str(root),
                     "--output", str(temporary_output),
-                    "--type", "bf16",
+                    "--type", args.type,
                     "--family", "samsone",
                     "--model-spec", str(REPO / "model_specs/samsone.json"),
                     "--overwrite",
