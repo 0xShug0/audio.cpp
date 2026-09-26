@@ -580,6 +580,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/neural_audio.cpp
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
+    src/framework/codecs/snac_decoder_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
@@ -767,6 +768,18 @@ audiocpp_add_model(outetts
     DEPENDS
         qwen3_asr
         qwen3_forced_aligner
+)
+
+audiocpp_add_model(maya1
+    SOURCES
+        src/models/maya1/assets.cpp
+        src/models/maya1/generator.cpp
+        src/models/maya1/session.cpp
+        src/models/maya1/tokenizer.cpp
+    INCLUDES
+        engine/models/maya1/session.h
+    LOADERS
+        engine::models::maya1::make_maya1_loader
 )
 
 audiocpp_add_model(parakeet_tdt

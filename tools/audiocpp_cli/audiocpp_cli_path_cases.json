@@ -1,6 +1,27 @@
 {
   "cases": [
     {
+      "id": "maya1_voice_design",
+      "coverage": "Maya1 voice-design TTS with inline emotion control",
+      "family": "maya1",
+      "model": "models/Maya1-GGUF/maya1-orig.gguf",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "voice_design",
+        "text": "Hello from Maya. <laugh> This is a short generation test.",
+        "options": {
+          "instruct": "A warm female voice in her 30s with an American accent and conversational pacing.",
+          "max_tokens": 84,
+          "min_tokens": 28,
+          "temperature": 0.4,
+          "top_p": 0.9,
+          "repetition_penalty": 1.1
+        },
+        "seed": 42
+      }]
+    },
+    {
       "id": "auk_zero_shot_tts",
       "coverage": "AuK zero-shot TTS with reference speaker audio",
       "family": "auk",
