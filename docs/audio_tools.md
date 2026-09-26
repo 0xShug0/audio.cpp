@@ -15,6 +15,7 @@
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
 | Tone Color VC | `tone_color_vc` | `vc` | [Tone Color VC](models/tone_color_vc.md) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
+| LFM2.5-Audio | `lfm2_audio` | `s2s` spoken chat (also `asr`, `tts`) | [LFM2.5-Audio](community_models/lfm2_audio.md) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
 | RVC | `rvc` | `vc` | [RVC](#rvc) |
 | Seed-VC | `seed_vc` | `vc`, `svc` | [Seed-VC](#seed-vc) |

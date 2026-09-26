@@ -1,10 +1,9 @@
 # LFM2.5-Audio
 
 LFM2.5-Audio is Liquid AI's end-to-end speech and text model. audio.cpp runs its
-speech recognition and text-to-speech as the community family `lfm2_audio`,
-directly from the GGUFs Liquid AI publishes, for the English and the Japanese
-checkpoint. Speech-to-speech is planned; progress is tracked in
-[#683](https://github.com/0xShug0/audio.cpp/pull/683).
+speech recognition, text-to-speech and spoken chat (speech-to-speech) as the
+community family `lfm2_audio`, directly from the GGUFs Liquid AI publishes, for
+the English and the Japanese checkpoint.
 
 Upstream: [LiquidAI/LFM2.5-Audio-1.5B](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B) ·
 [LiquidAI/LFM2.5-Audio-1.5B-JP](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-JP) ·
@@ -13,12 +12,12 @@ reference implementation: [liquid-audio](https://github.com/Liquid4All/liquid-au
 | Field | Value |
 |---|---|
 | Family | `lfm2_audio` |
-| Tasks | `asr`, `tts` |
-| Modes | `offline`; `streaming` for TTS |
-| Languages | `en` (`LFM2.5-Audio-1.5B`), `ja` (`LFM2.5-Audio-1.5B-JP`); each checkpoint transcribes and speaks its own language |
-| ASR input | WAV at any sample rate; channels are averaged and the audio is resampled to 16 kHz |
-| TTS output | 24 kHz mono speech |
-| Voices | `us_male` (default), `us_female`, `uk_male`, `uk_female` for English; the Japanese checkpoint has one voice |
+| Tasks | `asr`, `tts`, `s2s` |
+| Modes | `offline`; `streaming` for TTS and S2S |
+| Languages | `en` (`LFM2.5-Audio-1.5B`), `ja` (`LFM2.5-Audio-1.5B-JP`); each checkpoint transcribes, speaks and chats in its own language |
+| Audio input (ASR, S2S) | WAV at any sample rate; channels are averaged and the audio is resampled to 16 kHz |
+| Speech output (TTS, S2S) | 24 kHz mono speech; S2S also returns the reply's text |
+| Voices | TTS: `us_male` (default), `us_female`, `uk_male`, `uk_female` for English; the Japanese checkpoint has one voice. S2S replies in the checkpoint's own voice |
 | Backends tested | CPU, CUDA, Metal |
 | License | LFM Open License v1.0 |
 
@@ -40,6 +39,12 @@ reference implementation: [liquid-audio](https://github.com/Liquid4All/liquid-au
   frame: a 6-layer depthformer predicts its 8 codes one codebook at a time,
   and the frame goes back into the backbone as the sum of its code embeddings,
   until a frame starts with the end-of-audio code.
+- S2S: liquid-audio's interleaved generation. The system prompt `Respond with
+  interleaved text and audio.` and the user's audio as the user turn; the reply
+  alternates 6 text tokens and 12 audio frames (9 for the JP checkpoint, whose
+  vocoder GGUF records its blocks) until `<|text_end|>`, continues with audio
+  until end-of-audio, and ends at `<|im_end|>`. Text is greedy; audio is sampled
+  at temperature 1.0 with top-k 4, as in liquid-audio's README and chat demo.
 - An LFM2 detokenizer (8 layers, causal sliding-window attention over 30 steps)
   turns the mean of each frame's code embeddings, repeated 6 times, into
   log-magnitude and phase, and an ISTFT (n_fft 1280, hop 320) gives 24 kHz
@@ -54,10 +59,10 @@ The packages point at those repositories, pinned to the linked revisions:
 
 | File | Contents | Used by |
 |---|---|---|
-| `<model>-<quant>.gguf` | LFM2 backbone and text tokenizer | ASR, TTS |
-| `mmproj-<model>-<quant>.gguf` | Audio encoder and adapter; the embedding of generated audio codes | ASR, TTS |
-| `vocoder-<model>-<quant>.gguf` | Depthformer; the detokenizer's code embedding and ISTFT window | TTS |
-| `tokenizer-<model>-<quant>.gguf` | Audio detokenizer | TTS |
+| `<model>-<quant>.gguf` | LFM2 backbone and text tokenizer | ASR, TTS, S2S |
+| `mmproj-<model>-<quant>.gguf` | Audio encoder and adapter; the embedding of generated audio codes | ASR, TTS, S2S |
+| `vocoder-<model>-<quant>.gguf` | Depthformer; the detokenizer's code embedding and ISTFT window | TTS, S2S |
+| `tokenizer-<model>-<quant>.gguf` | Audio detokenizer | TTS, S2S |
 
 | Package | Checkpoint | Weights | Download |
 |---|---|---|---|
@@ -77,8 +82,8 @@ python3 tools/model_manager_v2.py install lfm2_audio_1_5b_jp_q8_0 --models-root 
 All quantizations of a checkpoint install into one directory,
 `models/LFM2.5-Audio-1.5B-GGUF` or `models/LFM2.5-Audio-1.5B-JP-GGUF`, so
 components of different quantizations can be combined with the session options
-below. The WebUI lists both checkpoints under ASR and TTS with their Q8_0 and
-F16 packages.
+below. The WebUI lists both checkpoints under ASR, TTS and speech-to-speech with
+their Q8_0 and F16 packages.
 
 ## Run
 
@@ -89,6 +94,10 @@ audiocpp_cli --task asr --family lfm2_audio \
 audiocpp_cli --task tts --family lfm2_audio \
   --model models/LFM2.5-Audio-1.5B-GGUF --backend cuda \
   --text "The next train leaves in ten minutes." --voice-id uk_female --out speech.wav
+
+audiocpp_cli --task s2s --family lfm2_audio \
+  --model models/LFM2.5-Audio-1.5B-GGUF --backend cuda \
+  --audio question.wav --out reply.wav --text-out reply.txt
 ```
 
 `--model` is the package directory: the published GGUFs do not embed an
@@ -106,6 +115,14 @@ For Japanese, pass `models/LFM2.5-Audio-1.5B-JP-GGUF` and no voice. `language`
 can be left out; a value other than the checkpoint's language is rejected.
 Speech is sampled like the README's example (temperature 0.8, top-k 64); pass
 `--seed` for repeatable audio, or `--temperature 0` for greedy decoding.
+
+S2S answers a spoken turn with a spoken reply and its text: the CLI prints the
+text (`text_output=`) and `--text-out` writes it. Each request is a new
+conversation under liquid-audio's chat system prompt, `Respond with interleaved
+text and audio.`; `--text` replaces that prompt, which the checkpoints were
+trained with, so leave it out unless experimenting. The reply is sampled like
+liquid-audio's README and demo (temperature 1.0, top-k 4) and may run to 1024
+steps, text tokens and audio frames together, about a minute of speech.
 
 The server takes the same directory and session options:
 
@@ -125,6 +142,14 @@ A TTS entry is the same with `"task": "tts"`, served at `/v1/audio/speech`:
 ```bash
 curl http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
   -d '{"model": "lfm2-audio-tts", "input": "The next train leaves in ten minutes.", "voice": "us_female"}' -o speech.wav
+```
+
+An S2S entry (`"task": "s2s"`) answers at `/v1/tasks/run` with the reply's
+`text` and its audio as base64 WAV (`audio`):
+
+```bash
+curl http://127.0.0.1:8080/v1/tasks/run -H 'Content-Type: application/json' \
+  -d '{"model": "lfm2-audio-s2s", "request": {"audio": "/path/to/question.wav"}}'
 ```
 
 ### Streaming TTS
@@ -161,22 +186,54 @@ In these runs the streamed audio differed from offline by 1e-4 to 6e-3
 with other texts and seeds reached 1.5e-2 on the CPU and 4.7e-2 on CUDA, with
 the same frames.
 
+### Streaming S2S
+
+With `--mode streaming` (CLI) or `"mode": "streaming"` (server entry), the
+question comes in as audio chunks, live PCM included (`--audio -` on the CLI).
+The reply starts when the input ends and streams like TTS: each event carries
+the audio of one frame (`stream_frames_per_event`) and the text written since
+the last event, in whole characters; together they are the offline reply for
+the same seed. The server's live route, `/v1/audio/speech/live`, takes the
+question as chunked raw PCM and requires an `input` query parameter, which
+becomes the system prompt, so pass liquid-audio's:
+
+```bash
+ffmpeg -i question.wav -ar 16000 -ac 1 -f s16le - \
+  | curl -N -X POST -H 'Expect:' -T - \
+      'http://127.0.0.1:8080/v1/audio/speech/live?model=lfm2-audio-s2s-stream&sample_rate=16000&channels=1&sample_format=s16le&input=Respond%20with%20interleaved%20text%20and%20audio.'
+```
+
+It returns the reply's audio as server-sent events; the text is not returned
+on this route. Time from the end of a 7.5 s English question, streamed in real
+time, to the first audio of the reply:
+
+| Backend | F16 | Q8_0 | Q4_0 |
+|---|---|---|---|
+| CUDA, NVIDIA A10 | 107 ms | 106 ms | 73 ms |
+| Metal, Apple M3 Ultra | 183 ms | 168 ms | 153 ms |
+| CPU, Apple M3 Ultra, 16 threads | 478 ms | 360 ms | 371 ms |
+
+That covers encoding the whole question, the prompt, the first text block and
+the first frame. With the JP F32 package on CUDA, the first audio came 113 ms
+after a 2.6 s Japanese question. Offline, `/v1/tasks/run` returned a 13.1 s
+English reply in 2.1 s on CUDA (F16).
+
 ## Request Options (use with `--request-option`)
 
 | Option | Task | Default | Meaning |
 |---|---|---|---|
-| `language` | both | The checkpoint's | `en` or `ja`; must match the checkpoint. |
-| `max_tokens` | both | `512` | ASR: transcript tokens per audio chunk. TTS: 80 ms audio frames per text chunk. A transcript or a text chunk's speech that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. Transcript tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript at the last whole character. |
+| `language` | all | The checkpoint's | `en` or `ja`; must match the checkpoint. |
+| `max_tokens` | all | `512`; S2S `1024` | ASR: transcript tokens per audio chunk. TTS: 80 ms audio frames per text chunk. S2S: text tokens and audio frames of the reply together. A transcript or a text chunk's speech that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. A reply that needs more fails the request rather than returning a cut-off result. Transcript tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript at the last whole character. |
 | `audio_chunk_mode` | ASR | `auto` | `auto`, `vad`, `fixed` or `none`; see [Long audio](#long-audio). |
 | `audio_chunk_seconds` | ASR | `30` | Longest chunk in seconds, at least 1. |
-| `temperature` | TTS | `0.8` | Audio code sampling temperature; 0 is greedy. |
-| `top_k` | TTS | `64` | Sample from the k most likely codes; 0 keeps all, 1 is greedy. |
-| `seed` | TTS | Random | Sampling seed; text chunk i uses seed + i. |
+| `temperature` | TTS, S2S | `0.8`; S2S `1.0` | Audio code sampling temperature; 0 is greedy. |
+| `top_k` | TTS, S2S | `64`; S2S `4` | Sample from the k most likely codes; 0 keeps all, 1 is greedy. |
+| `seed` | TTS, S2S | Random | Sampling seed; TTS text chunk i uses seed + i. |
 | `text_chunk_mode` | TTS | `japanese` for JP, else `default` | How long text is split; see [Long text](#long-text). |
 | `text_chunk_size` | TTS | `200` | Unicode codepoints per text chunk. |
-| `stream_frames_per_event` | TTS streaming | `1` | Audio frames (80 ms) per streaming event. |
+| `stream_frames_per_event` | TTS, S2S streaming | `1` | Audio frames (80 ms) per streaming event. |
 
-Each task rejects the other task's options.
+Each task rejects the options it does not take.
 
 ## Session Options (use with `--session-option`)
 
@@ -314,6 +371,34 @@ With the Q4_0 package on Metal on an Apple M3 Max, the server's footprint was 1.
 stayed within 4 MB of that over 12 requests alternating 2.5 s and 57 s of
 speech.
 
+### S2S
+
+liquid-audio's `generate_interleaved` (fp32, CUDA with TF32 off) was dumped at
+every step for its README's two questions (English and Japanese) and for
+`assets/resources/c.wav`, greedy and sampled like the README (temperature 1.0,
+top-k 4, seed 0), and the same steps were replayed through audio.cpp:
+
+| Stage | JP F32, CPU | EN F16, CPU / CUDA |
+|---|---|---|
+| Prompt ids and audio positions | identical | identical |
+| Text logits at every text step | 4e-6 relative | 7e-4 / 3e-3 |
+| Backbone output at every audio step | 4e-7 | 5e-4 / 1.4e-3 |
+| Depthformer logits at every frame | 7e-6 | 1.5e-3 / 3e-3 |
+| Free-running steps identical to liquid-audio | all 277 greedy and 308 sampled | the whole 250-step greedy reply to `c.wav` on the CPU, 248 on CUDA; sampled replies until a near-tie |
+| Waveform of the reference frames | 5e-5 | 9e-3 / 0.12 |
+
+The sampled replies were compared through torch's own draws: fed
+liquid-audio's logits, the framework's torch-compatible sampler picks every
+code torch drew. audio.cpp itself samples with its own generator, so a seed
+does not reproduce a liquid-audio reply. The CUDA waveform differs more because
+CUDA accumulates F16 products in half precision.
+
+A reply's audio says what its text says: transcribed back by the ASR task, it
+matched the text at 3% WER, the names the model makes up aside.
+`test_lfm2_audio_s2s` checks the prompt, the first text and audio blocks, a
+reply's round trip through ASR, and streaming against offline; it runs when
+`lfm2_audio_1_5b_f16` is installed in `models/`.
+
 ### Memory
 
 Memory is dominated by the weights, about the package size. Between chunks and
@@ -328,8 +413,10 @@ gather rows from, so on CUDA the backbone also keeps a 256 MiB F16 copy of it.
 
 ## Limitations
 
-- Speech-to-speech is planned.
-- ASR is offline only; TTS also streams.
+- S2S answers one turn per request, as a new conversation; liquid-audio's
+  demo also keeps the earlier turns.
+- `/v1/audio/speech/live` returns an S2S reply's audio but not its text.
+- ASR is offline only; TTS and S2S also stream.
 - TTS speaks with the built-in voices only; there is no voice cloning.
 - On CPU, quantized weights run without repacked kernels. On Apple Silicon,
   llama.cpp transcribes the same Q4_0 files up to 1.8x faster.

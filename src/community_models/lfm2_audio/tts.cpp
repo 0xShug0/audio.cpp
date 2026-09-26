@@ -1,12 +1,10 @@
 #include "engine/community_models/lfm2_audio/tts.h"
 
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/sampling/hf_sampler.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -36,7 +34,9 @@ void append(std::vector<int32_t> & out, const std::vector<int32_t> & ids) {
     out.insert(out.end(), ids.begin(), ids.end());
 }
 
-int32_t greedy(const std::vector<float> & logits) {
+}  // namespace
+
+int32_t lfm2_greedy(const std::vector<float> & logits) {
     if (!std::all_of(logits.begin(), logits.end(), [](float value) { return std::isfinite(value); })) {
         throw std::runtime_error("LFM2-Audio backbone produced non-finite logits");
     }
@@ -44,7 +44,21 @@ int32_t greedy(const std::vector<float> & logits) {
     return static_cast<int32_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
 }
 
-}  // namespace
+Lfm2CodeSampler::Lfm2CodeSampler(const Lfm2AudioSampling & sampling)
+    : greedy_(sampling.temperature <= 0.0f || sampling.top_k == 1), rng_(static_cast<uint32_t>(sampling.seed)) {
+    options_.do_sample = !greedy_;
+    options_.temperature = sampling.temperature;
+    options_.top_k = sampling.top_k;
+}
+
+int32_t Lfm2CodeSampler::pick(std::vector<float> & logits) {
+    if (greedy_) {
+        return lfm2_greedy(logits);
+    }
+
+    scratch_.reserve_vocab(logits.size());
+    return sampler_.sample(logits, {}, options_, scratch_, rng_, nullptr, "lfm2_audio audio code");
+}
 
 std::vector<std::string> lfm2_tts_voices(const std::string & language) {
     if (language == "ja") {
@@ -116,24 +130,10 @@ struct Lfm2SpeechGenerator::Impl {
           audio_start(tokenizer.require_token_id("<|audio_start|>")),
           end_of_turn(tokenizer.require_token_id("<|im_end|>")),
           options(options_in),
-          greedy_audio(options.sampling.temperature <= 0.0f || options.sampling.top_k == 1),
-          rng(static_cast<uint32_t>(options.sampling.seed)) {
+          sampler(options.sampling) {
         if (options.max_frames <= 0) {
             throw std::runtime_error("LFM2-Audio speech needs a positive frame budget");
         }
-
-        sampler_options.do_sample = !greedy_audio;
-        sampler_options.temperature = options.sampling.temperature;
-        sampler_options.top_k = options.sampling.top_k;
-    }
-
-    int32_t pick(std::vector<float> & logits) {
-        if (greedy_audio) {
-            return greedy(logits);
-        }
-
-        scratch.reserve_vocab(logits.size());
-        return sampler.sample(logits, {}, sampler_options, scratch, rng, nullptr, "lfm2_audio audio code");
     }
 
     // The prompt and any text before <|audio_start|>; leaves the backbone
@@ -141,7 +141,7 @@ struct Lfm2SpeechGenerator::Impl {
     void start() {
         auto logits = backbone.start(prompt, {}, kMaxTextTokens + options.max_frames);
         while (true) {
-            const int32_t token = greedy(logits);
+            const int32_t token = lfm2_greedy(logits);
             if (token == end_of_turn) {
                 throw std::runtime_error("LFM2-Audio ended the turn without speech");
             }
@@ -167,11 +167,7 @@ struct Lfm2SpeechGenerator::Impl {
     int32_t audio_start;
     int32_t end_of_turn;
     Lfm2SpeechOptions options;
-    bool greedy_audio;
-    sampling::HfSamplingOptions sampler_options;
-    sampling::HfSampler sampler;
-    sampling::HfSamplerScratch scratch;
-    std::mt19937 rng;
+    Lfm2CodeSampler sampler;
 
     bool started = false;
     bool finished = false;
@@ -210,7 +206,7 @@ std::optional<std::vector<int32_t>> Lfm2SpeechGenerator::next_frame() {
         return std::nullopt;
     }
 
-    auto codes = s.depthformer.frame(s.hidden, [&](int64_t, std::vector<float> & logits) { return s.pick(logits); });
+    auto codes = s.depthformer.frame(s.hidden, [&](int64_t, std::vector<float> & logits) { return s.sampler.pick(logits); });
 
     // A frame whose first code is end-of-audio ends the speech; the reference
     // sets its other codes to end-of-audio and does not decode it.

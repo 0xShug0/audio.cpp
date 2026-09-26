@@ -2889,6 +2889,28 @@
       ]
     },
     {
+      "id": "lfm2_audio_en_q8_s2s",
+      "coverage": "LFM2.5-Audio EN Q8_0 spoken chat: a spoken turn in, a reply of interleaved text and 24 kHz speech out",
+      "family": "lfm2_audio",
+      "model": "models/LFM2.5-Audio-1.5B-GGUF",
+      "task": "s2s",
+      "mode": "offline",
+      "session_options": {
+        "lfm2_audio.model_gguf": "LFM2.5-Audio-1.5B-Q8_0.gguf"
+      },
+      "outputs": [
+        "audio",
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "greeting",
+          "audio": "assets/resources/c.wav",
+          "seed": 1234
+        }
+      ]
+    },
+    {
       "id": "fun_asr_nano_offline",
       "coverage": "Fun-ASR-Nano Q8 GGUF offline English ASR warm-session path",
       "family": "fun_asr_nano",

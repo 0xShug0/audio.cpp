@@ -8,10 +8,12 @@
 #include "engine/community_models/lfm2_audio/backbone.h"
 #include "engine/community_models/lfm2_audio/depthformer.h"
 #include "engine/community_models/lfm2_audio/tokenizer.h"
+#include "engine/framework/sampling/hf_sampler.h"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -38,6 +40,26 @@ struct Lfm2AudioSampling {
     int64_t top_k = 64;
     uint64_t seed = 0;
 };
+
+// Picks the codes of audio frames with one random stream per sampler.
+class Lfm2CodeSampler {
+public:
+    explicit Lfm2CodeSampler(const Lfm2AudioSampling & sampling);
+
+    // May change `logits`.
+    int32_t pick(std::vector<float> & logits);
+
+private:
+    bool greedy_;
+    sampling::HfSamplingOptions options_;
+    sampling::HfSampler sampler_;
+    sampling::HfSamplerScratch scratch_;
+    std::mt19937 rng_;
+};
+
+// The first of the largest logits, like torch.argmax. Throws on non-finite
+// logits.
+int32_t lfm2_greedy(const std::vector<float> & logits);
 
 struct Lfm2SpeechOptions {
     int64_t max_frames = 0;

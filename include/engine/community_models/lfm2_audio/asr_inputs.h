@@ -31,4 +31,8 @@ struct Lfm2AsrPrompt {
 // The ASR prompt of an "en" or "ja" checkpoint.
 Lfm2AsrPrompt make_lfm2_asr_prompt(const Lfm2TextTokenizer & tokenizer, const std::string & language);
 
+// The same prompt around a spoken user turn with another system prompt, such
+// as interleaved generation's; without stop tokens.
+Lfm2AsrPrompt make_lfm2_spoken_prompt(const Lfm2TextTokenizer & tokenizer, const std::string & system_prompt);
+
 }  // namespace engine::community_models::lfm2_audio

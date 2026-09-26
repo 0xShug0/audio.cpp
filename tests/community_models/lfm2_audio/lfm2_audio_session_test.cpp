@@ -510,8 +510,11 @@ void test_loader(const Package & package) {
         "ASR runs offline only", "a streaming ASR session");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Tts, runtime::RunMode::Offline}, options); },
         "cannot pick the vocoder GGUF", "a TTS session without the vocoder file");
+    require_throws_with(
+        [&] { (void)model->create_task_session({runtime::VoiceTaskKind::SpeechToSpeech, runtime::RunMode::Streaming}, options); },
+        "cannot pick the vocoder GGUF", "a streaming s2s session without the vocoder file");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline}, options); },
-        "supports the asr and tts tasks", "another task");
+        "supports the asr, tts and s2s tasks", "another task");
 }
 
 }  // namespace
