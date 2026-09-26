@@ -974,7 +974,9 @@ struct HiggsARPrefillGraph::Impl {
         ggml_set_output(logits_output);
         ggml_build_forward_expand(graph, logits_output);
 
-        if (runtime->backend_type() == core::BackendType::Cuda && target_cache != nullptr) {
+        if ((runtime->backend_type() == core::BackendType::Cuda ||
+             runtime->backend_type() == core::BackendType::Vulkan) &&
+            target_cache != nullptr) {
             // Prefill intermediates are needed only until their last consumer.
             // Reuse their storage across layers instead of reserving the sum
             // of every tensor in the prompt graph. The externally owned KV
