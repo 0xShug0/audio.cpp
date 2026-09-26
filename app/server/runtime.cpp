@@ -2486,6 +2486,7 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
     std::optional<int> busy_timeout_ms;
     minitts::app::PcmSampleFormat sample_format = minitts::app::PcmSampleFormat::S16LE;
     std::string stream_format = "sse";
+    bool return_text = false;
     engine::runtime::TaskRequest task_request;
     try {
         const std::string model_id = query_param(request.query, "model");
@@ -2562,6 +2563,18 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
         if (stream_format != "sse" && stream_format != "audio") {
             throw std::runtime_error("live speech stream_format must be sse or audio");
         }
+        // The text a model writes as it speaks, such as a spoken reply's
+        // words, comes as SSE events next to the audio; raw PCM has no place
+        // for it.
+        const std::string return_text_value = query_param(request.query, "return_text");
+        if (!return_text_value.empty() && return_text_value != "true" && return_text_value != "1" &&
+            return_text_value != "false" && return_text_value != "0") {
+            throw std::runtime_error("live speech return_text must be true or false");
+        }
+        return_text = return_text_value == "true" || return_text_value == "1";
+        if (return_text && stream_format != "sse") {
+            throw std::runtime_error("live speech return_text needs stream_format=sse");
+        }
 
         task_request = build_speech_request(model, body);
         engine::runtime::AudioBuffer audio_contract;
@@ -2624,7 +2637,7 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
         });
     }
     return sse_response(
-        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms](
+        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms, return_text](
             HttpStreamWriter & writer) {
             const minitts::app::AudioStreamFormat format{sample_rate, channels};
             const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
@@ -2645,11 +2658,22 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
                 return has_more;
             };
             bool wrote_audio = false;
+            std::string streamed_text;
             const auto timed_result = run_streaming_model_from(
                 *model_ptr,
                 task_request,
                 timed_audio,
                 [&](const engine::runtime::StreamEvent & event) {
+                    // An event's text goes before its audio: a model that
+                    // speaks what it writes writes it first.
+                    if (return_text && event.partial_text.has_value() && !event.partial_text->text.empty()) {
+                        write_sse(
+                            writer,
+                            "{\"type\":\"speech.text.delta\",\"delta\":" +
+                                json_quote(event.partial_text->text) +
+                                "}");
+                        streamed_text += event.partial_text->text;
+                    }
                     if (event.audio_output.has_value()) {
                         if (!first_audio_ms.has_value()) {
                             first_audio_ms = elapsed_ms(request_started);
@@ -2678,6 +2702,20 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
                 busy_timeout_ms);
             if (!wrote_audio) {
                 throw std::runtime_error("live speech model produced no audio delta events");
+            }
+            if (return_text) {
+                // The model's final text when it gives one, else what it
+                // streamed; a model that writes none fails the request rather
+                // than returning less than was asked for.
+                const auto & text = timed_result.result.text_output;
+                if (!text.has_value() && streamed_text.empty()) {
+                    throw std::runtime_error("live speech model wrote no text; return_text needs a model that writes text");
+                }
+                write_sse(
+                    writer,
+                    "{\"type\":\"speech.text.done\",\"text\":" +
+                        json_quote(text.has_value() ? text->text : streamed_text) +
+                        "}");
             }
             write_sse(
                 writer,
