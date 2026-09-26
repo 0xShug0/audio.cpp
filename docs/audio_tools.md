@@ -362,10 +362,40 @@ Schema-v1 option compatibility:
 
 HTDemucs_6stems extends separation to six stems: drums, bass, vocals, other, guitar, and piano. It uses the same Hybrid Transformer Demucs architecture with a different checkpoint (`5c90dfd2`) that was trained for six-source separation.
 
+The original checkpoint is [`5c90dfd2-34c22ccb.th`](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th). The Demucs checkpoint is a PyTorch package rather than a flat tensor file, so first extract it with the existing Demucs converter and then create each GGUF directly from the extracted SafeTensors weights:
+
+```bash
+mkdir -p models/htdemucs_6stems_source models/HTDemucs-6stems-GGUF
+curl -fL \
+  https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th \
+  -o models/htdemucs_6stems_source/5c90dfd2-34c22ccb.th
+
+python tests/demucs/convert_reference_ckpt.py \
+  --name htdemucs_6s \
+  --repo models/htdemucs_6stems_source \
+  --output-dir models/htdemucs_6stems_source
+
+build/debug/bin/audiocpp_gguf \
+  --input submodel_weights=models/htdemucs_6stems_source/htdemucs_6s/5c90dfd2/model.safetensors \
+  --root models/htdemucs_6stems_source/htdemucs_6s \
+  --family htdemucs_6stems \
+  --model-spec model_specs/htdemucs_6stems.json \
+  --type f16 \
+  --output models/HTDemucs-6stems-GGUF/htdemucs-6stems-f16.gguf
+
+build/debug/bin/audiocpp_gguf \
+  --input submodel_weights=models/htdemucs_6stems_source/htdemucs_6s/5c90dfd2/model.safetensors \
+  --root models/htdemucs_6stems_source/htdemucs_6s \
+  --family htdemucs_6stems \
+  --model-spec model_specs/htdemucs_6stems.json \
+  --type q8_0 \
+  --output models/HTDemucs-6stems-GGUF/htdemucs-6stems-q8_0.gguf
+```
+
 | Field | Value |
 |---|---|
 | Family | `htdemucs_6stems` (alias: `htdemucs_6s`) |
-| Model directory | `models/htdemucs_6stems` |
+| Model directory | `models/HTDemucs-6stems-GGUF` |
 | Task | `sep` |
 | Modes | `offline` |
 | Input | 44.1 kHz music mixture WAV through `--audio` |
@@ -373,7 +403,7 @@ HTDemucs_6stems extends separation to six stems: drums, bass, vocals, other, gui
 | Stems | Drums, bass, vocals, other, guitar, piano |
 
 ```bash
-audiocpp_cli --task sep --family htdemucs_6stems --model models/htdemucs_6stems --backend cuda --audio song_44k.wav --out-dir stems_6
+audiocpp_cli --task sep --family htdemucs_6stems --model models/HTDemucs-6stems-GGUF/htdemucs-6stems-q8_0.gguf --backend cuda --audio song_44k.wav --out-dir stems_6
 ```
 
 | Option | Values | Default | Meaning |

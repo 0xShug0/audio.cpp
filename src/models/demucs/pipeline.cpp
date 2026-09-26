@@ -6,6 +6,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/cross_attention.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/attention/self_attention.h"
 #include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/attention/feed_forward.h"
@@ -466,7 +467,6 @@ core::TensorValue build_self_attention_flash(
         binding::linear_config(hidden, hidden * 3, true));
     const modules::LinearModule out_proj(
         binding::linear_config(hidden, hidden, true));
-    const modules::MatMulModule matmul;
 
     auto qkv = qkv_proj.build(
         ctx,
@@ -512,15 +512,11 @@ core::TensorValue build_self_attention_flash(
             core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.transformer_heads, head_dim}),
             GGML_TYPE_F32);
     } else {
-        auto k_transposed = modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads);
-        auto scores = matmul.build(ctx, q_heads, k_transposed);
-        scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
-        auto attn = core::wrap_tensor(
-            ggml_soft_max(ctx.ggml, ensure_contiguous(ctx, scores).tensor),
-            scores.shape,
-            GGML_TYPE_F32);
-        context = matmul.build(ctx, attn, v_heads);
-        context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+        context = modules::ScaledDotProductAttentionModule({
+            head_dim,
+            modules::ScaledDotProductAttentionLowering::Explicit,
+            GGML_PREC_F32,
+        }).build(ctx, q_heads, k_heads, v_heads);
         context = ensure_contiguous(ctx, context);
     }
     context = core::reshape_tensor(
@@ -553,7 +549,6 @@ core::TensorValue build_cross_attention_flash(
         binding::linear_config(hidden, hidden * 2, true));
     const modules::LinearModule out_proj(
         binding::linear_config(hidden, hidden, true));
-    const modules::MatMulModule matmul;
 
     auto q = q_proj.build(
         ctx,
@@ -599,15 +594,11 @@ core::TensorValue build_cross_attention_flash(
             core::TensorShape::from_dims({query.shape.dims[0], query.shape.dims[1], config.transformer_heads, head_dim}),
             GGML_TYPE_F32);
     } else {
-        auto k_transposed = modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads);
-        auto scores = matmul.build(ctx, q_heads, k_transposed);
-        scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
-        auto attn = core::wrap_tensor(
-            ggml_soft_max(ctx.ggml, ensure_contiguous(ctx, scores).tensor),
-            scores.shape,
-            GGML_TYPE_F32);
-        context = matmul.build(ctx, attn, v_heads);
-        context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+        context = modules::ScaledDotProductAttentionModule({
+            head_dim,
+            modules::ScaledDotProductAttentionLowering::Explicit,
+            GGML_PREC_F32,
+        }).build(ctx, q_heads, k_heads, v_heads);
         context = ensure_contiguous(ctx, context);
     }
     context = core::reshape_tensor(
@@ -1343,7 +1334,7 @@ struct FixedShapeGraph {
 protected:
     void reset_graph_storage() {
         if (graph_ != nullptr) {
-            engine::core::release_backend_graph_resources(backend_, graph_);
+            engine::core::release_backend_graph_resources(backend_, graph_, true);
             graph_ = nullptr;
         }
         if (gallocr_ != nullptr) {

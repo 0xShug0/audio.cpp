@@ -95,8 +95,7 @@ HTDemucsSession::HTDemucsSession(
     std::string family_name)
     : RuntimeSessionBase(runtime::apply_option_v1_compatibility(
           std::move(options),
-          std::vector<runtime::OptionV1CompatibilityAlias>{
-              {"weight_type", std::string(family_name) + ".weight_type"}},
+          {{"weight_type", family_name + ".weight_type"}},
           "HTDemucs")),
       task_(std::move(task)),
       assets_(require_assets(std::move(assets))),
