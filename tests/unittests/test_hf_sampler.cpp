@@ -253,6 +253,73 @@ void test_matches_reference_torch_sampler() {
     }
 }
 
+void test_cuda_population_offset_matches_full_scores() {
+    constexpr size_t population_size = 256;
+    constexpr size_t token_offset = 91;
+    constexpr size_t compact_size = 73;
+    const float suppressed = -std::numeric_limits<float>::infinity();
+
+    TorchCudaSamplingPolicy policy;
+    policy.cuda_fast_path = true;
+    policy.multiprocessor_count = 128;
+    policy.max_threads_per_multiprocessor = 1536;
+
+    HfSamplingOptions options;
+    options.do_sample = true;
+    options.temperature = 0.78F;
+    options.top_p = 0.86F;
+    options.repetition_penalty = 1.12F;
+
+    HfSampler sampler;
+    HfSamplerScratch full_scratch;
+    HfSamplerScratch compact_scratch;
+    std::mt19937 full_rng(1);
+    std::mt19937 compact_rng(1);
+    std::vector<int32_t> full_history{103, 127, 127, 151};
+    std::vector<int32_t> compact_history;
+    for (const int32_t token : full_history) {
+        compact_history.push_back(token - static_cast<int32_t>(token_offset));
+    }
+
+    for (uint64_t step = 0; step < 16; ++step) {
+        const auto compact_logits = make_logits(compact_size, static_cast<int>(step));
+        std::vector<float> full_logits(population_size, suppressed);
+        std::copy(
+            compact_logits.begin(),
+            compact_logits.end(),
+            full_logits.begin() + static_cast<std::ptrdiff_t>(token_offset));
+
+        HfTorchSamplingState full_state;
+        full_state.policy = &policy;
+        full_state.seed = 2468;
+        full_state.call_index = step;
+        HfTorchSamplingState compact_state = full_state;
+        compact_state.population_size = population_size;
+        compact_state.token_index_offset = token_offset;
+
+        const int32_t full_token = sampler.sample(
+            full_logits,
+            full_history,
+            options,
+            full_scratch,
+            full_rng,
+            &full_state,
+            "full population");
+        const int32_t compact_token = sampler.sample(
+            compact_logits,
+            compact_history,
+            options,
+            compact_scratch,
+            compact_rng,
+            &compact_state,
+            "compact population");
+        engine::test::require_eq(
+            compact_token + static_cast<int32_t>(token_offset),
+            full_token,
+            "CUDA population offset token");
+    }
+}
+
 void test_matches_python_hf_processor_reference_values() {
     std::vector<float> scores{0.2F, -0.3F, 1.4F, 0.8F, 0.1F, 1.2F, -0.6F};
     HfSamplerScratch scratch;
@@ -536,6 +603,7 @@ int main() {
         test_direct_torch_sampler_ignores_previous_score_buffer();
         test_matches_reference_fallback_sampler();
         test_matches_reference_torch_sampler();
+        test_cuda_population_offset_matches_full_scores();
         benchmark_sampler_path();
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';

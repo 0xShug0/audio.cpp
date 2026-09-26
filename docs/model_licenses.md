@@ -66,6 +66,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `liveavatar` | [Quark-Vision/Live-Avatar](https://huggingface.co/Quark-Vision/Live-Avatar)<br>[Wan-AI/Wan2.2-S2V-14B](https://huggingface.co/Wan-AI/Wan2.2-S2V-14B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `magpie_tts` | [nvidia/magpie_tts_multilingual_357m](https://huggingface.co/nvidia/magpie_tts_multilingual_357m) | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes | | 2026-09-21 |
 | `marblenet_vad` | Not linked | Not stated | Unclear | Bundled in `assets/framework/models`; the checkpoint's source is not documented. | 2026-09-21 |
+| `maya1` | [maya-research/maya1](https://huggingface.co/maya-research/maya1)<br>[hubertsiuzdak/snac_24khz](https://huggingface.co/hubertsiuzdak/snac_24khz) | Apache-2.0 (Maya1); MIT (SNAC) | Yes | The combined GGUF contains weights from both projects. | 2026-09-25 |
 | `meanvc2` | [ASLP-lab/MeanVC2](https://huggingface.co/ASLP-lab/MeanVC2) | Apache-2.0 | Yes | | 2026-09-21 |
 | `mel_band_roformer` | [mlx-community/mel-roformer-mlx](https://huggingface.co/mlx-community/mel-roformer-mlx) | MIT | Yes | | 2026-09-21 |
 | `midashenglm_gen` | [mispeech/midashenglm-gen](https://huggingface.co/mispeech/midashenglm-gen) | Apache-2.0 | Yes | | 2026-09-21 |

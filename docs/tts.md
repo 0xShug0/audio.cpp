@@ -18,6 +18,7 @@
 | MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](community_models/moss_voicegen.md) |
 | MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
 | MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
+| Maya1 | `maya1` | `tts` | [Maya1](models/maya1.md) |
 | NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
 | OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
