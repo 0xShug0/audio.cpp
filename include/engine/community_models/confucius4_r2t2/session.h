@@ -128,6 +128,7 @@ private:
     // cached; the thinker keeps the K/V rows of the prompt head plus those
     // cached audio tokens, and only the tail is recomputed per chunk.
     R2T2ASRAudioEmbeddings cached_audio_embeddings_;
+    std::vector<float> cached_audio_features_;
     int64_t cached_audio_frames_ = 0;
     int64_t prev_cached_audio_tokens_ = 0;
     int64_t stream_decodes_ = 0;

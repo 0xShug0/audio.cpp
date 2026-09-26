@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -325,6 +326,21 @@ R2T2ASRAudioEmbeddings R2T2ASRSession::encode_stream_audio(const R2T2ASRAudioFea
     const auto encode_range = [&](int64_t begin, int64_t end) {
         return audio_encoder_.encode(slice_audio_features(features, begin, end), /*reuse_graph=*/true);
     };
+    // Peak normalization and the log-mel floor span all accumulated audio, so
+    // louder later audio rewrites earlier frames. Cached windows are reused
+    // only while their features are bit-identical; otherwise the cache and the
+    // thinker rows of those audio tokens are dropped.
+    if (cached_audio_frames_ > 0) {
+        const auto current = slice_audio_features(features, 0, cached_audio_frames_).values;
+        if (current.size() != cached_audio_features_.size() ||
+            std::memcmp(current.data(), cached_audio_features_.data(), current.size() * sizeof(float)) != 0) {
+            cached_audio_embeddings_ = {};
+            cached_audio_features_.clear();
+            cached_audio_frames_ = 0;
+            prev_cached_audio_tokens_ = 0;
+            debug::trace_log_scalar("confucius4_r2t2.stream.audio_cache_invalidated", 1);
+        }
+    }
     // The last two log-mel frames still see the reflect padding at the end of
     // the audio, so only windows ending before them are final.
     const int64_t final_frames = std::max<int64_t>(0, features.frames - 2);
@@ -332,6 +348,7 @@ R2T2ASRAudioEmbeddings R2T2ASRSession::encode_stream_audio(const R2T2ASRAudioFea
     if (complete_frames > cached_audio_frames_) {
         append_audio_embeddings(cached_audio_embeddings_, encode_range(cached_audio_frames_, complete_frames), 0);
         cached_audio_frames_ = complete_frames;
+        cached_audio_features_ = slice_audio_features(features, 0, cached_audio_frames_).values;
     }
     R2T2ASRAudioEmbeddings out = cached_audio_embeddings_;
     if (features.frames > cached_audio_frames_) {
@@ -559,6 +576,7 @@ void R2T2ASRSession::reset() {
     stream_started_ = false;
     stream_wall_start_ = {};
     cached_audio_embeddings_ = {};
+    cached_audio_features_.clear();
     cached_audio_frames_ = 0;
     prev_cached_audio_tokens_ = 0;
     stream_decodes_ = 0;
