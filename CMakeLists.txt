@@ -681,8 +681,11 @@ audiocpp_add_model(demucs
         engine/models/demucs/session.h
     LOADERS
         engine::models::demucs::make_htdemucs_loader
+        engine::models::demucs::make_htdemucs_6stems_loader
     ALIASES
         htdemucs
+        htdemucs_6stems
+        htdemucs_6s
 )
 
 audiocpp_add_model(kokoro_tts

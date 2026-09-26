@@ -139,7 +139,7 @@ Model weights keep the license of their original release, which is separate from
 | **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
 | **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |
-| **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft | GGUF 16/Q8 |
+| **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft<br>HTDemucs_6stems | GGUF 16/Q8 |
 | **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
 | **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
 | **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |

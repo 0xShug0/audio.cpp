@@ -55,6 +55,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `higgs_audio_stt` | [bosonai/higgs-audio-v3-stt](https://huggingface.co/bosonai/higgs-audio-v3-stt) | Apache-2.0 | Yes | | 2026-09-21 |
 | `higgs_audio_tts` | [bosonai/higgs-tts-3-4b](https://huggingface.co/bosonai/higgs-tts-3-4b) | [Boson Higgs TTS 3 Research and Non-Commercial License](https://huggingface.co/bosonai/higgs-tts-3-4b/blob/main/LICENSE) | No | | 2026-09-21 |
 | `htdemucs` | [facebookresearch/demucs](https://github.com/facebookresearch/demucs) | MIT | Yes | | 2026-09-21 |
+| `htdemucs_6stems` | [facebookresearch/demucs `5c90dfd2`](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th) | MIT | Yes | | 2026-09-26 |
 | `hviske_asr` | [syvai/hviske-v5.3](https://huggingface.co/syvai/hviske-v5.3) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `index_tts2` | [IndexTeam/IndexTTS-2](https://huggingface.co/IndexTeam/IndexTTS-2)<br>[IndexTeam/IndexTTS-2.5](https://huggingface.co/IndexTeam/IndexTTS-2.5) | [bilibili Model Use License](https://huggingface.co/IndexTeam/IndexTTS-2.5/blob/main/LICENSE) | Conditional | A separate license is needed above RMB 1 billion yearly revenue or 100 million monthly users. The model and its outputs may not be used to improve other commercial AI models. | 2026-09-21 |
 | `inflect_v2` | [owensong/Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2)<br>[owensong/Inflect-Nano-v2](https://huggingface.co/owensong/Inflect-Nano-v2) | Apache-2.0 | Yes | | 2026-09-21 |
