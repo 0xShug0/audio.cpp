@@ -75,14 +75,21 @@ public:
             return false;
         };
         if (!ready()) {
-            if (model_run_has_overrun(exclusive_since_, steady_now_ms(), timeout_ms)) {
+            const auto now = steady_now_ms();
+            if (model_run_has_overrun(exclusive_since_, now, timeout_ms)) {
                 throw ServerBusyError("model '" + std::string(label) + "': exclusive operation exceeded busy_timeout_ms");
             }
-            bool all_overrun = !exclusive_ && !waiting_exclusive_;
+            // Management keeps admission priority, but waiting for it must not
+            // hide overdue inference. Only occupied slots block the manager;
+            // spare slots cannot serve requests while management is queued.
+            bool any_active = false;
+            bool all_overrun = !exclusive_;
             for (int i = 0; i < count_; ++i) {
-                all_overrun = all_overrun && model_run_has_overrun(since_[i], steady_now_ms(), timeout_ms);
+                if (since_[i] == 0) { continue; }
+                any_active = true;
+                all_overrun = all_overrun && model_run_has_overrun(since_[i], now, timeout_ms);
             }
-            if (all_overrun) { throw ServerBusyError("model '" + std::string(label) + "': all slots exceeded busy_timeout_ms"); }
+            if (any_active && all_overrun) { throw ServerBusyError("model '" + std::string(label) + "': all active slots exceeded busy_timeout_ms"); }
             ++waiting_requests_;
             try { wait(lock, timeout_ms, label, ready); }
             catch (...) { --waiting_requests_; throw; }

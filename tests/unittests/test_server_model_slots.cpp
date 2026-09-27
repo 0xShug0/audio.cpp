@@ -11,8 +11,88 @@ using minitts::server::ModelSlots;
 using minitts::server::ServerBusyError;
 void require(bool value, const char * message) { if (!value) { throw std::runtime_error(message); } }
 
+template<class Predicate>
+bool await_state(Predicate ready) {
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!ready()) {
+        if (std::chrono::steady_clock::now() >= deadline) { return false; }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+// A queued unload must not hide an already overdue inference. Include spare
+// slots: management priority makes those unavailable until active work drains.
+void test_overdue_with_waiting_management(int count, int occupied, int managers = 1) {
+    ModelSlots slots;
+    slots.configure(count);
+    std::vector<ModelSlots::Lock> held;
+    for (int i = 0; i < occupied; ++i) { held.push_back(slots.acquire_run(0, "overdue")); }
+    std::vector<std::future<void>> management;
+    for (int i = 0; i < managers; ++i) {
+        management.push_back(std::async(std::launch::async, [&] { auto exclusive = slots.acquire(0, "unload"); }));
+    }
+    const bool queued = await_state([&] { return slots.state().waiting_management == managers; });
+    std::this_thread::sleep_for(30ms);
+    const auto started = std::chrono::steady_clock::now();
+    std::string error;
+    try { auto lease = slots.acquire_run(15, "overdue"); }
+    catch (const ServerBusyError & e) { error = e.what(); }
+    const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    const auto state = slots.state();
+    // Drain every thread before asserting, including on the regression path.
+    held.clear();
+    for (auto & future : management) { future.get(); }
+    require(queued, "management did not queue behind inference");
+    require(error.find("slots exceeded busy_timeout_ms") != std::string::npos,
+            "waiting management suppressed overdue rejection");
+    require(state.active == occupied && state.waiting_requests == 0 && state.waiting_management == managers,
+            "overdue rejection changed lease ownership or leaked a waiter");
+    require(slots.try_acquire().has_value(), "overdue rejection stranded management");
+    std::cout << "PASS overdue with management: slots=" << count << " occupied=" << occupied
+              << " managers=" << managers << " rejection_ms=" << elapsed << '\n';
+}
+
+// One overdue request must not cause an early rejection while another blocker
+// is healthy. Timeout zero must also keep waiting, even if all work is overdue.
+void test_management_priority(bool disable_timeout) {
+    ModelSlots slots;
+    slots.configure(2);
+    std::vector<ModelSlots::Lock> held;
+    held.push_back(slots.acquire_run(0, "old"));
+    std::this_thread::sleep_for(225ms);
+    if (!disable_timeout) { held.push_back(slots.acquire_run(0, "healthy")); }
+    auto management = std::async(std::launch::async, [&] { return slots.acquire(0, "unload"); });
+    const bool manager_queued = await_state([&] { return slots.state().waiting_management == 1; });
+    auto request = std::async(std::launch::async, [&] {
+        try { auto lease = slots.acquire_run(disable_timeout ? 0 : 200, "waiting"); return true; }
+        catch (const ServerBusyError &) { return false; }
+    });
+    const bool request_queued = await_state([&] {
+        return slots.state().waiting_requests == 1 || request.wait_for(0ms) == std::future_status::ready;
+    }) && slots.state().waiting_requests == 1;
+    held.clear();
+    bool kept_priority;
+    {
+        auto exclusive = management.get();
+        kept_priority = request.wait_for(20ms) == std::future_status::timeout && slots.state().active == 0;
+    }
+    const bool completed = request.get();
+    require(manager_queued && request_queued, "healthy or unbounded request rejected instead of queuing");
+    require(kept_priority, "new request overtook a waiting management operation");
+    require(completed && slots.state().waiting_requests == 0, "management release failed to drain request queue");
+}
+
 int main() {
     try {
+        test_overdue_with_waiting_management(1, 1);
+        test_overdue_with_waiting_management(2, 2);
+        test_overdue_with_waiting_management(4, 4);
+        test_overdue_with_waiting_management(2, 1);
+        test_overdue_with_waiting_management(4, 2);
+        test_overdue_with_waiting_management(2, 2, 2);
+        test_management_priority(false);
+        test_management_priority(true);
         ModelSlots slots;
         slots.configure(2);
         std::optional<ModelSlots::Lock> a(slots.acquire_run(100, "test"));
