@@ -164,9 +164,19 @@ or in `server.json`:
 Set `"slots": 2` on a model entry to let two HTTP requests execute concurrently
 against one loaded model. The default is `1`; values from 1 through 16 are
 accepted. The common framework supports offline, streaming and native-batch sessions
-through an explicit model capability. Currently **Higgs Audio v3 TTS on CUDA
-in offline mode** is the only enabled model/backend combination. Unsupported
-combinations continue to work with one slot and reject larger configurations.
+through an explicit model capability. CUDA offline sessions also have an
+allowlisted fallback that creates independent sessions from the same loaded
+checkpoint. The 75 audited family/task pairs support their tested limit of two,
+three or four slots on this
+path; unlisted families and untested tasks keep a capacity of one. A specialized
+model factory takes precedence, including its
+backend/task/mode restrictions. Other backends and streaming require an explicit
+factory. The fallback enables testing; it does not establish that every model is
+safe or memory-efficient for every variant and workload. Validate the selected model,
+task, options and slot count before using it for a workload.
+See [the CUDA two-slot survey](../../docs/reports/generic_cuda_slots_audit.md)
+and [three/four-slot validation](../../docs/reports/generic_cuda_slots_3_4_audit.md)
+for tested packages, failures, per-family limits and memory costs.
 See [the adapter guide](../../docs/maintainers/parallel_sessions.md) to add
 parallel support to another model.
 See [the measured comparison](../../docs/reports/common_model_slots.md) for
@@ -183,7 +193,9 @@ See [the measured comparison](../../docs/reports/common_model_slots.md) for
 }
 ```
 
-Slots share the immutable AR and codec weights. Each has its own backend
+Higgs CUDA slots share the immutable AR and codec weights. Generic fallback
+sessions share loaded checkpoint assets but can replicate GPU weights, causing
+large VRAM increases or allocation failures. Each has its own backend
 execution context, graphs, KV cache, reference cache and sampler state. Requests
 lease any free slot and queue when all slots are occupied. `GET /v1/models`
 reports configured `slots`, current `active_slots`, `queued_requests`, and

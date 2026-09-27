@@ -3,6 +3,7 @@
 #include "engine/framework/runtime/session.h"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -15,14 +16,22 @@ namespace engine::runtime {
 // leases before destroying the pool. This also applies to a whole stream/batch.
 class VoiceTaskSessionPool {
 public:
-    VoiceTaskSessionPool(std::unique_ptr<IVoiceTaskSession> primary, size_t count)
+    using SessionFactory = std::function<std::unique_ptr<IVoiceTaskSession>()>;
+
+    // The loaded-model factory creates independent runtime state from the same
+    // immutable checkpoint assets. Device weights may be replicated by legacy
+    // sessions. A specialized factory takes precedence, including a capacity=1
+    // restriction for an unsupported backend/mode.
+    VoiceTaskSessionPool(std::unique_ptr<IVoiceTaskSession> primary, size_t count,
+                         SessionFactory loaded_model_factory = {}, size_t loaded_model_capacity = 1)
         : primary_(std::move(primary)) {
         if (!primary_ || count < 1 || count > kMaxParallelSessions) {
             throw std::invalid_argument("session pool requires a primary and 1..16 slots");
         }
         validate_mode(*primary_);
         const auto * factory = dynamic_cast<const IParallelVoiceTaskSessionFactory *>(primary_.get());
-        capacity_ = factory ? std::min(factory->parallel_session_capacity(), kMaxParallelSessions) : 1;
+        capacity_ = factory ? std::min(factory->parallel_session_capacity(), kMaxParallelSessions)
+                            : (loaded_model_factory ? std::min(loaded_model_capacity, kMaxParallelSessions) : 1);
         if (capacity_ < 1 || count > capacity_) {
             throw std::invalid_argument("model '" + primary_->family() +
                 "' does not support the requested slots for this backend/task/mode (capacity=" +
@@ -30,7 +39,7 @@ public:
         }
         extra_.reserve(count - 1);
         for (size_t i = 1; i < count; ++i) {
-            auto session = factory->create_parallel_session();
+            auto session = factory ? factory->create_parallel_session() : loaded_model_factory();
             if (!session || session->family() != primary_->family() ||
                 session->task_kind() != primary_->task_kind() ||
                 session->run_mode() != primary_->run_mode() ||

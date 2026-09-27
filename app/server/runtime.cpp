@@ -1,5 +1,6 @@
 #include "runtime.h"
 
+#include "audited_model_slots.h"
 #include "base64.h"
 #include "model_memory.h"
 #include "multipart.h"
@@ -1966,8 +1967,17 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
 
     auto loaded_model = registry.load(load_request);
     auto session = loaded_model->create_task_session(model.task, session_options);
+    engine::runtime::VoiceTaskSessionPool::SessionFactory slot_factory;
+    const size_t audited_capacity = audited_cuda_slot_capacity(
+        session->family(), session->task_kind(), config_.backend, session->run_mode());
+    if (audited_capacity > 1) {
+        // Construction is sequential; inference owns one independent session
+        // per lease. The callback is consumed during pool construction only.
+        slot_factory = [&] { return loaded_model->create_task_session(model.task, session_options); };
+    }
     auto sessions = std::make_unique<engine::runtime::VoiceTaskSessionPool>(
-        std::move(session), static_cast<size_t>(model.config.slots));
+        std::move(session), static_cast<size_t>(model.config.slots),
+        std::move(slot_factory), audited_capacity);
     model.model = std::move(loaded_model);
     model.parallel_capacity.store(sessions->capacity());
     model.sessions = std::move(sessions);

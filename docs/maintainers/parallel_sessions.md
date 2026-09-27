@@ -1,9 +1,25 @@
 # Parallel execution sessions
 
 The server uses a common session pool and slot scheduler for all model families.
-A model without parallel support keeps its existing single-session behavior.
-Multiple slots require explicit support for the selected backend, task, mode and
-session options; setting `slots` does not make an arbitrary model thread-safe.
+A model keeps its existing single-session behavior when configured with one slot.
+CUDA offline requests can use an audited loaded-model session factory fallback
+for the 75 family/task pairs in `app/server/audited_model_slots.h`. This fallback
+uses each pair's audited capacity (two, three or four slots); unlisted families and untested tasks retain a capacity of
+one. Other backends and streaming require explicit model support. Setting
+`slots` does not make an arbitrary model thread-safe; the generic fallback must
+be validated for the selected model, task, options and workload.
+
+The fallback calls `ILoadedVoiceModel::create_task_session` sequentially for each
+extra slot before publishing the pool. Checkpoint assets stay loaded once, but
+legacy sessions can upload separate GPU weight copies. This differs from a
+specialized adapter that shares backend weights. An explicit adapter takes
+precedence, including a capacity of one for unsupported combinations.
+
+Add a family/task pair only after cold/warm single-slot references match
+overlapping two-slot outputs and all leases drain. Record the tested package,
+request settings, backend and memory cost. A two-slot pass does not establish
+support for more slots; raise a pair's capacity only after validating every
+intermediate count. See [the higher-count survey](../reports/generic_cuda_slots_3_4_audit.md).
 
 ## Runtime contract
 

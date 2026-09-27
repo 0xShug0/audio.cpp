@@ -1,5 +1,6 @@
 #include "engine/framework/runtime/session_pool.h"
 #include "model_slots.h"
+#include "audited_model_slots.h"
 
 #include <future>
 #include <iostream>
@@ -154,6 +155,67 @@ void test_offline_and_native_batches() {
     require(slots.active() == 0, "finished batch retained its lease");
 }
 
+void test_loaded_model_factory() {
+    int created = 0;
+    VoiceTaskSessionPool pool(std::make_unique<Legacy>(), 2, [&] {
+        ++created;
+        return std::make_unique<Legacy>();
+    }, 2);
+    require(created == 1 && pool.size() == 2 && pool.capacity() == 2,
+            "loaded model factory did not honor its audited capacity");
+    require(&pool.at(0) != &pool.at(1), "loaded model fallback reused mutable session state");
+    // An explicit adapter's backend/mode rejection must not be bypassed.
+    auto state = std::make_shared<State>();
+    state->capacity = 1;
+    rejects([&] {
+        VoiceTaskSessionPool rejected(std::make_unique<Offline>(state), 2, [&] {
+            ++created;
+            return std::make_unique<Legacy>();
+        }, 16);
+    });
+    require(created == 1, "fallback bypassed explicit capacity restriction");
+    rejects([] {
+        VoiceTaskSessionPool null_clone(std::make_unique<Legacy>(), 2,
+            [] { return std::unique_ptr<IVoiceTaskSession>{}; }, 2);
+    });
+    rejects([] {
+        VoiceTaskSessionPool wrong_interface(std::make_unique<Legacy>(), 2,
+            [] { return std::make_unique<Streaming>(); }, 2);
+    });
+    rejects([] {
+        VoiceTaskSessionPool unvalidated_count(std::make_unique<Legacy>(), 3,
+            [] { return std::make_unique<Legacy>(); }, 2);
+    });
+    rejects([] {
+        VoiceTaskSessionPool unaudited_factory(std::make_unique<Legacy>(), 2,
+            [] { return std::make_unique<Legacy>(); });
+    });
+}
+
+void test_audited_model_policy() {
+    using engine::core::BackendType;
+    using minitts::server::audited_cuda_slot_capacity;
+    auto capacity = [](std::string_view family, VoiceTaskKind task,
+                       BackendType backend = BackendType::Cuda, RunMode mode = RunMode::Offline) {
+        return audited_cuda_slot_capacity(family, task, backend, mode);
+    };
+    require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation) == 4, "audited separation capacity wrong");
+    require(capacity("qwen3_asr", VoiceTaskKind::Asr) == 4, "audited ASR capacity wrong");
+    require(capacity("cosyvoice3", VoiceTaskKind::VoiceCloning) == 4, "audited clone capacity wrong");
+    require(capacity("qwen3_tts", VoiceTaskKind::Tts) == 3, "four-slot parity failure not restricted");
+    require(capacity("rvc", VoiceTaskKind::VoiceConversion) == 3, "four-slot request failure not restricted");
+    require(capacity("controlfoley", VoiceTaskKind::AudioGeneration) == 2, "VRAM-limited family not restricted");
+    require(capacity("cosyvoice3", VoiceTaskKind::Tts) == 1, "untested task enabled");
+    require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Cpu) == 1, "CPU fallback enabled");
+    require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Vulkan) == 1, "Vulkan fallback enabled");
+    require(capacity("qwen3_asr", VoiceTaskKind::Asr, BackendType::Cuda, RunMode::Streaming) == 1, "streaming fallback enabled");
+    require(capacity("unknown-model", VoiceTaskKind::Tts) == 1, "unknown family enabled");
+    require(capacity("f5_tts", VoiceTaskKind::Tts) == 1, "failed CUDA family enabled");
+    require(capacity("audiosr", VoiceTaskKind::SpeechToSpeech) == 1, "output mismatch family enabled");
+    require(capacity("miocodec", VoiceTaskKind::VoiceConversion) == 1, "unverified family enabled");
+    require(capacity("minimax_h3", VoiceTaskKind::AudioGeneration) == 1, "hardware-blocked family enabled");
+}
+
 void test_streaming_state_and_error_release() {
     VoiceTaskSessionPool pool(std::make_unique<Streaming>(), 2);
     ModelSlots slots; slots.configure(2);
@@ -185,6 +247,8 @@ int main() {
     try {
         test_pool_validation_and_lifetime();
         test_offline_and_native_batches();
+        test_loaded_model_factory();
+        test_audited_model_policy();
         test_streaming_state_and_error_release();
         std::cout << "PASS session pool validation, rollback, lifetime, shared weights, batch and stream isolation\n";
     } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
