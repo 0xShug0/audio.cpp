@@ -204,7 +204,11 @@ fs::path materialize_espeak_data(const fs::path & package) {
     for (int revision = 0; revision < 32; ++revision) {
         const auto root = base / (hash + "-" + std::to_string(revision));
         if (valid_cache(root, files)) return root / "espeak-ng-data";
-        if (fs::exists(fs::symlink_status(root))) continue;
+        if (fs::exists(fs::symlink_status(root))) {
+            // Another caller may have published this entry after the first validation.
+            if (valid_cache(root, files)) return root / "espeak-ng-data";
+            continue;
+        }
         std::random_device random;
         const auto stage = base / (hash + ".tmp-" + std::to_string(random()) + "-" + std::to_string(random()));
         if (!fs::create_directory(stage)) continue;

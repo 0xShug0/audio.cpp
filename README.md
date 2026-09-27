@@ -93,6 +93,7 @@ Model weights keep the license of their original release, which is separate from
 | **kokoro_tts** | TTS | en-us, en-gb, es, fr, hi, it, ja, pt-br, zh | Kokoro 82M, 54 preset voices | Safetensors, local GGUF BF16/Q8 |
 | **irodori_tts** | TTS, Clone, Design, Ctrl | ja | Irodori-TTS-v4.1-Small<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
 | **magpie_tts** | TTS | ar-AE, ar-MSA, ar-SA, de, en, es, fr, hi, it, ko, pt-BR, vi, zh | NVIDIA MagpieTTS Multilingual 357M (v2607) with baked speaker prompts and NanoCodec decode | GGUF original/Q8 |
+| **maya1** | TTS, Design, Ctrl | en | Maya1 expressive TTS with natural-language voice design, inline emotion tags, and SNAC decoding | GGUF original/Q8 |
 | **miotts** | TTS, Clone | en, ja | MioTTS-1.7B | GGUF 16/Q8 |
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | MOSS-TTS-Local-Transformer-v1.5 | GGUF 16/Q8 |
 | **moss_tts_nano** | TTS, Clone | auto | MOSS-TTS-Nano-100M | GGUF 16/Q8 |
@@ -112,6 +113,7 @@ Model weights keep the license of their original release, which is separate from
 | **canary_asr** | ASR, Translate | en, de, es, fr | Canary 180M Flash | GGUF F32/Q8 |
 | **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
 | **cohere_asr** | ASR | en, fr, de, es, it, pt, nl, pl, el, ar, ja, zh, vi, ko | Cohere Transcribe 03-2026 | GGUF BF16/Q8/Q4_0 |
+| **gigaam_asr** | ASR | ru, kk, ky, uz, en | GigaAM v3 CTC/RNN-T, v3 E2E CTC/RNN-T; Multilingual CTC/Large CTC | GGUF F16/F32 |
 | **fun_asr_nano** | ASR | auto, zh, en, ja | Fun-ASR-Nano-2512 | GGUF 16/Q8 |
 | **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
@@ -124,6 +126,7 @@ Model weights keep the license of their original release, which is separate from
 | **niagara_asr** | ASR | en | Niagara 19M Batch English<br>Niagara 38M Batch English | GGUF F32 |
 | **qwen3_asr** | ASR | zh, en, yue, ar, de, fr, es, pt, id, it, ko, ru, th, vi, ja, tr, hi, ms, nl, sv, da, fi, pl, cs, fil, fa, el, ro, hu, mk | Qwen3-ASR-0.6B<br>Qwen3-ASR-1.7B-hf | GGUF 16/Q8, Stream |
 | **qwen3_forced_aligner** | Align | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | GGUF 16/Q8 |
+| **samsone** | Audio understanding | en | SAMSONE 99M<br>SAMSONE 134M<br>SAMSONE 356M | GGUF BF16/Q8 |
 | **silero_vad** | VAD | lang agnostic | Silero VAD | Bundled, Stream |
 | **sortformer_diar** | Diar | en | Sortformer-4spk-v1 | - |
 | **vibevoice_asr** | ASR | auto | VibeVoice ASR | GGUF 16/Q8 |
@@ -136,10 +139,11 @@ Model weights keep the license of their original release, which is separate from
 |---|---|---|---|---|
 | **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
 | **apollo** | S2S | lang agnostic | Apollo music restoration | GGUF F32 |
+| **sam_audio** | S2S | lang agnostic | SAM Audio Small prompt-conditioned separation | GGUF F32 |
 | **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
 | **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |
-| **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft | GGUF 16/Q8 |
+| **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft<br>HTDemucs_6stems | GGUF 16/Q8 |
 | **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
 | **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
 | **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |

@@ -37,6 +37,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `chatterbox_turbo` | [ResembleAI/chatterbox-turbo](https://huggingface.co/ResembleAI/chatterbox-turbo) | MIT | Yes | | 2026-09-21 |
 | `citrinet_asr` | [nvidia/stt_en_citrinet_256_ls](https://huggingface.co/nvidia/stt_en_citrinet_256_ls) | CC-BY-4.0 | Yes | | 2026-09-21 |
 | `cohere_asr` | [CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026) | Apache-2.0 | Yes | | 2026-09-21 |
+| `gigaam_asr` | [ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3), [ai-sage/GigaAM-Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) | MIT | Yes | | 2026-09-25 |
 | `confucius4_r2t2` | [netease-youdao/Confucius4-R2T2](https://huggingface.co/netease-youdao/Confucius4-R2T2) | [NetEase Youdao Model License](https://github.com/netease-youdao/Confucius4-R2T2/blob/master/MODEL_LICENSE) | Conditional | A separate license is needed above RMB 1 billion yearly revenue or 100 million monthly users. The model and its outputs may not be used to improve other commercial AI models. | 2026-09-21 |
 | `confucius4_tts` | [netease-youdao/Confucius4-TTS](https://huggingface.co/netease-youdao/Confucius4-TTS) | Apache-2.0 | Yes | | 2026-09-21 |
 | `controlfoley` | [YJX-Xiaomi/ControlFoley](https://huggingface.co/YJX-Xiaomi/ControlFoley) | CC-BY-NC-4.0 | No | | 2026-09-21 |
@@ -55,6 +56,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `higgs_audio_stt` | [bosonai/higgs-audio-v3-stt](https://huggingface.co/bosonai/higgs-audio-v3-stt) | Apache-2.0 | Yes | | 2026-09-21 |
 | `higgs_audio_tts` | [bosonai/higgs-tts-3-4b](https://huggingface.co/bosonai/higgs-tts-3-4b) | [Boson Higgs TTS 3 Research and Non-Commercial License](https://huggingface.co/bosonai/higgs-tts-3-4b/blob/main/LICENSE) | No | | 2026-09-21 |
 | `htdemucs` | [facebookresearch/demucs](https://github.com/facebookresearch/demucs) | MIT | Yes | | 2026-09-21 |
+| `htdemucs_6stems` | [facebookresearch/demucs `5c90dfd2`](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th) | MIT | Yes | | 2026-09-26 |
 | `hviske_asr` | [syvai/hviske-v5.3](https://huggingface.co/syvai/hviske-v5.3) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `index_tts2` | [IndexTeam/IndexTTS-2](https://huggingface.co/IndexTeam/IndexTTS-2)<br>[IndexTeam/IndexTTS-2.5](https://huggingface.co/IndexTeam/IndexTTS-2.5) | [bilibili Model Use License](https://huggingface.co/IndexTeam/IndexTTS-2.5/blob/main/LICENSE) | Conditional | A separate license is needed above RMB 1 billion yearly revenue or 100 million monthly users. The model and its outputs may not be used to improve other commercial AI models. | 2026-09-21 |
 | `inflect_v2` | [owensong/Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2)<br>[owensong/Inflect-Nano-v2](https://huggingface.co/owensong/Inflect-Nano-v2) | Apache-2.0 | Yes | | 2026-09-21 |
@@ -65,6 +67,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `liveavatar` | [Quark-Vision/Live-Avatar](https://huggingface.co/Quark-Vision/Live-Avatar)<br>[Wan-AI/Wan2.2-S2V-14B](https://huggingface.co/Wan-AI/Wan2.2-S2V-14B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `magpie_tts` | [nvidia/magpie_tts_multilingual_357m](https://huggingface.co/nvidia/magpie_tts_multilingual_357m) | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes | | 2026-09-21 |
 | `marblenet_vad` | Not linked | Not stated | Unclear | Bundled in `assets/framework/models`; the checkpoint's source is not documented. | 2026-09-21 |
+| `maya1` | [maya-research/maya1](https://huggingface.co/maya-research/maya1)<br>[hubertsiuzdak/snac_24khz](https://huggingface.co/hubertsiuzdak/snac_24khz) | Apache-2.0 (Maya1); MIT (SNAC) | Yes | The combined GGUF contains weights from both projects. | 2026-09-25 |
 | `meanvc2` | [ASLP-lab/MeanVC2](https://huggingface.co/ASLP-lab/MeanVC2) | Apache-2.0 | Yes | | 2026-09-21 |
 | `mel_band_roformer` | [mlx-community/mel-roformer-mlx](https://huggingface.co/mlx-community/mel-roformer-mlx) | MIT | Yes | | 2026-09-21 |
 | `midashenglm_gen` | [mispeech/midashenglm-gen](https://huggingface.co/mispeech/midashenglm-gen) | Apache-2.0 | Yes | | 2026-09-21 |
@@ -97,6 +100,8 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `qwen3_forced_aligner` | [Qwen/Qwen3-ForcedAligner-0.6B](https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `qwen3_tts` | [Qwen/Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base)<br>[Qwen/Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base)<br>[Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice)<br>[Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign) | Apache-2.0 | Yes | | 2026-09-21 |
 | `rvc` | [lj1995/VoiceConversionWebUI](https://huggingface.co/lj1995/VoiceConversionWebUI) | MIT | Unclear | The base models (HuBERT, RMVPE) are MIT. The packaged voices (`manthos`, `chocola`, `fraise`) have no documented source or license. | 2026-09-21 |
+| `sam_audio` | [facebook/sam-audio-small](https://huggingface.co/facebook/sam-audio-small) | [SAM License](https://huggingface.co/facebook/sam-audio-small/blob/main/LICENSE) | Yes | The packaged Google T5 Base text encoder retains its Apache-2.0 license. | 2026-09-26 |
+| `samsone` | [SamsungLabs/samsone](https://github.com/SamsungLabs/samsone) | Not stated | Unclear | The upstream repository and v1.0.0 release do not publish model-weight license terms. | 2026-09-26 |
 | `sanotts` | [ampixa/sanoTTS](https://huggingface.co/ampixa/sanoTTS) | GPL-3.0 | Yes | Copyleft. | 2026-09-21 |
 | `seed_vc` | [Plachta/Seed-VC](https://huggingface.co/Plachta/Seed-VC)<br>[mlx-community/SeedVC-MLX](https://huggingface.co/mlx-community/SeedVC-MLX) | GPL-3.0 | Yes | Copyleft. | 2026-09-21 |
 | `sense_asr` | [FunAudioLLM/SenseVoiceSmall](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) | [FunASR Model Open Source License v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) | Yes | Credit the source and authors, and keep the model names. | 2026-09-21 |

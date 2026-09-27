@@ -27,6 +27,11 @@ struct LSTMSequenceConfig {
     int64_t input_size = 0;
     int64_t hidden_size = 0;
     bool reverse = false;
+    // Opt-in [time, batch, features] layout instead of [time, features].
+    bool batched = false;
+    // Put the non-activation operand first in commutative gate multiplies so
+    // backends can fuse a following sigmoid with the multiply.
+    bool fusion_friendly_gate_mul = false;
 };
 
 struct LSTMSequenceWeights {

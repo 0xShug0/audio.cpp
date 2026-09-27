@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "family": "gigaam_asr",
+  "display_name": "GigaAM ASR",
+  "description": "GigaAM v3 and Multilingual Conformer speech recognition with CTC or RNN-T decoding.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "ru",
+    "kk",
+    "ky",
+    "uz",
+    "en"
+  ],
+  "capabilities": {
+    "asr": [
+      "word_timestamps",
+      "vad_chunking"
+    ]
+  },
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Return word timestamps derived from decoder token emission frames.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Long-form audio chunking mode.",
+        "values": [
+          "auto",
+          "fixed",
+          "quiet_energy",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum duration of each audio chunk in seconds.",
+        "required": false,
+        "min": 0.02,
+        "max": 25,
+        "default": 25
+      }
+    ],
+    "session": [
+      {
+        "name": "vad_model_path",
+        "type": "path",
+        "description": "Offline VAD model used only with audio_chunk_mode=vad.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "gigaam_v3_ctc_f16",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/gigaam_asr.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "gigaam_v3_ctc_f16",
+      "display_name": "GigaAM v3 CTC F16 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-v3-ctc-f16.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    },
+    {
+      "id": "gigaam_v3_rnnt_f16",
+      "display_name": "GigaAM v3 RNN-T F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-v3-rnnt-f16.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    },
+    {
+      "id": "gigaam_v3_e2e_ctc_f16",
+      "display_name": "GigaAM v3 E2E CTC F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-v3-e2e-ctc-f16.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    },
+    {
+      "id": "gigaam_v3_e2e_rnnt_f16",
+      "display_name": "GigaAM v3 E2E RNN-T F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-v3-e2e-rnnt-f16.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    },
+    {
+      "id": "gigaam_multilingual_ctc_f32",
+      "display_name": "GigaAM Multilingual CTC F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-multilingual-ctc-f32.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    },
+    {
+      "id": "gigaam_multilingual_ctc_f16",
+      "display_name": "GigaAM Multilingual CTC F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-multilingual-ctc-f16.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    },
+    {
+      "id": "gigaam_multilingual_large_ctc_f32",
+      "display_name": "GigaAM Multilingual Large CTC F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-multilingual-large-ctc-f32.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    },
+    {
+      "id": "gigaam_multilingual_large_ctc_f16",
+      "display_name": "GigaAM Multilingual Large CTC F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "GigaAM-ASR-GGUF",
+      "files": [
+        "GigaAM-ASR-GGUF/gigaam-multilingual-large-ctc-f16.gguf"
+      ],
+      "strip_prefix": "GigaAM-ASR-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    }
+  ]
+}

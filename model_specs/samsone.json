@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "family": "samsone",
+  "display_name": "SAMSONE",
+  "description": "Compact audio-language models for audio captioning, question answering, and sound, music, and speech understanding.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {},
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "instruct",
+        "type": "string",
+        "default": "describe the audio",
+        "required": false,
+        "description": "Question or instruction about the input audio."
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "min": 1,
+        "max": 512,
+        "default": 100,
+        "required": false,
+        "description": "Maximum response tokens."
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "samsone_99m_bf16",
+      "display_name": "SAMSONE 99M GGUF BF16",
+      "default": true,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Samsone-GGUF",
+      "files": [
+        "Samsone-GGUF/samsone-99m-bf16.gguf"
+      ],
+      "strip_prefix": "Samsone-GGUF"
+    },
+    {
+      "id": "samsone_99m_q8_0",
+      "display_name": "SAMSONE 99M GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Samsone-GGUF",
+      "files": [
+        "Samsone-GGUF/samsone-99m-q8_0.gguf"
+      ],
+      "strip_prefix": "Samsone-GGUF"
+    },
+    {
+      "id": "samsone_134m_bf16",
+      "display_name": "SAMSONE 134M GGUF BF16",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Samsone-GGUF",
+      "files": [
+        "Samsone-GGUF/samsone-134m-bf16.gguf"
+      ],
+      "strip_prefix": "Samsone-GGUF"
+    },
+    {
+      "id": "samsone_134m_q8_0",
+      "display_name": "SAMSONE 134M GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Samsone-GGUF",
+      "files": [
+        "Samsone-GGUF/samsone-134m-q8_0.gguf"
+      ],
+      "strip_prefix": "Samsone-GGUF"
+    },
+    {
+      "id": "samsone_356m_bf16",
+      "display_name": "SAMSONE 356M GGUF BF16",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Samsone-GGUF",
+      "files": [
+        "Samsone-GGUF/samsone-356m-bf16.gguf"
+      ],
+      "strip_prefix": "Samsone-GGUF"
+    },
+    {
+      "id": "samsone_356m_q8_0",
+      "display_name": "SAMSONE 356M GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Samsone-GGUF",
+      "files": [
+        "Samsone-GGUF/samsone-356m-q8_0.gguf"
+      ],
+      "strip_prefix": "Samsone-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/samsone.md"
+    ],
+    "recommended_package": "samsone_99m_bf16"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "token_map": "model:token_map.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}

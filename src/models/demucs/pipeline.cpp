@@ -6,6 +6,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/cross_attention.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/attention/self_attention.h"
 #include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/attention/feed_forward.h"
@@ -432,6 +433,28 @@ LinearWeights packed_attention_projection_range(
     return {weight, bias};
 }
 
+// ggml's flash attention kernel only supports specific head dimensions.
+// When the model's head_dim is not in this set, fall back to the manual
+// matmul + softmax + matmul attention path (the same one used on CPU).
+bool flash_attn_supports_head_dim(int64_t head_dim) {
+    switch (head_dim) {
+    case 40:
+    case 64:
+    case 72:
+    case 80:
+    case 96:
+    case 112:
+    case 128:
+    case 192:
+    case 256:
+    case 320:
+    case 512:
+    case 576:
+        return true;
+    default:
+        return false;
+    }
+}
 core::TensorValue build_self_attention_flash(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -444,7 +467,6 @@ core::TensorValue build_self_attention_flash(
         binding::linear_config(hidden, hidden * 3, true));
     const modules::LinearModule out_proj(
         binding::linear_config(hidden, hidden, true));
-    const modules::MatMulModule matmul;
 
     auto qkv = qkv_proj.build(
         ctx,
@@ -471,7 +493,7 @@ core::TensorValue build_self_attention_flash(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     core::TensorValue context;
-    if (ctx.backend_type == core::BackendType::Cuda) {
+    if (ctx.backend_type == core::BackendType::Cuda && flash_attn_supports_head_dim(head_dim)) {
         q_heads = ensure_contiguous(ctx, q_heads);
         k_heads = ensure_contiguous(ctx, k_heads);
         v_heads = ensure_contiguous(ctx, v_heads);
@@ -490,15 +512,11 @@ core::TensorValue build_self_attention_flash(
             core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.transformer_heads, head_dim}),
             GGML_TYPE_F32);
     } else {
-        auto k_transposed = modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads);
-        auto scores = matmul.build(ctx, q_heads, k_transposed);
-        scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
-        auto attn = core::wrap_tensor(
-            ggml_soft_max(ctx.ggml, ensure_contiguous(ctx, scores).tensor),
-            scores.shape,
-            GGML_TYPE_F32);
-        context = matmul.build(ctx, attn, v_heads);
-        context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+        context = modules::ScaledDotProductAttentionModule({
+            head_dim,
+            modules::ScaledDotProductAttentionLowering::Explicit,
+            GGML_PREC_F32,
+        }).build(ctx, q_heads, k_heads, v_heads);
         context = ensure_contiguous(ctx, context);
     }
     context = core::reshape_tensor(
@@ -531,7 +549,6 @@ core::TensorValue build_cross_attention_flash(
         binding::linear_config(hidden, hidden * 2, true));
     const modules::LinearModule out_proj(
         binding::linear_config(hidden, hidden, true));
-    const modules::MatMulModule matmul;
 
     auto q = q_proj.build(
         ctx,
@@ -558,7 +575,7 @@ core::TensorValue build_cross_attention_flash(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     core::TensorValue context;
-    if (ctx.backend_type == core::BackendType::Cuda) {
+    if (ctx.backend_type == core::BackendType::Cuda && flash_attn_supports_head_dim(head_dim)) {
         q_heads = ensure_contiguous(ctx, q_heads);
         k_heads = ensure_contiguous(ctx, k_heads);
         v_heads = ensure_contiguous(ctx, v_heads);
@@ -577,15 +594,11 @@ core::TensorValue build_cross_attention_flash(
             core::TensorShape::from_dims({query.shape.dims[0], query.shape.dims[1], config.transformer_heads, head_dim}),
             GGML_TYPE_F32);
     } else {
-        auto k_transposed = modules::TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads);
-        auto scores = matmul.build(ctx, q_heads, k_transposed);
-        scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
-        auto attn = core::wrap_tensor(
-            ggml_soft_max(ctx.ggml, ensure_contiguous(ctx, scores).tensor),
-            scores.shape,
-            GGML_TYPE_F32);
-        context = matmul.build(ctx, attn, v_heads);
-        context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
+        context = modules::ScaledDotProductAttentionModule({
+            head_dim,
+            modules::ScaledDotProductAttentionLowering::Explicit,
+            GGML_PREC_F32,
+        }).build(ctx, q_heads, k_heads, v_heads);
         context = ensure_contiguous(ctx, context);
     }
     context = core::reshape_tensor(
@@ -1191,10 +1204,12 @@ HTDemucsWeights load_weights(
         config.embedding_scale);
 
     const int transformer_in_channels = config.channels * static_cast<int>(std::pow(config.growth, config.depth - 1));
-    out.channel_upsampler = binding::conv1d_from_source(*out.store, source, "channel_upsampler", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
-    out.channel_downsampler = binding::conv1d_from_source(*out.store, source, "channel_downsampler", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
-    out.channel_upsampler_t = binding::conv1d_from_source(*out.store, source, "channel_upsampler_t", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
-    out.channel_downsampler_t = binding::conv1d_from_source(*out.store, source, "channel_downsampler_t", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
+    if (config.has_channel_sampler) {
+        out.channel_upsampler = binding::conv1d_from_source(*out.store, source, "channel_upsampler", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
+        out.channel_downsampler = binding::conv1d_from_source(*out.store, source, "channel_downsampler", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
+        out.channel_upsampler_t = binding::conv1d_from_source(*out.store, source, "channel_upsampler_t", storage_type, config.bottom_channels, transformer_in_channels, 1, true);
+        out.channel_downsampler_t = binding::conv1d_from_source(*out.store, source, "channel_downsampler_t", storage_type, transformer_in_channels, config.bottom_channels, 1, true);
+    }
 
     if (config.transformer_layers > 0) {
         CrossTransformerWeights tr;
@@ -1319,7 +1334,7 @@ struct FixedShapeGraph {
 protected:
     void reset_graph_storage() {
         if (graph_ != nullptr) {
-            engine::core::release_backend_graph_resources(backend_, graph_);
+            engine::core::release_backend_graph_resources(backend_, graph_, true);
             graph_ = nullptr;
         }
         if (gallocr_ != nullptr) {
@@ -1462,29 +1477,34 @@ public:
 
         const int64_t freq_channels = x.shape.dims[1];
         const int64_t time_channels = xt.shape.dims[1];
-        if (!weights_.channel_upsampler.has_value() || !weights_.transformer.has_value()) {
+        if (!weights_.transformer.has_value()) {
             throw std::runtime_error("HTDemucs graph requires transformer weights");
         }
-        auto x_flat = flatten_freq_time_python_order(ctx, x);
-        x_flat = modules::Conv1dModule({
-            freq_channels,
-            config_.bottom_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_upsampler->bias.has_value(),
-        }).build(ctx, x_flat, binding::conv1d_data(ctx, weights_.channel_upsampler->weight, weights_.channel_upsampler->bias));
-        x = unflatten_freq_time_python_order(ctx, x_flat, saved.back().shape.dims[2], saved.back().shape.dims[3]);
-        xt = modules::Conv1dModule({
-            time_channels,
-            config_.bottom_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_upsampler_t->bias.has_value(),
-        }).build(ctx, xt, binding::conv1d_data(ctx, weights_.channel_upsampler_t->weight, weights_.channel_upsampler_t->bias));
+        if (config_.has_channel_sampler) {
+            if (!weights_.channel_upsampler.has_value()) {
+                throw std::runtime_error("HTDemucs graph requires channel upsampler weights");
+            }
+            auto x_flat = flatten_freq_time_python_order(ctx, x);
+            x_flat = modules::Conv1dModule({
+                freq_channels,
+                config_.bottom_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_upsampler->bias.has_value(),
+            }).build(ctx, x_flat, binding::conv1d_data(ctx, weights_.channel_upsampler->weight, weights_.channel_upsampler->bias));
+            x = unflatten_freq_time_python_order(ctx, x_flat, saved.back().shape.dims[2], saved.back().shape.dims[3]);
+            xt = modules::Conv1dModule({
+                time_channels,
+                config_.bottom_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_upsampler_t->bias.has_value(),
+            }).build(ctx, xt, binding::conv1d_data(ctx, weights_.channel_upsampler_t->weight, weights_.channel_upsampler_t->bias));
+        }
 
         const auto freq_pos_host = create_2d_sin_embedding(config_.bottom_channels, static_cast<int>(x.shape.dims[2]), static_cast<int>(x.shape.dims[3]), config_.transformer_max_period);
         auto freq_pos = constants_->make_f32(
@@ -1521,27 +1541,32 @@ public:
         xf = core::reshape_tensor(ctx, ensure_contiguous(ctx, xf), core::TensorShape::from_dims({1, x.shape.dims[3], x.shape.dims[2], config_.bottom_channels}));
         xf = modules::TransposeModule({{0, 3, 2, 1}, xf.shape.rank}).build(ctx, xf);
         xtf = modules::TransposeModule({{0, 2, 1}, xtf.shape.rank}).build(ctx, xtf);
-        xf = flatten_freq_time_python_order(ctx, xf);
-        xf = modules::Conv1dModule({
-            config_.bottom_channels,
-            freq_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_downsampler->bias.has_value(),
-        }).build(ctx, xf, binding::conv1d_data(ctx, weights_.channel_downsampler->weight, weights_.channel_downsampler->bias));
-        x = unflatten_freq_time_python_order(ctx, xf, saved.back().shape.dims[2], saved.back().shape.dims[3]);
+        if (config_.has_channel_sampler) {
+            xf = flatten_freq_time_python_order(ctx, xf);
+            xf = modules::Conv1dModule({
+                config_.bottom_channels,
+                freq_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_downsampler->bias.has_value(),
+            }).build(ctx, xf, binding::conv1d_data(ctx, weights_.channel_downsampler->weight, weights_.channel_downsampler->bias));
+            x = unflatten_freq_time_python_order(ctx, xf, saved.back().shape.dims[2], saved.back().shape.dims[3]);
 
-        xt = modules::Conv1dModule({
-            config_.bottom_channels,
-            time_channels,
-            1,
-            1,
-            0,
-            1,
-            weights_.channel_downsampler_t->bias.has_value(),
-        }).build(ctx, xtf, binding::conv1d_data(ctx, weights_.channel_downsampler_t->weight, weights_.channel_downsampler_t->bias));
+            xt = modules::Conv1dModule({
+                config_.bottom_channels,
+                time_channels,
+                1,
+                1,
+                0,
+                1,
+                weights_.channel_downsampler_t->bias.has_value(),
+            }).build(ctx, xtf, binding::conv1d_data(ctx, weights_.channel_downsampler_t->weight, weights_.channel_downsampler_t->bias));
+        } else {
+            x = xf;
+            xt = xtf;
+        }
 
         for (int idx = 0; idx < config_.depth; ++idx) {
             auto skip = saved.back();

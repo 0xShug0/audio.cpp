@@ -1,6 +1,7 @@
 #include "engine/framework/modules/text_encoders/t5_base_encoder.h"
 
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -128,6 +129,19 @@ core::TensorValue self_attention(
     q = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, q);
     k = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, k);
     v = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, v);
+    if (config.flash_attention) {
+        // T5 uses unscaled QK scores; compensate for SDPA's inverse-sqrt scale.
+        q = core::wrap_tensor(ggml_scale(ctx.ggml, contiguous(ctx, q).tensor,
+            std::sqrt(static_cast<float>(config.head_dim))), q.shape, GGML_TYPE_F32);
+        auto mask = AddModule{}.build(ctx, position_bias, additive_attention_mask);
+        mask = core::wrap_tensor(ggml_cast(ctx.ggml, contiguous(ctx, mask).tensor,
+            GGML_TYPE_F16), mask.shape, GGML_TYPE_F16);
+        auto context = ScaledDotProductAttentionModule({config.head_dim,
+            ScaledDotProductAttentionLowering::Flash, GGML_PREC_F32}).build(ctx, q, k, v, mask);
+        context = core::reshape_tensor(ctx, contiguous(ctx, context), core::TensorShape::from_dims(
+            {input.shape.dims[0], input.shape.dims[1], config.hidden_size}));
+        return o_proj.build(ctx, context, weights.o_proj);
+    }
     auto scores = matmul_f32(ctx, q, TransposeModule({{0, 1, 3, 2}, 4}).build(ctx, k));
     scores = AddModule{}.build(ctx, scores, position_bias);
     scores = AddModule{}.build(ctx, scores, additive_attention_mask);

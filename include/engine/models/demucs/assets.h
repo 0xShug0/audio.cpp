@@ -49,6 +49,7 @@ struct HTDemucsConfig {
     int dconv_comp = 0;
     float dconv_init = 0.0f;
     int bottom_channels = 0;
+    bool has_channel_sampler = false;
     int transformer_layers = 0;
     float transformer_hidden_scale = 0.0f;
     int transformer_heads = 0;
@@ -83,6 +84,8 @@ struct HTDemucsAssets {
 };
 
 void validate_demucs_weight_storage_type(assets::TensorStorageType storage_type);
-std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const HTDemucsAssets> load_htdemucs_assets(
+    const std::filesystem::path & model_path,
+    std::string_view family = "htdemucs");
 
 }  // namespace engine::models::demucs

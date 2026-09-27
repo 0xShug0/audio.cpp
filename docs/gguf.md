@@ -71,11 +71,13 @@ Status labels:
 | `cohere_asr` | Done | Pass | Pass | --- | Pass (drift) |
 | `fish_audio` | Done | Pass | --- | Pass | Pass |
 | `fun_asr_nano` | Done | Pass | --- | Pass | Pass |
+| `gigaam_asr` | Done | --- | Pass | Pass | --- |
 | `glm_tts` | Done | Pass (TTS + clone) | --- | --- | Pass (ASR match, drift) |
 | `heartmula` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `higgs_audio_stt` | Done | Pass | --- | Pass | Pass |
 | `higgs_audio_tts` | Done | Pass | --- | Pass | Pass |
 | `htdemucs` | Done | Pass | --- | Pass | Pass (drift) |
+| `htdemucs_6stems` | Done | Pass | --- | Pass | Pass (drift) |
 | `hviske_asr` | Done | Pass | --- | --- | Pass |
 | `inflect_v2` | Done | Pass | Pass | --- | --- |
 | `index_tts2` | Done (v2 + v2.5 variant) | Pass | Pass | Pass (drift) | Pass (ASR match, drift) |
@@ -84,6 +86,7 @@ Status labels:
 | `kitten_tts` | Done | --- | Pass (drift) | --- | --- |
 | `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
+| `maya1` | Done | --- | Pass | --- | --- |
 | `meanvc2` | Done | --- | --- | Pass | --- |
 | `mel_band_roformer` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `miocodec` | Done | Pass | Pass | Pass (drift) | Pass (drift) |
@@ -110,6 +113,8 @@ Status labels:
 | `qwen3_tts` custom voice | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `qwen3_tts` voice design | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `rvc` | Done | --- | --- | Pass | --- |
+| `sam_audio` | Done | --- | Pass | --- | --- |
+| `samsone` | Done | --- | --- | Pass | Pass (drift) |
 | `seed_vc` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `sopro_tts` | Done | Pass | --- | Pass | Pass |
 | `soprano_tts` | Done | Pass | --- | Pass | Pass (drift) |

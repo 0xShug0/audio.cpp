@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "id": "gigaam_official_repeat",
+      "coverage": "Official speech example with repeated requests in one session; override the model to test each variant.",
+      "family": "gigaam_asr",
+      "model": "GigaAM-ASR-GGUF/gigaam-v3-ctc-f16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "cold", "audio": "build/logs/gigaam_asr/inputs/example.wav"},
+        {"id": "warm1", "audio": "build/logs/gigaam_asr/inputs/example.wav"},
+        {"id": "warm2", "audio": "build/logs/gigaam_asr/inputs/example.wav"},
+        {"id": "warm3", "audio": "build/logs/gigaam_asr/inputs/example.wav"},
+        {"id": "warm4", "audio": "build/logs/gigaam_asr/inputs/example.wav"},
+        {"id": "warm5", "audio": "build/logs/gigaam_asr/inputs/example.wav"}
+      ]
+    }
+  ]
+}

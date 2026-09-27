@@ -433,22 +433,30 @@ int32_t HfTokenSampler::sample_from_processed_scores(
         if (!candidates_match_scores) {
             HfLogitsProcessor::build_candidates(scores, scratch, context);
         }
+        const uint64_t population_size = torch_state->population_size == 0
+            ? static_cast<uint64_t>(scores.size())
+            : torch_state->population_size;
+        if (torch_state->token_index_offset + scores.size() > population_size) {
+            throw std::runtime_error(context_message(context, "CUDA sampler population range is invalid"));
+        }
         double best_rank = -std::numeric_limits<double>::infinity();
         int32_t best_token = -1;
         for (size_t index = 0; index < scratch.candidates_.size(); ++index) {
             const int32_t token = scratch.candidates_[index];
+            const uint64_t population_token =
+                torch_state->token_index_offset + static_cast<uint64_t>(token);
             const float exponential = torch_state->use_offset_blocks
                 ? torch_cuda_tensor_iterator_exponential_element_at_offset(
                       torch_state->seed,
-                      static_cast<uint64_t>(scores.size()),
-                      static_cast<uint64_t>(token),
+                      population_size,
+                      population_token,
                       torch_state->offset_blocks,
                       torch_state->policy->multiprocessor_count,
                       torch_state->policy->max_threads_per_multiprocessor)
                 : torch_cuda_tensor_iterator_exponential_element(
                       torch_state->seed,
-                      static_cast<uint64_t>(scores.size()),
-                      static_cast<uint64_t>(token),
+                      population_size,
+                      population_token,
                       torch_state->call_index,
                       torch_state->policy->multiprocessor_count,
                       torch_state->policy->max_threads_per_multiprocessor);

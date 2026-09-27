@@ -214,6 +214,7 @@
           "input_hint_en": "**AudioSR**: upload a source audio file to generate a super-resolved output." },
 
     { "id": "htdemucs",               "display_name": "HTDemucs (sep 音源分离)", "display_name_en": "HTDemucs (source separation)", "family": "htdemucs",             "path": "models/htdemucs",                        "task": "sep",   "mode": "offline", "download_id": "htdemucs",                "min_vram_gb": 3 },
+    { "id": "htdemucs_6stems",        "display_name": "HTDemucs 6-stem (sep 音源分离)", "display_name_en": "HTDemucs 6-stem (source separation)", "family": "htdemucs_6stems",  "path": "models/htdemucs_6stems",                 "task": "sep",   "mode": "offline", "download_id": "htdemucs_6stems",         "min_vram_gb": 4 },
     { "id": "bs-roformer",             "display_name": "BS-RoFormer (sep 人声分离)", "display_name_en": "BS-RoFormer (vocal separation)", "family": "bs_roformer",           "path": "models/BS-RoFormer-ep368-GGUF/bs-roformer-ep368-q8_0.gguf", "task": "sep", "mode": "offline", "download_id": "bs_roformer_q8_0", "min_vram_gb": 3 },
     { "id": "mel-band-roformer",      "display_name": "Mel-Band RoFormer (sep 人声分离)", "display_name_en": "Mel-Band RoFormer (vocal separation)", "family": "mel_band_roformer",    "path": "models/mel-roformer-mlx",                "task": "sep",   "mode": "offline", "download_id": "mel_band_roformer",       "min_vram_gb": 3 },
 

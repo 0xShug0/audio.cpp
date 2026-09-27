@@ -580,6 +580,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/neural_audio.cpp
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
+    src/framework/codecs/snac_decoder_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
@@ -634,6 +635,21 @@ audiocpp_add_model(universr
         engine::models::universr::make_universr_loader
 )
 
+audiocpp_add_model(sam_audio
+    SOURCES
+        src/models/sam_audio/video.cpp
+        src/models/sam_audio/frontend.cpp
+        src/models/sam_audio/vision.cpp
+        src/models/sam_audio/codec.cpp
+        src/models/sam_audio/conditioner.cpp
+        src/models/sam_audio/dit.cpp
+        src/models/sam_audio/session.cpp
+    INCLUDES
+        engine/models/sam_audio/session.h
+    LOADERS
+        engine::models::sam_audio::make_sam_audio_loader
+)
+
 audiocpp_add_model(apollo
     SOURCES
         src/models/apollo/assets.cpp
@@ -681,8 +697,11 @@ audiocpp_add_model(demucs
         engine/models/demucs/session.h
     LOADERS
         engine::models::demucs::make_htdemucs_loader
+        engine::models::demucs::make_htdemucs_6stems_loader
     ALIASES
         htdemucs
+        htdemucs_6stems
+        htdemucs_6s
 )
 
 audiocpp_add_model(kokoro_tts
@@ -769,6 +788,18 @@ audiocpp_add_model(outetts
         qwen3_forced_aligner
 )
 
+audiocpp_add_model(maya1
+    SOURCES
+        src/models/maya1/assets.cpp
+        src/models/maya1/generator.cpp
+        src/models/maya1/session.cpp
+        src/models/maya1/tokenizer.cpp
+    INCLUDES
+        engine/models/maya1/session.h
+    LOADERS
+        engine::models::maya1::make_maya1_loader
+)
+
 audiocpp_add_model(parakeet_tdt
     SOURCES
         src/community_models/parakeet_tdt/assets.cpp
@@ -849,6 +880,17 @@ audiocpp_add_model(kitten_tts
 if(MSVC)
     target_compile_options(engine_model_kitten_tts PRIVATE /utf-8)
 endif()
+
+audiocpp_add_model(samsone
+    SOURCES
+        src/models/samsone/assets.cpp
+        src/models/samsone/runtime.cpp
+        src/models/samsone/session.cpp
+    INCLUDES
+        engine/models/samsone/session.h
+    LOADERS
+        engine::models::samsone::make_samsone_loader
+)
 
 audiocpp_add_model(f5_tts
     SOURCES
@@ -1436,6 +1478,20 @@ audiocpp_add_model(nemotron_asr
         engine/models/nemotron_asr/loader.h
     LOADERS
         engine::models::nemotron_asr::make_nemotron_asr_loader
+)
+
+audiocpp_add_model(gigaam_asr
+    SOURCES
+        src/models/gigaam_asr/assets.cpp
+        src/models/gigaam_asr/conformer.cpp
+        src/models/gigaam_asr/frontend.cpp
+        src/models/gigaam_asr/weights.cpp
+        src/models/gigaam_asr/runtime.cpp
+        src/models/gigaam_asr/session.cpp
+    INCLUDES
+        engine/models/gigaam_asr/model.h
+    LOADERS
+        engine::models::gigaam_asr::make_gigaam_asr_loader
 )
 
 audiocpp_add_model(cohere_asr
@@ -2993,6 +3049,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME encoder_module_test COMMAND encoder_module_test)
 
         add_engine_unittest(transpose_module_test tests/unittests/test_transpose_module.cpp)
+        add_engine_unittest(lstm_sequence_test tests/unittests/test_lstm_sequence.cpp)
+        add_test(NAME lstm_sequence_test COMMAND lstm_sequence_test --log)
         target_include_directories(transpose_module_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME transpose_module_test COMMAND transpose_module_test)
 

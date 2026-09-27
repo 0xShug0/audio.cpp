@@ -26,6 +26,9 @@ struct HfTorchSamplingState {
     uint64_t call_index = 0;
     uint64_t offset_blocks = 0;
     bool use_offset_blocks = false;
+    // Preserve full-population CUDA RNG coordinates when scores are a contiguous slice.
+    uint64_t population_size = 0;
+    uint64_t token_index_offset = 0;
 };
 
 class HfSamplerScratch {
