@@ -62,6 +62,31 @@ process is launched. Audio still comes from `--audio`, and should share the vide
 time origin. Use either the image or video option, not both. Frames are selected by
 nearest timestamp and encoded in bounded batches with a reused graph.
 
+## Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---|---|
+| `sam_audio.memory_bounded` | boolean | `false` | Experimental bounded-workspace execution for long recordings; the option name is provisional. |
+
+This mode keeps full-recording diffusion and evaluates codec convolutions in
+tiles with complete receptive-field context. Watermark recurrent state is
+carried between tiles. It does not split the recording into independent
+separation requests or crossfade the results. Different computation shapes can
+produce small floating-point differences.
+
+GPU workspace is bounded by fixed codec tiles and the model's configured
+diffusion capacity (400 seconds for Small). Intermediate recordings are held
+in host RAM, whose use grows with duration. Extra transfers and overlap
+computation may be slower. This does not extend the model's context limit.
+
+Until the option name is finalized, existing GGUFs are unchanged. To try it
+with the current checkout, add these flags to the command above:
+
+```bash
+--model-spec-override model_specs/sam_audio.json \
+--session-option sam_audio.memory_bounded=true
+```
+
 ## Convert Weights
 
 With the official checkpoint and configuration in a local directory:

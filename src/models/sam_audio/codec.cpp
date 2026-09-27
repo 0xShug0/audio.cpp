@@ -1,6 +1,7 @@
 #include "engine/models/sam_audio/codec.h"
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/audio/waveform_ops.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
@@ -22,6 +23,30 @@ namespace {
 using core::TensorShape;
 using core::TensorValue;
 using Weights = std::unordered_map<std::string, TensorValue>;
+
+// Evaluate convolution windows with full receptive-field halos. Only the valid
+// interior is copied; the first/last windows retain the real model boundaries.
+template<class Evaluate>
+std::vector<float> evaluate_windows(const std::vector<float> & input, int64_t rows,
+    int64_t input_frames, int64_t window, int64_t halo, int64_t output_rows,
+    int64_t output_window, Evaluate evaluate) {
+    const int64_t output_frames = input_frames * output_window / window;
+    const int64_t step = window == input_frames ? window : window - 2 * halo;
+    std::vector<float> output(output_rows * output_frames), tile(rows * window);
+    for (int64_t begin = 0; begin < input_frames; begin += step) {
+        const int64_t end = std::min(begin + step, input_frames);
+        const int64_t start = std::clamp(begin - halo, int64_t{0}, input_frames - window);
+        for (int64_t row = 0; row < rows; ++row)
+            std::copy_n(input.data() + row * input_frames + start, window, tile.data() + row * window);
+        const auto value = evaluate(tile);
+        const int64_t offset = (begin - start) * output_window / window;
+        const int64_t count = (end - begin) * output_window / window;
+        for (int64_t row = 0; row < output_rows; ++row)
+            std::copy_n(value.data() + row * output_window + offset, count,
+                        output.data() + row * output_frames + begin * output_window / window);
+    }
+    return output;
+}
 
 class EncoderGraph {
 public:
@@ -78,18 +103,19 @@ public:
         allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
         if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_))
             throw std::runtime_error("SAM Audio encoder graph allocation failed");
+        debug::timing_log_scalar("sam_audio.codec.encoder.graph_buffer_mb", ggml_gallocr_get_buffer_size(allocator_.get(), 0) / 1048576.0);
     }
 
     ~EncoderGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
 
-    std::vector<float> run(const std::vector<float> & audio) {
+    std::vector<float> run(const std::vector<float> & audio, bool log_timing = true) {
         const auto started = std::chrono::steady_clock::now();
         ggml_backend_tensor_set(input_, audio.data(), 0, audio.size() * sizeof(float));
         if (core::compute_backend_graph(backend_, graph_) != GGML_STATUS_SUCCESS)
             throw std::runtime_error("SAM Audio encoder graph execution failed");
         std::vector<float> result(static_cast<size_t>(ggml_nelements(output_)));
         ggml_backend_tensor_get(output_, result.data(), 0, result.size() * sizeof(float));
-        debug::timing_log_scalar("sam_audio.codec.encoder.wall_ms", debug::elapsed_ms(started));
+        if (log_timing) debug::timing_log_scalar("sam_audio.codec.encoder.wall_ms", debug::elapsed_ms(started));
         return result;
     }
 
@@ -110,6 +136,8 @@ struct CodecEncoder::Impl {
     Weights weights;
     std::unique_ptr<EncoderGraph> graph;
     size_t samples = 0;
+    bool memory_bounded = false;
+    int64_t context_samples = 0;
 
     Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution_, CodecConfig config_)
         : execution(execution_), config(std::move(config_)),
@@ -123,15 +151,49 @@ struct CodecEncoder::Impl {
             }
         }
         store.upload();
+        int64_t span = weights.at("audio_codec.encoder.block.0.weight").shape.dims[2], jump = 1;
+        for (size_t i = 0; i < config.encoder_rates.size(); ++i) {
+            const auto block = "audio_codec.encoder.block." + std::to_string(i + 1) + ".block.";
+            for (int r = 0, dilation = 1; r < 3; ++r, dilation *= 3) {
+                const auto unit = block + std::to_string(r) + ".block.";
+                span += ((weights.at(unit + "1.weight").shape.dims[2] - 1) * dilation +
+                         weights.at(unit + "3.weight").shape.dims[2] - 1) * jump;
+            }
+            span += (weights.at(block + "4.weight").shape.dims[2] - 1) * jump;
+            jump *= config.encoder_rates[i];
+        }
+        span += (weights.at("audio_codec.encoder.block." + std::to_string(config.encoder_rates.size() + 2) +
+                            ".weight").shape.dims[2] - 1) * jump;
+        span += (weights.at("audio_codec.quantizer.in_proj.weight").shape.dims[2] - 1) * jump;
+        context_samples = ((span + jump - 1) / jump) * jump;
     }
 };
 
 CodecEncoder::CodecEncoder(std::shared_ptr<const assets::TensorSource> source,
-                           core::ExecutionContext & execution, CodecConfig config)
-    : impl_(std::make_unique<Impl>(std::move(source), execution, std::move(config))) {}
+                           core::ExecutionContext & execution, CodecConfig config, bool memory_bounded)
+    : impl_(std::make_unique<Impl>(std::move(source), execution, std::move(config))) {
+    impl_->memory_bounded = memory_bounded;
+}
 CodecEncoder::~CodecEncoder() = default;
 
 std::vector<float> CodecEncoder::encode(const std::vector<float> & audio) {
+    if (impl_->memory_bounded) {
+        const auto start = std::chrono::steady_clock::now();
+        const int64_t hop = std::accumulate(impl_->config.encoder_rates.begin(), impl_->config.encoder_rates.end(),
+                                            int64_t{1}, std::multiplies<>());
+        const auto padded = audio::reflect_pad_samples(audio, 0, (hop - audio.size() % hop) % hop);
+        const int64_t window = std::min<int64_t>(padded.size(), 128 * hop + 2 * impl_->context_samples);
+        if (!impl_->graph || impl_->samples != static_cast<size_t>(window)) {
+            impl_->graph.reset();
+            impl_->graph = std::make_unique<EncoderGraph>(impl_->execution, impl_->config, impl_->weights, window);
+            impl_->samples = window;
+        }
+        auto result = evaluate_windows(padded, 1, padded.size(), window, impl_->context_samples,
+            impl_->config.codebook_dim, window / hop,
+            [&](const auto & tile) { return impl_->graph->run(tile, false); });
+        debug::timing_log_scalar("sam_audio.codec.encoder.wall_ms", debug::elapsed_ms(start));
+        return result;
+    }
     if (!impl_->graph || impl_->samples != audio.size()) {
         impl_->graph.reset();
         impl_->graph = std::make_unique<EncoderGraph>(impl_->execution, impl_->config, impl_->weights, audio.size());
@@ -198,7 +260,8 @@ struct CodecDecoderModule::Impl {
         return modules::AddModule().build(ctx, input, x);
     }
 
-    TensorValue lstm(core::ModuleBuildContext & ctx, const TensorValue & input, const std::string & name) const {
+    TensorValue lstm(core::ModuleBuildContext & ctx, const TensorValue & input, const std::string & name,
+                     CodecDecoderModule::RecurrentState * state = nullptr) const {
         auto x = modules::TransposeModule({{2, 0, 1, 3}, 3}).build(ctx, input);
         x = core::ensure_backend_addressable_layout(ctx, x);
         const auto residual = x;
@@ -208,7 +271,13 @@ struct CodecDecoderModule::Impl {
             modules::LSTMSequenceWeights w{{weights.at(name + ".weight_ih" + suffix),
                 weights.at(name + ".weight_hh" + suffix), weights.at(name + ".bias_ih" + suffix),
                 weights.at(name + ".bias_hh" + suffix)}};
-            x = modules::LSTMSequenceModule({512, 512, false, true, true}).build(ctx, x, zero, zero, w).sequence;
+            const auto result = modules::LSTMSequenceModule({512, 512, false, true, true}).build(
+                ctx, x, state ? (*state)[2 * layer] : zero, state ? (*state)[2 * layer + 1] : zero, w);
+            x = result.sequence;
+            if (state) {
+                (*state)[2 * layer] = result.hidden;
+                (*state)[2 * layer + 1] = result.cell;
+            }
         }
         x = modules::AddModule().build(ctx, x, residual);
         return modules::TransposeModule({{1, 2, 0, 3}, 3}).build(ctx, x);
@@ -248,6 +317,10 @@ TensorValue CodecDecoderModule::watermark_base(core::ModuleBuildContext & ctx, c
 }
 
 TensorValue CodecDecoderModule::watermark_encode(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+    return watermark_encode_output(ctx, watermark_lstm(ctx, watermark_encode_convs(ctx, input), false));
+}
+
+TensorValue CodecDecoderModule::watermark_encode_convs(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     const std::string prefix = "audio_codec.decoder.wm_model.encoder_block.";
     auto x = impl_->causal_conv(ctx, input, prefix + "pre.3");
     for (size_t i = impl_->config.watermark_rates.size(); i > 0; --i) {
@@ -255,14 +328,31 @@ TensorValue CodecDecoderModule::watermark_encode(core::ModuleBuildContext & ctx,
         x = impl_->elu_residual(ctx, x, block + "7");
         x = impl_->causal_conv(ctx, modules::EluModule().build(ctx, x), block + "11", impl_->config.watermark_rates[i - 1]);
     }
-    x = impl_->lstm(ctx, x, prefix + "post.0.lstm");
-    return impl_->causal_conv(ctx, modules::EluModule().build(ctx, x), prefix + "post.2");
+    return x;
+}
+
+TensorValue CodecDecoderModule::watermark_encode_output(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+    return impl_->causal_conv(ctx, modules::EluModule().build(ctx, input),
+                             "audio_codec.decoder.wm_model.encoder_block.post.2");
 }
 
 TensorValue CodecDecoderModule::watermark_decode(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+    return watermark_decode_convs(ctx, watermark_lstm(ctx, watermark_decode_input(ctx, input), true));
+}
+
+TensorValue CodecDecoderModule::watermark_decode_input(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+    return impl_->causal_conv(ctx, input, "audio_codec.decoder.wm_model.decoder_block.pre.0");
+}
+
+TensorValue CodecDecoderModule::watermark_lstm(core::ModuleBuildContext & ctx, const TensorValue & input,
+                                              bool decoder, RecurrentState * state) const {
+    return impl_->lstm(ctx, input, decoder ? "audio_codec.decoder.wm_model.decoder_block.pre.1.lstm"
+                                         : "audio_codec.decoder.wm_model.encoder_block.post.0.lstm", state);
+}
+
+TensorValue CodecDecoderModule::watermark_decode_convs(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     const std::string prefix = "audio_codec.decoder.wm_model.decoder_block.";
-    auto x = impl_->causal_conv(ctx, input, prefix + "pre.0");
-    x = impl_->lstm(ctx, x, prefix + "pre.1.lstm");
+    auto x = input;
     for (size_t i = 0; i < impl_->config.watermark_rates.size(); ++i) {
         const auto block = "audio_codec.decoder.model." + std::to_string(i + 1) + ".block.";
         const auto & weight = impl_->weights.at(block + "3.weight");
@@ -315,7 +405,129 @@ TensorValue CodecDecoderModule::build_block(core::ModuleBuildContext & ctx, cons
     return x;
 }
 
+int64_t CodecDecoderModule::context_frames(CodecTileStage stage) const {
+    // A conservative full receptive-field span, rounded to the downsampling
+    // lattice where needed, is sufficient as a halo on either side.
+    const auto kernel = [&](const std::string & name) { return impl_->weights.at(name + ".weight").shape.dims[2]; };
+    const std::string root = "audio_codec.decoder.";
+    if (stage == CodecTileStage::Bridge)
+        return kernel(root + "wm_model.encoder_block.post.2") + kernel(root + "wm_model.decoder_block.pre.0") - 2;
+    if (stage == CodecTileStage::WatermarkEncoder) {
+        int64_t span = kernel(root + "wm_model.encoder_block.pre.3"), jump = 1;
+        for (size_t i = impl_->config.watermark_rates.size(); i > 0; --i) {
+            const auto block = root + "model." + std::to_string(i) + ".block.";
+            span += (kernel(block + "7.block.1") + kernel(block + "7.block.3") - 2 + kernel(block + "11") - 1) * jump;
+            jump *= impl_->config.watermark_rates[i - 1];
+        }
+        return ((span + jump - 1) / jump) * jump;
+    }
+    const bool main = stage == CodecTileStage::Main;
+    const auto & rates = main ? impl_->config.decoder_rates : impl_->config.watermark_rates;
+    int64_t span = kernel(root + (main ? "wm_model.encoder_block.pre.1" : "wm_model.decoder_block.post.1"));
+    for (size_t i = rates.size(); i > 0; --i) {
+        const auto block = root + "model." + std::to_string(i) + ".block.";
+        if (main) {
+            int dilation = 1;
+            for (int unit : {4, 5, 8}) {
+                const auto name = block + std::to_string(unit) + ".block.";
+                span += (kernel(name + "1") - 1) * dilation + kernel(name + "3") - 1;
+                dilation *= 3;
+            }
+        } else {
+            span += kernel(block + "6.block.1") + kernel(block + "6.block.3") - 2;
+        }
+        span = (span + kernel(block + (main ? "1" : "3")) - 2 + rates[i - 1] - 1) / rates[i - 1] + 1;
+    }
+    return main ? span + kernel(root + "model.0") - 1 : span;
+}
+
 namespace {
+class CodecTileGraph {
+public:
+    CodecTileGraph(core::ExecutionContext & execution, const CodecDecoderModule & module,
+                   const CodecConfig & config, CodecTileStage stage, int64_t batch, int64_t frames)
+        : backend_(execution.backend()), frames_(frames) {
+        const bool recurrent = stage == CodecTileStage::EncoderLSTM || stage == CodecTileStage::DecoderLSTM;
+        const size_t nodes = recurrent ? frames * batch * 128 + 8192 : 8192;
+        context_.reset(ggml_init({nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(nodes, false), nullptr, true}));
+        if (!context_) throw std::runtime_error("SAM Audio codec tile context allocation failed");
+        core::ModuleBuildContext ctx{context_.get(), "sam_audio.codec.decoder", execution.backend_type()};
+        const int64_t channels = stage == CodecTileStage::Main ? config.codebook_dim :
+                                 stage == CodecTileStage::WatermarkEncoder ? 1 : 512;
+        input_ = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({batch, channels, frames}));
+        ggml_set_input(input_.tensor);
+        auto x = input_;
+        if (stage == CodecTileStage::Main) {
+            x = module.project_latents(ctx, x);
+            for (size_t i = 0; i <= config.decoder_rates.size(); ++i) x = module.build_block(ctx, x, i);
+            x = module.watermark_base(ctx, x);
+        } else if (stage == CodecTileStage::WatermarkEncoder) {
+            x = module.watermark_encode_convs(ctx, x);
+        } else if (recurrent) {
+            for (auto & state : state_in_) {
+                state = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({batch, 512}));
+                ggml_set_input(state.tensor);
+                ggml_set_output(state.tensor);
+            }
+            state_out_ = state_in_;
+            x = module.watermark_lstm(ctx, x, stage == CodecTileStage::DecoderLSTM, &state_out_);
+        } else if (stage == CodecTileStage::Bridge) {
+            message_ = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({batch, 16}));
+            ggml_set_input(message_.tensor);
+            x = module.watermark_decode_input(ctx, module.embed_message(ctx, module.watermark_encode_output(ctx, x), message_));
+        } else {
+            x = module.watermark_decode_convs(ctx, x);
+        }
+        output_ = core::ensure_backend_addressable_layout(ctx, x);
+        ggml_set_output(output_.tensor);
+        graph_ = ggml_new_graph_custom(context_.get(), nodes, false);
+        ggml_build_forward_expand(graph_, output_.tensor);
+        for (auto & state : state_out_) {
+            if (!state.valid()) continue;
+            state = core::ensure_backend_addressable_layout(ctx, state);
+            ggml_set_output(state.tensor);
+            ggml_build_forward_expand(graph_, state.tensor);
+        }
+        auto optimization = runtime::graph_optimization_options_for_backend(runtime::GraphOptimizationBackend::Gpu);
+        // Preserve the original watermark stage's view/materialization policy.
+        if (stage != CodecTileStage::Main) optimization.fold_identity_materializations = false;
+        if (execution.backend_type() == core::BackendType::Vulkan || execution.backend_type() == core::BackendType::Cpu)
+            optimization.fold_unary_broadcast_repeats = false;
+        runtime::optimize_graph(*graph_, optimization);
+        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_))
+            throw std::runtime_error("SAM Audio codec tile allocation failed");
+        debug::timing_log_scalar("sam_audio.codec.decoder.graph_buffer_mb", ggml_gallocr_get_buffer_size(allocator_.get(), 0) / 1048576.0);
+    }
+
+    ~CodecTileGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
+    int64_t frames() const { return frames_; }
+    int64_t output_frames() const { return output_.shape.dims[2]; }
+    void reset_state() {
+        for (const auto & state : state_in_)
+            if (state.valid()) core::write_tensor_f32(state, std::vector<float>(ggml_nelements(state.tensor), 0.0f));
+    }
+    std::vector<float> run(const std::vector<float> & input, const std::vector<int32_t> & indices) {
+        core::write_tensor_f32(input_, input);
+        if (message_.valid()) core::write_tensor_i32(message_, indices);
+        if (core::compute_backend_graph(backend_, graph_) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("SAM Audio codec tile execution failed");
+        auto result = core::read_tensor_f32(output_.tensor);
+        for (size_t i = 0; i < state_in_.size(); ++i)
+            if (state_in_[i].valid()) ggml_backend_tensor_copy(state_out_[i].tensor, state_in_[i].tensor);
+        return result;
+    }
+
+private:
+    ggml_backend_t backend_;
+    int64_t frames_;
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> context_{nullptr, ggml_free};
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
+    ggml_cgraph * graph_ = nullptr;
+    TensorValue input_, message_, output_;
+    CodecDecoderModule::RecurrentState state_in_{}, state_out_{};
+};
+
 class DecoderGraph {
 public:
     DecoderGraph(core::ExecutionContext & execution, const CodecDecoderModule & module,
@@ -426,6 +638,8 @@ struct CodecDecoder::Impl {
     CodecConfig config;
     CodecDecoderModule module;
     std::unique_ptr<DecoderGraph> graph;
+    std::array<std::unique_ptr<CodecTileGraph>, 6> tiles;
+    bool memory_bounded = false;
     int64_t batch = 0;
     int64_t frames = 0;
 
@@ -434,8 +648,10 @@ struct CodecDecoder::Impl {
 };
 
 CodecDecoder::CodecDecoder(std::shared_ptr<const assets::TensorSource> source,
-                           core::ExecutionContext & execution, CodecConfig config)
-    : impl_(std::make_unique<Impl>(std::move(source), execution, std::move(config))) {}
+                           core::ExecutionContext & execution, CodecConfig config, bool memory_bounded)
+    : impl_(std::make_unique<Impl>(std::move(source), execution, std::move(config))) {
+    impl_->memory_bounded = memory_bounded;
+}
 CodecDecoder::~CodecDecoder() = default;
 
 std::vector<float> CodecDecoder::decode(const std::vector<float> & latents, int64_t batch, int64_t frames,
@@ -449,6 +665,59 @@ std::vector<float> CodecDecoder::decode(const std::vector<float> & latents, int6
         if (message_bits[i] != 0 && message_bits[i] != 1)
             throw std::runtime_error("SAM Audio watermark message values must be zero or one");
         indices[i] = 2 * static_cast<int32_t>(i % 16) + message_bits[i];
+    }
+    if (impl_->memory_bounded) {
+        const auto start = std::chrono::steady_clock::now();
+        const int64_t hop = std::accumulate(impl_->config.decoder_rates.begin(), impl_->config.decoder_rates.end(),
+                                            int64_t{1}, std::multiplies<>());
+        const int64_t wm_hop = std::accumulate(impl_->config.watermark_rates.begin(), impl_->config.watermark_rates.end(),
+                                               int64_t{1}, std::multiplies<>());
+        if (impl_->batch != batch) {
+            for (auto & tile : impl_->tiles) tile.reset();
+            impl_->batch = batch;
+        }
+        auto convolve = [&](CodecTileStage stage, const std::vector<float> & input,
+                            int64_t channels, int64_t length, int64_t core, int64_t output_channels) {
+            const int64_t halo = impl_->module.context_frames(stage);
+            const int64_t window = std::min(length, core + 2 * halo);
+            auto & graph = impl_->tiles[static_cast<size_t>(stage)];
+            if (!graph || graph->frames() != window) {
+                graph.reset();
+                graph = std::make_unique<CodecTileGraph>(impl_->execution, impl_->module, impl_->config, stage, batch, window);
+            }
+            return evaluate_windows(input, batch * channels, length, window, halo,
+                batch * output_channels, graph->output_frames(),
+                [&](const auto & tile) { return graph->run(tile, indices); });
+        };
+        auto recurrent = [&](CodecTileStage stage, const std::vector<float> & input, int64_t length) {
+            constexpr int64_t window = 128;
+            auto & graph = impl_->tiles[static_cast<size_t>(stage)];
+            if (!graph) graph = std::make_unique<CodecTileGraph>(
+                impl_->execution, impl_->module, impl_->config, stage, batch, window);
+            graph->reset_state();
+            std::vector<float> result(input.size()), tile(batch * 512 * window);
+            for (int64_t begin = 0; begin < length; begin += window) {
+                const int64_t count = std::min(window, length - begin);
+                std::fill(tile.begin(), tile.end(), 0.0f);
+                for (int64_t row = 0; row < batch * 512; ++row)
+                    std::copy_n(input.data() + row * length + begin, count, tile.data() + row * window);
+                const auto output = graph->run(tile, indices);
+                for (int64_t row = 0; row < batch * 512; ++row)
+                    std::copy_n(output.data() + row * window, count, result.data() + row * length + begin);
+            }
+            return result;
+        };
+        auto base = convolve(CodecTileStage::Main, latents, impl_->config.codebook_dim, frames, 128, 1);
+        const int64_t samples = frames * hop, wm_frames = samples / wm_hop;
+        auto x = convolve(CodecTileStage::WatermarkEncoder, base, 1, samples, 128 * hop, 512);
+        x = recurrent(CodecTileStage::EncoderLSTM, x, wm_frames);
+        x = convolve(CodecTileStage::Bridge, x, 512, wm_frames, 128, 512);
+        x = recurrent(CodecTileStage::DecoderLSTM, x, wm_frames);
+        x = convolve(CodecTileStage::WatermarkDecoder, x, 512, wm_frames, 128 * hop / wm_hop, 1);
+        if (x.size() != base.size()) throw std::runtime_error("SAM Audio watermark output length mismatch");
+        for (size_t i = 0; i < base.size(); ++i) base[i] += 0.25f * x[i];
+        debug::timing_log_scalar("sam_audio.codec.decoder.wall_ms", debug::elapsed_ms(start));
+        return base;
     }
     if (impl_->batch != batch || impl_->frames != frames) {
         impl_->graph.reset();

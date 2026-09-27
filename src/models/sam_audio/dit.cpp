@@ -31,6 +31,7 @@ DiTModule::DiTModule(const assets::TensorSource & source, core::ExecutionContext
     heads_ = io::json::require_i64(json, "n_heads");
     layers_ = io::json::require_i64(json, "n_layers");
     frequency_dim_ = io::json::require_i64(json, "frequency_embedding_dim");
+    max_positions_ = io::json::require_i64(json, "max_positions");
     norm_eps_ = io::json::require_f32(json, "norm_eps");
     rope_theta_ = std::max(10000.0f, 2.0f * io::json::require_f32(json, "max_positions"));
     qk_norm_ = io::json::require_bool(json, "qk_norm");
@@ -179,7 +180,8 @@ namespace {
 class DiTGraph {
 public:
     DiTGraph(core::ExecutionContext & execution, const DiTModule & module, int64_t frames, int64_t tokens,
-             int64_t audio_channels, int64_t text_channels, int64_t video_channels)
+             int64_t audio_channels, int64_t text_channels, int64_t video_channels,
+             ggml_gallocr_t shared_allocator = nullptr, bool reserve_only = false)
         : backend_(execution.backend()), frames_(frames), audio_channels_(audio_channels), dim_(module.dim()),
           frequency_dim_(module.frequency_dim()), projection_(static_cast<size_t>(frames * audio_channels * 3), 0.0f) {
         constexpr size_t nodes = 32768;
@@ -203,9 +205,14 @@ public:
         graph_ = ggml_new_graph_custom(context_.get(), nodes, false);
         ggml_build_forward_expand(graph_, output_.tensor);
         runtime::optimize_graph(*graph_, runtime::GraphOptimizationBackend::Gpu);
-        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
-        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_))
+        if (!shared_allocator) allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+        auto * allocator = shared_allocator ? shared_allocator : allocator_.get();
+        if (!allocator || !ggml_gallocr_reserve(allocator, graph_))
             throw std::runtime_error("SAM Audio DiT graph allocation failed");
+        if (reserve_only) return;
+        if (!ggml_gallocr_alloc_graph(allocator, graph_))
+            throw std::runtime_error("SAM Audio DiT graph allocation failed");
+        debug::timing_log_scalar("sam_audio.dit.graph_buffer_mb", ggml_gallocr_get_buffer_size(allocator, 0) / 1048576.0);
         std::vector<int32_t> indices(frames);
         std::iota(indices.begin(), indices.end(), 0);
         core::write_tensor_i32(positions, indices);
@@ -255,7 +262,9 @@ private:
 struct DiTRuntime::Impl {
     core::ExecutionContext & execution;
     DiTModule module;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> bounded_allocator{nullptr, ggml_gallocr_free};
     std::unique_ptr<DiTGraph> graph;
+    bool memory_bounded = false;
     int64_t frames = 0, tokens = 0;
     int64_t audio_channels, text_channels, video_channels;
 
@@ -269,8 +278,10 @@ struct DiTRuntime::Impl {
 };
 
 DiTRuntime::DiTRuntime(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution,
-                       const std::filesystem::path & config)
-    : impl_(std::make_unique<Impl>(*source, execution, config)) {}
+                       const std::filesystem::path & config, bool memory_bounded)
+    : impl_(std::make_unique<Impl>(*source, execution, config)) {
+    impl_->memory_bounded = memory_bounded;
+}
 DiTRuntime::~DiTRuntime() = default;
 
 std::vector<float> DiTRuntime::sample(const DiTConditioning & conditioning, const std::vector<float> & noise, int steps) {
@@ -283,10 +294,23 @@ std::vector<float> DiTRuntime::sample(const DiTConditioning & conditioning, cons
         conditioning.anchors.size() != static_cast<size_t>(conditioning.frames))
         throw std::runtime_error("SAM Audio DiT conditioning shape mismatch");
     const auto start = std::chrono::steady_clock::now();
+    if (impl_->memory_bounded) {
+        if (conditioning.frames > impl_->module.max_positions())
+            throw std::runtime_error("SAM Audio bounded mode exceeds the model's maximum audio position count");
+        if (!impl_->bounded_allocator) {
+            impl_->bounded_allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(impl_->execution.backend())));
+            if (!impl_->bounded_allocator) throw std::runtime_error("SAM Audio DiT allocator creation failed");
+            // Reserve the model's finite context capacity, not a longer padded input:
+            // every real graph still evaluates only the original recording and text.
+            DiTGraph capacity(impl_->execution, impl_->module, impl_->module.max_positions(), 512,
+                impl_->audio_channels, impl_->text_channels, impl_->video_channels, impl_->bounded_allocator.get(), true);
+        }
+    }
     if (!impl_->graph || impl_->frames != conditioning.frames || impl_->tokens != conditioning.tokens) {
         impl_->graph.reset();
         impl_->graph = std::make_unique<DiTGraph>(impl_->execution, impl_->module, conditioning.frames, conditioning.tokens,
-                                                impl_->audio_channels, impl_->text_channels, impl_->video_channels);
+                                                impl_->audio_channels, impl_->text_channels, impl_->video_channels,
+                                                impl_->bounded_allocator.get());
         impl_->frames = conditioning.frames;
         impl_->tokens = conditioning.tokens;
     }

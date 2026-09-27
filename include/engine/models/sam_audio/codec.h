@@ -4,6 +4,7 @@
 #include "engine/framework/core/execution_context.h"
 
 #include <memory>
+#include <array>
 #include <vector>
 
 namespace engine::models::sam_audio {
@@ -20,7 +21,7 @@ struct CodecConfig {
 class CodecEncoder {
 public:
     CodecEncoder(std::shared_ptr<const assets::TensorSource> source,
-                 core::ExecutionContext & execution, CodecConfig config);
+                 core::ExecutionContext & execution, CodecConfig config, bool memory_bounded = false);
     ~CodecEncoder();
     std::vector<float> encode(const std::vector<float> & audio);
 
@@ -29,8 +30,11 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+enum class CodecTileStage { Main, WatermarkEncoder, EncoderLSTM, Bridge, DecoderLSTM, WatermarkDecoder };
+
 class CodecDecoderModule {
 public:
+    using RecurrentState = std::array<core::TensorValue, 4>;
     CodecDecoderModule(std::shared_ptr<const assets::TensorSource> source,
                        core::ExecutionContext & execution, CodecConfig config);
     ~CodecDecoderModule();
@@ -42,6 +46,13 @@ public:
     core::TensorValue watermark_base(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
     core::TensorValue watermark_encode(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
     core::TensorValue watermark_decode(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    core::TensorValue watermark_encode_convs(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    core::TensorValue watermark_encode_output(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    core::TensorValue watermark_decode_input(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    core::TensorValue watermark_decode_convs(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
+    core::TensorValue watermark_lstm(core::ModuleBuildContext & ctx, const core::TensorValue & input,
+                                    bool decoder, RecurrentState * state = nullptr) const;
+    int64_t context_frames(CodecTileStage stage) const;
 
 private:
     struct Impl;
@@ -51,7 +62,7 @@ private:
 class CodecDecoder {
 public:
     CodecDecoder(std::shared_ptr<const assets::TensorSource> source,
-                 core::ExecutionContext & execution, CodecConfig config);
+                 core::ExecutionContext & execution, CodecConfig config, bool memory_bounded = false);
     ~CodecDecoder();
     std::vector<float> decode(const std::vector<float> & latents, int64_t batch, int64_t frames,
                               const std::vector<int32_t> & message_bits);

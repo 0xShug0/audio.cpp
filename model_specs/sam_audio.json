@@ -58,7 +58,15 @@
         "required": false
       }
     ],
-    "session": [],
+    "session": [
+      {
+        "name": "memory_bounded",
+        "type": "bool",
+        "description": "Experimental bounded-workspace execution with full recording context. Provisional option name.",
+        "default": false,
+        "required": false
+      }
+    ],
     "load": []
   },
   "package_defaults": {
@@ -86,7 +94,6 @@
   "ui": {
     "recommended_package": "sam_audio_small_f32",
     "tags": [
-      "S2S",
       "GGUF"
     ],
     "docs": [

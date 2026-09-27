@@ -37,12 +37,14 @@ public:
         runtime::validate_spec_backed_session_options(options, *contract_, "sam_audio", "SAM Audio");
         if (task.task != runtime::VoiceTaskKind::SpeechToSpeech || task.mode != runtime::RunMode::Offline)
             throw std::runtime_error("SAM Audio supports offline s2s separation");
+        const auto bounded_option = runtime::find_option(options.options, {"sam_audio.memory_bounded"});
+        const bool memory_bounded = bounded_option && runtime::parse_bool_option(*bounded_option, "sam_audio.memory_bounded");
         auto & execution = execution_context();
-        encoder_ = std::make_unique<CodecEncoder>(assets_->tensors, execution, assets_->codec);
+        encoder_ = std::make_unique<CodecEncoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
         text_ = std::make_unique<TextEncoder>(assets_->tensors, execution,
             assets_->resources.require_file("t5_config"), assets_->resources.require_file("tokenizer"));
-        denoiser_ = std::make_unique<DiTRuntime>(assets_->tensors, execution, assets_->resources.require_file("config"));
-        decoder_ = std::make_unique<CodecDecoder>(assets_->tensors, execution, assets_->codec);
+        denoiser_ = std::make_unique<DiTRuntime>(assets_->tensors, execution, assets_->resources.require_file("config"), memory_bounded);
+        decoder_ = std::make_unique<CodecDecoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
         assets_->tensors->release_storage();
     }
 
