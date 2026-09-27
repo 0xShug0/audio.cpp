@@ -88,6 +88,86 @@
       "files": [
         "sam-audio-small-f32.gguf"
       ]
+    },
+    {
+      "id": "sam_audio_small_bf16",
+      "display_name": "SAM Audio Small BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-small-bf16.gguf"
+      ]
+    },
+    {
+      "id": "sam_audio_small_q8_0",
+      "display_name": "SAM Audio Small Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-small-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "sam_audio_base_f32",
+      "display_name": "SAM Audio Base F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-base-f32.gguf"
+      ]
+    },
+    {
+      "id": "sam_audio_base_bf16",
+      "display_name": "SAM Audio Base BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-base-bf16.gguf"
+      ]
+    },
+    {
+      "id": "sam_audio_base_q8_0",
+      "display_name": "SAM Audio Base Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-base-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "sam_audio_large_f32",
+      "display_name": "SAM Audio Large F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-large-f32.gguf"
+      ]
+    },
+    {
+      "id": "sam_audio_large_bf16",
+      "display_name": "SAM Audio Large BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-large-bf16.gguf"
+      ]
+    },
+    {
+      "id": "sam_audio_large_q8_0",
+      "display_name": "SAM Audio Large Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "SAM-Audio-GGUF",
+      "files": [
+        "sam-audio-large-q8_0.gguf"
+      ]
     }
   ],
   "dependencies": [],

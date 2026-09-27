@@ -616,6 +616,8 @@ public:
                 throw std::runtime_error("SAM Audio decoder graph execution failed");
             ggml_backend_synchronize(backend_);
             debug::timing_log_scalar(keys[i], debug::elapsed_ms(start));
+            // Return the base waveform without running the watermark stages.
+            if (i == 0) return core::read_tensor_f32(base_.tensor);
         }
         auto decoded = core::read_tensor_f32(output_.tensor);
         const auto base = core::read_tensor_f32(base_.tensor);
@@ -708,6 +710,9 @@ std::vector<float> CodecDecoder::decode(const std::vector<float> & latents, int6
             return result;
         };
         auto base = convolve(CodecTileStage::Main, latents, impl_->config.codebook_dim, frames, 128, 1);
+        // Preserve watermark code for future use, but return unwatermarked audio.
+        debug::timing_log_scalar("sam_audio.codec.decoder.wall_ms", debug::elapsed_ms(start));
+        return base;
         const int64_t samples = frames * hop, wm_frames = samples / wm_hop;
         auto x = convolve(CodecTileStage::WatermarkEncoder, base, 1, samples, 128 * hop, 512);
         x = recurrent(CodecTileStage::EncoderLSTM, x, wm_frames);
