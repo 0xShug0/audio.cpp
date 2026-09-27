@@ -996,13 +996,23 @@ ConfuciusS2ARuntime::ConfuciusS2ARuntime(
     if (graph_arena_bytes_ == 0) {
         throw std::runtime_error("Confucius S2Mel graph arena must be non-zero");
     }
-    weights_ = load_confucius_s2a_weights(
-        *assets_,
-        execution.backend(),
-        execution.backend_type(),
-        matmul_storage_type,
-        conv_storage_type,
-        weight_context_bytes);
+    const auto load = [&] {
+        return load_confucius_s2a_weights(
+            *assets_,
+            execution.backend(),
+            execution.backend_type(),
+            matmul_storage_type,
+            conv_storage_type,
+            weight_context_bytes);
+    };
+    if (execution.backend_type() == core::BackendType::Cuda) {
+        const auto key = "s2a:" + std::to_string(execution.config().device) + ":" +
+            std::to_string(static_cast<int>(matmul_storage_type)) + ":" +
+            std::to_string(static_cast<int>(conv_storage_type)) + ":" + std::to_string(weight_context_bytes);
+        weights_ = assets_->cuda_weights->get_or_load_shared<ConfuciusS2AWeights>(key, load);
+    } else {
+        weights_ = load();
+    }
 }
 
 ConfuciusS2ARuntime::~ConfuciusS2ARuntime() = default;
