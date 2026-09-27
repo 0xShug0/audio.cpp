@@ -78,6 +78,13 @@ of memory or an atomic snapshot of the entire server.
 
 ## Enabling another model
 
+Follow the [parallel model validation procedure](parallel_model_validation.md)
+before adding or increasing admission. It separates checkpoint quality and
+performance checks from common request-ownership/lifecycle evidence, requires
+validation of every advertised count, and records pending or hardware-blocked
+checks explicitly. The procedure describes required evidence, not tests that
+have all already run.
+
 1. Split immutable weights from mutable inference state in the model adapter.
 2. Implement the factory and advertise only audited backend/task/mode combinations.
 3. Compare isolated single-session and concurrent outputs with fixed seeds and

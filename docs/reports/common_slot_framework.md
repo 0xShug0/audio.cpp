@@ -74,6 +74,14 @@ measurements in the scheduler report retain that distinction. No real parallel
 streaming/native-batch adapter is certified by this extraction. Cross-platform
 CI, sanitizers and every possible lifecycle interleaving are not claimed here.
 
+The [parallel model validation procedure](../maintainers/parallel_model_validation.md)
+now defines the required model gate and additional controlled framework
+lifecycle scenarios arising from the maintainer's request-ownership review.
+This is a documentation update; the newly specified checks are not additional
+completed test results. Its final section identifies existing coverage and
+remaining disconnect, queued-reconfiguration, cross-model, shutdown and
+sanitizer evidence gaps.
+
 ## Reproduction and evidence
 
 Enable `ENGINE_BUILD_TESTS=ON` and `ENGINE_BUILD_EXTENDED_TESTS=ON`, build the CLI,
