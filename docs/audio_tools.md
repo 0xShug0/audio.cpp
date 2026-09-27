@@ -10,6 +10,7 @@
 | ControlFoley | `controlfoley` | `gen` Foley/SFX generation | [ControlFoley](#controlfoley) |
 | GTCRN | `gtcrn`, `gtcrn_dns3`, `gtcrn_vctk`, `gtcrn_streaming` | framework denoise utility API | [GTCRN](#gtcrn) |
 | MeanVC2 | `meanvc2` | `vc` | [MeanVC2](#meanvc2) |
+| Tone Color VC | `tone_color_vc` | `vc` | [Tone Color VC](models/tone_color_vc.md) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
 | RVC | `rvc` | `vc` | [RVC](#rvc) |
