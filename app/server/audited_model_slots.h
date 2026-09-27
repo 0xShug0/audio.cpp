@@ -117,7 +117,7 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
 // support. See docs/reports/generic_vulkan_slots_audit.md for tested workloads.
 // Weight-sharing additions: docs/reports/vulkan_slots_allocation_investigation.md.
 // Connection-reset follow-up: docs/reports/vulkan_slots_connection_resets.md.
-inline constexpr std::array<AuditedModelSlots, 71> kAuditedVulkanOfflineModels = {{
+inline constexpr std::array<AuditedModelSlots, 72> kAuditedVulkanOfflineModels = {{
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"audio8_tts", engine::runtime::VoiceTaskKind::Tts, 4},
@@ -143,6 +143,7 @@ inline constexpr std::array<AuditedModelSlots, 71> kAuditedVulkanOfflineModels =
     {"htdemucs", engine::runtime::VoiceTaskKind::SourceSeparation, 4},
     {"hviske_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"index_tts2", engine::runtime::VoiceTaskKind::Tts, 3},
+    {"inflect_v2", engine::runtime::VoiceTaskKind::Tts, 4},
     {"irodori_tts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"kitten_tts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"kokoro_tts", engine::runtime::VoiceTaskKind::Tts, 4},

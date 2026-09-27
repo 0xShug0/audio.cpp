@@ -2767,6 +2767,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
 
     if (ENGINE_ENABLE_VULKAN)
+        add_engine_unittest(inflect_vulkan_attention_row_test tests/unittests/test_inflect_vulkan_attention_row.cpp)
+        target_include_directories(inflect_vulkan_attention_row_test PRIVATE src/community_models/inflect_v2)
+        add_test(NAME inflect_vulkan_attention_row_test COMMAND inflect_vulkan_attention_row_test)
+        set_tests_properties(inflect_vulkan_attention_row_test PROPERTIES SKIP_RETURN_CODE 77)
         add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
         add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
         set_tests_properties(vulkan_shared_weight_cache_test PROPERTIES SKIP_RETURN_CODE 77)
