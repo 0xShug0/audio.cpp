@@ -139,6 +139,7 @@ Model weights keep the license of their original release, which is separate from
 |---|---|---|---|---|
 | **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
 | **apollo** | S2S | lang agnostic | Apollo music restoration | GGUF F32 |
+| **sam_audio** | S2S | lang agnostic | SAM Audio Small prompt-conditioned separation | GGUF F32 |
 | **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
 | **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |

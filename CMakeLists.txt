@@ -635,6 +635,21 @@ audiocpp_add_model(universr
         engine::models::universr::make_universr_loader
 )
 
+audiocpp_add_model(sam_audio
+    SOURCES
+        src/models/sam_audio/video.cpp
+        src/models/sam_audio/frontend.cpp
+        src/models/sam_audio/vision.cpp
+        src/models/sam_audio/codec.cpp
+        src/models/sam_audio/conditioner.cpp
+        src/models/sam_audio/dit.cpp
+        src/models/sam_audio/session.cpp
+    INCLUDES
+        engine/models/sam_audio/session.h
+    LOADERS
+        engine::models::sam_audio::make_sam_audio_loader
+)
+
 audiocpp_add_model(apollo
     SOURCES
         src/models/apollo/assets.cpp
@@ -2977,6 +2992,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME encoder_module_test COMMAND encoder_module_test)
 
         add_engine_unittest(transpose_module_test tests/unittests/test_transpose_module.cpp)
+        add_engine_unittest(lstm_sequence_test tests/unittests/test_lstm_sequence.cpp)
+        add_test(NAME lstm_sequence_test COMMAND lstm_sequence_test --log)
         target_include_directories(transpose_module_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME transpose_module_test COMMAND transpose_module_test)
 
