@@ -31,7 +31,8 @@ public:
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type,
         ggml_type cache_type = GGML_TYPE_F32,
-        const core::SharedWeightCache * shared_cuda_weights = nullptr);
+        // Optional package cache for read-only CUDA/Vulkan tensors only.
+        const core::SharedWeightCache * shared_device_weights = nullptr);
     ~MossTtsDelayBackboneRuntime();
 
     MossTtsDelayBackboneRuntime(const MossTtsDelayBackboneRuntime &) = delete;

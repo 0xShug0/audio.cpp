@@ -261,7 +261,7 @@ MossTtsDelayBackboneRuntime::MossTtsDelayBackboneRuntime(
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type,
     ggml_type cache_type,
-    const core::SharedWeightCache * shared_cuda_weights)
+    const core::SharedWeightCache * shared_device_weights)
     : impl_(std::make_unique<Impl>()) {
     if (weights == nullptr) {
         throw std::runtime_error("MOSS delay backbone requires model weights");
@@ -281,10 +281,12 @@ MossTtsDelayBackboneRuntime::MossTtsDelayBackboneRuntime(
         impl_->backend_type,
         weight_context_bytes,
         weight_storage_type); };
-    if (impl_->backend_type == core::BackendType::Cuda && shared_cuda_weights != nullptr) {
-        const auto key = "delay.backbone:" + std::to_string(execution_context.config().device) + ":" +
+    if ((impl_->backend_type == core::BackendType::Cuda || impl_->backend_type == core::BackendType::Vulkan) &&
+        shared_device_weights != nullptr) {
+        const auto key = "delay.backbone:" + std::to_string(static_cast<int>(impl_->backend_type)) + ":" +
+            std::to_string(execution_context.config().device) + ":" +
             std::to_string(static_cast<int>(weight_storage_type)) + ":" + std::to_string(weight_context_bytes);
-        impl_->weights = *shared_cuda_weights->get_or_load<MossTtsDelayBackboneWeights>(key, load_weights);
+        impl_->weights = *shared_device_weights->get_or_load<MossTtsDelayBackboneWeights>(key, load_weights);
     } else {
         impl_->weights = load_weights();
     }
