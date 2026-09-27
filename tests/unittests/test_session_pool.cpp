@@ -243,6 +243,8 @@ void test_audited_model_policy() {
     require(capacity("liveavatar", VoiceTaskKind::AudioGeneration) == 1, "VRAM-blocked family enabled");
     require(capacity("audiosr", VoiceTaskKind::SpeechToSpeech) == 2, "guarded AudioSR CUDA slots disabled");
     require(capacity("miocodec", VoiceTaskKind::VoiceConversion) == 2, "deterministic MioCodec CUDA slots disabled");
+    require(capacity("moss_ttsd", VoiceTaskKind::Tts) == 2, "revalidated CUDA slots disabled");
+    require(capacity("moss_ttsd", VoiceTaskKind::Tts, BackendType::Vulkan) == 1, "unaudited Vulkan slots enabled");
     require(capacity("miotts", VoiceTaskKind::Tts) == 2, "revalidated CUDA slots disabled");
     require(capacity("miotts", VoiceTaskKind::Tts, BackendType::Vulkan) == 1, "unaudited Vulkan slots enabled");
     require(capacity("neutts", VoiceTaskKind::Tts) == 2, "revalidated CUDA slots disabled");
