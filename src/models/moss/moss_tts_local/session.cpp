@@ -228,6 +228,16 @@ MossGenerationOptions generation_options_from_request(const runtime::TaskRequest
 
 }  // namespace
 
+struct MossTTSLocalSession::SharedCudaRuntime {
+    // The execution context outlives every graph and component that borrows it.
+    std::unique_ptr<core::ExecutionContext> execution;
+    std::shared_ptr<MossBackboneRuntime> backbone;
+    std::shared_ptr<MossDepthTransformer> depth;
+    std::shared_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> codec;
+    std::shared_ptr<MossGenerator> generator;
+    std::mutex mutex;
+};
+
 MossTTSLocalSession::MossTTSLocalSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
@@ -236,6 +246,46 @@ MossTTSLocalSession::MossTTSLocalSession(
       task_(task),
       assets_(require_assets(std::move(assets))),
       reference_voice_cache_(resolve_reference_cache_slots(this->options())) {
+    processor_ = std::make_unique<MossTextProcessor>(assets_);
+    if (execution_context().backend_type() == core::BackendType::Cuda) {
+        // Package, device, threads and session options identify a compatible
+        // runtime. Sharing it bounds retained allocator pools as well as weights.
+        std::vector<std::pair<std::string, std::string>> settings(options.options.begin(), options.options.end());
+        std::sort(settings.begin(), settings.end());
+        std::string key = std::to_string(options.backend.device) + ":" + std::to_string(options.backend.threads);
+        for (const auto & setting : settings) {
+            key += ":" + std::to_string(setting.first.size()) + ":" + setting.first +
+                   ":" + std::to_string(setting.second.size()) + ":" + setting.second;
+        }
+        const std::lock_guard<std::mutex> lock(assets_->cuda_runtimes->mutex);
+        auto & cached = assets_->cuda_runtimes->runtimes[key];
+        cuda_runtime_ = std::static_pointer_cast<SharedCudaRuntime>(cached.lock());
+        if (cuda_runtime_ == nullptr) {
+            auto runtime = std::make_shared<SharedCudaRuntime>();
+            runtime->execution = std::make_unique<core::ExecutionContext>(options.backend);
+            runtime->backbone = std::make_shared<MossBackboneRuntime>(assets_, *runtime->execution,
+                kBackboneGraphArenaBytes, kBackboneWeightContextBytes,
+                option_weight_type(options, "moss_tts_local.weight_type"));
+            runtime->depth = std::make_shared<MossDepthTransformer>(assets_, *runtime->execution,
+                kDepthGraphArenaBytes, kDepthWeightContextBytes);
+            runtime->codec = std::make_shared<engine::codecs::MossAudioTokenizerCodecRuntime>(
+                assets_->audio_tokenizer_weights, *runtime->execution, assets_->config.num_codebooks,
+                engine::codecs::MossAudioTokenizerCodecRuntimeOptions{
+                    kCodecWeightContextBytes, kEncoderGraphArenaBytes, kCodecGraphArenaBytes, true});
+            runtime->generator = std::make_shared<MossGenerator>(assets_, *runtime->execution,
+                kGeneratorProjectionGraphArenaBytes, kGeneratorProjectionWeightContextBytes,
+                *runtime->backbone, *runtime->depth);
+            runtime->codec->prepare_decoder();
+            assets_->model_weights->release_storage();
+            cached = runtime;
+            cuda_runtime_ = std::move(runtime);
+        }
+        backbone_ = cuda_runtime_->backbone;
+        depth_ = cuda_runtime_->depth;
+        codec_ = cuda_runtime_->codec;
+        generator_ = cuda_runtime_->generator;
+        return;
+    }
     backbone_ = std::make_unique<MossBackboneRuntime>(
         assets_,
         execution_context(),
@@ -244,7 +294,6 @@ MossTTSLocalSession::MossTTSLocalSession(
         option_weight_type(options, "moss_tts_local.weight_type"));
     depth_ = std::make_unique<MossDepthTransformer>(
         assets_, execution_context(), kDepthGraphArenaBytes, kDepthWeightContextBytes);
-    processor_ = std::make_unique<MossTextProcessor>(assets_);
     codec_ = std::make_unique<engine::codecs::MossAudioTokenizerCodecRuntime>(
         assets_->audio_tokenizer_weights,
         execution_context(),
@@ -279,6 +328,8 @@ runtime::RunMode MossTTSLocalSession::run_mode() const {
 }
 
 void MossTTSLocalSession::prepare(const runtime::SessionPreparationRequest & request) {
+    std::unique_lock<std::mutex> cuda_guard;
+    if (cuda_runtime_ != nullptr) cuda_guard = std::unique_lock<std::mutex>(cuda_runtime_->mutex);
     const bool has_reference = request.voice.has_value() && request.voice->speaker.has_value() &&
         request.voice->speaker->audio.has_value();
     if (has_reference) {
@@ -297,6 +348,8 @@ bool MossTTSLocalSession::ReferenceAudioCacheKeyEqual::operator()(
 }
 
 runtime::TaskResult MossTTSLocalSession::run(const runtime::TaskRequest & request) {
+    std::unique_lock<std::mutex> cuda_guard;
+    if (cuda_runtime_ != nullptr) cuda_guard = std::unique_lock<std::mutex>(cuda_runtime_->mutex);
     const auto wall_start = std::chrono::steady_clock::now();
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("MOSS-TTS-Local requires text input");

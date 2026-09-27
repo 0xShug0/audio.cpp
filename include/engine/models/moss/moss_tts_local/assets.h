@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::models::moss_tts_local {
@@ -52,7 +54,14 @@ struct MossTTSLocalConfig {
     std::string local_text_head_mode;
 };
 
+struct MossTTSLocalCudaRuntimeCache {
+    std::mutex mutex;
+    // Weak ownership avoids a cycle: the runtimes retain their package assets.
+    std::unordered_map<std::string, std::weak_ptr<void>> runtimes;
+};
+
 struct MossTTSLocalAssets {
+    std::shared_ptr<MossTTSLocalCudaRuntimeCache> cuda_runtimes = std::make_shared<MossTTSLocalCudaRuntimeCache>();
     assets::ResourceBundle resources;
     MossTTSLocalConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
