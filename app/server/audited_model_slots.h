@@ -118,8 +118,8 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
 // Weight-sharing additions: docs/reports/vulkan_slots_allocation_investigation.md.
 // Connection-reset follow-up: docs/reports/vulkan_slots_connection_resets.md.
 // Inflect/Mel-Band fixes and four-slot checks: docs/reports/vulkan_inflect_mel_slots.md.
-// F5-TTS fixes and two-slot checks: docs/reports/f5_seed_slots_followup.md.
-inline constexpr std::array<AuditedModelSlots, 74> kAuditedVulkanOfflineModels = {{
+// F5/Seed-VC fixes and two-slot checks: docs/reports/f5_seed_slots_followup.md.
+inline constexpr std::array<AuditedModelSlots, 75> kAuditedVulkanOfflineModels = {{
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"audio8_tts", engine::runtime::VoiceTaskKind::Tts, 4},
@@ -177,6 +177,7 @@ inline constexpr std::array<AuditedModelSlots, 74> kAuditedVulkanOfflineModels =
     {"qwen3_tts", engine::runtime::VoiceTaskKind::Tts, 3},
     {"rvc", engine::runtime::VoiceTaskKind::VoiceConversion, 3},
     {"sanotts", engine::runtime::VoiceTaskKind::Tts, 4},
+    {"seed_vc", engine::runtime::VoiceTaskKind::VoiceConversion, 2},
     {"sense_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"sheetsage2", engine::runtime::VoiceTaskKind::Midi, 2},
     {"soprano_tts", engine::runtime::VoiceTaskKind::Tts, 4},

@@ -2909,6 +2909,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_test(NAME f5_cpu_backend_test COMMAND f5_cpu_backend_test)
         endif()
 
+        if(seed_vc IN_LIST AUDIOCPP_LINKED_MODELS)
+            # Manual checkpoint-backed regression; no model downloads in CTest.
+            add_engine_unittest(campplus_graph_reuse_probe tests/seed_vc/campplus_reuse_main.cpp)
+        endif()
+
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
 
