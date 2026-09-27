@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <mutex>
 #include <numeric>
 #include <random>
 #include <stdexcept>
@@ -52,6 +53,14 @@ struct ModelWeights {
     core::TensorValue rope_factors;
     std::vector<LayerWeights> layers;
     assets::TensorDataF32 norm;
+};
+
+// OuteTTS switches weight storage when moving between default speech and
+// cloning. Retain each format only while a runtime uses it, preserving the
+// existing single-slot release behavior while sharing it across active slots.
+struct CachedModelWeights {
+    mutable std::mutex mutex;
+    mutable std::weak_ptr<const ModelWeights> weights;
 };
 
 struct PrefillOutput {
@@ -553,7 +562,23 @@ struct OuteTTSLlamaRuntime::Impl {
             throw std::runtime_error("OuteTTS Llama runtime requires assets");
         }
         backend = core::init_backend({backend_type, device, threads});
-        weights = load_weights(*assets, backend, backend_type, weight_context_bytes, storage_type);
+        const auto load = [&] { return load_weights(*assets, backend, backend_type, weight_context_bytes, storage_type); };
+        if (core::backend_type(backend) == core::BackendType::Cuda) {
+            const auto key = "llama:" + std::to_string(device) + ":" +
+                std::to_string(static_cast<int>(storage_type)) + ":" + std::to_string(weight_context_bytes);
+            const auto entry = assets->cuda_weights->get_or_load_shared<CachedModelWeights>(key, [] {
+                return std::make_shared<CachedModelWeights>();
+            });
+            const std::lock_guard<std::mutex> lock(entry->mutex);
+            shared_weights_owner = entry->weights.lock();
+            if (!shared_weights_owner) {
+                shared_weights_owner = std::make_shared<ModelWeights>(load());
+                entry->weights = shared_weights_owner;
+            }
+            weights = *shared_weights_owner;
+        } else {
+            weights = load();
+        }
         constants = std::make_unique<core::ConstantTensorCache>(
             backend, threads, "outetts.llama.constants", constant_context_bytes);
     }
@@ -566,6 +591,7 @@ struct OuteTTSLlamaRuntime::Impl {
         step_graph.reset();
         constants.reset();
         weights.store.reset();
+        shared_weights_owner.reset();
         if (backend != nullptr) {
             ggml_backend_free(backend);
         }
@@ -738,6 +764,7 @@ struct OuteTTSLlamaRuntime::Impl {
     int threads = 1;
     sampling::TorchCudaSamplingPolicy sampling_policy;
     ModelWeights weights;
+    std::shared_ptr<const ModelWeights> shared_weights_owner;
     std::unique_ptr<core::ConstantTensorCache> constants;
     std::unique_ptr<CachedStepGraph> step_graph;
 };

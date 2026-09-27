@@ -80,7 +80,7 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
     {"nemotron_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"neutts", engine::runtime::VoiceTaskKind::Tts, 2},
     {"omnivoice", engine::runtime::VoiceTaskKind::Tts, 4},
-    {"outetts", engine::runtime::VoiceTaskKind::Tts, 3},
+    {"outetts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"parakeet_tdt", engine::runtime::VoiceTaskKind::Asr, 4},
     {"personaplex", engine::runtime::VoiceTaskKind::SpeechToSpeech, 2},
     {"piper_tts", engine::runtime::VoiceTaskKind::Tts, 4},
