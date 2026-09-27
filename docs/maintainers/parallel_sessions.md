@@ -101,8 +101,9 @@ without the factory work with one slot and reject larger configurations.
 
 ## Current implementation and validation
 
-Higgs Audio v3 TTS on CUDA in offline mode is the first enabled adapter. Other
-models and other Higgs backend/mode combinations retain one slot. The framework
+Higgs Audio v3 TTS has a specialized offline adapter for CUDA and Vulkan
+(up to four Vulkan slots). Audited CUDA families also use the loaded-model
+fallback described above. Other Higgs backend/mode combinations retain one slot. The framework
 has no family-specific CUDA kernels and does not change shared CUDA operations.
 
 Default unit tests cover the session pool, scheduler and compatibility with the
@@ -126,4 +127,6 @@ four shared slots with actual independent single-slot server instances, includin
 generation time, memory, output parity and reproduction commands.
 The [Vulkan report](../reports/common_model_slots_vulkan.md) records single-slot
 compatibility, same-backend WAV parity and two reproduced upstream extended-test
-failures. Vulkan parallel execution remains disabled.
+failures at the original revision. The follow-up
+[Higgs Vulkan parallel report](../reports/higgs_vulkan_parallel_slots.md)
+records the four-slot adapter validation.

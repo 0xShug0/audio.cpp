@@ -1,6 +1,6 @@
-"""Compare shared-model slots with independent single-slot CUDA servers.
+"""Compare shared-model slots with independent single-slot GPU servers.
 
-Requires an otherwise idle NVIDIA GPU, NVML and a CUDA audiocpp_server build.
+Requires an otherwise idle NVIDIA GPU, NVML and a matching audiocpp_server build.
 Uses only the Python standard library. Input is a task request JSON with fixed
 seed and reference audio; all generated WAVs and sampled observations are saved.
 """
@@ -90,7 +90,7 @@ def measure_case(args, gpu, request, kind, count, expected):
             if args.spec:
                 model["model_spec_override"] = str(args.spec)
             config = {
-                "host": "127.0.0.1", "port": port, "backend": "cuda", "device": 0,
+                "host": "127.0.0.1", "port": port, "backend": args.backend, "device": args.device,
                 "threads": args.threads, "lazy_load": False, "models": [model],
             }
             config_path = out / f"config-{index}.json"
@@ -210,6 +210,9 @@ def main():
     parser.add_argument("--spec", type=Path)
     parser.add_argument("--iterations", type=int, default=3, help="warm repeats per configuration")
     parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--backend", choices=["cuda", "vulkan"], default="cuda")
+    parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--skip-instances", action="store_true")
     parser.add_argument("--slots", type=int, nargs="+", default=[1, 2, 3, 4])
     args = parser.parse_args()
     if args.iterations < 1 or not args.slots or args.slots[0] != 1 or any(n < 1 or n > 16 for n in args.slots):
@@ -218,7 +221,7 @@ def main():
         if getattr(args, name):
             setattr(args, name, getattr(args, name).resolve())
     args.output.mkdir(parents=True, exist_ok=True)
-    request = json.loads(args.request_json.read_text(encoding="utf-8"))
+    request = json.loads(args.request_json.read_text(encoding="utf-8-sig"))
     if "seed" not in request:
         parser.error("request JSON must contain a fixed seed for parity comparison")
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -232,11 +235,12 @@ def main():
     try:
         for count in args.slots:
             reports.append(measure_case(args, gpu, request, "slots", count, expected))
-        for count in args.slots:
+        for count in ([] if args.skip_instances else args.slots):
             if count > 1:
                 reports.append(measure_case(args, gpu, request, "instances", count, expected))
         (args.output / "results.json").write_text(json.dumps({
             "server": str(args.server), "model": str(args.model), "request": request,
+            "backend": args.backend, "device": args.device,
             "idle_nvml_bytes": gpu.idle, "expected_sha256": expected, "cases": reports,
         }, indent=2, ensure_ascii=False), encoding="utf-8")
         print("PASS all WAVs match their cold/warm single-slot reference", flush=True)

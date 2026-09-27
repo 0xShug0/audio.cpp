@@ -125,12 +125,18 @@ def main():
     for name in ['before-server', 'after-server', 'model', 'spec', 'reference', 'output-dir']:
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--backend', choices=['vulkan', 'cpu'], default='vulkan',
-                        help='backends currently advertising one Higgs execution slot')
+                        help='backend for same-backend single-slot regression checks')
+    parser.add_argument('--expected-capacity', type=int,
+                        help='updated adapter capacity (default: Vulkan 4, CPU 1); inference uses one slot')
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--separator-model', type=Path)
     parser.add_argument('--separator-spec', type=Path)
     parser.add_argument('--input-audio', type=Path)
     args = parser.parse_args()
+    if args.expected_capacity is None:
+        args.expected_capacity = 4 if args.backend == 'vulkan' else 1
+    if not 1 <= args.expected_capacity < 16:
+        parser.error('expected capacity must be 1..15 to test capacity+1 rejection')
     if any([args.separator_model, args.separator_spec, args.input_audio]) and not all([
             args.separator_model, args.separator_spec, args.input_audio]):
         parser.error('separator model, spec and input audio must be supplied together')
@@ -180,15 +186,15 @@ def main():
             assert expected['roformer'][0]['status'] == 200, expected['roformer'][0]
     passed('unmodified same-backend references generated')
 
-    # This harness specifically tests backends that currently advertise one slot.
-    updated_models = [{**m, 'slots': 1} for m in models] + [{**higgs, 'id': 'unsupported', 'slots': 2}]
+    updated_models = [{**m, 'slots': 1} for m in models] + [
+        {**higgs, 'id': 'unsupported', 'slots': args.expected_capacity + 1}]
     with Server(args.after_server, updated_models, args.backend, args.device, args.output_dir / 'after') as server:
         records['after'] = []
         for name, body in cases:
             value = server.run(body, name)
             same(value, expected[name])
             records['after'].append(value[0])
-            assert server.status()['max_parallel_slots'] == 1 and server.status()['active_slots'] == 0
+            assert server.status()['max_parallel_slots'] == args.expected_capacity and server.status()['active_slots'] == 0
             print('after', name, value[0]['status'], round(value[0]['http_s'], 3), 'exact', flush=True)
         passed('all ten inference/error cases match upstream on the same backend')
         with cf.ThreadPoolExecutor(max_workers=5) as pool:
@@ -225,7 +231,7 @@ def main():
             records['roformer'] = value[0]
             passed('idle eviction and legacy BS-RoFormer output unchanged')
         failure = server.run(request, 'unsupported', 'unsupported')[0]
-        assert failure['status'] >= 400 and 'capacity=1' in json.dumps(failure['error']), failure
+        assert failure['status'] >= 400 and f'capacity={args.expected_capacity}' in json.dumps(failure['error']), failure
         assert not server.status('unsupported')['loaded'] and server.status('unsupported')['active_slots'] == 0
         same(server.run(request, 'after_failure'), expected['polish_cold'])
         assert server.run({**request, 'max_tokens': -1}, 'invalid')[0]['status'] >= 400

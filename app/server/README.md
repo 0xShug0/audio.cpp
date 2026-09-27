@@ -193,7 +193,10 @@ See [the measured comparison](../../docs/reports/common_model_slots.md) for
 }
 ```
 
-Higgs CUDA slots share the immutable AR and codec weights. Generic fallback
+Higgs offline slots share the immutable AR and codec weights on CUDA and Vulkan.
+Vulkan supports up to four Higgs slots; see the
+[Vulkan parallel validation](../../docs/reports/higgs_vulkan_parallel_slots.md)
+for output parity, timing, memory and cache-history limits. Generic fallback
 sessions share loaded checkpoint assets but can replicate GPU weights, causing
 large VRAM increases or allocation failures. Each has its own backend
 execution context, graphs, KV cache, reference cache and sampler state. Requests

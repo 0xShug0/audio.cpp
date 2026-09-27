@@ -1,5 +1,8 @@
 # Vulkan compatibility validation for common model slots
 
+Historical single-slot validation. For the subsequent Higgs Vulkan parallel
+adapter, see [the parallel validation report](higgs_vulkan_parallel_slots.md).
+
 Date: 2026-09-26. Slots source: `0da5b26b`, upstream reference: `ab862077`.
 Windows/MSVC Release, Vulkan SDK 1.4.350.0, RTX 3090 24 GiB, eight CPU threads.
 The reference includes both merged Higgs CUDA and Vulkan prefill memory fixes.

@@ -221,13 +221,20 @@ HiggsTTSSession::HiggsTTSSession(
 }
 
 size_t HiggsTTSSession::parallel_session_capacity() const noexcept {
-    return options().backend.type == core::BackendType::Cuda && task_.mode == runtime::RunMode::Offline
-        ? runtime::kMaxParallelSessions : 1;
+    if (task_.mode != runtime::RunMode::Offline) {
+        return 1;
+    }
+    if (options().backend.type == core::BackendType::Cuda) {
+        return runtime::kMaxParallelSessions;
+    }
+    // Vulkan clones own their execution contexts, graphs and caches while
+    // sharing immutable device weights. Keep the ceiling at the tested count.
+    return options().backend.type == core::BackendType::Vulkan ? 4 : 1;
 }
 
 std::unique_ptr<runtime::IVoiceTaskSession> HiggsTTSSession::create_parallel_session() const {
     if (parallel_session_capacity() == 1) {
-        throw std::runtime_error("Higgs parallel sessions currently require CUDA offline execution");
+        throw std::runtime_error("Higgs parallel sessions currently require CUDA or Vulkan offline execution");
     }
     return std::make_unique<HiggsTTSSession>(task_, options(), assets_,
         ar_->shared_weights(), codec_->shared_weights());
