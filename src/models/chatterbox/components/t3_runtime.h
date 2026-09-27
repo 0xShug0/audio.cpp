@@ -29,7 +29,7 @@ namespace engine::models::chatterbox {
 namespace {
 
 size_t & t3_host_thread_count_setting() {
-    static size_t thread_count = 1;
+    static thread_local size_t thread_count = 1;
     return thread_count;
 }
 
@@ -70,6 +70,8 @@ public:
 
     template <typename Fn>
     void parallel_for(size_t total, size_t grain, Fn && fn) {
+        // Workers use one callback/scratch queue until every chunk completes.
+        const std::lock_guard<std::mutex> submission_lock(submission_mutex_);
         if (total == 0) {
             return;
         }
@@ -149,6 +151,7 @@ private:
     }
 
     std::vector<std::thread> workers_;
+    std::mutex submission_mutex_;
     size_t thread_count_ = 1;
     std::mutex mutex_;
     std::condition_variable work_cv_;
@@ -164,11 +167,14 @@ private:
 };
 
 T3HostThreadPool & t3_host_thread_pool() {
+    // Keep existing pools alive when another request uses a different count.
+    // Thread-local worker owners can deadlock during Windows thread teardown.
     static std::mutex pool_mutex;
-    static std::unique_ptr<T3HostThreadPool> pool;
+    static std::unordered_map<size_t, std::unique_ptr<T3HostThreadPool>> pools;
     const size_t requested_threads = t3_host_thread_count_setting();
-    std::lock_guard<std::mutex> lock(pool_mutex);
-    if (!pool || pool->thread_count() != requested_threads) {
+    const std::lock_guard<std::mutex> lock(pool_mutex);
+    auto & pool = pools[requested_threads];
+    if (!pool) {
         pool = std::make_unique<T3HostThreadPool>(requested_threads);
     }
     return *pool;
