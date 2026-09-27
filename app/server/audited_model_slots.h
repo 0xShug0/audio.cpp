@@ -88,7 +88,7 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
     {"pulsevad", engine::runtime::VoiceTaskKind::Vad, 4},
     {"qwen3_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"qwen3_forced_aligner", engine::runtime::VoiceTaskKind::Alignment, 4},
-    {"qwen3_tts", engine::runtime::VoiceTaskKind::Tts, 3},
+    {"qwen3_tts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"rvc", engine::runtime::VoiceTaskKind::VoiceConversion, 3},
     {"sanotts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"seed_vc", engine::runtime::VoiceTaskKind::VoiceConversion, 2},

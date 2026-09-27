@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -82,6 +83,9 @@ struct Qwen3TTSConfig {
 };
 
 struct Qwen3TTSAssets {
+    // CUDA speech codes are stable under overlap, but waveform decoding can
+    // vary. Guard that stage between slots of the same loaded package.
+    mutable std::mutex cuda_speech_decoder_mutex;
     assets::ResourceBundle resources;
     Qwen3TTSConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;

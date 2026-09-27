@@ -1178,6 +1178,10 @@ Qwen3SpeechTokenizerDecoderRuntime::Qwen3SpeechTokenizerDecoderRuntime(
 Qwen3SpeechTokenizerDecoderRuntime::~Qwen3SpeechTokenizerDecoderRuntime() = default;
 
 runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3SpeechCodes & codec_codes) const {
+    std::unique_lock<std::mutex> cuda_guard(assets_->cuda_speech_decoder_mutex, std::defer_lock);
+    if (execution_context_->backend_type() == core::BackendType::Cuda) {
+        cuda_guard.lock();
+    }
     const auto total_start = Clock::now();
     if (codec_codes.frames <= 0 || codec_codes.code_groups != weights_->config.num_quantizers) {
         throw std::runtime_error("Qwen3 speech decoder received invalid codec shape");
