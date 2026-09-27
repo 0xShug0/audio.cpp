@@ -27,6 +27,7 @@ struct F5SynthesisRequest {
     int threads = 0;  // 0 = hardware concurrency
     bool use_cuda = false;
     int cuda_device = 0;
+    core::BackendType backend_type = core::BackendType::Cpu;
 };
 
 struct F5SynthesisResult {

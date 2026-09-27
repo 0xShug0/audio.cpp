@@ -118,7 +118,8 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
 // Weight-sharing additions: docs/reports/vulkan_slots_allocation_investigation.md.
 // Connection-reset follow-up: docs/reports/vulkan_slots_connection_resets.md.
 // Inflect/Mel-Band fixes and four-slot checks: docs/reports/vulkan_inflect_mel_slots.md.
-inline constexpr std::array<AuditedModelSlots, 73> kAuditedVulkanOfflineModels = {{
+// F5-TTS fixes and two-slot checks: docs/reports/f5_seed_slots_followup.md.
+inline constexpr std::array<AuditedModelSlots, 74> kAuditedVulkanOfflineModels = {{
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"audio8_tts", engine::runtime::VoiceTaskKind::Tts, 4},
@@ -132,6 +133,7 @@ inline constexpr std::array<AuditedModelSlots, 73> kAuditedVulkanOfflineModels =
     {"cosyvoice3", engine::runtime::VoiceTaskKind::VoiceCloning, 4},
     {"dots_tts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"echo_tts", engine::runtime::VoiceTaskKind::VoiceCloning, 3},
+    {"f5_tts", engine::runtime::VoiceTaskKind::Tts, 2},
     {"firered_audio", engine::runtime::VoiceTaskKind::VoiceCloning, 2},
     {"fireredtts3", engine::runtime::VoiceTaskKind::VoiceCloning, 3},
     {"fish_audio", engine::runtime::VoiceTaskKind::Tts, 3},

@@ -2904,6 +2904,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             COMMAND citrinet_tokenizer_decode_test
         )
 
+        if(f5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(f5_cpu_backend_test tests/unittests/test_f5_cpu_backend.cpp)
+            add_test(NAME f5_cpu_backend_test COMMAND f5_cpu_backend_test)
+        endif()
+
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)
 
