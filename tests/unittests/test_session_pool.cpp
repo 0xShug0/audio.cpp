@@ -219,7 +219,8 @@ void test_audited_model_policy() {
     for (const auto & entry : minitts::server::kAuditedCudaOfflineModels) {
         require(capacity(entry.family, entry.task) == entry.capacity, "CUDA capacity changed");
     }
-    for (const auto family : {"auk", "controlfoley", "firered_audio", "glm_tts", "heartmula", "inflect_v2",
+    require(capacity("firered_audio", VoiceTaskKind::VoiceCloning, BackendType::Vulkan) == 2, "shared FireRed Vulkan weights disabled");
+    for (const auto family : {"auk", "controlfoley", "glm_tts", "heartmula", "inflect_v2",
                               "mel_band_roformer", "moss_tts_v15", "outetts", "personaplex", "sheetsage2", "stable_audio"}) {
         for (const auto & entry : minitts::server::kAuditedCudaOfflineModels) {
             if (entry.family == family) {

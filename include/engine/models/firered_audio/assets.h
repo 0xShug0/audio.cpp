@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/shared_weight_cache.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -98,6 +99,7 @@ struct FireRedAudioSpecialTokens {
 };
 
 struct FireRedAudioAssets {
+    std::shared_ptr<core::SharedWeightCache> vulkan_weights = std::make_shared<core::SharedWeightCache>();
     std::filesystem::path model_root;
     std::filesystem::path gguf_path;
     engine::assets::ResourceBundle resources;
