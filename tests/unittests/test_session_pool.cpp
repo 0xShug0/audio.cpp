@@ -223,7 +223,8 @@ void test_audited_model_policy() {
     require(capacity("heartmula", VoiceTaskKind::AudioGeneration, BackendType::Vulkan) == 2, "shared HeartMuLa Vulkan weights disabled");
     require(capacity("moss_tts_v15", VoiceTaskKind::Tts, BackendType::Vulkan) == 2, "shared MOSS Vulkan backbone disabled");
     require(capacity("personaplex", VoiceTaskKind::SpeechToSpeech, BackendType::Vulkan) == 2, "shared PersonaPlex Vulkan weights disabled");
-    for (const auto family : {"auk", "controlfoley", "glm_tts", "inflect_v2",
+    require(capacity("glm_tts", VoiceTaskKind::Tts, BackendType::Vulkan) == 2, "validated GLM Vulkan slots disabled");
+    for (const auto family : {"auk", "controlfoley", "inflect_v2",
                               "mel_band_roformer", "outetts", "sheetsage2", "stable_audio"}) {
         for (const auto & entry : minitts::server::kAuditedCudaOfflineModels) {
             if (entry.family == family) {
