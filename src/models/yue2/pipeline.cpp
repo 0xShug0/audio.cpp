@@ -17,6 +17,15 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+// These contexts are no_alloc: tensor data lives in backend buffers. Bound
+// host descriptor reservations by graph capacity instead of reserving the
+// multi-GiB data-sized defaults separately for every slot and pipeline stage.
+size_t descriptor_context_bytes(size_t requested, size_t tensors, size_t graph_nodes = 0) {
+    const size_t descriptors = tensors * 4 + graph_nodes * 4 + 1024;
+    const size_t graph_bytes = graph_nodes == 0 ? 0 : ggml_graph_overhead_custom(graph_nodes, false);
+    return std::min(requested, descriptors * ggml_tensor_overhead() + graph_bytes);
+}
+
 std::string request_text(const Yue2Request & request) {
     std::string text;
     text += cot_instruction(request.cot);
@@ -146,7 +155,14 @@ public:
         if (!this->assets) {
             throw std::runtime_error("Yue2 pipeline requires assets");
         }
-        (void) this->nar_graph_arena_bytes;
+        const size_t model_tensors = this->assets->model_weights->tensors().size();
+        const size_t vae_tensors = this->assets->vae_weights->tensors().size();
+        this->model_weight_context_bytes = descriptor_context_bytes(model_weight_context_bytes, model_tensors);
+        this->vae_weight_context_bytes = descriptor_context_bytes(vae_weight_context_bytes, vae_tensors);
+        this->ar_prefill_graph_arena_bytes = descriptor_context_bytes(ar_prefill_graph_arena_bytes, model_tensors, 262144);
+        this->ar_decode_graph_arena_bytes = descriptor_context_bytes(ar_decode_graph_arena_bytes, model_tensors, 262144);
+        this->nar_graph_arena_bytes = descriptor_context_bytes(nar_graph_arena_bytes, model_tensors, 262144);
+        this->vae_graph_arena_bytes = descriptor_context_bytes(vae_graph_arena_bytes, vae_tensors, 524288);
         allow_flash_attention = core::resolve_flash_attention(
             execution.backend(),
             this->assets->config.model.head_dim,
@@ -367,7 +383,13 @@ public:
         auto audio = decode_audio(latents, frames);
         engine::debug::timing_log_scalar("yue2.vae_decode_ms", engine::debug::elapsed_ms(vae_start, Clock::now()));
         if (vae) {
-            vae->release_runtime_graphs();
+            if (execution->backend_type() == core::BackendType::Vulkan) {
+                // A retained VAE's weights otherwise overlap the next request's
+                // AR/NAR stages in every slot, raising warm-request VRAM peaks.
+                vae.reset();
+            } else {
+                vae->release_runtime_graphs();
+            }
         }
         out.audio = std::move(audio);
         return out;

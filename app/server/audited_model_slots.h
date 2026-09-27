@@ -193,7 +193,7 @@ inline constexpr std::array<AuditedModelSlots, 75> kAuditedVulkanOfflineModels =
     {"voxcpm1", engine::runtime::VoiceTaskKind::Tts, 4},
     {"voxcpm2", engine::runtime::VoiceTaskKind::Tts, 4},
     {"voxtral_realtime", engine::runtime::VoiceTaskKind::Asr, 4},
-    {"yue2", engine::runtime::VoiceTaskKind::AudioGeneration, 3},
+    {"yue2", engine::runtime::VoiceTaskKind::AudioGeneration, 4},
     {"zipvoice", engine::runtime::VoiceTaskKind::VoiceCloning, 4},
 }};
 
