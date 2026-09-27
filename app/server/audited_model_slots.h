@@ -17,7 +17,7 @@ struct AuditedModelSlots {
 // CUDA requests. Each capacity is the highest consecutively validated count.
 // See docs/reports/generic_cuda_slots_3_4_audit.md for VRAM and quality limits.
 // This does not certify other tasks, variants, options or larger pools.
-inline constexpr std::array<AuditedModelSlots, 80> kAuditedCudaOfflineModels = {{
+inline constexpr std::array<AuditedModelSlots, 81> kAuditedCudaOfflineModels = {{
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"audio8_tts", engine::runtime::VoiceTaskKind::Tts, 4},
@@ -90,6 +90,7 @@ inline constexpr std::array<AuditedModelSlots, 80> kAuditedCudaOfflineModels = {
     {"stable_audio", engine::runtime::VoiceTaskKind::AudioGeneration, 4},
     {"supertonic", engine::runtime::VoiceTaskKind::Tts, 4},
     {"universr", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
+    {"vevo2", engine::runtime::VoiceTaskKind::VoiceConversion, 2},
     {"vibevoice", engine::runtime::VoiceTaskKind::Tts, 4},
     {"vibevoice_asr", engine::runtime::VoiceTaskKind::Asr, 2},
     {"vibevoice_asr_streaming", engine::runtime::VoiceTaskKind::Asr, 2},
