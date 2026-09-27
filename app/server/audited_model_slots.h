@@ -115,6 +115,7 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
 
 // Vulkan has its own audited capacities; CUDA results do not imply Vulkan
 // support. See docs/reports/generic_vulkan_slots_audit.md for tested workloads.
+// Weight-sharing additions: docs/reports/vulkan_slots_allocation_investigation.md.
 inline constexpr std::array<AuditedModelSlots, 67> kAuditedVulkanOfflineModels = {{
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},

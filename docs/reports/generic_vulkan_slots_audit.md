@@ -1,5 +1,10 @@
 # Vulkan parallel-slot model audit
 
+The [allocation follow-up](vulkan_slots_allocation_investigation.md) validates
+two-slot weight sharing for FireRed Audio, HeartMuLa, MOSS TTS v1.5 and
+PersonaPlex. The audited Vulkan table now includes 67 family/task pairs;
+the original survey results below remain a record of the earlier implementation.
+
 Date: 2026-09-27. Windows/MSVC Release, RTX 3090 24 GiB, eight CPU threads.
 
 Tested all 75 model/task packages that had passed the earlier CUDA two-slot audit, on the RTX 3090 using Vulkan device 1 and an audit server with temporary Vulkan eligibility. These results now define the separate Vulkan offline allowlist in `app/server/audited_model_slots.h`. The 3/4-slot test ran only for exact two-slot passes and within each family's existing audited slot capacity.
