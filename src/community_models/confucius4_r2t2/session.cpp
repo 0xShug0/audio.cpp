@@ -402,6 +402,14 @@ std::string R2T2ASRSession::build_stream_prefix(bool final_flush) const {
     if (final_flush) {
         // finish_streaming_transcribe uses a fixed rollback without the
         // replacement-character loop and never rolls back past the first token.
+        // There is no first token to keep when nothing has been decoded yet
+        // (silence, or a chunk that parsed down to an empty transcript while a
+        // forced language kept chunk_id_ advancing): clamping to 1 below would
+        // build a vector from [begin(), begin() + 1) on an empty vector, whose
+        // begin() is null.
+        if (ids.empty()) {
+            return {};
+        }
         const int64_t end_index = std::max<int64_t>(1, static_cast<int64_t>(ids.size()) - stream_config_.unfixed_token_num);
         return truncate_at_pipe(sanitize_utf8_lossy(tokenizer_.decode(std::vector<int32_t>(ids.begin(), ids.begin() + static_cast<std::ptrdiff_t>(end_index)))));
     }
