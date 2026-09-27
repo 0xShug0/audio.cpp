@@ -32,6 +32,17 @@ int main() {
             catch (const std::runtime_error &) { failed = true; }
             if (!failed || *cache.get_or_load<int>("failed", [] { return 9; }) != 9)
                 throw std::runtime_error("failed upload poisoned a cache entry");
+            auto uploaded = std::make_shared<const int>(17);
+            if (cache.get_or_load_shared<int>("uploaded:vulkan1:native", [&] { return uploaded; }) != uploaded ||
+                cache.get_or_load_shared<int>("uploaded:vulkan1:native", []() -> std::shared_ptr<const int> {
+                    throw std::runtime_error("cached upload ran twice");
+                }) != uploaded)
+                throw std::runtime_error("shared loader lost the original allocation ownership");
+            failed = false;
+            try { cache.get_or_load_shared<int>("null", [] { return std::shared_ptr<const int>{}; }); }
+            catch (const std::runtime_error &) { failed = true; }
+            if (!failed || *cache.get_or_load_shared<int>("null", [] { return std::make_shared<const int>(23); }) != 23)
+                throw std::runtime_error("null upload poisoned a cache entry");
             first.reset();
             if (retained.expired()) throw std::runtime_error("package lost weights when first slot closed");
         }
