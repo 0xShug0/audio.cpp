@@ -107,6 +107,10 @@ engine::runtime::TaskResult AudioSRSession::run(const engine::runtime::TaskReque
         throw std::runtime_error("AudioSR requires --audio input");
     }
     engine::runtime::TaskResult result;
+    std::unique_lock<std::mutex> cuda_guard(assets_->cuda_execution_mutex, std::defer_lock);
+    if (execution_->backend_type() == engine::core::BackendType::Cuda) {
+        cuda_guard.lock();
+    }
     result.audio_output = pipeline_->run(*request.audio_input, parse_audiosr_options(request.options));
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;

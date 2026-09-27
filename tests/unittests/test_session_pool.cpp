@@ -241,7 +241,7 @@ void test_audited_model_policy() {
     require(capacity("ace_step", VoiceTaskKind::AudioGeneration, BackendType::Vulkan) == 1, "unaudited ACE-Step Vulkan slots enabled");
     require(capacity("dramabox", VoiceTaskKind::Tts) == 1, "VRAM-blocked family enabled");
     require(capacity("liveavatar", VoiceTaskKind::AudioGeneration) == 1, "VRAM-blocked family enabled");
-    require(capacity("audiosr", VoiceTaskKind::SpeechToSpeech) == 1, "output mismatch family enabled");
+    require(capacity("audiosr", VoiceTaskKind::SpeechToSpeech) == 2, "guarded AudioSR CUDA slots disabled");
     require(capacity("miocodec", VoiceTaskKind::VoiceConversion) == 1, "unverified family enabled");
     require(capacity("minimax_h3", VoiceTaskKind::AudioGeneration) == 1, "hardware-blocked family enabled");
 }
