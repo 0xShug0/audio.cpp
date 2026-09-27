@@ -15,7 +15,7 @@ import threading
 import time
 import wave
 
-from server_backend_compat import Server
+from server_test_utils import Server
 
 
 def wait_active(server, count):
@@ -35,6 +35,8 @@ def main():
     parser.add_argument('--backend', choices=('cuda', 'vulkan'), required=True)
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--repeats', type=int, default=5)
+    parser.add_argument('--slots', type=int, nargs='+', default=[1], choices=(1, 2, 3, 4),
+                        help='use 1 for the standalone framework; larger counts require model support')
     args = parser.parse_args()
     for name, value in vars(args).items():
         if isinstance(value, Path):
@@ -72,7 +74,7 @@ def main():
 
     references = {}
     for label, exe in [('before', args.before_server), ('after', args.after_server)]:
-        for slots in (1, 2, 4):
+        for slots in args.slots:
             folder = args.output_dir / f'{label}-{slots}'
             with Server(exe, [{**model, 'slots': slots}], args.backend, args.device, folder) as server:
                 body = {'model': 'canary', 'request': payload}

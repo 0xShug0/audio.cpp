@@ -83,11 +83,11 @@ Cross-platform CI and real CPU inference have not been rerun for this local fix.
 From the repository root, substitute paths to both executables, model and WAV:
 
 ```powershell
-python tests/higgs_audio_tts/server_busy_timeout_regression.py `
+python tests/server/server_busy_timeout_regression.py `
   --before-server <before.exe> --after-server <after.exe> `
   --model <canary-180m-flash-q8_0.gguf> --spec model_specs/canary_asr.json `
   --audio <speech-16k-mono.wav> --backend cuda --device 0 `
-  --output-dir <audit-directory> --repeats 5
+  --output-dir <audit-directory> --repeats 5 --slots 1
 ```
 
 Repeat for `--backend vulkan` and that backend's device index. The script saves
@@ -97,3 +97,11 @@ under `outputs/scheduler-timeout-fix/cuda/` and
 `outputs/scheduler-timeout-fix/vulkan-rtx3090/`; build/CTest logs and aggregate
 `summary.json` are in the parent directory. An interrupted AMD Vulkan diagnostic
 run is excluded from the table and validation counts.
+
+## Framework split scope
+
+The historical multi-slot measurements above were taken with the PR #706 model
+adapters/admission rules present. The extracted foundation keeps those rules
+empty; reproduce one-slot controls here, and use `--slots 1 2 4` on the model
+follow-up. The scheduler implementation is identical. Fresh standalone build
+and inference checks are recorded in [the framework split report](common_slot_framework.md).

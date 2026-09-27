@@ -161,61 +161,45 @@ or in `server.json`:
 
 ### Experimental parallel model slots
 
-Set `"slots": 2` on a model entry to let two HTTP requests execute concurrently
-against one loaded model. The default is `1`; values from 1 through 16 are
-accepted. The common framework supports offline, streaming and native-batch sessions
-through an explicit model capability. CUDA and Vulkan offline sessions also have an
-allowlisted fallback that creates independent sessions from the same loaded
-checkpoint. Separate allowlists cover 75 CUDA and 63 Vulkan family/task pairs,
-with backend-specific tested limits of two, three or four slots on this path;
-unlisted families and untested tasks keep a capacity of one. A specialized
-model factory takes precedence, including its
-backend/task/mode restrictions. CPU, Metal and streaming require an explicit
-factory. The fallback enables testing; it does not establish that every model is
-safe or memory-efficient for every variant and workload. Validate the selected model,
-task, options and slot count before using it for a workload.
-See [the CUDA two-slot survey](../../docs/reports/generic_cuda_slots_audit.md)
-and [three/four-slot validation](../../docs/reports/generic_cuda_slots_3_4_audit.md)
-for tested packages, failures, per-family limits and memory costs.
-See [the Vulkan model audit](../../docs/reports/generic_vulkan_slots_audit.md)
-for the separate Vulkan allowlist and its limits.
-See [the adapter guide](../../docs/maintainers/parallel_sessions.md) to add
-parallel support to another model.
-See [the measured comparison](../../docs/reports/common_model_slots.md) for
-1–4 slots versus independent server instances, including time and VRAM.
+Each model entry accepts `"slots"` from 1 to 16 (default: 1). The server leases
+one independent session to each request and queues work when admission is
+blocked. The requested count must fit the model's advertised parallel capacity;
+this setting does not make an arbitrary model safe to run concurrently.
 
-```json
-{
-  "id": "higgs",
-  "family": "higgs_audio_tts",
-  "path": "models/higgs-audio-v3-tts.gguf",
-  "task": "tts",
-  "mode": "offline",
-  "slots": 2
-}
-```
+The common framework defaults to capacity one. This model-support follow-up
+adds parallel adapters and validated offline admission entries. Unsupported counts fail before a partial session pool is published.
 
-Higgs offline slots share the immutable AR and codec weights on CUDA and Vulkan.
-Vulkan supports up to four Higgs slots; see the
-[Vulkan parallel validation](../../docs/reports/higgs_vulkan_parallel_slots.md)
-for output parity, timing, memory and cache-history limits. Generic fallback
-sessions share loaded checkpoint assets but can replicate GPU weights, causing
-large VRAM increases or allocation failures. Each has its own backend
-execution context, graphs, KV cache, reference cache and sampler state. Requests
-lease any free slot and queue when all slots are occupied. `GET /v1/models`
-reports configured `slots`, current `active_slots`, `queued_requests`, and
-`max_parallel_slots` (the model/backend capability after loading; `null` while
-unloaded). The capability is an upper bound, not a VRAM reservation. Unload, eviction and
-reconfiguration take an exclusive lease and cannot free an active slot.
+`GET /v1/models` reports configured `slots`, `active_slots`, `queued_requests`
+and the loaded model's `max_parallel_slots` (`null` when unloaded). Unload,
+eviction and reconfiguration wait for all active sessions to finish. Waiting
+management operations block new requests so management cannot starve.
 
-This is concurrent session execution; it does not combine tokens from different
-requests into a single continuous batch. More slots can improve total throughput
-while increasing individual request latency and peak VRAM. Start with two slots
-and measure your workload. With the Higgs prefill allocation improvement, the
-tested Polish sentence peaked at about 6.95 GiB including the shared model with
-four active slots on an RTX 3090. Other prompt lengths and models use different
-amounts of working memory. Warm each slot before comparing output/timing because
-reference and graph caches are private to each slot.
+Each slot needs private execution contexts, graphs, KV/reference caches,
+stream state and sampling state. Immutable assets/weights can be shared.
+More slots can improve throughput but increase latency and working memory.
+This is concurrent session execution; continuous token batching is not included.
+See [the adapter contract](../../docs/maintainers/parallel_sessions.md).
+
+### Validated model support (PR #706)
+
+The model follow-up enables 89 CUDA and 75 Vulkan offline family/task pairs at
+their individual validated limits of two, three or four slots. Configure
+`"slots": 2` (or a higher validated count) on the model entry and select the
+server backend. `app/server/audited_model_slots.h` is the current admission policy.
+
+Higgs v3 has a specialized CUDA/Vulkan adapter sharing immutable AR/codec
+weights. Other admitted models use independent loaded-model sessions and
+model-specific weight sharing/guards where validated. Working memory remains
+private. Admission is limited to tested backend/task/mode combinations; a
+two-slot pass does not certify higher counts. CPU and unaudited streaming
+combinations retain one slot.
+
+Ten additional Vulkan packages passed two-slot audit tests but remain capped
+at one in the production policy: ACE-Step, Chatterbox, Chatterbox Turbo, MMS
+Forced Aligner, Vevo2, AudioSR, MioCodec, MioTTS, NeuTTS and VieNeu v3 Turbo.
+Hardware-blocked packages remain excluded. See [model audit](../../docs/reports/generic_cuda_slots_audit.md),
+[Vulkan audit](../../docs/reports/generic_vulkan_slots_audit.md) and their follow-up
+reports for packages, requests, output/memory checks and current limits.
 
 Set top-level `"busy_timeout_ms"` to bound how long a request waits for a model that is already running. By default each model runs one request at a time. With multiple slots, requests queue when every slot is occupied or a management operation blocks admission. A GPU call that wedges cannot be cancelled from userspace, so without a bound every subsequent request would park a worker thread forever. When every occupied request slot has exceeded this timeout, a new request fails fast with HTTP 503 (`server_busy`) instead of queuing; streaming requests that have already sent headers surface the same condition as a `{"type":"error"}` stream event. The value must exceed the slowest legitimate single inference (music generation can take minutes). Defaults to `300000` (5 minutes); set `0` to disable the guard and restore unbounded waiting. The `--busy-timeout-ms <ms>` command-line flag overrides the config value.
 

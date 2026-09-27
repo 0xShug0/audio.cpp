@@ -1,26 +1,16 @@
 # Parallel execution sessions
 
-The server uses a common session pool and slot scheduler for all model families.
-A model keeps its existing single-session behavior when configured with one slot.
-CUDA and Vulkan offline requests can use an audited loaded-model session factory
-fallback. Separate tables in `app/server/audited_model_slots.h` admit 75 CUDA
-and 63 Vulkan family/task pairs at their backend-specific capacities. This fallback
-uses each pair's audited capacity (two, three or four slots); unlisted families and untested tasks retain a capacity of
-one. CPU, Metal and streaming require explicit model support. Setting
-`slots` does not make an arbitrary model thread-safe; the generic fallback must
-be validated for the selected model, task, options and workload.
+The common server framework owns session pools and leases slots to offline,
+streaming and native-batch requests. Existing models keep their single-session
+behavior by default. Parallel model adapters and audited admission rules are
+the separate PR #706 follow-up; no model is newly enabled by this foundation.
 
-The fallback calls `ILoadedVoiceModel::create_task_session` sequentially for each
-extra slot before publishing the pool. Checkpoint assets stay loaded once, but
-legacy sessions can upload separate GPU weight copies. This differs from a
-specialized adapter that shares backend weights. An explicit adapter takes
-precedence, including a capacity of one for unsupported combinations.
-
-Add a family/task pair only after cold/warm single-slot references match
-overlapping two-slot outputs and all leases drain. Record the tested package,
-request settings, backend and memory cost. A two-slot pass does not establish
-support for more slots; raise a pair's capacity only after validating every
-intermediate count. See [the higher-count survey](../reports/generic_cuda_slots_3_4_audit.md).
+The optional loaded-model factory creates extra sessions sequentially before
+publishing a pool. Assets can be shared while execution state remains private.
+Explicit parallel adapters take precedence, including a rejection of the chosen
+backend/task/mode. The admission extension point is initially empty on all
+backends. Add a model only after checkpoint-backed cold/warm, mixed-request,
+unload/reload, output and memory validation at every advertised slot count.
 
 ## Runtime contract
 
@@ -62,7 +52,7 @@ preparation and execution, including the entire stream or native batch. RAII
 releases it on completion or exception. Native batching within one session and
 multiple concurrent sessions are independent capabilities.
 
-Requests queue when all slots are busy. The existing busy-timeout policy applies
+Requests queue when all slots are busy or management blocks admission. The existing busy-timeout policy applies
 to the queue. Unload, eviction and reconfiguration require an exclusive lease;
 waiting management operations block new requests so management cannot starve.
 Leases must drain before destroying the pool. This does not cancel an in-flight
@@ -100,39 +90,30 @@ of memory or an atomic snapshot of the entire server.
 No family-specific routing change is needed in the server. Existing adapters
 without the factory work with one slot and reject larger configurations.
 
-## Current implementation and validation
+## Framework validation
 
-Higgs Audio v3 TTS has a specialized offline adapter for CUDA and Vulkan
-(up to four Vulkan slots). Audited CUDA and Vulkan families also use the loaded-model
-fallback described above. Other Higgs backend/mode combinations retain one slot. The framework
-has no family-specific CUDA kernels and does not change shared CUDA operations.
+Unit tests cover clone contracts, ownership/destruction ordering, construction
+rollback, independent offline/batch/stream state, slot leases, queue drainage,
+exclusive management, timeout-zero behavior and immediate rejection of overdue
+work even when unload is waiting. The shared weight cache tests cover concurrent
+loading, failed-load retry, immutable ownership and release. Tensor-source tests
+cover concurrent copying/scalar reads while mapped storage is released.
 
-Default unit tests cover the session pool, scheduler and compatibility with the
-old single-slot guard. Test doubles cover shared weights, separate request state,
-native batches, streaming reset, clone validation, partial failure and lifetime
-ordering. Extended tests cover server configuration and the original busy guard.
+The common cross-platform server lifecycle workflow builds and runs these
+backend-neutral checks. Real concurrent streaming/native-batch adapters still
+need model-specific validation. See [the split validation report](../reports/common_slot_framework.md)
+and [the scheduler regression report](../reports/scheduler_busy_timeout.md).
 
-Local validation built the full CPU model set and passed all 49 default CTests,
-plus five focused tests in a CUDA build with Higgs and BS-RoFormer enabled.
-RTX 3090 HTTP validation exercised four Higgs slots, a six-request queue,
-timeouts, failure recovery, unload/reload and eviction, including unloading
-during the first lazy load. All 27 Higgs WAVs matched
-their corresponding cold/warm reference byte for byte. A real BS-RoFormer
-single-slot request matched both reference stems; requesting two slots was
-rejected cleanly. Real concurrent streaming and native-batch model adapters have
-not yet been enabled or validated. These checks do not establish multi-slot
-support for every model or backend.
+## Model-support follow-up (#706)
 
-The [benchmark report](../reports/common_model_slots.md) compares one through
-four shared slots with actual independent single-slot server instances, including
-generation time, memory, output parity and reproduction commands.
-The [Vulkan report](../reports/common_model_slots_vulkan.md) records single-slot
-compatibility, same-backend WAV parity and two reproduced upstream extended-test
-failures at the original revision. The follow-up
-[Higgs Vulkan parallel report](../reports/higgs_vulkan_parallel_slots.md)
-records the four-slot adapter validation.
+This branch adds the specialized Higgs CUDA/Vulkan adapter and populated
+backend-specific offline admission tables: 89 CUDA and 75 Vulkan family/task
+pairs. Model-specific session guards, shared-weight opt-ins and codec/constant
+fixes are validated in the reports under `docs/reports/`. Model admission
+assertions run separately in `model_slot_admission_test`; common pool/scheduler
+tests are unchanged from the framework dependency.
 
-The [Vulkan model audit](../reports/generic_vulkan_slots_audit.md) records
-63 exact two-slot passes and their validated three/four-slot limits. Vulkan
-capacities are independent of CUDA: IndexTTS2 and Yue2 are limited to three,
-and ZipVoice to two. Families that failed Vulkan validation retain one slot.
+Historical survey tables record earlier failures/capacities. Prefer the current
+admission header and latest follow-up reports when assessing supported counts.
+Ten two-slot Vulkan audit passes still await production admission. No generic
+CPU/streaming admission or universal checkpoint/option guarantee is implied.

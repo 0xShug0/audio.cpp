@@ -2821,7 +2821,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
     add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
-
     add_engine_unittest(roformer_mask_accumulation_test tests/unittests/test_roformer_mask_accumulation.cpp)
     target_include_directories(roformer_mask_accumulation_test PRIVATE src/models/roformer)
     if (OpenMP_CXX_FOUND)
@@ -2914,6 +2913,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(session_pool_test PRIVATE ggml-base Threads::Threads)
         add_test(NAME session_pool_test COMMAND session_pool_test)
         set_tests_properties(session_pool_test PROPERTIES TIMEOUT 60)
+
+        add_executable(model_slot_admission_test tests/unittests/test_model_slot_admission.cpp)
+        target_include_directories(model_slot_admission_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(model_slot_admission_test PRIVATE ggml-base Threads::Threads)
+        add_test(NAME model_slot_admission_test COMMAND model_slot_admission_test)
 
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
