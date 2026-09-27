@@ -19,6 +19,7 @@ engine::codecs::FsqAudioCodecConfig make_neutts_fsq_audio_codec_config(
     out.rope_theta = config.rope_theta;
     out.quantization_levels = config.quantization_levels;
     out.trace_name = "neutts.codec";
+    out.deterministic_overlap_add = true;
     return out;
 }
 
