@@ -6,11 +6,13 @@
 #include "test_assert.h"
 
 #include <cstring>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -99,6 +101,54 @@ void test_safetensors_to_gguf_roundtrip() {
         binary_sidecar,
         "binary nested GGUF sidecar");
 
+    std::filesystem::remove_all(root);
+}
+
+void test_concurrent_storage_release() {
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_concurrent_tensor_source_test";
+    std::filesystem::create_directories(root);
+    const auto safetensors = root / "model.safetensors";
+    const auto gguf = root / "model.gguf";
+    std::vector<float> values(262144);
+    for (size_t i = 0; i < values.size(); ++i) values[i] = static_cast<float>(i % 128);
+    const auto expected = bytes_for(values);
+    engine::io::write_safetensors_file(safetensors, {
+        {"weight", "F32", {512, 512}, expected},
+        {"step", "I64", {}, bytes_for(std::vector<int64_t>{42})},
+    });
+    engine::assets::convert_tensor_source_to_gguf(
+        safetensors, gguf, engine::assets::TensorStorageType::F32, true, false);
+    for (const auto & path : {safetensors, gguf}) {
+        const auto source = engine::assets::open_tensor_source(path);
+        source->release_storage();
+        std::atomic<bool> start{false};
+        std::atomic<bool> failed{false};
+        auto read = [&] {
+            while (!start.load()) std::this_thread::yield();
+            try {
+                for (int i = 0; i < 100; ++i) {
+                    const auto tensor = source->require_tensor_data("weight");
+                    if (tensor.bytes.size() != expected.size() ||
+                        std::memcmp(tensor.bytes.data(), expected.data(), expected.size()) != 0 ||
+                        source->require_i64_scalar("step") != 42) failed.store(true);
+                }
+            } catch (...) { failed.store(true); }
+        };
+        std::thread first(read);
+        std::thread second(read);
+        std::thread release([&] {
+            while (!start.load()) std::this_thread::yield();
+            for (int i = 0; i < 1000; ++i) {
+                source->release_storage();
+                std::this_thread::yield();
+            }
+        });
+        start.store(true);
+        first.join();
+        second.join();
+        release.join();
+        engine::test::require(!failed.load(), "concurrent read/release changed tensor data");
+    }
     std::filesystem::remove_all(root);
 }
 
@@ -429,6 +479,7 @@ void test_malformed_embedded_sidecars_are_rejected_by_the_name_reader() {
 int main() {
     try {
         test_safetensors_to_gguf_roundtrip();
+        test_concurrent_storage_release();
         test_packed_multi_source_gguf();
         test_all_rank0_gguf();
         test_embedded_model_spec_roundtrip_and_precedence();

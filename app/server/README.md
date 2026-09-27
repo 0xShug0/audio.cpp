@@ -159,7 +159,35 @@ or in `server.json`:
 > [!WARNING]
 > CORS support is experimental and intended for trusted local web apps only. Do not expose a server with CORS enabled on an untrusted network. With CORS enabled, any browser page can send requests to the local server and consume local CPU/GPU resources.
 
-Set top-level `"busy_timeout_ms"` to bound how long a request waits for a model that is already running. Each model serializes its requests on an internal lock, so a second request normally queues behind the first. A GPU call that wedges cannot be cancelled from userspace, so without a bound every subsequent request would park a worker thread forever. When the current inference has held the lock past this timeout, a new request fails fast with HTTP 503 (`server_busy`) instead of queuing; streaming requests that have already sent headers surface the same condition as a `{"type":"error"}` stream event. The value must exceed the slowest legitimate single inference (music generation can take minutes). Defaults to `300000` (5 minutes); set `0` to disable the guard and restore unbounded waiting. The `--busy-timeout-ms <ms>` command-line flag overrides the config value.
+### Experimental parallel model slots
+
+Each model entry accepts `"slots"` from 1 to 16 (default: 1). The server leases
+one independent session to each request and queues work when admission is
+blocked. The requested count must fit the model's advertised parallel capacity;
+this setting does not make an arbitrary model safe to run concurrently.
+
+The common framework retains capacity one for existing models. Model-specific
+parallel adapters and validated offline admission entries are added separately
+in PR #706. Unsupported counts fail before a partial session pool is published.
+
+`GET /v1/models` reports configured `slots`, `active_slots`, `queued_requests`
+and the loaded model's `max_parallel_slots` (`null` when unloaded). Unload,
+eviction and reconfiguration wait for all active sessions to finish. Waiting
+management operations block new requests so management cannot starve.
+
+Each slot needs private execution contexts, graphs, KV/reference caches,
+stream state and sampling state. Immutable assets/weights can be shared.
+More slots can improve throughput but increase latency and working memory.
+This is concurrent session execution; continuous token batching is not included.
+See [the adapter contract](../../docs/maintainers/parallel_sessions.md).
+
+Set top-level `"busy_timeout_ms"` to bound how long a request waits for a model that is already running. By default each model runs one request at a time. With multiple slots, requests queue when every slot is occupied or a management operation blocks admission. A GPU call that wedges cannot be cancelled from userspace, so without a bound every subsequent request would park a worker thread forever. When every occupied request slot has exceeded this timeout, a new request fails fast with HTTP 503 (`server_busy`) instead of queuing; streaming requests that have already sent headers surface the same condition as a `{"type":"error"}` stream event. The value must exceed the slowest legitimate single inference (music generation can take minutes). Defaults to `300000` (5 minutes); set `0` to disable the guard and restore unbounded waiting. The `--busy-timeout-ms <ms>` command-line flag overrides the config value.
+
+Waiting unload/reconfiguration operations keep priority over new inference, but
+do not suppress this overdue check. If admission is blocked by management and
+all occupied inference slots are overdue, a new request fails immediately even
+when the pool has spare slots. A healthy occupied slot still permits bounded
+waiting; a timeout of `0` disables the overdue check and wait bound.
 
 The bound is resolved in three layers, since model runtimes differ by orders of magnitude (a short TTS clip versus minutes of music generation):
 

@@ -2,12 +2,14 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/parallel_session.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <optional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>

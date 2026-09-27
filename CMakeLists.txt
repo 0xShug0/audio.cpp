@@ -2819,6 +2819,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
+    add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
+    add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
+    if (ENGINE_ENABLE_VULKAN)
+        add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
+        add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
+        set_tests_properties(vulkan_shared_weight_cache_test PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+
     add_engine_unittest(auk_conditioning_test tests/auk/conditioning_test.cpp)
     add_engine_unittest(auk_vae_test tests/auk/vae_test.cpp)
     add_engine_unittest(auk_flow_test tests/auk/flow_test.cpp)
@@ -2868,6 +2876,25 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_TESTS)
+        add_executable(server_single_slot_compat_test tests/unittests/test_server_busy_guard.cpp)
+        target_compile_definitions(server_single_slot_compat_test PRIVATE AUDIOCPP_TEST_MODEL_SLOTS)
+        target_include_directories(server_single_slot_compat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(server_single_slot_compat_test PRIVATE Threads::Threads)
+        add_test(NAME server_single_slot_compat_test COMMAND server_single_slot_compat_test)
+        set_tests_properties(server_single_slot_compat_test PROPERTIES TIMEOUT 60)
+
+        add_executable(server_model_slots_test tests/unittests/test_server_model_slots.cpp)
+        target_include_directories(server_model_slots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(server_model_slots_test PRIVATE Threads::Threads)
+        add_test(NAME server_model_slots_test COMMAND server_model_slots_test)
+        set_tests_properties(server_model_slots_test PROPERTIES TIMEOUT 60)
+
+        add_executable(session_pool_test tests/unittests/test_session_pool.cpp)
+        target_include_directories(session_pool_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        target_link_libraries(session_pool_test PRIVATE ggml-base Threads::Threads)
+        add_test(NAME session_pool_test COMMAND session_pool_test)
+        set_tests_properties(session_pool_test PROPERTIES TIMEOUT 60)
+
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
             add_engine_unittest(kokoro_g2p_probe tests/kokoro_tts/kokoro_g2p_probe.cpp)
