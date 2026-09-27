@@ -2763,6 +2763,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
+    add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
+    add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
+
     add_engine_unittest(auk_conditioning_test tests/auk/conditioning_test.cpp)
     add_engine_unittest(auk_vae_test tests/auk/vae_test.cpp)
     add_engine_unittest(auk_flow_test tests/auk/flow_test.cpp)
