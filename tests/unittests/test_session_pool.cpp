@@ -242,7 +242,7 @@ void test_audited_model_policy() {
     require(capacity("dramabox", VoiceTaskKind::Tts) == 1, "VRAM-blocked family enabled");
     require(capacity("liveavatar", VoiceTaskKind::AudioGeneration) == 1, "VRAM-blocked family enabled");
     require(capacity("audiosr", VoiceTaskKind::SpeechToSpeech) == 2, "guarded AudioSR CUDA slots disabled");
-    require(capacity("miocodec", VoiceTaskKind::VoiceConversion) == 1, "unverified family enabled");
+    require(capacity("miocodec", VoiceTaskKind::VoiceConversion) == 2, "deterministic MioCodec CUDA slots disabled");
     require(capacity("minimax_h3", VoiceTaskKind::AudioGeneration) == 1, "hardware-blocked family enabled");
 }
 

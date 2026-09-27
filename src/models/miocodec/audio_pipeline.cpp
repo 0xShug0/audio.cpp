@@ -325,6 +325,7 @@ std::vector<float> MioCodecWaveformReconstructor::reconstruct(
                 assets_->config.hop_length,
                 assets_->config.n_fft + 2,
                 execution_context_->config().device,
+                true,
             });
         cuda_istft_frames_ = head.frames;
         engine::debug::timing_log_scalar("miocodec.istft.runtime_rebuilt", true);
