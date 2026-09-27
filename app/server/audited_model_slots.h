@@ -16,6 +16,8 @@ struct AuditedModelSlots {
 // One package/task per family passed cold/warm output parity and overlapping
 // CUDA requests. Each capacity is the highest consecutively validated count.
 // See docs/reports/generic_cuda_slots_3_4_audit.md for VRAM and quality limits.
+// Revalidated two-slot additions and their synchronization limits are in
+// docs/reports/cuda_slots_failure_investigation.md.
 // This does not certify other tasks, variants, options or larger pools.
 inline constexpr std::array<AuditedModelSlots, 82> kAuditedCudaOfflineModels = {{
     {"ace_step", engine::runtime::VoiceTaskKind::AudioGeneration, 2},
