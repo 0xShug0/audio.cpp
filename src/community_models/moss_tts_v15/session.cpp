@@ -162,7 +162,8 @@ void MossTtsV15Session::prepare(const runtime::SessionPreparationRequest &) {
         backbone_graph_arena_bytes_,
         backbone_weight_context_bytes_,
         weight_storage_type_,
-        use_f16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
+        use_f16 ? GGML_TYPE_F16 : GGML_TYPE_F32,
+        backend_type == core::BackendType::Vulkan ? assets_->vulkan_weights.get() : nullptr);
     heads_ = std::make_unique<decoders::MossTtsDelayHeadsRuntime>(
         assets_->config,
         assets_->model_weights,

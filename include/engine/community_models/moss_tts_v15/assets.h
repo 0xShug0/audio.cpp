@@ -8,6 +8,7 @@
 // neither) and the session that drives them.
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/framework/decoders/moss_tts_delay/config.h"
 
 #include <filesystem>
@@ -18,6 +19,7 @@ namespace engine::models::moss_tts_v15 {
 using Config = decoders::MossTtsDelayConfig;
 
 struct Assets {
+    std::shared_ptr<core::SharedWeightCache> vulkan_weights = std::make_shared<core::SharedWeightCache>();
     assets::ResourceBundle resources;
     Config config;
     std::shared_ptr<const assets::TensorSource> model_weights;

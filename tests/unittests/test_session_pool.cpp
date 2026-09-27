@@ -221,8 +221,9 @@ void test_audited_model_policy() {
     }
     require(capacity("firered_audio", VoiceTaskKind::VoiceCloning, BackendType::Vulkan) == 2, "shared FireRed Vulkan weights disabled");
     require(capacity("heartmula", VoiceTaskKind::AudioGeneration, BackendType::Vulkan) == 2, "shared HeartMuLa Vulkan weights disabled");
+    require(capacity("moss_tts_v15", VoiceTaskKind::Tts, BackendType::Vulkan) == 2, "shared MOSS Vulkan backbone disabled");
     for (const auto family : {"auk", "controlfoley", "glm_tts", "inflect_v2",
-                              "mel_band_roformer", "moss_tts_v15", "outetts", "personaplex", "sheetsage2", "stable_audio"}) {
+                              "mel_band_roformer", "outetts", "personaplex", "sheetsage2", "stable_audio"}) {
         for (const auto & entry : minitts::server::kAuditedCudaOfflineModels) {
             if (entry.family == family) {
                 require(capacity(entry.family, entry.task, BackendType::Vulkan) == 1, "unvalidated Vulkan family enabled");
