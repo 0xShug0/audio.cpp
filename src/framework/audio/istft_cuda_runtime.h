@@ -12,6 +12,7 @@ struct CudaIstftRuntimeConfig {
     int64_t hop_length = 0;
     int64_t out_dim = 0;
     int device = 0;
+    bool deterministic_overlap_add = false;
 };
 
 struct CudaIstftRuntimeTiming {

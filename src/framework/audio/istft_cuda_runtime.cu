@@ -119,6 +119,33 @@ __global__ void normalize_kernel(
     audio[index] = folded[src] / envelope[src];
 }
 
+// One thread owns each output sample, so scheduling cannot reorder its sum.
+__global__ void deterministic_overlap_add_kernel(
+    const float * framed,
+    const float * window,
+    float * folded,
+    float * envelope,
+    int samples,
+    int frames,
+    int n_fft,
+    int hop_length) {
+    const int dst = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dst >= samples) return;
+    const int first = dst < n_fft ? 0 : (dst - n_fft) / hop_length + 1;
+    const int last = min(dst / hop_length, frames - 1);
+    float value = 0.0F;
+    float weight = 0.0F;
+    for (int frame = first; frame <= last; ++frame) {
+        const int i = dst - frame * hop_length;
+        const float w = window[i];
+        // Keep the original product/division rounding, without fused adds.
+        value = __fadd_rn(value, __fdiv_rn(__fmul_rn(framed[frame * n_fft + i], w), static_cast<float>(n_fft)));
+        weight = __fadd_rn(weight, __fmul_rn(w, w));
+    }
+    folded[dst] = value;
+    envelope[dst] = weight;
+}
+
 int blocks_for(int count) {
     constexpr int kThreads = 256;
     return (count + kThreads - 1) / kThreads;
@@ -226,17 +253,25 @@ public:
         timing.fft_inverse_ms = timer.end_ms("cufftExecC2R synchronize");
 
         timer.begin();
-        check_cuda(cudaMemset(folded_, 0, bytes(output_size_)), "cudaMemset folded");
-        check_cuda(cudaMemset(envelope_, 0, bytes(output_size_)), "cudaMemset envelope");
-        overlap_add_kernel<<<blocks_for(static_cast<int>(config_.frames * config_.n_fft)), 256>>>(
-            framed_,
-            window_,
-            folded_,
-            envelope_,
-            static_cast<int>(config_.frames),
-            static_cast<int>(config_.n_fft),
-            static_cast<int>(config_.hop_length));
-        check_cuda(cudaGetLastError(), "overlap_add_kernel");
+        if (config_.deterministic_overlap_add) {
+            deterministic_overlap_add_kernel<<<blocks_for(static_cast<int>(output_size_)), 256>>>(
+                framed_, window_, folded_, envelope_, static_cast<int>(output_size_),
+                static_cast<int>(config_.frames), static_cast<int>(config_.n_fft),
+                static_cast<int>(config_.hop_length));
+            check_cuda(cudaGetLastError(), "deterministic_overlap_add_kernel");
+        } else {
+            check_cuda(cudaMemset(folded_, 0, bytes(output_size_)), "cudaMemset folded");
+            check_cuda(cudaMemset(envelope_, 0, bytes(output_size_)), "cudaMemset envelope");
+            overlap_add_kernel<<<blocks_for(static_cast<int>(config_.frames * config_.n_fft)), 256>>>(
+                framed_,
+                window_,
+                folded_,
+                envelope_,
+                static_cast<int>(config_.frames),
+                static_cast<int>(config_.n_fft),
+                static_cast<int>(config_.hop_length));
+            check_cuda(cudaGetLastError(), "overlap_add_kernel");
+        }
         timing.overlap_add_ms = timer.end_ms("overlap_add_kernel synchronize");
 
         timer.begin();

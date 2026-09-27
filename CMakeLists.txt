@@ -2778,6 +2778,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(cuda_head_convert_test PRIVATE CUDA::cudart_static)
         add_test(NAME cuda_head_convert_test COMMAND cuda_head_convert_test)
         set_tests_properties(cuda_head_convert_test PROPERTIES SKIP_RETURN_CODE 77)
+        add_engine_unittest(cuda_istft_determinism_test tests/unittests/test_cuda_istft_determinism.cpp)
+        target_link_libraries(cuda_istft_determinism_test PRIVATE CUDA::cudart_static)
+        add_test(NAME cuda_istft_determinism_test COMMAND cuda_istft_determinism_test)
+        set_tests_properties(cuda_istft_determinism_test PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 
     add_engine_unittest(sortformer_v2_aosc_test tests/community_models/sortformer_diar/sortformer_v2_aosc_test.cpp)

@@ -21,6 +21,8 @@ struct CudaLogMagnitudePhaseISTFTConfig {
     int64_t hop_length = 0;
     int64_t out_dim = 0;
     int device = 0;
+    // Opt in to a fixed frame accumulation order instead of atomic adds.
+    bool deterministic_overlap_add = false;
 };
 
 struct HostLogMagnitudePhaseISTFTTiming {
