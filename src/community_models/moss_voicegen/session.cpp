@@ -139,7 +139,9 @@ void MossVoiceGenSession::prepare(const runtime::SessionPreparationRequest &) {
         execution_context(),
         backbone_graph_arena_bytes_,
         backbone_weight_context_bytes_,
-        weight_storage_type_);
+        weight_storage_type_,
+        GGML_TYPE_F32,
+        execution_context().backend_type() == core::BackendType::Cuda ? assets_->cuda_weights.get() : nullptr);
     heads_ = std::make_unique<decoders::MossTtsDelayHeadsRuntime>(
         assets_->config,
         assets_->model_weights,

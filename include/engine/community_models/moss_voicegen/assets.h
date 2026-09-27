@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/framework/decoders/moss_tts_delay/config.h"
 
 #include <cstdint>
@@ -23,6 +24,7 @@ struct MossVoiceGenAssets {
     MossVoiceGenConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> audio_tokenizer_weights;
+    std::shared_ptr<core::SharedWeightCache> cuda_weights = std::make_shared<core::SharedWeightCache>();
 };
 
 std::shared_ptr<const MossVoiceGenAssets> load_moss_voicegen_assets(const std::filesystem::path & model_path);

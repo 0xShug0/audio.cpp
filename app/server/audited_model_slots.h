@@ -74,7 +74,7 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
     {"moss_tts_nano", engine::runtime::VoiceTaskKind::Tts, 4},
     {"moss_tts_v15", engine::runtime::VoiceTaskKind::Tts, 2},
     {"moss_ttsd", engine::runtime::VoiceTaskKind::Tts, 2},
-    {"moss_voicegen", engine::runtime::VoiceTaskKind::VoiceDesign, 3},
+    {"moss_voicegen", engine::runtime::VoiceTaskKind::VoiceDesign, 4},
     {"muscriptor", engine::runtime::VoiceTaskKind::Midi, 4},
     {"nemotron_3_diar", engine::runtime::VoiceTaskKind::Diarization, 4},
     {"nemotron_asr", engine::runtime::VoiceTaskKind::Asr, 4},

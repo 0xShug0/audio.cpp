@@ -208,6 +208,7 @@ void test_audited_model_policy() {
     require(capacity("confucius4_tts", VoiceTaskKind::VoiceCloning) == 4, "shared Confucius CUDA weights disabled");
     require(capacity("echo_tts", VoiceTaskKind::VoiceCloning) == 4, "shared Echo CUDA weights disabled");
     require(capacity("fish_audio", VoiceTaskKind::Tts) == 4, "shared Fish CUDA weights disabled");
+    require(capacity("moss_voicegen", VoiceTaskKind::VoiceDesign) == 4, "shared MOSS VoiceGenerator CUDA weights disabled");
     require(capacity("controlfoley", VoiceTaskKind::AudioGeneration) == 2, "VRAM-limited family not restricted");
     require(capacity("cosyvoice3", VoiceTaskKind::Tts) == 1, "untested task enabled");
     require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Cpu) == 1, "CPU fallback enabled");
