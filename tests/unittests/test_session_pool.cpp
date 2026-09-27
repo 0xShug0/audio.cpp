@@ -202,6 +202,7 @@ void test_audited_model_policy() {
     require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation) == 4, "audited separation capacity wrong");
     require(capacity("qwen3_asr", VoiceTaskKind::Asr) == 4, "audited ASR capacity wrong");
     require(capacity("cosyvoice3", VoiceTaskKind::VoiceCloning) == 4, "audited clone capacity wrong");
+    require(capacity("fireredtts3", VoiceTaskKind::VoiceCloning) == 4, "revalidated FireRedTTS3 capacity wrong");
     require(capacity("qwen3_tts", VoiceTaskKind::Tts) == 3, "four-slot parity failure not restricted");
     require(capacity("rvc", VoiceTaskKind::VoiceConversion) == 3, "four-slot request failure not restricted");
     require(capacity("controlfoley", VoiceTaskKind::AudioGeneration) == 2, "VRAM-limited family not restricted");

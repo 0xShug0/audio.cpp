@@ -43,7 +43,7 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
     {"echo_tts", engine::runtime::VoiceTaskKind::VoiceCloning, 3},
     {"f5_tts", engine::runtime::VoiceTaskKind::Tts, 2},
     {"firered_audio", engine::runtime::VoiceTaskKind::VoiceCloning, 2},
-    {"fireredtts3", engine::runtime::VoiceTaskKind::VoiceCloning, 3},
+    {"fireredtts3", engine::runtime::VoiceTaskKind::VoiceCloning, 4},
     {"fish_audio", engine::runtime::VoiceTaskKind::Tts, 3},
     {"fun_asr_nano", engine::runtime::VoiceTaskKind::Asr, 4},
     {"glm_tts", engine::runtime::VoiceTaskKind::Tts, 4},
