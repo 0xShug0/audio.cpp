@@ -724,11 +724,13 @@ struct Mert2EncoderRuntime::Impl {
         std::shared_ptr<const assets::TensorSource> source,
         core::ExecutionContext & execution,
         SheetSage2DecoderConfig config,
-        SheetSage2DecoderRuntimeOptions options)
+        SheetSage2DecoderRuntimeOptions options,
+        const core::SharedWeightCache * shared_device_weights)
         : source(std::move(source)),
           execution(&execution),
           config(config),
-          options(options) {
+          options(options),
+          shared_device_weights(shared_device_weights) {
         if (!this->source) {
             throw std::runtime_error("MERT2 encoder runtime requires tensor source");
         }
@@ -737,12 +739,22 @@ struct Mert2EncoderRuntime::Impl {
 
     const SheetSage2EncoderWeights & require_encoder_weights() {
         if (!encoder_weights) {
-            encoder_weights = std::make_unique<SheetSage2EncoderWeights>(load_encoder_weights(
-                *source,
-                config,
-                execution->backend(),
-                execution->backend_type(),
-                options));
+            const auto load = [&] {
+                return load_encoder_weights(
+                    *source,
+                    config,
+                    execution->backend(),
+                    execution->backend_type(),
+                    options);
+            };
+            if (execution->backend_type() == core::BackendType::Cuda && shared_device_weights != nullptr) {
+                const auto key = "sheetsage.encoder:" + std::to_string(execution->config().device) + ":" +
+                    std::to_string(static_cast<int>(options.weight_storage_type)) + ":" +
+                    std::to_string(options.weight_context_bytes);
+                encoder_weights = shared_device_weights->get_or_load<SheetSage2EncoderWeights>(key, load);
+            } else {
+                encoder_weights = std::make_shared<SheetSage2EncoderWeights>(load());
+            }
             source->release_storage();
         }
         return *encoder_weights;
@@ -752,7 +764,8 @@ struct Mert2EncoderRuntime::Impl {
     core::ExecutionContext * execution = nullptr;
     SheetSage2DecoderConfig config;
     SheetSage2DecoderRuntimeOptions options;
-    std::unique_ptr<SheetSage2EncoderWeights> encoder_weights;
+    const core::SharedWeightCache * shared_device_weights = nullptr;
+    std::shared_ptr<const SheetSage2EncoderWeights> encoder_weights;
     std::unique_ptr<EncoderGraph> encoder_graph;
 };
 
@@ -923,11 +936,13 @@ struct SheetSage2DecoderRuntime::Impl {
         std::shared_ptr<const assets::TensorSource> source,
         core::ExecutionContext & execution,
         SheetSage2DecoderConfig config,
-        SheetSage2DecoderRuntimeOptions options)
+        SheetSage2DecoderRuntimeOptions options,
+        const core::SharedWeightCache * shared_device_weights)
         : source(std::move(source)),
           execution(&execution),
           config(config),
-          options(options) {
+          options(options),
+          shared_device_weights(shared_device_weights) {
         if (!this->source) {
             throw std::runtime_error("SheetSage2 decoder runtime requires tensor source");
         }
@@ -936,12 +951,22 @@ struct SheetSage2DecoderRuntime::Impl {
 
     const SheetSage2DecoderWeights & require_weights() {
         if (!weights) {
-            weights = std::make_unique<SheetSage2DecoderWeights>(load_weights(
-                *source,
-                config,
-                execution->backend(),
-                execution->backend_type(),
-                options));
+            const auto load = [&] {
+                return load_weights(
+                    *source,
+                    config,
+                    execution->backend(),
+                    execution->backend_type(),
+                    options);
+            };
+            if (execution->backend_type() == core::BackendType::Cuda && shared_device_weights != nullptr) {
+                const auto key = "sheetsage.decoder:" + std::to_string(execution->config().device) + ":" +
+                    std::to_string(static_cast<int>(options.weight_storage_type)) + ":" +
+                    std::to_string(options.weight_context_bytes);
+                weights = shared_device_weights->get_or_load<SheetSage2DecoderWeights>(key, load);
+            } else {
+                weights = std::make_shared<SheetSage2DecoderWeights>(load());
+            }
             source->release_storage();
         }
         return *weights;
@@ -951,7 +976,8 @@ struct SheetSage2DecoderRuntime::Impl {
     core::ExecutionContext * execution = nullptr;
     SheetSage2DecoderConfig config;
     SheetSage2DecoderRuntimeOptions options;
-    std::unique_ptr<SheetSage2DecoderWeights> weights;
+    const core::SharedWeightCache * shared_device_weights = nullptr;
+    std::shared_ptr<const SheetSage2DecoderWeights> weights;
     std::unique_ptr<DecodeGraph> graph;
     std::unique_ptr<CachedDecodeGraph> cached_graph;
 };
@@ -1420,8 +1446,9 @@ Mert2EncoderRuntime::Mert2EncoderRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     core::ExecutionContext & execution,
     SheetSage2DecoderConfig config,
-    SheetSage2DecoderRuntimeOptions options)
-    : impl_(std::make_unique<Impl>(std::move(source), execution, config, options)) {}
+    SheetSage2DecoderRuntimeOptions options,
+    const core::SharedWeightCache * shared_device_weights)
+    : impl_(std::make_unique<Impl>(std::move(source), execution, config, options, shared_device_weights)) {}
 
 Mert2EncoderRuntime::~Mert2EncoderRuntime() = default;
 Mert2EncoderRuntime::Mert2EncoderRuntime(Mert2EncoderRuntime &&) noexcept = default;
@@ -1462,8 +1489,9 @@ SheetSage2DecoderRuntime::SheetSage2DecoderRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     core::ExecutionContext & execution,
     SheetSage2DecoderConfig config,
-    SheetSage2DecoderRuntimeOptions options)
-    : impl_(std::make_unique<Impl>(std::move(source), execution, config, options)) {}
+    SheetSage2DecoderRuntimeOptions options,
+    const core::SharedWeightCache * shared_device_weights)
+    : impl_(std::make_unique<Impl>(std::move(source), execution, config, options, shared_device_weights)) {}
 
 SheetSage2DecoderRuntime::~SheetSage2DecoderRuntime() = default;
 SheetSage2DecoderRuntime::SheetSage2DecoderRuntime(SheetSage2DecoderRuntime &&) noexcept = default;
