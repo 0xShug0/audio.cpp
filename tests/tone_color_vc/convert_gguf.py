@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--type", choices=("f32", "f16", "bf16", "q8_0"), default="f32")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(args.upstream.resolve()))
@@ -46,13 +47,21 @@ def main():
             if not torch.equal(value, restored[name]):
                 raise RuntimeError(f"Safetensors round-trip mismatch: {name}")
         shutil.copyfile(args.checkpoint_dir / "config.json", root / "config.json")
+        type_options = []
+        for name, tensor in tensors.items():
+            if tensor.ndim == 1:
+                type_options.extend(["--keep-type", f"weights/{name}=f32"])
+            elif args.type == "q8_0":
+                storage = "q8_0" if tensor.ndim == 2 and tensor.shape[-1] % 32 == 0 else "f16"
+                type_options.extend(["--keep-type", f"weights/{name}={storage}"])
         subprocess.run([
             str(repo / "build/debug/bin/audiocpp_gguf"),
             "--input", f"weights={source}", "--root", str(root),
-            "--output", str(args.output), "--type", "f32",
+            "--output", str(args.output), "--type", args.type,
             "--family", "tone_color_vc",
             "--model-spec", str(repo / "model_specs/tone_color_vc.json"),
             "--overwrite",
+            *type_options,
         ], check=True)
     print(f"Converted {len(tensors)} tensors with folded weight normalization")
 

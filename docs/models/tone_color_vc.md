@@ -18,6 +18,9 @@ The output is mono, 22,050 Hz audio. Inputs are mixed down to mono. Other sample
 rates require libsoxr; otherwise resample the input WAVs to 22,050 Hz first.
 Conversion is offline. No separate watermark model is applied.
 
+F32 and F16 packages are available. F16 keeps biases and normalization vectors
+in F32. F32 remains the default; F16 is the smaller alternative.
+
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -84,6 +87,9 @@ python tests/tone_color_vc/convert_gguf.py \
   --checkpoint-dir /path/to/OpenVoiceV2/converter \
   --output models/Tone-Color-VC-GGUF/tone-color-vc-f32.gguf
 ```
+
+Use `--type f16` and the corresponding output filename to convert the smaller
+package.
 
 The converter folds weight normalization and embeds the configuration and model
 spec. The resulting GGUF does not need external checkpoint files.

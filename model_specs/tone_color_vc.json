@@ -66,6 +66,18 @@
         "Tone-Color-VC-GGUF/tone-color-vc-f32.gguf"
       ],
       "strip_prefix": "Tone-Color-VC-GGUF"
+    },
+    {
+      "id": "tone_color_vc_f16",
+      "display_name": "Tone Color VC F16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Tone-Color-VC-GGUF",
+      "files": [
+        "Tone-Color-VC-GGUF/tone-color-vc-f16.gguf"
+      ],
+      "strip_prefix": "Tone-Color-VC-GGUF"
     }
   ],
   "dependencies": [],
