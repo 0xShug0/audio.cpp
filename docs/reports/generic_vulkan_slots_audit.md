@@ -2,8 +2,10 @@
 
 The [allocation follow-up](vulkan_slots_allocation_investigation.md) validates
 two-slot weight sharing for FireRed Audio, HeartMuLa, MOSS TTS v1.5 and
-PersonaPlex. The audited Vulkan table now includes 67 family/task pairs;
-the original survey results below remain a record of the earlier implementation.
+PersonaPlex. The [connection-reset follow-up](vulkan_slots_connection_resets.md)
+also validates GLM TTS, OuteTTS, SheetSage2 and Stable Audio at two slots.
+The audited Vulkan table now includes 71 family/task pairs; the original survey
+results below remain a record of the earlier implementation.
 
 Date: 2026-09-27. Windows/MSVC Release, RTX 3090 24 GiB, eight CPU threads.
 
