@@ -787,8 +787,16 @@ public:
         backend_config.threads = threads_;
         backend_ = core::init_backend(backend_config);
         backend_type_ = core::backend_type(backend_);
-        weights_ = std::make_shared<FishARWeights>(
-            load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
+        const auto load = [&] {
+            return load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type);
+        };
+        if (backend_type_ == core::BackendType::Cuda) {
+            const auto key = "ar:" + std::to_string(backend_config.device) + ":" +
+                std::to_string(static_cast<int>(weight_storage_type)) + ":" + std::to_string(weight_context_bytes);
+            weights_ = assets_->cuda_weights->get_or_load<FishARWeights>(key, load);
+        } else {
+            weights_ = std::make_shared<FishARWeights>(load());
+        }
         slow_step_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
