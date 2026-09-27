@@ -1,5 +1,7 @@
 #include "engine/models/roformer/runtime.h"
 
+#include "mask_accumulation.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/audio/fft.h"
@@ -956,20 +958,8 @@ std::vector<float> apply_masks_to_stft(
     const int64_t freq_bins = config.stft_freq_bins;
     const int64_t frames = config.chunk_frames;
     std::vector<float> averaged_masks(static_cast<size_t>(channels * freq_bins * frames * 2), 0.0f);
-    const int64_t merged = static_cast<int64_t>(config.merged_freq_indices.size());
-
-#ifdef _OPENMP
-    #pragma omp parallel for if(merged * frames >= 4096)
-#endif
-    for (int64_t m = 0; m < merged; ++m) {
-        const int64_t merged_index = config.merged_freq_indices[static_cast<size_t>(m)];
-        for (int64_t t = 0; t < frames; ++t) {
-            const size_t src = static_cast<size_t>(t * config.total_band_input_dim + m * 2);
-            const size_t dst = static_cast<size_t>(((merged_index * frames) + t) * 2);
-            averaged_masks[dst] += raw_masks[src];
-            averaged_masks[dst + 1] += raw_masks[src + 1];
-        }
-    }
+    detail::accumulate_band_masks(raw_masks, config.merged_freq_indices,
+        frames, config.total_band_input_dim, averaged_masks);
 
 #ifdef _OPENMP
     #pragma omp parallel for if(channels * freq_bins >= 512)

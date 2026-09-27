@@ -228,7 +228,8 @@ void test_audited_model_policy() {
     require(capacity("sheetsage2", VoiceTaskKind::Midi, BackendType::Vulkan) == 2, "validated SheetSage2 Vulkan slots disabled");
     require(capacity("stable_audio", VoiceTaskKind::AudioGeneration, BackendType::Vulkan) == 2, "validated Stable Audio Vulkan slots disabled");
     require(capacity("inflect_v2", VoiceTaskKind::Tts, BackendType::Vulkan) == 4, "aligned Inflect Vulkan slots disabled");
-    for (const auto family : {"auk", "controlfoley", "mel_band_roformer"}) {
+    require(capacity("mel_band_roformer", VoiceTaskKind::SourceSeparation, BackendType::Vulkan) == 4, "deterministic Mel-Band Vulkan slots disabled");
+    for (const auto family : {"auk", "controlfoley"}) {
         for (const auto & entry : minitts::server::kAuditedCudaOfflineModels) {
             if (entry.family == family) {
                 require(capacity(entry.family, entry.task, BackendType::Vulkan) == 1, "unvalidated Vulkan family enabled");

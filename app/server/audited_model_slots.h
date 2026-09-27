@@ -117,7 +117,8 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
 // support. See docs/reports/generic_vulkan_slots_audit.md for tested workloads.
 // Weight-sharing additions: docs/reports/vulkan_slots_allocation_investigation.md.
 // Connection-reset follow-up: docs/reports/vulkan_slots_connection_resets.md.
-inline constexpr std::array<AuditedModelSlots, 72> kAuditedVulkanOfflineModels = {{
+// Inflect/Mel-Band fixes and four-slot checks: docs/reports/vulkan_inflect_mel_slots.md.
+inline constexpr std::array<AuditedModelSlots, 73> kAuditedVulkanOfflineModels = {{
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"audio8_tts", engine::runtime::VoiceTaskKind::Tts, 4},
@@ -150,6 +151,7 @@ inline constexpr std::array<AuditedModelSlots, 72> kAuditedVulkanOfflineModels =
     {"kroko_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"magpie_tts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"meanvc2", engine::runtime::VoiceTaskKind::VoiceConversion, 4},
+    {"mel_band_roformer", engine::runtime::VoiceTaskKind::SourceSeparation, 4},
     {"midashenglm_gen", engine::runtime::VoiceTaskKind::AudioGeneration, 4},
     {"minimax_music3", engine::runtime::VoiceTaskKind::AudioGeneration, 2},
     {"mira_tts", engine::runtime::VoiceTaskKind::Tts, 4},
