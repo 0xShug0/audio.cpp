@@ -18,6 +18,8 @@ struct AuditedModelSlots {
 // See docs/reports/generic_cuda_slots_3_4_audit.md for VRAM and quality limits.
 // Revalidated two-slot additions and their synchronization limits are in
 // docs/reports/cuda_slots_failure_investigation.md.
+// Codec parity and MOSS/AudioSR additions are documented in
+// docs/reports/cuda_slots_parity_investigation.md.
 // This does not certify other tasks, variants, options or larger pools.
 inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {{
     {"ace_step", engine::runtime::VoiceTaskKind::AudioGeneration, 2},
