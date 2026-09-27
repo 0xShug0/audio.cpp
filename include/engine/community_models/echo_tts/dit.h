@@ -3,6 +3,7 @@
 #include "engine/community_models/echo_tts/config.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/shared_weight_cache.h"
 
 #include <cstdint>
 #include <memory>
@@ -23,7 +24,7 @@ struct EchoConditioning {
     int64_t speaker_frames = 0;
 };
 
-// Owns the DiT weights and the two graphs that use them.
+// Holds the DiT weights and owns the two graphs that use them.
 //
 // The conditioning encoders run once per request and their per-block key/value
 // projections are held in a persistent device buffer. The denoiser graph then
@@ -37,7 +38,9 @@ public:
         const assets::TensorSource & source,
         const std::string & tensor_prefix,
         core::ExecutionContext & execution,
-        assets::TensorStorageType matmul_storage_type);
+        assets::TensorStorageType matmul_storage_type,
+        // Optional cache for one fixed-config package's immutable CUDA tensors.
+        const core::SharedWeightCache * shared_device_weights = nullptr);
     ~EchoDitRuntime();
 
     EchoDitRuntime(const EchoDitRuntime &) = delete;
