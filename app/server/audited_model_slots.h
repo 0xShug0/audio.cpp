@@ -194,7 +194,7 @@ inline constexpr std::array<AuditedModelSlots, 75> kAuditedVulkanOfflineModels =
     {"voxcpm2", engine::runtime::VoiceTaskKind::Tts, 4},
     {"voxtral_realtime", engine::runtime::VoiceTaskKind::Asr, 4},
     {"yue2", engine::runtime::VoiceTaskKind::AudioGeneration, 3},
-    {"zipvoice", engine::runtime::VoiceTaskKind::VoiceCloning, 2},
+    {"zipvoice", engine::runtime::VoiceTaskKind::VoiceCloning, 4},
 }};
 
 inline size_t audited_slot_capacity(

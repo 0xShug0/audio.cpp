@@ -211,7 +211,7 @@ void test_audited_model_policy() {
     require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Vulkan) == 4, "validated Vulkan separation disabled");
     require(capacity("index_tts2", VoiceTaskKind::Tts, BackendType::Vulkan) == 3, "Vulkan VRAM ceiling wrong");
     require(capacity("yue2", VoiceTaskKind::AudioGeneration, BackendType::Vulkan) == 3, "Vulkan allocation failure count enabled");
-    require(capacity("zipvoice", VoiceTaskKind::VoiceCloning, BackendType::Vulkan) == 2, "unstable Vulkan counts enabled");
+    require(capacity("zipvoice", VoiceTaskKind::VoiceCloning, BackendType::Vulkan) == 4, "cold-load guarded ZipVoice capacity wrong");
     for (const auto & entry : minitts::server::kAuditedVulkanOfflineModels) {
         require(capacity(entry.family, entry.task, BackendType::Vulkan) == entry.capacity, "Vulkan table entry not admitted");
         require(capacity(entry.family, entry.task, BackendType::Vulkan, RunMode::Streaming) == 1, "Vulkan streaming fallback enabled");
