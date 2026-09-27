@@ -19,7 +19,7 @@ struct AuditedModelSlots {
 // Revalidated two-slot additions and their synchronization limits are in
 // docs/reports/cuda_slots_failure_investigation.md.
 // This does not certify other tasks, variants, options or larger pools.
-inline constexpr std::array<AuditedModelSlots, 88> kAuditedCudaOfflineModels = {{
+inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {{
     {"ace_step", engine::runtime::VoiceTaskKind::AudioGeneration, 2},
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},
@@ -103,6 +103,7 @@ inline constexpr std::array<AuditedModelSlots, 88> kAuditedCudaOfflineModels = {
     {"vibevoice", engine::runtime::VoiceTaskKind::Tts, 4},
     {"vibevoice_asr", engine::runtime::VoiceTaskKind::Asr, 2},
     {"vibevoice_asr_streaming", engine::runtime::VoiceTaskKind::Asr, 2},
+    {"vieneu_v3_turbo", engine::runtime::VoiceTaskKind::Tts, 2},
     {"voxcpm1", engine::runtime::VoiceTaskKind::Tts, 4},
     {"voxcpm2", engine::runtime::VoiceTaskKind::Tts, 4},
     {"voxtral_realtime", engine::runtime::VoiceTaskKind::Asr, 4},
