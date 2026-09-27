@@ -233,6 +233,7 @@ void test_audited_model_policy() {
     require(capacity("unknown-model", VoiceTaskKind::Tts) == 1, "unknown family enabled");
     require(capacity("f5_tts", VoiceTaskKind::Tts) == 1, "failed CUDA family enabled");
     require(capacity("chatterbox", VoiceTaskKind::VoiceCloning) == 2, "validated CUDA slots disabled");
+    require(capacity("chatterbox_turbo", VoiceTaskKind::Tts) == 2, "validated CUDA slots disabled");
     require(capacity("audiosr", VoiceTaskKind::SpeechToSpeech) == 1, "output mismatch family enabled");
     require(capacity("miocodec", VoiceTaskKind::VoiceConversion) == 1, "unverified family enabled");
     require(capacity("minimax_h3", VoiceTaskKind::AudioGeneration) == 1, "hardware-blocked family enabled");
