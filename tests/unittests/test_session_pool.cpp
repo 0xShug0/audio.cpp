@@ -204,7 +204,7 @@ void test_audited_model_policy() {
     require(capacity("cosyvoice3", VoiceTaskKind::VoiceCloning) == 4, "audited clone capacity wrong");
     require(capacity("fireredtts3", VoiceTaskKind::VoiceCloning) == 4, "revalidated FireRedTTS3 capacity wrong");
     require(capacity("qwen3_tts", VoiceTaskKind::Tts) == 4, "guarded Qwen3 decoder capacity wrong");
-    require(capacity("rvc", VoiceTaskKind::VoiceConversion) == 3, "four-slot request failure not restricted");
+    require(capacity("rvc", VoiceTaskKind::VoiceConversion) == 4, "revalidated RVC capacity wrong");
     require(capacity("controlfoley", VoiceTaskKind::AudioGeneration) == 2, "VRAM-limited family not restricted");
     require(capacity("cosyvoice3", VoiceTaskKind::Tts) == 1, "untested task enabled");
     require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Cpu) == 1, "CPU fallback enabled");
