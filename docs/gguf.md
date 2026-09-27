@@ -113,6 +113,7 @@ Status labels:
 | `qwen3_tts` base | Done | Pass | Pass | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `qwen3_tts` custom voice | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `qwen3_tts` voice design | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
+| `reuse` | Done | --- | Pass (drift) | Pass (drift) | Pass (drift) |
 | `rvc` | Done | --- | --- | Pass | --- |
 | `sam_audio` | Done | --- | Pass | --- | --- |
 | `samsone` | Done | --- | --- | Pass | Pass (drift) |

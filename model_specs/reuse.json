@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "family": "reuse",
+  "display_name": "RE-USE",
+  "description": "Sample-rate-independent speech restoration with bidirectional Mamba.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "s2s": [
+      "audio_enhancement"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Chunk duration in seconds; zero processes the whole recording. Chunking changes bidirectional and normalization context.",
+        "min": 0,
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "audio_chunk_overlap_sec",
+        "type": "float",
+        "description": "Hann-weighted overlap in seconds, shorter than the chunk duration.",
+        "min": 0,
+        "default": 1,
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; native preserves GGUF tensor types.",
+        "preset": "weight_type_full",
+        "default": "native",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/RE-USE-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "reuse_f32",
+      "display_name": "RE-USE F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "RE-USE-GGUF",
+      "files": [
+        "reuse-f32.gguf"
+      ]
+    },
+    {
+      "id": "reuse_f16",
+      "display_name": "RE-USE F16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "RE-USE-GGUF",
+      "files": [
+        "reuse-f16.gguf"
+      ]
+    },
+    {
+      "id": "reuse_q8_0",
+      "display_name": "RE-USE Q8_0 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "RE-USE-GGUF",
+      "files": [
+        "reuse-q8_0.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "reuse_f32",
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/community_models/reuse.md",
+      "docs/audio_tools.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}

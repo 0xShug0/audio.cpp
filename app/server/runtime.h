@@ -206,6 +206,7 @@ private:
         std::optional<int> busy_timeout_ms = std::nullopt);
     HttpResponse handle_transcription_live(const HttpRequest & request);
     HttpResponse handle_generic_run(const std::string & body_text);
+    HttpResponse handle_generic_batch(const std::string & body_text);
     HttpResponse handle_generic_stream(const std::string & body_text);
     HttpResponse handle_voices(const HttpRequest & request) const;
     HttpResponse handle_unload_models(const std::string & body_text);
