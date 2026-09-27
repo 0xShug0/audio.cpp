@@ -194,10 +194,10 @@ void test_loaded_model_factory() {
 
 void test_audited_model_policy() {
     using engine::core::BackendType;
-    using minitts::server::audited_cuda_slot_capacity;
+    using minitts::server::audited_slot_capacity;
     auto capacity = [](std::string_view family, VoiceTaskKind task,
                        BackendType backend = BackendType::Cuda, RunMode mode = RunMode::Offline) {
-        return audited_cuda_slot_capacity(family, task, backend, mode);
+        return audited_slot_capacity(family, task, backend, mode);
     };
     require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation) == 4, "audited separation capacity wrong");
     require(capacity("qwen3_asr", VoiceTaskKind::Asr) == 4, "audited ASR capacity wrong");
@@ -207,7 +207,28 @@ void test_audited_model_policy() {
     require(capacity("controlfoley", VoiceTaskKind::AudioGeneration) == 2, "VRAM-limited family not restricted");
     require(capacity("cosyvoice3", VoiceTaskKind::Tts) == 1, "untested task enabled");
     require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Cpu) == 1, "CPU fallback enabled");
-    require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Vulkan) == 1, "Vulkan fallback enabled");
+    require(capacity("bs_roformer", VoiceTaskKind::SourceSeparation, BackendType::Vulkan) == 4, "validated Vulkan separation disabled");
+    require(capacity("index_tts2", VoiceTaskKind::Tts, BackendType::Vulkan) == 3, "Vulkan VRAM ceiling wrong");
+    require(capacity("yue2", VoiceTaskKind::AudioGeneration, BackendType::Vulkan) == 3, "Vulkan allocation failure count enabled");
+    require(capacity("zipvoice", VoiceTaskKind::VoiceCloning, BackendType::Vulkan) == 2, "unstable Vulkan counts enabled");
+    for (const auto & entry : minitts::server::kAuditedVulkanOfflineModels) {
+        require(capacity(entry.family, entry.task, BackendType::Vulkan) == entry.capacity, "Vulkan table entry not admitted");
+        require(capacity(entry.family, entry.task, BackendType::Vulkan, RunMode::Streaming) == 1, "Vulkan streaming fallback enabled");
+        require(capacity(entry.family, entry.task, BackendType::Cpu) == 1, "CPU fallback enabled by Vulkan audit");
+    }
+    for (const auto & entry : minitts::server::kAuditedCudaOfflineModels) {
+        require(capacity(entry.family, entry.task) == entry.capacity, "CUDA capacity changed");
+    }
+    for (const auto family : {"auk", "controlfoley", "firered_audio", "glm_tts", "heartmula", "inflect_v2",
+                              "mel_band_roformer", "moss_tts_v15", "outetts", "personaplex", "sheetsage2", "stable_audio"}) {
+        for (const auto & entry : minitts::server::kAuditedCudaOfflineModels) {
+            if (entry.family == family) {
+                require(capacity(entry.family, entry.task, BackendType::Vulkan) == 1, "unvalidated Vulkan family enabled");
+            }
+        }
+    }
+    require(capacity("cosyvoice3", VoiceTaskKind::Tts, BackendType::Vulkan) == 1, "untested Vulkan task enabled");
+    require(capacity("unknown-model", VoiceTaskKind::Tts, BackendType::Vulkan) == 1, "unknown Vulkan family enabled");
     require(capacity("qwen3_asr", VoiceTaskKind::Asr, BackendType::Cuda, RunMode::Streaming) == 1, "streaming fallback enabled");
     require(capacity("unknown-model", VoiceTaskKind::Tts) == 1, "unknown family enabled");
     require(capacity("f5_tts", VoiceTaskKind::Tts) == 1, "failed CUDA family enabled");

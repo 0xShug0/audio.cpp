@@ -2,10 +2,11 @@
 
 The server uses a common session pool and slot scheduler for all model families.
 A model keeps its existing single-session behavior when configured with one slot.
-CUDA offline requests can use an audited loaded-model session factory fallback
-for the 75 family/task pairs in `app/server/audited_model_slots.h`. This fallback
+CUDA and Vulkan offline requests can use an audited loaded-model session factory
+fallback. Separate tables in `app/server/audited_model_slots.h` admit 75 CUDA
+and 63 Vulkan family/task pairs at their backend-specific capacities. This fallback
 uses each pair's audited capacity (two, three or four slots); unlisted families and untested tasks retain a capacity of
-one. Other backends and streaming require explicit model support. Setting
+one. CPU, Metal and streaming require explicit model support. Setting
 `slots` does not make an arbitrary model thread-safe; the generic fallback must
 be validated for the selected model, task, options and workload.
 
@@ -102,7 +103,7 @@ without the factory work with one slot and reject larger configurations.
 ## Current implementation and validation
 
 Higgs Audio v3 TTS has a specialized offline adapter for CUDA and Vulkan
-(up to four Vulkan slots). Audited CUDA families also use the loaded-model
+(up to four Vulkan slots). Audited CUDA and Vulkan families also use the loaded-model
 fallback described above. Other Higgs backend/mode combinations retain one slot. The framework
 has no family-specific CUDA kernels and does not change shared CUDA operations.
 
@@ -130,3 +131,8 @@ compatibility, same-backend WAV parity and two reproduced upstream extended-test
 failures at the original revision. The follow-up
 [Higgs Vulkan parallel report](../reports/higgs_vulkan_parallel_slots.md)
 records the four-slot adapter validation.
+
+The [Vulkan model audit](../reports/generic_vulkan_slots_audit.md) records
+63 exact two-slot passes and their validated three/four-slot limits. Vulkan
+capacities are independent of CUDA: IndexTTS2 and Yue2 are limited to three,
+and ZipVoice to two. Families that failed Vulkan validation retain one slot.

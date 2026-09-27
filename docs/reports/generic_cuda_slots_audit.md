@@ -10,8 +10,8 @@ pairs in `app/server/audited_model_slots.h`. Subsequent
 highest validated capacity: 58 families at four, nine at three and eight at two.
 Families
 requiring investigation, unverified parity, CPU-only variants and hardware-blocked
-packages remain single-slot. Untested tasks and other backends are not enabled
-by the fallback. Higgs retains its specialized shared-weight factory and existing
+packages remain single-slot on CUDA. Untested tasks are not enabled by this
+CUDA table; Vulkan uses its own [audited table](generic_vulkan_slots_audit.md). Higgs retains its specialized shared-weight factory and existing
 capacity. The survey below exercised the broader experimental factory to find
 the supported subset; its failures are not enabled by the final allowlist.
 
@@ -174,6 +174,8 @@ GPU measurements include loaded weights, runtime caches and retained buffers; th
 - AuK passed text-only TTS. Reference-audio conditioning requires Soxr, absent from this build.
 - LiveAvatar used a 256x256 frame extracted from the provided video, five output frames and four inference steps; video quality was not evaluated.
 - Some TTS cases use explicit token limits. Full request settings are in the JSON evidence.
-- Generic CUDA fallback does not enable CPU/Vulkan/streaming sessions; an explicit specialized adapter remains required there.
+- The CUDA table does not enable other backends. Vulkan now has a separate
+  [audited offline table](generic_vulkan_slots_audit.md); CPU and streaming
+  still require explicit specialized support.
 - No CUDA kernels or model inference implementations were changed. The audited subset is enabled in PR #706; the failing models remain disabled for generic multi-slot execution.
 - Framework checks: session_pool_test, server_model_slots_test, server_busy_guard_test and server_config_test all passed.

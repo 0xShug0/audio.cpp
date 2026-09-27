@@ -164,19 +164,21 @@ or in `server.json`:
 Set `"slots": 2` on a model entry to let two HTTP requests execute concurrently
 against one loaded model. The default is `1`; values from 1 through 16 are
 accepted. The common framework supports offline, streaming and native-batch sessions
-through an explicit model capability. CUDA offline sessions also have an
+through an explicit model capability. CUDA and Vulkan offline sessions also have an
 allowlisted fallback that creates independent sessions from the same loaded
-checkpoint. The 75 audited family/task pairs support their tested limit of two,
-three or four slots on this
-path; unlisted families and untested tasks keep a capacity of one. A specialized
+checkpoint. Separate allowlists cover 75 CUDA and 63 Vulkan family/task pairs,
+with backend-specific tested limits of two, three or four slots on this path;
+unlisted families and untested tasks keep a capacity of one. A specialized
 model factory takes precedence, including its
-backend/task/mode restrictions. Other backends and streaming require an explicit
+backend/task/mode restrictions. CPU, Metal and streaming require an explicit
 factory. The fallback enables testing; it does not establish that every model is
 safe or memory-efficient for every variant and workload. Validate the selected model,
 task, options and slot count before using it for a workload.
 See [the CUDA two-slot survey](../../docs/reports/generic_cuda_slots_audit.md)
 and [three/four-slot validation](../../docs/reports/generic_cuda_slots_3_4_audit.md)
 for tested packages, failures, per-family limits and memory costs.
+See [the Vulkan model audit](../../docs/reports/generic_vulkan_slots_audit.md)
+for the separate Vulkan allowlist and its limits.
 See [the adapter guide](../../docs/maintainers/parallel_sessions.md) to add
 parallel support to another model.
 See [the measured comparison](../../docs/reports/common_model_slots.md) for
