@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 
@@ -32,6 +33,10 @@ namespace {
 
 namespace core = engine::core;
 namespace modules = engine::modules;
+
+// The legacy runtime caches mutable graph inputs and a backend process-wide.
+// Hold this through input upload, compute and readback, including cold loading.
+std::mutex dit_runtime_mutex;
 
 // Column convention throughout: tensors are [features, seq] (ggml ne0 =
 // features), so ggml_norm == LayerNorm over features and ggml_mul_mat(W, X)
@@ -309,6 +314,7 @@ std::pair<std::vector<float>, std::vector<float>> f5_dit_forward_cfg(
     int seq_len,
     const F5Architecture & arch,
     const F5ComputeDevice * device) {
+    const std::lock_guard<std::mutex> lock(dit_runtime_mutex);
     static const F5ComputeDevice kDefaultDevice{};
     const F5ComputeDevice & dev = device != nullptr ? *device : kDefaultDevice;
     const auto & model = load_model_once(weights_path, dev);
@@ -491,6 +497,7 @@ std::vector<float> f5_dit_forward(
     bool drop_text,
     const F5DebugTaps * taps,
     const F5ComputeDevice * device) {
+    const std::lock_guard<std::mutex> lock(dit_runtime_mutex);
     static const F5ComputeDevice kDefaultDevice{};
     const F5ComputeDevice & dev = device != nullptr ? *device : kDefaultDevice;
     const auto & model = load_model_once(weights_path, dev);

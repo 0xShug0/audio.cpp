@@ -666,6 +666,9 @@ std::vector<float> vocos_decode_gpu(
     const std::string & vocos_path,
     const std::vector<float> & mel_rows,
     const F5ComputeDevice & dev) {
+    // The cached graph owns mutable inputs, outputs and allocator scratch.
+    static std::mutex graph_mutex;
+    const std::lock_guard<std::mutex> lock(graph_mutex);
     const auto & v = load_vocos_once(vocos_path);
     const int T = static_cast<int>(mel_rows.size()) / kNMel;
     const int D = 512;
