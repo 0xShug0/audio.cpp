@@ -392,20 +392,32 @@ runtime::RunMode PersonaPlexSession::run_mode() const {
 
 void PersonaPlexSession::prepare(const runtime::SessionPreparationRequest &) {
     if (lm_weights_ == nullptr) {
-        lm_weights_ = load_personaplex_lm_weights(
-            *assets_,
-            execution_context().backend(),
-            execution_context().backend_type(),
-            lm_weight_context_bytes_,
-            weight_storage_type_);
+        const auto load = [&] {
+            return load_personaplex_lm_weights(
+                *assets_, execution_context().backend(), execution_context().backend_type(),
+                lm_weight_context_bytes_, weight_storage_type_);
+        };
+        if (execution_context().backend_type() == core::BackendType::Vulkan) {
+            const auto key = "lm:" + std::to_string(execution_context().config().device) + ":" +
+                std::to_string(static_cast<int>(weight_storage_type_)) + ":" + std::to_string(lm_weight_context_bytes_);
+            lm_weights_ = assets_->vulkan_weights->get_or_load_shared<PersonaPlexLMWeights>(key, load);
+        } else {
+            lm_weights_ = load();
+        }
     }
     if (depformer_weights_ == nullptr) {
-        depformer_weights_ = load_personaplex_depformer_weights(
-            *assets_,
-            execution_context().backend(),
-            execution_context().backend_type(),
-            depformer_weight_context_bytes_,
-            weight_storage_type_);
+        const auto load = [&] {
+            return load_personaplex_depformer_weights(
+                *assets_, execution_context().backend(), execution_context().backend_type(),
+                depformer_weight_context_bytes_, weight_storage_type_);
+        };
+        if (execution_context().backend_type() == core::BackendType::Vulkan) {
+            const auto key = "depformer:" + std::to_string(execution_context().config().device) + ":" +
+                std::to_string(static_cast<int>(weight_storage_type_)) + ":" + std::to_string(depformer_weight_context_bytes_);
+            depformer_weights_ = assets_->vulkan_weights->get_or_load_shared<PersonaPlexDepformerWeights>(key, load);
+        } else {
+            depformer_weights_ = load();
+        }
     }
     if (mimi_codec_ == nullptr) {
         mimi_codec_ = std::make_unique<engine::codecs::MimiCodecComponent>(
