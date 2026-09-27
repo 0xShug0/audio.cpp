@@ -115,7 +115,7 @@ inline constexpr std::array<AuditedModelSlots, 89> kAuditedCudaOfflineModels = {
 
 // Vulkan has its own audited capacities; CUDA results do not imply Vulkan
 // support. See docs/reports/generic_vulkan_slots_audit.md for tested workloads.
-inline constexpr std::array<AuditedModelSlots, 64> kAuditedVulkanOfflineModels = {{
+inline constexpr std::array<AuditedModelSlots, 65> kAuditedVulkanOfflineModels = {{
     {"apollo", engine::runtime::VoiceTaskKind::SpeechToSpeech, 4},
     {"audio8_asr", engine::runtime::VoiceTaskKind::Asr, 4},
     {"audio8_tts", engine::runtime::VoiceTaskKind::Tts, 4},
@@ -134,6 +134,7 @@ inline constexpr std::array<AuditedModelSlots, 64> kAuditedVulkanOfflineModels =
     {"fish_audio", engine::runtime::VoiceTaskKind::Tts, 3},
     {"fun_asr_nano", engine::runtime::VoiceTaskKind::Asr, 4},
     {"granite5asr", engine::runtime::VoiceTaskKind::Asr, 4},
+    {"heartmula", engine::runtime::VoiceTaskKind::AudioGeneration, 2},
     {"higgs_audio_stt", engine::runtime::VoiceTaskKind::Asr, 4},
     {"higgs_audio_tts", engine::runtime::VoiceTaskKind::Tts, 4},
     {"htdemucs", engine::runtime::VoiceTaskKind::SourceSeparation, 4},
