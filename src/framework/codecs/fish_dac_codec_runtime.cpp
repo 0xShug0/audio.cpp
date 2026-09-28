@@ -1305,6 +1305,11 @@ public:
         return decode_latents(latents);
     }
 
+    void release_decode_graphs() {
+        decode_graph_.reset();
+        latent_decode_graph_.reset();
+    }
+
     void release_encode_graph() {
         encode_graph_.reset();
     }
@@ -1390,6 +1395,10 @@ runtime::AudioBuffer FishDacCodecRuntime::decode_latents(const FishDacLatents & 
 
 runtime::AudioBuffer FishDacCodecRuntime::decode_latents(const std::vector<float> & values, int64_t frames) {
     return impl_->decode_latents(values, frames);
+}
+
+void FishDacCodecRuntime::release_decode_graphs() {
+    impl_->release_decode_graphs();
 }
 
 void FishDacCodecRuntime::release_encode_graph() {

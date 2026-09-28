@@ -196,6 +196,10 @@ EchoTtsSession::EchoTtsSession(
     // Without this a typo in server config is silently ignored.
     runtime::validate_spec_backed_session_options(
         RuntimeSessionBase::options(), *contract_, kFamily, "Echo-TTS");
+    if (const auto value = runtime::find_option(
+        RuntimeSessionBase::options().options, {"echo_tts.mem_saver"})) {
+            mem_saver_ = runtime::parse_bool_option(*value, "echo_tts.mem_saver");
+        }
     const auto slots = runtime::parse_int_option(
         RuntimeSessionBase::options().options, {"echo_tts.reference_cache_slots"});
     if (slots.has_value()) {
@@ -381,6 +385,9 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
         return;
     }
 
+    if (mem_saver_) {
+        codec_->release_decode_graphs();
+    }
     // Mixed down and resampled once, so chunk boundaries land on exact codec
     // frames rather than on pre-resample sample indices.
     auto mono = engine::audio::mixdown_interleaved_to_mono_average(audio.samples, audio.channels);
@@ -435,6 +442,9 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
     speaker_latent_ = std::move(latents);
     speaker_frames_ = frames;
     reference_cache_.put(identity, EchoPreparedSpeaker{speaker_latent_, speaker_frames_});
+    if (mem_saver_) {
+        codec_->release_encode_graph();
+    }
 }
 
 runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
