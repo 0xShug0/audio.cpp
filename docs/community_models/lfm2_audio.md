@@ -232,11 +232,13 @@ system prompt, so pass liquid-audio's:
 ```bash
 ffmpeg -i question.wav -ar 16000 -ac 1 -f s16le - \
   | curl -N -X POST -H 'Expect:' -T - \
-      'http://127.0.0.1:8080/v1/audio/speech/live?model=lfm2-audio-s2s-stream&sample_rate=16000&channels=1&sample_format=s16le&input=Respond%20with%20interleaved%20text%20and%20audio.'
+      'http://127.0.0.1:8080/v1/audio/speech/live?model=lfm2-audio-s2s-stream&sample_rate=16000&channels=1&sample_format=s16le&return_text=true&input=Respond%20with%20interleaved%20text%20and%20audio.'
 ```
 
-It returns the reply's audio as server-sent events; the text is not returned
-on this route. Time from the end of a 7.5 s English question, streamed in real
+It returns the reply's audio as server-sent events and, with `return_text=true`,
+its text: `speech.text.delta` events carry what the reply wrote since the
+previous event, ahead of the audio that speaks it, and `speech.text.done` the
+whole text. Time from the end of a 7.5 s English question, streamed in real
 time, to the first audio of the reply:
 
 | Backend | F16 | Q8_0 | Q4_0 |
@@ -547,7 +549,6 @@ gather rows from, so on CUDA the backbone also keeps a 256 MiB F16 copy of it.
 
 - S2S answers one turn per request, as a new conversation; liquid-audio's
   demo also keeps the earlier turns.
-- `/v1/audio/speech/live` returns an S2S reply's audio but not its text.
 - ASR is offline only; TTS and S2S also stream.
 - TTS speaks with the built-in voices only; there is no voice cloning.
 - On CPU, quantized weights run without repacked kernels. On Apple Silicon,
