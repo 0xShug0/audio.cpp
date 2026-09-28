@@ -205,8 +205,8 @@ Granite5ASRSessionBase::Granite5ASRSessionBase(
     }
     const auto storage_type = parse_weight_storage(RuntimeSessionBase::options(), family_impl());
     const auto arena_bytes = parse_graph_arena_bytes(RuntimeSessionBase::options(), family_impl());
-    encoder_ = std::unique_ptr<Granite5EncoderRuntime>(
-        new Granite5EncoderRuntime(
+    encoder_ = std::unique_ptr<Granite5ConformerEncoderRuntime>(
+        new Granite5ConformerEncoderRuntime(
             assets_,
             execution_context(),
             storage_type,

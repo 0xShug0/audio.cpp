@@ -14,17 +14,17 @@ namespace engine::models::fun_asr_nano {
 using FunAsrNanoTokenCallback =
     std::function<void(const FunAsrNanoGeneratedTokens &)>;
 
-class FunAsrNanoDecoderRuntime {
+class FunAsrNanoQwen3DecoderRuntime {
 public:
   struct Impl;
 
-  FunAsrNanoDecoderRuntime(std::shared_ptr<const FunAsrNanoAssets> assets,
+  FunAsrNanoQwen3DecoderRuntime(std::shared_ptr<const FunAsrNanoAssets> assets,
                            core::ExecutionContext &execution,
                            size_t prefill_graph_arena_bytes,
                            size_t decode_graph_arena_bytes,
                            size_t weight_context_bytes,
                            assets::TensorStorageType weight_storage_type);
-  ~FunAsrNanoDecoderRuntime();
+  ~FunAsrNanoQwen3DecoderRuntime();
 
   FunAsrNanoGeneratedTokens
   generate(const FunAsrNanoPrompt &prompt,

@@ -16,7 +16,7 @@ struct AceStepModelSelection {
     std::string dit_model_path = "acestep-v15-turbo";
 };
 
-struct AceStepPlannerConfig {
+struct AceStepQwen3PlannerConfig {
     std::string lm_family = "qwen3";
     int64_t frame_rate_hz = 5;
     bool supports_thinking = true;
@@ -35,7 +35,7 @@ struct AceStepPlannerConfig {
     float rope_theta = 1000000.0F;
 };
 
-struct AceStepTextEncoderConfig {
+struct AceStepQwen3TextEncoderConfig {
     std::string encoder_family = "qwen3_embedding";
     int64_t vocab_size = 0;
     int64_t hidden_size = 0;
@@ -104,8 +104,8 @@ struct AceStepVAEConfig {
 };
 
 struct AceStepConfig {
-    AceStepPlannerConfig planner;
-    AceStepTextEncoderConfig text_encoder;
+    AceStepQwen3PlannerConfig planner;
+    AceStepQwen3TextEncoderConfig text_encoder;
     // The DiT itself.
     AceStepDiffusionConfig diffusion;
     // Everything that feeds it: the condition encoder, the audio tokenizer and

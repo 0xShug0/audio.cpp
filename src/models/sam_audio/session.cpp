@@ -23,7 +23,7 @@ namespace {
 struct SAMAudioAssets {
     assets::ResourceBundle resources;
     std::shared_ptr<const assets::TensorSource> tensors;
-    DacVaeConfig codec;
+    DacVAEConfig codec;
     int sample_rate = 48000;
     int64_t video_channels = 1024;
 };
@@ -40,11 +40,11 @@ public:
         const auto bounded_option = runtime::find_option(options.options, {"sam_audio.memory_bounded"});
         const bool memory_bounded = bounded_option && runtime::parse_bool_option(*bounded_option, "sam_audio.memory_bounded");
         auto & execution = execution_context();
-        encoder_ = std::make_unique<DacVaeEncoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
+        encoder_ = std::make_unique<DacVAEEncoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
         text_ = std::make_unique<T5TextEncoder>(assets_->tensors, execution,
             assets_->resources.require_file("t5_config"), assets_->resources.require_file("tokenizer"));
         denoiser_ = std::make_unique<DiTRuntime>(assets_->tensors, execution, assets_->resources.require_file("config"), memory_bounded);
-        decoder_ = std::make_unique<DacVaeDecoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
+        decoder_ = std::make_unique<DacVAEDecoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
         assets_->tensors->release_storage();
     }
 
@@ -151,10 +151,10 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const SAMAudioAssets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
-    std::unique_ptr<DacVaeEncoder> encoder_;
+    std::unique_ptr<DacVAEEncoder> encoder_;
     std::unique_ptr<T5TextEncoder> text_;
     std::unique_ptr<DiTRuntime> denoiser_;
-    std::unique_ptr<DacVaeDecoder> decoder_;
+    std::unique_ptr<DacVAEDecoder> decoder_;
     std::unique_ptr<PECoreVisionEncoder> vision_;
 };
 

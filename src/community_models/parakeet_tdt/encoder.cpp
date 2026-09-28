@@ -55,7 +55,7 @@ engine::core::TensorValue pad_symmetric_1d(
 engine::core::TensorValue build_fastconformer_conv_module(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input_btc,
-    const ParakeetEncoderLayerWeights & weights,
+    const ParakeetFastConformerLayerWeights & weights,
     const engine::core::TensorValue & keep_mask,
     int64_t conv_kernel) {
     // pointwise_conv1 runs as a Linear over the feature axis, so it wants plain
@@ -184,7 +184,7 @@ engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for(engine::co
 // single encoder layer in isolation against the exact same code path the
 // production encoder graph uses, instead of maintaining a separate copy that
 // could silently drift out of sync. See
-// ParakeetEncoderRuntime::ensure_graph()'s per-layer loop for the only other
+// ParakeetFastConformerEncoderRuntime::ensure_graph()'s per-layer loop for the only other
 // caller, and tests/parakeet_tdt/parity/ for the isolation harness.
 engine::core::TensorValue build_encoder_layer(
     engine::core::ModuleBuildContext & ctx,
@@ -192,7 +192,7 @@ engine::core::TensorValue build_encoder_layer(
     const engine::core::TensorValue & attention_mask,
     const engine::core::TensorValue & keep_mask,
     const engine::core::TensorValue & projected_pos_emb,
-    const ParakeetEncoderLayerWeights & weights,
+    const ParakeetFastConformerLayerWeights & weights,
     int64_t hidden_size,
     int64_t intermediate_size,
     int64_t heads,
@@ -313,7 +313,7 @@ engine::core::TensorValue build_encoder_layer(
     return engine::modules::LayerNormModule({hidden_size, 1.0e-5f, true, true}).build(ctx, x, weights.norm_out);
 }
 
-struct ParakeetEncoderRuntime::Graph {
+struct ParakeetFastConformerEncoderRuntime::Graph {
     int64_t input_frames = 0;
     int64_t feature_dim = 0;
     int64_t encoded_frames = 0;
@@ -354,7 +354,7 @@ struct ParakeetEncoderRuntime::Graph {
     }
 };
 
-ParakeetEncoderRuntime::ParakeetEncoderRuntime(
+ParakeetFastConformerEncoderRuntime::ParakeetFastConformerEncoderRuntime(
     std::shared_ptr<const ParakeetTDTAssets> assets,
     std::shared_ptr<const ParakeetWeights> weights,
     engine::core::ExecutionContext & execution_context,
@@ -370,9 +370,9 @@ ParakeetEncoderRuntime::ParakeetEncoderRuntime(
     }
 }
 
-ParakeetEncoderRuntime::~ParakeetEncoderRuntime() = default;
+ParakeetFastConformerEncoderRuntime::~ParakeetFastConformerEncoderRuntime() = default;
 
-const std::vector<float> & ParakeetEncoderRuntime::relative_positional_encoding(int64_t frames) {
+const std::vector<float> & ParakeetFastConformerEncoderRuntime::relative_positional_encoding(int64_t frames) {
     auto cached = relative_positional_encoding_cache_.find(frames);
     if (cached != relative_positional_encoding_cache_.end()) {
         return cached->second;
@@ -392,7 +392,7 @@ const std::vector<float> & ParakeetEncoderRuntime::relative_positional_encoding(
     return inserted.first->second;
 }
 
-void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_dim) {
+void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_dim) {
     if (input_frames <= 0 || feature_dim <= 0) {
         throw std::runtime_error("Parakeet TDT encoder graph requires positive input shape");
     }
@@ -585,15 +585,15 @@ void ParakeetEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_encoded_frames", stage3_frames);
 }
 
-void ParakeetEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t feature_dim) {
+void ParakeetFastConformerEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t feature_dim) {
     ensure_graph(input_frames, feature_dim);
 }
 
-void ParakeetEncoderRuntime::release_offline_graph() {
+void ParakeetFastConformerEncoderRuntime::release_offline_graph() {
     graph_.reset();
 }
 
-ParakeetEncodedAudio ParakeetEncoderRuntime::encode(
+ParakeetEncodedAudio ParakeetFastConformerEncoderRuntime::encode(
     const ParakeetFrontendFeatures & features) {
     if (features.frames <= 0 || features.feature_dim <= 0) {
         throw std::runtime_error("Parakeet TDT encoder requires positive frontend shape");

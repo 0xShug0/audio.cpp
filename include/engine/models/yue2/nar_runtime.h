@@ -15,9 +15,9 @@
 
 namespace engine::models::yue2 {
 
-class Yue2NarRuntime {
+class Yue2NARRuntime {
 public:
-    Yue2NarRuntime(
+    Yue2NARRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
         assets::TensorStorageType weight_type,
@@ -25,12 +25,12 @@ public:
         size_t graph_arena_bytes,
         bool allow_flash_attention = true,
         int64_t attention_tile_rows = 0);
-    ~Yue2NarRuntime();
+    ~Yue2NARRuntime();
 
     std::vector<float> synthesize(
         const std::vector<int32_t> & prefix,
         const std::vector<int32_t> & codec,
-        const std::function<Yue2ArDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
+        const std::function<Yue2ARDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
         const std::vector<float> & noise,
         uint64_t seed,
         int64_t ode_steps,

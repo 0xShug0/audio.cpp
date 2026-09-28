@@ -92,8 +92,8 @@ std::vector<int32_t> semantic_tokens_from_codec(const std::vector<int32_t> & cod
     return out;
 }
 
-Yue2ArSamplingWindow abc_window(const Yue2GenerationConfig & generation) {
-    return Yue2ArSamplingWindow{
+Yue2ARSamplingWindow abc_window(const Yue2GenerationConfig & generation) {
+    return Yue2ARSamplingWindow{
         0,
         kEodToken,
         kAbcEndToken,
@@ -103,8 +103,8 @@ Yue2ArSamplingWindow abc_window(const Yue2GenerationConfig & generation) {
     };
 }
 
-Yue2ArSamplingWindow semantic_window(const Yue2GenerationConfig & generation) {
-    return Yue2ArSamplingWindow{
+Yue2ARSamplingWindow semantic_window(const Yue2GenerationConfig & generation) {
+    return Yue2ARSamplingWindow{
         kCodecOffset,
         kCodecOffset + kCodecSize,
         kMusicEndToken,
@@ -418,7 +418,7 @@ private:
             return;
         }
         const auto start = Clock::now();
-        ar = std::make_unique<Yue2ArRuntime>(
+        ar = std::make_unique<Yue2ARRuntime>(
             *execution,
             assets,
             model_weight_type,
@@ -457,7 +457,7 @@ private:
             return;
         }
         const auto start = Clock::now();
-        nar = std::make_unique<Yue2NarRuntime>(
+        nar = std::make_unique<Yue2NARRuntime>(
             *execution,
             assets,
             model_weight_type,
@@ -482,8 +482,8 @@ private:
     size_t vae_graph_arena_bytes = 0;
     int64_t nar_attention_tile_rows = 0;
     std::unique_ptr<codecs::OobleckAudioVaeRuntime> vae;
-    std::unique_ptr<Yue2ArRuntime> ar;
-    std::unique_ptr<Yue2NarRuntime> nar;
+    std::unique_ptr<Yue2ARRuntime> ar;
+    std::unique_ptr<Yue2NARRuntime> nar;
 };
 
 Yue2PipelineRuntime::Yue2PipelineRuntime(

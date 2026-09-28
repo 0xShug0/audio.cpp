@@ -278,7 +278,7 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
 void EchoTtsSession::prepare(const runtime::SessionPreparationRequest & request) {
     (void)request;
     if (dit_ == nullptr) {
-        dit_ = std::make_unique<EchoDitRuntime>(
+        dit_ = std::make_unique<EchoDiTRuntime>(
             assets_->config,
             *assets_->dit_weights,
             // Namespace-scoped source: tensor names are already stripped of the

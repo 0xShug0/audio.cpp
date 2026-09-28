@@ -34,7 +34,7 @@ private:
     engine::assets::TensorStorageType weight_storage_type_ = engine::assets::TensorStorageType::Native;
     std::unique_ptr<StableAudioConditionerInputs> conditioner_inputs_;
     std::unique_ptr<FoundationConditionerRuntime> conditioner_runtime_;
-    std::unique_ptr<FoundationRfDitRuntime> rf_dit_;
+    std::unique_ptr<FoundationRFDiTRuntime> rf_dit_;
     std::unique_ptr<OobleckAutoencoderRuntime> oobleck_;
     int64_t max_batch_ = 1;
 };

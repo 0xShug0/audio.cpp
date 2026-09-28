@@ -39,14 +39,14 @@ struct NemotronEncoderSpeakerState {
     int64_t attention_cached_frames = 0;
 };
 
-class NemotronEncoderRuntime {
+class NemotronFastConformerEncoderRuntime {
 public:
-    NemotronEncoderRuntime(
+    NemotronFastConformerEncoderRuntime(
         std::shared_ptr<const NemotronASRAssets> assets,
         std::shared_ptr<const NemotronWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
-    ~NemotronEncoderRuntime();
+    ~NemotronFastConformerEncoderRuntime();
 
     void prepare_capacity(int64_t input_frames, int64_t feature_dim, int64_t lookahead_tokens);
     void prepare_streaming_capacity(int64_t feature_dim, int64_t lookahead_tokens);

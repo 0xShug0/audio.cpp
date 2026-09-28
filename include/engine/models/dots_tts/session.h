@@ -86,7 +86,7 @@ private:
         const std::string & text,
         size_t segment_index,
         PromptConditioning & conditioning,
-        DotsAudioVaeStreamState & stream_state,
+        DotsAudioVAEStreamState & stream_state,
         const runtime::StreamEventCallback & sink);
     runtime::AudioBuffer synthesize_chunked(
         const runtime::TaskRequest & request,
@@ -106,7 +106,7 @@ private:
     DotsTokenizer tokenizer_;
     DotsLatentCodec latent_codec_;
     engine::modules::CampplusEncoderComponent speaker_encoder_;
-    DotsAudioVaeComponent audio_vae_;
+    DotsAudioVAEComponent audio_vae_;
     DotsPatchEncoderComponent patch_encoder_;
     DotsQwen2Component llm_;
     DotsFlowComponent flow_;

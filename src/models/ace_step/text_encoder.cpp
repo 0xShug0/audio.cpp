@@ -32,7 +32,7 @@ namespace binding = modules::binding;
 
 using Clock = std::chrono::steady_clock;
 
-struct TextEncoderLayerWeights {
+struct Qwen3TextEncoderLayerWeights {
     core::TensorValue input_norm;
     core::TensorValue q_proj;
     core::TensorValue k_proj;
@@ -46,14 +46,14 @@ struct TextEncoderLayerWeights {
     core::TensorValue down_proj;
 };
 
-struct TextEncoderWeights {
+struct Qwen3TextEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue embed_tokens;
-    std::vector<TextEncoderLayerWeights> layers;
+    std::vector<Qwen3TextEncoderLayerWeights> layers;
     core::TensorValue norm;
 };
 
-int64_t head_dim(const AceStepTextEncoderConfig & config) {
+int64_t head_dim(const AceStepQwen3TextEncoderConfig & config) {
     if (config.num_attention_heads <= 0 || config.num_key_value_heads <= 0 || config.head_dim <= 0) {
         throw std::runtime_error("ACE-Step text encoder attention config is invalid");
     }
@@ -103,8 +103,8 @@ core::TensorValue decoder_layer(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const std::optional<core::TensorValue> & attention_mask,
-    const TextEncoderLayerWeights & weights,
-    const AceStepTextEncoderConfig & config) {
+    const Qwen3TextEncoderLayerWeights & weights,
+    const AceStepQwen3TextEncoderConfig & config) {
     const int64_t dim = head_dim(config);
     const int64_t kv_repeats = config.num_attention_heads / config.num_key_value_heads;
     const modules::LinearModule q_proj(
@@ -164,7 +164,7 @@ core::TensorValue decoder_layer(
     return add.build(ctx, x, ff);
 }
 
-TextEncoderWeights load_text_encoder_weights(
+Qwen3TextEncoderWeights load_text_encoder_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     const AceStepAssets & assets,
@@ -173,7 +173,7 @@ TextEncoderWeights load_text_encoder_weights(
     const auto & source = *assets.text_encoder_weights;
     const int64_t dim = config.head_dim;
 
-    TextEncoderWeights weights;
+    Qwen3TextEncoderWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -189,7 +189,7 @@ TextEncoderWeights load_text_encoder_weights(
     weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t i = 0; i < config.num_hidden_layers; ++i) {
         const std::string prefix = "layers." + std::to_string(i);
-        TextEncoderLayerWeights layer;
+        Qwen3TextEncoderLayerWeights layer;
         layer.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size});
         layer.post_norm =
             weights.store->load_f32_tensor(source, prefix + ".post_attention_layernorm.weight", {config.hidden_size});
@@ -240,7 +240,7 @@ public:
 
 }  // namespace
 
-class AceStepQwenTextEncoderRuntime::Graph {
+class AceStepQwen3TextEncoderRuntime::Graph {
 public:
     Graph(
         core::ExecutionContext & execution,
@@ -504,7 +504,7 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     std::shared_ptr<const AceStepAssets> assets_;
-    TextEncoderWeights weights_;
+    Qwen3TextEncoderWeights weights_;
     mutable std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     mutable ggml_tensor * input_ids_ = nullptr;
     mutable ggml_tensor * positions_ = nullptr;
@@ -522,7 +522,7 @@ private:
     mutable int64_t embedding_capacity_ = 0;
 };
 
-AceStepQwenTextEncoderRuntime::AceStepQwenTextEncoderRuntime(
+AceStepQwen3TextEncoderRuntime::AceStepQwen3TextEncoderRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const AceStepAssets> assets,
     assets::TensorStorageType weight_storage_type)
@@ -537,21 +537,21 @@ AceStepQwenTextEncoderRuntime::AceStepQwenTextEncoderRuntime(
     }
 }
 
-AceStepQwenTextEncoderRuntime::~AceStepQwenTextEncoderRuntime() = default;
+AceStepQwen3TextEncoderRuntime::~AceStepQwen3TextEncoderRuntime() = default;
 
-void AceStepQwenTextEncoderRuntime::prepare_runtime() const {
+void AceStepQwen3TextEncoderRuntime::prepare_runtime() const {
     if (!graph_) {
         graph_ = std::make_unique<Graph>(*execution_, assets_, weight_storage_type_);
     }
 }
 
-void AceStepQwenTextEncoderRuntime::release_runtime_graphs() const {
+void AceStepQwen3TextEncoderRuntime::release_runtime_graphs() const {
     if (graph_) {
         graph_->release_runtime_graphs();
     }
 }
 
-AceStepTextConditioning AceStepQwenTextEncoderRuntime::encode(const AceStepTokenizedText & tokens) const {
+AceStepTextConditioning AceStepQwen3TextEncoderRuntime::encode(const AceStepTokenizedText & tokens) const {
     const auto total_start = Clock::now();
     const auto ensure_runtime_start = Clock::now();
     prepare_runtime();
@@ -565,7 +565,7 @@ AceStepTextConditioning AceStepQwenTextEncoderRuntime::encode(const AceStepToken
     return out;
 }
 
-AceStepTextConditioning AceStepQwenTextEncoderRuntime::embed_tokens(const AceStepTokenizedText & tokens) const {
+AceStepTextConditioning AceStepQwen3TextEncoderRuntime::embed_tokens(const AceStepTokenizedText & tokens) const {
     const auto total_start = Clock::now();
     const auto ensure_runtime_start = Clock::now();
     prepare_runtime();

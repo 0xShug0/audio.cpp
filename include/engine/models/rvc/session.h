@@ -34,7 +34,7 @@ private:
     std::shared_ptr<const RvcAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     engine::assets::TensorStorageType weight_storage_type_;
-    RvcNativePipeline pipeline_;
+    RvcPipeline pipeline_;
     runtime::CacheSlots<std::string, RvcVoiceModel> user_voice_cache_;
 };
 

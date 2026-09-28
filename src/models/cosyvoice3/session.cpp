@@ -123,13 +123,13 @@ CosyVoice3Session::CosyVoice3Session(
         weight_context_bytes,
         storage_type,
         static_cast<size_t>(reference_cache_slots));
-    ar_ = std::make_unique<CosyVoice3ArRuntime>(
+    ar_ = std::make_unique<CosyVoice3Qwen2ARRuntime>(
         assets_,
         execution_context(),
         graph_arena_bytes,
         weight_context_bytes,
         storage_type);
-    flow_ = std::make_unique<CosyVoice3FlowRuntime>(
+    flow_ = std::make_unique<CosyVoice3DiTFlowRuntime>(
         assets_,
         execution_context(),
         graph_arena_bytes,
@@ -192,7 +192,7 @@ runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request)
         if (mem_saver_) {
             frontend_->release_graphs();
         }
-        CosyVoice3ArRequest ar_request;
+        CosyVoice3ARRequest ar_request;
         ar_request.prompt_text_tokens = std::move(text_tokens.prompt);
         ar_request.target_text_tokens = std::move(text_tokens.target);
         if (mode == "zero_shot") {
@@ -205,7 +205,7 @@ runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request)
         if (index > 0) {
             ar_request.seed += static_cast<uint32_t>(index);
         }
-        CosyVoice3ArOutput ar_output = ar_->generate(ar_request);
+        CosyVoice3AROutput ar_output = ar_->generate(ar_request);
         if (mem_saver_) {
             ar_->release_graphs();
         }

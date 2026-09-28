@@ -295,7 +295,7 @@ struct EncoderGraph {
     }
 };
 
-struct VaeEncoderRuntime::State {
+struct VAEEncoderRuntime::State {
     core::ExecutionContext & execution;
     core::BackendWeightStore store;
     EncoderWeights weights;
@@ -309,15 +309,15 @@ struct VaeEncoderRuntime::State {
     }
 };
 
-VaeEncoderRuntime::VaeEncoderRuntime(core::ExecutionContext & execution,
+VAEEncoderRuntime::VAEEncoderRuntime(core::ExecutionContext & execution,
     const assets::TensorSource & source, int64_t samples)
     : state_(std::make_unique<State>(execution, source)) {
     prepare(samples);
 }
 
-VaeEncoderRuntime::~VaeEncoderRuntime() = default;
+VAEEncoderRuntime::~VAEEncoderRuntime() = default;
 
-void VaeEncoderRuntime::prepare(int64_t samples) {
+void VAEEncoderRuntime::prepare(int64_t samples) {
     if (samples <= 0) throw std::runtime_error("AuK VAE encoder sample count must be positive");
     auto & state = *state_;
     if (state.prepared && state.prepared->samples == samples) return;
@@ -325,12 +325,12 @@ void VaeEncoderRuntime::prepare(int64_t samples) {
     state.prepared = std::make_unique<EncoderGraph>(state.execution, state.weights, samples);
 }
 
-int64_t VaeEncoderRuntime::frames() const {
+int64_t VAEEncoderRuntime::frames() const {
     if (!state_->prepared) throw std::runtime_error("AuK VAE encoder graph is not prepared");
     return state_->prepared->output.shape.dims[1];
 }
 
-std::vector<float> VaeEncoderRuntime::encode(const std::vector<float> & audio,
+std::vector<float> VAEEncoderRuntime::encode(const std::vector<float> & audio,
     const std::vector<float> & noise, std::vector<float> * statistics) {
     if (!state_->prepared) throw std::runtime_error("AuK VAE encoder graph is not prepared");
     auto & state = *state_->prepared;
@@ -391,7 +391,7 @@ struct DecoderGraph {
     }
 };
 
-struct VaeDecoderRuntime::State {
+struct VAEDecoderRuntime::State {
     core::ExecutionContext & execution;
     core::BackendWeightStore store;
     DecoderWeights weights;
@@ -405,15 +405,15 @@ struct VaeDecoderRuntime::State {
     }
 };
 
-VaeDecoderRuntime::VaeDecoderRuntime(core::ExecutionContext & execution,
+VAEDecoderRuntime::VAEDecoderRuntime(core::ExecutionContext & execution,
     const assets::TensorSource & source, int64_t frames)
     : state_(std::make_unique<State>(execution, source)) {
     prepare(frames);
 }
 
-VaeDecoderRuntime::~VaeDecoderRuntime() = default;
+VAEDecoderRuntime::~VAEDecoderRuntime() = default;
 
-void VaeDecoderRuntime::prepare(int64_t frames) {
+void VAEDecoderRuntime::prepare(int64_t frames) {
     if (frames <= 0) throw std::runtime_error("AuK VAE frame count must be positive");
     auto & state = *state_;
     if (state.prepared && state.prepared->frames == frames) return;
@@ -421,7 +421,7 @@ void VaeDecoderRuntime::prepare(int64_t frames) {
     state.prepared = std::make_unique<DecoderGraph>(state.execution, state.weights, frames);
 }
 
-std::vector<float> VaeDecoderRuntime::decode(const std::vector<float> & latents) {
+std::vector<float> VAEDecoderRuntime::decode(const std::vector<float> & latents) {
     if (!state_->prepared) throw std::runtime_error("AuK VAE graph is not prepared");
     auto & state = *state_->prepared;
     if (latents.size() != static_cast<size_t>(state.frames * 64)) {

@@ -35,7 +35,7 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     int64_t max_alignment_cells_ = 50000000;
     int64_t max_target_tokens_ = 8192;
-    std::unique_ptr<MmsEmissionRuntime> emission_runtime_;
+    std::unique_ptr<MmsWav2Vec2CtcRuntime> emission_runtime_;
 };
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_mms_forced_aligner_loader();

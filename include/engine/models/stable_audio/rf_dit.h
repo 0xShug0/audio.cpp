@@ -50,7 +50,7 @@ struct StableAudioRfLayerWeights {
     core::TensorValue scale_shift_gate;
 };
 
-struct StableAudioRfDitWeights {
+struct StableAudioRFDiTWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::LinearWeights to_cond_embed_0;
     modules::LinearWeights to_cond_embed_2;
@@ -68,23 +68,23 @@ struct StableAudioRfDitWeights {
     std::vector<StableAudioRfLayerWeights> layers;
 };
 
-StableAudioRfDitWeights load_stable_audio_rf_dit_weights(
+StableAudioRFDiTWeights load_stable_audio_rf_dit_weights(
     const StableAudioAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type);
 
-class StableAudioRfDitRuntime {
+class StableAudioRFDiTRuntime {
 public:
-    StableAudioRfDitRuntime(
+    StableAudioRFDiTRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const StableAudioAssets> assets,
         assets::TensorStorageType weight_storage_type);
-    ~StableAudioRfDitRuntime();
+    ~StableAudioRFDiTRuntime();
 
-    StableAudioRfDitRuntime(const StableAudioRfDitRuntime &) = delete;
-    StableAudioRfDitRuntime & operator=(const StableAudioRfDitRuntime &) = delete;
+    StableAudioRFDiTRuntime(const StableAudioRFDiTRuntime &) = delete;
+    StableAudioRFDiTRuntime & operator=(const StableAudioRFDiTRuntime &) = delete;
 
     void prepare(const StableAudioSamplingState & sampling, float cfg_scale) const;
     std::vector<float> sample(
@@ -104,7 +104,7 @@ private:
     core::ExecutionContext * execution_ = nullptr;
     std::shared_ptr<const StableAudioAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
-    mutable std::unique_ptr<StableAudioRfDitWeights> weights_;
+    mutable std::unique_ptr<StableAudioRFDiTWeights> weights_;
     mutable std::unique_ptr<Graph> graph_;
 };
 

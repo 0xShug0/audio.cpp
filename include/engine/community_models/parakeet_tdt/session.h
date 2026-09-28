@@ -48,8 +48,8 @@ protected:
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool encoder_flash_attention_ = false;
     ParakeetFrontend frontend_;
-    std::unique_ptr<ParakeetEncoderRuntime> encoder_;
-    std::unique_ptr<ParakeetDecoderRuntime> decoder_;
+    std::unique_ptr<ParakeetFastConformerEncoderRuntime> encoder_;
+    std::unique_ptr<ParakeetTDTDecoderRuntime> decoder_;
 };
 
 class ParakeetTDTOfflineSession final

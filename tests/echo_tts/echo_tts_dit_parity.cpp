@@ -299,7 +299,7 @@ int main(int argc, char ** argv) try {
     engine::models::echo_tts::EchoTtsConfig config;
     config.validate();
 
-    engine::models::echo_tts::EchoDitRuntime dit(
+    engine::models::echo_tts::EchoDiTRuntime dit(
         config, *dit_weights, "", execution, engine::assets::TensorStorageType::Native);
 
     // Inject the reference's own conditioning rather than recomputing it, so

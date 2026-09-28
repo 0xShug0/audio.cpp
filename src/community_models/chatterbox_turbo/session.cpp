@@ -83,7 +83,7 @@ void ChatterboxTurboSession::prepare(const runtime::SessionPreparationRequest & 
             "-- omit the speaker reference audio to use the built-in voice");
     }
     if (!component_) {
-        component_ = std::make_unique<ChatterboxTurboTtsComponent>(assets_, execution_context());
+        component_ = std::make_unique<ChatterboxTurboTTSComponent>(assets_, execution_context());
     }
     mark_prepared();
 }

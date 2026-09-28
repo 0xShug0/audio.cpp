@@ -11,20 +11,20 @@
 
 namespace engine::models::fun_asr_nano {
 
-class FunAsrNanoEncoderRuntime {
+class FunAsrNanoSenseVoiceEncoderRuntime {
 public:
-  FunAsrNanoEncoderRuntime(std::shared_ptr<const FunAsrNanoAssets> assets,
+  FunAsrNanoSenseVoiceEncoderRuntime(std::shared_ptr<const FunAsrNanoAssets> assets,
                            engine::core::ExecutionContext &execution_context,
                            size_t graph_arena_bytes,
                            engine::assets::TensorStorageType weight_storage =
                                engine::assets::TensorStorageType::F32);
-  ~FunAsrNanoEncoderRuntime();
+  ~FunAsrNanoSenseVoiceEncoderRuntime();
 
-  FunAsrNanoEncoderRuntime(const FunAsrNanoEncoderRuntime &) = delete;
-  FunAsrNanoEncoderRuntime &
-  operator=(const FunAsrNanoEncoderRuntime &) = delete;
-  FunAsrNanoEncoderRuntime(FunAsrNanoEncoderRuntime &&) noexcept;
-  FunAsrNanoEncoderRuntime &operator=(FunAsrNanoEncoderRuntime &&) noexcept;
+  FunAsrNanoSenseVoiceEncoderRuntime(const FunAsrNanoSenseVoiceEncoderRuntime &) = delete;
+  FunAsrNanoSenseVoiceEncoderRuntime &
+  operator=(const FunAsrNanoSenseVoiceEncoderRuntime &) = delete;
+  FunAsrNanoSenseVoiceEncoderRuntime(FunAsrNanoSenseVoiceEncoderRuntime &&) noexcept;
+  FunAsrNanoSenseVoiceEncoderRuntime &operator=(FunAsrNanoSenseVoiceEncoderRuntime &&) noexcept;
 
   void prepare_capacity(int64_t frames);
   FunAsrNanoEncoderEmbeddings encode(const FunAsrNanoAudioFeatures &features,

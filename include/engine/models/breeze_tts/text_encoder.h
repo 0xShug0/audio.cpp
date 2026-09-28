@@ -15,15 +15,15 @@ struct BreezeProjectedText {
     std::vector<float> values;
 };
 
-class BreezeTextEncoderRuntime {
+class BreezeT5Gemma2TextEncoderRuntime {
 public:
-    BreezeTextEncoderRuntime(
+    BreezeT5Gemma2TextEncoderRuntime(
         std::shared_ptr<const BreezeTTSAssets> assets,
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type);
-    ~BreezeTextEncoderRuntime();
+    ~BreezeT5Gemma2TextEncoderRuntime();
 
     BreezeProjectedText encode(const std::vector<int32_t> & input_ids);
     void release_runtime_graphs();

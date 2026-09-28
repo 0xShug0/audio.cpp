@@ -56,7 +56,7 @@ private:
     std::shared_ptr<const MossTTSLocalAssets> assets_;
     // Declared before the generator so the generator (which holds references to them) is
     // destroyed first.
-    std::unique_ptr<MossBackboneRuntime> backbone_;
+    std::unique_ptr<MossTTSLocalQwen3BackboneRuntime> backbone_;
     std::unique_ptr<MossDepthTransformer> depth_;
     std::unique_ptr<MossTextProcessor> processor_;
     std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> codec_;

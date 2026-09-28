@@ -917,7 +917,7 @@ private:
 
 }  // namespace
 
-class FireRedQwen3ArRuntime::Impl {
+class FireRedQwen3ARRuntime::Impl {
 public:
     Impl(
         std::shared_ptr<const FireRedTTS3Assets> assets,
@@ -1053,7 +1053,7 @@ private:
     std::unique_ptr<modules::CausalDecoderRuntime> backbone_;
 };
 
-FireRedQwen3ArRuntime::FireRedQwen3ArRuntime(
+FireRedQwen3ARRuntime::FireRedQwen3ARRuntime(
     std::shared_ptr<const FireRedTTS3Assets> assets,
     engine::core::ExecutionContext & execution,
     size_t graph_arena_bytes,
@@ -1070,57 +1070,57 @@ FireRedQwen3ArRuntime::FireRedQwen3ArRuntime(
           storage_type,
           instruct)) {}
 
-FireRedQwen3ArRuntime::~FireRedQwen3ArRuntime() = default;
+FireRedQwen3ARRuntime::~FireRedQwen3ARRuntime() = default;
 
-std::vector<float> FireRedQwen3ArRuntime::token_embedding(const std::vector<int32_t> & token_ids) {
+std::vector<float> FireRedQwen3ARRuntime::token_embedding(const std::vector<int32_t> & token_ids) {
     return impl_->token_embedding(token_ids);
 }
 
-std::vector<float> FireRedQwen3ArRuntime::speaker_llm(const std::vector<float> & speaker) {
+std::vector<float> FireRedQwen3ARRuntime::speaker_llm(const std::vector<float> & speaker) {
     return impl_->speaker_llm(speaker);
 }
 
-std::vector<float> FireRedQwen3ArRuntime::speaker_dit(const std::vector<float> & speaker) {
+std::vector<float> FireRedQwen3ARRuntime::speaker_dit(const std::vector<float> & speaker) {
     return impl_->speaker_dit(speaker);
 }
 
-std::vector<float> FireRedQwen3ArRuntime::patch_encode(const std::vector<float> & latents) {
+std::vector<float> FireRedQwen3ARRuntime::patch_encode(const std::vector<float> & latents) {
     return impl_->patch_encode(latents);
 }
 
-std::vector<float> FireRedQwen3ArRuntime::dit_head(const std::vector<float> & hidden, int64_t rows) {
+std::vector<float> FireRedQwen3ARRuntime::dit_head(const std::vector<float> & hidden, int64_t rows) {
     return impl_->dit_head(hidden, rows);
 }
 
-float FireRedQwen3ArRuntime::stop(const std::vector<float> & hidden) {
+float FireRedQwen3ARRuntime::stop(const std::vector<float> & hidden) {
     return impl_->stop(hidden);
 }
 
-std::vector<float> FireRedQwen3ArRuntime::text_logits(const std::vector<float> & hidden) {
+std::vector<float> FireRedQwen3ARRuntime::text_logits(const std::vector<float> & hidden) {
     return impl_->text_logits(hidden);
 }
 
-engine::modules::CausalDecoderPrefillResult FireRedQwen3ArRuntime::prefill_embeddings(
+engine::modules::CausalDecoderPrefillResult FireRedQwen3ARRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) {
     return impl_->prefill_embeddings(embeddings, steps);
 }
 
-void FireRedQwen3ArRuntime::start_decode_embeddings(
+void FireRedQwen3ARRuntime::start_decode_embeddings(
     const engine::runtime::TransformerKVState & state,
     int64_t required_cache_steps) {
     impl_->start_decode_embeddings(state, required_cache_steps);
 }
 
-engine::modules::CausalDecoderStepResult FireRedQwen3ArRuntime::decode_embedding(const std::vector<float> & embedding) {
+engine::modules::CausalDecoderStepResult FireRedQwen3ARRuntime::decode_embedding(const std::vector<float> & embedding) {
     return impl_->decode_embedding(embedding);
 }
 
-void FireRedQwen3ArRuntime::release_graphs() {
+void FireRedQwen3ARRuntime::release_graphs() {
     impl_->release_graphs();
 }
 
-void FireRedQwen3ArRuntime::release_backbone_graphs() {
+void FireRedQwen3ARRuntime::release_backbone_graphs() {
     impl_->release_backbone_graphs();
 }
 

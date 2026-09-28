@@ -19,7 +19,7 @@ class FishAudioGenerator {
 public:
     FishAudioGenerator(
         std::shared_ptr<const FishAudioAssets> assets,
-        std::unique_ptr<FishAudioARRuntime> ar,
+        std::unique_ptr<FishAudioDualARRuntime> ar,
         std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec);
     ~FishAudioGenerator();
 
@@ -34,7 +34,7 @@ private:
     std::shared_ptr<const FishAudioAssets> assets_;
     FishAudioTextTokenizer tokenizer_;
     FishAudioPromptBuilder prompt_builder_;
-    std::unique_ptr<FishAudioARRuntime> ar_;
+    std::unique_ptr<FishAudioDualARRuntime> ar_;
     std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec_;
 };
 

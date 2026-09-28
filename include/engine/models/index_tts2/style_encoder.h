@@ -13,9 +13,9 @@ struct IndexTTS2StyleEmbedding {
     int64_t dims = 0;
 };
 
-class IndexTTS2StyleEncoder {
+class IndexTTS2CampplusStyleEncoder {
 public:
-    IndexTTS2StyleEncoder(
+    IndexTTS2CampplusStyleEncoder(
         std::shared_ptr<const IndexTTS2Assets> assets,
         core::BackendConfig backend,
         engine::assets::TensorStorageType weight_storage_type);

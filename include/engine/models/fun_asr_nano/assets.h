@@ -24,7 +24,7 @@ struct FunAsrNanoFrontendConfig {
   float preemphasis = 0.97F;
 };
 
-struct FunAsrNanoEncoderConfig {
+struct FunAsrNanoSenseVoiceEncoderConfig {
   int64_t num_mel_bins = 80;
   int64_t num_stacked_frames = 7;
   int64_t input_size = 560;
@@ -46,7 +46,7 @@ struct FunAsrNanoAdaptorConfig {
   std::string activation = "relu";
 };
 
-struct FunAsrNanoTextConfig {
+struct FunAsrNanoQwen3DecoderConfig {
   int64_t vocab_size = 151936;
   int64_t hidden_size = 1024;
   int64_t intermediate_size = 3072;
@@ -68,9 +68,9 @@ struct FunAsrNanoConfig {
   int64_t projector_hidden_size = 2048;
   bool tie_word_embeddings = true;
   FunAsrNanoFrontendConfig frontend;
-  FunAsrNanoEncoderConfig encoder;
+  FunAsrNanoSenseVoiceEncoderConfig encoder;
   FunAsrNanoAdaptorConfig adaptor;
-  FunAsrNanoTextConfig text;
+  FunAsrNanoQwen3DecoderConfig text;
   std::vector<std::string> supported_languages = {"zh", "en", "ja"};
 };
 

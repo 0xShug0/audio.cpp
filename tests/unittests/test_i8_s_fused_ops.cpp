@@ -11,7 +11,7 @@
 
 #include "test_assert.h"
 
-#include <ggml-cpu.h>
+#include "engine/framework/core/execution_context.h"
 #include <ggml.h>
 
 #include <cmath>
@@ -115,7 +115,9 @@ void compare_i8(ggml_tensor * got, const std::vector<int8_t> & want, float want_
 void compute(ggml_context * ctx, ggml_tensor * result, int n_threads) {
     ggml_cgraph * gf = ggml_new_graph(ctx);
     ggml_build_forward_expand(gf, result);
-    ggml_graph_compute_with_ctx(ctx, gf, n_threads);
+    engine::core::ExecutionContext execution({engine::core::BackendType::Cpu, 0, n_threads});
+    require(ggml_backend_graph_compute(execution.backend(), gf) == GGML_STATUS_SUCCESS,
+            "CPU graph execution failed");
 }
 
 // ---------------------------------------------------------------- round trips

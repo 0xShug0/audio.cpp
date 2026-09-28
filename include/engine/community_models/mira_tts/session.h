@@ -17,7 +17,7 @@ namespace engine::community_models::mira_tts {
 std::shared_ptr<runtime::IVoiceModelLoader> make_mira_tts_loader();
 
 class MiraPromptBuilder;
-class MiraEcapaPerceiverSpeakerEncoder;
+class MiraEcapaPerceiverEncoder;
 class MiraQwen2Generator;
 class MiraConvNeXtAcousticProcessor;
 class MiraSnakeConvDecoder;
@@ -77,7 +77,7 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::optional<runtime::AudioBuffer> prepared_reference_;
     std::unique_ptr<MiraPromptBuilder> prompt_;
-    std::unique_ptr<MiraEcapaPerceiverSpeakerEncoder> speaker_encoder_;
+    std::unique_ptr<MiraEcapaPerceiverEncoder> speaker_encoder_;
     std::unique_ptr<MiraQwen2Generator> generator_;
     std::unique_ptr<MiraConvNeXtAcousticProcessor> processor_;
     std::unique_ptr<MiraSnakeConvDecoder> decoder_;

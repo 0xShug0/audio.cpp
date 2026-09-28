@@ -72,7 +72,7 @@ int64_t checked_positive(int64_t value, const char * name) {
     return value;
 }
 
-int64_t head_dim(const OmniVoiceLLMConfig & config) {
+int64_t head_dim(const OmniVoiceQwen3DiffusionConfig & config) {
     if (config.num_attention_heads <= 0 || config.num_key_value_heads <= 0 || config.head_dim <= 0) {
         throw std::runtime_error("OmniVoice generator attention configuration is invalid");
     }
@@ -155,7 +155,7 @@ core::TensorValue attention_from_heads(
     return modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
 }
 
-struct LayerWeights {
+struct Qwen3DiffusionLayerWeights {
     core::TensorValue input_norm;
     core::TensorValue q_proj;
     core::TensorValue k_proj;
@@ -169,16 +169,16 @@ struct LayerWeights {
     core::TensorValue down_proj;
 };
 
-struct GeneratorWeights {
+struct Qwen3DiffusionWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue text_embedding;
     core::TensorValue audio_embedding;
-    std::vector<LayerWeights> layers;
+    std::vector<Qwen3DiffusionLayerWeights> layers;
     core::TensorValue norm;
     core::TensorValue audio_head;
 };
 
-GeneratorWeights load_weights(
+Qwen3DiffusionWeights load_weights(
     const OmniVoiceAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -187,7 +187,7 @@ GeneratorWeights load_weights(
     validate_weight_storage_type(storage_type);
     const auto & config = assets.config;
     const auto & source = *assets.model_weights;
-    GeneratorWeights weights;
+    Qwen3DiffusionWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -207,7 +207,7 @@ GeneratorWeights load_weights(
     weights.layers.reserve(static_cast<size_t>(config.llm.num_hidden_layers));
     for (int64_t layer = 0; layer < config.llm.num_hidden_layers; ++layer) {
         const std::string prefix = "llm.layers." + std::to_string(layer);
-        LayerWeights w;
+        Qwen3DiffusionLayerWeights w;
         w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.llm.hidden_size});
         w.q_proj = weights.store->load_tensor(
             source,
@@ -265,7 +265,7 @@ GeneratorWeights load_weights(
 core::TensorValue build_embeddings(
     core::ModuleBuildContext & ctx,
     const OmniVoiceConfig & config,
-    const GeneratorWeights & weights,
+    const Qwen3DiffusionWeights & weights,
     const core::TensorValue & text_ids,
     const std::array<core::TensorValue, 8> & audio_ids,
     const core::TensorValue & audio_mask,
@@ -294,8 +294,8 @@ core::TensorValue decoder_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const LayerWeights & weights,
-    const OmniVoiceLLMConfig & config,
+    const Qwen3DiffusionLayerWeights & weights,
+    const OmniVoiceQwen3DiffusionConfig & config,
     const core::TensorValue & attention_mask,
     OmniVoiceGeneratorPerfMode perf_mode = OmniVoiceGeneratorPerfMode::Standard) {
     const int64_t dim = head_dim(config);
@@ -345,9 +345,9 @@ core::TensorValue decoder_layer(
     return modules::AddModule{}.build(ctx, x, ff);
 }
 
-class WeightsRuntime {
+class Qwen3DiffusionWeightsRuntime {
 public:
-    WeightsRuntime(
+    Qwen3DiffusionWeightsRuntime(
         std::shared_ptr<const OmniVoiceAssets> assets,
         core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
@@ -356,7 +356,7 @@ public:
           backend_(execution_context.backend()),
           backend_type_(execution_context.backend_type()),
           threads_(std::max(1, execution_context.config().threads)),
-          weights_(std::make_shared<GeneratorWeights>(
+          weights_(std::make_shared<Qwen3DiffusionWeights>(
               load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
         if (assets_ == nullptr) {
             throw std::runtime_error("OmniVoice generator requires assets");
@@ -370,7 +370,7 @@ public:
         return *assets_;
     }
 
-    const GeneratorWeights & weights() const noexcept {
+    const Qwen3DiffusionWeights & weights() const noexcept {
         return *weights_;
     }
 
@@ -391,7 +391,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    std::shared_ptr<const GeneratorWeights> weights_;
+    std::shared_ptr<const Qwen3DiffusionWeights> weights_;
 };
 
 struct PackedInputs {
@@ -405,10 +405,10 @@ struct PackedInputs {
     std::array<std::vector<int32_t>, 8> unconditional_audio_ids;
 };
 
-class GeneratorForwardGraph {
+class Qwen3DiffusionGraph {
 public:
-    virtual ~GeneratorForwardGraph() = default;
-    virtual bool matches(const WeightsRuntime & runtime, int64_t total_tokens, int64_t target_frames) const = 0;
+    virtual ~Qwen3DiffusionGraph() = default;
+    virtual bool matches(const Qwen3DiffusionWeightsRuntime & runtime, int64_t total_tokens, int64_t target_frames) const = 0;
     virtual void rebuild(int64_t total_token_capacity, int64_t target_frame_capacity) = 0;
     virtual void prepare_request(const PackedInputs & inputs) = 0;
     virtual void set_guidance_scale(float value) noexcept = 0;
@@ -422,10 +422,10 @@ public:
     virtual double rebuild_init_ms() const noexcept = 0;
 };
 
-class ForwardGraph final : public GeneratorForwardGraph {
+class Qwen3DiffusionForwardGraph final : public Qwen3DiffusionGraph {
 public:
-    ForwardGraph(
-        std::shared_ptr<WeightsRuntime> runtime,
+    Qwen3DiffusionForwardGraph(
+        std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
         int64_t total_token_capacity,
         int64_t target_frame_capacity,
@@ -436,12 +436,12 @@ public:
         rebuild(total_token_capacity, target_frame_capacity);
     }
 
-    ~ForwardGraph() {
+    ~Qwen3DiffusionForwardGraph() {
         clear_graph();
     }
 
     bool matches(
-        const WeightsRuntime & runtime,
+        const Qwen3DiffusionWeightsRuntime & runtime,
         int64_t total_tokens,
         int64_t target_frames) const override {
         return runtime_.get() == &runtime &&
@@ -923,7 +923,7 @@ private:
         }
     }
 
-    std::shared_ptr<WeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
     OmniVoiceGeneratorPerfMode perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
     int64_t total_tokens_capacity_ = 0;
@@ -1248,18 +1248,18 @@ void update_generated_tokens(
 
 }  // namespace
 
-struct OmniVoiceGeneratorRuntime::Impl {
+struct OmniVoiceQwen3DiffusionRuntime::Impl {
     std::shared_ptr<const OmniVoiceAssets> assets;
     size_t graph_arena_bytes = 0;
-    std::shared_ptr<WeightsRuntime> runtime;
-    std::unique_ptr<GeneratorForwardGraph> forward_graph;
+    std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime;
+    std::unique_ptr<Qwen3DiffusionGraph> forward_graph;
     bool mem_saver = false;
     OmniVoiceGeneratorPerfMode perf_mode = OmniVoiceGeneratorPerfMode::Standard;
-    OmniVoiceGeneratorRuntimeStats last_stats = {};
+    OmniVoiceQwen3DiffusionRuntimeStats last_stats = {};
     std::mt19937 rng{std::random_device{}()};
 };
 
-OmniVoiceGeneratorRuntime::OmniVoiceGeneratorRuntime(
+OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     std::shared_ptr<const OmniVoiceAssets> assets,
     core::ExecutionContext & execution_context,
     size_t prefill_graph_arena_bytes,
@@ -1277,7 +1277,7 @@ OmniVoiceGeneratorRuntime::OmniVoiceGeneratorRuntime(
     }
     impl_->assets = std::move(assets);
     impl_->graph_arena_bytes = std::max(prefill_graph_arena_bytes, decode_graph_arena_bytes);
-    impl_->runtime = std::make_shared<WeightsRuntime>(
+    impl_->runtime = std::make_shared<Qwen3DiffusionWeightsRuntime>(
         impl_->assets,
         execution_context,
         weight_context_bytes,
@@ -1286,21 +1286,21 @@ OmniVoiceGeneratorRuntime::OmniVoiceGeneratorRuntime(
     impl_->perf_mode = perf_mode;
 }
 
-OmniVoiceGeneratorRuntime::~OmniVoiceGeneratorRuntime() = default;
+OmniVoiceQwen3DiffusionRuntime::~OmniVoiceQwen3DiffusionRuntime() = default;
 
-const OmniVoiceGeneratorRuntimeStats & OmniVoiceGeneratorRuntime::last_stats() const noexcept {
+const OmniVoiceQwen3DiffusionRuntimeStats & OmniVoiceQwen3DiffusionRuntime::last_stats() const noexcept {
     return impl_->last_stats;
 }
 
-void OmniVoiceGeneratorRuntime::seed_rng(uint32_t seed) {
+void OmniVoiceQwen3DiffusionRuntime::seed_rng(uint32_t seed) {
     impl_->rng.seed(seed);
 }
 
-void OmniVoiceGeneratorRuntime::release_runtime_graphs() {
+void OmniVoiceQwen3DiffusionRuntime::release_runtime_graphs() {
     impl_->forward_graph.reset();
 }
 
-OmniVoiceGeneratedAudioTokens OmniVoiceGeneratorRuntime::generate(
+OmniVoiceGeneratedAudioTokens OmniVoiceQwen3DiffusionRuntime::generate(
     const OmniVoicePrompt & prompt,
     const OmniVoiceGenerationOptions & options) {
     if (prompt.style_token_ids.empty()) {
@@ -1336,13 +1336,13 @@ OmniVoiceGeneratedAudioTokens OmniVoiceGeneratorRuntime::generate(
         const auto rebuild_start = Clock::now();
         if (impl_->forward_graph == nullptr) {
             if (impl_->mem_saver) {
-                impl_->forward_graph = std::make_unique<LayerwiseForwardGraph>(
+                impl_->forward_graph = std::make_unique<Qwen3DiffusionLayerwiseGraph>(
                     impl_->runtime,
                     impl_->graph_arena_bytes,
                     required_total_tokens,
                     packed.target_frames);
             } else {
-                impl_->forward_graph = std::make_unique<ForwardGraph>(
+                impl_->forward_graph = std::make_unique<Qwen3DiffusionForwardGraph>(
                     impl_->runtime,
                     impl_->graph_arena_bytes,
                     required_total_tokens,

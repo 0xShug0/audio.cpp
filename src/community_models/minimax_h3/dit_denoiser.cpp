@@ -61,7 +61,7 @@ std::vector<float> load_dit_adaln_table(const assets::TensorSource & source) {
     return values;
 }
 
-MiniMaxH3DitWeightStore::MiniMaxH3DitWeightStore(
+MiniMaxH3DiTWeightStore::MiniMaxH3DiTWeightStore(
     core::ExecutionContext & execution_context,
     std::shared_ptr<const assets::TensorSource> tensor_source,
     size_t weight_context_bytes)
@@ -84,7 +84,7 @@ MiniMaxH3DitWeightStore::MiniMaxH3DitWeightStore(
     source_->release_storage();
 }
 
-MiniMaxH3DitWeightStore::MiniMaxH3DitWeightStore(
+MiniMaxH3DiTWeightStore::MiniMaxH3DiTWeightStore(
     core::ExecutionContext & execution_context,
     std::shared_ptr<const assets::TensorSource> tensor_source,
     size_t weight_context_bytes,
@@ -117,7 +117,7 @@ MiniMaxH3DitWeightStore::MiniMaxH3DitWeightStore(
     source_->release_storage();
 }
 
-const core::TensorValue & MiniMaxH3DitWeightStore::require(std::string_view name) const {
+const core::TensorValue & MiniMaxH3DiTWeightStore::require(std::string_view name) const {
     const auto it = weights_.find(std::string(name));
     if (it == weights_.end()) {
         throw std::runtime_error("missing MiniMax-H3 DiT tensor: " + std::string(name));
@@ -125,7 +125,7 @@ const core::TensorValue & MiniMaxH3DitWeightStore::require(std::string_view name
     return it->second;
 }
 
-const core::TensorValue * MiniMaxH3DitWeightStore::find(std::string_view name) const {
+const core::TensorValue * MiniMaxH3DiTWeightStore::find(std::string_view name) const {
     const auto it = weights_.find(std::string(name));
     return it == weights_.end() ? nullptr : &it->second;
 }
@@ -168,7 +168,7 @@ core::TensorValue dit_f32_view_hnd(
 
 core::TensorValue dit_linear_projection(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const std::string & prefix,
     const core::TensorValue & x,
     const core::TensorValue & weight,
@@ -355,7 +355,7 @@ std::vector<float> h3_rope_half_values(const MiniMaxH3Config & cfg, int64_t text
 
 core::TensorValue h3_mlp(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & x,
     const std::string & prefix) {
@@ -369,7 +369,7 @@ core::TensorValue h3_mlp(
 
 core::TensorValue h3_attention(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & x,
     const core::TensorValue * cos,
@@ -440,7 +440,7 @@ core::TensorValue h3_attention(
 
 core::TensorValue token_refiner(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & prompt) {
     auto x = prompt;
@@ -468,7 +468,7 @@ core::TensorValue token_refiner(
 
 std::vector<core::TensorValue> adaln_chunks(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const core::TensorValue & t_emb,
     const std::string & prefix,
     int64_t time_dim,
@@ -545,7 +545,7 @@ core::TensorValue gated_residual(
 
 core::TensorValue dit_block(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & x_in,
     const core::TensorValue & t_emb,
@@ -576,7 +576,7 @@ core::TensorValue dit_block(
 
 core::TensorValue dit_block_attention_part(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & x_in,
     const core::TensorValue & t_emb,
@@ -603,7 +603,7 @@ core::TensorValue dit_block_attention_part(
 
 core::TensorValue dit_block_mlp_part(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & x_in,
     const core::TensorValue & t_emb,
@@ -628,7 +628,7 @@ core::TensorValue dit_block_mlp_part(
 
 core::TensorValue build_time_embed(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & features) {
     const std::string prefix;
@@ -650,11 +650,11 @@ core::TensorValue build_time_embed(
 }
 
 
-MiniMaxH3DitGraph::DitOutput build_dit(
+MiniMaxH3DiTGraph::DiTOutput build_dit(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
-    const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
     const core::TensorValue & prompt,
     const core::TensorValue & audio_full,
     const core::TensorValue & video_full,
@@ -767,12 +767,12 @@ MiniMaxH3DitGraph::DitOutput build_dit(
     };
 }
 
-MiniMaxH3DitGraph::DitOutput build_dit_cfg(
+MiniMaxH3DiTGraph::DiTOutput build_dit_cfg(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
-    const MiniMaxH3DitGraph::PackedSequenceLayout & positive_layout,
-    const MiniMaxH3DitGraph::PackedSequenceLayout & negative_layout,
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & positive_layout,
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & negative_layout,
     const core::TensorValue & positive_prompt,
     const core::TensorValue & positive_audio_full,
     const core::TensorValue & positive_video_full,
@@ -881,9 +881,9 @@ struct LayerwisePreludeOutput {
 
 LayerwisePreludeOutput build_dit_prelude(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
-    const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
     const core::TensorValue & prompt,
     const core::TensorValue & audio_full,
     const core::TensorValue & video_full,
@@ -935,7 +935,7 @@ LayerwisePreludeOutput build_dit_prelude(
 
 core::TensorValue build_dit_layer_group(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & hidden_in,
     const core::TensorValue & t_emb,
@@ -953,7 +953,7 @@ core::TensorValue build_dit_layer_group(
 
 core::TensorValue build_dit_layer_chunked_mlp(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & hidden_in,
     const core::TensorValue & t_emb,
@@ -981,7 +981,7 @@ core::TensorValue build_dit_layer_chunked_mlp(
 
 core::TensorValue build_dit_chunked_layer_group(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const core::TensorValue & hidden_in,
     const core::TensorValue & t_emb,
@@ -998,11 +998,11 @@ core::TensorValue build_dit_chunked_layer_group(
     return hidden;
 }
 
-MiniMaxH3DitGraph::DitOutput build_dit_final(
+MiniMaxH3DiTGraph::DiTOutput build_dit_final(
     core::ModuleBuildContext & ctx,
-    const MiniMaxH3DitWeightStore & weights,
+    const MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
-    const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
     const core::TensorValue & hidden_in,
     const core::TensorValue & t_emb,
     const core::TensorValue & inverse_indices,
@@ -1062,7 +1062,7 @@ MiniMaxH3DitGraph::DitOutput build_dit_final(
 }
 
 void build_dit_index_pattern(
-    const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
     bool split_audio_timestep,
     std::vector<int32_t> & combined,
     std::vector<int32_t> & inverse) {
@@ -1081,7 +1081,7 @@ void build_dit_index_pattern(
     }
 }
 
-MiniMaxH3DitGraph::PackedSequenceLayout make_dit_layout(
+MiniMaxH3DiTGraph::PackedSequenceLayout make_dit_layout(
     int64_t text_len,
     const MiniMaxH3Config & cfg) {
     const int64_t audio_rows = cfg.audio_steps * cfg.audio_channels;
@@ -1094,7 +1094,7 @@ MiniMaxH3DitGraph::PackedSequenceLayout make_dit_layout(
         text_len + audio_rows + cfg.video_patches};
 }
 
-struct DitLayerwiseGgmlContextDeleter {
+struct DiTLayerwiseGgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
         if (ctx != nullptr) {
             ggml_free(ctx);
@@ -1102,12 +1102,12 @@ struct DitLayerwiseGgmlContextDeleter {
     }
 };
 
-class DitLayerwisePreludeGraph {
+class DiTLayerwisePreludeGraph {
 public:
-    DitLayerwisePreludeGraph(
-        MiniMaxH3DitWeightStore & weights,
+    DiTLayerwisePreludeGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
         const std::vector<float> & prompt)
         : execution_(weights.execution),
           cfg_(cfg),
@@ -1177,7 +1177,7 @@ public:
         core::write_tensor_f32(video_t_, video_zeros);
     }
 
-    ~DitLayerwisePreludeGraph() {
+    ~DiTLayerwisePreludeGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -1219,9 +1219,9 @@ public:
 private:
     core::ExecutionContext & execution_;
     MiniMaxH3Config cfg_;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> input_ctx_;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -1236,12 +1236,12 @@ private:
     LayerwisePreludeOutput out_;
 };
 
-class DitLayerwiseBlockGroupGraph {
+class DiTLayerwiseBlockGroupGraph {
 public:
-    DitLayerwiseBlockGroupGraph(
-        MiniMaxH3DitWeightStore & weights,
+    DiTLayerwiseBlockGroupGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
         int64_t layer_begin,
         int64_t layer_end)
         : execution_(weights.execution),
@@ -1278,7 +1278,7 @@ public:
         core::write_tensor_f32(sin_t_, h3_rope_half_values(cfg_, layout_.text_len, cfg_.rope_inv_freq_len, false));
     }
 
-    ~DitLayerwiseBlockGroupGraph() {
+    ~DiTLayerwiseBlockGroupGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -1316,9 +1316,9 @@ public:
 private:
     core::ExecutionContext & execution_;
     MiniMaxH3Config cfg_;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> input_ctx_;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -1331,12 +1331,12 @@ private:
     core::TensorValue output_;
 };
 
-class DitLayerwiseChunkedBlockGroupGraph {
+class DiTLayerwiseChunkedBlockGroupGraph {
 public:
-    DitLayerwiseChunkedBlockGroupGraph(
-        MiniMaxH3DitWeightStore & weights,
+    DiTLayerwiseChunkedBlockGroupGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
         int64_t layer_begin,
         int64_t layer_end,
         int64_t chunk_rows)
@@ -1385,7 +1385,7 @@ public:
         core::write_tensor_f32(sin_t_, h3_rope_half_values(cfg_, layout_.text_len, cfg_.rope_inv_freq_len, false));
     }
 
-    ~DitLayerwiseChunkedBlockGroupGraph() {
+    ~DiTLayerwiseChunkedBlockGroupGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -1423,9 +1423,9 @@ public:
 private:
     core::ExecutionContext & execution_;
     MiniMaxH3Config cfg_;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> input_ctx_;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -1438,12 +1438,12 @@ private:
     core::TensorValue output_;
 };
 
-class DitLayerwiseFinalGraph {
+class DiTLayerwiseFinalGraph {
 public:
-    DitLayerwiseFinalGraph(
-        MiniMaxH3DitWeightStore & weights,
+    DiTLayerwiseFinalGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout)
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout)
         : execution_(weights.execution),
           cfg_(cfg),
           layout_(layout) {
@@ -1485,7 +1485,7 @@ public:
         core::write_tensor_f32(video_t_, video_zeros);
     }
 
-    ~DitLayerwiseFinalGraph() {
+    ~DiTLayerwiseFinalGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -1508,7 +1508,7 @@ public:
         float sigma_delta_video,
         bool read_logits,
         bool read_next_rows,
-        DitGraphResult & result,
+        DiTGraphResult & result,
         double & input_ms,
         double & output_ms) {
         const auto input_start = Clock::now();
@@ -1541,9 +1541,9 @@ public:
 private:
     core::ExecutionContext & execution_;
     MiniMaxH3Config cfg_;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> input_ctx_;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -1555,7 +1555,7 @@ private:
     core::TensorValue video_t_;
     core::TensorValue sigma_delta_audio_t_;
     core::TensorValue sigma_delta_video_t_;
-    MiniMaxH3DitGraph::DitOutput out_;
+    MiniMaxH3DiTGraph::DiTOutput out_;
 };
 
 struct FirstBlockGraphOutput {
@@ -1566,7 +1566,7 @@ struct FirstBlockGraphOutput {
 };
 
 struct FirstBlockDeviceState {
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx;
     ggml_backend_buffer_t buffer = nullptr;
     core::TensorValue first_hidden;
     core::TensorValue t_emb;
@@ -1580,7 +1580,7 @@ struct FirstBlockDeviceState {
         }
     }
 
-    void init(core::ExecutionContext & execution, const MiniMaxH3Config & cfg, const MiniMaxH3DitGraph::PackedSequenceLayout & layout) {
+    void init(core::ExecutionContext & execution, const MiniMaxH3Config & cfg, const MiniMaxH3DiTGraph::PackedSequenceLayout & layout) {
         ctx.reset(ggml_init({64 * 1024 * 1024, nullptr, true}));
         if (ctx == nullptr) {
             throw std::runtime_error("failed to initialize MiniMax-H3 first-block device state context");
@@ -1602,12 +1602,12 @@ struct FirstBlockDeviceState {
     }
 };
 
-class DitFirstBlockPreludeGraph {
+class DiTFirstBlockPreludeGraph {
 public:
-    DitFirstBlockPreludeGraph(
-        MiniMaxH3DitWeightStore & weights,
+    DiTFirstBlockPreludeGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout,
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout,
         const std::vector<float> & prompt)
         : execution_(weights.execution),
           cfg_(cfg),
@@ -1712,7 +1712,7 @@ public:
         core::write_tensor_f32(sin_t_, h3_rope_half_values(cfg_, layout_.text_len, cfg_.rope_inv_freq_len, false));
     }
 
-    ~DitFirstBlockPreludeGraph() {
+    ~DiTFirstBlockPreludeGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -1772,9 +1772,9 @@ public:
 private:
     core::ExecutionContext & execution_;
     MiniMaxH3Config cfg_;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> input_ctx_;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -1793,12 +1793,12 @@ private:
     FirstBlockGraphOutput out_;
 };
 
-class DitFirstBlockTailFinalGraph {
+class DiTFirstBlockTailFinalGraph {
 public:
-    DitFirstBlockTailFinalGraph(
-        MiniMaxH3DitWeightStore & weights,
+    DiTFirstBlockTailFinalGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout)
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout)
         : execution_(weights.execution),
           cfg_(cfg),
           layout_(layout) {
@@ -1861,7 +1861,7 @@ public:
         core::write_tensor_f32(sin_t_, h3_rope_half_values(cfg_, layout_.text_len, cfg_.rope_inv_freq_len, false));
     }
 
-    ~DitFirstBlockTailFinalGraph() {
+    ~DiTFirstBlockTailFinalGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -1881,7 +1881,7 @@ public:
         const std::vector<float> & video_rows,
         float sigma_delta_audio,
         float sigma_delta_video,
-        DitGraphResult & result,
+        DiTGraphResult & result,
         double & input_ms,
         double & output_ms) {
         const auto input_start = Clock::now();
@@ -1919,9 +1919,9 @@ public:
 private:
     core::ExecutionContext & execution_;
     MiniMaxH3Config cfg_;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> input_ctx_;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -1938,15 +1938,15 @@ private:
     core::TensorValue sin_t_;
     core::TensorValue final_hidden_;
     core::TensorValue tail_residual_;
-    MiniMaxH3DitGraph::DitOutput out_;
+    MiniMaxH3DiTGraph::DiTOutput out_;
 };
 
-class DitFirstBlockCachedFinalGraph {
+class DiTFirstBlockCachedFinalGraph {
 public:
-    DitFirstBlockCachedFinalGraph(
-        MiniMaxH3DitWeightStore & weights,
+    DiTFirstBlockCachedFinalGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout)
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout)
         : execution_(weights.execution),
           cfg_(cfg),
           layout_(layout) {
@@ -1993,7 +1993,7 @@ public:
         core::write_tensor_f32(video_t_, video_zeros);
     }
 
-    ~DitFirstBlockCachedFinalGraph() {
+    ~DiTFirstBlockCachedFinalGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -2012,7 +2012,7 @@ public:
         const std::vector<int32_t> & inverse,
         float sigma_delta_audio,
         float sigma_delta_video,
-        DitGraphResult & result,
+        DiTGraphResult & result,
         double & input_ms,
         double & output_ms) {
         const auto input_start = Clock::now();
@@ -2049,9 +2049,9 @@ public:
 private:
     core::ExecutionContext & execution_;
     MiniMaxH3Config cfg_;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, DitLayerwiseGgmlContextDeleter> input_ctx_;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, DiTLayerwiseGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -2064,18 +2064,18 @@ private:
     core::TensorValue video_t_;
     core::TensorValue sigma_delta_audio_t_;
     core::TensorValue sigma_delta_video_t_;
-    MiniMaxH3DitGraph::DitOutput out_;
+    MiniMaxH3DiTGraph::DiTOutput out_;
 };
 
-struct MiniMaxH3DitFirstBlockCacheRuntime::Impl {
-    MiniMaxH3DitWeightStore * weights = nullptr;
+struct MiniMaxH3DiTFirstBlockCacheRuntime::Impl {
+    MiniMaxH3DiTWeightStore * weights = nullptr;
     MiniMaxH3Config cfg;
     std::vector<float> prompt;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout;
     FirstBlockDeviceState state;
-    std::unique_ptr<DitFirstBlockPreludeGraph> first_graph;
-    std::unique_ptr<DitFirstBlockTailFinalGraph> tail_final_graph;
-    std::unique_ptr<DitFirstBlockCachedFinalGraph> cached_final_graph;
+    std::unique_ptr<DiTFirstBlockPreludeGraph> first_graph;
+    std::unique_ptr<DiTFirstBlockTailFinalGraph> tail_final_graph;
+    std::unique_ptr<DiTFirstBlockCachedFinalGraph> cached_final_graph;
     std::vector<int32_t> combined_shared;
     std::vector<int32_t> inverse_shared;
     std::vector<int32_t> combined_split;
@@ -2092,8 +2092,8 @@ struct MiniMaxH3DitFirstBlockCacheRuntime::Impl {
     double output_read_ms = 0.0;
 };
 
-MiniMaxH3DitFirstBlockCacheRuntime::MiniMaxH3DitFirstBlockCacheRuntime(
-    MiniMaxH3DitWeightStore & weights,
+MiniMaxH3DiTFirstBlockCacheRuntime::MiniMaxH3DiTFirstBlockCacheRuntime(
+    MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const MiniMaxH3GenerateRequest & request,
     const std::vector<float> & prompt)
@@ -2125,13 +2125,13 @@ MiniMaxH3DitFirstBlockCacheRuntime::MiniMaxH3DitFirstBlockCacheRuntime(
     build_dit_index_pattern(impl_->layout, true, impl_->combined_split, impl_->inverse_split);
     impl_->state.init(weights.execution, cfg, impl_->layout);
     const auto build_start = Clock::now();
-    impl_->first_graph = std::make_unique<DitFirstBlockPreludeGraph>(weights, cfg, impl_->layout, prompt);
+    impl_->first_graph = std::make_unique<DiTFirstBlockPreludeGraph>(weights, cfg, impl_->layout, prompt);
     engine::debug::timing_log_scalar("minimax_h3.dit.first_block_cache.graph_build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
 }
 
-MiniMaxH3DitFirstBlockCacheRuntime::~MiniMaxH3DitFirstBlockCacheRuntime() = default;
+MiniMaxH3DiTFirstBlockCacheRuntime::~MiniMaxH3DiTFirstBlockCacheRuntime() = default;
 
-void MiniMaxH3DitFirstBlockCacheRuntime::run(
+void MiniMaxH3DiTFirstBlockCacheRuntime::run(
     const std::vector<float> & audio_rows,
     const std::vector<float> & video_rows,
     const float * timestep_values,
@@ -2140,12 +2140,12 @@ void MiniMaxH3DitFirstBlockCacheRuntime::run(
     float sigma_delta_audio,
     float sigma_delta_video,
     bool split_audio_timestep,
-    DitGraphResult & result) {
+    DiTGraphResult & result) {
     const auto & combined = split_audio_timestep ? impl_->combined_split : impl_->combined_shared;
     const auto & inverse = split_audio_timestep ? impl_->inverse_split : impl_->inverse_shared;
     if (impl_->first_graph == nullptr) {
         const auto build_start = Clock::now();
-        impl_->first_graph = std::make_unique<DitFirstBlockPreludeGraph>(*impl_->weights, impl_->cfg, impl_->layout, impl_->prompt);
+        impl_->first_graph = std::make_unique<DiTFirstBlockPreludeGraph>(*impl_->weights, impl_->cfg, impl_->layout, impl_->prompt);
         engine::debug::timing_log_scalar("minimax_h3.dit.first_block_cache.first_graph_build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
     }
     ggml_backend_tensor_copy(impl_->state.previous_first_residual.tensor, impl_->first_graph->previous_residual_input());
@@ -2185,7 +2185,7 @@ void MiniMaxH3DitFirstBlockCacheRuntime::run(
     if (use_cache) {
         if (impl_->cached_final_graph == nullptr) {
             const auto build_start = Clock::now();
-            impl_->cached_final_graph = std::make_unique<DitFirstBlockCachedFinalGraph>(*impl_->weights, impl_->cfg, impl_->layout);
+            impl_->cached_final_graph = std::make_unique<DiTFirstBlockCachedFinalGraph>(*impl_->weights, impl_->cfg, impl_->layout);
             engine::debug::timing_log_scalar("minimax_h3.dit.first_block_cache.final_graph_build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         }
         const auto reconstruct_start = Clock::now();
@@ -2198,7 +2198,7 @@ void MiniMaxH3DitFirstBlockCacheRuntime::run(
     } else {
         if (impl_->tail_final_graph == nullptr) {
             const auto build_start = Clock::now();
-            impl_->tail_final_graph = std::make_unique<DitFirstBlockTailFinalGraph>(*impl_->weights, impl_->cfg, impl_->layout);
+            impl_->tail_final_graph = std::make_unique<DiTFirstBlockTailFinalGraph>(*impl_->weights, impl_->cfg, impl_->layout);
             engine::debug::timing_log_scalar("minimax_h3.dit.first_block_cache.tail_final_graph_build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         }
         const auto copy_start = Clock::now();
@@ -2241,23 +2241,23 @@ void MiniMaxH3DitFirstBlockCacheRuntime::run(
     engine::debug::timing_log_scalar("minimax_h3.dit.first_block_cache.final_ms", engine::debug::elapsed_ms(final_start, Clock::now()));
 }
 
-double MiniMaxH3DitFirstBlockCacheRuntime::input_upload_ms() const {
+double MiniMaxH3DiTFirstBlockCacheRuntime::input_upload_ms() const {
     return impl_->input_upload_ms;
 }
 
-double MiniMaxH3DitFirstBlockCacheRuntime::output_read_ms() const {
+double MiniMaxH3DiTFirstBlockCacheRuntime::output_read_ms() const {
     return impl_->output_read_ms;
 }
 
-int64_t MiniMaxH3DitFirstBlockCacheRuntime::full_steps() const {
+int64_t MiniMaxH3DiTFirstBlockCacheRuntime::full_steps() const {
     return impl_->full_steps;
 }
 
-int64_t MiniMaxH3DitFirstBlockCacheRuntime::cached_steps() const {
+int64_t MiniMaxH3DiTFirstBlockCacheRuntime::cached_steps() const {
     return impl_->cached_steps;
 }
 
-MiniMaxH3DitLayerwiseRuntime::MiniMaxH3DitLayerwiseRuntime(
+MiniMaxH3DiTLayerwiseRuntime::MiniMaxH3DiTLayerwiseRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const assets::TensorSource> tensor_source,
     const MiniMaxH3Config & cfg,
@@ -2279,7 +2279,7 @@ MiniMaxH3DitLayerwiseRuntime::MiniMaxH3DitLayerwiseRuntime(
     tensor_source_->release_storage();
 }
 
-void MiniMaxH3DitLayerwiseRuntime::run(
+void MiniMaxH3DiTLayerwiseRuntime::run(
     const std::vector<float> & audio_rows,
     const std::vector<float> & video_rows,
     const float * timestep_values,
@@ -2289,9 +2289,9 @@ void MiniMaxH3DitLayerwiseRuntime::run(
     bool split_audio_timestep,
     bool read_logits,
     bool read_next_rows,
-    DitGraphResult & result) {
+    DiTGraphResult & result) {
     const int64_t text_len = static_cast<int64_t>(prompt_.size()) / cfg_.text_dim;
-    const MiniMaxH3DitGraph::PackedSequenceLayout layout = make_dit_layout(text_len, cfg_);
+    const MiniMaxH3DiTGraph::PackedSequenceLayout layout = make_dit_layout(text_len, cfg_);
     std::vector<int32_t> combined;
     std::vector<int32_t> inverse;
     build_dit_index_pattern(layout, split_audio_timestep, combined, inverse);
@@ -2306,8 +2306,8 @@ void MiniMaxH3DitLayerwiseRuntime::run(
         if (cfg_.adaln_curve_grid == 0) {
             prefixes.push_back("time_embedder.");
         }
-        MiniMaxH3DitWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, prefixes, false);
-        DitLayerwisePreludeGraph graph(weights, cfg_, layout, prompt_);
+        MiniMaxH3DiTWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, prefixes, false);
+        DiTLayerwisePreludeGraph graph(weights, cfg_, layout, prompt_);
         const auto compute_start = Clock::now();
         graph.run(audio_rows, video_rows, timestep_values, timestep_count, hidden, t_emb, input_upload_ms_, output_read_ms_);
         engine::debug::timing_log_scalar("minimax_h3.dit.layerwise.prelude_ms", engine::debug::elapsed_ms(compute_start, Clock::now()));
@@ -2319,8 +2319,8 @@ void MiniMaxH3DitLayerwiseRuntime::run(
             for (int64_t i = layer; i < end; ++i) {
                 prefixes.push_back("blocks." + std::to_string(i) + ".");
             }
-            MiniMaxH3DitWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, prefixes, false);
-            DitLayerwiseChunkedBlockGroupGraph graph(weights, cfg_, layout, layer, end, mlp_chunk_tokens_);
+            MiniMaxH3DiTWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, prefixes, false);
+            DiTLayerwiseChunkedBlockGroupGraph graph(weights, cfg_, layout, layer, end, mlp_chunk_tokens_);
             std::vector<float> next_hidden;
             const auto compute_start = Clock::now();
             graph.run(hidden, t_emb, combined, next_hidden, input_upload_ms_, output_read_ms_);
@@ -2334,8 +2334,8 @@ void MiniMaxH3DitLayerwiseRuntime::run(
             for (int64_t i = layer; i < end; ++i) {
                 prefixes.push_back("blocks." + std::to_string(i) + ".");
             }
-            MiniMaxH3DitWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, prefixes, false);
-            DitLayerwiseBlockGroupGraph graph(weights, cfg_, layout, layer, end);
+            MiniMaxH3DiTWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, prefixes, false);
+            DiTLayerwiseBlockGroupGraph graph(weights, cfg_, layout, layer, end);
             std::vector<float> next_hidden;
             const auto compute_start = Clock::now();
             graph.run(hidden, t_emb, combined, next_hidden, input_upload_ms_, output_read_ms_);
@@ -2344,8 +2344,8 @@ void MiniMaxH3DitLayerwiseRuntime::run(
         }
     }
     {
-        MiniMaxH3DitWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, {"final_layer."}, false);
-        DitLayerwiseFinalGraph graph(weights, cfg_, layout);
+        MiniMaxH3DiTWeightStore weights(execution_, tensor_source_, weight_context_bytes_, {}, {"final_layer."}, false);
+        DiTLayerwiseFinalGraph graph(weights, cfg_, layout);
         const auto compute_start = Clock::now();
         graph.run(
             hidden,
@@ -2364,20 +2364,20 @@ void MiniMaxH3DitLayerwiseRuntime::run(
     }
 }
 
-double MiniMaxH3DitLayerwiseRuntime::input_upload_ms() const {
+double MiniMaxH3DiTLayerwiseRuntime::input_upload_ms() const {
     return input_upload_ms_;
 }
 
-double MiniMaxH3DitLayerwiseRuntime::output_read_ms() const {
+double MiniMaxH3DiTLayerwiseRuntime::output_read_ms() const {
     return output_read_ms_;
 }
 
-const std::vector<float> & MiniMaxH3DitLayerwiseRuntime::adaln_curve_table() const {
+const std::vector<float> & MiniMaxH3DiTLayerwiseRuntime::adaln_curve_table() const {
     return adaln_curve_table_;
 }
 
-MiniMaxH3DitGraph::MiniMaxH3DitGraph(
-    MiniMaxH3DitWeightStore & weights,
+MiniMaxH3DiTGraph::MiniMaxH3DiTGraph(
+    MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & prompt,
     bool include_sampler_update)
@@ -2482,7 +2482,7 @@ MiniMaxH3DitGraph::MiniMaxH3DitGraph(
     build_dit_index_pattern(layout_, true, combined_split_timestep_, inverse_split_timestep_);
 }
 
-MiniMaxH3DitGraph::~MiniMaxH3DitGraph() {
+MiniMaxH3DiTGraph::~MiniMaxH3DiTGraph() {
     plan_.reset();
     if (graph_ != nullptr) {
         core::release_backend_graph_resources(weights_.execution.backend(), graph_);
@@ -2501,7 +2501,7 @@ MiniMaxH3DitGraph::~MiniMaxH3DitGraph() {
     }
 }
 
-void MiniMaxH3DitGraph::run(
+void MiniMaxH3DiTGraph::run(
     const std::vector<float> & audio_rows,
     const std::vector<float> & video_rows,
     const float * timestep_values,
@@ -2512,7 +2512,7 @@ void MiniMaxH3DitGraph::run(
     bool read_logits,
     bool read_hidden,
     bool read_next_rows,
-    DitGraphResult & result) {
+    DiTGraphResult & result) {
     const auto input_start = Clock::now();
     const int64_t video_dim = cfg_.video_latents_dim * 4;
     core::write_tensor_f32_slice(
@@ -2561,38 +2561,38 @@ void MiniMaxH3DitGraph::run(
     output_read_ms_ += engine::debug::elapsed_ms(read_start, Clock::now());
 }
 
-double MiniMaxH3DitGraph::input_upload_ms() const {
+double MiniMaxH3DiTGraph::input_upload_ms() const {
     return input_upload_ms_;
 }
 
-double MiniMaxH3DitGraph::output_read_ms() const {
+double MiniMaxH3DiTGraph::output_read_ms() const {
     return output_read_ms_;
 }
 
-const MiniMaxH3DitGraph::PackedSequenceLayout & MiniMaxH3DitGraph::layout() const {
+const MiniMaxH3DiTGraph::PackedSequenceLayout & MiniMaxH3DiTGraph::layout() const {
     return layout_;
 }
 
-ggml_tensor * MiniMaxH3DitGraph::video_state_tensor() const {
+ggml_tensor * MiniMaxH3DiTGraph::video_state_tensor() const {
     return video_t_.tensor;
 }
 
-ggml_tensor * MiniMaxH3DitGraph::audio_state_tensor() const {
+ggml_tensor * MiniMaxH3DiTGraph::audio_state_tensor() const {
     return audio_t_.tensor;
 }
 
-ggml_tensor * MiniMaxH3DitGraph::video_logits_tensor() const {
+ggml_tensor * MiniMaxH3DiTGraph::video_logits_tensor() const {
     return out_.video_logits.tensor;
 }
 
-ggml_tensor * MiniMaxH3DitGraph::audio_logits_tensor() const {
+ggml_tensor * MiniMaxH3DiTGraph::audio_logits_tensor() const {
     return out_.audio_logits.tensor;
 }
 
-struct MiniMaxH3DitFinalGraph::Impl {
-    MiniMaxH3DitWeightStore & weights;
+struct MiniMaxH3DiTFinalGraph::Impl {
+    MiniMaxH3DiTWeightStore & weights;
     MiniMaxH3Config cfg;
-    MiniMaxH3DitGraph::PackedSequenceLayout layout;
+    MiniMaxH3DiTGraph::PackedSequenceLayout layout;
     ggml_context * ctx = nullptr;
     ggml_context * input_ctx = nullptr;
     ggml_cgraph * graph = nullptr;
@@ -2606,7 +2606,7 @@ struct MiniMaxH3DitFinalGraph::Impl {
     core::TensorValue video;
     core::TensorValue sigma_delta_audio;
     core::TensorValue sigma_delta_video;
-    MiniMaxH3DitGraph::DitOutput out;
+    MiniMaxH3DiTGraph::DiTOutput out;
     std::vector<int32_t> inverse_shared_timestep;
     std::vector<int32_t> inverse_split_timestep;
     bool indices_uploaded = false;
@@ -2615,9 +2615,9 @@ struct MiniMaxH3DitFinalGraph::Impl {
     double output_read_ms = 0.0;
 
     Impl(
-        MiniMaxH3DitWeightStore & weights_in,
+        MiniMaxH3DiTWeightStore & weights_in,
         const MiniMaxH3Config & cfg_in,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout_in)
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout_in)
         : weights(weights_in),
           cfg(cfg_in),
           layout(layout_in) {
@@ -2703,7 +2703,7 @@ struct MiniMaxH3DitFinalGraph::Impl {
         float sigma_delta_audio_value,
         float sigma_delta_video_value,
         bool split_audio_timestep,
-        DitGraphResult & result) {
+        DiTGraphResult & result) {
         const auto input_start = Clock::now();
         if (hidden_rows.size() != static_cast<size_t>(layout.total * cfg.hidden)) {
             throw std::runtime_error("MiniMax-H3 DiT final graph hidden input shape mismatch");
@@ -2736,15 +2736,15 @@ struct MiniMaxH3DitFinalGraph::Impl {
     }
 };
 
-MiniMaxH3DitFinalGraph::MiniMaxH3DitFinalGraph(
-    MiniMaxH3DitWeightStore & weights,
+MiniMaxH3DiTFinalGraph::MiniMaxH3DiTFinalGraph(
+    MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
-    const MiniMaxH3DitGraph::PackedSequenceLayout & layout)
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & layout)
     : impl_(std::make_unique<Impl>(weights, cfg, layout)) {}
 
-MiniMaxH3DitFinalGraph::~MiniMaxH3DitFinalGraph() = default;
+MiniMaxH3DiTFinalGraph::~MiniMaxH3DiTFinalGraph() = default;
 
-void MiniMaxH3DitFinalGraph::run(
+void MiniMaxH3DiTFinalGraph::run(
     const std::vector<float> & hidden,
     const std::vector<float> & audio_rows,
     const std::vector<float> & video_rows,
@@ -2753,20 +2753,20 @@ void MiniMaxH3DitFinalGraph::run(
     float sigma_delta_audio,
     float sigma_delta_video,
     bool split_audio_timestep,
-    DitGraphResult & result) {
+    DiTGraphResult & result) {
     impl_->run(hidden, audio_rows, video_rows, timestep_values, timestep_count, sigma_delta_audio, sigma_delta_video, split_audio_timestep, result);
 }
 
-double MiniMaxH3DitFinalGraph::input_upload_ms() const {
+double MiniMaxH3DiTFinalGraph::input_upload_ms() const {
     return impl_->input_upload_ms;
 }
 
-double MiniMaxH3DitFinalGraph::output_read_ms() const {
+double MiniMaxH3DiTFinalGraph::output_read_ms() const {
     return impl_->output_read_ms;
 }
 
-MiniMaxH3DitCfgGraph::MiniMaxH3DitCfgGraph(
-    MiniMaxH3DitWeightStore & weights,
+MiniMaxH3DiTCfgGraph::MiniMaxH3DiTCfgGraph(
+    MiniMaxH3DiTWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & positive_prompt,
     const std::vector<float> & negative_prompt,
@@ -2944,7 +2944,7 @@ MiniMaxH3DitCfgGraph::MiniMaxH3DitCfgGraph(
     build_dit_index_pattern(negative_.layout, true, negative_.combined_split_timestep, negative_.inverse_split_timestep);
 }
 
-MiniMaxH3DitCfgGraph::~MiniMaxH3DitCfgGraph() {
+MiniMaxH3DiTCfgGraph::~MiniMaxH3DiTCfgGraph() {
     plan_.reset();
     if (graph_ != nullptr) {
         core::release_backend_graph_resources(weights_.execution.backend(), graph_);
@@ -2963,7 +2963,7 @@ MiniMaxH3DitCfgGraph::~MiniMaxH3DitCfgGraph() {
     }
 }
 
-void MiniMaxH3DitCfgGraph::run(
+void MiniMaxH3DiTCfgGraph::run(
     const std::vector<float> & audio_rows,
     const std::vector<float> & video_rows,
     const float * timestep_values,
@@ -2975,7 +2975,7 @@ void MiniMaxH3DitCfgGraph::run(
     bool read_logits,
     bool read_hidden,
     bool read_next_rows,
-    DitGraphResult & result) {
+    DiTGraphResult & result) {
     const auto input_start = Clock::now();
     const int64_t video_dim = cfg_.video_latents_dim * 4;
     core::write_tensor_f32_slice(
@@ -3045,31 +3045,31 @@ void MiniMaxH3DitCfgGraph::run(
     output_read_ms_ += engine::debug::elapsed_ms(read_start, Clock::now());
 }
 
-double MiniMaxH3DitCfgGraph::input_upload_ms() const {
+double MiniMaxH3DiTCfgGraph::input_upload_ms() const {
     return input_upload_ms_;
 }
 
-double MiniMaxH3DitCfgGraph::output_read_ms() const {
+double MiniMaxH3DiTCfgGraph::output_read_ms() const {
     return output_read_ms_;
 }
 
-const MiniMaxH3DitGraph::PackedSequenceLayout & MiniMaxH3DitCfgGraph::layout() const {
+const MiniMaxH3DiTGraph::PackedSequenceLayout & MiniMaxH3DiTCfgGraph::layout() const {
     return positive_.layout;
 }
 
-ggml_tensor * MiniMaxH3DitCfgGraph::video_state_tensor() const {
+ggml_tensor * MiniMaxH3DiTCfgGraph::video_state_tensor() const {
     return positive_.video.tensor;
 }
 
-ggml_tensor * MiniMaxH3DitCfgGraph::audio_state_tensor() const {
+ggml_tensor * MiniMaxH3DiTCfgGraph::audio_state_tensor() const {
     return positive_.audio.tensor;
 }
 
-ggml_tensor * MiniMaxH3DitCfgGraph::video_logits_tensor() const {
+ggml_tensor * MiniMaxH3DiTCfgGraph::video_logits_tensor() const {
     return out_.video_logits.tensor;
 }
 
-ggml_tensor * MiniMaxH3DitCfgGraph::audio_logits_tensor() const {
+ggml_tensor * MiniMaxH3DiTCfgGraph::audio_logits_tensor() const {
     return out_.audio_logits.tensor;
 }
 

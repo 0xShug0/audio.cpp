@@ -107,7 +107,7 @@ Granite5LayerWeights load_layer_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     int64_t layer_idx,
-    const Granite5EncoderConfig & config,
+    const Granite5ConformerEncoderConfig & config,
     assets::TensorStorageType storage_type) {
     Granite5LayerWeights w;
     const std::string pfx = "encoder.layers." + std::to_string(layer_idx) + ".";
@@ -159,12 +159,12 @@ Granite5LayerWeights load_layer_weights(
     return w;
 }
 
-Granite5EncoderWeights load_encoder_weights(
+Granite5ConformerEncoderWeights load_encoder_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const Granite5ASRConfig & config,
     assets::TensorStorageType storage_type) {
-    Granite5EncoderWeights weights;
+    Granite5ConformerEncoderWeights weights;
     weights.input_linear = load_linear_with_bias(
         store, source, "encoder.input_linear",
         config.encoder.input_features, config.encoder.hidden_size, storage_type);
@@ -189,7 +189,7 @@ core::TensorValue build_block_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & x,
     const Granite5LayerWeights & weights,
-    const Granite5EncoderConfig & config) {
+    const Granite5ConformerEncoderConfig & config) {
     const int64_t num_frames = x.shape.dims[1];
     const int64_t d_model = config.hidden_size;
     const int64_t heads = config.num_attention_heads;
@@ -333,7 +333,7 @@ core::TensorValue build_conformer_block(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_btc,
     const Granite5LayerWeights & weights,
-    const Granite5EncoderConfig & config) {
+    const Granite5ConformerEncoderConfig & config) {
     const int64_t d_model = config.hidden_size;
     const int64_t d_ffn = config.intermediate_size;
     const int64_t d_conv = d_model * config.conv_expansion_factor; // 2048
@@ -426,7 +426,7 @@ core::TensorValue build_conformer_block(
 
 }  // namespace
 
-Granite5EncoderRuntime::Granite5EncoderRuntime(
+Granite5ConformerEncoderRuntime::Granite5ConformerEncoderRuntime(
     std::shared_ptr<const Granite5ASRAssets> assets,
     engine::core::ExecutionContext & execution_context,
     assets::TensorStorageType storage_type,
@@ -445,7 +445,7 @@ Granite5EncoderRuntime::Granite5EncoderRuntime(
     weights_ = load_encoder_weights(weight_store_, *assets_->source, assets_->config, storage_type);
 }
 
-std::vector<int32_t> Granite5EncoderRuntime::transcribe_features(
+std::vector<int32_t> Granite5ConformerEncoderRuntime::transcribe_features(
     const Granite5FrontendFeatures & features) {
     if (features.frames <= 0 || features.values.empty()) {
         return {};

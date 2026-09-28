@@ -168,7 +168,7 @@ modules::CausalDecoderRuntimeConfig make_minimax_music3_global_lm_runtime_config
     return out;
 }
 
-MiniMaxMusic3GlobalLMWeights load_minimax_music3_global_lm_weights(
+MiniMaxMusic3Qwen3GlobalLMWeights load_minimax_music3_global_lm_weights(
     const MiniMaxMusic3Assets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
@@ -176,7 +176,7 @@ MiniMaxMusic3GlobalLMWeights load_minimax_music3_global_lm_weights(
     validate_storage_type(storage_type);
     const auto & config = assets.config.qwen;
     const auto & source = *assets.language_model_weights;
-    MiniMaxMusic3GlobalLMWeights out;
+    MiniMaxMusic3Qwen3GlobalLMWeights out;
     out.lm_head_layout = classify_minimax_music3_lm_head_shape(
         source.require_metadata("lm_head.weight").shape,
         config.vocab_size,

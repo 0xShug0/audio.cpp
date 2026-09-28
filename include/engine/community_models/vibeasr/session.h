@@ -53,7 +53,7 @@ private:
     std::shared_ptr<const VibeASRAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> tokenizer_;
-    VibeASRVaeEncoderRuntime encoder_;
+    VibeASRVAEEncoderRuntime encoder_;
     VibeASRLmRuntime lm_;
 };
 

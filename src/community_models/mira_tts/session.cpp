@@ -142,7 +142,7 @@ MiraTTSOfflineSession::MiraTTSOfflineSession(
          assets::TensorStorageType::F16, assets::TensorStorageType::BF16});
     auto & execution = execution_context();
     prompt_ = std::make_unique<MiraPromptBuilder>(assets_);
-    speaker_encoder_ = std::make_unique<MiraEcapaPerceiverSpeakerEncoder>(
+    speaker_encoder_ = std::make_unique<MiraEcapaPerceiverEncoder>(
         *assets_, execution, kWeightBytes, kGraphBytes, linear_type, conv_type);
     generator_ = std::make_unique<MiraQwen2Generator>(
         *assets_, execution, kGraphBytes, kGraphBytes, kWeightBytes, lm_type);

@@ -57,7 +57,7 @@ private:
     MeanVC2StreamingFrontend frontend_;
     MeanVC2BnStreamAdapter bn_adapter_;
     std::unique_ptr<MeanVC2WenetConformerRuntime> asr_encoder_;
-    std::unique_ptr<MeanVC2WavlmEcapaSpeakerEncoderRuntime> speaker_encoder_;
+    std::unique_ptr<MeanVC2WavlmEcapaEncoderRuntime> speaker_encoder_;
     std::unique_ptr<MeanVC2FlowSamplerRuntime> flow_;
     std::unique_ptr<MeanVC2VocosRuntime> vocoder_;
     runtime::TaskRequest streaming_request_;

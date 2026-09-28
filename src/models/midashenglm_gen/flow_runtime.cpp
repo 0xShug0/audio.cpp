@@ -180,7 +180,7 @@ std::shared_ptr<const MiDashengLmGenFlowWeights> load_weights(
 
 }  // namespace
 
-class MiDashengLmGenFlowRuntime::DenoiserGraph {
+class MiDashengLmGenDiTFlowRuntime::DenoiserGraph {
 public:
     DenoiserGraph(
         core::ExecutionContext & execution,
@@ -322,7 +322,7 @@ private:
     ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
-MiDashengLmGenFlowRuntime::MiDashengLmGenFlowRuntime(
+MiDashengLmGenDiTFlowRuntime::MiDashengLmGenDiTFlowRuntime(
     std::shared_ptr<const MiDashengLmGenAssets> assets,
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
@@ -342,9 +342,9 @@ MiDashengLmGenFlowRuntime::MiDashengLmGenFlowRuntime(
     weights_ = load_weights(*assets_, execution.backend(), execution.backend_type(), weight_context_bytes, storage_type);
 }
 
-MiDashengLmGenFlowRuntime::~MiDashengLmGenFlowRuntime() = default;
+MiDashengLmGenDiTFlowRuntime::~MiDashengLmGenDiTFlowRuntime() = default;
 
-std::vector<float> MiDashengLmGenFlowRuntime::sample(
+std::vector<float> MiDashengLmGenDiTFlowRuntime::sample(
     const MiDashengLmGenFlowInput & input,
     float cfg_scale,
     uint64_t seed,
@@ -450,7 +450,7 @@ std::vector<float> MiDashengLmGenFlowRuntime::sample(
     return x;
 }
 
-void MiDashengLmGenFlowRuntime::release_graphs() {
+void MiDashengLmGenDiTFlowRuntime::release_graphs() {
     graph_.reset();
 }
 

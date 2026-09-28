@@ -54,7 +54,7 @@ struct GgmlContextDeleter {
     }
 };
 
-struct PlannerWeights {
+struct Qwen3PlannerWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
     DecoderStackWeights layers;
@@ -142,7 +142,7 @@ std::vector<ggml_fp16_t> build_cfg_prefill_attention_mask_values(
     return values;
 }
 
-int64_t planner_attention_head_dim(const AceStepPlannerConfig & config) {
+int64_t planner_attention_head_dim(const AceStepQwen3PlannerConfig & config) {
     if (config.num_attention_heads <= 0 || config.num_key_value_heads <= 0 || config.head_dim <= 0) {
         throw std::runtime_error("ACE-Step planner attention configuration is invalid");
     }
@@ -336,7 +336,7 @@ modules::DecoderLayerOutputs planner_decoder_layer_batched(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const DecoderLayerWeights & weights,
-    const AceStepPlannerConfig & config,
+    const AceStepQwen3PlannerConfig & config,
     const core::TensorValue & attention_mask,
     const core::TensorValue & query_mask,
     ggml_type activation_type) {
@@ -446,7 +446,7 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batche
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const DecoderLayerWeights & weights,
-    const AceStepPlannerConfig & config,
+    const AceStepQwen3PlannerConfig & config,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & attention_mask,
@@ -529,7 +529,7 @@ modules::DecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const DecoderLayerWeights & weights,
-    const AceStepPlannerConfig & config,
+    const AceStepQwen3PlannerConfig & config,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const core::TensorValue & cache_slot,
@@ -1103,7 +1103,7 @@ std::vector<std::string> planner_language_values() {
 
 Phase1ConstraintTables build_phase1_constraint_tables(
     const AceStepTextTokenizer & tokenizer,
-    const AceStepPlannerConfig & config) {
+    const AceStepQwen3PlannerConfig & config) {
     Phase1ConstraintTables tables;
     const auto newline_tokens = tokenizer.encode("\n");
     if (!newline_tokens.empty()) {
@@ -1170,7 +1170,7 @@ class Phase1ConstrainedDecoder {
 public:
     Phase1ConstrainedDecoder(
         const AceStepTextTokenizer & tokenizer,
-        const AceStepPlannerConfig & config,
+        const AceStepQwen3PlannerConfig & config,
         const AceStepRequest & request,
         const std::vector<uint8_t> & is_audio_code_token,
         const Phase1ConstraintTables & tables)
@@ -1567,7 +1567,7 @@ private:
     }
 
     const AceStepTextTokenizer & tokenizer_;
-    const AceStepPlannerConfig & config_;
+    const AceStepQwen3PlannerConfig & config_;
     const std::vector<uint8_t> & is_audio_code_token_;
     const Phase1ConstraintTables & tables_;
     std::vector<int32_t> duration_user_tokens_;
@@ -1591,7 +1591,7 @@ int64_t target_code_count(const AceStepRequest & request, const AceStepPlan & pl
     throw std::runtime_error("ACE-Step planner requires a positive duration to determine target audio-code count");
 }
 
-bool is_eos(const AceStepPlannerConfig & config, int32_t token) {
+bool is_eos(const AceStepQwen3PlannerConfig & config, int32_t token) {
     return token == config.eos_token_id;
 }
 
@@ -1599,7 +1599,7 @@ std::string require_lm_head_name(const assets::TensorSource & source) {
     return source.require_tensor_name({"lm_head.weight", "embed_tokens.weight"});
 }
 
-PlannerWeights load_planner_weights(
+Qwen3PlannerWeights load_planner_weights(
     const AceStepAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -1607,7 +1607,7 @@ PlannerWeights load_planner_weights(
     assets::TensorStorageType storage_type) {
     const auto & config = assets.config.planner;
     const auto & source = *assets.lm_weights;
-    PlannerWeights weights;
+    Qwen3PlannerWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -1693,9 +1693,9 @@ PlannerWeights load_planner_weights(
 
 }  // namespace
 
-class PlannerWeightsRuntime {
+class Qwen3PlannerWeightsRuntime {
 public:
-    PlannerWeightsRuntime(
+    Qwen3PlannerWeightsRuntime(
         std::shared_ptr<const AceStepAssets> assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
@@ -1704,7 +1704,7 @@ public:
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
-          weights_(std::make_shared<PlannerWeights>(
+          weights_(std::make_shared<Qwen3PlannerWeights>(
               load_planner_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
         if (assets_ == nullptr) {
             throw std::runtime_error("ACE-Step planner weights runtime requires assets");
@@ -1715,7 +1715,7 @@ public:
     }
 
     const AceStepAssets & assets() const noexcept { return *assets_; }
-    const PlannerWeights & weights() const noexcept { return *weights_; }
+    const Qwen3PlannerWeights & weights() const noexcept { return *weights_; }
     ggml_backend_t backend() const noexcept { return backend_; }
     core::BackendType backend_type() const noexcept { return backend_type_; }
     int threads() const noexcept { return threads_; }
@@ -1725,7 +1725,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    std::shared_ptr<const PlannerWeights> weights_;
+    std::shared_ptr<const Qwen3PlannerWeights> weights_;
 };
 
 struct PrefillOutput {
@@ -1746,10 +1746,10 @@ struct CfgPrefillOutput {
     std::vector<CfgLayerState> layers;
 };
 
-class PrefillGraph {
+class Qwen3PlannerPrefillGraph {
 public:
-    PrefillGraph(
-        std::shared_ptr<PlannerWeightsRuntime> runtime,
+    Qwen3PlannerPrefillGraph(
+        std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t prompt_steps,
         size_t graph_arena_bytes)
         : runtime_(std::move(runtime)),
@@ -1812,14 +1812,14 @@ public:
         }
     }
 
-    ~PrefillGraph() {
+    ~Qwen3PlannerPrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
     }
 
-    bool can_run(const PlannerWeightsRuntime & runtime, int64_t prompt_steps) const {
+    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t prompt_steps) const {
         return runtime_.get() == &runtime && prompt_steps_ == prompt_steps;
     }
 
@@ -1870,7 +1870,7 @@ public:
     }
 
 private:
-    std::shared_ptr<PlannerWeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t prompt_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
@@ -1884,10 +1884,10 @@ private:
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-class DecodeGraph {
+class Qwen3PlannerDecodeGraph {
 public:
-    DecodeGraph(
-        std::shared_ptr<PlannerWeightsRuntime> runtime,
+    Qwen3PlannerDecodeGraph(
+        std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t cache_steps,
         size_t graph_arena_bytes)
         : runtime_(std::move(runtime)),
@@ -1965,14 +1965,14 @@ public:
             ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
-    ~DecodeGraph() {
+    ~Qwen3PlannerDecodeGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
     }
 
-    bool can_run(const PlannerWeightsRuntime & runtime, int64_t required_steps) const {
+    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t required_steps) const {
         return runtime_.get() == &runtime && cache_steps_ >= required_steps;
     }
 
@@ -2066,7 +2066,7 @@ private:
         }
     }
 
-    std::shared_ptr<PlannerWeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_id_ = nullptr;
@@ -2083,7 +2083,7 @@ private:
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-PrefillOutput run_decode_graph_prompt_prefill(DecodeGraph & graph, const AceStepTokenizedText & prompt) {
+PrefillOutput run_decode_graph_prompt_prefill(Qwen3PlannerDecodeGraph & graph, const AceStepTokenizedText & prompt) {
     graph.reset_state();
     std::vector<float> logits;
     for (size_t index = 0; index < prompt.input_ids.size(); ++index) {
@@ -2122,10 +2122,10 @@ CfgPrefillOutput pack_cfg_prefill_output(
     return output;
 }
 
-class CfgPrefillGraph {
+class Qwen3PlannerCfgPrefillGraph {
 public:
-    CfgPrefillGraph(
-        std::shared_ptr<PlannerWeightsRuntime> runtime,
+    Qwen3PlannerCfgPrefillGraph(
+        std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t prompt_steps,
         size_t graph_arena_bytes)
         : runtime_(std::move(runtime)),
@@ -2244,14 +2244,14 @@ public:
         }
     }
 
-    ~CfgPrefillGraph() {
+    ~Qwen3PlannerCfgPrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool can_run(const PlannerWeightsRuntime & runtime, int64_t prompt_steps) const {
+    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t prompt_steps) const {
         return runtime_.get() == &runtime && prompt_steps_ == prompt_steps;
     }
 
@@ -2342,7 +2342,7 @@ public:
     }
 
 private:
-    std::shared_ptr<PlannerWeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t prompt_steps_ = 0;
     ggml_type activation_type_ = GGML_TYPE_F32;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -2362,10 +2362,10 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class CfgDecodeGraph {
+class Qwen3PlannerCfgDecodeGraph {
 public:
-    CfgDecodeGraph(
-        std::shared_ptr<PlannerWeightsRuntime> runtime,
+    Qwen3PlannerCfgDecodeGraph(
+        std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime,
         int64_t cache_steps,
         size_t graph_arena_bytes)
         : runtime_(std::move(runtime)),
@@ -2453,14 +2453,14 @@ public:
             ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
-    ~CfgDecodeGraph() {
+    ~Qwen3PlannerCfgDecodeGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
     }
 
-    bool can_run(const PlannerWeightsRuntime & runtime, int64_t required_steps) const {
+    bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t required_steps) const {
         return runtime_.get() == &runtime && cache_steps_ >= required_steps;
     }
 
@@ -2618,7 +2618,7 @@ public:
     }
 
 private:
-    std::shared_ptr<PlannerWeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3PlannerWeightsRuntime> runtime_;
     int64_t cache_steps_ = 0;
     int64_t current_end_ = 0;
     int64_t valid_steps_ = 0;
@@ -2638,7 +2638,7 @@ private:
 };
 
 CfgPrefillOutput run_cfg_decode_graph_prompt_prefill(
-    CfgDecodeGraph & graph,
+    Qwen3PlannerCfgDecodeGraph & graph,
     const AceStepTokenizedText & conditional_prompt,
     const AceStepTokenizedText & unconditional_prompt,
     size_t layer_count) {
@@ -2708,10 +2708,10 @@ AceStepPlannerPreparedInput prepare_phase2_unconditional_prompt(
     return {formatted, trim_to_valid_tokens(tokenizer.tokenize_text(formatted, max_prompt_tokens))};
 }
 
-AceStepPlannerRuntime::AceStepPlannerRuntime(
+AceStepQwen3PlannerRuntime::AceStepQwen3PlannerRuntime(
     std::shared_ptr<const AceStepAssets> assets,
     core::ExecutionContext & execution)
-    : AceStepPlannerRuntime(
+    : AceStepQwen3PlannerRuntime(
           std::move(assets),
           execution,
           assets::TensorStorageType::Native,
@@ -2719,7 +2719,7 @@ AceStepPlannerRuntime::AceStepPlannerRuntime(
           128ull * 1024ull * 1024ull,
           GenerationConfig{4096, 512, 4032}) {}
 
-AceStepPlannerRuntime::AceStepPlannerRuntime(
+AceStepQwen3PlannerRuntime::AceStepQwen3PlannerRuntime(
     std::shared_ptr<const AceStepAssets> assets,
     core::ExecutionContext & execution,
     assets::TensorStorageType weight_storage_type,
@@ -2729,7 +2729,7 @@ AceStepPlannerRuntime::AceStepPlannerRuntime(
     : assets_(std::move(assets)),
       tokenizer_(assets_, AceStepTextTokenizer::ResourceSet::Planner),
       generation_(generation),
-      weights_runtime_(std::make_shared<PlannerWeightsRuntime>(
+      weights_runtime_(std::make_shared<Qwen3PlannerWeightsRuntime>(
           assets_,
           execution,
           weight_context_bytes,
@@ -2744,7 +2744,7 @@ AceStepPlannerRuntime::AceStepPlannerRuntime(
         config.type = core::BackendType::Cpu;
         config.threads = execution.config().threads;
         host_planner_prefill_execution_ = std::make_unique<core::ExecutionContext>(config);
-        planner_prefill_weights_runtime_ = std::make_shared<PlannerWeightsRuntime>(
+        planner_prefill_weights_runtime_ = std::make_shared<Qwen3PlannerWeightsRuntime>(
             assets_,
             *host_planner_prefill_execution_,
             weight_context_bytes,
@@ -2769,28 +2769,28 @@ AceStepPlannerRuntime::AceStepPlannerRuntime(
     }
 }
 
-AceStepPlannerRuntime::~AceStepPlannerRuntime() = default;
+AceStepQwen3PlannerRuntime::~AceStepQwen3PlannerRuntime() = default;
 
-AceStepPlannerPreparedInput AceStepPlannerRuntime::prepare_prompt(const AceStepRequest & request) const {
+AceStepPlannerPreparedInput AceStepQwen3PlannerRuntime::prepare_prompt(const AceStepRequest & request) const {
     return prepare_phase1_prompt(tokenizer_, request, generation_.max_prompt_tokens);
 }
 
-std::string AceStepPlannerRuntime::decode_tokens(const std::vector<int32_t> & token_ids) const {
+std::string AceStepQwen3PlannerRuntime::decode_tokens(const std::vector<int32_t> & token_ids) const {
     return tokenizer_.decode(token_ids, false);
 }
 
-AceStepPlan AceStepPlannerRuntime::parse_output(const std::string & output_text) const {
+AceStepPlan AceStepQwen3PlannerRuntime::parse_output(const std::string & output_text) const {
     return ace_step_parse_lm_output(output_text);
 }
 
-void AceStepPlannerRuntime::release_graph_workspace() const {
+void AceStepQwen3PlannerRuntime::release_graph_workspace() const {
     cfg_decode_graph_.reset();
     cfg_prefill_graph_.reset();
     decode_graph_.reset();
     prefill_graph_.reset();
 }
 
-AceStepPlan AceStepPlannerRuntime::generate(const AceStepRequest & request, bool generate_audio_codes) const {
+AceStepPlan AceStepQwen3PlannerRuntime::generate(const AceStepRequest & request, bool generate_audio_codes) const {
     const auto total_start = Clock::now();
     double cot_decode_graph_step_ms = 0.0;
     double code_decode_graph_step_ms = 0.0;
@@ -2811,7 +2811,7 @@ AceStepPlan AceStepPlannerRuntime::generate(const AceStepRequest & request, bool
         const auto graph_prepare_start = Clock::now();
         const int64_t required_cache_steps = static_cast<int64_t>(prompt_ids.size()) + max_new_tokens;
         if (!decode_graph_ || !decode_graph_->can_run(*weights_runtime_, required_cache_steps)) {
-            decode_graph_ = std::make_unique<DecodeGraph>(
+            decode_graph_ = std::make_unique<Qwen3PlannerDecodeGraph>(
                 weights_runtime_,
                 required_cache_steps,
                 decode_graph_arena_bytes_);
@@ -2819,7 +2819,7 @@ AceStepPlan AceStepPlannerRuntime::generate(const AceStepRequest & request, bool
         const bool use_metal_prompt_step_prefill = prefill_runtime->backend_type() == core::BackendType::Metal;
         if (!use_metal_prompt_step_prefill &&
             (!prefill_graph_ || !prefill_graph_->can_run(*prefill_runtime, static_cast<int64_t>(prompt_ids.size())))) {
-            prefill_graph_ = std::make_unique<PrefillGraph>(
+            prefill_graph_ = std::make_unique<Qwen3PlannerPrefillGraph>(
                 prefill_runtime,
                 static_cast<int64_t>(prompt_ids.size()),
                 decode_graph_arena_bytes_);
@@ -2920,7 +2920,7 @@ AceStepPlan AceStepPlannerRuntime::generate(const AceStepRequest & request, bool
             if (!use_metal_prompt_step_cfg_prefill &&
                 (!cfg_prefill_graph_ ||
                  !cfg_prefill_graph_->can_run(*cfg_prefill_runtime, prompt_steps))) {
-                cfg_prefill_graph_ = std::make_unique<CfgPrefillGraph>(
+                cfg_prefill_graph_ = std::make_unique<Qwen3PlannerCfgPrefillGraph>(
                     cfg_prefill_runtime,
                     prompt_steps,
                     decode_graph_arena_bytes_);
@@ -2931,7 +2931,7 @@ AceStepPlan AceStepPlannerRuntime::generate(const AceStepRequest & request, bool
             const auto cfg_prefill_run_start = Clock::now();
             CfgPrefillOutput cfg_prefill;
             if (use_metal_prompt_step_cfg_prefill) {
-                CfgDecodeGraph prompt_graph(weights_runtime_, cfg_required_cache_steps, decode_graph_arena_bytes_);
+                Qwen3PlannerCfgDecodeGraph prompt_graph(weights_runtime_, cfg_required_cache_steps, decode_graph_arena_bytes_);
                 cfg_prefill = run_cfg_decode_graph_prompt_prefill(
                     prompt_graph,
                     conditional_prompt.tokenized_prompt,
@@ -2951,7 +2951,7 @@ AceStepPlan AceStepPlannerRuntime::generate(const AceStepRequest & request, bool
             unconditional_visible = unconditional_prompt.tokenized_prompt.attention_mask;
             const auto cfg_decode_prepare_start = Clock::now();
             if (!cfg_decode_graph_ || !cfg_decode_graph_->can_run(*weights_runtime_, cfg_required_cache_steps)) {
-                cfg_decode_graph_ = std::make_unique<CfgDecodeGraph>(
+                cfg_decode_graph_ = std::make_unique<Qwen3PlannerCfgDecodeGraph>(
                     weights_runtime_,
                     cfg_required_cache_steps,
                     decode_graph_arena_bytes_);

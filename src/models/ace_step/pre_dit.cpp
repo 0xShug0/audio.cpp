@@ -693,7 +693,7 @@ AceStepPreDitInputs AceStepPreDitRuntime::prepare(
 
 void AceStepPreDitRuntime::ensure_text_encoder() const {
     if (!text_encoder_) {
-        text_encoder_ = std::make_unique<AceStepQwenTextEncoderRuntime>(
+        text_encoder_ = std::make_unique<AceStepQwen3TextEncoderRuntime>(
             *execution_,
             assets_,
             text_encoder_weight_storage_type_);

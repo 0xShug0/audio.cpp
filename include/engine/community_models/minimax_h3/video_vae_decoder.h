@@ -18,9 +18,9 @@
 
 namespace engine::models::minimax_h3 {
 
-class VideoVaeWeightStore {
+class VideoVAEWeightStore {
 public:
-    VideoVaeWeightStore(
+    VideoVAEWeightStore(
         core::ExecutionContext & execution_context,
         std::shared_ptr<const assets::TensorSource> tensor_source,
         const MiniMaxH3Config & cfg,
@@ -38,17 +38,17 @@ private:
     std::unordered_map<std::string, engine::modules::LinearWeights> linear_weights_;
 };
 
-class VideoVaeTileGraph;
+class VideoVAETileGraph;
 
-class VideoVaeDecodeCache {
+class VideoVAEDecodeCache {
 public:
-    VideoVaeDecodeCache();
-    ~VideoVaeDecodeCache();
+    VideoVAEDecodeCache();
+    ~VideoVAEDecodeCache();
 
-    VideoVaeDecodeCache(const VideoVaeDecodeCache &) = delete;
-    VideoVaeDecodeCache & operator=(const VideoVaeDecodeCache &) = delete;
+    VideoVAEDecodeCache(const VideoVAEDecodeCache &) = delete;
+    VideoVAEDecodeCache & operator=(const VideoVAEDecodeCache &) = delete;
 
-    VideoVaeTileGraph & graph(VideoVaeWeightStore & weights, const MiniMaxH3Config & cfg, int64_t latent_t, int64_t latent_h, int64_t latent_w);
+    VideoVAETileGraph & graph(VideoVAEWeightStore & weights, const MiniMaxH3Config & cfg, int64_t latent_t, int64_t latent_h, int64_t latent_w);
 
 private:
     struct Impl;
@@ -56,9 +56,9 @@ private:
 };
 
 MiniMaxH3VideoFrames run_video_vae_decode_graph(
-    VideoVaeWeightStore & weights,
+    VideoVAEWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & video_rows,
-    VideoVaeDecodeCache & cache);
+    VideoVAEDecodeCache & cache);
 
 }  // namespace engine::models::minimax_h3

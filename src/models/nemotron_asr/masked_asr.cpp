@@ -136,8 +136,8 @@ void MelFeatureSource::discard_before(int64_t frame) {
 }
 
 MaskedSpeakerStreams::MaskedSpeakerStreams(
-    NemotronEncoderRuntime & encoder,
-    NemotronDecoderRuntime & decoder,
+    NemotronFastConformerEncoderRuntime & encoder,
+    NemotronRnntDecoderRuntime & decoder,
     const NemotronFrontend & frontend,
     const SpeakerProbabilities & probabilities,
     const SpeakerTaggingOptions & options,

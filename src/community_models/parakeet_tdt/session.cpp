@@ -257,13 +257,13 @@ ParakeetTDTSessionBase::ParakeetTDTSessionBase(
         matmul_weight_storage_type_,
         conv_weight_storage_type_,
         weight_context_bytes_);
-    encoder_ = std::make_unique<ParakeetEncoderRuntime>(
+    encoder_ = std::make_unique<ParakeetFastConformerEncoderRuntime>(
         assets_,
         weights_,
         execution_context(),
         encoder_graph_arena_bytes_,
         encoder_flash_attention_);
-    decoder_ = std::make_unique<ParakeetDecoderRuntime>(
+    decoder_ = std::make_unique<ParakeetTDTDecoderRuntime>(
         assets_,
         weights_,
         execution_context(),

@@ -9,26 +9,26 @@ typedef struct ggml_backend * ggml_backend_t;
 
 namespace kokoro_ggml {
 
-struct KokoroDecoderCapacityContract {
+struct KokoroIstftNetDecoderCapacityContract {
     int64_t decoder_frames = 0;
     int64_t conditioning_frames = 0;
 };
 
-class KokoroDecoderRuntime {
+class KokoroIstftNetDecoderRuntime {
 public:
-    KokoroDecoderRuntime(
+    KokoroIstftNetDecoderRuntime(
         std::shared_ptr<const KokoroWeights> weights,
         ggml_backend_t backend,
         int n_threads,
         bool use_device_backend,
         uint64_t rng_seed,
-        KokoroDecoderCapacityContract contract);
-    ~KokoroDecoderRuntime();
+        KokoroIstftNetDecoderCapacityContract contract);
+    ~KokoroIstftNetDecoderRuntime();
 
-    KokoroDecoderRuntime(const KokoroDecoderRuntime &) = delete;
-    KokoroDecoderRuntime & operator=(const KokoroDecoderRuntime &) = delete;
+    KokoroIstftNetDecoderRuntime(const KokoroIstftNetDecoderRuntime &) = delete;
+    KokoroIstftNetDecoderRuntime & operator=(const KokoroIstftNetDecoderRuntime &) = delete;
 
-    void prepare(KokoroDecoderCapacityContract contract);
+    void prepare(KokoroIstftNetDecoderCapacityContract contract);
 
     std::vector<float> decode(
         const PredictorOutputs & predictor,

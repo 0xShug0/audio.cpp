@@ -48,9 +48,9 @@ std::vector<float> evaluate_windows(const std::vector<float> & input, int64_t ro
     return output;
 }
 
-class DacVaeEncoderGraph {
+class DacVAEEncoderGraph {
 public:
-    DacVaeEncoderGraph(core::ExecutionContext & execution, const DacVaeConfig & config,
+    DacVAEEncoderGraph(core::ExecutionContext & execution, const DacVAEConfig & config,
                  const Weights & weights, int64_t samples) : backend_(execution.backend()) {
         constexpr size_t nodes = 8192;
         context_.reset(ggml_init({nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(nodes, false), nullptr, true}));
@@ -106,7 +106,7 @@ public:
         debug::timing_log_scalar("sam_audio.codec.encoder.graph_buffer_mb", ggml_gallocr_get_buffer_size(allocator_.get(), 0) / 1048576.0);
     }
 
-    ~DacVaeEncoderGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
+    ~DacVAEEncoderGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
 
     std::vector<float> run(const std::vector<float> & audio, bool log_timing = true) {
         const auto started = std::chrono::steady_clock::now();
@@ -129,17 +129,17 @@ private:
 };
 }  // namespace
 
-struct DacVaeEncoder::Impl {
+struct DacVAEEncoder::Impl {
     core::ExecutionContext & execution;
-    DacVaeConfig config;
+    DacVAEConfig config;
     core::BackendWeightStore store;
     Weights weights;
-    std::unique_ptr<DacVaeEncoderGraph> graph;
+    std::unique_ptr<DacVAEEncoderGraph> graph;
     size_t samples = 0;
     bool memory_bounded = false;
     int64_t context_samples = 0;
 
-    Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution_, DacVaeConfig config_)
+    Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution_, DacVAEConfig config_)
         : execution(execution_), config(std::move(config_)),
           store(execution.backend(), execution.backend_type(), "sam_audio.codec.encoder.weights", 4 * 1024 * 1024) {
         source = assets::make_weight_norm_folded_tensor_source(std::move(source), {"audio_codec.*"});
@@ -169,14 +169,14 @@ struct DacVaeEncoder::Impl {
     }
 };
 
-DacVaeEncoder::DacVaeEncoder(std::shared_ptr<const assets::TensorSource> source,
-                           core::ExecutionContext & execution, DacVaeConfig config, bool memory_bounded)
+DacVAEEncoder::DacVAEEncoder(std::shared_ptr<const assets::TensorSource> source,
+                           core::ExecutionContext & execution, DacVAEConfig config, bool memory_bounded)
     : impl_(std::make_unique<Impl>(std::move(source), execution, std::move(config))) {
     impl_->memory_bounded = memory_bounded;
 }
-DacVaeEncoder::~DacVaeEncoder() = default;
+DacVAEEncoder::~DacVAEEncoder() = default;
 
-std::vector<float> DacVaeEncoder::encode(const std::vector<float> & audio) {
+std::vector<float> DacVAEEncoder::encode(const std::vector<float> & audio) {
     if (impl_->memory_bounded) {
         const auto start = std::chrono::steady_clock::now();
         const int64_t hop = std::accumulate(impl_->config.encoder_rates.begin(), impl_->config.encoder_rates.end(),
@@ -185,7 +185,7 @@ std::vector<float> DacVaeEncoder::encode(const std::vector<float> & audio) {
         const int64_t window = std::min<int64_t>(padded.size(), 128 * hop + 2 * impl_->context_samples);
         if (!impl_->graph || impl_->samples != static_cast<size_t>(window)) {
             impl_->graph.reset();
-            impl_->graph = std::make_unique<DacVaeEncoderGraph>(impl_->execution, impl_->config, impl_->weights, window);
+            impl_->graph = std::make_unique<DacVAEEncoderGraph>(impl_->execution, impl_->config, impl_->weights, window);
             impl_->samples = window;
         }
         auto result = evaluate_windows(padded, 1, padded.size(), window, impl_->context_samples,
@@ -196,20 +196,20 @@ std::vector<float> DacVaeEncoder::encode(const std::vector<float> & audio) {
     }
     if (!impl_->graph || impl_->samples != audio.size()) {
         impl_->graph.reset();
-        impl_->graph = std::make_unique<DacVaeEncoderGraph>(impl_->execution, impl_->config, impl_->weights, audio.size());
+        impl_->graph = std::make_unique<DacVAEEncoderGraph>(impl_->execution, impl_->config, impl_->weights, audio.size());
         impl_->samples = audio.size();
     }
     return impl_->graph->run(audio);
 }
 
-struct DacVaeDecoderModule::Impl {
-    DacVaeConfig config;
+struct DacVAEDecoderModule::Impl {
+    DacVAEConfig config;
     core::BackendType backend_type;
     core::BackendWeightStore store;
     Weights weights;
     TensorValue zero_state;
 
-    Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution, DacVaeConfig config_)
+    Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution, DacVAEConfig config_)
         : config(std::move(config_)), backend_type(execution.backend_type()),
           store(execution.backend(), execution.backend_type(), "sam_audio.codec.decoder.weights", 4 * 1024 * 1024) {
         source = assets::make_weight_norm_folded_tensor_source(std::move(source), {"audio_codec.*"});
@@ -261,7 +261,7 @@ struct DacVaeDecoderModule::Impl {
     }
 
     TensorValue lstm(core::ModuleBuildContext & ctx, const TensorValue & input, const std::string & name,
-                     DacVaeDecoderModule::RecurrentState * state = nullptr) const {
+                     DacVAEDecoderModule::RecurrentState * state = nullptr) const {
         auto x = modules::TransposeModule({{2, 0, 1, 3}, 3}).build(ctx, input);
         x = core::ensure_backend_addressable_layout(ctx, x);
         const auto residual = x;
@@ -284,19 +284,19 @@ struct DacVaeDecoderModule::Impl {
     }
 };
 
-DacVaeDecoderModule::DacVaeDecoderModule(std::shared_ptr<const assets::TensorSource> source,
-                                       core::ExecutionContext & execution, DacVaeConfig config)
+DacVAEDecoderModule::DacVAEDecoderModule(std::shared_ptr<const assets::TensorSource> source,
+                                       core::ExecutionContext & execution, DacVAEConfig config)
     : impl_(std::make_unique<Impl>(std::move(source), execution, std::move(config))) {}
-DacVaeDecoderModule::~DacVaeDecoderModule() = default;
+DacVAEDecoderModule::~DacVAEDecoderModule() = default;
 
-TensorValue DacVaeDecoderModule::project_latents(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::project_latents(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     const auto & weights = impl_->weights;
     return modules::Conv1dModule({impl_->config.codebook_dim, impl_->config.latent_dim, 1, 1, 0, 1, true})
         .build(ctx, input, {weights.at("audio_codec.quantizer.out_proj.weight"),
                             weights.at("audio_codec.quantizer.out_proj.bias")});
 }
 
-TensorValue DacVaeDecoderModule::embed_message(core::ModuleBuildContext & ctx, const TensorValue & input,
+TensorValue DacVAEDecoderModule::embed_message(core::ModuleBuildContext & ctx, const TensorValue & input,
                                              const TensorValue & message_indices) const {
     const auto & embedding = impl_->weights.at("audio_codec.decoder.wm_model.msg_processor.msg_processor.weight");
     auto message = modules::EmbeddingModule({embedding.shape.dims[0], embedding.shape.dims[1]})
@@ -306,7 +306,7 @@ TensorValue DacVaeDecoderModule::embed_message(core::ModuleBuildContext & ctx, c
     return modules::AddModule().build(ctx, input, modules::RepeatModule({input.shape}).build(ctx, message));
 }
 
-TensorValue DacVaeDecoderModule::watermark_base(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::watermark_base(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     const auto & weights = impl_->weights;
     const std::string prefix = "audio_codec.decoder.wm_model.encoder_block.pre.";
     auto alpha = core::reshape_tensor(ctx, weights.at(prefix + "0.alpha"), TensorShape::from_dims({input.shape.dims[1]}));
@@ -316,11 +316,11 @@ TensorValue DacVaeDecoderModule::watermark_base(core::ModuleBuildContext & ctx, 
     return modules::TanhModule().build(ctx, x);
 }
 
-TensorValue DacVaeDecoderModule::watermark_encode(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::watermark_encode(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     return watermark_encode_output(ctx, watermark_lstm(ctx, watermark_encode_convs(ctx, input), false));
 }
 
-TensorValue DacVaeDecoderModule::watermark_encode_convs(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::watermark_encode_convs(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     const std::string prefix = "audio_codec.decoder.wm_model.encoder_block.";
     auto x = impl_->causal_conv(ctx, input, prefix + "pre.3");
     for (size_t i = impl_->config.watermark_rates.size(); i > 0; --i) {
@@ -331,26 +331,26 @@ TensorValue DacVaeDecoderModule::watermark_encode_convs(core::ModuleBuildContext
     return x;
 }
 
-TensorValue DacVaeDecoderModule::watermark_encode_output(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::watermark_encode_output(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     return impl_->causal_conv(ctx, modules::EluModule().build(ctx, input),
                              "audio_codec.decoder.wm_model.encoder_block.post.2");
 }
 
-TensorValue DacVaeDecoderModule::watermark_decode(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::watermark_decode(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     return watermark_decode_convs(ctx, watermark_lstm(ctx, watermark_decode_input(ctx, input), true));
 }
 
-TensorValue DacVaeDecoderModule::watermark_decode_input(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::watermark_decode_input(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     return impl_->causal_conv(ctx, input, "audio_codec.decoder.wm_model.decoder_block.pre.0");
 }
 
-TensorValue DacVaeDecoderModule::watermark_lstm(core::ModuleBuildContext & ctx, const TensorValue & input,
+TensorValue DacVAEDecoderModule::watermark_lstm(core::ModuleBuildContext & ctx, const TensorValue & input,
                                               bool decoder, RecurrentState * state) const {
     return impl_->lstm(ctx, input, decoder ? "audio_codec.decoder.wm_model.decoder_block.pre.1.lstm"
                                          : "audio_codec.decoder.wm_model.encoder_block.post.0.lstm", state);
 }
 
-TensorValue DacVaeDecoderModule::watermark_decode_convs(core::ModuleBuildContext & ctx, const TensorValue & input) const {
+TensorValue DacVAEDecoderModule::watermark_decode_convs(core::ModuleBuildContext & ctx, const TensorValue & input) const {
     const std::string prefix = "audio_codec.decoder.wm_model.decoder_block.";
     auto x = input;
     for (size_t i = 0; i < impl_->config.watermark_rates.size(); ++i) {
@@ -367,7 +367,7 @@ TensorValue DacVaeDecoderModule::watermark_decode_convs(core::ModuleBuildContext
     return impl_->causal_conv(ctx, modules::EluModule().build(ctx, x), prefix + "post.1");
 }
 
-TensorValue DacVaeDecoderModule::build_block(core::ModuleBuildContext & ctx, const TensorValue & input,
+TensorValue DacVAEDecoderModule::build_block(core::ModuleBuildContext & ctx, const TensorValue & input,
                                            size_t block) const {
     const auto & weights = impl_->weights;
     auto conv = [&](const TensorValue & value, const std::string & name, int dilation = 1) {
@@ -405,7 +405,7 @@ TensorValue DacVaeDecoderModule::build_block(core::ModuleBuildContext & ctx, con
     return x;
 }
 
-int64_t DacVaeDecoderModule::context_frames(CodecTileStage stage) const {
+int64_t DacVAEDecoderModule::context_frames(CodecTileStage stage) const {
     // A conservative full receptive-field span, rounded to the downsampling
     // lattice where needed, is sufficient as a halo on either side.
     const auto kernel = [&](const std::string & name) { return impl_->weights.at(name + ".weight").shape.dims[2]; };
@@ -442,10 +442,10 @@ int64_t DacVaeDecoderModule::context_frames(CodecTileStage stage) const {
 }
 
 namespace {
-class DacVaeTileGraph {
+class DacVAETileGraph {
 public:
-    DacVaeTileGraph(core::ExecutionContext & execution, const DacVaeDecoderModule & module,
-                   const DacVaeConfig & config, CodecTileStage stage, int64_t batch, int64_t frames)
+    DacVAETileGraph(core::ExecutionContext & execution, const DacVAEDecoderModule & module,
+                   const DacVAEConfig & config, CodecTileStage stage, int64_t batch, int64_t frames)
         : backend_(execution.backend()), frames_(frames) {
         const bool recurrent = stage == CodecTileStage::EncoderLSTM || stage == CodecTileStage::DecoderLSTM;
         const size_t nodes = recurrent ? frames * batch * 128 + 8192 : 8192;
@@ -500,7 +500,7 @@ public:
         debug::timing_log_scalar("sam_audio.codec.decoder.graph_buffer_mb", ggml_gallocr_get_buffer_size(allocator_.get(), 0) / 1048576.0);
     }
 
-    ~DacVaeTileGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
+    ~DacVAETileGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
     int64_t frames() const { return frames_; }
     int64_t output_frames() const { return output_.shape.dims[2]; }
     void reset_state() {
@@ -525,13 +525,13 @@ private:
     std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
     ggml_cgraph * graph_ = nullptr;
     TensorValue input_, message_, output_;
-    DacVaeDecoderModule::RecurrentState state_in_{}, state_out_{};
+    DacVAEDecoderModule::RecurrentState state_in_{}, state_out_{};
 };
 
-class DacVaeDecoderGraph {
+class DacVAEDecoderGraph {
 public:
-    DacVaeDecoderGraph(core::ExecutionContext & execution, const DacVaeDecoderModule & module,
-                     const DacVaeConfig & config, int64_t batch, int64_t frames)
+    DacVAEDecoderGraph(core::ExecutionContext & execution, const DacVAEDecoderModule & module,
+                     const DacVAEConfig & config, int64_t batch, int64_t frames)
         : backend_(execution.backend()) {
         const int64_t samples = frames * std::accumulate(
             config.decoder_rates.begin(), config.decoder_rates.end(), int64_t{1}, std::multiplies<>());
@@ -599,7 +599,7 @@ public:
                                  ggml_gallocr_get_buffer_size(allocator_.get(), 0) / 1048576.0);
     }
 
-    ~DacVaeDecoderGraph() {
+    ~DacVAEDecoderGraph() {
         for (auto * stage : stages_)
             core::release_backend_graph_resources(backend_, stage, true);
     }
@@ -635,28 +635,28 @@ private:
 };
 }  // namespace
 
-struct DacVaeDecoder::Impl {
+struct DacVAEDecoder::Impl {
     core::ExecutionContext & execution;
-    DacVaeConfig config;
-    DacVaeDecoderModule module;
-    std::unique_ptr<DacVaeDecoderGraph> graph;
-    std::array<std::unique_ptr<DacVaeTileGraph>, 6> tiles;
+    DacVAEConfig config;
+    DacVAEDecoderModule module;
+    std::unique_ptr<DacVAEDecoderGraph> graph;
+    std::array<std::unique_ptr<DacVAETileGraph>, 6> tiles;
     bool memory_bounded = false;
     int64_t batch = 0;
     int64_t frames = 0;
 
-    Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution_, DacVaeConfig config_)
+    Impl(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution_, DacVAEConfig config_)
         : execution(execution_), config(std::move(config_)), module(std::move(source), execution, config) {}
 };
 
-DacVaeDecoder::DacVaeDecoder(std::shared_ptr<const assets::TensorSource> source,
-                           core::ExecutionContext & execution, DacVaeConfig config, bool memory_bounded)
+DacVAEDecoder::DacVAEDecoder(std::shared_ptr<const assets::TensorSource> source,
+                           core::ExecutionContext & execution, DacVAEConfig config, bool memory_bounded)
     : impl_(std::make_unique<Impl>(std::move(source), execution, std::move(config))) {
     impl_->memory_bounded = memory_bounded;
 }
-DacVaeDecoder::~DacVaeDecoder() = default;
+DacVAEDecoder::~DacVAEDecoder() = default;
 
-std::vector<float> DacVaeDecoder::decode(const std::vector<float> & latents, int64_t batch, int64_t frames,
+std::vector<float> DacVAEDecoder::decode(const std::vector<float> & latents, int64_t batch, int64_t frames,
                                        const std::vector<int32_t> & message_bits) {
     if (batch <= 0 || frames <= 0 || latents.size() != static_cast<size_t>(batch * frames * impl_->config.codebook_dim))
         throw std::runtime_error("SAM Audio decoder latent shape mismatch");
@@ -685,7 +685,7 @@ std::vector<float> DacVaeDecoder::decode(const std::vector<float> & latents, int
             auto & graph = impl_->tiles[static_cast<size_t>(stage)];
             if (!graph || graph->frames() != window) {
                 graph.reset();
-                graph = std::make_unique<DacVaeTileGraph>(impl_->execution, impl_->module, impl_->config, stage, batch, window);
+                graph = std::make_unique<DacVAETileGraph>(impl_->execution, impl_->module, impl_->config, stage, batch, window);
             }
             return evaluate_windows(input, batch * channels, length, window, halo,
                 batch * output_channels, graph->output_frames(),
@@ -694,7 +694,7 @@ std::vector<float> DacVaeDecoder::decode(const std::vector<float> & latents, int
         auto recurrent = [&](CodecTileStage stage, const std::vector<float> & input, int64_t length) {
             constexpr int64_t window = 128;
             auto & graph = impl_->tiles[static_cast<size_t>(stage)];
-            if (!graph) graph = std::make_unique<DacVaeTileGraph>(
+            if (!graph) graph = std::make_unique<DacVAETileGraph>(
                 impl_->execution, impl_->module, impl_->config, stage, batch, window);
             graph->reset_state();
             std::vector<float> result(input.size()), tile(batch * 512 * window);
@@ -730,7 +730,7 @@ std::vector<float> DacVaeDecoder::decode(const std::vector<float> & latents, int
         impl_->frames = frames;
     }
     const auto start = std::chrono::steady_clock::now();
-    if (!impl_->graph) impl_->graph = std::make_unique<DacVaeDecoderGraph>(
+    if (!impl_->graph) impl_->graph = std::make_unique<DacVAEDecoderGraph>(
         impl_->execution, impl_->module, impl_->config, batch, frames);
     auto decoded = impl_->graph->run(latents, indices);
     debug::timing_log_scalar("sam_audio.codec.decoder.wall_ms", debug::elapsed_ms(start));

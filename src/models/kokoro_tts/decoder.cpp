@@ -1242,7 +1242,7 @@ private:
 
 }  // namespace
 
-struct KokoroDecoderRuntime::Impl {
+struct KokoroIstftNetDecoderRuntime::Impl {
     std::shared_ptr<const KokoroWeights> weights;
     int n_threads = 1;
     bool use_device_backend = false;
@@ -1258,7 +1258,7 @@ struct KokoroDecoderRuntime::Impl {
         int n_threads_in,
         bool use_device_backend_in,
         uint64_t rng_seed_in,
-        KokoroDecoderCapacityContract contract_in)
+        KokoroIstftNetDecoderCapacityContract contract_in)
         : weights(std::move(weights_in)),
           n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in),
@@ -1276,7 +1276,7 @@ struct KokoroDecoderRuntime::Impl {
         prepare(contract_in);
     }
 
-    void prepare(KokoroDecoderCapacityContract contract) {
+    void prepare(KokoroIstftNetDecoderCapacityContract contract) {
         conditioning_graph.reset();
         conditioning_graph = std::make_unique<ConditioningGraphRuntime>(
             weights->decoder.generator,
@@ -1291,13 +1291,13 @@ struct KokoroDecoderRuntime::Impl {
     }
 };
 
-KokoroDecoderRuntime::KokoroDecoderRuntime(
+KokoroIstftNetDecoderRuntime::KokoroIstftNetDecoderRuntime(
     std::shared_ptr<const KokoroWeights> weights,
     ggml_backend_t backend,
     int n_threads,
     bool use_device_backend,
     uint64_t rng_seed,
-    KokoroDecoderCapacityContract contract)
+    KokoroIstftNetDecoderCapacityContract contract)
     : impl_(std::make_unique<Impl>(
           std::move(weights),
           backend,
@@ -1306,13 +1306,13 @@ KokoroDecoderRuntime::KokoroDecoderRuntime(
           rng_seed,
           contract)) {}
 
-KokoroDecoderRuntime::~KokoroDecoderRuntime() = default;
+KokoroIstftNetDecoderRuntime::~KokoroIstftNetDecoderRuntime() = default;
 
-void KokoroDecoderRuntime::prepare(KokoroDecoderCapacityContract contract) {
+void KokoroIstftNetDecoderRuntime::prepare(KokoroIstftNetDecoderCapacityContract contract) {
     impl_->prepare(contract);
 }
 
-std::vector<float> KokoroDecoderRuntime::decode(
+std::vector<float> KokoroIstftNetDecoderRuntime::decode(
     const PredictorOutputs & predictor,
     const std::vector<float> & ref_s) {
     if (static_cast<int64_t>(ref_s.size()) != 256) {

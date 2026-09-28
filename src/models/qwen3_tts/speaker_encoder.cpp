@@ -212,7 +212,7 @@ core::TensorValue attentive_statistics_pool(
 
 }  // namespace
 
-struct Qwen3SpeakerEncoderWeights {
+struct Qwen3TTSEcapaTdnnEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     ConvWeights block0;
     std::vector<SERes2NetWeights> blocks;
@@ -225,13 +225,13 @@ struct Qwen3SpeakerEncoderWeights {
 
 namespace {
 
-std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
+std::shared_ptr<const Qwen3TTSEcapaTdnnEncoderWeights> load_weights(
     const Qwen3TTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType conv_weight_storage_type) {
     const auto & source = *assets.model_weights;
-    auto weights = std::make_shared<Qwen3SpeakerEncoderWeights>();
+    auto weights = std::make_shared<Qwen3TTSEcapaTdnnEncoderWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -271,10 +271,10 @@ std::shared_ptr<const Qwen3SpeakerEncoderWeights> load_weights(
 
 }  // namespace
 
-class Qwen3SpeakerEncoderGraph {
+class Qwen3TTSEcapaTdnnEncoderGraph {
 public:
-    Qwen3SpeakerEncoderGraph(
-        std::shared_ptr<const Qwen3SpeakerEncoderWeights> weights,
+    Qwen3TTSEcapaTdnnEncoderGraph(
+        std::shared_ptr<const Qwen3TTSEcapaTdnnEncoderWeights> weights,
         int64_t frames,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes)
@@ -336,14 +336,14 @@ public:
         }
     }
 
-    ~Qwen3SpeakerEncoderGraph() {
+    ~Qwen3TTSEcapaTdnnEncoderGraph() {
         engine::core::release_backend_graph_resources(backend_, graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool matches(const Qwen3SpeakerEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
+    bool matches(const Qwen3TTSEcapaTdnnEncoderWeights & weights, int64_t frames, ggml_backend_t backend, int threads) const {
         return weights_.get() == &weights && frames_ >= frames && backend_ == backend && compute_threads_ == std::max(1, threads);
     }
 
@@ -374,7 +374,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const Qwen3SpeakerEncoderWeights> weights_;
+    std::shared_ptr<const Qwen3TTSEcapaTdnnEncoderWeights> weights_;
     int64_t frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::ConstantTensorCache constants_;
@@ -386,7 +386,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-Qwen3SpeakerEncoderRuntime::Qwen3SpeakerEncoderRuntime(
+Qwen3TTSEcapaTdnnEncoderRuntime::Qwen3TTSEcapaTdnnEncoderRuntime(
     std::shared_ptr<const Qwen3TTSAssets> assets,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
@@ -403,9 +403,9 @@ Qwen3SpeakerEncoderRuntime::Qwen3SpeakerEncoderRuntime(
     weights_ = load_weights(*assets_, execution_context_->backend(), execution_context_->backend_type(), conv_weight_storage_type);
 }
 
-Qwen3SpeakerEncoderRuntime::~Qwen3SpeakerEncoderRuntime() = default;
+Qwen3TTSEcapaTdnnEncoderRuntime::~Qwen3TTSEcapaTdnnEncoderRuntime() = default;
 
-Qwen3SpeakerFeatures Qwen3SpeakerEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
+Qwen3SpeakerFeatures Qwen3TTSEcapaTdnnEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
     const int threads = execution_context_ != nullptr ? std::max(1, execution_context_->config().threads) : 1;
     auto mel = compute_qwen3_speaker_mel(audio, threads);
     if (mel.shape.size() != 3 || mel.shape[1] != kFeatureDim) {
@@ -418,11 +418,11 @@ Qwen3SpeakerFeatures Qwen3SpeakerEncoderRuntime::extract_features(const runtime:
     return features;
 }
 
-Qwen3SpeakerEmbedding Qwen3SpeakerEncoderRuntime::encode(const runtime::AudioBuffer & audio) const {
+Qwen3SpeakerEmbedding Qwen3TTSEcapaTdnnEncoderRuntime::encode(const runtime::AudioBuffer & audio) const {
     return encode_features(extract_features(audio));
 }
 
-Qwen3SpeakerEmbedding Qwen3SpeakerEncoderRuntime::encode_features(const Qwen3SpeakerFeatures & extracted) const {
+Qwen3SpeakerEmbedding Qwen3TTSEcapaTdnnEncoderRuntime::encode_features(const Qwen3SpeakerFeatures & extracted) const {
     if (execution_context_ == nullptr) {
         throw std::runtime_error("Qwen3 speaker encoder execution context is missing");
     }
@@ -434,7 +434,7 @@ Qwen3SpeakerEmbedding Qwen3SpeakerEncoderRuntime::encode_features(const Qwen3Spe
     if (graph_ == nullptr || !graph_->matches(*weights_, frames, execution_context_->backend(), threads)) {
         const auto build_start = Clock::now();
         graph_.reset();
-        graph_ = std::make_unique<Qwen3SpeakerEncoderGraph>(
+        graph_ = std::make_unique<Qwen3TTSEcapaTdnnEncoderGraph>(
             weights_,
             frames,
             *execution_context_,

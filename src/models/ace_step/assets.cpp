@@ -35,8 +35,8 @@ void parse_qwen_common(
     rope_theta = json::optional_f32(value, "rope_theta", rope_theta);
 }
 
-AceStepPlannerConfig parse_planner_config(const engine::io::json::Value & value) {
-    AceStepPlannerConfig config;
+AceStepQwen3PlannerConfig parse_planner_config(const engine::io::json::Value & value) {
+    AceStepQwen3PlannerConfig config;
     config.lm_family = json::optional_string(value, "model_type", config.lm_family);
     parse_qwen_common(
         value,
@@ -56,8 +56,8 @@ AceStepPlannerConfig parse_planner_config(const engine::io::json::Value & value)
     return config;
 }
 
-AceStepTextEncoderConfig parse_text_encoder_config(const engine::io::json::Value & value) {
-    AceStepTextEncoderConfig config;
+AceStepQwen3TextEncoderConfig parse_text_encoder_config(const engine::io::json::Value & value) {
+    AceStepQwen3TextEncoderConfig config;
     config.encoder_family = json::optional_string(value, "model_type", config.encoder_family);
     parse_qwen_common(
         value,

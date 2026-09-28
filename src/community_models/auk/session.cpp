@@ -237,7 +237,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
         debug::timing_log_scalar("auk.stage.audio_frontend_ms", debug::elapsed_ms(stage_started));
         stage_started = std::chrono::steady_clock::now();
         if (!audio_conditioning_) {
-            audio_conditioning_ = std::make_unique<AudioConditioningRuntime>(execution, *assets_->qwen, features.frames);
+            audio_conditioning_ = std::make_unique<AuKQwen25OmniAudioEncoderRuntime>(execution, *assets_->qwen, features.frames);
         } else {
             audio_conditioning_->prepare(features.frames);
         }
@@ -252,7 +252,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
         debug::timing_log_scalar("auk.stage.reference_resample_ms", debug::elapsed_ms(stage_started));
         stage_started = std::chrono::steady_clock::now();
         if (!reference_encoder_) {
-            reference_encoder_ = std::make_unique<VaeEncoderRuntime>(execution, *assets_->vae, reference_audio.size());
+            reference_encoder_ = std::make_unique<VAEEncoderRuntime>(execution, *assets_->vae, reference_audio.size());
         } else {
             reference_encoder_->prepare(reference_audio.size());
         }
@@ -274,7 +274,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
     const bool use_flash_attention = core::resolve_flash_attention(execution.backend(), 64, attention);
     debug::trace_log_scalar("auk.attention.allow_flash", use_flash_attention);
     if (!conditioning_) {
-        conditioning_ = std::make_unique<ConditioningRuntime>(execution, *assets_->qwen, *assets_->model,
+        conditioning_ = std::make_unique<AuKQwen25OmniConditioningRuntime>(execution, *assets_->qwen, *assets_->model,
             input.token_ids.size(), false, false, audio_tokens);
     } else {
         conditioning_->prepare(input.token_ids.size(), audio_tokens);
@@ -287,7 +287,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
             flow_->prepare(frames, input.token_ids.size(), guidance >= 1e-5F, reference_frames, valid_reference_frames, steps);
         }
         if (!decoder_) {
-            decoder_ = std::make_unique<VaeDecoderRuntime>(execution, *assets_->vae, frames);
+            decoder_ = std::make_unique<VAEDecoderRuntime>(execution, *assets_->vae, frames);
         } else {
             decoder_->prepare(frames);
         }

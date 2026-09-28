@@ -92,14 +92,14 @@ modules::DecoderLayerWeights load_qwen3_layer(
     return out;
 }
 
-std::shared_ptr<const MiDashengLmGenARWeights> load_weights(
+std::shared_ptr<const MiDashengLmGenQwen3ARWeights> load_weights(
     const MiDashengLmGenAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     engine::assets::TensorStorageType storage_type,
     modules::CausalDecoderConfig & qwen) {
-    auto weights = std::make_shared<MiDashengLmGenARWeights>();
+    auto weights = std::make_shared<MiDashengLmGenQwen3ARWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -176,11 +176,11 @@ float stop_probability(const std::vector<float> & logits) {
 
 }  // namespace
 
-class MiDashengLmGenARRuntime::ProjectorGraph {
+class MiDashengLmGenQwen3ARRuntime::ProjectorGraph {
 public:
     ProjectorGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const MiDashengLmGenARWeights> weights,
+        std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights,
         MiDashengLmGenConfig config,
         int64_t batch,
         size_t graph_arena_bytes)
@@ -257,7 +257,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const MiDashengLmGenARWeights> weights_;
+    std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights_;
     MiDashengLmGenConfig config_;
     int64_t batch_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
@@ -269,11 +269,11 @@ private:
     ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
-class MiDashengLmGenARRuntime::StopHeadGraph {
+class MiDashengLmGenQwen3ARRuntime::StopHeadGraph {
 public:
     StopHeadGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const MiDashengLmGenARWeights> weights,
+        std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights,
         MiDashengLmGenConfig config,
         int64_t batch,
         size_t graph_arena_bytes)
@@ -347,7 +347,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const MiDashengLmGenARWeights> weights_;
+    std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights_;
     MiDashengLmGenConfig config_;
     int64_t batch_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
@@ -359,10 +359,10 @@ private:
     ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
-MiDashengLmGenARRuntime::MiDashengLmGenARRuntime(
+MiDashengLmGenQwen3ARRuntime::MiDashengLmGenQwen3ARRuntime(
     std::shared_ptr<const MiDashengLmGenAssets> assets,
     core::ExecutionContext & execution,
-    MiDashengLmGenFlowRuntime & flow,
+    MiDashengLmGenDiTFlowRuntime & flow,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
     size_t helper_graph_arena_bytes,
@@ -396,9 +396,9 @@ MiDashengLmGenARRuntime::MiDashengLmGenARRuntime(
         weights_->qwen);
 }
 
-MiDashengLmGenARRuntime::~MiDashengLmGenARRuntime() = default;
+MiDashengLmGenQwen3ARRuntime::~MiDashengLmGenQwen3ARRuntime() = default;
 
-MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
+MiDashengLmGenAROutput MiDashengLmGenQwen3ARRuntime::generate(
     const MiDashengLmGenPromptEncoderOutput & prompt,
     const MiDashengLmGenGenerationOptions & options) {
     const auto & config = assets_->config;
@@ -465,7 +465,7 @@ MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
     return out;
 }
 
-void MiDashengLmGenARRuntime::release_graphs() {
+void MiDashengLmGenQwen3ARRuntime::release_graphs() {
     if (qwen3_runtime_ != nullptr) {
         qwen3_runtime_->release_runtime_graphs();
     }

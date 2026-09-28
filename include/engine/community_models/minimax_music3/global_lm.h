@@ -26,14 +26,14 @@ int64_t minimax_music3_lm_head_output_size(
     MiniMaxMusic3LmHeadLayout layout,
     int64_t vocab_size) noexcept;
 
-struct MiniMaxMusic3GlobalLMWeights {
+struct MiniMaxMusic3Qwen3GlobalLMWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
     modules::CausalDecoderRuntimeWeights qwen;
     MiniMaxMusic3LmHeadLayout lm_head_layout = MiniMaxMusic3LmHeadLayout::FullVocab;
 };
 
-MiniMaxMusic3GlobalLMWeights load_minimax_music3_global_lm_weights(
+MiniMaxMusic3Qwen3GlobalLMWeights load_minimax_music3_global_lm_weights(
     const MiniMaxMusic3Assets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,

@@ -19,7 +19,7 @@ class Audio8TtsGenerator {
 public:
     Audio8TtsGenerator(
         std::shared_ptr<const Audio8TtsAssets> assets,
-        std::unique_ptr<Audio8TtsARRuntime> ar,
+        std::unique_ptr<Audio8TtsDualARRuntime> ar,
         std::unique_ptr<Audio8TtsCodecRuntime> codec);
     ~Audio8TtsGenerator();
 
@@ -34,7 +34,7 @@ private:
     std::shared_ptr<const Audio8TtsAssets> assets_;
     Audio8TtsTextTokenizer tokenizer_;
     Audio8TtsPromptBuilder prompt_builder_;
-    std::unique_ptr<Audio8TtsARRuntime> ar_;
+    std::unique_ptr<Audio8TtsDualARRuntime> ar_;
     std::unique_ptr<Audio8TtsCodecRuntime> codec_;
 };
 

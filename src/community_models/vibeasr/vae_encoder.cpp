@@ -269,8 +269,8 @@ ggml_tensor * build_branch(
 
 }  // namespace
 
-VibeASRVaeEncoderRuntime::VibeASRVaeEncoderRuntime(
-    std::shared_ptr<const VibeASRVaeAssets> assets,
+VibeASRVAEEncoderRuntime::VibeASRVAEEncoderRuntime(
+    std::shared_ptr<const VibeASRVAEAssets> assets,
     engine::core::ExecutionContext & execution_context,
     size_t graph_arena_bytes)
     : assets_(std::move(assets)),
@@ -289,15 +289,15 @@ VibeASRVaeEncoderRuntime::VibeASRVaeEncoderRuntime(
     weight_store_.upload();
 }
 
-VaeEncoderFeatures VibeASRVaeEncoderRuntime::encode_acoustic(const std::vector<float> & samples) {
+VAEEncoderFeatures VibeASRVAEEncoderRuntime::encode_acoustic(const std::vector<float> & samples) {
     return encode(assets_->config.acoustic, weights_.acoustic, samples);
 }
 
-VaeEncoderFeatures VibeASRVaeEncoderRuntime::encode_semantic(const std::vector<float> & samples) {
+VAEEncoderFeatures VibeASRVAEEncoderRuntime::encode_semantic(const std::vector<float> & samples) {
     return encode(assets_->config.semantic, weights_.semantic, samples);
 }
 
-VaeEncoderFeatures VibeASRVaeEncoderRuntime::encode(
+VAEEncoderFeatures VibeASRVAEEncoderRuntime::encode(
     const VaeBranchConfig & config,
     const VaeBranchWeights & weights,
     const std::vector<float> & samples) {
@@ -326,7 +326,7 @@ VaeEncoderFeatures VibeASRVaeEncoderRuntime::encode(
         throw std::runtime_error("Failed to initialize GGML allocator for the VibeASR VAE encoder");
     }
 
-    VaeEncoderFeatures features;
+    VAEEncoderFeatures features;
 
     try {
         core::ModuleBuildContext ctx{ggml_ctx, "vibeasr_vae_encoder", execution_context_->backend_type()};

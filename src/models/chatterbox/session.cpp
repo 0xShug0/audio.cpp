@@ -150,7 +150,7 @@ ChatterboxPromptPrepConfig make_prompt_prep_config(const runtime::SessionOptions
     return config;
 }
 
-std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
+std::unique_ptr<ChatterboxTTSComponent> make_chatterbox_component_for_language(
     const ChatterboxAssets & assets,
     const runtime::SessionOptions & options,
     const engine::core::ExecutionContext & execution_context,
@@ -196,7 +196,7 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
         execution_context,
         component_weight_storage_type);
     release_tensor_storage(assets);
-    return std::make_unique<ChatterboxTtsComponent>(
+    return std::make_unique<ChatterboxTTSComponent>(
         std::move(t3_weights),
         std::move(tokenizer),
         std::move(voice_encoder),
@@ -210,7 +210,7 @@ std::unique_ptr<ChatterboxTtsComponent> make_chatterbox_component_for_language(
         mem_saver);
 }
 
-std::unique_ptr<ChatterboxVcComponent> make_chatterbox_vc_component(
+std::unique_ptr<ChatterboxVCComponent> make_chatterbox_vc_component(
     const ChatterboxAssets & assets,
     const runtime::SessionOptions & options,
     const engine::core::ExecutionContext & execution_context,
@@ -237,7 +237,7 @@ std::unique_ptr<ChatterboxVcComponent> make_chatterbox_vc_component(
         execution_context,
         component_weight_storage_type);
     release_tensor_storage(assets);
-    return std::make_unique<ChatterboxVcComponent>(
+    return std::make_unique<ChatterboxVCComponent>(
         std::move(s3_tokenizer),
         std::move(campplus_encoder),
         std::move(flow_encoder),

@@ -98,7 +98,7 @@ core::TensorValue dit_block(
     const core::TensorValue & k_speaker,
     const core::TensorValue & v_speaker,
     const core::TensorValue & mask,
-    const EchoDitBlockWeights & weights,
+    const EchoDiTBlockWeights & weights,
     const EchoTtsConfig & config) {
     auto attn_ada = adaln(
         ctx, x, cond_embed, weights.attention_adaln,
@@ -187,7 +187,7 @@ std::vector<int32_t> iota_positions(int64_t count) {
 
 // --- runtime ------------------------------------------------------------
 
-class EchoDitRuntime::Impl {
+class EchoDiTRuntime::Impl {
 public:
     Impl(
         const EchoTtsConfig & config,
@@ -804,7 +804,7 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     core::BackendWeightStore store_;
-    EchoDitWeights weights_;
+    EchoDiTWeights weights_;
 
     bool conditioning_ready_ = false;
     bool debug_printed_ = false;
@@ -834,7 +834,7 @@ private:
     DenoiserGraph triple_;
 };
 
-EchoDitRuntime::EchoDitRuntime(
+EchoDiTRuntime::EchoDiTRuntime(
     const EchoTtsConfig & config,
     const assets::TensorSource & source,
     const std::string & tensor_prefix,
@@ -842,15 +842,15 @@ EchoDitRuntime::EchoDitRuntime(
     assets::TensorStorageType matmul_storage_type)
     : impl_(std::make_unique<Impl>(config, source, tensor_prefix, execution, matmul_storage_type)) {}
 
-EchoDitRuntime::~EchoDitRuntime() = default;
+EchoDiTRuntime::~EchoDiTRuntime() = default;
 
-const EchoTtsConfig & EchoDitRuntime::config() const noexcept { return impl_->config(); }
+const EchoTtsConfig & EchoDiTRuntime::config() const noexcept { return impl_->config(); }
 
-void EchoDitRuntime::prepare_conditioning(const EchoConditioning & conditioning) {
+void EchoDiTRuntime::prepare_conditioning(const EchoConditioning & conditioning) {
     impl_->prepare_conditioning(conditioning);
 }
 
-std::vector<float> EchoDitRuntime::denoise_once(const std::vector<float> & x, float t, int lanes) {
+std::vector<float> EchoDiTRuntime::denoise_once(const std::vector<float> & x, float t, int lanes) {
     if (!impl_->conditioning_ready()) {
         throw std::runtime_error("Echo-TTS denoise_once() called before prepare_conditioning()");
     }
@@ -869,7 +869,7 @@ std::vector<float> EchoDitRuntime::denoise_once(const std::vector<float> & x, fl
     return impl_->denoise(x, t, lanes);
 }
 
-std::vector<float> EchoDitRuntime::sample(const EchoSamplerOptions & options) {
+std::vector<float> EchoDiTRuntime::sample(const EchoSamplerOptions & options) {
     if (!impl_->conditioning_ready()) {
         throw std::runtime_error("Echo-TTS sample() called before prepare_conditioning()");
     }

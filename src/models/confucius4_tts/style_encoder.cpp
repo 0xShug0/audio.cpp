@@ -5,7 +5,7 @@
 
 namespace engine::models::confucius4_tts {
 
-ConfuciusStyleEncoder::ConfuciusStyleEncoder(
+ConfuciusCampplusStyleEncoder::ConfuciusCampplusStyleEncoder(
     std::shared_ptr<const ConfuciusAssets> assets,
     core::BackendConfig backend,
     engine::assets::TensorStorageType weight_storage_type)
@@ -23,7 +23,7 @@ ConfuciusStyleEncoder::ConfuciusStyleEncoder(
         config);
 }
 
-ConfuciusStyleEmbedding ConfuciusStyleEncoder::embed_fbank(
+ConfuciusStyleEmbedding ConfuciusCampplusStyleEncoder::embed_fbank(
     const std::vector<float> & features,
     int64_t frames,
     int64_t dims) const {
@@ -31,7 +31,7 @@ ConfuciusStyleEmbedding ConfuciusStyleEncoder::embed_fbank(
     return {out.embedding, out.embedding_size};
 }
 
-void ConfuciusStyleEncoder::release_runtime_graph() {
+void ConfuciusCampplusStyleEncoder::release_runtime_graph() {
     component_.release_runtime_graph();
 }
 

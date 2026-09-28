@@ -142,20 +142,20 @@ modules::DecoderLayerWeights load_qwen_layer(
     return out;
 }
 
-struct CosyVoice3ArWeights {
+struct CosyVoice3Qwen2ARWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::CausalDecoderRuntimeWeights qwen;
     std::vector<float> text_embedding;
     std::vector<float> speech_embedding;
 };
 
-std::shared_ptr<CosyVoice3ArWeights> load_ar_weights(
+std::shared_ptr<CosyVoice3Qwen2ARWeights> load_ar_weights(
     const CosyVoice3Assets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type,
     const modules::CausalDecoderRuntimeConfig & qwen_config) {
-    auto weights = std::make_shared<CosyVoice3ArWeights>();
+    auto weights = std::make_shared<CosyVoice3Qwen2ARWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         execution.backend(),
         execution.backend_type(),
@@ -382,7 +382,7 @@ bool is_silent_token(int32_t token) {
 
 }  // namespace
 
-class CosyVoice3ArRuntime::Impl {
+class CosyVoice3Qwen2ARRuntime::Impl {
 public:
     Impl(
         std::shared_ptr<const CosyVoice3Assets> assets,
@@ -409,7 +409,7 @@ public:
             weights_->qwen);
     }
 
-    CosyVoice3ArOutput generate(const CosyVoice3ArRequest & request) {
+    CosyVoice3AROutput generate(const CosyVoice3ARRequest & request) {
         const auto & config = assets_->config;
         if (request.target_text_tokens.empty()) {
             throw std::runtime_error("CosyVoice3 AR target text tokens are empty");
@@ -480,7 +480,7 @@ public:
         uint64_t sample_call_index = 0;
         uint64_t rng_offset_blocks = 0;
 
-        CosyVoice3ArOutput out;
+        CosyVoice3AROutput out;
         std::vector<int32_t> decoded_tokens;
         int64_t consecutive_silent_tokens = 0;
         int64_t filtered_silent_tokens = 0;
@@ -541,12 +541,12 @@ private:
     std::shared_ptr<const CosyVoice3Assets> assets_;
     core::ExecutionContext & execution_;
     modules::CausalDecoderRuntimeConfig qwen_config_;
-    std::shared_ptr<CosyVoice3ArWeights> weights_;
+    std::shared_ptr<CosyVoice3Qwen2ARWeights> weights_;
     std::unique_ptr<modules::CausalDecoderRuntime> qwen_runtime_;
     sampling::TorchCudaSamplingPolicy sampling_policy_;
 };
 
-CosyVoice3ArRuntime::CosyVoice3ArRuntime(
+CosyVoice3Qwen2ARRuntime::CosyVoice3Qwen2ARRuntime(
     std::shared_ptr<const CosyVoice3Assets> assets,
     engine::core::ExecutionContext & execution,
     size_t graph_arena_bytes,
@@ -559,13 +559,13 @@ CosyVoice3ArRuntime::CosyVoice3ArRuntime(
           weight_context_bytes,
           storage_type)) {}
 
-CosyVoice3ArRuntime::~CosyVoice3ArRuntime() = default;
+CosyVoice3Qwen2ARRuntime::~CosyVoice3Qwen2ARRuntime() = default;
 
-CosyVoice3ArOutput CosyVoice3ArRuntime::generate(const CosyVoice3ArRequest & request) {
+CosyVoice3AROutput CosyVoice3Qwen2ARRuntime::generate(const CosyVoice3ARRequest & request) {
     return impl_->generate(request);
 }
 
-void CosyVoice3ArRuntime::release_graphs() {
+void CosyVoice3Qwen2ARRuntime::release_graphs() {
     impl_->release_graphs();
 }
 

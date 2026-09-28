@@ -24,18 +24,18 @@ struct CosyVoice3FlowOutput {
     int64_t frames = 0;
 };
 
-class CosyVoice3FlowRuntime {
+class CosyVoice3DiTFlowRuntime {
 public:
-    CosyVoice3FlowRuntime(
+    CosyVoice3DiTFlowRuntime(
         std::shared_ptr<const CosyVoice3Assets> assets,
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type);
-    ~CosyVoice3FlowRuntime();
+    ~CosyVoice3DiTFlowRuntime();
 
-    CosyVoice3FlowRuntime(const CosyVoice3FlowRuntime &) = delete;
-    CosyVoice3FlowRuntime & operator=(const CosyVoice3FlowRuntime &) = delete;
+    CosyVoice3DiTFlowRuntime(const CosyVoice3DiTFlowRuntime &) = delete;
+    CosyVoice3DiTFlowRuntime & operator=(const CosyVoice3DiTFlowRuntime &) = delete;
 
     CosyVoice3FlowOutput generate(const CosyVoice3FlowRequest & request);
     void release_graphs();

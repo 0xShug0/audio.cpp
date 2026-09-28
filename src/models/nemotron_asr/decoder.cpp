@@ -110,7 +110,7 @@ std::vector<runtime::WordTimestamp> build_token_timestamps(
 
 }  // namespace
 
-struct NemotronDecoderRuntime::Graph {
+struct NemotronRnntDecoderRuntime::Graph {
     std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
     ggml_cgraph * graph = nullptr;
     ggml_gallocr_t allocator = nullptr;
@@ -131,7 +131,7 @@ struct NemotronDecoderRuntime::Graph {
     }
 };
 
-struct NemotronDecoderRuntime::JointGraph {
+struct NemotronRnntDecoderRuntime::JointGraph {
     std::unique_ptr<ggml_context, GgmlContextDeleter> ggml;
     ggml_cgraph * graph = nullptr;
     ggml_gallocr_t allocator = nullptr;
@@ -147,7 +147,7 @@ struct NemotronDecoderRuntime::JointGraph {
     }
 };
 
-NemotronDecoderRuntime::NemotronDecoderRuntime(
+NemotronRnntDecoderRuntime::NemotronRnntDecoderRuntime(
     std::shared_ptr<const NemotronASRAssets> assets,
     std::shared_ptr<const NemotronWeights> weights,
     engine::core::ExecutionContext & execution_context,
@@ -164,14 +164,14 @@ NemotronDecoderRuntime::NemotronDecoderRuntime(
     if (unk != vocab.end()) unk_token_id_ = static_cast<int32_t>(unk - vocab.begin());
 }
 
-NemotronDecoderRuntime::~NemotronDecoderRuntime() = default;
+NemotronRnntDecoderRuntime::~NemotronRnntDecoderRuntime() = default;
 
-void NemotronDecoderRuntime::prepare() {
+void NemotronRnntDecoderRuntime::prepare() {
     ensure_graph();
     ensure_joint_graph();
 }
 
-void NemotronDecoderRuntime::ensure_graph() {
+void NemotronRnntDecoderRuntime::ensure_graph() {
     if (graph_ != nullptr) {
         debug::timing_log_scalar("nemotron_asr.decoder.graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("nemotron_asr.decoder.graph_cache_hit", true);
@@ -266,7 +266,7 @@ void NemotronDecoderRuntime::ensure_graph() {
     graph_ = std::move(graph);
 }
 
-void NemotronDecoderRuntime::ensure_joint_graph() {
+void NemotronRnntDecoderRuntime::ensure_joint_graph() {
     if (joint_graph_ != nullptr) {
         debug::timing_log_scalar("nemotron_asr.decoder.joint_graph_rebuild_ms", 0.0);
         debug::trace_log_scalar("nemotron_asr.decoder.joint_graph_cache_hit", true);
@@ -315,7 +315,7 @@ void NemotronDecoderRuntime::ensure_joint_graph() {
     joint_graph_ = std::move(graph);
 }
 
-NemotronPredictorState NemotronDecoderRuntime::initial_predictor_state() const {
+NemotronPredictorState NemotronRnntDecoderRuntime::initial_predictor_state() const {
     const auto & config = assets_->config;
     NemotronPredictorState state;
     state.hidden.assign(static_cast<size_t>(config.decoder_layers * config.decoder_hidden_size), 0.0f);
@@ -324,7 +324,7 @@ NemotronPredictorState NemotronDecoderRuntime::initial_predictor_state() const {
     return state;
 }
 
-int32_t NemotronDecoderRuntime::run_joint_step(const float * encoder_frame, const NemotronPredictorState & predictor) {
+int32_t NemotronRnntDecoderRuntime::run_joint_step(const float * encoder_frame, const NemotronPredictorState & predictor) {
     if (joint_graph_ == nullptr) {
         throw std::runtime_error("Nemotron ASR decoder joint graph is not prepared");
     }
@@ -342,7 +342,7 @@ int32_t NemotronDecoderRuntime::run_joint_step(const float * encoder_frame, cons
     return argmax_index(logits_scratch_);
 }
 
-int32_t NemotronDecoderRuntime::run_step(
+int32_t NemotronRnntDecoderRuntime::run_step(
     int32_t input_token,
     const float * encoder_frame,
     bool decoder_cache_initialized,
@@ -398,7 +398,7 @@ int32_t NemotronDecoderRuntime::run_step(
     return argmax_index(logits_scratch_);
 }
 
-std::string NemotronDecoderRuntime::decode_text(const std::vector<int32_t> & token_ids, bool keep_language_tags) const {
+std::string NemotronRnntDecoderRuntime::decode_text(const std::vector<int32_t> & token_ids, bool keep_language_tags) const {
     std::vector<int32_t> filtered;
     filtered.reserve(token_ids.size());
     for (const int32_t id : token_ids) {
@@ -417,7 +417,7 @@ std::string NemotronDecoderRuntime::decode_text(const std::vector<int32_t> & tok
     return assets_->tokenizer->decode_ids(filtered);
 }
 
-NemotronDecodedText NemotronDecoderRuntime::decode(
+NemotronDecodedText NemotronRnntDecoderRuntime::decode(
     const NemotronEncodedAudio & encoded,
     const NemotronDecodeOptions & options) {
     if (encoded.valid_frames <= 0 || encoded.hidden_size != assets_->config.decoder_hidden_size) {
@@ -469,7 +469,7 @@ NemotronDecodedText NemotronDecoderRuntime::decode(
     return out;
 }
 
-NemotronDecoderStreamState NemotronDecoderRuntime::make_stream_state(
+NemotronDecoderStreamState NemotronRnntDecoderRuntime::make_stream_state(
     const NemotronDecodeOptions & options) {
     ensure_graph();
     ensure_joint_graph();
@@ -487,7 +487,7 @@ NemotronDecoderStreamState NemotronDecoderRuntime::make_stream_state(
     return state;
 }
 
-void NemotronDecoderRuntime::decode_stream_chunk(
+void NemotronRnntDecoderRuntime::decode_stream_chunk(
     const NemotronEncodedAudio & encoded,
     NemotronDecoderStreamState & state) {
     if (encoded.valid_frames <= 0 ||
@@ -530,7 +530,7 @@ void NemotronDecoderRuntime::decode_stream_chunk(
         engine::debug::elapsed_ms(wall_start, Clock::now()));
 }
 
-std::string NemotronDecoderRuntime::stream_text(
+std::string NemotronRnntDecoderRuntime::stream_text(
     const NemotronDecoderStreamState & state, bool keep_language_tags) const {
     // SentencePiece (NeMo) renders <unk> as " \xE2\x81\x87 "; the tokenizer.json decoder drops it.
     const auto & ids = state.decoded.token_ids;
@@ -563,7 +563,7 @@ std::string NemotronDecoderRuntime::stream_text(
     return text;
 }
 
-std::vector<int64_t> NemotronDecoderRuntime::stream_token_frames(const NemotronDecoderStreamState & state) const {
+std::vector<int64_t> NemotronRnntDecoderRuntime::stream_token_frames(const NemotronDecoderStreamState & state) const {
     std::vector<int64_t> frames;
     int64_t frame = 0;
     const auto & ids = state.decoded.token_ids;
@@ -575,7 +575,7 @@ std::vector<int64_t> NemotronDecoderRuntime::stream_token_frames(const NemotronD
     return frames;
 }
 
-NemotronDecodedText NemotronDecoderRuntime::stream_result(
+NemotronDecodedText NemotronRnntDecoderRuntime::stream_result(
     const NemotronDecoderStreamState & state) const {
     NemotronDecodedText out = state.decoded;
     out.token_timestamps = build_token_timestamps(*assets_, out.token_ids, out.durations);

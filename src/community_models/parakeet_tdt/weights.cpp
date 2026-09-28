@@ -110,14 +110,14 @@ std::pair<std::vector<float>, std::vector<float>> fold_bn(
     return {std::move(w_f), std::move(dw_b)};
 }
 
-ParakeetEncoderLayerWeights load_encoder_layer(
+ParakeetFastConformerLayerWeights load_encoder_layer(
     engine::core::BackendWeightStore & store, const engine::assets::TensorSource & source,
     const ParakeetConfig & config, int64_t idx, engine::assets::TensorStorageType matmul_st) {
     const std::string p = "encoder.layers." + std::to_string(idx);
     const auto & enc = config.encoder;
     const int64_t h = enc.hidden_size;
     const int64_t hd = h / enc.heads;
-    ParakeetEncoderLayerWeights layer;
+    ParakeetFastConformerLayerWeights layer;
     layer.norm_ff1 = binding::norm_from_source(store, source, p + ".norm_feed_forward1", h);
     layer.ff1_linear1 = {store.load_tensor(source, p + ".feed_forward1.linear1.weight", matmul_st, {enc.intermediate_size, h}), std::nullopt};
     // The 0.5 half-step each feed-forward branch contributes to the residual is
@@ -175,11 +175,11 @@ ParakeetEncoderLayerWeights load_encoder_layer(
 
 }  // namespace
 
-ParakeetEncoderWeights load_encoder_weights(
+ParakeetFastConformerWeights load_encoder_weights(
     engine::core::BackendWeightStore & store, const engine::assets::TensorSource & source,
     const ParakeetConfig & config, engine::assets::TensorStorageType matmul_st,
     engine::assets::TensorStorageType conv_st) {
-    ParakeetEncoderWeights w;
+    ParakeetFastConformerWeights w;
     w.subsampling = load_subsampling(store, source, config, matmul_st, conv_st);
     w.layers.reserve(static_cast<size_t>(config.encoder.layers));
     for (int64_t i = 0; i < config.encoder.layers; ++i)
@@ -187,10 +187,10 @@ ParakeetEncoderWeights load_encoder_weights(
     return w;
 }
 
-ParakeetDecoderWeights load_decoder_weights(
+ParakeetTDTDecoderWeights load_decoder_weights(
     engine::core::BackendWeightStore & store, const engine::assets::TensorSource & source,
     const ParakeetConfig & config, engine::assets::TensorStorageType st) {
-    ParakeetDecoderWeights w;
+    ParakeetTDTDecoderWeights w;
     const int64_t H = config.decoder_hidden_size;
     w.embedding = store.load_tensor(source, "decoder.embedding.weight", st, {config.vocab_size, H});
     w.lstm_layers.reserve(static_cast<size_t>(config.decoder_layers));

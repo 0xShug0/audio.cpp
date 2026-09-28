@@ -777,7 +777,7 @@ struct MiniMaxMusic3ArRuntime::Impl {
     core::ExecutionContext & execution;
     bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3PromptBuilder prompt_builder;
-    MiniMaxMusic3GlobalLMWeights global_weights;
+    MiniMaxMusic3Qwen3GlobalLMWeights global_weights;
     std::unique_ptr<modules::CausalDecoderRuntime> global_runtime;
     std::unique_ptr<MiniMaxMusic3DepthDecoderRuntime> depth;
     sampling::TorchCudaSamplingPolicy sampling_policy;

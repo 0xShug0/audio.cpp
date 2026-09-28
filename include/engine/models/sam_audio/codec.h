@@ -9,7 +9,7 @@
 
 namespace engine::models::sam_audio {
 
-struct DacVaeConfig {
+struct DacVAEConfig {
     int64_t encoder_dim = 64;
     int64_t latent_dim = 1024;
     int64_t codebook_dim = 128;
@@ -18,11 +18,11 @@ struct DacVaeConfig {
     std::vector<int> watermark_rates{8, 5, 4, 2};
 };
 
-class DacVaeEncoder {
+class DacVAEEncoder {
 public:
-    DacVaeEncoder(std::shared_ptr<const assets::TensorSource> source,
-                 core::ExecutionContext & execution, DacVaeConfig config, bool memory_bounded = false);
-    ~DacVaeEncoder();
+    DacVAEEncoder(std::shared_ptr<const assets::TensorSource> source,
+                 core::ExecutionContext & execution, DacVAEConfig config, bool memory_bounded = false);
+    ~DacVAEEncoder();
     std::vector<float> encode(const std::vector<float> & audio);
 
 private:
@@ -32,12 +32,12 @@ private:
 
 enum class CodecTileStage { Main, WatermarkEncoder, EncoderLSTM, Bridge, DecoderLSTM, WatermarkDecoder };
 
-class DacVaeDecoderModule {
+class DacVAEDecoderModule {
 public:
     using RecurrentState = std::array<core::TensorValue, 4>;
-    DacVaeDecoderModule(std::shared_ptr<const assets::TensorSource> source,
-                       core::ExecutionContext & execution, DacVaeConfig config);
-    ~DacVaeDecoderModule();
+    DacVAEDecoderModule(std::shared_ptr<const assets::TensorSource> source,
+                       core::ExecutionContext & execution, DacVAEConfig config);
+    ~DacVAEDecoderModule();
     core::TensorValue project_latents(core::ModuleBuildContext & ctx, const core::TensorValue & input) const;
     core::TensorValue build_block(core::ModuleBuildContext & ctx, const core::TensorValue & input,
                                  size_t block) const;
@@ -59,11 +59,11 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-class DacVaeDecoder {
+class DacVAEDecoder {
 public:
-    DacVaeDecoder(std::shared_ptr<const assets::TensorSource> source,
-                 core::ExecutionContext & execution, DacVaeConfig config, bool memory_bounded = false);
-    ~DacVaeDecoder();
+    DacVAEDecoder(std::shared_ptr<const assets::TensorSource> source,
+                 core::ExecutionContext & execution, DacVAEConfig config, bool memory_bounded = false);
+    ~DacVAEDecoder();
     std::vector<float> decode(const std::vector<float> & latents, int64_t batch, int64_t frames,
                               const std::vector<int32_t> & message_bits);
 

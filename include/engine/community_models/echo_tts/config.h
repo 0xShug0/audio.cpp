@@ -130,14 +130,14 @@ struct EchoJointAttentionWeights {
     EchoRmsNormWeights k_norm;
 };
 
-struct EchoDitBlockWeights {
+struct EchoDiTBlockWeights {
     EchoJointAttentionWeights attention;
     EchoMlpWeights mlp;
     EchoAdaLnWeights attention_adaln;
     EchoAdaLnWeights mlp_adaln;
 };
 
-struct EchoDitWeights {
+struct EchoDiTWeights {
     EchoTextEncoderWeights text_encoder;
     EchoSpeakerEncoderWeights speaker_encoder;
     EchoRmsNormWeights text_norm;
@@ -148,7 +148,7 @@ struct EchoDitWeights {
     modules::LinearWeights cond_4;  // model_size -> model_size * 3
 
     modules::LinearWeights in_proj;   // latent_size -> model_size, bias
-    std::vector<EchoDitBlockWeights> blocks;
+    std::vector<EchoDiTBlockWeights> blocks;
     EchoRmsNormWeights out_norm;
     modules::LinearWeights out_proj;  // model_size -> latent_size, bias
 };

@@ -1191,7 +1191,7 @@ runtime::AudioBuffer DotsSession::synthesize_streaming_segment(
     const std::string & text,
     size_t segment_index,
     PromptConditioning & conditioning,
-    DotsAudioVaeStreamState & stream_state,
+    DotsAudioVAEStreamState & stream_state,
     const runtime::StreamEventCallback & sink) {
     const int64_t merge_steps = request.generation.vocoder_merge_steps;
     runtime::AudioBuffer merged{static_cast<int>(audio_vae_.sample_rate()), 1, {}};
@@ -1280,7 +1280,7 @@ void DotsSession::ensure_audio_vae_loaded() {
     if (audio_vae_.is_loaded()) {
         return;
     }
-    audio_vae_ = DotsAudioVaeComponent::load_from_tensor_source(
+    audio_vae_ = DotsAudioVAEComponent::load_from_tensor_source(
         assets_->vocoder_weights,
         options().backend,
         assets_->config.vocoder,
@@ -1326,7 +1326,7 @@ void DotsSession::release_conditioning_phase_components() {
         return;
     }
     speaker_encoder_ = engine::modules::CampplusEncoderComponent();
-    audio_vae_ = DotsAudioVaeComponent();
+    audio_vae_ = DotsAudioVAEComponent();
 }
 
 void DotsSession::release_generation_phase_components() {
@@ -1342,7 +1342,7 @@ void DotsSession::release_audio_phase_components() {
     if (!mem_saver_) {
         return;
     }
-    audio_vae_ = DotsAudioVaeComponent();
+    audio_vae_ = DotsAudioVAEComponent();
 }
 
 runtime::AudioBuffer DotsSession::synthesize_chunked(

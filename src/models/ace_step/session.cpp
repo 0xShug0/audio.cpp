@@ -389,9 +389,9 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
 
 void AceStepSession::ensure_planner() {
     if (!planner_) {
-        planner_ = std::make_unique<AceStepPlannerRuntime>(assets_, execution_context(), planner_weight_storage_type_,
+        planner_ = std::make_unique<AceStepQwen3PlannerRuntime>(assets_, execution_context(), planner_weight_storage_type_,
                                                            256ull * 1024ull * 1024ull, 128ull * 1024ull * 1024ull,
-                                                           AceStepPlannerRuntime::GenerationConfig{4096, 512, 4032});
+                                                           AceStepQwen3PlannerRuntime::GenerationConfig{4096, 512, 4032});
     }
 }
 
