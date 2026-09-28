@@ -974,7 +974,7 @@ struct HiggsARPrefillGraph::Impl {
         ggml_set_output(logits_output);
         ggml_build_forward_expand(graph, logits_output);
 
-        if ((runtime->backend_type() == core::BackendType::Cuda ||
+        if ((core::uses_ggml_cuda_or_hip_backend(runtime->backend_type()) ||
              runtime->backend_type() == core::BackendType::Vulkan) &&
             target_cache != nullptr) {
             // Prefill intermediates are needed only until their last consumer.
