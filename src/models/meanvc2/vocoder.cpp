@@ -53,7 +53,7 @@ struct MeanVC2VocoderConvNeXtBlockWeights {
     core::TensorValue gamma;
 };
 
-struct MeanVC2VocoderWeights {
+struct MeanVC2VocosWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::Conv1dWeights embed;
     modules::NormWeights norm;
@@ -77,14 +77,14 @@ core::TensorValue scale_last_dim(
     return modules::MulModule{}.build(ctx, input, repeated);
 }
 
-std::shared_ptr<const MeanVC2VocoderWeights> load_vocoder_weights(
+std::shared_ptr<const MeanVC2VocosWeights> load_vocoder_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     const assets::TensorSource & source,
     size_t weight_context_bytes,
     assets::TensorStorageType matmul_storage_type,
     assets::TensorStorageType conv_storage_type) {
-    auto weights = std::make_shared<MeanVC2VocoderWeights>();
+    auto weights = std::make_shared<MeanVC2VocosWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -171,7 +171,7 @@ core::TensorValue build_convnext_block(
 core::TensorValue build_vocoder_head(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & mel_bct,
-    const MeanVC2VocoderWeights & weights) {
+    const MeanVC2VocosWeights & weights) {
     auto hidden = modules::Conv1dModule({
         kMelBins,
         kDim,
@@ -267,12 +267,12 @@ std::vector<float> istft_center_from_head(
 
 }  // namespace
 
-struct MeanVC2VocoderGraph {
-    MeanVC2VocoderGraph(
+struct MeanVC2VocosGraph {
+    MeanVC2VocosGraph(
         ggml_backend_t backend,
         core::BackendType backend_type,
         size_t graph_context_bytes,
-        std::shared_ptr<const MeanVC2VocoderWeights> weights,
+        std::shared_ptr<const MeanVC2VocosWeights> weights,
         int64_t frames)
         : backend(backend),
           weights(std::move(weights)),
@@ -309,14 +309,14 @@ struct MeanVC2VocoderGraph {
         }
     }
 
-    ~MeanVC2VocoderGraph() {
+    ~MeanVC2VocosGraph() {
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
             gallocr = nullptr;
         }
     }
 
-    bool matches(const MeanVC2VocoderWeights & other_weights, int64_t other_frames) const noexcept {
+    bool matches(const MeanVC2VocosWeights & other_weights, int64_t other_frames) const noexcept {
         return weights.get() == &other_weights && frames == other_frames;
     }
 
@@ -341,7 +341,7 @@ struct MeanVC2VocoderGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const MeanVC2VocoderWeights> weights;
+    std::shared_ptr<const MeanVC2VocosWeights> weights;
     int64_t frames = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     core::TensorValue input;
@@ -350,7 +350,7 @@ struct MeanVC2VocoderGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-MeanVC2VocoderRuntime::MeanVC2VocoderRuntime(
+MeanVC2VocosRuntime::MeanVC2VocosRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -373,9 +373,9 @@ MeanVC2VocoderRuntime::MeanVC2VocoderRuntime(
     source_->release_storage();
 }
 
-MeanVC2VocoderRuntime::~MeanVC2VocoderRuntime() = default;
+MeanVC2VocosRuntime::~MeanVC2VocosRuntime() = default;
 
-MeanVC2VocoderGraph & MeanVC2VocoderRuntime::graph_for_frames(int64_t frames) const {
+MeanVC2VocosGraph & MeanVC2VocosRuntime::graph_for_frames(int64_t frames) const {
     if (frames <= 0) {
         throw std::runtime_error("MeanVC2 vocoder graph requires positive frame count");
     }
@@ -384,7 +384,7 @@ MeanVC2VocoderGraph & MeanVC2VocoderRuntime::graph_for_frames(int64_t frames) co
             return *graph;
         }
     }
-    graphs_.push_back(std::make_unique<MeanVC2VocoderGraph>(
+    graphs_.push_back(std::make_unique<MeanVC2VocosGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,
@@ -393,7 +393,7 @@ MeanVC2VocoderGraph & MeanVC2VocoderRuntime::graph_for_frames(int64_t frames) co
     return *graphs_.back();
 }
 
-runtime::AudioBuffer MeanVC2VocoderRuntime::decode(const std::vector<float> & mel_frames, int64_t frames) const {
+runtime::AudioBuffer MeanVC2VocosRuntime::decode(const std::vector<float> & mel_frames, int64_t frames) const {
     if (frames <= 0) {
         throw std::runtime_error("MeanVC2 vocoder requires positive frame count");
     }
@@ -412,7 +412,7 @@ runtime::AudioBuffer MeanVC2VocoderRuntime::decode(const std::vector<float> & me
     return out;
 }
 
-runtime::AudioBuffer MeanVC2VocoderRuntime::decode_streaming(
+runtime::AudioBuffer MeanVC2VocosRuntime::decode_streaming(
     const std::vector<float> & mel_frames,
     int64_t frames) const {
     if (frames <= 0) {
@@ -441,12 +441,12 @@ runtime::AudioBuffer MeanVC2VocoderRuntime::decode_streaming(
     return out;
 }
 
-void MeanVC2VocoderRuntime::reset_streaming_state() const {
+void MeanVC2VocosRuntime::reset_streaming_state() const {
     streaming_mel_cache_.clear();
     streaming_last_wav_.clear();
 }
 
-runtime::AudioBuffer MeanVC2VocoderRuntime::decode_streaming_chunk(
+runtime::AudioBuffer MeanVC2VocosRuntime::decode_streaming_chunk(
     const std::vector<float> & mel_frames,
     int64_t frames) const {
     if (frames <= 0) {
@@ -509,7 +509,7 @@ runtime::AudioBuffer MeanVC2VocoderRuntime::decode_streaming_chunk(
     return out;
 }
 
-runtime::AudioBuffer MeanVC2VocoderRuntime::finish_streaming() const {
+runtime::AudioBuffer MeanVC2VocosRuntime::finish_streaming() const {
     runtime::AudioBuffer out;
     out.sample_rate = static_cast<int>(kSampleRate);
     out.channels = 1;

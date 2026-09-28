@@ -160,7 +160,7 @@ int main(int argc, char ** argv) {
     // ---- stage: vocoder round trip ----
     {
         std::printf("\n[mel] analysis mel -> vocoder round trip\n");
-        sopro::SoproVocoderRuntime vocoder(
+        sopro::SoproVocosRuntime vocoder(
             *assets, execution, kWeightBytes, kGraphBytes, storage, storage);
         const auto mel = vocoder.log_mel(normalised);
         const int64_t n_mels = vocoder.n_mels();
@@ -288,7 +288,7 @@ int main(int argc, char ** argv) {
     // a broken one produces something uncorrelated with it.
     {
         std::printf("\n[acoustic] self-reconstruction from the reference's own tokens\n");
-        sopro::SoproVocoderRuntime vocoder(
+        sopro::SoproVocosRuntime vocoder(
             *assets, execution, kWeightBytes, kGraphBytes, storage, storage);
         sopro::SoproSpeakerEncoderRuntime speaker(
             *assets, execution, kWeightBytes, kGraphBytes, storage, storage);

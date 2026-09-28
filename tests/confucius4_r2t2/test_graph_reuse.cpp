@@ -46,7 +46,7 @@ int main(int argc, char ** argv) {
         model::R2T2ASRAudioEncoderRuntime exact(assets, execution, 128ull << 20, engine::assets::TensorStorageType::Native);
         model::R2T2ASRAudioEncoderRuntime reused(assets, execution, 128ull << 20, engine::assets::TensorStorageType::Native);
         model::R2T2ASRTextTokenizer tokenizer(assets);
-        model::R2T2ASRThinkerRuntime thinker(assets, execution, 256ull << 20, 256ull << 20, 64ull << 20,
+        model::R2T2ASRQwen3ThinkerRuntime thinker(assets, execution, 256ull << 20, 256ull << 20, 64ull << 20,
                                           engine::assets::TensorStorageType::Native);
         auto check_joint = [&](const model::R2T2ASRAudioEmbeddings & expected,
                                const model::R2T2ASRAudioEmbeddings & actual, const std::string & language) {

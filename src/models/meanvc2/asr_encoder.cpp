@@ -59,7 +59,7 @@ struct GgmlContextDeleter {
 
 }  // namespace
 
-struct MeanVC2AsrEncoderWeights {
+struct MeanVC2WenetConformerWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::Conv2dWeights conv0;
     modules::Conv2dWeights conv1;
@@ -86,13 +86,13 @@ struct MeanVC2AsrEncoderWeights {
 
 namespace {
 
-std::shared_ptr<const MeanVC2AsrEncoderWeights> load_asr_encoder_weights(
+std::shared_ptr<const MeanVC2WenetConformerWeights> load_asr_encoder_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     const assets::TensorSource & source,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
-    auto weights = std::make_shared<MeanVC2AsrEncoderWeights>();
+    auto weights = std::make_shared<MeanVC2WenetConformerWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -237,7 +237,7 @@ std::shared_ptr<const MeanVC2AsrEncoderWeights> load_asr_encoder_weights(
 core::TensorValue build_subsampling(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & fbank,
-    const MeanVC2AsrEncoderWeights & weights) {
+    const MeanVC2WenetConformerWeights & weights) {
     auto x = core::reshape_tensor(
         ctx,
         fbank,
@@ -324,7 +324,7 @@ core::TensorValue build_wenet_attention(
     const core::TensorValue & input,
     const core::TensorValue & pos_emb,
     const core::TensorValue & att_cache,
-    const MeanVC2AsrEncoderWeights::Layer & weights,
+    const MeanVC2WenetConformerWeights::Layer & weights,
     core::TensorValue & next_cache) {
     auto q = modules::LinearModule({kHidden, kHidden, true})
                  .build(ctx, input, {weights.self_attn.attention.q_weight, weights.self_attn.attention.q_bias});
@@ -372,7 +372,7 @@ core::TensorValue build_wenet_streaming_conv(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & conv_cache,
-    const MeanVC2AsrEncoderWeights::Layer & weights,
+    const MeanVC2WenetConformerWeights::Layer & weights,
     core::TensorValue & next_cache) {
     auto x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input);
     auto conv_input = modules::ConcatModule({2}).build(ctx, conv_cache, x);
@@ -408,7 +408,7 @@ core::TensorValue build_encoder_layer(
     const core::TensorValue & pos_emb,
     const core::TensorValue & att_cache,
     const core::TensorValue & conv_cache,
-    const MeanVC2AsrEncoderWeights::Layer & weights,
+    const MeanVC2WenetConformerWeights::Layer & weights,
     core::TensorValue & next_att_cache,
     core::TensorValue & next_conv_cache) {
     auto x_norm = modules::LayerNormModule({kHidden, 1.0e-5F, true, true}).build(ctx, input, weights.norm_ff_macaron);
@@ -435,12 +435,12 @@ core::TensorValue build_encoder_layer(
 
 }  // namespace
 
-struct MeanVC2AsrEncoderGraph {
-    MeanVC2AsrEncoderGraph(
+struct MeanVC2WenetConformerGraph {
+    MeanVC2WenetConformerGraph(
         ggml_backend_t backend,
         core::BackendType backend_type,
         size_t graph_context_bytes,
-        std::shared_ptr<const MeanVC2AsrEncoderWeights> weights)
+        std::shared_ptr<const MeanVC2WenetConformerWeights> weights)
         : backend(backend),
           weights(std::move(weights)) {
         if (backend == nullptr || this->weights == nullptr) {
@@ -507,7 +507,7 @@ struct MeanVC2AsrEncoderGraph {
         }
     }
 
-    ~MeanVC2AsrEncoderGraph() {
+    ~MeanVC2WenetConformerGraph() {
         if (backend != nullptr) {
             core::release_backend_graph_resources(backend, graph);
         }
@@ -573,7 +573,7 @@ struct MeanVC2AsrEncoderGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const MeanVC2AsrEncoderWeights> weights;
+    std::shared_ptr<const MeanVC2WenetConformerWeights> weights;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     core::TensorValue input;
     core::TensorValue pos_emb;
@@ -586,7 +586,7 @@ struct MeanVC2AsrEncoderGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-MeanVC2AsrEncoderRuntime::MeanVC2AsrEncoderRuntime(
+MeanVC2WenetConformerRuntime::MeanVC2WenetConformerRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -607,16 +607,16 @@ MeanVC2AsrEncoderRuntime::MeanVC2AsrEncoderRuntime(
     source_->release_storage();
 }
 
-MeanVC2AsrEncoderRuntime::~MeanVC2AsrEncoderRuntime() = default;
+MeanVC2WenetConformerRuntime::~MeanVC2WenetConformerRuntime() = default;
 
-void MeanVC2AsrEncoderRuntime::reset() {
+void MeanVC2WenetConformerRuntime::reset() {
     attention_cache_.assign(
         static_cast<size_t>(kLayers * kHeads * kAttentionCacheFrames * kAttentionCacheWidth),
         0.0F);
     conv_cache_.assign(static_cast<size_t>(kLayers * kHidden * kConvCacheFrames), 0.0F);
 }
 
-std::vector<float> MeanVC2AsrEncoderRuntime::encode_windows(
+std::vector<float> MeanVC2WenetConformerRuntime::encode_windows(
     const std::vector<MeanVC2FbankWindow> & windows) {
     if (windows.empty()) {
         return {};
@@ -625,7 +625,7 @@ std::vector<float> MeanVC2AsrEncoderRuntime::encode_windows(
         reset();
     }
     if (graph_ == nullptr) {
-        graph_ = std::make_unique<MeanVC2AsrEncoderGraph>(
+        graph_ = std::make_unique<MeanVC2WenetConformerGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,

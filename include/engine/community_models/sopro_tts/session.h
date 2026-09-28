@@ -20,7 +20,7 @@ class SoproSemanticEncoderRuntime;
 class SoproSemanticLMRuntime;
 class SoproSpeakerEncoderRuntime;
 class SoproTextTokenizer;
-class SoproVocoderRuntime;
+class SoproVocosRuntime;
 
 // Everything one synthesis run carries between its text segments: the parsed
 // options, the encoded reference voice, the LM carry-over prompt and the RNG.
@@ -71,7 +71,7 @@ private:
     std::unique_ptr<SoproTextTokenizer> tokenizer_;
     std::unique_ptr<SoproSpeakerEncoderRuntime> speaker_encoder_;
     std::unique_ptr<SoproSemanticEncoderRuntime> semantic_encoder_;
-    std::unique_ptr<SoproVocoderRuntime> vocoder_;
+    std::unique_ptr<SoproVocosRuntime> vocoder_;
     std::unique_ptr<SoproSemanticLMRuntime> semantic_lm_;
     std::unique_ptr<SoproAcousticRuntime> acoustic_;
     std::unique_ptr<SoproReferenceBuilder> reference_builder_;

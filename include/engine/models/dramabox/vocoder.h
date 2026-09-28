@@ -18,7 +18,7 @@ class ExecutionContext;
 
 namespace engine::models::dramabox {
 
-struct DramaBoxVocoderWeights {
+struct DramaBoxBigVganWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::BigVganVocoderWeights vocoder;
     modules::BigVganVocoderWeights bwe;
@@ -34,38 +34,38 @@ struct DramaBoxVocoderOutput {
     std::vector<float> waveform;
 };
 
-DramaBoxVocoderWeights load_dramabox_vocoder_weights(
+DramaBoxBigVganWeights load_dramabox_vocoder_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type);
 
-class DramaBoxVocoderRuntime {
+class DramaBoxBigVganRuntime {
 public:
-    DramaBoxVocoderRuntime(
+    DramaBoxBigVganRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const DramaBoxAssets> assets,
         assets::TensorStorageType weight_storage_type);
-    ~DramaBoxVocoderRuntime();
+    ~DramaBoxBigVganRuntime();
 
-    DramaBoxVocoderRuntime(const DramaBoxVocoderRuntime &) = delete;
-    DramaBoxVocoderRuntime & operator=(const DramaBoxVocoderRuntime &) = delete;
+    DramaBoxBigVganRuntime(const DramaBoxBigVganRuntime &) = delete;
+    DramaBoxBigVganRuntime & operator=(const DramaBoxBigVganRuntime &) = delete;
 
     void prepare(int64_t mel_frames) const;
     DramaBoxVocoderOutput synthesize(const DramaBoxDecodedMel & mel) const;
     void release_runtime_state() const;
 
 private:
-    class VocoderGraph;
-    class BweGraph;
+    class BigVganVocoderGraph;
+    class BigVganBweGraph;
 
     core::ExecutionContext * execution_ = nullptr;
     std::shared_ptr<const DramaBoxAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
-    mutable std::unique_ptr<DramaBoxVocoderWeights> weights_;
-    mutable std::unique_ptr<VocoderGraph> vocoder_graph_;
-    mutable std::unique_ptr<BweGraph> bwe_graph_;
+    mutable std::unique_ptr<DramaBoxBigVganWeights> weights_;
+    mutable std::unique_ptr<BigVganVocoderGraph> vocoder_graph_;
+    mutable std::unique_ptr<BigVganBweGraph> bwe_graph_;
 };
 
 }  // namespace engine::models::dramabox

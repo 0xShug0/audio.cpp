@@ -101,7 +101,7 @@ private:
     R2T2ASRTextTokenizer tokenizer_;
     R2T2ASRWhisperFrontend frontend_;
     R2T2ASRAudioEncoderRuntime audio_encoder_;
-    R2T2ASRThinkerRuntime thinker_;
+    R2T2ASRQwen3ThinkerRuntime thinker_;
 
     // Streaming state (mirrors ASRStreamingState in the reference code).
     runtime::TaskRequest streaming_request_;

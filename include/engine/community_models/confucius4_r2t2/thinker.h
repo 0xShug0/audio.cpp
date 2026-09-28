@@ -15,18 +15,18 @@ namespace engine::community_models::confucius4_r2t2 {
 /// lifetimes all come from the shared framework runtime
 /// (runtime::GreedyCausalDecoderRuntime), so this class only maps the family's
 /// config and tensor layout onto it.
-class R2T2ASRThinkerRuntime {
+class R2T2ASRQwen3ThinkerRuntime {
 public:
     struct Impl;
 
-    R2T2ASRThinkerRuntime(
+    R2T2ASRQwen3ThinkerRuntime(
         std::shared_ptr<const R2T2ASRAssets> assets,
         core::ExecutionContext & execution,
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type);
-    ~R2T2ASRThinkerRuntime();
+    ~R2T2ASRQwen3ThinkerRuntime();
 
     R2T2ASRGeneratedTokens generate(
         const R2T2ASRPrompt & prompt,

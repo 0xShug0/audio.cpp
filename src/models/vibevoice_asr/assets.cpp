@@ -69,12 +69,12 @@ VibeVoiceTokenizerConfig parse_tokenizer_config(const json::Value & value, const
     return config;
 }
 
-VibeVoiceDecoderConfig parse_decoder_config(const json::Value & value) {
+VibeVoiceQwen2Config parse_decoder_config(const json::Value & value) {
     const auto model_type = json::optional_string(value, "model_type", "");
     if (model_type != "qwen2") {
         throw std::runtime_error("VibeVoice config decoder model_type mismatch");
     }
-    VibeVoiceDecoderConfig config;
+    VibeVoiceQwen2Config config;
     config.hidden_size = json::require_i64(value, "hidden_size");
     config.intermediate_size = json::require_i64(value, "intermediate_size");
     config.max_position_embeddings = json::require_i64(value, "max_position_embeddings");
