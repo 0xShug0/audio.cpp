@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "family": "kugelaudio",
+  "display_name": "KugelAudio-0-Open",
+  "description": "KugelAudio text-to-speech with bundled preset voices and incremental audio output.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en",
+    "de",
+    "fr",
+    "es",
+    "it",
+    "pt",
+    "nl",
+    "pl",
+    "ru",
+    "uk",
+    "cs",
+    "ro",
+    "hu",
+    "sv",
+    "da",
+    "fi",
+    "no",
+    "el",
+    "bg",
+    "sk",
+    "hr",
+    "sr",
+    "tr"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "values": [
+          "default",
+          "clear",
+          "english_female",
+          "english_male"
+        ],
+        "description": "Bundled preset voice.",
+        "default": "default",
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Diffusion steps per generated acoustic frame.",
+        "min": 1,
+        "max": 1000,
+        "default": 20,
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Diffusion classifier-free guidance; 1 disables the unconditional pass.",
+        "min": 0,
+        "default": 3,
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum autoregressive tokens per text chunk.",
+        "min": 1,
+        "default": 2048,
+        "required": false
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Sample autoregressive speech control tokens instead of greedy decoding.",
+        "default": false,
+        "required": false
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Autoregressive sampling temperature when do_sample is enabled.",
+        "min": 0,
+        "default": 1,
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Random seed; -1 chooses a random seed.",
+        "min": -1,
+        "default": 1234,
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk.",
+        "min": 1,
+        "default": 300,
+        "required": false
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "description": "Framework long-form text splitting mode.",
+        "default": "default",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k",
+          "q8_0",
+          "nvfp4"
+        ],
+        "description": "Weight storage type; native preserves packaged tensor types.",
+        "default": "native",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "kugelaudio_0_open_bf16",
+      "display_name": "KugelAudio-0-Open BF16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "KugelAudio-0-Open-GGUF",
+      "files": [
+        "KugelAudio-0-Open-GGUF/kugelaudio-0-open-bf16.gguf"
+      ],
+      "strip_prefix": "KugelAudio-0-Open-GGUF"
+    },
+    {
+      "id": "kugelaudio_0_open_q8_0",
+      "display_name": "KugelAudio-0-Open Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "KugelAudio-0-Open-GGUF",
+      "files": [
+        "KugelAudio-0-Open-GGUF/kugelaudio-0-open-q8_0.gguf"
+      ],
+      "strip_prefix": "KugelAudio-0-Open-GGUF"
+    },
+    {
+      "id": "kugelaudio_0_open_q4_k",
+      "display_name": "KugelAudio-0-Open Q4_K GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "KugelAudio-0-Open-GGUF",
+      "files": [
+        "KugelAudio-0-Open-GGUF/kugelaudio-0-open-q4_k.gguf"
+      ],
+      "strip_prefix": "KugelAudio-0-Open-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "kugelaudio_0_open_q8_0",
+    "default_voice": "default",
+    "builtin_voices": [
+      "default",
+      "clear",
+      "english_female",
+      "english_male"
+    ],
+    "tags": [
+      "TTS",
+      "Stream",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/kugelaudio.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:text_tokenizer/tokenizer.json",
+        "tokenizer_config": "model:text_tokenizer/tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": "weights:"
+      }
+    }
+  ]
+}

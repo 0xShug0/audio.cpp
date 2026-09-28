@@ -4212,6 +4212,51 @@
           "seed": 44
         }
       ]
+    },
+    {
+      "id": "kugelaudio_offline_reuse",
+      "coverage": "Preset switching, diffusion graph shape changes, and deterministic state reset",
+      "family": "kugelaudio",
+      "model": "models/KugelAudio-0-Open-GGUF/kugelaudio-0-open-bf16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "default", "text": "The next train leaves in ten minutes.", "seed": 1234},
+        {"id": "clear", "text": "The next train leaves in ten minutes.", "seed": 1234, "options": {"voice_id": "clear"}},
+        {"id": "cfg_disabled", "text": "The next train leaves in ten minutes.", "seed": 1234, "options": {"guidance_scale": 1}},
+        {"id": "four_steps", "text": "The next train leaves in ten minutes.", "seed": 1234, "options": {"num_inference_steps": 4}},
+        {"id": "default_repeat", "text": "The next train leaves in ten minutes.", "seed": 1234}
+      ]
+    },
+    {
+      "id": "kugelaudio_streaming",
+      "coverage": "Incremental codec audio through the CLI streaming route",
+      "family": "kugelaudio",
+      "model": "models/KugelAudio-0-Open-GGUF/kugelaudio-0-open-bf16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "first", "text": "The next train leaves in ten minutes.", "seed": 1234}
+      ]
+    },
+    {
+      "id": "kugelaudio_longform",
+      "coverage": "Framework text chunking across multiple synthesis calls",
+      "family": "kugelaudio",
+      "model": "models/KugelAudio-0-Open-GGUF/kugelaudio-0-open-bf16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "longform",
+          "text": "The next train leaves in ten minutes. Please check the departure board before you walk to the platform. Keep your ticket ready, and remember to take all your bags with you. The journey follows the river through several small towns. There is a quiet carriage near the front of the train. If you need assistance, speak to a member of staff. We hope you have a comfortable journey and a pleasant afternoon.",
+          "seed": 1234,
+          "options": {"voice_id": "english_female"}
+        }
+      ]
     }
   ],
   "audit_gaps": [

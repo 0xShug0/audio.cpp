@@ -63,6 +63,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `irodori_tts` | [Aratako/Irodori-TTS-500M-v3](https://huggingface.co/Aratako/Irodori-TTS-500M-v3)<br>[Aratako/Irodori-TTS-600M-v3-VoiceDesign](https://huggingface.co/Aratako/Irodori-TTS-600M-v3-VoiceDesign)<br>[Aratako/Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small) | MIT | Yes | | 2026-09-21 |
 | `kitten_tts` | [KittenML/kitten-tts-mini-0.8](https://huggingface.co/KittenML/kitten-tts-mini-0.8) | Apache-2.0 | Yes | | 2026-09-21 |
 | `kokoro_tts` | [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) | Apache-2.0 | Yes | | 2026-09-21 |
+| `kugelaudio` | [kugelaudio/kugelaudio-0-open](https://huggingface.co/kugelaudio/kugelaudio-0-open) | MIT | Yes | Includes the upstream preset voice features. | 2026-09-28 |
 | `kroko_asr` | [Banafo/Kroko-ASR](https://huggingface.co/Banafo/Kroko-ASR) | CC-BY-SA | Yes | Stated in the model card text only: the LICENSE file is empty and no version is named. Applies to the community models; Kroko's commercial models are licensed separately. | 2026-09-21 |
 | `liveavatar` | [Quark-Vision/Live-Avatar](https://huggingface.co/Quark-Vision/Live-Avatar)<br>[Wan-AI/Wan2.2-S2V-14B](https://huggingface.co/Wan-AI/Wan2.2-S2V-14B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `magpie_tts` | [nvidia/magpie_tts_multilingual_357m](https://huggingface.co/nvidia/magpie_tts_multilingual_357m) | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes | | 2026-09-21 |
