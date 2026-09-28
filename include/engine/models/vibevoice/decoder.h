@@ -25,10 +25,10 @@ class ConstantTensorCache;
 
 namespace engine::models::vibevoice {
 
-class VibeVoiceDecoderPrefillGraph;
-class VibeVoiceDecoderCachedStepGraph;
+class VibeVoiceQwen2PrefillGraph;
+class VibeVoiceQwen2CachedStepGraph;
 class VibeVoiceDecoderCachedBatchStepGraph;
-class VibeVoiceDecoderEmbeddingGraph;
+class VibeVoiceQwen2EmbeddingGraph;
 
 class VibeVoiceDecoderCachedState final {
 public:
@@ -44,7 +44,7 @@ private:
     friend class VibeVoiceDecoderWeightsRuntime;
     friend class VibeVoiceDecoderCachedBatchStepGraph;
 
-    std::unique_ptr<VibeVoiceDecoderCachedStepGraph> graph_;
+    std::unique_ptr<VibeVoiceQwen2CachedStepGraph> graph_;
     runtime::TransformerKVState pending_state_;
     const VibeVoiceDecoderCachedBatchStepGraph * batch_owner_ = nullptr;
     bool graph_has_state_ = false;
@@ -150,8 +150,8 @@ private:
     std::shared_ptr<const VibeVoiceAssets> assets_;
     std::shared_ptr<const VibeVoiceDecoderWeights> weights_;
     std::unique_ptr<core::ConstantTensorCache> constants_;
-    mutable std::unique_ptr<VibeVoiceDecoderEmbeddingGraph> embedding_graph_;
-    mutable std::unique_ptr<VibeVoiceDecoderPrefillGraph> prefill_graph_;
+    mutable std::unique_ptr<VibeVoiceQwen2EmbeddingGraph> embedding_graph_;
+    mutable std::unique_ptr<VibeVoiceQwen2PrefillGraph> prefill_graph_;
     mutable std::vector<std::unique_ptr<VibeVoiceDecoderCachedBatchStepGraph>> cached_batch_graphs_;
     ggml_backend_t backend_ = nullptr;
     ggml_type cache_type_ = GGML_TYPE_F16;

@@ -10,16 +10,16 @@
 
 namespace engine::community_models::mira_tts {
 
-class MiraAcousticProcessor final {
+class MiraConvNeXtAcousticProcessor final {
 public:
-    MiraAcousticProcessor(
+    MiraConvNeXtAcousticProcessor(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
         size_t graph_context_bytes,
         assets::TensorStorageType linear_storage_type,
         assets::TensorStorageType conv_storage_type);
-    ~MiraAcousticProcessor();
+    ~MiraConvNeXtAcousticProcessor();
 
     std::vector<float> process(
         const std::vector<int32_t> & speech_codes,

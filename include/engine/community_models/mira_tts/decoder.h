@@ -11,15 +11,15 @@
 
 namespace engine::community_models::mira_tts {
 
-class MiraDecoder final {
+class MiraSnakeConvDecoder final {
 public:
-    MiraDecoder(
+    MiraSnakeConvDecoder(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
         size_t graph_context_bytes,
         assets::TensorStorageType storage_type);
-    ~MiraDecoder();
+    ~MiraSnakeConvDecoder();
 
     runtime::AudioBuffer decode(
         const std::vector<float> & latents,

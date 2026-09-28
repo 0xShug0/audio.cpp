@@ -240,7 +240,7 @@ void apply_min_token_limit(std::vector<float> &logits, int64_t generated_tokens,
 
 } // namespace
 
-struct Maya1Generator::Impl {
+struct Maya1LlamaGenerator::Impl {
   Impl(std::shared_ptr<const Maya1Assets> assets_in,
        core::ExecutionContext &execution, size_t prefill_bytes,
        size_t decode_bytes, size_t weight_bytes,
@@ -359,7 +359,7 @@ struct Maya1Generator::Impl {
   sampling::TorchCudaSamplingPolicy sampling_policy;
 };
 
-Maya1Generator::Maya1Generator(std::shared_ptr<const Maya1Assets> assets,
+Maya1LlamaGenerator::Maya1LlamaGenerator(std::shared_ptr<const Maya1Assets> assets,
                                core::ExecutionContext &execution,
                                size_t prefill_graph_arena_bytes,
                                size_t decode_graph_arena_bytes,
@@ -371,10 +371,10 @@ Maya1Generator::Maya1Generator(std::shared_ptr<const Maya1Assets> assets,
                                    weight_context_bytes, weight_storage_type)) {
 }
 
-Maya1Generator::~Maya1Generator() = default;
+Maya1LlamaGenerator::~Maya1LlamaGenerator() = default;
 
 Maya1GenerationResult
-Maya1Generator::generate(const std::vector<int32_t> &prompt_ids,
+Maya1LlamaGenerator::generate(const std::vector<int32_t> &prompt_ids,
                          const Maya1GenerationOptions &options) {
   return impl_->generate(prompt_ids, options);
 }

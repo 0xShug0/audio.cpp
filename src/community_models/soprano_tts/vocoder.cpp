@@ -34,7 +34,7 @@ struct SopranoConvNeXtBlockWeights {
     engine::core::TensorValue gamma;
 };
 
-struct SopranoDecoderWeights {
+struct SopranoVocosWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
     engine::modules::Conv1dWeights embed;
     engine::modules::NormWeights norm;
@@ -65,7 +65,7 @@ engine::core::TensorValue scale_last_dim(
 }
 
 }  // namespace
-std::shared_ptr<const SopranoDecoderWeights> load_decoder_weights(
+std::shared_ptr<const SopranoVocosWeights> load_decoder_weights(
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
     const engine::assets::TensorSource & source,
@@ -73,7 +73,7 @@ std::shared_ptr<const SopranoDecoderWeights> load_decoder_weights(
     size_t weight_context_bytes,
     engine::assets::TensorStorageType matmul_storage_type,
     engine::assets::TensorStorageType conv_storage_type) {
-    auto weights = std::make_shared<SopranoDecoderWeights>();
+    auto weights = std::make_shared<SopranoVocosWeights>();
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
         backend, backend_type, "soprano_tts.decoder.weights", weight_context_bytes);
     weights->embed = engine::modules::binding::conv1d_from_source(
@@ -138,7 +138,7 @@ engine::core::TensorValue build_convnext_block(
 engine::core::TensorValue build_decoder_head(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & feat_bct,
-    const SopranoDecoderWeights & weights,
+    const SopranoVocosWeights & weights,
     const SopranoTTSConfig & config,
     int64_t output_frames) {
     // SopranoDecoder: interpolate upscale (4*(T-1)+1 frames), embed, ConvNeXt,
@@ -300,13 +300,13 @@ std::vector<float> istft_center_from_head(
 
 }  // namespace
 
-struct SopranoDecoderGraph {
-    SopranoDecoderGraph(
+struct SopranoVocosGraph {
+    SopranoVocosGraph(
         ggml_backend_t backend,
         engine::core::BackendType backend_type,
         size_t graph_context_bytes,
         const SopranoTTSConfig & config,
-        std::shared_ptr<const SopranoDecoderWeights> weights,
+        std::shared_ptr<const SopranoVocosWeights> weights,
         int64_t frames_in)
         : backend(backend),
           weights(std::move(weights)),
@@ -347,14 +347,14 @@ struct SopranoDecoderGraph {
         }
     }
 
-    ~SopranoDecoderGraph() {
+    ~SopranoVocosGraph() {
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
             gallocr = nullptr;
         }
     }
 
-    bool matches(const SopranoDecoderWeights & other, int64_t other_frames) const noexcept {
+    bool matches(const SopranoVocosWeights & other, int64_t other_frames) const noexcept {
         return weights.get() == &other && frames == other_frames;
     }
 
@@ -384,7 +384,7 @@ struct SopranoDecoderGraph {
 
     
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const SopranoDecoderWeights> weights;
+    std::shared_ptr<const SopranoVocosWeights> weights;
     int64_t frames = 0;
     int64_t input_channels = 0;
     int64_t head_dim = 0;
@@ -397,7 +397,7 @@ struct SopranoDecoderGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-SopranoDecoderRuntime::SopranoDecoderRuntime(
+SopranoVocosRuntime::SopranoVocosRuntime(
     const SopranoTTSAssets & assets,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -416,16 +416,16 @@ SopranoDecoderRuntime::SopranoDecoderRuntime(
           matmul_storage_type,
           conv_storage_type)) {}
 
-SopranoDecoderRuntime::~SopranoDecoderRuntime() = default;
+SopranoVocosRuntime::~SopranoVocosRuntime() = default;
 
-runtime::AudioBuffer SopranoDecoderRuntime::decode(
+runtime::AudioBuffer SopranoVocosRuntime::decode(
     const std::vector<float> & features,
     int64_t frames) const {
     if (frames <= 0 || static_cast<int64_t>(features.size()) != frames * config_.decoder_input_channels) {
         throw std::runtime_error("Soprano decoder requires consistent feature frames");
     }
     if (graph_ == nullptr || !graph_->matches(*weights_, frames)) {
-        graph_ = std::make_unique<SopranoDecoderGraph>(
+        graph_ = std::make_unique<SopranoVocosGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,

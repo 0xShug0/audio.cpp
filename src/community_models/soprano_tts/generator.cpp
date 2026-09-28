@@ -202,7 +202,7 @@ modules::CausalDecoderRuntimeWeights make_soprano_decode_weights(
 
 }  // namespace
 
-class SopranoTTSGenerator::Impl {
+class SopranoQwen3Generator::Impl {
 public:
     Impl(
         std::shared_ptr<const SopranoTTSAssets> assets,
@@ -315,7 +315,7 @@ public:
     std::unique_ptr<modules::CausalDecoderRuntime> qwen3_runtime;
 };
 
-SopranoTTSGenerator::SopranoTTSGenerator(
+SopranoQwen3Generator::SopranoQwen3Generator(
     const SopranoTTSAssets & assets,
     engine::core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -327,15 +327,15 @@ SopranoTTSGenerator::SopranoTTSGenerator(
           prefill_graph_arena_bytes, decode_graph_arena_bytes,
           weight_context_bytes, weight_storage_type)) {}
 
-SopranoTTSGenerator::~SopranoTTSGenerator() = default;
+SopranoQwen3Generator::~SopranoQwen3Generator() = default;
 
-SopranoTTSGenerator::Result SopranoTTSGenerator::generate(
+SopranoQwen3Generator::Result SopranoQwen3Generator::generate(
     const std::vector<int32_t> & prompt_ids,
     const SopranoGenerationOptions & options) {
     return impl_->generate(prompt_ids, options);
 }
 
-void SopranoTTSGenerator::release_runtime_graphs() {
+void SopranoQwen3Generator::release_runtime_graphs() {
     impl_->release_runtime_graphs();
 }
 

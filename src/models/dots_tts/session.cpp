@@ -379,7 +379,7 @@ struct DotsSession::PromptConditioning {
 };
 
 struct DotsSession::SegmentState {
-    DotsLlmState llm;
+    DotsQwen2State llm;
     DotsPatchEncoderState patch;
     DotsFlowDecodeState flow;
     std::vector<float> fm_sequence;
@@ -1303,7 +1303,7 @@ void DotsSession::ensure_llm_loaded() {
     if (llm_.is_loaded()) {
         return;
     }
-    llm_ = DotsLlmComponent::load_from_tensor_source(
+    llm_ = DotsQwen2Component::load_from_tensor_source(
         assets_->core_weights,
         options().backend,
         assets_->config.llm,
@@ -1333,7 +1333,7 @@ void DotsSession::release_generation_phase_components() {
     if (!mem_saver_) {
         return;
     }
-    llm_ = DotsLlmComponent();
+    llm_ = DotsQwen2Component();
     patch_encoder_ = DotsPatchEncoderComponent();
     flow_ = DotsFlowComponent();
 }

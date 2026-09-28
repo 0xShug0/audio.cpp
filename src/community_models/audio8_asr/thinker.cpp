@@ -8,7 +8,7 @@ namespace {
 
 namespace modules = engine::modules;
 
-runtime::GreedyCausalDecoderSpec make_decoder_spec(const Audio8ASRDecoderConfig & config) {
+runtime::GreedyCausalDecoderSpec make_qwen2_decoder_spec(const Audio8ASRDecoderConfig & config) {
     runtime::GreedyCausalDecoderSpec spec;
     // Qwen2-style decoder: attention biases, no Q/K norms, RoPE theta 1e6.
     spec.decoder.stack.hidden_size = config.hidden_size;
@@ -46,9 +46,9 @@ Audio8ThinkerRuntime::Audio8ThinkerRuntime(
     size_t decode_graph_arena_bytes,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type)
-    : runtime_(
+    : qwen2_runtime_(
           std::move(weights_source),
-          make_decoder_spec(config),
+          make_qwen2_decoder_spec(config),
           execution,
           prefill_graph_arena_bytes,
           decode_graph_arena_bytes,
@@ -81,7 +81,7 @@ Audio8ASRGeneratedTokens Audio8ThinkerRuntime::generate(
     decoder_prompt.injection.tokens = audio_embeddings.tokens;
     decoder_prompt.injection.positions = prompt.audio_token_positions;
     Audio8ASRGeneratedTokens out;
-    out.token_ids = runtime_.generate(decoder_prompt, options.max_new_tokens);
+    out.token_ids = qwen2_runtime_.generate(decoder_prompt, options.max_new_tokens);
     return out;
 }
 

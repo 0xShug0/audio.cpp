@@ -108,7 +108,7 @@ private:
     engine::modules::CampplusEncoderComponent speaker_encoder_;
     DotsAudioVaeComponent audio_vae_;
     DotsPatchEncoderComponent patch_encoder_;
-    DotsLlmComponent llm_;
+    DotsQwen2Component llm_;
     DotsFlowComponent flow_;
     runtime::CacheSlots<PromptFeatureCacheKey, PromptFeatureCacheEntry, PromptFeatureCacheKeyEqual> prompt_feature_cache_;
     std::optional<DotsRequest> prepared_defaults_;

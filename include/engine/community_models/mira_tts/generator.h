@@ -10,16 +10,16 @@
 
 namespace engine::community_models::mira_tts {
 
-class MiraGenerator final {
+class MiraQwen2Generator final {
 public:
-    MiraGenerator(
+    MiraQwen2Generator(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution,
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type);
-    ~MiraGenerator();
+    ~MiraQwen2Generator();
 
     std::vector<int32_t> generate(
         const std::vector<int32_t> & prompt_ids,

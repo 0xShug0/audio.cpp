@@ -255,7 +255,7 @@ modules::CausalDecoderRuntimeWeights qwen2_runtime_weights(
 
 }  // namespace
 
-struct MiraGenerator::Impl {
+struct MiraQwen2Generator::Impl {
     Impl(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution,
@@ -343,7 +343,7 @@ struct MiraGenerator::Impl {
     std::unique_ptr<modules::CausalDecoderRuntime> qwen2_runtime;
 };
 
-MiraGenerator::MiraGenerator(
+MiraQwen2Generator::MiraQwen2Generator(
     const MiraTTSAssets & assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -358,15 +358,15 @@ MiraGenerator::MiraGenerator(
           weight_context_bytes,
           weight_storage_type)) {}
 
-MiraGenerator::~MiraGenerator() = default;
+MiraQwen2Generator::~MiraQwen2Generator() = default;
 
-std::vector<int32_t> MiraGenerator::generate(
+std::vector<int32_t> MiraQwen2Generator::generate(
     const std::vector<int32_t> & prompt_ids,
     const MiraGenerationOptions & options) {
     return impl_->generate(prompt_ids, options);
 }
 
-void MiraGenerator::release_runtime_graphs() {
+void MiraQwen2Generator::release_runtime_graphs() {
     impl_->qwen2_runtime->release_runtime_graphs();
 }
 

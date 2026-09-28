@@ -34,7 +34,7 @@ public:
         const Audio8ASRGenerationOptions & options);
 
 private:
-    runtime::GreedyCausalDecoderRuntime runtime_;
+    runtime::GreedyCausalDecoderRuntime qwen2_runtime_;
     std::shared_ptr<const Audio8ASRDecoderConfig> config_;
 };
 

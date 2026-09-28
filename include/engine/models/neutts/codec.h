@@ -6,7 +6,7 @@
 namespace engine::models::neutts {
 
 using NeuTTSCodecHead = engine::codecs::FsqAudioCodecHead;
-using NeuTTSCodecDecoderRuntime = engine::codecs::FsqAudioCodecDecoderRuntime;
+using NeuTTSNeuCodecDecoderRuntime = engine::codecs::FsqAudioCodecDecoderRuntime;
 
 engine::codecs::FsqAudioCodecConfig make_neutts_fsq_audio_codec_config(
     const NeuTTSCodecConfig & config);

@@ -46,7 +46,7 @@ public:
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           device_(execution.config().device),
-          weights_(std::make_shared<NeuTTSBackboneWeights>(
+          weights_(std::make_shared<NeuTTSQwen3Weights>(
               load_neutts_backbone_weights(
                   *assets_,
                   backend_,
@@ -62,7 +62,7 @@ public:
         return *assets_;
     }
 
-    const NeuTTSBackboneWeights & weights() const noexcept {
+    const NeuTTSQwen3Weights & weights() const noexcept {
         return *weights_;
     }
 
@@ -79,7 +79,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int device_ = 0;
-    std::shared_ptr<const NeuTTSBackboneWeights> weights_;
+    std::shared_ptr<const NeuTTSQwen3Weights> weights_;
 };
 
 modules::CausalDecoderRuntimeConfig make_qwen3_decode_runtime_config(
@@ -95,7 +95,7 @@ modules::CausalDecoderRuntimeConfig make_qwen3_decode_runtime_config(
     return config;
 }
 
-modules::CausalDecoderRuntimeWeights make_qwen3_decode_runtime_weights(const NeuTTSBackboneWeights & weights) {
+modules::CausalDecoderRuntimeWeights make_qwen3_decode_runtime_weights(const NeuTTSQwen3Weights & weights) {
     modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = weights.token_embedding;
     out.stack = weights.decoder.stack;
@@ -132,7 +132,7 @@ void round_finite_logits_to_bf16(std::vector<float> & logits) {
 
 }  // namespace
 
-struct NeuTTSARRuntime::Impl {
+struct NeuTTSQwen3ARRuntime::Impl {
     Impl(
         std::shared_ptr<const NeuTTSAssets> assets,
         core::ExecutionContext & execution,
@@ -259,7 +259,7 @@ struct NeuTTSARRuntime::Impl {
     sampling::TorchCudaSamplingPolicy sampling_policy;
 };
 
-NeuTTSARRuntime::NeuTTSARRuntime(
+NeuTTSQwen3ARRuntime::NeuTTSQwen3ARRuntime(
     std::shared_ptr<const NeuTTSAssets> assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -274,9 +274,9 @@ NeuTTSARRuntime::NeuTTSARRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-NeuTTSARRuntime::~NeuTTSARRuntime() = default;
+NeuTTSQwen3ARRuntime::~NeuTTSQwen3ARRuntime() = default;
 
-NeuTTSGeneratedCodes NeuTTSARRuntime::generate(
+NeuTTSGeneratedCodes NeuTTSQwen3ARRuntime::generate(
     const std::vector<int32_t> & prompt_ids,
     int32_t speech_token_start,
     int32_t speech_token_end,
@@ -285,7 +285,7 @@ NeuTTSGeneratedCodes NeuTTSARRuntime::generate(
     return impl_->generate(prompt_ids, speech_token_start, speech_token_end, speech_generation_end, options);
 }
 
-void NeuTTSARRuntime::release_runtime_graphs() {
+void NeuTTSQwen3ARRuntime::release_runtime_graphs() {
     if (impl_ != nullptr && impl_->qwen3_runtime != nullptr) {
         impl_->qwen3_runtime->release_runtime_graphs();
     }

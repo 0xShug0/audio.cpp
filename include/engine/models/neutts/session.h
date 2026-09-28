@@ -57,8 +57,8 @@ private:
     std::shared_ptr<const NeuTTSAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     NeuTTSPromptBuilder prompt_builder_;
-    std::unique_ptr<NeuTTSARRuntime> ar_;
-    std::unique_ptr<NeuTTSCodecDecoderRuntime> codec_;
+    std::unique_ptr<NeuTTSQwen3ARRuntime> ar_;
+    std::unique_ptr<NeuTTSNeuCodecDecoderRuntime> codec_;
     std::vector<NeuTTSRequest> streaming_requests_;
     std::vector<runtime::AudioBuffer> streaming_chunks_;
     size_t streaming_index_ = 0;

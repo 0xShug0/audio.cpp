@@ -9,9 +9,9 @@ namespace engine::models::sam_audio {
 
 struct SourceVideo;
 
-class VisionEncoderModule {
+class PECoreVisionEncoderModule {
 public:
-    VisionEncoderModule(const assets::TensorSource & source, core::ExecutionContext & execution);
+    PECoreVisionEncoderModule(const assets::TensorSource & source, core::ExecutionContext & execution);
     core::TensorValue build(core::ModuleBuildContext & ctx, const core::TensorValue & pixels,
                            std::map<std::string, core::TensorValue> * boundaries = nullptr) const;
 
@@ -21,10 +21,10 @@ private:
     core::TensorValue x_positions_, y_positions_;
 };
 
-class VisionEncoder {
+class PECoreVisionEncoder {
 public:
-    VisionEncoder(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution);
-    ~VisionEncoder();
+    PECoreVisionEncoder(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution);
+    ~PECoreVisionEncoder();
     // Normalized RGB frames in NCHW order, fixed to the upstream 336px input.
     std::vector<float> encode(const std::vector<float> & pixels, int64_t batch);
     // Returns [1024, audio_frames] features aligned to the audio timeline.
