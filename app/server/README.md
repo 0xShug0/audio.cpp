@@ -495,7 +495,7 @@ curl http://127.0.0.1:8080/v1/audio/alignments \
   -F file=@/path/to/input.wav
 ```
 
-`file`, `model`, and `text` are required; `language` is optional. The selected model must be configured with `task: "align"` and `mode: "offline"`. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. The response includes word timestamps in seconds plus sample offsets.
+`file`, `model`, and `text` are required. `language` is model-dependent: Qwen3 Forced Aligner requires it (for example, `English` or `Chinese`). The selected model must be configured with `task: "align"` and `mode: "offline"`. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. The response includes word timestamps in seconds plus sample offsets.
 
 ### `POST /v1/audio/transcriptions/live`
 

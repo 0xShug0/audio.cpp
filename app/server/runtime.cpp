@@ -1279,6 +1279,15 @@ HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_f
     // sent. (Streaming requests acquire the lock inside the stream body, after
     // headers are sent, so there it becomes a stream error event instead.)
     response = error_response(503, ex.what(), "server_busy");
+  } catch (const std::exception & ex) {
+    if (allowed_origin.empty()) {
+        throw;
+    }
+    // Keep the transport's error response, but attach CORS before returning it.
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(std::string("[SERVER_HTTP_DEBUG] http.error ") + ex.what());
+    }
+    response = error_response(500, ex.what(), "server_error");
   }
   if (!allowed_origin.empty()) {
       response.headers["Access-Control-Allow-Origin"] = allowed_origin;
