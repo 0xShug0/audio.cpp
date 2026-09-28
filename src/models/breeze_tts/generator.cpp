@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -495,10 +496,13 @@ public:
         const modules::LinearWeights & projector_weights,
         const core::TensorValue & packed_heads)
         : backend_(backend),
+          backend_type_(backend_type),
           threads_(std::max(1, threads)),
           hidden_(config.hidden_size),
           depth_hidden_(config.depth_hidden_size),
-          vocab_(config.vocab_size) {
+          vocab_(config.vocab_size),
+          config_num_codebooks_(config.num_codebooks),
+          packed_heads_(packed_heads) {
         if (backend_ == nullptr || hidden_ <= 0 || depth_hidden_ <= 0 || vocab_ <= 0 || config.num_codebooks <= 1) {
             throw std::runtime_error("BreezeTTS depth projection shape is invalid");
         }
@@ -522,9 +526,13 @@ public:
             projector_weights,
             "breeze_tts.depth_projector.pair");
         head_graphs_.reserve(static_cast<size_t>(config.num_codebooks - 1));
+        head_single_graphs_.reserve(static_cast<size_t>(config.num_codebooks - 1));
         for (int64_t codebook = 1; codebook < config.num_codebooks; ++codebook) {
-            head_graphs_.push_back(build_head_graph(ctx, packed_heads, codebook));
+            head_graphs_.push_back(build_head_graph(ctx, packed_heads, codebook, 2));
+            head_single_graphs_.push_back(build_head_graph(ctx, packed_heads, codebook, 1));
         }
+        head_batch_cache_[2] = head_graphs_;
+        head_batch_cache_[1] = head_single_graphs_;
         head_paired_staging_.assign(static_cast<size_t>(2 * vocab_), 0.0F);
         graph_buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
         if (graph_buffer_ == nullptr) {
@@ -536,6 +544,9 @@ public:
         release_graph(projector_single_);
         release_graph(projector_pair_);
         for (const auto & graph : head_graphs_) {
+            release_graph(graph);
+        }
+        for (const auto & graph : head_single_graphs_) {
             release_graph(graph);
         }
         if (graph_buffer_ != nullptr) {
@@ -621,6 +632,74 @@ public:
         }
     }
 
+    void ensure_head_batch(int64_t batch) const {
+        if (batch <= 0) {
+            throw std::runtime_error("BreezeTTS depth head batch must be positive");
+        }
+        if (head_batch_cache_.find(batch) != head_batch_cache_.end()) {
+            return;
+        }
+        if (head_batch_cache_.size() >= 8) {
+            // Bound VRAM: drop all but the canonical batch 1/2 sets; exotic
+            // bucket graphs are cheap to rebuild (~ms).
+            for (auto it = head_batch_cache_.begin(); it != head_batch_cache_.end();) {
+                if (it->first != 1 && it->first != 2) {
+                    for (const auto & graph : it->second) {
+                        release_graph(graph);
+                    }
+                    it = head_batch_cache_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        core::ModuleBuildContext ctx{ctx_.get(), "breeze_tts.depth_projection", backend_type_};
+        std::vector<Graph> graphs;
+        graphs.reserve(static_cast<size_t>(config_num_codebooks_ - 1));
+        for (int64_t codebook = 1; codebook < config_num_codebooks_; ++codebook) {
+            graphs.push_back(build_head_graph(ctx, packed_heads_, codebook, batch));
+        }
+        head_batch_cache_[batch] = std::move(graphs);
+    }
+
+    void logits_single(
+        const float * cond_hidden,
+        int64_t codebook,
+        float * out) const {
+        logits_batched(cond_hidden, 1, codebook, out);
+    }
+
+    // Depth head logits for a batch of frames. Head graphs are built on demand
+    // per batch size (bucketed by the caller) and cached; hidden/out layout is
+    // batch-major: [batch][depth_hidden] / [batch][vocab].
+    void logits_batched(
+        const float * cond_hidden_batch,
+        int64_t batch,
+        int64_t codebook,
+        float * out_batch) const {
+        if (codebook <= 0 || codebook >= config_num_codebooks_) {
+            throw std::runtime_error("BreezeTTS depth codebook index is invalid");
+        }
+        ensure_head_batch(batch);
+        const auto & graphs = head_batch_cache_.at(batch);
+        const auto & graph = graphs[static_cast<size_t>(codebook - 1)];
+        ggml_backend_tensor_set(
+            graph.input,
+            cond_hidden_batch,
+            0,
+            static_cast<size_t>(batch * depth_hidden_) * sizeof(float));
+        core::set_backend_threads(backend_, threads_);
+        if (core::compute_backend_graph(backend_, graph.graph, nullptr, graph.label) != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("BreezeTTS depth projection graph compute failed");
+        }
+        ggml_backend_synchronize(backend_);
+        ggml_backend_tensor_get(
+            graph.output,
+            out_batch,
+            0,
+            static_cast<size_t>(batch * vocab_) * sizeof(float));
+    }
+
     std::vector<float> logits_cfg(
         const std::vector<float> & cond_hidden,
         const std::vector<float> & uncond_hidden,
@@ -665,8 +744,9 @@ private:
     Graph build_head_graph(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & packed_heads,
-        int64_t codebook) {
-        auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, depth_hidden_}));
+        int64_t codebook,
+        int64_t batch) const {
+        auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, depth_hidden_}));
         const size_t row_stride = packed_heads.tensor->nb[1];
         const size_t codebook_stride = packed_heads.tensor->nb[2];
         const size_t offset = static_cast<size_t>(codebook - 1) * codebook_stride;
@@ -680,7 +760,7 @@ private:
         auto * graph = ggml_new_graph_custom(ctx_.get(), 32768, false);
         ggml_set_output(output);
         ggml_build_forward_expand(graph, output);
-        return {input.tensor, output, graph, 2 * depth_hidden_, 2 * vocab_, "breeze_tts.depth_head"};
+        return {input.tensor, output, graph, batch * depth_hidden_, batch * vocab_, "breeze_tts.depth_head"};
     }
 
     void release_graph(const Graph & graph) const {
@@ -715,15 +795,20 @@ private:
     }
 
     ggml_backend_t backend_ = nullptr;
+    core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     int64_t hidden_ = 0;
     int64_t depth_hidden_ = 0;
     int64_t vocab_ = 0;
+    int64_t config_num_codebooks_ = 0;
+    core::TensorValue packed_heads_;
+    mutable std::map<int64_t, std::vector<Graph>> head_batch_cache_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_backend_buffer_t graph_buffer_ = nullptr;
     Graph projector_single_;
     Graph projector_pair_;
     std::vector<Graph> head_graphs_;
+    std::vector<Graph> head_single_graphs_;
     mutable std::vector<float> head_paired_staging_;
 };
 
@@ -858,6 +943,105 @@ struct BreezeGeneratorRuntime::Impl {
         }
         return out;
     }
+
+    // Single-pass depth decode for guidance_scale == 1.0: only the conditional
+    // branch is evaluated (batch 1 instead of batch 2). The CFG blend at scale
+    // 1.0 is the identity (uncond + 1*(cond-uncond) == cond), so skipping the
+    // unconditional backbone/depth passes preserves output quality up to
+    // floating-point reassociation in the sampling logits.
+    std::vector<int32_t> generate_frame_single(
+        const std::vector<float> & cond_hidden,
+        int32_t first_token,
+        const BreezeGenerationRequest & request,
+        sampling::HfSamplerScratch & scratch,
+        std::mt19937 & fallback_rng,
+        uint64_t & call_index,
+        uint64_t & offset_blocks) {
+        const auto & config = assets->config;
+        std::vector<int32_t> frame;
+        frame.reserve(static_cast<size_t>(config.num_codebooks));
+        frame.push_back(first_token);
+
+        const size_t depth_hidden_size = static_cast<size_t>(config.depth_hidden_size);
+        const size_t depth_hidden_bytes = depth_hidden_size * sizeof(float);
+
+        const auto project_audio_embedding_row = [&](int64_t row, float * out) {
+            const int64_t rows = config.num_codebooks * config.vocab_size;
+            if (row < 0 || row >= rows) {
+                throw std::runtime_error("BreezeTTS embedding row is outside table");
+            }
+            const size_t begin = static_cast<size_t>(row * config.hidden_size);
+            depth_projection->project_single(
+                weights->audio_embedding.data() + begin,
+                out);
+        };
+
+        project_audio_embedding_row(first_token, depth_first_embed_staging_.data());
+        depth_projection->project_single(
+            cond_hidden.data(),
+            depth_projected_pair_staging_.data());
+
+        // Reuse the pair staging buffers at batch 1: [projected, first_embed].
+        std::memcpy(depth_prefill_staging_.data(),
+                    depth_projected_pair_staging_.data(),
+                    depth_hidden_bytes);
+        std::memcpy(depth_prefill_staging_.data() + depth_hidden_size,
+                    depth_first_embed_staging_.data(),
+                    depth_hidden_bytes);
+
+        std::vector<float> prefill_1x(
+            depth_prefill_staging_.begin(),
+            depth_prefill_staging_.begin() + static_cast<std::ptrdiff_t>(2 * depth_hidden_size));
+        auto depth = depth_pair->prefill_embeddings_batched(prefill_1x, 1, 2);
+        if (static_cast<int64_t>(depth.hidden.size()) != config.depth_hidden_size) {
+            throw std::runtime_error("BreezeTTS single-pass depth prefill hidden size mismatch");
+        }
+        std::memcpy(depth_cond_hidden_now_.data(),
+                    depth.hidden.data(),
+                    depth_hidden_bytes);
+        depth_pair->start_decode_embeddings_batched(depth.state, config.num_codebooks + 1);
+
+        sampling::HfSamplingOptions options;
+        options.do_sample = true;
+        options.temperature = request.depth_temperature;
+        options.top_k = request.top_k;
+        options.top_p = request.top_p;
+        options.min_tokens_to_keep = 1;
+        for (int64_t codebook = 1; codebook < config.num_codebooks; ++codebook) {
+            depth_projection->logits_single(
+                depth_cond_hidden_now_.data(),
+                codebook,
+                depth_logits_staging_.data());
+            suppress_reserved(depth_logits_staging_, kCodecCodebookSize, config.vocab_size);
+            const int32_t token = sample_logits(
+                depth_logits_staging_,
+                {},
+                options,
+                scratch,
+                fallback_rng,
+                sampling_policy.cuda_fast_path ? &sampling_policy : nullptr,
+                request.seed,
+                call_index,
+                offset_blocks,
+                "BreezeTTS depth sampler");
+            frame.push_back(token);
+            if (codebook + 1 < config.num_codebooks) {
+                project_audio_embedding_row(codebook * config.vocab_size + token, depth_next_embed_staging_.data());
+                std::vector<float> next_1x(
+                    depth_next_embed_staging_.begin(),
+                    depth_next_embed_staging_.begin() + static_cast<std::ptrdiff_t>(depth_hidden_size));
+                const auto step = depth_pair->decode_embeddings_batched(next_1x, 1);
+                if (static_cast<int64_t>(step.hidden.size()) != config.depth_hidden_size) {
+                    throw std::runtime_error("BreezeTTS single-pass depth decode hidden size mismatch");
+                }
+                std::memcpy(depth_cond_hidden_now_.data(),
+                            step.hidden.data(),
+                            depth_hidden_bytes);
+            }
+        }
+        return frame;
+    }
+
 
     std::vector<int32_t> generate_frame(
         const std::vector<float> & cond_hidden,
@@ -1346,15 +1530,27 @@ struct BreezeGeneratorRuntime::Impl {
                 if (first_token == config.codebook_pad_token_id) {
                     continue;
                 }
-                const auto frame = generate_frame(
-                    cond.hidden,
-                    use_cfg ? uncond->hidden : cond.hidden,
-                    first_token,
-                    request,
-                    scratch,
-                    fallback_rng,
-                    sample_call_index,
-                    offset_blocks);
+                // Without CFG the depth decoder also runs single-branch (batch 1
+                // instead of batch 2): the CFG blend at scale 1.0 is the
+                // identity, so the unconditional depth pass is pure overhead.
+                const auto frame = !use_cfg
+                    ? generate_frame_single(
+                          cond.hidden,
+                          first_token,
+                          request,
+                          scratch,
+                          fallback_rng,
+                          sample_call_index,
+                          offset_blocks)
+                    : generate_frame(
+                          cond.hidden,
+                          uncond->hidden,
+                          first_token,
+                          request,
+                          scratch,
+                          fallback_rng,
+                          sample_call_index,
+                          offset_blocks);
                 first_codebook_history.push_back(first_token);
                 codes.insert(codes.end(), frame.begin(), frame.end());
                 const auto embedded = frame_embedding(
