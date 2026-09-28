@@ -252,9 +252,9 @@ VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
     return weights;
 }
 
-class VibeVoiceDecoderEmbeddingGraph {
+class VibeVoiceQwen2EmbeddingGraph {
 public:
-    VibeVoiceDecoderEmbeddingGraph(
+    VibeVoiceQwen2EmbeddingGraph(
         const VibeVoiceDecoderWeightsRuntime & runtime,
         int64_t steps,
         size_t graph_arena_bytes)
@@ -291,7 +291,7 @@ public:
         }
     }
 
-    ~VibeVoiceDecoderEmbeddingGraph() {
+    ~VibeVoiceQwen2EmbeddingGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -334,9 +334,9 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class VibeVoiceDecoderPrefillGraph {
+class VibeVoiceQwen2PrefillGraph {
 public:
-    VibeVoiceDecoderPrefillGraph(
+    VibeVoiceQwen2PrefillGraph(
         const VibeVoiceDecoderWeightsRuntime & runtime,
         int64_t batch_size,
         int64_t prompt_steps,
@@ -448,7 +448,7 @@ public:
         attention_mask_values_ = modules::causal_prefill_mask_values(batch_size_, prompt_steps_);
     }
 
-    ~VibeVoiceDecoderPrefillGraph() {
+    ~VibeVoiceQwen2PrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -710,9 +710,9 @@ private:
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-class VibeVoiceDecoderCachedStepGraph {
+class VibeVoiceQwen2CachedStepGraph {
 public:
-    VibeVoiceDecoderCachedStepGraph(
+    VibeVoiceQwen2CachedStepGraph(
         const VibeVoiceDecoderWeightsRuntime & runtime,
         VibeVoiceDecoderKVCache & cache,
         size_t graph_arena_bytes)
@@ -788,7 +788,7 @@ public:
         attention_mask_buffer_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
-    ~VibeVoiceDecoderCachedStepGraph() {
+    ~VibeVoiceQwen2CachedStepGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
@@ -880,9 +880,9 @@ private:
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-class VibeVoiceDecoderCachedSuffixGraph {
+class VibeVoiceQwen2CachedSuffixGraph {
 public:
-    VibeVoiceDecoderCachedSuffixGraph(
+    VibeVoiceQwen2CachedSuffixGraph(
         const VibeVoiceDecoderWeightsRuntime & runtime,
         int64_t suffix_steps,
         VibeVoiceDecoderKVCache & cache,
@@ -1003,7 +1003,7 @@ public:
         attention_mask_buffer_.resize(static_cast<size_t>(suffix_steps_ * attention_key_steps_));
     }
 
-    ~VibeVoiceDecoderCachedSuffixGraph() {
+    ~VibeVoiceQwen2CachedSuffixGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
@@ -1229,7 +1229,7 @@ VibeVoiceTokenEmbeddings VibeVoiceDecoderWeightsRuntime::embed_tokens(
     const int64_t steps = static_cast<int64_t>(input_ids.size());
     if (embedding_graph_ == nullptr || !embedding_graph_->matches(*this, steps)) {
         embedding_graph_.reset();
-        embedding_graph_ = std::make_unique<VibeVoiceDecoderEmbeddingGraph>(
+        embedding_graph_ = std::make_unique<VibeVoiceQwen2EmbeddingGraph>(
             *this,
             steps,
             64ull * 1024ull * 1024ull);
@@ -1249,7 +1249,7 @@ VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_embeddings
     }
     if (prefill_graph_ == nullptr || !prefill_graph_->matches(*this, 1, steps, 0)) {
         prefill_graph_.reset();
-        prefill_graph_ = std::make_unique<VibeVoiceDecoderPrefillGraph>(
+        prefill_graph_ = std::make_unique<VibeVoiceQwen2PrefillGraph>(
             *this,
             1,
             steps,
@@ -1277,7 +1277,7 @@ VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_prompt(
     }
     if (prefill_graph_ == nullptr || !prefill_graph_->matches(*this, 1, steps, speech_tokens)) {
         prefill_graph_.reset();
-        prefill_graph_ = std::make_unique<VibeVoiceDecoderPrefillGraph>(
+        prefill_graph_ = std::make_unique<VibeVoiceQwen2PrefillGraph>(
             *this,
             1,
             steps,
@@ -1396,7 +1396,7 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
         state.graph_.reset();
         const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
-        state.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
+        state.graph_ = std::make_unique<VibeVoiceQwen2CachedStepGraph>(
             *this,
             *state.cache_,
             graph_arena_bytes);
@@ -1441,7 +1441,7 @@ void VibeVoiceDecoderWeightsRuntime::append_cached_step(
     if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
         state.graph_.reset();
         const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
-        state.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
+        state.graph_ = std::make_unique<VibeVoiceQwen2CachedStepGraph>(
             *this,
             *state.cache_,
             graph_arena_bytes);
@@ -1490,7 +1490,7 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_suffix(
     if (state.suffix_graph_ == nullptr || !state.suffix_graph_->can_decode(*this, steps, required_capacity)) {
         state.suffix_graph_.reset();
         const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
-        state.suffix_graph_ = std::make_unique<VibeVoiceDecoderCachedSuffixGraph>(
+        state.suffix_graph_ = std::make_unique<VibeVoiceQwen2CachedSuffixGraph>(
             *this,
             steps,
             *state.cache_,

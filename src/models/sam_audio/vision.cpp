@@ -21,7 +21,7 @@ namespace engine::models::sam_audio {
 using core::TensorShape;
 using core::TensorValue;
 
-VisionEncoderModule::VisionEncoderModule(const assets::TensorSource & source, core::ExecutionContext & execution)
+PECoreVisionEncoderModule::PECoreVisionEncoderModule(const assets::TensorSource & source, core::ExecutionContext & execution)
     : store_(execution.backend(), execution.backend_type(), "sam_audio.vision.weights", 4 * 1024 * 1024) {
     const std::string prefix = "vision_encoder.model.visual.";
     for (const auto & tensor : source.tensors()) {
@@ -39,7 +39,7 @@ VisionEncoderModule::VisionEncoderModule(const assets::TensorSource & source, co
     store_.upload();
 }
 
-TensorValue VisionEncoderModule::build(core::ModuleBuildContext & ctx, const TensorValue & pixels,
+TensorValue PECoreVisionEncoderModule::build(core::ModuleBuildContext & ctx, const TensorValue & pixels,
                                        std::map<std::string, TensorValue> * boundaries) const {
     const int64_t batch = pixels.shape.dims[0];
     core::validate_shape(pixels, TensorShape::from_dims({batch, 3, 336, 336}), "PE-Core-L14 pixels");
@@ -122,9 +122,9 @@ TensorValue VisionEncoderModule::build(core::ModuleBuildContext & ctx, const Ten
 }
 
 namespace {
-class VisionGraph {
+class PECoreVisionEncoderGraph {
 public:
-    VisionGraph(core::ExecutionContext & execution, const VisionEncoderModule & module, int64_t batch)
+    PECoreVisionEncoderGraph(core::ExecutionContext & execution, const PECoreVisionEncoderModule & module, int64_t batch)
         : backend_(execution.backend()) {
         context_.reset(ggml_init({32 * 1024 * 1024, nullptr, true}));
         if (!context_) throw std::runtime_error("SAM Audio vision context allocation failed");
@@ -144,7 +144,7 @@ public:
         if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_))
             throw std::runtime_error("SAM Audio vision graph allocation failed");
     }
-    ~VisionGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
+    ~PECoreVisionEncoderGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
 
     std::vector<float> run(const std::vector<float> & pixels) {
         const auto start = std::chrono::steady_clock::now();
@@ -171,20 +171,20 @@ private:
 };
 }  // namespace
 
-struct VisionEncoder::Impl {
+struct PECoreVisionEncoder::Impl {
     core::ExecutionContext & execution;
-    VisionEncoderModule module;
-    std::unique_ptr<VisionGraph> graph;
+    PECoreVisionEncoderModule module;
+    std::unique_ptr<PECoreVisionEncoderGraph> graph;
     int64_t batch = 0;
     Impl(const assets::TensorSource & source, core::ExecutionContext & context)
         : execution(context), module(source, context) {}
 };
 
-VisionEncoder::VisionEncoder(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution)
+PECoreVisionEncoder::PECoreVisionEncoder(std::shared_ptr<const assets::TensorSource> source, core::ExecutionContext & execution)
     : impl_(std::make_unique<Impl>(*source, execution)) {}
-VisionEncoder::~VisionEncoder() = default;
+PECoreVisionEncoder::~PECoreVisionEncoder() = default;
 
-std::vector<float> VisionEncoder::encode_video(const SourceVideo & video, int64_t audio_frames,
+std::vector<float> PECoreVisionEncoder::encode_video(const SourceVideo & video, int64_t audio_frames,
                                                int64_t hop, int sample_rate) {
     const auto selected = select_video_frames(video, audio_frames, hop, sample_rate);
     auto unique = selected;
@@ -213,12 +213,12 @@ std::vector<float> VisionEncoder::encode_video(const SourceVideo & video, int64_
     return result;
 }
 
-std::vector<float> VisionEncoder::encode(const std::vector<float> & pixels, int64_t batch) {
+std::vector<float> PECoreVisionEncoder::encode(const std::vector<float> & pixels, int64_t batch) {
     if (batch <= 0 || pixels.size() != static_cast<size_t>(batch * 3 * 336 * 336))
         throw std::runtime_error("SAM Audio vision expects [batch,3,336,336] normalized pixels");
     if (!impl_->graph || impl_->batch != batch) {
         impl_->graph.reset();
-        impl_->graph = std::make_unique<VisionGraph>(impl_->execution, impl_->module, batch);
+        impl_->graph = std::make_unique<PECoreVisionEncoderGraph>(impl_->execution, impl_->module, batch);
         impl_->batch = batch;
     }
     return impl_->graph->run(pixels);

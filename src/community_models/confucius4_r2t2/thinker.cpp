@@ -10,7 +10,7 @@ namespace {
 
 namespace modules = engine::modules;
 
-runtime::GreedyCausalDecoderSpec make_decoder_spec(const R2T2ASRConfig & config) {
+runtime::GreedyCausalDecoderSpec make_qwen3_decoder_spec(const R2T2ASRConfig & config) {
     const auto & text = config.text_decoder;
     runtime::GreedyCausalDecoderSpec spec;
     // Qwen3-style stack: Q/K norms, no attention biases, separate QKV.
@@ -57,9 +57,9 @@ struct R2T2ASRThinkerRuntime::Impl {
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type)
         : config(assets == nullptr ? throw std::runtime_error("R2T2 ASR thinker requires assets") : assets->config),
-          runtime(
+          qwen3_runtime(
               assets->model_weights,
-              make_decoder_spec(assets->config),
+              make_qwen3_decoder_spec(assets->config),
               execution,
               prefill_graph_arena_bytes,
               decode_graph_arena_bytes,
@@ -67,7 +67,7 @@ struct R2T2ASRThinkerRuntime::Impl {
               weight_storage_type) {}
 
     R2T2ASRConfig config;
-    runtime::GreedyCausalDecoderRuntime runtime;
+    runtime::GreedyCausalDecoderRuntime qwen3_runtime;
 };
 
 R2T2ASRThinkerRuntime::R2T2ASRThinkerRuntime(
@@ -113,8 +113,8 @@ R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
 
     R2T2ASRGeneratedTokens out;
     out.token_ids = options.incremental_prefill
-        ? impl_->runtime.generate_incremental(decoder_prompt, options.max_new_tokens, options.cached_prefix_steps)
-        : impl_->runtime.generate(decoder_prompt, options.max_new_tokens, options.reuse_graphs);
+        ? impl_->qwen3_runtime.generate_incremental(decoder_prompt, options.max_new_tokens, options.cached_prefix_steps)
+        : impl_->qwen3_runtime.generate(decoder_prompt, options.max_new_tokens, options.reuse_graphs);
     return out;
 }
 

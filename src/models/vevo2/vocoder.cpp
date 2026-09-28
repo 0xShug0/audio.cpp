@@ -30,7 +30,7 @@ struct Vevo2VocoderConvNeXtBlockWeights {
     engine::core::TensorValue gamma;
 };
 
-struct Vevo2VocoderWeights {
+struct Vevo2VocosWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
     engine::modules::Conv1dWeights embed;
     engine::modules::NormWeights norm;
@@ -62,7 +62,7 @@ engine::core::TensorValue scale_last_dim(
     return engine::modules::MulModule{}.build(ctx, input, repeated);
 }
 
-std::shared_ptr<const Vevo2VocoderWeights> load_vocoder_weights(
+std::shared_ptr<const Vevo2VocosWeights> load_vocoder_weights(
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
     const engine::assets::TensorSource & source,
@@ -70,7 +70,7 @@ std::shared_ptr<const Vevo2VocoderWeights> load_vocoder_weights(
     size_t weight_context_bytes,
     engine::assets::TensorStorageType matmul_storage_type,
     engine::assets::TensorStorageType conv_storage_type) {
-    auto weights = std::make_shared<Vevo2VocoderWeights>();
+    auto weights = std::make_shared<Vevo2VocosWeights>();
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
         backend,
         backend_type,
@@ -169,7 +169,7 @@ engine::core::TensorValue build_vocoder_convnext_block(
 engine::core::TensorValue build_vocoder_head(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & mel_bct,
-    const Vevo2VocoderWeights & weights,
+    const Vevo2VocosWeights & weights,
     const Vevo2VocoderConfig & config) {
     auto hidden = engine::modules::Conv1dModule({
         config.input_channels,
@@ -273,13 +273,13 @@ std::vector<float> istft_same_from_head(
 
 }  // namespace
 
-struct Vevo2VocoderGraph {
-    Vevo2VocoderGraph(
+struct Vevo2VocosGraph {
+    Vevo2VocosGraph(
         ggml_backend_t backend,
         engine::core::BackendType backend_type,
         size_t graph_context_bytes,
         const Vevo2VocoderConfig & config,
-        std::shared_ptr<const Vevo2VocoderWeights> weights,
+        std::shared_ptr<const Vevo2VocosWeights> weights,
         int64_t frames)
         : backend(backend),
           weights(std::move(weights)),
@@ -320,14 +320,14 @@ struct Vevo2VocoderGraph {
         }
     }
 
-    ~Vevo2VocoderGraph() {
+    ~Vevo2VocosGraph() {
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
             gallocr = nullptr;
         }
     }
 
-    bool matches(const Vevo2VocoderWeights & other_weights, int64_t other_frames) const noexcept {
+    bool matches(const Vevo2VocosWeights & other_weights, int64_t other_frames) const noexcept {
         return weights.get() == &other_weights && frames == other_frames;
     }
 
@@ -355,7 +355,7 @@ struct Vevo2VocoderGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const Vevo2VocoderWeights> weights;
+    std::shared_ptr<const Vevo2VocosWeights> weights;
     int64_t frames = 0;
     int64_t input_channels = 0;
     int64_t head_dim = 0;
@@ -366,7 +366,7 @@ struct Vevo2VocoderGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-Vevo2VocoderRuntime::Vevo2VocoderRuntime(
+Vevo2VocosRuntime::Vevo2VocosRuntime(
     const Vevo2Assets & assets,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -389,14 +389,14 @@ Vevo2VocoderRuntime::Vevo2VocoderRuntime(
     weight_source_->release_storage();
 }
 
-Vevo2VocoderRuntime::~Vevo2VocoderRuntime() = default;
+Vevo2VocosRuntime::~Vevo2VocosRuntime() = default;
 
-runtime::AudioBuffer Vevo2VocoderRuntime::decode(const Vevo2MelSequence & mel) const {
+runtime::AudioBuffer Vevo2VocosRuntime::decode(const Vevo2MelSequence & mel) const {
     if (mel.frames <= 0 || mel.mel_bins != config_.input_channels) {
         throw std::runtime_error("Vevo2 vocoder requires non-empty mel with configured bins");
     }
     if (graph_ == nullptr || !graph_->matches(*weights_, mel.frames)) {
-        graph_ = std::make_unique<Vevo2VocoderGraph>(
+        graph_ = std::make_unique<Vevo2VocosGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,

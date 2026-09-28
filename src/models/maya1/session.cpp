@@ -124,7 +124,7 @@ public:
               maya1_snac_options(codec_storage), maya1_snac_weight_binding()) {}
 
   Maya1Tokenizer tokenizer;
-  Maya1Generator generator;
+  Maya1LlamaGenerator generator;
   codecs::SnacDecoderRuntime codec;
 };
 

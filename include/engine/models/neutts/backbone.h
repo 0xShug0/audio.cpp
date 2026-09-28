@@ -17,7 +17,7 @@ class BackendWeightStore;
 
 namespace engine::models::neutts {
 
-struct NeuTTSBackboneWeights {
+struct NeuTTSQwen3Weights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
     modules::CausalDecoderWeights decoder;
@@ -27,7 +27,7 @@ modules::CausalDecoderConfig make_neutts_qwen3_config(
     const NeuTTSBackboneConfig & config,
     core::BackendType backend_type);
 
-NeuTTSBackboneWeights load_neutts_backbone_weights(
+NeuTTSQwen3Weights load_neutts_backbone_weights(
     const NeuTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,

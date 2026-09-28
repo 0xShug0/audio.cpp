@@ -23,7 +23,7 @@ namespace {
 struct SAMAudioAssets {
     assets::ResourceBundle resources;
     std::shared_ptr<const assets::TensorSource> tensors;
-    CodecConfig codec;
+    DacVaeConfig codec;
     int sample_rate = 48000;
     int64_t video_channels = 1024;
 };
@@ -40,11 +40,11 @@ public:
         const auto bounded_option = runtime::find_option(options.options, {"sam_audio.memory_bounded"});
         const bool memory_bounded = bounded_option && runtime::parse_bool_option(*bounded_option, "sam_audio.memory_bounded");
         auto & execution = execution_context();
-        encoder_ = std::make_unique<CodecEncoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
-        text_ = std::make_unique<TextEncoder>(assets_->tensors, execution,
+        encoder_ = std::make_unique<DacVaeEncoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
+        text_ = std::make_unique<T5TextEncoder>(assets_->tensors, execution,
             assets_->resources.require_file("t5_config"), assets_->resources.require_file("tokenizer"));
         denoiser_ = std::make_unique<DiTRuntime>(assets_->tensors, execution, assets_->resources.require_file("config"), memory_bounded);
-        decoder_ = std::make_unique<CodecDecoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
+        decoder_ = std::make_unique<DacVaeDecoder>(assets_->tensors, execution, assets_->codec, memory_bounded);
         assets_->tensors->release_storage();
     }
 
@@ -92,7 +92,7 @@ public:
         if (image_path || video_path) {
             if (!vision_) {
                 auto tensors = assets_->resources.open_tensor_source("weights");
-                vision_ = std::make_unique<VisionEncoder>(tensors, execution_context());
+                vision_ = std::make_unique<PECoreVisionEncoder>(tensors, execution_context());
                 tensors->release_storage();
             }
             if (image_path) {
@@ -151,11 +151,11 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const SAMAudioAssets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
-    std::unique_ptr<CodecEncoder> encoder_;
-    std::unique_ptr<TextEncoder> text_;
+    std::unique_ptr<DacVaeEncoder> encoder_;
+    std::unique_ptr<T5TextEncoder> text_;
     std::unique_ptr<DiTRuntime> denoiser_;
-    std::unique_ptr<CodecDecoder> decoder_;
-    std::unique_ptr<VisionEncoder> vision_;
+    std::unique_ptr<DacVaeDecoder> decoder_;
+    std::unique_ptr<PECoreVisionEncoder> vision_;
 };
 
 }  // namespace

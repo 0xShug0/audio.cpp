@@ -8,21 +8,21 @@
 #include <vector>
 
 namespace engine::community_models::soprano_tts {
-struct SopranoQwenWeights;
+struct SopranoQwen3Weights;
 
 // Autoregressive Qwen3 causal LM wrapper. Captures the last-layer 512-dim
 // hidden state of every generated token (the per-frame audio features) plus the
 // sampled token ids, stopping on EOS.
-class SopranoTTSGenerator {
+class SopranoQwen3Generator {
 public:
-    SopranoTTSGenerator(
+    SopranoQwen3Generator(
         const SopranoTTSAssets & assets,
         engine::core::ExecutionContext & execution,
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType weight_storage_type);
-    ~SopranoTTSGenerator();
+    ~SopranoQwen3Generator();
 
     struct Result {
         std::vector<float> features;   // frames x hidden (frame-major)

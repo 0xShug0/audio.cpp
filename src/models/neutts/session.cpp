@@ -201,14 +201,14 @@ NeuTTSSession::NeuTTSSession(
         {assets::TensorStorageType::Native,
          assets::TensorStorageType::F32,
          assets::TensorStorageType::F16});
-    ar_ = std::make_unique<NeuTTSARRuntime>(
+    ar_ = std::make_unique<NeuTTSQwen3ARRuntime>(
         assets_,
         execution_context(),
         graph_arena_bytes,
         graph_arena_bytes,
         kDefaultWeightContextBytes,
         backbone_weight_type);
-    codec_ = std::make_unique<NeuTTSCodecDecoderRuntime>(
+    codec_ = std::make_unique<NeuTTSNeuCodecDecoderRuntime>(
         make_neutts_fsq_audio_codec_config(assets_->codec),
         assets_->codec_weights,
         execution_context(),

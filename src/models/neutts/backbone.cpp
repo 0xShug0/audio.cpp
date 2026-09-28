@@ -158,7 +158,7 @@ modules::CausalDecoderConfig make_neutts_qwen3_config(
     return out;
 }
 
-NeuTTSBackboneWeights load_neutts_backbone_weights(
+NeuTTSQwen3Weights load_neutts_backbone_weights(
     const NeuTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -167,7 +167,7 @@ NeuTTSBackboneWeights load_neutts_backbone_weights(
     validate_backbone_storage_type(storage_type);
     const auto & config = assets.backbone;
     const auto & source = *assets.backbone_weights;
-    NeuTTSBackboneWeights weights;
+    NeuTTSQwen3Weights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,

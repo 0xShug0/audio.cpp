@@ -15,9 +15,9 @@ namespace engine::models::sam_audio {
 namespace {
 using core::TensorShape;
 
-class TextGraph {
+class T5TextEncoderGraph {
 public:
-    TextGraph(core::ExecutionContext & execution, const modules::T5BaseEncoderConfig & config,
+    T5TextEncoderGraph(core::ExecutionContext & execution, const modules::T5BaseEncoderConfig & config,
               const modules::T5BaseEncoderWeights & weights, int64_t length)
         : backend_(execution.backend()), length_(length), heads_(config.attention_heads), hidden_(config.hidden_size) {
         constexpr size_t nodes = 8192;
@@ -44,7 +44,7 @@ public:
             config.relative_attention_num_buckets, config.relative_attention_max_distance));
     }
 
-    ~TextGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
+    ~T5TextEncoderGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
 
     std::vector<float> run(const std::vector<int32_t> & tokens, int32_t pad_id) {
         const auto started = std::chrono::steady_clock::now();
@@ -76,13 +76,13 @@ private:
 };
 }  // namespace
 
-struct TextEncoder::Impl {
+struct T5TextEncoder::Impl {
     core::ExecutionContext & execution;
     modules::T5BaseEncoderConfig config;
     core::BackendWeightStore store;
     modules::T5BaseEncoderWeights weights;
     std::vector<tokenizers::SentencePiecePiece> pieces;
-    std::unique_ptr<TextGraph> graph;
+    std::unique_ptr<T5TextEncoderGraph> graph;
     int64_t max_length;
     int32_t eos;
     int32_t pad;
@@ -132,13 +132,13 @@ struct TextEncoder::Impl {
     }
 };
 
-TextEncoder::TextEncoder(std::shared_ptr<const assets::TensorSource> source,
+T5TextEncoder::T5TextEncoder(std::shared_ptr<const assets::TensorSource> source,
                          core::ExecutionContext & execution, const std::filesystem::path & config,
                          const std::filesystem::path & tokenizer, int64_t max_length)
     : impl_(std::make_unique<Impl>(*source, execution, config, tokenizer, max_length)) {}
-TextEncoder::~TextEncoder() = default;
+T5TextEncoder::~T5TextEncoder() = default;
 
-TextConditioning TextEncoder::encode(const std::string & text) {
+TextConditioning T5TextEncoder::encode(const std::string & text) {
     TextConditioning result;
     result.tokens = tokenizers::tokenize_sentencepiece(impl_->pieces, text);
     if (result.tokens.size() >= static_cast<size_t>(impl_->max_length))
@@ -148,7 +148,7 @@ TextConditioning TextEncoder::encode(const std::string & text) {
     const size_t capacity = (result.tokens.size() + 15) / 16 * 16;
     if (!impl_->graph || impl_->graph_length != capacity) {
         impl_->graph.reset();
-        impl_->graph = std::make_unique<TextGraph>(impl_->execution, impl_->config, impl_->weights, capacity);
+        impl_->graph = std::make_unique<T5TextEncoderGraph>(impl_->execution, impl_->config, impl_->weights, capacity);
         impl_->graph_length = capacity;
     }
     result.features = impl_->graph->run(result.tokens, impl_->pad);

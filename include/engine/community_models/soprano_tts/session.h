@@ -20,8 +20,8 @@ struct SopranoRequest {
     SopranoGenerationOptions generation;
 };
 
-class SopranoTTSGenerator;
-class SopranoDecoderRuntime;
+class SopranoQwen3Generator;
+class SopranoVocosRuntime;
 
 class SopranoTTSOfflineSession final : public runtime::RuntimeSessionBase,
                                        public runtime::IOfflineVoiceTaskSession,
@@ -62,8 +62,8 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const SopranoTTSAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
-    std::unique_ptr<SopranoTTSGenerator> generator_;
-    std::unique_ptr<SopranoDecoderRuntime> decoder_;
+    std::unique_ptr<SopranoQwen3Generator> generator_;
+    std::unique_ptr<SopranoVocosRuntime> decoder_;
 };
 
 }  // namespace engine::community_models::soprano_tts

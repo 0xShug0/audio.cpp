@@ -49,7 +49,7 @@ struct GgmlGallocrDeleter {
     }
 };
 
-struct LlmWeights {
+struct DotsQwen2Weights {
     DotsLlmConfig config;
     std::shared_ptr<core::ExecutionContext> execution_context;
     std::shared_ptr<core::BackendWeightStore> store;
@@ -102,7 +102,7 @@ modules::CausalDecoderRuntimeConfig make_qwen2_decode_runtime_config(const DotsL
     return out;
 }
 
-modules::CausalDecoderRuntimeWeights make_qwen2_decode_runtime_weights(const LlmWeights & weights) {
+modules::CausalDecoderRuntimeWeights make_qwen2_decode_runtime_weights(const DotsQwen2Weights & weights) {
     modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = weights.token_embedding;
     out.stack = weights.stack;
@@ -134,7 +134,7 @@ modules::DecoderLayerWeights load_layer(
     return out;
 }
 
-std::shared_ptr<LlmWeights> load_weights(
+std::shared_ptr<DotsQwen2Weights> load_weights(
     std::shared_ptr<const assets::TensorSource> source,
     core::BackendConfig backend,
     DotsLlmConfig config,
@@ -146,7 +146,7 @@ std::shared_ptr<LlmWeights> load_weights(
         source->has_tensor("llm.model.layers.0.self_attn.k_norm.weight")) {
         throw std::runtime_error("DotTTS LLM q/k norm checkpoint is not implemented");
     }
-    auto weights = std::make_shared<LlmWeights>();
+    auto weights = std::make_shared<DotsQwen2Weights>();
     weights->config = config;
     weights->execution_context = std::make_shared<core::ExecutionContext>(backend);
     weights->store = std::make_shared<core::BackendWeightStore>(
@@ -178,7 +178,7 @@ std::shared_ptr<LlmWeights> load_weights(
 
 class EmbeddingRunner {
 public:
-    explicit EmbeddingRunner(std::shared_ptr<const LlmWeights> weights)
+    explicit EmbeddingRunner(std::shared_ptr<const DotsQwen2Weights> weights)
         : weights_(std::move(weights)) {}
 
     ~EmbeddingRunner() { release_graph(); }
@@ -238,7 +238,7 @@ private:
         steps_ = steps;
     }
 
-    std::shared_ptr<const LlmWeights> weights_;
+    std::shared_ptr<const DotsQwen2Weights> weights_;
     std::mutex mutex_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ggml_;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
@@ -251,7 +251,7 @@ private:
 
 class EosRunner {
 public:
-    explicit EosRunner(std::shared_ptr<const LlmWeights> weights)
+    explicit EosRunner(std::shared_ptr<const DotsQwen2Weights> weights)
         : weights_(std::move(weights)) {}
 
     ~EosRunner() { release_graph(); }
@@ -315,7 +315,7 @@ private:
         core::prepare_host_graph_plan(*weights_->execution_context, graph_, plan_);
     }
 
-    std::shared_ptr<const LlmWeights> weights_;
+    std::shared_ptr<const DotsQwen2Weights> weights_;
     std::mutex mutex_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ggml_;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
@@ -327,27 +327,27 @@ private:
 
 }  // namespace
 
-struct DotsLlmState::Impl {
+struct DotsQwen2State::Impl {
     runtime::TransformerKVState kv;
     int64_t capacity = 0;
     bool decode_advanced = false;
 };
 
-DotsLlmState::DotsLlmState() : impl_(std::make_unique<Impl>()) {}
-DotsLlmState::~DotsLlmState() = default;
-DotsLlmState::DotsLlmState(DotsLlmState &&) noexcept = default;
-DotsLlmState & DotsLlmState::operator=(DotsLlmState &&) noexcept = default;
+DotsQwen2State::DotsQwen2State() : impl_(std::make_unique<Impl>()) {}
+DotsQwen2State::~DotsQwen2State() = default;
+DotsQwen2State::DotsQwen2State(DotsQwen2State &&) noexcept = default;
+DotsQwen2State & DotsQwen2State::operator=(DotsQwen2State &&) noexcept = default;
 
-int64_t DotsLlmState::seq_len() const noexcept {
+int64_t DotsQwen2State::seq_len() const noexcept {
     return impl_ == nullptr ? 0 : impl_->kv.current_end;
 }
 
-int64_t DotsLlmState::capacity() const noexcept {
+int64_t DotsQwen2State::capacity() const noexcept {
     return impl_ == nullptr ? 0 : impl_->capacity;
 }
 
-struct DotsLlmComponent::Impl {
-    explicit Impl(std::shared_ptr<const LlmWeights> weights)
+struct DotsQwen2Component::Impl {
+    explicit Impl(std::shared_ptr<const DotsQwen2Weights> weights)
         : weights(std::move(weights)),
           embedding_runner(std::make_unique<EmbeddingRunner>(this->weights)),
           qwen2_runtime(std::make_unique<modules::CausalDecoderRuntime>(
@@ -356,19 +356,19 @@ struct DotsLlmComponent::Impl {
               make_qwen2_decode_runtime_weights(*this->weights))),
           eos_runner(std::make_unique<EosRunner>(this->weights)) {}
 
-    std::shared_ptr<const LlmWeights> weights;
+    std::shared_ptr<const DotsQwen2Weights> weights;
     std::unique_ptr<EmbeddingRunner> embedding_runner;
     std::unique_ptr<modules::CausalDecoderRuntime> qwen2_runtime;
     std::unique_ptr<EosRunner> eos_runner;
     const void * active_decode_state = nullptr;
 };
 
-DotsLlmComponent DotsLlmComponent::load_from_tensor_source(
+DotsQwen2Component DotsQwen2Component::load_from_tensor_source(
     std::shared_ptr<const assets::TensorSource> source,
     core::BackendConfig backend,
     DotsLlmConfig config,
     assets::TensorStorageType weight_storage_type) {
-    DotsLlmComponent component;
+    DotsQwen2Component component;
     component.impl_ = std::make_unique<Impl>(load_weights(
         std::move(source),
         backend,
@@ -377,23 +377,23 @@ DotsLlmComponent DotsLlmComponent::load_from_tensor_source(
     return component;
 }
 
-DotsLlmComponent::DotsLlmComponent() = default;
-DotsLlmComponent::~DotsLlmComponent() = default;
-DotsLlmComponent::DotsLlmComponent(DotsLlmComponent &&) noexcept = default;
-DotsLlmComponent & DotsLlmComponent::operator=(DotsLlmComponent &&) noexcept = default;
+DotsQwen2Component::DotsQwen2Component() = default;
+DotsQwen2Component::~DotsQwen2Component() = default;
+DotsQwen2Component::DotsQwen2Component(DotsQwen2Component &&) noexcept = default;
+DotsQwen2Component & DotsQwen2Component::operator=(DotsQwen2Component &&) noexcept = default;
 
-bool DotsLlmComponent::is_loaded() const noexcept {
+bool DotsQwen2Component::is_loaded() const noexcept {
     return impl_ != nullptr && impl_->weights != nullptr;
 }
 
-DotsLlmState DotsLlmComponent::create_state(int64_t max_sequence_length) const {
+DotsQwen2State DotsQwen2Component::create_state(int64_t max_sequence_length) const {
     if (impl_ == nullptr || impl_->weights == nullptr) {
         throw std::runtime_error("DotTTS LLM is not initialized");
     }
     if (max_sequence_length <= 0) {
         throw std::runtime_error("DotTTS LLM state capacity must be positive");
     }
-    DotsLlmState state;
+    DotsQwen2State state;
     state.impl_->capacity = max_sequence_length;
     state.impl_->kv.current_end = 0;
     state.impl_->kv.layers.resize(static_cast<size_t>(impl_->weights->config.num_hidden_layers));
@@ -401,17 +401,17 @@ DotsLlmState DotsLlmComponent::create_state(int64_t max_sequence_length) const {
     return state;
 }
 
-std::vector<float> DotsLlmComponent::embed_tokens(const std::vector<int32_t> & token_ids) const {
+std::vector<float> DotsQwen2Component::embed_tokens(const std::vector<int32_t> & token_ids) const {
     if (impl_ == nullptr || impl_->embedding_runner == nullptr) {
         throw std::runtime_error("DotTTS LLM is not initialized");
     }
     return impl_->embedding_runner->run(token_ids);
 }
 
-DotsLlmHidden DotsLlmComponent::prefill_embeddings(
+DotsLlmHidden DotsQwen2Component::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps,
-    DotsLlmState & state) const {
+    DotsQwen2State & state) const {
     if (impl_ == nullptr || impl_->qwen2_runtime == nullptr) {
         throw std::runtime_error("DotTTS LLM is not initialized");
     }
@@ -430,9 +430,9 @@ DotsLlmHidden DotsLlmComponent::prefill_embeddings(
     };
 }
 
-DotsLlmHidden DotsLlmComponent::decode_embedding(
+DotsLlmHidden DotsQwen2Component::decode_embedding(
     const std::vector<float> & embedding,
-    DotsLlmState & state) const {
+    DotsQwen2State & state) const {
     if (impl_ == nullptr || impl_->qwen2_runtime == nullptr) {
         throw std::runtime_error("DotTTS LLM is not initialized");
     }
@@ -462,14 +462,14 @@ DotsLlmHidden DotsLlmComponent::decode_embedding(
     };
 }
 
-float DotsLlmComponent::eos_probability(const std::vector<float> & hidden) const {
+float DotsQwen2Component::eos_probability(const std::vector<float> & hidden) const {
     if (impl_ == nullptr || impl_->eos_runner == nullptr) {
         throw std::runtime_error("DotTTS LLM is not initialized");
     }
     return impl_->eos_runner->run(hidden);
 }
 
-void DotsLlmComponent::release_runtime_graphs() {
+void DotsQwen2Component::release_runtime_graphs() {
     if (impl_ != nullptr && impl_->embedding_runner != nullptr) {
         impl_->embedding_runner->release_graph();
     }

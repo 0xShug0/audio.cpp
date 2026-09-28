@@ -14,14 +14,14 @@ struct TextConditioning {
     std::vector<float> features;
 };
 
-class TextEncoder {
+class T5TextEncoder {
 public:
-    TextEncoder(std::shared_ptr<const assets::TensorSource> source,
+    T5TextEncoder(std::shared_ptr<const assets::TensorSource> source,
                 core::ExecutionContext & execution,
                 const std::filesystem::path & config,
                 const std::filesystem::path & tokenizer,
                 int64_t max_length = 512);
-    ~TextEncoder();
+    ~T5TextEncoder();
     TextConditioning encode(const std::string & text);
 
 private:
