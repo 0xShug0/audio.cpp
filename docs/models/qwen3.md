@@ -227,6 +227,7 @@ audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qw
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `return_timestamps` | bool | `false` | Run the configured forced aligner after ASR. CLI `--words-out` enables this automatically; server requests must enable it explicitly or through `default_request_options`. |
 | `clamp_timestamps_to_audio` | bool | `false` | Opt-in guard for `--words-out`: keep repaired forced-aligner word spans inside each local audio chunk. Default preserves existing timestamp repair behavior. |
 
 ### Session Options (use with `--session-option`)
@@ -235,6 +236,44 @@ audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qw
 |---|---|---:|---|
 | `qwen3_asr.forced_aligner_model_path` | model directory | not set | Qwen3 Forced Aligner model used to generate word timestamps after ASR. |
 | `qwen3_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Optional internal VAD model override for timestamp-safe chunking. |
+
+### Server: Transcript and Word Timestamps
+
+Configure the aligner and VAD with paths visible to the server. Put request
+defaults, including `language`, in `default_request_options`, not `session_options`.
+
+```json
+{
+  "id": "qwen3-asr",
+  "family": "qwen3_asr",
+  "path": "/path/to/qwen3-asr-0.6b-q8_0.gguf",
+  "task": "asr",
+  "mode": "offline",
+  "session_options": {
+    "qwen3_asr.forced_aligner_model_path": "/path/to/qwen3-forced-aligner-0.6b-q8_0.gguf",
+    "qwen3_asr.vad_model_path": "/path/to/assets/framework/models/silero_vad"
+  },
+  "default_request_options": {
+    "language": "English",
+    "return_timestamps": true
+  }
+}
+```
+
+Add that entry to the server config's `models` array, then upload the recording:
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/transcriptions/details \
+  -F model=qwen3-asr \
+  -F language=English \
+  -F file=@input.wav
+```
+
+The response includes `text`, `words` with `start_sample`/`end_sample`, and
+`sample_rate`. Divide sample offsets by `sample_rate` for seconds. The ordinary
+`/v1/audio/transcriptions` endpoint returns text and timing only, even when the
+model generates word timestamps. Timestamp generation uses Silero VAD in the
+default `audio_chunk_mode=auto` path.
 
 ## Qwen3 Forced Aligner
 
