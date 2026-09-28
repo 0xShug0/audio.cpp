@@ -1,4 +1,4 @@
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
@@ -25,75 +25,75 @@ namespace {
 
 int64_t tensor_elements(const std::vector<int64_t> & shape) {
     if (shape.empty()) {
-        throw std::runtime_error("HuBERT tensor shape is empty");
+        throw std::runtime_error("Wav2Vec2 tensor shape is empty");
     }
     return std::accumulate(shape.begin(), shape.end(), int64_t{1}, [](int64_t lhs, int64_t rhs) {
         if (rhs <= 0) {
-            throw std::runtime_error("HuBERT tensor shape contains non-positive dimension");
+            throw std::runtime_error("Wav2Vec2 tensor shape contains non-positive dimension");
         }
         return lhs * rhs;
     });
 }
 
-void validate_config(const HubertEncoderConfig & config) {
+void validate_config(const Wav2Vec2EncoderConfig & config) {
     if (config.hidden_size <= 0 || config.intermediate_size <= 0 || config.num_hidden_layers <= 0 ||
         config.output_hidden_layer < 0 || config.num_attention_heads <= 0 || config.conv_in_channels <= 0 ||
         config.num_conv_pos_embeddings <= 0 || config.num_conv_pos_embedding_groups <= 0) {
-        throw std::runtime_error("HuBERT config contains non-positive dimensions");
+        throw std::runtime_error("Wav2Vec2 config contains non-positive dimensions");
     }
     if (config.output_hidden_layer > config.num_hidden_layers) {
-        throw std::runtime_error("HuBERT output layer cannot exceed hidden layer count");
+        throw std::runtime_error("Wav2Vec2 output layer cannot exceed hidden layer count");
     }
     if (config.final_projection_size < 0) {
-        throw std::runtime_error("HuBERT final projection size cannot be negative");
+        throw std::runtime_error("Wav2Vec2 final projection size cannot be negative");
     }
     if (config.hidden_size % config.num_attention_heads != 0 ||
         config.hidden_size % config.num_conv_pos_embedding_groups != 0) {
-        throw std::runtime_error("HuBERT hidden size must be divisible by head and positional-conv group counts");
+        throw std::runtime_error("Wav2Vec2 hidden size must be divisible by head and positional-conv group counts");
     }
     if (config.conv_dim.empty() || config.conv_dim.size() != config.conv_kernel.size() ||
         config.conv_dim.size() != config.conv_stride.size()) {
-        throw std::runtime_error("HuBERT convolution config is inconsistent");
+        throw std::runtime_error("Wav2Vec2 convolution config is inconsistent");
     }
     for (const int64_t value : config.conv_dim) {
         if (value <= 0) {
-            throw std::runtime_error("HuBERT convolution dimensions must be positive");
+            throw std::runtime_error("Wav2Vec2 convolution dimensions must be positive");
         }
     }
     for (const int64_t value : config.conv_kernel) {
         if (value <= 0) {
-            throw std::runtime_error("HuBERT convolution kernels must be positive");
+            throw std::runtime_error("Wav2Vec2 convolution kernels must be positive");
         }
     }
     for (const int64_t value : config.conv_stride) {
         if (value <= 0) {
-            throw std::runtime_error("HuBERT convolution strides must be positive");
+            throw std::runtime_error("Wav2Vec2 convolution strides must be positive");
         }
     }
 }
 
-core::TensorValue require_tensor(const HubertEncoderWeights & weights, const std::string & name) {
+core::TensorValue require_tensor(const Wav2Vec2EncoderWeights & weights, const std::string & name) {
     const auto it = weights.tensors.find(name);
     if (it == weights.tensors.end()) {
-        throw std::runtime_error("HuBERT missing tensor: " + name);
+        throw std::runtime_error("Wav2Vec2 missing tensor: " + name);
     }
     return it->second;
 }
 
-NormWeights norm_weights(const HubertEncoderWeights & weights, const std::string & prefix) {
+NormWeights norm_weights(const Wav2Vec2EncoderWeights & weights, const std::string & prefix) {
     return NormWeights{
         require_tensor(weights, prefix + ".weight"),
         require_tensor(weights, prefix + ".bias")};
 }
 
-LinearWeights linear_weights(const HubertEncoderWeights & weights, const std::string & prefix) {
+LinearWeights linear_weights(const Wav2Vec2EncoderWeights & weights, const std::string & prefix) {
     return LinearWeights{
         require_tensor(weights, prefix + ".weight"),
         require_tensor(weights, prefix + ".bias")};
 }
 
 Conv1dWeights conv1d_weights(
-    const HubertEncoderWeights & weights,
+    const Wav2Vec2EncoderWeights & weights,
     const std::string & prefix,
     bool use_bias = true) {
     Conv1dWeights out;
@@ -180,7 +180,7 @@ std::vector<float> fold_weight_norm_conv1d(
         }
         const double norm = std::sqrt(sum);
         if (norm == 0.0) {
-            throw std::runtime_error("HuBERT positional-conv weight norm is zero");
+            throw std::runtime_error("Wav2Vec2 positional-conv weight norm is zero");
         }
         const float scale_value = static_cast<float>(static_cast<double>(g[static_cast<size_t>(k)]) / norm);
         for (int64_t out = 0; out < out_channels; ++out) {
@@ -226,7 +226,7 @@ std::vector<float> effective_weight_norm_conv1d(
             kernel_size);
     }
     throw std::runtime_error(
-        "HuBERT positional-conv weights missing: expected " + prefix +
+        "Wav2Vec2 positional-conv weights missing: expected " + prefix +
         ".weight, .weight_g/.weight_v, or .parametrizations.weight.original0/.original1");
 }
 
@@ -245,7 +245,7 @@ std::string indexed_prefix(const std::string & prefix, int64_t index) {
 }
 
 core::TensorValue load_tensor_alias(
-    HubertEncoderWeights & weights,
+    Wav2Vec2EncoderWeights & weights,
     const engine::assets::TensorSource & source,
     const std::string & source_name,
     engine::assets::TensorStorageType storage_type,
@@ -258,7 +258,7 @@ core::TensorValue load_tensor_alias(
 }
 
 void put_tensor_alias(
-    HubertEncoderWeights & weights,
+    Wav2Vec2EncoderWeights & weights,
     const engine::assets::TensorSource & source,
     const std::string & logical_name,
     const std::string & source_name,
@@ -270,7 +270,7 @@ void put_tensor_alias(
 }
 
 void put_f32_tensor_alias(
-    HubertEncoderWeights & weights,
+    Wav2Vec2EncoderWeights & weights,
     const engine::assets::TensorSource & source,
     const std::string & logical_name,
     const std::string & source_name,
@@ -282,7 +282,7 @@ core::TensorValue grouped_pos_conv(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_bct,
     const Conv1dWeights & weights,
-    const HubertEncoderConfig & config) {
+    const Wav2Vec2EncoderConfig & config) {
     const int64_t groups = config.num_conv_pos_embedding_groups;
     const int64_t channels_per_group = config.hidden_size / groups;
     const auto input_contiguous = contiguous(ctx, input_bct);
@@ -313,7 +313,7 @@ core::TensorValue grouped_pos_conv(
 core::TensorValue build_self_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & hidden_btc,
-    const HubertEncoderWeights & weights,
+    const Wav2Vec2EncoderWeights & weights,
     int64_t layer_index,
     const core::TensorValue * attention_mask) {
     const auto & config = weights.config;
@@ -364,7 +364,7 @@ core::TensorValue build_self_attention(
 core::TensorValue build_feed_forward(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & hidden_btc,
-    const HubertEncoderWeights & weights,
+    const Wav2Vec2EncoderWeights & weights,
     int64_t layer_index) {
     const auto & config = weights.config;
     const std::string prefix = "encoder.layers." + std::to_string(layer_index) + ".feed_forward";
@@ -375,11 +375,11 @@ core::TensorValue build_feed_forward(
         .build(ctx, x, linear_weights(weights, prefix + ".output_dense"));
 }
 
-core::TensorValue build_hubert_graph(
+core::TensorValue build_wav2vec2_graph(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_values,
-    const HubertEncoderWeights & weights,
-    const HubertEncoderRunConfig & run_config,
+    const Wav2Vec2EncoderWeights & weights,
+    const Wav2Vec2EncoderRunConfig & run_config,
     std::vector<std::pair<core::TensorValue, std::vector<float>>> & graph_inputs,
     std::vector<core::TensorValue> * layer_outputs = nullptr,
     const std::vector<int64_t> * output_layers = nullptr) {
@@ -389,27 +389,27 @@ core::TensorValue build_hubert_graph(
         : config.output_hidden_layer;
     if (output_layers != nullptr) {
         if (output_layers->empty()) {
-            throw std::runtime_error("HuBERT layer output request cannot be empty");
+            throw std::runtime_error("Wav2Vec2 layer output request cannot be empty");
         }
         output_hidden_layer = 0;
         for (const int64_t layer : *output_layers) {
             if (layer < 0 || layer > config.num_hidden_layers) {
-                throw std::runtime_error("HuBERT requested output layer is out of range");
+                throw std::runtime_error("Wav2Vec2 requested output layer is out of range");
             }
             output_hidden_layer = std::max(output_hidden_layer, layer);
         }
         if (run_config.apply_final_projection) {
-            throw std::runtime_error("HuBERT layer outputs cannot request final projection");
+            throw std::runtime_error("Wav2Vec2 layer outputs cannot request final projection");
         }
     }
     if (output_hidden_layer < 0) {
-        throw std::runtime_error("HuBERT run output layer cannot be negative");
+        throw std::runtime_error("Wav2Vec2 run output layer cannot be negative");
     }
     if (output_hidden_layer > config.num_hidden_layers) {
-        throw std::runtime_error("HuBERT run output layer cannot exceed hidden layer count");
+        throw std::runtime_error("Wav2Vec2 run output layer cannot exceed hidden layer count");
     }
     if (run_config.apply_final_projection && config.final_projection_size <= 0) {
-        throw std::runtime_error("HuBERT run requested final projection but no projection is configured");
+        throw std::runtime_error("Wav2Vec2 run requested final projection but no projection is configured");
     }
     auto hidden = core::reshape_tensor(
         ctx,
@@ -419,7 +419,7 @@ core::TensorValue build_hubert_graph(
     int64_t frames = input_values.shape.dims[1];
     for (size_t index = 0; index < config.conv_dim.size(); ++index) {
         const std::string prefix = "feature_extractor.conv_layers." + std::to_string(index);
-        const bool use_conv_bias = config.feature_extractor_norm == HubertFeatureExtractorNorm::LayerNormEveryLayer;
+        const bool use_conv_bias = config.feature_extractor_norm == Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer;
         hidden = Conv1dModule({
             in_channels,
             config.conv_dim[index],
@@ -428,7 +428,7 @@ core::TensorValue build_hubert_graph(
             0,
             1,
             use_conv_bias}).build(ctx, hidden, conv1d_weights(weights, prefix + ".conv", use_conv_bias));
-        if (config.feature_extractor_norm == HubertFeatureExtractorNorm::LayerNormEveryLayer) {
+        if (config.feature_extractor_norm == Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer) {
             hidden = transpose_bct_btc(ctx, hidden);
             hidden = LayerNormModule({config.conv_dim[index], config.layer_norm_eps, true, true})
                          .build(ctx, hidden, norm_weights(weights, prefix + ".layer_norm"));
@@ -490,7 +490,7 @@ core::TensorValue build_hubert_graph(
 
     for (int64_t layer = 0; layer < output_hidden_layer; ++layer) {
         const std::string prefix = "encoder.layers." + std::to_string(layer);
-        if (config.encoder_layer_norm_order == HubertEncoderLayerNormOrder::PreNorm) {
+        if (config.encoder_layer_norm_order == Wav2Vec2EncoderLayerNormOrder::PreNorm) {
             const auto attn_residual = hidden;
             hidden = LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
                          .build(ctx, hidden, norm_weights(weights, prefix + ".layer_norm"));
@@ -533,30 +533,30 @@ core::TensorValue build_hubert_graph(
     return hidden;
 }
 
-class HubertRunner {
+class Wav2Vec2Runner {
 public:
-    explicit HubertRunner(std::shared_ptr<const HubertEncoderWeights> weights)
+    explicit Wav2Vec2Runner(std::shared_ptr<const Wav2Vec2EncoderWeights> weights)
         : weights_(std::move(weights)) {
         if (weights_ == nullptr || weights_->execution_context == nullptr) {
-            throw std::runtime_error("HuBERT runner requires weights and execution context");
+            throw std::runtime_error("Wav2Vec2 runner requires weights and execution context");
         }
     }
 
-    ~HubertRunner() {
+    ~Wav2Vec2Runner() {
         release_graph();
     }
 
-    HubertEncoderOutput encode(
+    Wav2Vec2EncoderOutput encode(
         const std::vector<float> & input_values,
         int64_t batch,
         int64_t samples,
-        HubertEncoderRunConfig run_config) {
+        Wav2Vec2EncoderRunConfig run_config) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (batch != 1) {
-            throw std::runtime_error("HuBERT encoder currently requires batch size 1");
+            throw std::runtime_error("Wav2Vec2 encoder currently requires batch size 1");
         }
         if (samples <= 0 || static_cast<int64_t>(input_values.size()) != batch * samples) {
-            throw std::runtime_error("HuBERT encoder input size mismatch");
+            throw std::runtime_error("Wav2Vec2 encoder input size mismatch");
         }
         ensure_graph(batch, samples, run_config, {});
         core::write_tensor_f32(input_, input_values);
@@ -564,9 +564,9 @@ public:
             core::write_tensor_f32(graph_input.first, graph_input.second);
         }
         if (engine::core::compute_backend_graph(weights_->execution_context->backend(), graph_) != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("ggml_backend_graph_compute failed for HuBERT encoder");
+            throw std::runtime_error("ggml_backend_graph_compute failed for Wav2Vec2 encoder");
         }
-        HubertEncoderOutput out;
+        Wav2Vec2EncoderOutput out;
         out.hidden_states = core::read_tensor_f32(output_.tensor);
         out.batch = batch;
         out.tokens = output_.shape.dims[1];
@@ -577,20 +577,20 @@ public:
         return out;
     }
 
-    HubertEncoderLayerOutput encode_layers(
+    Wav2Vec2EncoderLayerOutput encode_layers(
         const std::vector<float> & input_values,
         int64_t batch,
         int64_t samples,
         const std::vector<int64_t> & output_layers) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (batch != 1) {
-            throw std::runtime_error("HuBERT encoder currently requires batch size 1");
+            throw std::runtime_error("Wav2Vec2 encoder currently requires batch size 1");
         }
         if (samples <= 0 || static_cast<int64_t>(input_values.size()) != batch * samples) {
-            throw std::runtime_error("HuBERT encoder input size mismatch");
+            throw std::runtime_error("Wav2Vec2 encoder input size mismatch");
         }
         if (output_layers.empty()) {
-            throw std::runtime_error("HuBERT encode_layers requires at least one layer");
+            throw std::runtime_error("Wav2Vec2 encode_layers requires at least one layer");
         }
         std::vector<int64_t> normalized = output_layers;
         std::sort(normalized.begin(), normalized.end());
@@ -601,9 +601,9 @@ public:
             core::write_tensor_f32(graph_input.first, graph_input.second);
         }
         if (engine::core::compute_backend_graph(weights_->execution_context->backend(), graph_) != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("ggml_backend_graph_compute failed for HuBERT encoder layer outputs");
+            throw std::runtime_error("ggml_backend_graph_compute failed for Wav2Vec2 encoder layer outputs");
         }
-        HubertEncoderLayerOutput out;
+        Wav2Vec2EncoderLayerOutput out;
         out.layer_indices = normalized;
         out.batch = batch;
         out.tokens = layer_outputs_.empty() ? 0 : layer_outputs_.front().shape.dims[1];
@@ -651,7 +651,7 @@ private:
     void ensure_graph(
         int64_t batch,
         int64_t samples,
-        const HubertEncoderRunConfig & run_config,
+        const Wav2Vec2EncoderRunConfig & run_config,
         const std::vector<int64_t> & output_layers) {
         const int64_t output_hidden_layer = run_config.output_hidden_layer >= 0
             ? run_config.output_hidden_layer
@@ -672,20 +672,20 @@ private:
         };
         ggml_ = ggml_init(params);
         if (ggml_ == nullptr) {
-            throw std::runtime_error("failed to initialize HuBERT graph context");
+            throw std::runtime_error("failed to initialize Wav2Vec2 graph context");
         }
         core::ModuleBuildContext ctx{
             ggml_,
-            "framework.hubert.encode",
+            "framework.wav2vec2.encode",
             weights_->execution_context->config().type};
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, samples}));
         if (output_layers.empty()) {
-            output_ = build_hubert_graph(ctx, input_, *weights_, run_config, graph_inputs_);
+            output_ = build_wav2vec2_graph(ctx, input_, *weights_, run_config, graph_inputs_);
         } else {
             output_ = {};
-            build_hubert_graph(ctx, input_, *weights_, run_config, graph_inputs_, &layer_outputs_, &output_layers);
+            build_wav2vec2_graph(ctx, input_, *weights_, run_config, graph_inputs_, &layer_outputs_, &output_layers);
             if (layer_outputs_.size() != output_layers.size()) {
-                throw std::runtime_error("HuBERT layer output graph did not produce all requested layers");
+                throw std::runtime_error("Wav2Vec2 layer output graph did not produce all requested layers");
             }
         }
         graph_ = ggml_new_graph_custom(ggml_, 131072, false);
@@ -703,7 +703,7 @@ private:
             !ggml_gallocr_reserve(gallocr_, graph_) ||
             !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             release_graph();
-            throw std::runtime_error("failed to allocate HuBERT graph tensors");
+            throw std::runtime_error("failed to allocate Wav2Vec2 graph tensors");
         }
         batch_ = batch;
         samples_ = samples;
@@ -712,7 +712,7 @@ private:
         output_layers_ = output_layers;
     }
 
-    std::shared_ptr<const HubertEncoderWeights> weights_;
+    std::shared_ptr<const Wav2Vec2EncoderWeights> weights_;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
@@ -730,42 +730,42 @@ private:
 
 }  // namespace
 
-HubertEncoderComponent HubertEncoderComponent::load_from_safetensors(
+Wav2Vec2EncoderRuntime Wav2Vec2EncoderRuntime::load_from_safetensors(
     const std::filesystem::path & checkpoint_path,
     core::BackendConfig backend,
-    HubertEncoderConfig config) {
+    Wav2Vec2EncoderConfig config) {
     const auto source = engine::assets::open_tensor_source(checkpoint_path);
     return load_from_tensor_source(std::move(source), std::move(backend), std::move(config));
 }
 
-HubertEncoderComponent HubertEncoderComponent::load_from_tensor_source(
+Wav2Vec2EncoderRuntime Wav2Vec2EncoderRuntime::load_from_tensor_source(
     std::shared_ptr<const engine::assets::TensorSource> source,
     core::BackendConfig backend,
-    HubertEncoderConfig config) {
+    Wav2Vec2EncoderConfig config) {
     return load_from_tensor_source(
         std::move(source),
         std::move(backend),
         std::move(config),
-        HubertEncoderWeightBinding{});
+        Wav2Vec2EncoderWeightBinding{});
 }
 
-HubertEncoderComponent HubertEncoderComponent::load_from_tensor_source(
+Wav2Vec2EncoderRuntime Wav2Vec2EncoderRuntime::load_from_tensor_source(
     std::shared_ptr<const engine::assets::TensorSource> source,
     core::BackendConfig backend,
-    HubertEncoderConfig config,
-    HubertEncoderWeightBinding binding) {
+    Wav2Vec2EncoderConfig config,
+    Wav2Vec2EncoderWeightBinding binding) {
     if (source == nullptr) {
-        throw std::runtime_error("HuBERT tensor source is missing");
+        throw std::runtime_error("Wav2Vec2 tensor source is missing");
     }
     validate_config(config);
-    auto weights = std::make_shared<HubertEncoderWeights>();
+    auto weights = std::make_shared<Wav2Vec2EncoderWeights>();
     weights->config = std::move(config);
     weights->source_path = source->source_path();
     weights->execution_context = std::make_shared<core::ExecutionContext>(backend);
     weights->store = std::make_shared<core::BackendWeightStore>(
         weights->execution_context->backend(),
         weights->execution_context->backend_type(),
-        "framework.hubert.weights",
+        "framework.wav2vec2.weights",
         1024ull * 1024ull * 1024ull);
 
     const auto & config_ref = weights->config;
@@ -781,7 +781,7 @@ HubertEncoderComponent HubertEncoderComponent::load_from_tensor_source(
             join_name(join_name(source_layer, binding.feature_extractor_conv), "weight"),
             binding.conv_storage_type,
             {config_ref.conv_dim[static_cast<size_t>(index)], in_channels, config_ref.conv_kernel[static_cast<size_t>(index)]});
-        if (config_ref.feature_extractor_norm == HubertFeatureExtractorNorm::LayerNormEveryLayer) {
+        if (config_ref.feature_extractor_norm == Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer) {
             put_f32_tensor_alias(
                 *weights,
                 *source,
@@ -789,7 +789,7 @@ HubertEncoderComponent HubertEncoderComponent::load_from_tensor_source(
                 join_name(join_name(source_layer, binding.feature_extractor_conv), "bias"),
                 {config_ref.conv_dim[static_cast<size_t>(index)]});
         }
-        if (config_ref.feature_extractor_norm == HubertFeatureExtractorNorm::LayerNormEveryLayer ||
+        if (config_ref.feature_extractor_norm == Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer ||
             index == 0) {
             put_f32_tensor_alias(
                 *weights,
@@ -888,7 +888,7 @@ HubertEncoderComponent HubertEncoderComponent::load_from_tensor_source(
                 join_name(join_name(source_attention, proj), "bias"),
                 {config_ref.hidden_size});
         }
-        if (config_ref.encoder_layer_norm_order == HubertEncoderLayerNormOrder::PreNorm) {
+        if (config_ref.encoder_layer_norm_order == Wav2Vec2EncoderLayerNormOrder::PreNorm) {
             put_f32_tensor_alias(
                 *weights,
                 *source,
@@ -970,79 +970,79 @@ HubertEncoderComponent HubertEncoderComponent::load_from_tensor_source(
             {config_ref.final_projection_size});
     }
     if (weights->loaded_tensor_count <= 0) {
-        throw std::runtime_error("HuBERT tensor source contains no loaded tensors");
+        throw std::runtime_error("Wav2Vec2 tensor source contains no loaded tensors");
     }
     weights->store->upload();
     source->release_storage();
-    return HubertEncoderComponent(std::move(weights), backend);
+    return Wav2Vec2EncoderRuntime(std::move(weights), backend);
 }
 
-struct HubertEncoderComponent::State {
-    std::unique_ptr<HubertRunner> runner;
+struct Wav2Vec2EncoderRuntime::State {
+    std::unique_ptr<Wav2Vec2Runner> runner;
 };
 
-HubertEncoderComponent::HubertEncoderComponent(
-    std::shared_ptr<const HubertEncoderWeights> weights,
+Wav2Vec2EncoderRuntime::Wav2Vec2EncoderRuntime(
+    std::shared_ptr<const Wav2Vec2EncoderWeights> weights,
     core::BackendConfig backend)
     : weights_(std::move(weights)),
       backend_(backend),
       state_(std::make_shared<State>()) {
     if (weights_ == nullptr) {
-        throw std::runtime_error("HuBERT component requires weights");
+        throw std::runtime_error("Wav2Vec2 component requires weights");
     }
-    state_->runner = std::make_unique<HubertRunner>(weights_);
+    state_->runner = std::make_unique<Wav2Vec2Runner>(weights_);
 }
 
-const core::BackendConfig & HubertEncoderComponent::backend() const noexcept {
+const core::BackendConfig & Wav2Vec2EncoderRuntime::backend() const noexcept {
     return backend_;
 }
 
-const std::shared_ptr<const HubertEncoderWeights> & HubertEncoderComponent::weights() const noexcept {
+const std::shared_ptr<const Wav2Vec2EncoderWeights> & Wav2Vec2EncoderRuntime::weights() const noexcept {
     return weights_;
 }
 
-int64_t HubertEncoderComponent::hidden_size() const noexcept {
+int64_t Wav2Vec2EncoderRuntime::hidden_size() const noexcept {
     return weights_ == nullptr ? 0 : weights_->config.hidden_size;
 }
 
-int64_t HubertEncoderComponent::loaded_tensor_count() const noexcept {
+int64_t Wav2Vec2EncoderRuntime::loaded_tensor_count() const noexcept {
     return weights_ == nullptr ? 0 : weights_->loaded_tensor_count;
 }
 
-int64_t HubertEncoderComponent::parameter_count() const noexcept {
+int64_t Wav2Vec2EncoderRuntime::parameter_count() const noexcept {
     return weights_ == nullptr ? 0 : weights_->parameter_count;
 }
 
-HubertEncoderOutput HubertEncoderComponent::encode(
+Wav2Vec2EncoderOutput Wav2Vec2EncoderRuntime::encode(
     const std::vector<float> & input_values,
     int64_t batch,
     int64_t samples) const {
     return encode(input_values, batch, samples, {});
 }
 
-HubertEncoderOutput HubertEncoderComponent::encode(
+Wav2Vec2EncoderOutput Wav2Vec2EncoderRuntime::encode(
     const std::vector<float> & input_values,
     int64_t batch,
     int64_t samples,
-    HubertEncoderRunConfig run_config) const {
+    Wav2Vec2EncoderRunConfig run_config) const {
     if (state_ == nullptr || state_->runner == nullptr) {
-        throw std::runtime_error("HuBERT component is not initialized");
+        throw std::runtime_error("Wav2Vec2 component is not initialized");
     }
     return state_->runner->encode(input_values, batch, samples, run_config);
 }
 
-HubertEncoderLayerOutput HubertEncoderComponent::encode_layers(
+Wav2Vec2EncoderLayerOutput Wav2Vec2EncoderRuntime::encode_layers(
     const std::vector<float> & input_values,
     int64_t batch,
     int64_t samples,
     const std::vector<int64_t> & output_layers) const {
     if (state_ == nullptr || state_->runner == nullptr) {
-        throw std::runtime_error("HuBERT component is not initialized");
+        throw std::runtime_error("Wav2Vec2 component is not initialized");
     }
     return state_->runner->encode_layers(input_values, batch, samples, output_layers);
 }
 
-void HubertEncoderComponent::release_runtime_graph() {
+void Wav2Vec2EncoderRuntime::release_runtime_graph() {
     if (state_ != nullptr && state_->runner != nullptr) {
         state_->runner->release_runtime_graph();
     }

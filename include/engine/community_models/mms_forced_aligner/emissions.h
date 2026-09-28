@@ -2,7 +2,7 @@
 
 #include "engine/community_models/mms_forced_aligner/assets.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>
@@ -44,7 +44,7 @@ public:
         MmsEmissionConfig config = {});
 
     // Mixdown/resample to 16 kHz, normalize, window with left/right context,
-    // encode through the HuBERT component with the CTC head, and convert to
+    // encode through the MMS Wav2Vec2 encoder with the CTC head, and convert to
     // [frames, 32] CPU log probabilities. Mirrors the reference
     // ctc-forced-aligner generate_emissions (30s center + 2s context windows;
     // short audio runs un-windowed).
@@ -58,7 +58,7 @@ private:
     engine::assets::TensorStorageType weight_storage_type_;
     MmsEmissionConfig config_;
     // Lazily loaded on first compute; a loaded encoder is non-null.
-    mutable std::unique_ptr<modules::HubertEncoderComponent> encoder_;
+    mutable std::unique_ptr<modules::Wav2Vec2EncoderRuntime> mms_encoder_;
 };
 
 }  // namespace engine::community_models::mms_forced_aligner

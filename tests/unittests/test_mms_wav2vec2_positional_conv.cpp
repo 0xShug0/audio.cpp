@@ -1,7 +1,7 @@
 #include "test_assert.h"
 
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -105,27 +105,27 @@ private:
     std::unordered_map<std::string, Tensor> tensors_;
 };
 
-engine::modules::HubertEncoderConfig tiny_config() {
-    engine::modules::HubertEncoderConfig config;
-    config.hidden_size = kHidden;
-    config.intermediate_size = kIntermediate;
-    config.num_hidden_layers = 1;
-    config.output_hidden_layer = 1;
-    config.num_attention_heads = kHeads;
-    config.conv_dim = {kHidden};
-    config.conv_kernel = {3};
-    config.conv_stride = {2};
-    config.layer_norm_eps = 1.0e-5F;
-    config.num_conv_pos_embeddings = kPosConvKernel;
-    config.num_conv_pos_embedding_groups = kPosConvGroups;
-    config.feature_extractor_norm = engine::modules::HubertFeatureExtractorNorm::LayerNormEveryLayer;
-    config.encoder_layer_norm_order = engine::modules::HubertEncoderLayerNormOrder::PreNorm;
-    return config;
+engine::modules::Wav2Vec2EncoderConfig tiny_mms_config() {
+    engine::modules::Wav2Vec2EncoderConfig mms_config;
+    mms_config.hidden_size = kHidden;
+    mms_config.intermediate_size = kIntermediate;
+    mms_config.num_hidden_layers = 1;
+    mms_config.output_hidden_layer = 1;
+    mms_config.num_attention_heads = kHeads;
+    mms_config.conv_dim = {kHidden};
+    mms_config.conv_kernel = {3};
+    mms_config.conv_stride = {2};
+    mms_config.layer_norm_eps = 1.0e-5F;
+    mms_config.num_conv_pos_embeddings = kPosConvKernel;
+    mms_config.num_conv_pos_embedding_groups = kPosConvGroups;
+    mms_config.feature_extractor_norm = engine::modules::Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer;
+    mms_config.encoder_layer_norm_order = engine::modules::Wav2Vec2EncoderLayerNormOrder::PreNorm;
+    return mms_config;
 }
 
 // Populates every non-positional tensor the tiny config needs. Returns the
 // effective (out, in, kernel) positional-conv kernel computed in the same way
-// the component folds weight-norm layouts.
+// the MMS encoder runtime folds weight-norm layouts.
 std::vector<float> populate_common_tensors(FakeTensorSource & source) {
     const auto fill = [](const std::vector<int64_t> & shape) {
         size_t count = 1;
@@ -214,11 +214,11 @@ std::vector<float> read_backend_tensor(const engine::core::TensorValue & tensor)
 std::vector<float> load_and_read_pos_conv(std::shared_ptr<const engine::assets::TensorSource> source) {
     const engine::core::BackendConfig backend{engine::core::BackendType::Cpu, 0, 1};
     (void) engine::core::init_backend(backend);
-    const auto component = engine::modules::HubertEncoderComponent::load_from_tensor_source(
+    const auto mms_encoder = engine::modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
         std::move(source),
         backend,
-        tiny_config());
-    const auto & tensors = component.weights()->tensors;
+        tiny_mms_config());
+    const auto & tensors = mms_encoder.weights()->tensors;
     const auto it = tensors.find("encoder.pos_conv_embed.conv.weight");
     require(it != tensors.end(), "positional-conv logical tensor missing");
     return read_backend_tensor(it->second);
@@ -291,10 +291,10 @@ bool load_rejected(std::shared_ptr<const engine::assets::TensorSource> source) {
     const engine::core::BackendConfig backend{engine::core::BackendType::Cpu, 0, 1};
     (void) engine::core::init_backend(backend);
     try {
-        (void) engine::modules::HubertEncoderComponent::load_from_tensor_source(
+        (void) engine::modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
             std::move(source),
             backend,
-            tiny_config());
+            tiny_mms_config());
     } catch (const std::exception &) {
         return true;
     }
@@ -350,10 +350,10 @@ int main() {
         test_wrong_scale_shape_rejected();
         test_zero_norm_rejected();
         test_prefolded_shape_mismatch_rejected();
-        std::cout << "mms_hubert_positional_conv_test passed\n";
+        std::cout << "mms_wav2vec2_positional_conv_test passed\n";
         return 0;
     } catch (const std::exception & error) {
-        std::fprintf(stderr, "mms_hubert_positional_conv_test: %s\n", error.what());
+        std::fprintf(stderr, "mms_wav2vec2_positional_conv_test: %s\n", error.what());
         return 1;
     }
 }
