@@ -2840,10 +2840,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(cuda_rope_rows_test tests/unittests/test_cuda_rope_rows.cpp)
         add_test(NAME cuda_rope_rows_test COMMAND cuda_rope_rows_test)
         set_tests_properties(cuda_rope_rows_test PROPERTIES SKIP_RETURN_CODE 77)
-        add_engine_unittest(cuda_head_convert_test tests/unittests/test_cuda_head_convert.cpp)
-        target_link_libraries(cuda_head_convert_test PRIVATE CUDA::cudart_static)
-        add_test(NAME cuda_head_convert_test COMMAND cuda_head_convert_test)
-        set_tests_properties(cuda_head_convert_test PROPERTIES SKIP_RETURN_CODE 77)
+        # This probe calls an internal CUDA symbol, not the backend registry API.
+        if (NOT GGML_BACKEND_DL)
+            add_engine_unittest(cuda_head_convert_test tests/unittests/test_cuda_head_convert.cpp)
+            target_link_libraries(cuda_head_convert_test PRIVATE CUDA::cudart_static)
+            add_test(NAME cuda_head_convert_test COMMAND cuda_head_convert_test)
+            set_tests_properties(cuda_head_convert_test PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
     endif()
 
     add_engine_unittest(sortformer_v2_aosc_test tests/community_models/sortformer_diar/sortformer_v2_aosc_test.cpp)

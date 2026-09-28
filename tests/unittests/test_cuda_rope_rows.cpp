@@ -1,7 +1,7 @@
 #include <ggml.h>
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
-#include <ggml-cuda.h>
+#include "engine/framework/core/backend.h"
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -46,8 +46,10 @@ static std::vector<float> run(ggml_backend_t backend, int lanes, bool strided, i
 }
 
 int main() {
-    if (ggml_backend_cuda_get_device_count() == 0) return 77;
-    auto backend = ggml_backend_cuda_init(0);
+    engine::core::ensure_backends_loaded();
+    auto reg = ggml_backend_reg_by_name("CUDA");
+    if (!reg || ggml_backend_reg_dev_count(reg) == 0) return 77;
+    auto backend = ggml_backend_dev_init(ggml_backend_reg_dev_get(reg, 0), nullptr);
     if (!backend) return 1;
     try {
         for (bool strided : {false, true}) {
