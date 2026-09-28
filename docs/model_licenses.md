@@ -69,6 +69,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `marblenet_vad` | Not linked | Not stated | Unclear | Bundled in `assets/framework/models`; the checkpoint's source is not documented. | 2026-09-21 |
 | `maya1` | [maya-research/maya1](https://huggingface.co/maya-research/maya1)<br>[hubertsiuzdak/snac_24khz](https://huggingface.co/hubertsiuzdak/snac_24khz) | Apache-2.0 (Maya1); MIT (SNAC) | Yes | The combined GGUF contains weights from both projects. | 2026-09-25 |
 | `meanvc2` | [ASLP-lab/MeanVC2](https://huggingface.co/ASLP-lab/MeanVC2) | Apache-2.0 | Yes | | 2026-09-21 |
+| `tone_color_vc` | [myshell-ai/OpenVoiceV2](https://huggingface.co/myshell-ai/OpenVoiceV2) | MIT | Yes | Standalone V2 converter. | 2026-09-27 |
 | `mel_band_roformer` | [mlx-community/mel-roformer-mlx](https://huggingface.co/mlx-community/mel-roformer-mlx) | MIT | Yes | | 2026-09-21 |
 | `midashenglm_gen` | [mispeech/midashenglm-gen](https://huggingface.co/mispeech/midashenglm-gen) | Apache-2.0 | Yes | | 2026-09-21 |
 | `minimax_h3` | [MiniMaxAI/MiniMax-H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) | [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) | Conditional | Grants no rights in the EU, the UK, South Korea or the USA. Elsewhere, written authorization is needed above USD 20M yearly revenue, and "MiniMax H3" must be shown in the product's user interface. | 2026-09-21 |

@@ -661,6 +661,16 @@ audiocpp_add_model(apollo
         engine::models::apollo::make_apollo_loader
 )
 
+audiocpp_add_model(tone_color_vc
+    SOURCES
+        src/models/tone_color_vc/runtime.cpp
+        src/models/tone_color_vc/session.cpp
+    INCLUDES
+        engine/models/tone_color_vc/session.h
+    LOADERS
+        engine::models::tone_color_vc::make_tone_color_vc_loader
+)
+
 audiocpp_add_model(pulsevad
     SOURCES
         src/models/pulsevad/runtime.cpp

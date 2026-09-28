@@ -1,0 +1,112 @@
+{
+  "family": "tone_color_vc",
+  "schema_version": 1,
+  "display_name": "Tone Color VC",
+  "description": "Standalone voice conversion with a reference speaker recording.",
+  "category": "voice_conversion",
+  "status": "experimental",
+  "tasks": [
+    "vc"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "vc": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "seed",
+        "type": "int",
+        "required": false,
+        "description": "Random seed for posterior sampling; -1 chooses a random seed.",
+        "default": 1234,
+        "min": -1
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "required": false,
+        "description": "Posterior sampling noise scale.",
+        "default": 0.3,
+        "min": 0
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "tone_color_vc_f32",
+      "display_name": "Tone Color VC F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Tone-Color-VC-GGUF",
+      "files": [
+        "Tone-Color-VC-GGUF/tone-color-vc-f32.gguf"
+      ],
+      "strip_prefix": "Tone-Color-VC-GGUF"
+    },
+    {
+      "id": "tone_color_vc_f16",
+      "display_name": "Tone Color VC F16 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Tone-Color-VC-GGUF",
+      "files": [
+        "Tone-Color-VC-GGUF/tone-color-vc-f16.gguf"
+      ],
+      "strip_prefix": "Tone-Color-VC-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "tone_color_vc_f32",
+    "tags": [
+      "VC",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/tone_color_vc.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}
