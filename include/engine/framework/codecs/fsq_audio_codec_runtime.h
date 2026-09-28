@@ -40,6 +40,7 @@ struct FsqAudioCodecConfig {
     float rope_theta = 10000.0f;
     std::vector<int64_t> quantization_levels;
     std::string trace_name = "fsq_audio_codec";
+    bool deterministic_overlap_add = false;
 };
 
 struct FsqAudioCodecWeightBinding {

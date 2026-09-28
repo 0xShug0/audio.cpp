@@ -2829,6 +2829,25 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
+    add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
+    add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
+    add_engine_unittest(roformer_mask_accumulation_test tests/unittests/test_roformer_mask_accumulation.cpp)
+    target_include_directories(roformer_mask_accumulation_test PRIVATE src/models/roformer)
+    if (OpenMP_CXX_FOUND)
+        target_link_libraries(roformer_mask_accumulation_test PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+    add_test(NAME roformer_mask_accumulation_test COMMAND roformer_mask_accumulation_test)
+
+    if (ENGINE_ENABLE_VULKAN)
+        add_engine_unittest(inflect_vulkan_attention_row_test tests/unittests/test_inflect_vulkan_attention_row.cpp)
+        target_include_directories(inflect_vulkan_attention_row_test PRIVATE src/community_models/inflect_v2)
+        add_test(NAME inflect_vulkan_attention_row_test COMMAND inflect_vulkan_attention_row_test)
+        set_tests_properties(inflect_vulkan_attention_row_test PROPERTIES SKIP_RETURN_CODE 77)
+        add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
+        add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
+        set_tests_properties(vulkan_shared_weight_cache_test PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+
     add_engine_unittest(auk_conditioning_test tests/auk/conditioning_test.cpp)
     add_engine_unittest(auk_vae_test tests/auk/vae_test.cpp)
     add_engine_unittest(auk_flow_test tests/auk/flow_test.cpp)
@@ -2844,6 +2863,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(cuda_head_convert_test PRIVATE CUDA::cudart_static)
         add_test(NAME cuda_head_convert_test COMMAND cuda_head_convert_test)
         set_tests_properties(cuda_head_convert_test PROPERTIES SKIP_RETURN_CODE 77)
+        add_engine_unittest(cuda_istft_determinism_test tests/unittests/test_cuda_istft_determinism.cpp)
+        target_link_libraries(cuda_istft_determinism_test PRIVATE CUDA::cudart_static)
+        add_test(NAME cuda_istft_determinism_test COMMAND cuda_istft_determinism_test)
+        set_tests_properties(cuda_istft_determinism_test PROPERTIES SKIP_RETURN_CODE 77)
+        add_engine_unittest(fsq_audio_codec_reuse_test tests/unittests/test_fsq_audio_codec_reuse.cpp)
+        target_link_libraries(fsq_audio_codec_reuse_test PRIVATE CUDA::cudart_static)
+        add_test(NAME fsq_audio_codec_reuse_test COMMAND fsq_audio_codec_reuse_test)
+        set_tests_properties(fsq_audio_codec_reuse_test PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 
     add_engine_unittest(sortformer_v2_aosc_test tests/community_models/sortformer_diar/sortformer_v2_aosc_test.cpp)
@@ -2878,6 +2905,30 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_TESTS)
+        add_executable(server_single_slot_compat_test tests/unittests/test_server_busy_guard.cpp)
+        target_compile_definitions(server_single_slot_compat_test PRIVATE AUDIOCPP_TEST_MODEL_SLOTS)
+        target_include_directories(server_single_slot_compat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(server_single_slot_compat_test PRIVATE Threads::Threads)
+        add_test(NAME server_single_slot_compat_test COMMAND server_single_slot_compat_test)
+        set_tests_properties(server_single_slot_compat_test PROPERTIES TIMEOUT 60)
+
+        add_executable(server_model_slots_test tests/unittests/test_server_model_slots.cpp)
+        target_include_directories(server_model_slots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(server_model_slots_test PRIVATE Threads::Threads)
+        add_test(NAME server_model_slots_test COMMAND server_model_slots_test)
+        set_tests_properties(server_model_slots_test PROPERTIES TIMEOUT 60)
+
+        add_executable(session_pool_test tests/unittests/test_session_pool.cpp)
+        target_include_directories(session_pool_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        target_link_libraries(session_pool_test PRIVATE ggml-base Threads::Threads)
+        add_test(NAME session_pool_test COMMAND session_pool_test)
+        set_tests_properties(session_pool_test PROPERTIES TIMEOUT 60)
+
+        add_executable(model_slot_admission_test tests/unittests/test_model_slot_admission.cpp)
+        target_include_directories(model_slot_admission_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(model_slot_admission_test PRIVATE ggml-base Threads::Threads)
+        add_test(NAME model_slot_admission_test COMMAND model_slot_admission_test)
+
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
             add_engine_unittest(kokoro_g2p_probe tests/kokoro_tts/kokoro_g2p_probe.cpp)
@@ -2922,6 +2973,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             NAME citrinet_tokenizer_decode_test
             COMMAND citrinet_tokenizer_decode_test
         )
+
+        if(f5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(f5_cpu_backend_test tests/unittests/test_f5_cpu_backend.cpp)
+            add_test(NAME f5_cpu_backend_test COMMAND f5_cpu_backend_test)
+        endif()
+
+        if(seed_vc IN_LIST AUDIOCPP_LINKED_MODELS)
+            # Manual checkpoint-backed regression; no model downloads in CTest.
+            add_engine_unittest(campplus_graph_reuse_probe tests/seed_vc/campplus_reuse_main.cpp)
+        endif()
 
         add_engine_unittest(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
         add_test(NAME audio_dsp_test COMMAND audio_dsp_test)

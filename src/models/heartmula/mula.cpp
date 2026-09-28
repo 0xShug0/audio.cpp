@@ -1798,8 +1798,16 @@ HeartMuLaWeightsRuntime::HeartMuLaWeightsRuntime(
         throw std::runtime_error("HeartMuLa weights runtime requires positive thread count");
     }
     backend_ = core::init_backend({backend_type, device, threads_});
-    weights_ = std::make_shared<HeartMuLaWeights>(
-        load_heartmula_weights(*assets_, backend_, backend_type, weight_context_bytes, weight_storage_type));
+    const auto load = [&] {
+        return load_heartmula_weights(*assets_, backend_, backend_type, weight_context_bytes, weight_storage_type);
+    };
+    if (backend_type == core::BackendType::Vulkan) {
+        const auto key = "mula:" + std::to_string(device) + ":" +
+            std::to_string(static_cast<int>(weight_storage_type)) + ":" + std::to_string(weight_context_bytes);
+        weights_ = assets_->vulkan_weights->get_or_load<HeartMuLaWeights>(key, load);
+    } else {
+        weights_ = std::make_shared<HeartMuLaWeights>(load());
+    }
     assets_->mula_weights->release_storage();
     backbone_constants_ = std::make_unique<core::ConstantTensorCache>(
         backend_,

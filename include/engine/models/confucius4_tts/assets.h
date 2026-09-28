@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/models/confucius4_tts/types.h"
 
 #include <filesystem>
@@ -22,6 +23,8 @@ struct ConfuciusAssets {
     std::shared_ptr<const assets::TensorSource> semantic_stats;
     std::shared_ptr<const assets::TensorSource> style_encoder_weights;
     std::shared_ptr<const assets::TensorSource> vocoder_weights;
+    // Immutable CUDA tensors are shared by this package; graphs remain per session.
+    std::shared_ptr<core::SharedWeightCache> cuda_weights = std::make_shared<core::SharedWeightCache>();
 };
 
 std::shared_ptr<const ConfuciusAssets> load_confucius_assets(const std::filesystem::path & model_path);

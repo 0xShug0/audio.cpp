@@ -2,6 +2,7 @@
 
 #include "engine/community_models/echo_tts/config.h"
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
@@ -25,6 +26,7 @@ struct EchoTtsAssets {
     // The framework owns the graph; Echo only supplies the config and weights.
     engine::codecs::FishDacCodecConfig codec_config;
     std::shared_ptr<const assets::TensorSource> codec_weights;
+    std::shared_ptr<core::SharedWeightCache> cuda_weights = std::make_shared<core::SharedWeightCache>();
 };
 
 // Encoding a speaker reference is linear in its length -- a 4.5-minute clip is

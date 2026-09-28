@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/framework/decoders/moss_tts_delay/config.h"
 
 #include <cstdint>
@@ -29,7 +30,9 @@ public:
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type,
-        ggml_type cache_type = GGML_TYPE_F32);
+        ggml_type cache_type = GGML_TYPE_F32,
+        // Optional package cache for read-only CUDA/Vulkan tensors only.
+        const core::SharedWeightCache * shared_device_weights = nullptr);
     ~MossTtsDelayBackboneRuntime();
 
     MossTtsDelayBackboneRuntime(const MossTtsDelayBackboneRuntime &) = delete;

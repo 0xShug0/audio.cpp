@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,9 @@ struct AudioSRConfig {
 };
 
 struct AudioSRAssets {
+    // Seeded CUDA output is stable serially, but not under overlapping graphs.
+    // Share the guard only between slots using this loaded package.
+    mutable std::mutex cuda_execution_mutex;
     std::filesystem::path model_root;
     std::filesystem::path gguf_path;
     std::string variant = "basic";

@@ -22,6 +22,15 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+std::unique_lock<std::mutex> guard_cuda_execution(
+    const AceStepAssets & assets, const core::ExecutionContext & execution) {
+    std::unique_lock<std::mutex> lock(assets.cuda_execution_mutex, std::defer_lock);
+    if (execution.backend_type() == core::BackendType::Cuda) {
+        lock.lock();
+    }
+    return lock;
+}
+
 std::shared_ptr<const AceStepAssets> require_assets(std::shared_ptr<const AceStepAssets> assets) {
     if (assets == nullptr) {
         throw std::runtime_error("ACE-Step session requires assets");
@@ -214,6 +223,7 @@ runtime::RunMode AceStepSession::run_mode() const {
 }
 
 void AceStepSession::prepare(const runtime::SessionPreparationRequest &request) {
+    const auto cuda_guard = guard_cuda_execution(*assets_, execution_context());
     ensure_planner();
     if (rewrite_caption_requested(request.options)) {
         mark_prepared();
@@ -237,6 +247,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
     engine::debug::timing_log_scalar("ace_step.session.parse_request_ms", engine::debug::elapsed_ms(parse_start, Clock::now()));
     const bool flow_edit_morph = ace_step_request_uses_flow_edit_morph(ace_request);
     if (ace_request.rewrite_caption) {
+        const auto cuda_guard = guard_cuda_execution(*assets_, execution_context());
         if (flow_edit_morph || !route.uses_planner) {
             throw std::runtime_error("ACE-Step rewrite_caption requires a planner route");
         }
@@ -282,6 +293,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
         (ace_request.generation.thinking || ace_step_request_needs_lm_for_cot(ace_request));
     const bool generate_planner_audio_codes = ace_request.generation.thinking && !has_request_audio_codes;
     if (use_planner) {
+        const auto cuda_guard = guard_cuda_execution(*assets_, execution_context());
         const auto planner_ensure_start = Clock::now();
         ensure_planner();
         engine::debug::timing_log_scalar("ace_step.session.ensure_planner_ms",
@@ -310,6 +322,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
     apply_request_audio_codes(plan, ace_request);
     validate_task_route_source_input(ace_request, route, plan);
 
+    auto cuda_stage_guard = guard_cuda_execution(*assets_, execution_context());
     const auto pre_dit_ensure_start = Clock::now();
     ensure_pre_dit();
     engine::debug::timing_log_scalar("ace_step.session.ensure_pre_dit_ms",
@@ -334,6 +347,8 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
     }
     const AceStepGenerationOptions generation_options =
         normalize_generation_options_for_model(ace_request.generation, *assets_);
+    if (cuda_stage_guard.owns_lock()) cuda_stage_guard.unlock();
+    cuda_stage_guard = guard_cuda_execution(*assets_, execution_context());
     const auto diffusion_start = Clock::now();
     AceStepLatents latents = diffusion_->generate_latents(conditioning, generation_options);
     engine::debug::timing_log_scalar("ace_step.session.diffusion_generate_ms",
@@ -343,7 +358,9 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
     diffusion_->release_graph_workspace();
     engine::debug::timing_log_scalar("ace_step.session.diffusion_release.graph.workspace_ms",
                                      engine::debug::elapsed_ms(diffusion_release_start, Clock::now()));
+    if (cuda_stage_guard.owns_lock()) cuda_stage_guard.unlock();
 
+    cuda_stage_guard = guard_cuda_execution(*assets_, execution_context());
     const auto vae_ensure_start = Clock::now();
     ensure_vae_decoder();
     engine::debug::timing_log_scalar("ace_step.session.ensure_vae_decoder_ms",
@@ -359,6 +376,7 @@ runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
             engine::debug::elapsed_ms(vae_release_start, Clock::now()));
     }
 
+    if (cuda_stage_guard.owns_lock()) cuda_stage_guard.unlock();
     const auto repaint_splice_start = Clock::now();
     if (route.task == AceStepTaskType::Repaint) {
         if (!conditioning.pre_dit.repaint_splice_audio.has_value()) {

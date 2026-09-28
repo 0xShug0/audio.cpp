@@ -247,6 +247,20 @@ std::shared_ptr<Qwen35Weights> load_qwen35_weights(
     return weights;
 }
 
+std::shared_ptr<const Qwen35Weights> load_session_qwen35_weights(
+    const FireRedAudioAssets & assets,
+    core::ExecutionContext & execution,
+    size_t weight_context_bytes,
+    assets::TensorStorageType storage_type) {
+    const auto load = [&] { return load_qwen35_weights(assets, execution, weight_context_bytes, storage_type); };
+    if (execution.backend_type() != core::BackendType::Vulkan) {
+        return load();
+    }
+    const auto key = "qwen35:" + std::to_string(execution.config().device) + ":" +
+        std::to_string(static_cast<int>(storage_type)) + ":" + std::to_string(weight_context_bytes);
+    return assets.vulkan_weights->get_or_load_shared<Qwen35Weights>(key, load);
+}
+
 core::TensorValue reshape_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -1267,7 +1281,7 @@ public:
 	        size_t weight_context_bytes,
 	        assets::TensorStorageType storage_type)
 	        : assets_(std::move(assets)),
-	          weights_(load_qwen35_weights(*assets_, execution, weight_context_bytes, storage_type)),
+	          weights_(load_session_qwen35_weights(*assets_, execution, weight_context_bytes, storage_type)),
 	          token_embedding_(execution, weights_, assets_->backbone, graph_arena_bytes),
 	          forward_(execution, weights_, assets_->backbone, graph_arena_bytes),
 	          lm_head_(execution, weights_, assets_->backbone, graph_arena_bytes),
@@ -1308,7 +1322,7 @@ public:
 
 private:
     std::shared_ptr<const FireRedAudioAssets> assets_;
-    std::shared_ptr<Qwen35Weights> weights_;
+    std::shared_ptr<const Qwen35Weights> weights_;
     TokenEmbeddingGraph token_embedding_;
     BackboneForwardGraph forward_;
     LmHeadGraph lm_head_;

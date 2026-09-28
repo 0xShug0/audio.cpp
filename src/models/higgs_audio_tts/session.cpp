@@ -141,7 +141,9 @@ HiggsGenerationOptions generation_options_from_request(
 HiggsTTSSession::HiggsTTSSession(
     runtime::TaskSpec task,
     runtime::SessionOptions options,
-    std::shared_ptr<const HiggsAssets> assets)
+    std::shared_ptr<const HiggsAssets> assets,
+    std::shared_ptr<const HiggsARWeights> ar_weights,
+    std::shared_ptr<const HiggsCodecWeights> codec_weights)
     : RuntimeSessionBase(options),
       task_(task),
       assets_(std::move(assets)),
@@ -203,19 +205,39 @@ HiggsTTSSession::HiggsTTSSession(
         execution_context(),
         ar_weight_context_bytes_,
         ar_weight_storage_type_,
-        attention_preference);
+        attention_preference, std::move(ar_weights));
     codec_ = std::make_shared<HiggsCodecRuntime>(
         assets_,
         execution_context(),
         codec_weight_context_bytes_,
         codec_decode_graph_arena_bytes_,
         codec_encode_graph_arena_bytes_,
-        codec_weight_storage_type_);
+        codec_weight_storage_type_, std::move(codec_weights));
     generator_ = std::make_unique<HiggsGenerator>(
         assets_,
         ar_,
         codec_,
         ar_decode_graph_arena_bytes_);
+}
+
+size_t HiggsTTSSession::parallel_session_capacity() const noexcept {
+    if (task_.mode != runtime::RunMode::Offline) {
+        return 1;
+    }
+    if (options().backend.type == core::BackendType::Cuda) {
+        return runtime::kMaxParallelSessions;
+    }
+    // Vulkan clones own their execution contexts, graphs and caches while
+    // sharing immutable device weights. Keep the ceiling at the tested count.
+    return options().backend.type == core::BackendType::Vulkan ? 4 : 1;
+}
+
+std::unique_ptr<runtime::IVoiceTaskSession> HiggsTTSSession::create_parallel_session() const {
+    if (parallel_session_capacity() == 1) {
+        throw std::runtime_error("Higgs parallel sessions currently require CUDA or Vulkan offline execution");
+    }
+    return std::make_unique<HiggsTTSSession>(task_, options(), assets_,
+        ar_->shared_weights(), codec_->shared_weights());
 }
 
 std::string HiggsTTSSession::family() const {

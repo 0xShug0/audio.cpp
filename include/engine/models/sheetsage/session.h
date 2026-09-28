@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/models/sheetsage/runtime.h"
 #include "engine/models/sheetsage/audio_frontend.h"
@@ -18,6 +19,7 @@ struct SheetSage2Assets {
     assets::ResourceBundle resources;
     SheetSage2DecoderConfig config;
     std::shared_ptr<const assets::TensorSource> weights;
+    std::shared_ptr<core::SharedWeightCache> cuda_weights = std::make_shared<core::SharedWeightCache>();
     engine::audio::SparseMelFilterbank mel_filterbank;
     std::vector<float> mel_mean;
     std::vector<float> mel_std;

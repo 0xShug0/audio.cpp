@@ -164,7 +164,8 @@ void MossTtsdSession::prepare(const runtime::SessionPreparationRequest &) {
     backbone_ = std::make_unique<decoders::MossTtsDelayBackboneRuntime>(
         assets_->config, assets_->model_weights, execution_context(),
         backbone_graph_arena_bytes_, backbone_weight_context_bytes_, weight_storage_type_,
-        use_f16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
+        use_f16 ? GGML_TYPE_F16 : GGML_TYPE_F32,
+        execution_context().backend_type() == core::BackendType::Cuda ? assets_->cuda_weights.get() : nullptr);
     heads_ = std::make_unique<decoders::MossTtsDelayHeadsRuntime>(
         assets_->config, assets_->model_weights, execution_context(),
         heads_graph_arena_bytes_, heads_weight_context_bytes_, weight_storage_type_);

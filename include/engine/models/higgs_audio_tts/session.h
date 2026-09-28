@@ -17,12 +17,18 @@ namespace engine::models::higgs_audio_tts {
 
 class HiggsTTSSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::IParallelVoiceTaskSessionFactory {
 public:
     HiggsTTSSession(
         runtime::TaskSpec task,
         runtime::SessionOptions options,
-        std::shared_ptr<const HiggsAssets> assets);
+        std::shared_ptr<const HiggsAssets> assets,
+        std::shared_ptr<const HiggsARWeights> ar_weights = nullptr,
+        std::shared_ptr<const HiggsCodecWeights> codec_weights = nullptr);
+
+    size_t parallel_session_capacity() const noexcept override;
+    std::unique_ptr<runtime::IVoiceTaskSession> create_parallel_session() const override;
 
     std::string family() const override;
     runtime::VoiceTaskKind task_kind() const override;

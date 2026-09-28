@@ -1,5 +1,7 @@
 #include "engine/community_models/inflect_v2/runtime.h"
 
+#include "vulkan_graph.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -327,7 +329,7 @@ core::TensorValue relative_value_output(
     core::TensorValue output;
     for (int64_t row = 0; row < length; ++row) {
         const auto probability_row =
-            modules::SliceModule({2, row, 1}).build(ctx, probabilities);
+            detail::attention_probability_row(ctx, probabilities, row);
         const auto value_window = modules::SliceModule({
             2,
             length - 1 - row,
@@ -822,11 +824,13 @@ struct GraphResources {
     ggml_backend_buffer_t io_buffer = nullptr;
     ggml_gallocr_t allocator = nullptr;
     ggml_backend_t backend = nullptr;
+    core::BackendType backend_type = core::BackendType::Cpu;
     ggml_backend_graph_plan_t plan = nullptr;
     ggml_cgraph * graph = nullptr;
 };
 
 void allocate_graph(GraphResources & resources) {
+    detail::configure_vulkan_graph(resources.graph, resources.backend_type);
     resources.io_buffer =
         ggml_backend_alloc_ctx_tensors(resources.io_context.get(), resources.backend);
     if (resources.io_buffer == nullptr) {
@@ -875,6 +879,7 @@ std::unique_ptr<DurationGraph> build_duration_graph(
     auto out = std::make_unique<DurationGraph>();
     out->backend = backend;
     out->token_count = token_count;
+    out->backend_type = backend_type;
     out->io_context.reset(ggml_init({kIoArenaBytes, nullptr, true}));
     out->graph_context.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
     if (out->io_context == nullptr || out->graph_context == nullptr) {
@@ -935,6 +940,7 @@ std::unique_ptr<DecoderGraph> build_decoder_graph(
     auto out = std::make_unique<DecoderGraph>();
     out->backend = backend;
     out->latent_frames = latent_frames;
+    out->backend_type = backend_type;
     out->io_context.reset(ggml_init({kIoArenaBytes, nullptr, true}));
     out->graph_context.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
     if (out->io_context == nullptr || out->graph_context == nullptr) {

@@ -189,24 +189,46 @@ std::vector<int32_t> iota_positions(int64_t count) {
 
 class EchoDitRuntime::Impl {
 public:
+    struct SharedWeights {
+        std::shared_ptr<core::BackendWeightStore> store;
+        EchoDitWeights weights;
+    };
+
     Impl(
         const EchoTtsConfig & config,
         const assets::TensorSource & source,
         const std::string & tensor_prefix,
         core::ExecutionContext & execution,
-        assets::TensorStorageType matmul_storage_type)
+        assets::TensorStorageType matmul_storage_type,
+        const core::SharedWeightCache * shared_device_weights)
         : config_(config),
           execution_(execution),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
-          threads_(std::max(1, execution.config().threads)),
-          store_(backend_, backend_type_, "Echo-TTS DiT weights", kWeightContextBytes) {
+          threads_(std::max(1, execution.config().threads)) {
         config_.validate();
         if (backend_ == nullptr) {
             throw std::runtime_error("Echo-TTS DiT backend initialization failed");
         }
-        weights_ = load_dit_weights(config_, store_, source, tensor_prefix, matmul_storage_type);
-        store_.upload();
+        const auto load = [&] {
+            SharedWeights out;
+            out.store = std::make_shared<core::BackendWeightStore>(
+                backend_, backend_type_, "Echo-TTS DiT weights", kWeightContextBytes);
+            out.weights = load_dit_weights(config_, *out.store, source, tensor_prefix, matmul_storage_type);
+            out.store->upload();
+            return out;
+        };
+        if (backend_type_ == core::BackendType::Cuda && shared_device_weights != nullptr) {
+            const auto key = "echo.dit:" + std::to_string(execution.config().device) + ":" +
+                std::to_string(static_cast<int>(matmul_storage_type)) + ":" + tensor_prefix;
+            const auto shared = shared_device_weights->get_or_load<SharedWeights>(key, load);
+            store_ = shared->store;
+            weights_ = shared->weights;
+        } else {
+            auto own = load();
+            store_ = std::move(own.store);
+            weights_ = std::move(own.weights);
+        }
     }
 
     ~Impl() { release_all(); }
@@ -803,7 +825,7 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    core::BackendWeightStore store_;
+    std::shared_ptr<core::BackendWeightStore> store_;
     EchoDitWeights weights_;
 
     bool conditioning_ready_ = false;
@@ -839,8 +861,9 @@ EchoDitRuntime::EchoDitRuntime(
     const assets::TensorSource & source,
     const std::string & tensor_prefix,
     core::ExecutionContext & execution,
-    assets::TensorStorageType matmul_storage_type)
-    : impl_(std::make_unique<Impl>(config, source, tensor_prefix, execution, matmul_storage_type)) {}
+    assets::TensorStorageType matmul_storage_type,
+    const core::SharedWeightCache * shared_device_weights)
+    : impl_(std::make_unique<Impl>(config, source, tensor_prefix, execution, matmul_storage_type, shared_device_weights)) {}
 
 EchoDitRuntime::~EchoDitRuntime() = default;
 

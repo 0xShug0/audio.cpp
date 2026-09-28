@@ -285,7 +285,8 @@ void EchoTtsSession::prepare(const runtime::SessionPreparationRequest & request)
             // "dit_weights/" prefix by the resource bundle.
             "",
             execution_context(),
-            assets::TensorStorageType::Native);
+            assets::TensorStorageType::Native,
+            assets_->cuda_weights.get());
     }
     if (codec_ == nullptr) {
         if (assets_->codec_weights == nullptr) {

@@ -136,6 +136,7 @@ F5TTSSession::F5TTSSession(
                 "f5_tts.frame_budget must be within [256, 8192] mel frames");
         }
     }
+    backend_type_ = options.backend.type;
     use_cuda_ = options.backend.type == core::BackendType::Cuda;
     cuda_device_ = options.backend.device;
     threads_ = options.backend.threads;
@@ -203,6 +204,7 @@ runtime::TaskResult F5TTSSession::run(const runtime::TaskRequest & request) {
         req.strip_diacritics = runtime::parse_bool_option(*v, "strip_diacritics");
     }
     req.use_cuda = use_cuda_;
+    req.backend_type = backend_type_;
     req.frame_budget = frame_budget_;
     req.cuda_device = cuda_device_;
     req.threads = threads_;

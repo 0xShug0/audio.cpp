@@ -4,8 +4,6 @@
 
 #include "engine/community_models/f5_tts/runtime.h"
 
-#include "cpu_graph_compute.h"
-
 #include "engine/framework/core/backend.h"
 
 #include "ggml.h"
@@ -14,6 +12,7 @@
 
 #include <algorithm>
 #include <map>
+#include <tuple>
 #include <chrono>
 #include <random>
 #include <cstdio>
@@ -666,6 +665,9 @@ std::vector<float> vocos_decode_gpu(
     const std::string & vocos_path,
     const std::vector<float> & mel_rows,
     const F5ComputeDevice & dev) {
+    // The cached graph owns mutable inputs, outputs and allocator scratch.
+    static std::mutex graph_mutex;
+    const std::lock_guard<std::mutex> lock(graph_mutex);
     const auto & v = load_vocos_once(vocos_path);
     const int T = static_cast<int>(mel_rows.size()) / kNMel;
     const int D = 512;
@@ -677,38 +679,30 @@ std::vector<float> vocos_decode_gpu(
     struct BackendOwnerV {
         ggml_backend_t value = nullptr;
     };
-    static auto * owners = new std::map<int, BackendOwnerV>();
-    const int key = dev.use_cuda ? dev.device : -1;
-    ggml_backend_t backend = nullptr;
-    if (dev.use_cuda) {
-        auto ob = owners->find(key);
-        if (ob == owners->end()) {
-            core::BackendConfig cfg{core::BackendType::Cuda, dev.device, 1};
-            ob = owners->emplace(key, BackendOwnerV{core::init_backend(cfg)}).first;
-        }
-        backend = ob->second.value;
-    } else {
-        auto ob = owners->find(key);
-        if (ob == owners->end()) {
-            core::BackendConfig cfg{core::BackendType::Cpu, 0, std::max(1, dev.threads)};
-            ob = owners->emplace(key, BackendOwnerV{core::init_backend(cfg)}).first;
-        }
-        backend = ob->second.value;
+    const auto type = f5_backend_type(dev);
+    const int device = type == core::BackendType::Cpu ? 0 : dev.device;
+    const auto key = std::make_pair(static_cast<int>(type), device);
+    static auto * owners = new std::map<std::pair<int, int>, BackendOwnerV>();
+    auto ob = owners->find(key);
+    if (ob == owners->end()) {
+        core::BackendConfig cfg{type, device, type == core::BackendType::Cpu ? std::max(1, dev.threads) : 1};
+        ob = owners->emplace(key, BackendOwnerV{core::init_backend(cfg)}).first;
     }
-    const bool is_cuda = dev.use_cuda;
+    ggml_backend_t backend = ob->second.value;
+    const bool is_device = type != core::BackendType::Cpu;
 
-    // graph cache per (T, device)
-    static auto * cache = new std::map<std::pair<int, int>, std::unique_ptr<VocosGraph>>();
-    const auto ckey = std::make_pair(T, key);
+    // Graph and buffer ownership is separate for each backend/device.
+    static auto * cache = new std::map<std::tuple<int, int, int>, std::unique_ptr<VocosGraph>>();
+    const auto ckey = std::make_tuple(T, static_cast<int>(type), device);
     auto it = cache->find(ckey);
     if (it == cache->end()) {
         auto g = std::make_unique<VocosGraph>();
         const size_t ctx_bytes = 256ULL << 20;
-        g->ctx = ggml_init({ctx_bytes, nullptr, is_cuda});
+        g->ctx = ggml_init({ctx_bytes, nullptr, is_device});
         ggml_context * ctx = g->ctx;
         std::vector<std::pair<ggml_tensor *, std::vector<uint8_t>>> pending;
         const auto leaf_write = [&](ggml_tensor * t, const void * src, size_t bytes) {
-            if (!is_cuda) {
+            if (!is_device) {
                 std::memcpy(t->data, src, bytes);
             } else {
                 const auto * b = static_cast<const uint8_t *>(src);
@@ -716,7 +710,7 @@ std::vector<float> vocos_decode_gpu(
             }
         };
         const auto leaf_zero = [&](ggml_tensor * t, size_t bytes) {
-            if (!is_cuda) {
+            if (!is_device) {
                 std::memset(t->data, 0, bytes);
             } else {
                 pending.emplace_back(t, std::vector<uint8_t>(bytes, 0));
@@ -793,7 +787,7 @@ std::vector<float> vocos_decode_gpu(
         g->graph = ggml_new_graph_custom(ctx, 8192, false);
         ggml_build_forward_expand(g->graph, spec);
         core::validate_backend_graph_supported(backend, g->graph, "f5_vocos");
-        if (is_cuda) {
+        if (is_device) {
             g->io_buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
             for (auto & leaf : pending) {
                 ggml_backend_tensor_set(leaf.first, leaf.second.data(), 0, leaf.second.size());
@@ -801,7 +795,7 @@ std::vector<float> vocos_decode_gpu(
             g->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
             if (g->gallocr == nullptr || !ggml_gallocr_reserve(g->gallocr, g->graph) ||
                 !ggml_gallocr_alloc_graph(g->gallocr, g->graph)) {
-                throw std::runtime_error("vocos CUDA graph alloc failed");
+                throw std::runtime_error("vocos device graph alloc failed");
             }
         }
         it = cache->emplace(ckey, std::move(g)).first;
@@ -809,17 +803,17 @@ std::vector<float> vocos_decode_gpu(
     VocosGraph & g = *it->second;
 
     // upload mel + compute
-    if (is_cuda) {
+    if (is_device) {
         ggml_backend_tensor_set(g.mel, mel_rows.data(), 0, mel_rows.size() * sizeof(float));
     } else {
         std::memcpy(g.mel->data, mel_rows.data(), mel_rows.size() * sizeof(float));
     }
-    const auto status = is_cuda
+    const auto status = is_device
         ? core::compute_backend_graph(backend, g.graph, nullptr, "f5_vocos")
-        : f5_cpu_graph_compute(g.ctx, g.graph,
+        : f5_cpu_graph_compute(backend, g.graph,
               dev.threads > 0 ? dev.threads
                               : static_cast<int>(std::thread::hardware_concurrency()));
-    if (is_cuda) {
+    if (is_device) {
         ggml_backend_synchronize(backend);
     }
     if (status != GGML_STATUS_SUCCESS) {
@@ -827,7 +821,7 @@ std::vector<float> vocos_decode_gpu(
     }
     // spec: ne [1026, T] o-fastest == row t at t*1026 — same as host layout
     std::vector<float> spec(static_cast<size_t>(T) * 2 * n_freqs);
-    if (is_cuda) {
+    if (is_device) {
         ggml_backend_tensor_get(g.spec, spec.data(), 0, spec.size() * sizeof(float));
     } else {
         std::memcpy(spec.data(), ggml_get_data(g.spec), spec.size() * sizeof(float));
@@ -1197,6 +1191,7 @@ F5SynthesisResult f5_synthesize(
 
     F5ComputeDevice dev;
     dev.use_cuda = request.use_cuda;
+    dev.backend_type = request.backend_type;
     dev.device = request.cuda_device;
     dev.threads = request.threads;
 
@@ -1250,7 +1245,7 @@ F5SynthesisResult f5_synthesize(
         all_rows.insert(all_rows.end(), out.gen_mel_rows.begin(), out.gen_mel_rows.end());
     }
 
-    result.audio = request.use_cuda
+    result.audio = f5_backend_type(dev) != core::BackendType::Cpu
         ? vocos_decode_gpu(vocos_path, all_rows, dev)
         : vocos_decode(vocos_path, all_rows);
     // undo the reference normalization on the output (Python F5 parity)

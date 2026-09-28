@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/framework/tokenizers/sentencepiece.h"
 
 #include <cstdint>
@@ -70,6 +71,7 @@ struct PersonaPlexVoicePrompt {
 };
 
 struct PersonaPlexAssets {
+    std::shared_ptr<core::SharedWeightCache> vulkan_weights = std::make_shared<core::SharedWeightCache>();
     assets::ResourceBundle resources;
     PersonaPlexConfig config;
     std::vector<engine::tokenizers::SentencePiecePiece> tokenizer_pieces;

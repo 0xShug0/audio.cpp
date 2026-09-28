@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/shared_weight_cache.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -79,6 +80,7 @@ struct HeartCodecConfig {
 };
 
 struct HeartMuLaAssets {
+    std::shared_ptr<core::SharedWeightCache> vulkan_weights = std::make_shared<core::SharedWeightCache>();
     assets::ResourceBundle resources;
     HeartMuLaConfig mula_config;
     HeartMuLaGenerationConfig generation_config;

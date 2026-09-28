@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/shared_weight_cache.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -59,6 +60,7 @@ struct OuteTTSAssets {
     OuteTTSGenerationConfig generation;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> dac_weights;
+    std::shared_ptr<core::SharedWeightCache> cuda_weights = std::make_shared<core::SharedWeightCache>();
     std::shared_ptr<const engine::models::qwen3_asr::Qwen3ASRAssets>
         embedded_aligner;
 };

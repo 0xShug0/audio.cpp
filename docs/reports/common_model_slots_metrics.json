@@ -1,0 +1,130 @@
+{
+  "date": "2026-09-26",
+  "base": "ab862077",
+  "gpu": "RTX 3090 24 GiB",
+  "cuda": "12.4",
+  "platform": "Windows / MSVC Release",
+  "cpu_threads_per_server": 8,
+  "warm_repeats": 3,
+  "model_sha256": "6140c39b4d3baa24082fb0614069ad87644c8449525396865940dd8cbefe2db6",
+  "model_bytes": 5095340672,
+  "text": "Ptaszki ćwierkają, że Apple chce wrócić na rynek serwerów dostarczając chłonnemu rynkowi AI swoje własne rozwiązania bazujące na zmodyfikowanych układach z serii M.",
+  "seed": 1234,
+  "max_tokens": 1024,
+  "reference_audio": "assets/resources/b.wav",
+  "audio_sha256": {
+    "cold": "b34983738b8300a364ce4321a6bfd153b5da54d8238ca9693efea19fa1a8d5f3",
+    "warm": "a11fb5604f732a56f2b9a40d4d9e517b8b5ec5049120addbd00873dfaa7a7e03"
+  },
+  "benchmark_wavs_compared": 76,
+  "results": [
+    {
+      "requests": 1,
+      "estimated_sequential_s": 2.1493172999907983,
+      "shared_median_s": 2.1493172999907983,
+      "instances_median_s": 2.1493172999907983,
+      "time_saved_vs_instances_pct": 0.0,
+      "time_saved_vs_sequential_pct": 0.0,
+      "throughput_gain_vs_sequential_pct": 0.0,
+      "shared_warm_peak_GiB": 5.399742126464844,
+      "instances_warm_peak_GiB": 5.399742126464844,
+      "shared_loaded_GiB": 4.930992126464844,
+      "instances_loaded_GiB": 4.930992126464844,
+      "shared_warm_batch_samples_s": [
+        2.147447399998782,
+        2.1498712000029627,
+        2.1493172999907983
+      ],
+      "instances_warm_batch_samples_s": [
+        2.147447399998782,
+        2.1498712000029627,
+        2.1493172999907983
+      ],
+      "shared_cold_s": 2.299695100009558,
+      "instances_cold_s": 2.299695100009558,
+      "shared_cold_peak_GiB": 5.440757751464844,
+      "instances_cold_peak_GiB": 5.440757751464844
+    },
+    {
+      "requests": 2,
+      "estimated_sequential_s": 4.298634599981597,
+      "shared_median_s": 3.7325468999915756,
+      "instances_median_s": 6.241139199992176,
+      "time_saved_vs_instances_pct": 40.194461613734646,
+      "time_saved_vs_sequential_pct": 13.1690118530299,
+      "throughput_gain_vs_sequential_pct": 15.16625819199482,
+      "shared_warm_peak_GiB": 5.833335876464844,
+      "instances_warm_peak_GiB": 10.799484252929688,
+      "shared_loaded_GiB": 4.930992126464844,
+      "instances_loaded_GiB": 9.861984252929688,
+      "shared_warm_batch_samples_s": [
+        3.7226552000065567,
+        3.7352686999947764,
+        3.7325468999915756
+      ],
+      "instances_warm_batch_samples_s": [
+        6.241139199992176,
+        6.242011599999387,
+        6.233763099997304
+      ],
+      "shared_cold_s": 3.973022000005585,
+      "instances_cold_s": 6.382210900002974,
+      "shared_cold_peak_GiB": 5.944664001464844,
+      "instances_cold_peak_GiB": 10.824874877929688
+    },
+    {
+      "requests": 3,
+      "estimated_sequential_s": 6.447951899972395,
+      "shared_median_s": 5.358583099994576,
+      "instances_median_s": 9.3915774999914,
+      "time_saved_vs_instances_pct": 42.9426728363847,
+      "time_saved_vs_sequential_pct": 16.89480344886697,
+      "throughput_gain_vs_sequential_pct": 20.32941879690029,
+      "shared_warm_peak_GiB": 6.266929626464844,
+      "instances_warm_peak_GiB": 16.19922637939453,
+      "shared_loaded_GiB": 4.930992126464844,
+      "instances_loaded_GiB": 14.792976379394531,
+      "shared_warm_batch_samples_s": [
+        5.347169400003622,
+        5.358583099994576,
+        5.365147499993327
+      ],
+      "instances_warm_batch_samples_s": [
+        9.384394799999427,
+        9.3915774999914,
+        9.409537599989562
+      ],
+      "shared_cold_s": 5.646303000001353,
+      "instances_cold_s": 9.65408569999272,
+      "shared_cold_peak_GiB": 6.448570251464844,
+      "instances_cold_peak_GiB": 16.32227325439453
+    },
+    {
+      "requests": 4,
+      "estimated_sequential_s": 8.597269199963193,
+      "shared_median_s": 7.042017600004328,
+      "instances_median_s": 12.55491350000375,
+      "time_saved_vs_instances_pct": 43.910265889110065,
+      "time_saved_vs_sequential_pct": 18.090065156567658,
+      "throughput_gain_vs_sequential_pct": 22.085312595042495,
+      "shared_warm_peak_GiB": 6.700523376464844,
+      "instances_warm_peak_GiB": 21.598968505859375,
+      "shared_loaded_GiB": 4.930992126464844,
+      "instances_loaded_GiB": 19.723968505859375,
+      "shared_warm_batch_samples_s": [
+        7.030963500001235,
+        7.042017600004328,
+        7.0615557999990415
+      ],
+      "instances_warm_batch_samples_s": [
+        12.5366817000031,
+        12.55491350000375,
+        12.589411900000414
+      ],
+      "shared_cold_s": 7.401453300000867,
+      "instances_cold_s": 12.912360000002082,
+      "shared_cold_peak_GiB": 6.952476501464844,
+      "instances_cold_peak_GiB": 21.763031005859375
+    }
+  ]
+}

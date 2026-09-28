@@ -37,17 +37,28 @@ struct F5SampleOptions {
     uint32_t seed = 0;
 };
 
-// Compute device for the DiT forward: CUDA device index or CPU threads.
+// Compute device for the DiT forward and vocoder. use_cuda is retained for legacy callers.
 struct F5ComputeDevice {
     bool use_cuda = false;
-    int device = 0;      // CUDA device index
+    int device = 0;      // GPU device index
     int threads = 0;     // CPU threads; 0 = hardware concurrency
     // FP16 linear weights: GEMMs get ~3x faster on tensor cores but each
     // mul_mat converts the F32 activations to F16 first; at F5's GEMM sizes
     // (K=1024/2048, N~1022) the conversion overhead outweighs the gain on an
     // RTX 3090 (measured 4.0s -> 5.0s per clip). Off by default.
     bool fp16_weights = false;
+    core::BackendType backend_type = core::BackendType::Cpu;
 };
+
+inline core::BackendType f5_backend_type(const F5ComputeDevice & device) {
+    return device.use_cuda ? core::BackendType::Cuda : device.backend_type;
+}
+
+inline std::string f5_device_key(const F5ComputeDevice & device) {
+    const auto type = f5_backend_type(device);
+    return std::to_string(static_cast<int>(type)) + ":" +
+        std::to_string(type == core::BackendType::Cpu ? 0 : device.device);
+}
 
 // Debug taps for parity testing: when non-null, intermediate stage outputs are
 // appended (column layout, [features, T] flattened feature-major).

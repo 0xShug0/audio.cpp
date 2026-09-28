@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/models/fish_audio/types.h"
 
 #include <filesystem>
@@ -17,6 +18,7 @@ struct FishAudioAssets {
     FishAudioConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
     std::shared_ptr<const assets::TensorSource> codec_weights;
+    std::shared_ptr<core::SharedWeightCache> cuda_weights = std::make_shared<core::SharedWeightCache>();
 };
 
 std::shared_ptr<const FishAudioAssets> load_fish_audio_assets(const std::filesystem::path & model_path);

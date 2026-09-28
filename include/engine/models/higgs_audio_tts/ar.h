@@ -46,10 +46,12 @@ public:
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type,
-        core::AttentionPreference attention_preference = core::AttentionPreference::Auto);
+        core::AttentionPreference attention_preference = core::AttentionPreference::Auto,
+        std::shared_ptr<const HiggsARWeights> shared_weights = nullptr);
 
     const HiggsAssets & assets() const noexcept;
     const HiggsARWeights & weights() const noexcept;
+    std::shared_ptr<const HiggsARWeights> shared_weights() const { return weights_; }
     ggml_backend_t backend() const noexcept;
     core::BackendType backend_type() const noexcept;
     int device() const noexcept;

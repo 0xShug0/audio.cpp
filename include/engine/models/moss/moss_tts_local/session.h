@@ -54,13 +54,15 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const MossTTSLocalAssets> assets_;
+    struct SharedCudaRuntime;
+    std::shared_ptr<SharedCudaRuntime> cuda_runtime_;
     // Declared before the generator so the generator (which holds references to them) is
     // destroyed first.
-    std::unique_ptr<MossBackboneRuntime> backbone_;
-    std::unique_ptr<MossDepthTransformer> depth_;
+    std::shared_ptr<MossBackboneRuntime> backbone_;
+    std::shared_ptr<MossDepthTransformer> depth_;
     std::unique_ptr<MossTextProcessor> processor_;
-    std::unique_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> codec_;
-    std::unique_ptr<MossGenerator> generator_;
+    std::shared_ptr<engine::codecs::MossAudioTokenizerCodecRuntime> codec_;
+    std::shared_ptr<MossGenerator> generator_;
     runtime::CacheSlots<ReferenceAudioCacheKey, ReferenceVoiceCacheEntry, ReferenceAudioCacheKeyEqual>
         reference_voice_cache_;
 };

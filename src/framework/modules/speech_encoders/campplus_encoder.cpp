@@ -639,6 +639,9 @@ public:
 
     std::vector<float> run(const std::vector<float> & input) {
         std::lock_guard<std::mutex> lock(run_mutex_);
+        // Graph allocation can reuse the constant leaf storage after its last
+        // consumer. Restore those values before every execution of this runner.
+        writer_.flush();
         core::write_tensor_f32(input_tensor_, input);
         if (engine::core::compute_backend_graph(execution_context_.backend(), graph_) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ggml_backend_graph_compute failed for CAMPPlus graph");

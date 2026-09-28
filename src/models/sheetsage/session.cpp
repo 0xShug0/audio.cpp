@@ -923,12 +923,14 @@ SheetSage2Session::SheetSage2Session(
           assets_->weights,
           execution_context(),
           assets_->config,
-          decoder_options_from_session_options(RuntimeSessionBase::options())),
+          decoder_options_from_session_options(RuntimeSessionBase::options()),
+          assets_->cuda_weights.get()),
       decoder_(
           assets_->weights,
           execution_context(),
           assets_->config,
-          decoder_options_from_session_options(RuntimeSessionBase::options())) {
+          decoder_options_from_session_options(RuntimeSessionBase::options()),
+          assets_->cuda_weights.get()) {
     if (task_.task != runtime::VoiceTaskKind::Midi || task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("SheetSage2 supports only offline midi");
     }

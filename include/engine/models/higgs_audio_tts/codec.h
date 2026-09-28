@@ -98,10 +98,12 @@ public:
         size_t weight_context_bytes,
         size_t decode_graph_arena_bytes,
         size_t encode_graph_arena_bytes,
-        assets::TensorStorageType weight_storage_type);
+        assets::TensorStorageType weight_storage_type,
+        std::shared_ptr<const HiggsCodecWeights> shared_weights = nullptr);
     ~HiggsCodecRuntime();
 
     const HiggsCodecWeights & weights() const noexcept;
+    std::shared_ptr<const HiggsCodecWeights> shared_weights() const { return weights_; }
     ggml_backend_t backend() const noexcept;
     core::BackendType backend_type() const noexcept;
     int threads() const noexcept;

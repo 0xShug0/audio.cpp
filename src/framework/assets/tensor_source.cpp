@@ -15,6 +15,7 @@
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <mutex>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -589,6 +590,7 @@ public:
     }
 
     void release_storage() const override {
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
         bytes_ = engine::io::BinaryBlob();
     }
 
@@ -597,6 +599,7 @@ public:
         if (info == nullptr) {
             throw std::runtime_error("missing tensor: " + std::string(name));
         }
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
         const auto [data, byte_size] = require_data_range(*info);
         RawTensorData tensor;
         tensor.metadata = TensorMetadata{info->name, info->dtype, info->shape};
@@ -618,6 +621,7 @@ public:
         validate_expected_shape(name, info->shape, expected_shape);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
         const auto [data, byte_size] = require_data_range(*info);
         if (raw_dtype_matches_ggml_type(info->dtype, type)) {
             validate_raw_tensor_byte_size(name, shape, type, byte_size);
@@ -669,6 +673,7 @@ public:
         if (info->dtype != "I64" || info->data_end - info->data_begin != sizeof(int64_t)) {
             throw std::runtime_error("tensor is not an I64 scalar: " + std::string(name));
         }
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
         const auto [data, byte_size] = require_data_range(*info);
         (void) byte_size;
         int64_t value = 0;
@@ -710,6 +715,8 @@ private:
     }
 
     engine::io::SafeTensorIndex index_;
+    // Keep mappings alive until each copy or synchronous backend upload completes.
+    mutable std::mutex storage_mutex_;
     mutable engine::io::BinaryBlob bytes_;
 };
 
@@ -834,10 +841,14 @@ public:
         return out;
     }
 
-    void release_storage() const override { bytes_ = engine::io::BinaryBlob(); }
+    void release_storage() const override {
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        bytes_ = engine::io::BinaryBlob();
+    }
 
     RawTensorData require_tensor_data(std::string_view name) const override {
         const auto & info = require_info(name);
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
         const auto [data, byte_size] = require_data_range(info);
         RawTensorData out;
         out.metadata = {info.logical_name, info.dtype, info.shape};
@@ -856,6 +867,7 @@ public:
         validate_expected_shape(name, info.shape, expected_shape);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
         const auto [data, byte_size] = require_data_range(info);
         if (info.type == type) {
             validate_raw_tensor_byte_size(name, shape, type, byte_size);
@@ -902,6 +914,7 @@ public:
         if (info.type != GGML_TYPE_I64 || info.byte_size != sizeof(int64_t)) {
             throw std::runtime_error("tensor is not an I64 scalar: " + std::string(name));
         }
+        const std::lock_guard<std::mutex> lock(storage_mutex_);
         const auto [data, byte_size] = require_data_range(info);
         (void) byte_size;
         int64_t value = 0;
@@ -929,6 +942,8 @@ private:
     size_t data_begin_ = 0;
     std::vector<GgufTensorInfo> infos_;
     std::unordered_map<std::string, size_t> info_by_name_;
+    // Sessions share this source, including lazy remapping and storage release.
+    mutable std::mutex storage_mutex_;
     mutable engine::io::BinaryBlob bytes_;
 };
 

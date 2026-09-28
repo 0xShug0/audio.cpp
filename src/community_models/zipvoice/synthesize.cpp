@@ -263,6 +263,16 @@ std::shared_ptr<LoadedModel> load_model(
         "::" + std::to_string(static_cast<int>(resolve_backend_type(device))) +
         "::" + std::to_string(device.device_index) + "::" + std::to_string(reinterpret_cast<uintptr_t>(device.backend));
     if (state.model && state.key == key) return state.model;
+    // Vulkan device/buffer initialization is lazy here, unlike sessions that
+    // initialize their backend during pool construction. Concurrent cold slot
+    // loads can observe an incompletely initialized buffer type. Serialize only
+    // this loading stage; each slot retains its own inference graph/backend.
+    static std::mutex vulkan_load_mutex;
+    std::unique_lock<std::mutex> vulkan_load_guard(vulkan_load_mutex, std::defer_lock);
+    const auto requested_backend = resolve_backend_type(device);
+    if (requested_backend == core::BackendType::Vulkan || requested_backend == core::BackendType::BestAvailable) {
+        vulkan_load_guard.lock();
+    }
     state.model.reset();
     auto model = std::make_unique<LoadedModel>();
     model->path = path;

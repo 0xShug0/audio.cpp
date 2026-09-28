@@ -407,6 +407,7 @@ public:
             static_cast<int64_t>(config.quantization_levels.size()),
             frames_,
             1);
+        ggml_set_input(levels_);
         auto x = core::wrap_tensor(
             levels_,
             core::TensorShape::from_dims({1, frames_, static_cast<int64_t>(config.quantization_levels.size())}),
@@ -428,6 +429,8 @@ public:
         }
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, config.attention_heads);
+        // Persistent input: gallocr must not recycle it as an intermediate.
+        ggml_set_input(positions_);
         auto positions = core::wrap_tensor(
             positions_,
             core::TensorShape::from_dims({config.attention_heads}),
@@ -489,6 +492,8 @@ public:
             throw std::runtime_error("FSQ audio codec code count mismatch");
         }
         const auto levels = decode_fsq_audio_codec_levels(codes, config.quantization_levels);
+        ggml_backend_tensor_set(positions_, positions_values_.data(), 0,
+                                positions_values_.size() * sizeof(int32_t));
         core::write_tensor_f32(core::wrap_tensor(
             levels_,
             core::TensorShape::from_dims({1, frames_, static_cast<int64_t>(config.quantization_levels.size())}),
@@ -666,6 +671,7 @@ public:
                         config.hop_length,
                         head.out_dim,
                         execution_->config().device,
+                        config.deterministic_overlap_add,
                     });
                 cuda_istft_frames_ = head.frames;
             }

@@ -229,6 +229,7 @@ public:
                 config_.hop_length,
                 config_.out_dim,
                 config_.device,
+                config_.deterministic_overlap_add,
             });
 #else
         throw std::runtime_error("CUDA ISTFT runtime was not built");

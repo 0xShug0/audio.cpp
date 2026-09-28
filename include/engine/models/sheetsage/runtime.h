@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/core/shared_weight_cache.h"
 #include "engine/models/sheetsage/types.h"
 
 #include <memory>
@@ -15,7 +16,9 @@ public:
         std::shared_ptr<const assets::TensorSource> source,
         core::ExecutionContext & execution,
         SheetSage2DecoderConfig config = {},
-        SheetSage2DecoderRuntimeOptions options = {});
+        SheetSage2DecoderRuntimeOptions options = {},
+        // One fixed-config package's immutable CUDA weights; must outlive this runtime.
+        const core::SharedWeightCache * shared_device_weights = nullptr);
     ~Mert2EncoderRuntime();
 
     Mert2EncoderRuntime(const Mert2EncoderRuntime &) = delete;
@@ -40,7 +43,8 @@ public:
         std::shared_ptr<const assets::TensorSource> source,
         core::ExecutionContext & execution,
         SheetSage2DecoderConfig config = {},
-        SheetSage2DecoderRuntimeOptions options = {});
+        SheetSage2DecoderRuntimeOptions options = {},
+        const core::SharedWeightCache * shared_device_weights = nullptr);
     ~SheetSage2DecoderRuntime();
 
     SheetSage2DecoderRuntime(const SheetSage2DecoderRuntime &) = delete;

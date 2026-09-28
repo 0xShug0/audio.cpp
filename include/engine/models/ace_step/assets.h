@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -116,6 +117,9 @@ struct AceStepConfig {
 };
 
 struct AceStepAssets {
+    // Shared by this package's slots; protects CUDA stages without changing
+    // other families or serializing their work.
+    mutable std::mutex cuda_execution_mutex;
     assets::ResourceBundle resources;
     AceStepModelSelection selection;
     AceStepConfig config;

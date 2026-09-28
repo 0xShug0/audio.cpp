@@ -1278,13 +1278,21 @@ HeartCodecWeightsRuntime::HeartCodecWeightsRuntime(
     if (execution_context_->config().threads <= 0) {
         throw std::runtime_error("HeartCodec weights runtime requires positive thread count");
     }
-    weights_ = std::make_shared<HeartCodecWeights>(
-        load_heartcodec_weights(
+    const auto load = [&] {
+        return load_heartcodec_weights(
             *assets_,
             execution_context_->backend(),
             execution_context_->backend_type(),
             weight_context_bytes,
-            weight_storage_type));
+            weight_storage_type);
+    };
+    if (execution_context_->backend_type() == core::BackendType::Vulkan) {
+        const auto key = "codec:" + std::to_string(execution_context_->config().device) + ":" +
+            std::to_string(static_cast<int>(weight_storage_type)) + ":" + std::to_string(weight_context_bytes);
+        weights_ = assets_->vulkan_weights->get_or_load<HeartCodecWeights>(key, load);
+    } else {
+        weights_ = std::make_shared<HeartCodecWeights>(load());
+    }
     assets_->codec_weights->release_storage();
 }
 
