@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/runtime/kv_cache.h"
@@ -14,175 +14,175 @@
 
 namespace engine::modules {
 
-enum class QwenCausalDecoderLogitsMode {
+enum class CausalDecoderLogitsMode {
     LastStep,
     AllSteps,
 };
 
-struct QwenDecoderHiddenConfig {
-    QwenDecoderStackConfig stack;
-    QwenCausalDecoderLogitsMode hidden_mode = QwenCausalDecoderLogitsMode::LastStep;
+struct DecoderHiddenConfig {
+    DecoderStackConfig stack;
+    CausalDecoderLogitsMode hidden_mode = CausalDecoderLogitsMode::LastStep;
     ggml_type static_cache_type = GGML_TYPE_F32;
 };
 
-struct QwenCausalDecoderConfig {
-    QwenDecoderStackConfig stack;
+struct CausalDecoderConfig {
+    DecoderStackConfig stack;
     int64_t logits_size = 0;
-    QwenCausalDecoderLogitsMode logits_mode = QwenCausalDecoderLogitsMode::LastStep;
+    CausalDecoderLogitsMode logits_mode = CausalDecoderLogitsMode::LastStep;
     bool use_lm_head_bias = false;
     ggml_prec lm_head_precision = GGML_PREC_DEFAULT;
     std::optional<ggml_type> lm_head_input_type;
     ggml_type static_cache_type = GGML_TYPE_F32;
 };
 
-struct QwenCausalDecoderWeights {
-    QwenDecoderStackWeights stack;
+struct CausalDecoderWeights {
+    DecoderStackWeights stack;
     NormWeights final_norm;
     LinearWeights lm_head;
 };
 
-struct QwenDecoderHiddenWeights {
-    QwenDecoderStackWeights stack;
+struct DecoderHiddenWeights {
+    DecoderStackWeights stack;
     NormWeights final_norm;
 };
 
-struct QwenDecoderHiddenOutputs {
+struct DecoderHiddenOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
-    QwenDecoderStackState state;
+    DecoderStackState state;
 };
 
-struct QwenDecoderHiddenStaticCacheOutputs {
+struct DecoderHiddenStaticCacheOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
     runtime::TransformerKVCache cache;
 };
 
-struct QwenDecoderHiddenBatchedStaticCacheOutputs {
+struct DecoderHiddenBatchedStaticCacheOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
     runtime::TransformerBatchedKVCache cache;
 };
 
-struct QwenCausalDecoderOutputs {
+struct CausalDecoderOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
     core::TensorValue logits;
-    QwenDecoderStackState state;
+    DecoderStackState state;
 };
 
-struct QwenCausalDecoderStaticCacheOutputs {
+struct CausalDecoderStaticCacheOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
     core::TensorValue logits;
     runtime::TransformerKVCache cache;
 };
 
-struct QwenCausalDecoderBatchedStaticCacheOutputs {
+struct CausalDecoderBatchedStaticCacheOutputs {
     core::TensorValue sequence;
     core::TensorValue hidden;
     core::TensorValue logits;
     runtime::TransformerBatchedKVCache cache;
 };
 
-class QwenDecoderHiddenModule {
+class DecoderHiddenModule {
 public:
-    explicit QwenDecoderHiddenModule(QwenDecoderHiddenConfig config);
+    explicit DecoderHiddenModule(DecoderHiddenConfig config);
 
-    const QwenDecoderHiddenConfig & config() const noexcept;
+    const DecoderHiddenConfig & config() const noexcept;
 
-    QwenDecoderHiddenOutputs build(
+    DecoderHiddenOutputs build(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const QwenDecoderHiddenWeights & weights,
-        const std::optional<QwenDecoderStackState> & prefix_state = std::nullopt,
+        const DecoderHiddenWeights & weights,
+        const std::optional<DecoderStackState> & prefix_state = std::nullopt,
         const std::optional<core::TensorValue> & attention_mask = std::nullopt) const;
 
-    QwenDecoderHiddenStaticCacheOutputs build_static_cache_tail(
+    DecoderHiddenStaticCacheOutputs build_static_cache_tail(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const QwenDecoderHiddenWeights & weights,
+        const DecoderHiddenWeights & weights,
         int64_t cache_steps,
         const core::TensorValue & attention_mask,
         const std::optional<core::TensorValue> & cache_slot = std::nullopt) const;
 
-    QwenDecoderHiddenBatchedStaticCacheOutputs build_static_cache_tail_batched(
+    DecoderHiddenBatchedStaticCacheOutputs build_static_cache_tail_batched(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const QwenDecoderHiddenWeights & weights,
+        const DecoderHiddenWeights & weights,
         int64_t cache_steps,
         const core::TensorValue & attention_mask,
         const core::TensorValue & cache_slot) const;
 
 private:
-    QwenDecoderHiddenConfig config_;
+    DecoderHiddenConfig config_;
 };
 
-class QwenCausalDecoderModule {
+class CausalDecoderModule {
 public:
-    explicit QwenCausalDecoderModule(QwenCausalDecoderConfig config);
+    explicit CausalDecoderModule(CausalDecoderConfig config);
 
-    const QwenCausalDecoderConfig & config() const noexcept;
+    const CausalDecoderConfig & config() const noexcept;
 
-    QwenCausalDecoderOutputs build(
+    CausalDecoderOutputs build(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const QwenCausalDecoderWeights & weights,
-        const std::optional<QwenDecoderStackState> & prefix_state = std::nullopt,
+        const CausalDecoderWeights & weights,
+        const std::optional<DecoderStackState> & prefix_state = std::nullopt,
         const std::optional<core::TensorValue> & attention_mask = std::nullopt) const;
 
-    QwenCausalDecoderStaticCacheOutputs build_static_cache_tail(
+    CausalDecoderStaticCacheOutputs build_static_cache_tail(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const QwenCausalDecoderWeights & weights,
+        const CausalDecoderWeights & weights,
         int64_t cache_steps,
         const core::TensorValue & attention_mask,
         const std::optional<core::TensorValue> & cache_slot = std::nullopt) const;
 
-    QwenCausalDecoderBatchedStaticCacheOutputs build_static_cache_tail_batched(
+    CausalDecoderBatchedStaticCacheOutputs build_static_cache_tail_batched(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const QwenCausalDecoderWeights & weights,
+        const CausalDecoderWeights & weights,
         int64_t cache_steps,
         const core::TensorValue & attention_mask,
         const core::TensorValue & cache_slot) const;
 
 private:
-    QwenCausalDecoderConfig config_;
+    CausalDecoderConfig config_;
 };
 
-std::vector<int32_t> qwen_position_ids(int64_t steps, int64_t offset = 0);
+std::vector<int32_t> decoder_position_ids(int64_t steps, int64_t offset = 0);
 
-std::vector<ggml_fp16_t> qwen_causal_prefill_mask_values(int64_t batch_size, int64_t steps);
+std::vector<ggml_fp16_t> causal_prefill_mask_values(int64_t batch_size, int64_t steps);
 
-std::vector<ggml_fp16_t> qwen_causal_suffix_mask_values(
+std::vector<ggml_fp16_t> causal_suffix_mask_values(
     int64_t batch_size,
     int64_t query_steps,
     int64_t prefix_steps);
 
-void write_qwen_causal_prefill_mask(
+void write_causal_prefill_mask(
     ggml_tensor * tensor,
     int64_t batch_size,
     int64_t steps);
 
-void write_qwen_cached_step_mask(
+void write_decoder_cached_step_mask(
     ggml_tensor * tensor,
     std::vector<ggml_fp16_t> & scratch,
     int64_t mask_steps,
     int64_t visible_prefix_steps,
     int64_t current_slot);
 
-void write_qwen_batched_cached_step_mask(
+void write_decoder_batched_cached_step_mask(
     ggml_tensor * tensor,
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,

@@ -10,7 +10,7 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <algorithm>
@@ -43,19 +43,19 @@ struct Yue2NarWeights {
     engine::modules::LinearWeights time0;
     engine::modules::LinearWeights time2;
     core::TensorValue latent_pos_embed;
-    engine::modules::QwenDecoderStackWeights nar_stack;
+    engine::modules::DecoderStackWeights nar_stack;
     engine::modules::NormWeights final_norm;
     engine::modules::LinearWeights llm2vae;
 };
 
-engine::modules::QwenDecoderLayerWeights load_nar_layer(
+engine::modules::DecoderLayerWeights load_nar_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const Yue2ModelConfig & config,
     assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "model.layers." + std::to_string(layer);
-    engine::modules::QwenDecoderLayerWeights out;
+    engine::modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".nar_input_layernorm", config.hidden_size);
     out.self_attention.q_weight = store.load_tensor(
         source,
@@ -224,7 +224,7 @@ core::TensorValue reshape_heads(
 QKVParts build_qkv_part(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const engine::modules::QwenDecoderLayerWeights & weights,
+    const engine::modules::DecoderLayerWeights & weights,
     const Yue2ModelConfig & config) {
     auto q = engine::modules::LinearModule({config.hidden_size, config.attention_heads * config.head_dim, false})
                  .build(ctx, input, {weights.self_attention.q_weight, std::nullopt});
@@ -403,7 +403,7 @@ core::TensorValue mixed_attention(
 core::TensorValue build_mlp_part(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const engine::modules::QwenMLPWeights & weights,
+    const engine::modules::DecoderMLPWeights & weights,
     const Yue2ModelConfig & config) {
     auto gate = engine::modules::LinearModule({config.hidden_size, config.intermediate_size, false})
                     .build(ctx, input, {weights.gate_proj.weight, std::nullopt});
@@ -419,7 +419,7 @@ core::TensorValue build_cached_nar_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const engine::modules::QwenDecoderLayerWeights & nar_weights,
+    const engine::modules::DecoderLayerWeights & nar_weights,
     const core::TensorValue & ar_key,
     const core::TensorValue & ar_value,
     const Yue2ModelConfig & config,

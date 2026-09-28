@@ -5,8 +5,8 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -157,8 +157,8 @@ struct ArkttsPrefillCacheTarget {
     std::vector<core::TensorValue> values;
 };
 
-modules::QwenDecoderActivationCastPolicy arktts_activation_cast_policy(core::BackendType backend_type) {
-    modules::QwenDecoderActivationCastPolicy policy;
+modules::DecoderActivationCastPolicy arktts_activation_cast_policy(core::BackendType backend_type) {
+    modules::DecoderActivationCastPolicy policy;
     if (backend_type == core::BackendType::Vulkan) {
         return policy;
     }
@@ -180,10 +180,10 @@ modules::QwenDecoderActivationCastPolicy arktts_activation_cast_policy(core::Bac
     return policy;
 }
 
-modules::QwenCausalDecoderConfig make_slow_decoder_config(
+modules::CausalDecoderConfig make_slow_decoder_config(
     const Audio8TtsTextConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.dim;
     out.stack.num_attention_heads = config.n_head;
     out.stack.num_key_value_heads = config.n_local_heads;
@@ -194,24 +194,24 @@ modules::QwenCausalDecoderConfig make_slow_decoder_config(
     out.stack.rope_theta = config.rope_base;
     out.stack.rope_type = GGML_ROPE_TYPE_NORMAL;
     out.stack.attention_precision = GGML_PREC_F32;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
     out.stack.use_qk_norm = config.attention_qk_norm;
     out.stack.activation_cast = arktts_activation_cast_policy(backend_type);
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_F32;
     return out;
 }
 
-modules::QwenCausalDecoderConfig make_fast_decoder_config(
+modules::CausalDecoderConfig make_fast_decoder_config(
     const Audio8TtsFastConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.dim;
     out.stack.num_attention_heads = config.n_head;
     out.stack.num_key_value_heads = config.n_local_heads;
@@ -222,25 +222,25 @@ modules::QwenCausalDecoderConfig make_fast_decoder_config(
     out.stack.rope_theta = config.rope_base;
     out.stack.rope_type = GGML_ROPE_TYPE_NORMAL;
     out.stack.attention_precision = GGML_PREC_F32;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
     out.stack.use_qk_norm = config.attention_qk_norm;
     out.stack.activation_cast = arktts_activation_cast_policy(backend_type);
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_F32;
     return out;
 }
 
-modules::QwenDecoderLayerWeights bind_layer(
+modules::DecoderLayerWeights bind_layer(
     core::ConstantTensorCache & constants,
     const ArkttsLayerWeights & weights,
     bool use_qk_norm) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
     out.self_attention.qkv_weight = weights.qkv_proj;
     if (weights.qkv_bias.has_value()) {
@@ -260,11 +260,11 @@ modules::QwenDecoderLayerWeights bind_layer(
     return out;
 }
 
-modules::QwenCausalDecoderWeights bind_slow_weights(
+modules::CausalDecoderWeights bind_slow_weights(
     core::ConstantTensorCache & constants,
     const ArkttsARWeights & weights,
     const Audio8TtsTextConfig & config) {
-    modules::QwenCausalDecoderWeights out;
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.slow_layers.size());
     for (const auto & layer : weights.slow_layers) {
         out.stack.layers.push_back(bind_layer(constants, layer, config.attention_qk_norm));
@@ -274,7 +274,7 @@ modules::QwenCausalDecoderWeights bind_slow_weights(
     return out;
 }
 
-modules::QwenDecoderLayerWeights bind_fast_layer(
+modules::DecoderLayerWeights bind_fast_layer(
     core::ConstantTensorCache & constants,
     const ArkttsLayerWeights & weights,
     const Audio8TtsFastConfig & config) {
@@ -755,7 +755,7 @@ core::TensorValue make_arktts_causal_mask(
     core::ModuleBuildContext &,
     core::ConstantTensorCache & constants,
     int64_t steps) {
-    auto values = modules::qwen_causal_prefill_mask_values(1, steps);
+    auto values = modules::causal_prefill_mask_values(1, steps);
     return constants.make_tensor(
         core::TensorShape::from_dims({1, 1, steps, steps}),
         GGML_TYPE_F16,
@@ -766,7 +766,7 @@ core::TensorValue make_arktts_causal_mask(
 struct ArkttsCausalDecoderOutputs {
     core::TensorValue hidden;
     core::TensorValue logits;
-    modules::QwenDecoderStackState state;
+    modules::DecoderStackState state;
 };
 
 ArkttsCausalDecoderOutputs build_arktts_causal_decoder(
@@ -774,15 +774,15 @@ ArkttsCausalDecoderOutputs build_arktts_causal_decoder(
     core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const modules::QwenCausalDecoderWeights & weights,
-    const modules::QwenCausalDecoderConfig & config,
+    const modules::CausalDecoderWeights & weights,
+    const modules::CausalDecoderConfig & config,
     bool norm_fastlayer_input) {
     auto mask = make_arktts_causal_mask(ctx, constants, input.shape.dims[1]);
     auto x = input;
-    modules::QwenDecoderStackState state;
+    modules::DecoderStackState state;
     state.layers.reserve(weights.stack.layers.size());
-    const auto layer_config = modules::qwen_decoder_layer_config_from_stack(config.stack);
-    const modules::QwenDecoderLayerModule layer_module(layer_config);
+    const auto layer_config = modules::decoder_layer_config_from_stack(config.stack);
+    const modules::DecoderLayerModule layer_module(layer_config);
     for (const auto & layer : weights.stack.layers) {
         auto out = layer_module.build(ctx, x, positions, layer, std::nullopt, std::nullopt, mask);
         x = out.output;
@@ -813,8 +813,8 @@ ArkttsStaticDecoderOutputs build_arktts_static_decoder(
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const modules::QwenCausalDecoderWeights & weights,
-    const modules::QwenCausalDecoderConfig & config,
+    const modules::CausalDecoderWeights & weights,
+    const modules::CausalDecoderConfig & config,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
     const core::TensorValue & cache_slot,
@@ -826,8 +826,8 @@ ArkttsStaticDecoderOutputs build_arktts_static_decoder(
     }
     const int64_t step_elems = config.stack.num_key_value_heads * config.stack.head_dim;
     auto x = input;
-    const auto layer_config = modules::qwen_decoder_layer_config_from_stack(config.stack);
-    const modules::QwenDecoderLayerModule layer_module(layer_config);
+    const auto layer_config = modules::decoder_layer_config_from_stack(config.stack);
+    const modules::DecoderLayerModule layer_module(layer_config);
     for (size_t layer_index = 0; layer_index < weights.stack.layers.size(); ++layer_index) {
         auto out = layer_module.build_with_static_cache_tail(
             ctx,
@@ -2545,7 +2545,7 @@ private:
                 !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
                 throw std::runtime_error("failed to allocate Audio8 TTS AR prefill graph");
             }
-            auto positions = modules::qwen_position_ids(steps_);
+            auto positions = modules::decoder_position_ids(steps_);
             ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
         }
 
@@ -2858,7 +2858,7 @@ private:
             graph_ = ggml_new_graph_custom(graph_ctx_.get(), 32768, false);
             auto & constants = runtime_->fast_constants();
             constants.begin_graph();
-            modules::QwenCausalDecoderWeights decoder_weights;
+            modules::CausalDecoderWeights decoder_weights;
             decoder_weights.stack.layers.reserve(weights.fast_layers.size());
             for (const auto & layer : weights.fast_layers) {
                 decoder_weights.stack.layers.push_back(bind_fast_layer(constants, layer, config));

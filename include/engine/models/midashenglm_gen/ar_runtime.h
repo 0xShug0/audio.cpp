@@ -6,7 +6,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 
 #include <memory>
 #include <vector>
@@ -31,7 +31,7 @@ struct MiDashengLmGenAROutput {
 
 struct MiDashengLmGenARWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
-    engine::modules::QwenCausalDecodeRuntimeWeights qwen;
+    engine::modules::CausalDecoderRuntimeWeights qwen;
     engine::modules::LinearWeights audio_projector_in;
     engine::modules::LinearWeights audio_projector_out;
     engine::modules::LinearWeights stop_head;
@@ -68,7 +68,7 @@ private:
     MiDashengLmGenFlowRuntime * flow_ = nullptr;
     size_t helper_graph_arena_bytes_ = 0;
     std::shared_ptr<const MiDashengLmGenARWeights> weights_;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> qwen_;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> qwen3_runtime_;
     std::unique_ptr<ProjectorGraph> projector_;
     std::unique_ptr<StopHeadGraph> stop_head_;
 };

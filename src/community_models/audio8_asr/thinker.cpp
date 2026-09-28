@@ -8,8 +8,8 @@ namespace {
 
 namespace modules = engine::modules;
 
-runtime::GreedyQwenDecoderSpec make_decoder_spec(const Audio8ASRDecoderConfig & config) {
-    runtime::GreedyQwenDecoderSpec spec;
+runtime::GreedyCausalDecoderSpec make_decoder_spec(const Audio8ASRDecoderConfig & config) {
+    runtime::GreedyCausalDecoderSpec spec;
     // Qwen2-style decoder: attention biases, no Q/K norms, RoPE theta 1e6.
     spec.decoder.stack.hidden_size = config.hidden_size;
     spec.decoder.stack.num_attention_heads = config.num_attention_heads;
@@ -21,9 +21,9 @@ runtime::GreedyQwenDecoderSpec make_decoder_spec(const Audio8ASRDecoderConfig & 
     spec.decoder.stack.rope_theta = config.rope_theta;
     spec.decoder.stack.use_qk_norm = false;
     spec.decoder.stack.runtime.static_cache.update_mode =
-        modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+        modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     spec.decoder.logits_size = config.vocab_size;
-    spec.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    spec.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     spec.vocab_size = config.vocab_size;
     spec.max_position_embeddings = config.max_position_embeddings;
     spec.tie_word_embeddings = config.tie_word_embeddings;
@@ -75,7 +75,7 @@ Audio8ASRGeneratedTokens Audio8ThinkerRuntime::generate(
             throw std::runtime_error("Audio8 ASR audio placeholder position out of range");
         }
     }
-    runtime::GreedyQwenDecoderRuntime::Prompt decoder_prompt;
+    runtime::GreedyCausalDecoderRuntime::Prompt decoder_prompt;
     decoder_prompt.input_ids = prompt.input_ids;
     decoder_prompt.injection.values = audio_embeddings.values;
     decoder_prompt.injection.tokens = audio_embeddings.tokens;

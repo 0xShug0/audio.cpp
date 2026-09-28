@@ -4,7 +4,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <ggml-alloc.h>
@@ -66,7 +66,7 @@ struct GraphMemory {
     }
 };
 
-modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
+modules::CausalDecoderRuntimeConfig qwen_runtime_config(
     const std::string & trace,
     int64_t hidden,
     int64_t intermediate,
@@ -74,13 +74,13 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
     int64_t heads,
     int64_t kv_heads,
     int64_t head_dim,
-    modules::QwenCausalDecoderLogitsMode hidden_mode,
+    modules::CausalDecoderLogitsMode hidden_mode,
     size_t prefill_arena,
     size_t decode_arena,
     core::BackendType backend_type,
     bool bf16_autocast = false,
     int64_t sliding_window = 0) {
-    modules::QwenCausalDecodeRuntimeConfig out;
+    modules::CausalDecoderRuntimeConfig out;
     out.trace_name = trace;
     out.prefill_graph_arena_bytes = prefill_arena;
     out.decode_graph_arena_bytes = decode_arena;
@@ -96,10 +96,10 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
     out.decoder.stack.use_qk_norm = true;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
-    out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.decoder.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     out.sliding_window = sliding_window;
     if (bf16_autocast && backend_type != core::BackendType::Cpu && backend_type != core::BackendType::Vulkan &&
         backend_type != core::BackendType::Metal) {
@@ -121,7 +121,7 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
         out.decoder.static_cache_type = GGML_TYPE_BF16;
     }
     out.decoder.logits_mode = hidden_mode;
-    out.output_mode = modules::QwenCausalDecodeOutputMode::Hidden;
+    out.output_mode = modules::CausalDecoderOutputMode::Hidden;
     out.return_hidden = true;
     if (bf16_autocast && backend_type != core::BackendType::Cpu && backend_type != core::BackendType::Vulkan &&
         backend_type != core::BackendType::Metal) {
@@ -130,13 +130,13 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
     return out;
 }
 
-modules::QwenDecoderLayerWeights load_qwen_layer(
+modules::DecoderLayerWeights load_qwen_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
-    const modules::QwenCausalDecoderConfig & config,
+    const modules::CausalDecoderConfig & config,
     assets::TensorStorageType storage_type) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.stack.hidden_size);
     out.self_attention.q_weight = store.load_tensor(
         source,
@@ -188,15 +188,15 @@ modules::QwenDecoderLayerWeights load_qwen_layer(
     return out;
 }
 
-modules::QwenCausalDecodeRuntimeWeights load_qwen_weights(
+modules::CausalDecoderRuntimeWeights load_qwen_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
-    const modules::QwenCausalDecodeRuntimeConfig & runtime_config,
+    const modules::CausalDecoderRuntimeConfig & runtime_config,
     int64_t vocab_size,
     assets::TensorStorageType storage_type) {
     const auto & config = runtime_config.decoder;
-    modules::QwenCausalDecodeRuntimeWeights out;
+    modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = store.load_tensor(
         source,
         prefix + ".embed_tokens.weight",
@@ -220,12 +220,12 @@ struct RedAeWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::LinearWeights enc_in0;
     modules::LinearWeights enc_in1;
-    modules::QwenCausalDecodeRuntimeWeights encoder_qwen;
+    modules::CausalDecoderRuntimeWeights encoder_qwen;
     core::TensorValue downsample_cls;
-    modules::QwenCausalDecodeRuntimeWeights downsample_qwen;
+    modules::CausalDecoderRuntimeWeights downsample_qwen;
     modules::LinearWeights enc_out;
     modules::LinearWeights dec_in;
-    modules::QwenCausalDecodeRuntimeWeights decoder_qwen;
+    modules::CausalDecoderRuntimeWeights decoder_qwen;
     modules::LinearWeights istft_head;
     core::TensorValue istft_window;
 };
@@ -260,14 +260,14 @@ std::shared_ptr<RedAeWeights> load_redae_weights(
         c.enc_heads,
         c.enc_kv_heads,
         c.enc_head_dim,
-        modules::QwenCausalDecoderLogitsMode::AllSteps,
+        modules::CausalDecoderLogitsMode::AllSteps,
         options.graph_arena_bytes,
         options.graph_arena_bytes,
         execution.backend_type(),
         true,
         c.enc_sliding_window);
     auto encoder_load_config = encoder_config;
-    encoder_load_config.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    encoder_load_config.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
     weights->encoder_qwen = load_qwen_weights(
         *weights->store, encoder_source, binding_config.encoder_qwen, encoder_load_config, binding_config.qwen_vocab_size, options.weight_storage_type);
     weights->downsample_cls = weights->store->load_f32_tensor(
@@ -280,14 +280,14 @@ std::shared_ptr<RedAeWeights> load_redae_weights(
         c.enc_heads,
         c.enc_kv_heads,
         c.enc_head_dim,
-        modules::QwenCausalDecoderLogitsMode::AllSteps,
+        modules::CausalDecoderLogitsMode::AllSteps,
         options.graph_arena_bytes,
         options.graph_arena_bytes,
         execution.backend_type(),
         true,
         0);
     auto downsample_load_config = downsample_config;
-    downsample_load_config.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    downsample_load_config.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
     weights->downsample_qwen = load_qwen_weights(
         *weights->store, encoder_source, binding_config.downsample_qwen, downsample_load_config, binding_config.qwen_vocab_size, options.weight_storage_type);
     weights->enc_out = binding::linear_from_source(
@@ -308,14 +308,14 @@ std::shared_ptr<RedAeWeights> load_redae_weights(
         c.dec_heads,
         c.dec_kv_heads,
         c.dec_head_dim,
-        modules::QwenCausalDecoderLogitsMode::AllSteps,
+        modules::CausalDecoderLogitsMode::AllSteps,
         options.graph_arena_bytes,
         options.graph_arena_bytes,
         execution.backend_type(),
         false,
         c.dec_sliding_window);
     auto decoder_load_config = decoder_config;
-    decoder_load_config.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+    decoder_load_config.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
     weights->decoder_qwen = load_qwen_weights(
         *weights->store, decoder_source, binding_config.decoder_qwen, decoder_load_config, binding_config.qwen_vocab_size, options.weight_storage_type);
     weights->istft_head = binding::linear_from_source(
@@ -654,7 +654,7 @@ public:
     }
 
 private:
-    modules::QwenCausalDecodeRuntimeConfig encoder_config(size_t graph_arena_bytes) const {
+    modules::CausalDecoderRuntimeConfig encoder_config(size_t graph_arena_bytes) const {
         auto out = qwen_runtime_config(
             weights_->trace_prefix + ".encoder",
             config_.enc_hidden_size,
@@ -663,17 +663,17 @@ private:
             config_.enc_heads,
             config_.enc_kv_heads,
             config_.enc_head_dim,
-            modules::QwenCausalDecoderLogitsMode::AllSteps,
+            modules::CausalDecoderLogitsMode::AllSteps,
             graph_arena_bytes,
             graph_arena_bytes,
             execution_.backend_type(),
             true,
             config_.enc_sliding_window);
-        out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+        out.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
         return out;
     }
 
-    modules::QwenCausalDecodeRuntimeConfig downsample_config(size_t graph_arena_bytes) const {
+    modules::CausalDecoderRuntimeConfig downsample_config(size_t graph_arena_bytes) const {
         auto out = qwen_runtime_config(
             weights_->trace_prefix + ".downsample",
             config_.enc_hidden_size,
@@ -682,17 +682,17 @@ private:
             config_.enc_heads,
             config_.enc_kv_heads,
             config_.enc_head_dim,
-            modules::QwenCausalDecoderLogitsMode::AllSteps,
+            modules::CausalDecoderLogitsMode::AllSteps,
             graph_arena_bytes,
             graph_arena_bytes,
             execution_.backend_type(),
             true,
             0);
-        out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+        out.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
         return out;
     }
 
-    modules::QwenCausalDecodeRuntimeConfig decoder_config(size_t graph_arena_bytes) const {
+    modules::CausalDecoderRuntimeConfig decoder_config(size_t graph_arena_bytes) const {
         auto out = qwen_runtime_config(
             weights_->trace_prefix + ".decoder",
             config_.dec_hidden_size,
@@ -701,13 +701,13 @@ private:
             config_.dec_heads,
             config_.dec_kv_heads,
             config_.dec_head_dim,
-            modules::QwenCausalDecoderLogitsMode::AllSteps,
+            modules::CausalDecoderLogitsMode::AllSteps,
             graph_arena_bytes,
             graph_arena_bytes,
             execution_.backend_type(),
             false,
             config_.dec_sliding_window);
-        out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
+        out.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
         return out;
     }
 
@@ -716,9 +716,9 @@ private:
     RedAeCodecConfig config_;
     RedAeInGraph encoder_in_;
     RedAeOutGraph encoder_out_;
-    modules::QwenCausalDecodeRuntime encoder_qwen_;
-    modules::QwenCausalDecodeRuntime downsample_qwen_;
-    modules::QwenCausalDecodeRuntime decoder_qwen_;
+    modules::CausalDecoderRuntime encoder_qwen_;
+    modules::CausalDecoderRuntime downsample_qwen_;
+    modules::CausalDecoderRuntime decoder_qwen_;
     std::vector<float> istft_window_;
     std::unique_ptr<audio::HostLogMagnitudePhaseISTFT> host_istft_;
     int64_t host_istft_frames_ = 0;

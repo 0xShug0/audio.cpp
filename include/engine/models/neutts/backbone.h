@@ -3,7 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/models/neutts/assets.h"
 
 #include <cstddef>
@@ -20,10 +20,10 @@ namespace engine::models::neutts {
 struct NeuTTSBackboneWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
-    modules::QwenCausalDecoderWeights decoder;
+    modules::CausalDecoderWeights decoder;
 };
 
-modules::QwenCausalDecoderConfig make_neutts_qwen_config(
+modules::CausalDecoderConfig make_neutts_qwen3_config(
     const NeuTTSBackboneConfig & config,
     core::BackendType backend_type);
 

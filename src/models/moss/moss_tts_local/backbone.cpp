@@ -4,7 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -148,8 +148,8 @@ BackboneWeights load_backbone_weights(
     return weights;
 }
 
-modules::QwenDecoderLayerWeights qwen_layer_weights(const BackboneLayerWeights & weights) {
-    modules::QwenDecoderLayerWeights out;
+modules::DecoderLayerWeights qwen_layer_weights(const BackboneLayerWeights & weights) {
+    modules::DecoderLayerWeights out;
     out.input_norm = {weights.input_norm, std::nullopt};
     out.self_attention.q_weight = weights.q_proj;
     out.self_attention.k_weight = weights.k_proj;
@@ -164,8 +164,8 @@ modules::QwenDecoderLayerWeights qwen_layer_weights(const BackboneLayerWeights &
     return out;
 }
 
-modules::QwenDecoderLayerConfig qwen_layer_config(const MossBackboneConfig & config) {
-    modules::QwenDecoderLayerConfig out;
+modules::DecoderLayerConfig qwen_layer_config(const MossBackboneConfig & config) {
+    modules::DecoderLayerConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
     out.num_key_value_heads = config.num_key_value_heads;
@@ -175,9 +175,9 @@ modules::QwenDecoderLayerConfig qwen_layer_config(const MossBackboneConfig & con
     out.rope_theta = config.rope_theta;
     out.attention_precision = GGML_PREC_F32;
     out.use_qk_norm = true;
-    out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-    out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
-    out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
+    out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGrouped;
+    out.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     return out;
 }
 
@@ -310,7 +310,7 @@ void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     cache_values.reserve(static_cast<size_t>(config.num_hidden_layers));
 
     impl.step_graph = ggml_new_graph_custom(gctx, 65536, false);
-    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
+    const modules::DecoderLayerModule layer_module(qwen_layer_config(config));
 
     auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                  .build(ctx, token_input, weights.embed_tokens);
@@ -499,7 +499,7 @@ std::vector<float> MossBackboneRuntime::prefill(
     std::vector<core::TensorValue> layer_values;
     layer_keys.reserve(impl.weights.layers.size());
     layer_values.reserve(impl.weights.layers.size());
-    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
+    const modules::DecoderLayerModule layer_module(qwen_layer_config(config));
     for (const auto & layer : impl.weights.layers) {
         auto out = layer_module.build(
             ctx,

@@ -148,7 +148,7 @@ std::shared_ptr<const AceStepDetokenizerWeights> load_detokenizer_weights(
     weights->layers.layers.reserve(static_cast<size_t>(config.num_attention_pooler_hidden_layers));
     for (int64_t i = 0; i < config.num_attention_pooler_hidden_layers; ++i) {
         const std::string prefix = "detokenizer.layers." + std::to_string(i);
-        modules::QwenDecoderLayerWeights layer;
+        modules::DecoderLayerWeights layer;
         layer.input_norm.weight = store->load_f32_tensor(
             source, prefix + ".input_layernorm.weight", {config.hidden_size});
         layer.post_norm.weight = store->load_f32_tensor(

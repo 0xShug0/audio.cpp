@@ -1,7 +1,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/optimizations/fast_projection_modules.h"
 
@@ -97,7 +97,7 @@ LayerResult run_layer(bool packed,
             GGML_TYPE_I32,
             engine::core::TensorShape::from_dims({batched_decode ? batch : steps}));
 
-        engine::modules::QwenDecoderLayerWeights weights;
+        engine::modules::DecoderLayerWeights weights;
         weights.input_norm = {make_f32({hidden}), std::nullopt};
         weights.post_norm = {make_f32({hidden}), std::nullopt};
         weights.self_attention.out_weight = make_f32({hidden, hidden});
@@ -123,7 +123,7 @@ LayerResult run_layer(bool packed,
             weights.mlp.up_proj = {make_f32({intermediate, hidden}), std::nullopt};
         }
 
-        engine::modules::QwenDecoderLayerConfig config;
+        engine::modules::DecoderLayerConfig config;
         config.hidden_size = hidden;
         config.num_attention_heads = heads;
         config.num_key_value_heads = kv_heads;
@@ -131,16 +131,16 @@ LayerResult run_layer(bool packed,
         config.intermediate_size = intermediate;
         config.rms_norm_eps = 1e-5f;
         config.qkv_layout = packed
-            ? engine::modules::QwenDecoderQKVLayout::PackedQKV
-            : engine::modules::QwenDecoderQKVLayout::Separate;
+            ? engine::modules::DecoderQKVLayout::PackedQKV
+            : engine::modules::DecoderQKVLayout::Separate;
         config.runtime.mlp.mode = packed
-            ? engine::modules::QwenDecoderMLPMode::PackedGateUp
-            : engine::modules::QwenDecoderMLPMode::Exact;
+            ? engine::modules::DecoderMLPMode::PackedGateUp
+            : engine::modules::DecoderMLPMode::Exact;
         config.use_qk_norm = false;
-        config.runtime.attention.prefill_mode = engine::modules::QwenDecoderAttentionMode::ManualRepeat;
+        config.runtime.attention.prefill_mode = engine::modules::DecoderAttentionMode::ManualRepeat;
 
         ggml_cgraph * graph = ggml_new_graph_custom(ggml, kGraphNodes, false);
-        engine::modules::QwenDecoderLayerOutputs outputs;
+        engine::modules::DecoderLayerOutputs outputs;
         engine::core::TensorValue cache_key, cache_value, cache_slot, mask;
         if (batched_decode) {
             cache_key = make_f32({batch, cache_steps, kv_heads, head_dim});
@@ -148,12 +148,12 @@ LayerResult run_layer(bool packed,
             cache_slot = engine::core::make_tensor(ctx, GGML_TYPE_I32,
                 engine::core::TensorShape::from_dims({batch}));
             mask = make_f32({batch, 1, 1, cache_steps});
-            config.runtime.static_cache.update_mode = engine::modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-            config.runtime.attention.static_mode = engine::modules::QwenDecoderAttentionMode::ManualRepeat;
-            outputs = engine::modules::QwenDecoderLayerModule(config).build_with_static_cache_tail_batched(
+            config.runtime.static_cache.update_mode = engine::modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+            config.runtime.attention.static_mode = engine::modules::DecoderAttentionMode::ManualRepeat;
+            outputs = engine::modules::DecoderLayerModule(config).build_with_static_cache_tail_batched(
                 ctx, graph, input, positions, weights, cache_key, cache_value, cache_slot, mask);
         } else {
-            outputs = engine::modules::QwenDecoderLayerModule(config).build(ctx, input, positions, weights);
+            outputs = engine::modules::DecoderLayerModule(config).build(ctx, input, positions, weights);
         }
         ggml_build_forward_expand(graph, outputs.output.tensor);
         if (batched_decode) {
@@ -258,7 +258,7 @@ void test_packed_qkv_and_gate_up_match_separate_projections() {
 }
 
 void test_suffix_causal_mask() {
-    const auto values = engine::modules::qwen_causal_suffix_mask_values(2, 3, 2);
+    const auto values = engine::modules::causal_suffix_mask_values(2, 3, 2);
     if (values.size() != 30) {
         throw std::runtime_error("suffix causal mask size mismatch");
     }
@@ -547,7 +547,7 @@ void test_higgs_decode_graph_exposes_cuda_fast_paths() {
         const auto cache_slot = make_tensor(GGML_TYPE_I64, {1});
         const auto attention_mask = make_tensor(GGML_TYPE_F16, {1, 1, 1, cache_steps});
 
-        engine::modules::QwenDecoderLayerWeights weights;
+        engine::modules::DecoderLayerWeights weights;
         weights.input_norm = {make_tensor(GGML_TYPE_F32, {hidden}), std::nullopt};
         weights.q_norm = {make_tensor(GGML_TYPE_F32, {head_dim}), std::nullopt};
         weights.k_norm = {make_tensor(GGML_TYPE_F32, {head_dim}), std::nullopt};
@@ -563,24 +563,24 @@ void test_higgs_decode_graph_exposes_cuda_fast_paths() {
             std::nullopt,
         };
 
-        engine::modules::QwenDecoderLayerConfig config;
+        engine::modules::DecoderLayerConfig config;
         config.hidden_size = hidden;
         config.num_attention_heads = heads;
         config.num_key_value_heads = kv_heads;
         config.head_dim = head_dim;
         config.intermediate_size = intermediate;
-        config.qkv_layout = engine::modules::QwenDecoderQKVLayout::PackedQKV;
+        config.qkv_layout = engine::modules::DecoderQKVLayout::PackedQKV;
         config.use_qk_norm = true;
         config.runtime.attention.static_mode =
-            engine::modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+            engine::modules::DecoderAttentionMode::FlashGroupedViewKV;
         config.runtime.static_cache.update_mode =
-            engine::modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+            engine::modules::DecoderStaticCacheUpdateMode::DirectSetRows;
         config.runtime.static_cache.set_rows_mode =
-            engine::modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-        config.runtime.mlp.mode = engine::modules::QwenDecoderMLPMode::PackedGateUp;
+            engine::modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+        config.runtime.mlp.mode = engine::modules::DecoderMLPMode::PackedGateUp;
 
         ggml_cgraph * graph = ggml_new_graph_custom(ggml, kGraphNodes, false);
-        const auto outputs = engine::modules::QwenDecoderLayerModule(config).build_with_static_cache_tail(
+        const auto outputs = engine::modules::DecoderLayerModule(config).build_with_static_cache_tail(
             ctx,
             graph,
             input,
@@ -647,10 +647,10 @@ int main(int argc, char ** argv) {
         test_f16_kv_set_rows_batched();
         test_fast_projection_accepts_cuda_or_hip_backends();
         test_higgs_decode_graph_exposes_cuda_fast_paths();
-        std::cout << "qwen_decoder_packed_projection_test: ok\n";
+        std::cout << "decoder_packed_projection_test: ok\n";
         return 0;
     } catch (const std::exception & ex) {
-        std::cerr << "qwen_decoder_packed_projection_test: failed: " << ex.what() << "\n";
+        std::cerr << "decoder_packed_projection_test: failed: " << ex.what() << "\n";
         return 1;
     }
 }

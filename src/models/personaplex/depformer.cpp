@@ -4,7 +4,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 
 #include <algorithm>
 #include <limits>
@@ -35,17 +35,17 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderLayerConfig depformer_layer_config(
+modules::DecoderLayerConfig depformer_layer_config(
     const PersonaPlexConfig & config,
     core::BackendType backend_type) {
-    modules::QwenDecoderLayerConfig out;
+    modules::DecoderLayerConfig out;
     out.hidden_size = config.depformer.hidden_size;
     out.num_attention_heads = config.depformer.num_attention_heads;
     out.num_key_value_heads = config.depformer.num_attention_heads;
     out.head_dim = config.depformer.head_dim;
     out.intermediate_size = config.depformer.intermediate_size;
     out.rms_norm_eps = config.lm.rms_norm_eps;
-    out.position_encoding = modules::QwenDecoderPositionEncoding::None;
+    out.position_encoding = modules::DecoderPositionEncoding::None;
     out.attention_precision = GGML_PREC_F32;
     out.projection_precision = GGML_PREC_DEFAULT;
     out.activation_cast.enabled = backend_type != core::BackendType::Vulkan;
@@ -60,12 +60,12 @@ modules::QwenDecoderLayerConfig depformer_layer_config(
     out.activation_cast.after_mlp_silu = true;
     out.activation_cast.after_mlp_mul = true;
     out.activation_cast.after_output = true;
-    out.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
     out.use_qk_norm = false;
-    out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     return out;
 }
 
@@ -88,7 +88,7 @@ core::TensorValue view_linear_rows(
         weight.type);
 }
 
-modules::QwenDecoderLayerWeights depformer_step_layer_weights(
+modules::DecoderLayerWeights depformer_step_layer_weights(
     ggml_context * ctx,
     const PersonaPlexDepformerLayerWeights & layer,
     int64_t step,
@@ -97,7 +97,7 @@ modules::QwenDecoderLayerWeights depformer_step_layer_weights(
     if (!layer.attention.qkv_weight.has_value()) {
         throw std::runtime_error("PersonaPlex depformer requires packed QKV weight");
     }
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = layer.norm1;
     out.self_attention.qkv_weight =
         view_linear_rows(ctx, *layer.attention.qkv_weight, step * 3 * hidden, 3 * hidden, hidden, "qkv");
@@ -316,7 +316,7 @@ struct PersonaPlexDepformerRuntime::Impl {
             hidden = core::wrap_tensor(ggml_add(ctx.get(), hidden.tensor, token_embedding.tensor), hidden.shape, GGML_TYPE_F32);
 
             const auto layer_config = depformer_layer_config(config, backend_type);
-            const modules::QwenDecoderLayerModule layer_module(layer_config);
+            const modules::DecoderLayerModule layer_module(layer_config);
             for (int64_t layer_index = 0; layer_index < config.depformer.num_layers; ++layer_index) {
                 const auto layer_weights = depformer_step_layer_weights(
                     ctx.get(),

@@ -45,8 +45,8 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderStackConfig qwen_config() {
-    modules::QwenDecoderStackConfig config;
+modules::DecoderStackConfig qwen_config() {
+    modules::DecoderStackConfig config;
     config.hidden_size = kHidden;
     config.num_attention_heads = kAttentionHeads;
     config.num_key_value_heads = kKvHeads;
@@ -112,13 +112,13 @@ IndexTTS2EmotionVector convert_emotion_json(const std::string & content, const s
     return out;
 }
 
-engine::modules::QwenDecoderLayerWeights load_qwen_layer(
+engine::modules::DecoderLayerWeights load_qwen_layer(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     int64_t layer_index,
     engine::assets::TensorStorageType storage_type) {
     const std::string prefix = "model.layers." + std::to_string(layer_index);
-    engine::modules::QwenDecoderLayerWeights layer;
+    engine::modules::DecoderLayerWeights layer;
     layer.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", kHidden);
     layer.self_attention.q_weight = store.load_tensor(
         source,
@@ -309,7 +309,7 @@ public:
             ctx,
             core::wrap_tensor(token_ids_, core::TensorShape::from_dims({1, prompt_steps_}), GGML_TYPE_I32),
             weights_->token_embedding);
-        auto outputs = modules::QwenDecoderStackModule(qwen_config()).build(
+        auto outputs = modules::DecoderStackModule(qwen_config()).build(
             ctx,
             x,
             core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32),
@@ -505,7 +505,7 @@ public:
             core::wrap_tensor(token_id_, core::TensorShape::from_dims({1, 1}), GGML_TYPE_I32),
             weights_->token_embedding);
         const auto cfg = qwen_config();
-        const modules::QwenDecoderLayerModule layer_module(modules::qwen_decoder_layer_config_from_stack(cfg));
+        const modules::DecoderLayerModule layer_module(modules::decoder_layer_config_from_stack(cfg));
         const auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, cache_steps_ + 1}), GGML_TYPE_F16);
         for (const auto & layer : weights_->decoder.layers) {
             cache_keys.push_back(core::make_tensor(

@@ -1,4 +1,4 @@
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/debug/trace.h"
 
 #include <cmath>
@@ -54,12 +54,12 @@ int main(int argc, char ** argv) {
             tensors.push_back(value);
             return value;
         };
-        engine::modules::QwenCausalDecodeRuntimeWeights weights;
+        engine::modules::CausalDecoderRuntimeWeights weights;
         weights.token_embedding = tensor({97, 64});
         weights.final_norm = {tensor({64}), std::nullopt};
         weights.lm_head = engine::modules::LinearWeights{weights.token_embedding, std::nullopt};
         for (int layer = 0; layer < 2; ++layer) {
-            engine::modules::QwenDecoderLayerWeights w;
+            engine::modules::DecoderLayerWeights w;
             w.input_norm = {tensor({64}), std::nullopt};
             w.post_norm = {tensor({64}), std::nullopt};
             w.q_norm = {tensor({64}), std::nullopt};
@@ -128,7 +128,7 @@ int main(int argc, char ** argv) {
                 }
             }
         }
-        engine::modules::QwenCausalDecodeRuntimeConfig config;
+        engine::modules::CausalDecoderRuntimeConfig config;
         auto & stack = config.decoder.stack;
         stack.hidden_size = 64;
         stack.num_attention_heads = 2;
@@ -136,17 +136,17 @@ int main(int argc, char ** argv) {
         stack.head_dim = 64;
         stack.intermediate_size = 128;
         stack.layers = 2;
-        stack.runtime.static_cache.update_mode = engine::modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-        stack.runtime.static_cache.set_rows_mode = engine::modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-        stack.runtime.attention.prefill_mode = engine::modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        stack.runtime.attention.static_mode = engine::modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+        stack.runtime.static_cache.update_mode = engine::modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+        stack.runtime.static_cache.set_rows_mode = engine::modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+        stack.runtime.attention.prefill_mode = engine::modules::DecoderAttentionMode::FlashGroupedViewKV;
+        stack.runtime.attention.static_mode = engine::modules::DecoderAttentionMode::FlashGroupedViewKV;
         config.decoder.logits_size = 97;
         config.decoder.static_cache_type = GGML_TYPE_F16;
         config.prefill_graph_arena_bytes = 4 * 1024 * 1024;
         config.decode_graph_arena_bytes = 4 * 1024 * 1024;
         config.evict_cuda_graph_cache_on_release = true;
-        engine::modules::QwenCausalDecodeRuntime reference(execution, config, weights);
-        engine::modules::QwenCausalDecodeRuntime saver(execution, config, weights);
+        engine::modules::CausalDecoderRuntime reference(execution, config, weights);
+        engine::modules::CausalDecoderRuntime saver(execution, config, weights);
         for (int steps : {11, 5, 1, 11, 28}) {
             const auto embeddings = pattern(steps * 64, .3f);
             auto expected = reference.prefill_embeddings(embeddings, steps);

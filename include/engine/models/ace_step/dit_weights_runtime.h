@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/models/ace_step/assets.h"
@@ -16,7 +16,7 @@ namespace engine::models::ace_step {
 struct AceStepDetokenizerWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::LinearWeights embed_tokens;
-    modules::QwenDecoderStackWeights layers;
+    modules::DecoderStackWeights layers;
     core::TensorValue norm;
     modules::LinearWeights proj_out;
     std::vector<float> quantizer_project_out_weight;
@@ -28,7 +28,7 @@ struct AceStepCoverTokenizerWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::LinearWeights audio_acoustic_proj;
     modules::LinearWeights attention_pooler_embed_tokens;
-    modules::QwenDecoderStackWeights attention_pooler_layers;
+    modules::DecoderStackWeights attention_pooler_layers;
     core::TensorValue attention_pooler_norm;
     modules::LinearWeights quantizer_project_in;
     std::vector<float> attention_pooler_special_token_host;

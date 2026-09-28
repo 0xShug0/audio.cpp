@@ -2,7 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/neutts/backbone.h"
@@ -82,21 +82,21 @@ private:
     std::shared_ptr<const NeuTTSBackboneWeights> weights_;
 };
 
-modules::QwenCausalDecodeRuntimeConfig make_qwen_decode_runtime_config(
+modules::CausalDecoderRuntimeConfig make_qwen3_decode_runtime_config(
     const NeuTTSBackboneConfig & backbone,
     core::BackendType backend_type,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes) {
-    modules::QwenCausalDecodeRuntimeConfig config;
+    modules::CausalDecoderRuntimeConfig config;
     config.trace_name = "neutts.ar";
-    config.decoder = make_neutts_qwen_config(backbone, backend_type);
+    config.decoder = make_neutts_qwen3_config(backbone, backend_type);
     config.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
     config.decode_graph_arena_bytes = decode_graph_arena_bytes;
     return config;
 }
 
-modules::QwenCausalDecodeRuntimeWeights make_qwen_decode_runtime_weights(const NeuTTSBackboneWeights & weights) {
-    modules::QwenCausalDecodeRuntimeWeights out;
+modules::CausalDecoderRuntimeWeights make_qwen3_decode_runtime_weights(const NeuTTSBackboneWeights & weights) {
+    modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = weights.token_embedding;
     out.stack = weights.decoder.stack;
     out.final_norm = weights.decoder.final_norm;
@@ -145,14 +145,14 @@ struct NeuTTSARRuntime::Impl {
               execution,
               weight_context_bytes,
               storage_type)),
-          qwen_runtime(std::make_unique<modules::QwenCausalDecodeRuntime>(
+          qwen3_runtime(std::make_unique<modules::CausalDecoderRuntime>(
               execution,
-              make_qwen_decode_runtime_config(
+              make_qwen3_decode_runtime_config(
                   weights->assets().backbone,
                   weights->backend_type(),
                   prefill_graph_arena_bytes,
                   decode_graph_arena_bytes),
-              make_qwen_decode_runtime_weights(weights->weights()))),
+              make_qwen3_decode_runtime_weights(weights->weights()))),
           sampling_policy(sampling::resolve_torch_cuda_sampling_policy(
               weights->backend_type(),
               weights->device(),
@@ -196,11 +196,11 @@ struct NeuTTSARRuntime::Impl {
         debug::trace_log_scalar("neutts.ar.generation_context", generation_context);
         debug::trace_log_scalar("neutts.ar.max_new_tokens.effective", max_new_tokens);
         auto timing_start = Clock::now();
-        auto prefill = qwen_runtime->prefill_tokens(prompt_ids);
+        auto prefill = qwen3_runtime->prefill_tokens(prompt_ids);
         debug::timing_log_scalar(
             "neutts.ar.prefill.total_ms",
             engine::debug::elapsed_ms(timing_start, Clock::now()));
-        qwen_runtime->start_decode_tokens(prefill.state, required_cache_steps);
+        qwen3_runtime->start_decode_tokens(prefill.state, required_cache_steps);
 
         sampling::HfSamplingOptions sampling_options;
         sampling_options.do_sample = true;
@@ -244,7 +244,7 @@ struct NeuTTSARRuntime::Impl {
             if (is_speech_token(token, speech_token_start, speech_token_end)) {
                 out.speech_codes.push_back(token - speech_token_start);
             }
-            logits = qwen_runtime->decode_token(token).logits;
+            logits = qwen3_runtime->decode_token(token).logits;
         }
         debug::timing_log_scalar(
             "neutts.ar.decode.total_ms",
@@ -255,7 +255,7 @@ struct NeuTTSARRuntime::Impl {
     }
 
     std::shared_ptr<ARWeightsRuntime> weights;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> qwen_runtime;
+    std::unique_ptr<modules::CausalDecoderRuntime> qwen3_runtime;
     sampling::TorchCudaSamplingPolicy sampling_policy;
 };
 
@@ -286,8 +286,8 @@ NeuTTSGeneratedCodes NeuTTSARRuntime::generate(
 }
 
 void NeuTTSARRuntime::release_runtime_graphs() {
-    if (impl_ != nullptr && impl_->qwen_runtime != nullptr) {
-        impl_->qwen_runtime->release_runtime_graphs();
+    if (impl_ != nullptr && impl_->qwen3_runtime != nullptr) {
+        impl_->qwen3_runtime->release_runtime_graphs();
     }
 }
 

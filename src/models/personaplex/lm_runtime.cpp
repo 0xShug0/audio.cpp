@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/lookup_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/bounded_static_kv_decode.h"
 
@@ -25,14 +25,14 @@ modules::NormWeights load_rms_alpha(
     };
 }
 
-modules::QwenDecoderLayerWeights load_main_layer(
+modules::DecoderLayerWeights load_main_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const PersonaPlexLMConfig & config,
     int64_t layer,
     assets::TensorStorageType storage_type) {
     const std::string prefix = "transformer.layers." + std::to_string(layer) + ".";
-    modules::QwenDecoderLayerWeights weights;
+    modules::DecoderLayerWeights weights;
     weights.input_norm = load_rms_alpha(store, source, prefix + "norm1.alpha", config.hidden_size);
     weights.self_attention.qkv_weight = store.load_tensor(
         source,
@@ -74,10 +74,10 @@ struct GgmlContextDeleter {
 
 }  // namespace
 
-modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(
+modules::CausalDecoderConfig personaplex_lm_decoder_config(
     const PersonaPlexConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.lm.hidden_size;
     out.stack.num_attention_heads = config.lm.num_attention_heads;
     out.stack.num_key_value_heads = config.lm.num_key_value_heads;
@@ -102,16 +102,16 @@ modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(
     out.stack.activation_cast.after_mlp_silu = true;
     out.stack.activation_cast.after_mlp_mul = true;
     out.stack.activation_cast.after_output = true;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
     out.stack.use_qk_norm = false;
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::FlashWithPrefix;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     out.logits_size = config.lm.text_vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.use_lm_head_bias = false;
     return out;
 }
@@ -239,7 +239,7 @@ public:
             ggml_add(ctx.get(), embedding_scaled.tensor, token_scaled.tensor),
             core::TensorShape::from_dims({1, 1, config.lm.hidden_size}),
             GGML_TYPE_F32);
-        auto decoder_out = modules::QwenCausalDecoderModule(personaplex_lm_decoder_config(config, backend_type))
+        auto decoder_out = modules::CausalDecoderModule(personaplex_lm_decoder_config(config, backend_type))
                                .build_static_cache_tail(
                                    build_ctx,
                                    graph,
@@ -374,7 +374,7 @@ public:
         const int32_t position = static_cast<int32_t>(step.position);
         ggml_backend_tensor_set(positions, &position, 0, sizeof(int32_t));
         ggml_backend_tensor_set(cache_slot, &step.cache_slot, 0, sizeof(int32_t));
-        modules::write_qwen_cached_step_mask(
+        modules::write_decoder_cached_step_mask(
             attention_mask,
             mask_values,
             cache_steps_,

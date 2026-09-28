@@ -9,7 +9,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/speech_encoders/whisper_frontend.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/sampling/hf_sampler.h"
@@ -89,7 +89,7 @@ public:
         whisper_ = modules::WhisperFrontendComponent::load_openai_layout(
             source_, execution.config(), {80, 1500, 1024, 16, 24, 1e-5f}, whisper_config);
 
-        modules::QwenCausalDecodeRuntimeConfig ar_config;
+        modules::CausalDecoderRuntimeConfig ar_config;
         ar_config.trace_name = "moss_transcribe_diarize.decoder";
         ar_config.prefill_graph_arena_bytes = 32 * 1024 * 1024;
         ar_config.decode_graph_arena_bytes = 32 * 1024 * 1024;
@@ -103,19 +103,19 @@ public:
         stack.layers = 28;
         stack.rms_norm_eps = 1e-6f;
         stack.rope_theta = 1000000.f;
-        stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-        stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+        stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+        stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+        stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+        stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
         ar_config.decoder.static_cache_type = GGML_TYPE_F16;
         ar_config.decoder.logits_size = vocab_;
 
-        modules::QwenCausalDecodeRuntimeWeights ar_weights;
+        modules::CausalDecoderRuntimeWeights ar_weights;
         const std::string prefix = "model.language_model";
         ar_weights.token_embedding = store_.load_tensor(*source_, prefix + ".embed_tokens.weight", Storage::Native, {vocab_, kHidden});
         for (int64_t i = 0; i < stack.layers; ++i) {
             const std::string p = prefix + ".layers." + std::to_string(i);
-            modules::QwenDecoderLayerWeights layer;
+            modules::DecoderLayerWeights layer;
             layer.input_norm = binding::norm_weight_from_source(store_, *source_, p + ".input_layernorm", kHidden);
             layer.post_norm = binding::norm_weight_from_source(store_, *source_, p + ".post_attention_layernorm", kHidden);
             layer.q_norm = binding::norm_weight_from_source(store_, *source_, p + ".self_attn.q_norm", stack.head_dim);
@@ -143,7 +143,7 @@ public:
         const auto norm = binding::norm_from_source(store_, *source_, "model.vq_adaptor.layers.3", kHidden);
         store_.upload();
         source_->release_storage();
-        ar_ = std::make_unique<modules::QwenCausalDecodeRuntime>(execution_, ar_config, ar_weights);
+        qwen3_runtime_ = std::make_unique<modules::CausalDecoderRuntime>(execution_, ar_config, ar_weights);
 
         ctx_.reset(ggml_init({2 * 1024 * 1024, nullptr, true}));
         if (!ctx_) {
@@ -254,7 +254,7 @@ public:
         }
         debug::timing_log_scalar("moss_transcribe_diarize.frontend_ms", debug::elapsed_ms(started));
         const auto prefill_started = std::chrono::steady_clock::now();
-        logits_ = ar_->prefill_embeddings_into_cache(embeddings, static_cast<int64_t>(ids.size()),
+        logits_ = qwen3_runtime_->prefill_embeddings_into_cache(embeddings, static_cast<int64_t>(ids.size()),
             static_cast<int64_t>(ids.size()) + max_tokens, 128).logits;
         debug::timing_log_scalar("moss_transcribe_diarize.prefill_ms", debug::elapsed_ms(prefill_started));
         max_tokens_ = max_tokens;
@@ -268,7 +268,7 @@ public:
         }
         while (static_cast<int64_t>(generated_.size()) < max_tokens_) {
             if (!generated_.empty()) {
-                logits_ = ar_->decode_token(generated_.back()).logits;
+                logits_ = qwen3_runtime_->decode_token(generated_.back()).logits;
             }
             const int32_t token = sampling::HfLogitsProcessor::argmax(logits_.data(), logits_.size(), "MOSS-Transcribe-Diarize");
             if (token == kEosToken) {
@@ -306,7 +306,7 @@ private:
     audio::WhisperLogMelExtractor mel_;
     modules::WhisperFrontendComponent whisper_;
     std::shared_ptr<tokenizers::LlamaBpeTokenizer> tokenizer_;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> ar_;
+    std::unique_ptr<modules::CausalDecoderRuntime> qwen3_runtime_;
     int64_t vocab_ = 0;
     bool active_ = false;
     int64_t max_tokens_ = 0;

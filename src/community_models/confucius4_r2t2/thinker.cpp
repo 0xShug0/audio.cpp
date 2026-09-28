@@ -1,6 +1,6 @@
 #include "engine/community_models/confucius4_r2t2/thinker.h"
 
-#include "engine/framework/runtime/greedy_qwen_decoder.h"
+#include "engine/framework/runtime/greedy_causal_decoder.h"
 
 #include <stdexcept>
 #include <utility>
@@ -10,9 +10,9 @@ namespace {
 
 namespace modules = engine::modules;
 
-runtime::GreedyQwenDecoderSpec make_decoder_spec(const R2T2ASRConfig & config) {
+runtime::GreedyCausalDecoderSpec make_decoder_spec(const R2T2ASRConfig & config) {
     const auto & text = config.text_decoder;
-    runtime::GreedyQwenDecoderSpec spec;
+    runtime::GreedyCausalDecoderSpec spec;
     // Qwen3-style stack: Q/K norms, no attention biases, separate QKV.
     spec.decoder.stack.hidden_size = text.hidden_size;
     spec.decoder.stack.num_attention_heads = text.num_attention_heads;
@@ -24,9 +24,9 @@ runtime::GreedyQwenDecoderSpec make_decoder_spec(const R2T2ASRConfig & config) {
     spec.decoder.stack.rope_theta = text.rope_theta;
     spec.decoder.stack.use_qk_norm = true;
     spec.decoder.stack.runtime.static_cache.update_mode =
-        modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+        modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     spec.decoder.logits_size = text.output_size;
-    spec.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    spec.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     spec.vocab_size = text.vocab_size;
     spec.max_position_embeddings = text.max_position_embeddings;
     spec.tie_word_embeddings = config.tie_word_embeddings;
@@ -67,7 +67,7 @@ struct R2T2ASRThinkerRuntime::Impl {
               weight_storage_type) {}
 
     R2T2ASRConfig config;
-    runtime::GreedyQwenDecoderRuntime runtime;
+    runtime::GreedyCausalDecoderRuntime runtime;
 };
 
 R2T2ASRThinkerRuntime::R2T2ASRThinkerRuntime(
@@ -105,7 +105,7 @@ R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
             throw std::runtime_error("R2T2 ASR audio placeholder position out of range");
         }
     }
-    runtime::GreedyQwenDecoderRuntime::Prompt decoder_prompt;
+    runtime::GreedyCausalDecoderRuntime::Prompt decoder_prompt;
     decoder_prompt.input_ids = prompt.input_ids;
     decoder_prompt.injection.values = audio_embeddings.values;
     decoder_prompt.injection.tokens = audio_embeddings.tokens;

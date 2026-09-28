@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +24,7 @@ struct Qwen3VlEncoderRuntimeConfig {
     std::string final_norm_weight_name;
     std::string lm_head_weight_name = "lm_head.weight";
     std::string lm_head_bias_name = "lm_head.bias";
-    QwenDecoderStackConfig stack;
+    DecoderStackConfig stack;
     int64_t vocab_size = 0;
     int64_t logits_size = 0;
     size_t weight_context_bytes = 0;

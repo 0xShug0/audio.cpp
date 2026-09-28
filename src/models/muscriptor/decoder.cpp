@@ -7,7 +7,7 @@
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/sampling/hf_sampler.h"
 
 #include <ggml-alloc.h>

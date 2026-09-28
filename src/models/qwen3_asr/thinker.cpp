@@ -5,7 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -72,8 +72,8 @@ struct PrefillOutput {
     runtime::TransformerKVState kv_state;
 };
 
-modules::QwenDecoderLayerWeights to_qwen_layer_weights(const TextLayerWeights & weights) {
-    modules::QwenDecoderLayerWeights out;
+modules::DecoderLayerWeights to_qwen3_layer_weights(const TextLayerWeights & weights) {
+    modules::DecoderLayerWeights out;
     out.input_norm = {weights.input_norm, std::nullopt};
     out.self_attention.q_weight = weights.q_proj;
     out.self_attention.k_weight = weights.k_proj;
@@ -88,10 +88,10 @@ modules::QwenDecoderLayerWeights to_qwen_layer_weights(const TextLayerWeights & 
     return out;
 }
 
-modules::QwenCausalDecoderConfig make_qwen_decoder_config(
+modules::CausalDecoderConfig make_qwen3_decoder_config(
     const Qwen3ASRTextDecoderConfig & config,
-    modules::QwenCausalDecoderLogitsMode logits_mode) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderLogitsMode logits_mode) {
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
     out.stack.num_key_value_heads = config.num_key_value_heads;
@@ -101,17 +101,17 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     out.stack.use_qk_norm = true;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = config.output_size;
     out.logits_mode = logits_mode;
     return out;
 }
 
-modules::QwenCausalDecoderWeights make_qwen_decoder_weights(const ThinkerWeights & weights) {
-    modules::QwenCausalDecoderWeights out;
+modules::CausalDecoderWeights make_qwen3_decoder_weights(const ThinkerWeights & weights) {
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & layer : weights.layers) {
-        out.stack.layers.push_back(to_qwen_layer_weights(layer));
+        out.stack.layers.push_back(to_qwen3_layer_weights(layer));
     }
     out.final_norm = {weights.norm, std::nullopt};
     out.lm_head = {weights.lm_head, std::nullopt};
@@ -327,9 +327,9 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        const auto decoder_weights = make_qwen_decoder_weights(weights);
-        auto decoder_out = modules::QwenCausalDecoderModule(
-                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::LastStep))
+        const auto decoder_weights = make_qwen3_decoder_weights(weights);
+        auto decoder_out = modules::CausalDecoderModule(
+                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::LastStep))
                                .build(ctx, x, positions, decoder_weights);
         for (const auto & layer : decoder_out.state.layers) {
             if (!layer.key.has_value() || !layer.value.has_value()) {
@@ -338,7 +338,7 @@ public:
             // The graph allocator recycles intermediates, and the decoder K/V is an
             // intermediate that run() has to read back afterwards. Copy each one into
             // a tensor of its own and mark it as a graph output, which is what keeps
-            // it off the reuse list. Same shape as QwenCausalDecodeRuntime prefill.
+            // it off the reuse list. Same shape as CausalDecoderRuntime prefill.
             auto * key = ggml_cpy(
                 ctx_.get(),
                 layer.key->tensor,
@@ -386,7 +386,7 @@ public:
                 + std::to_string(audio_tokens_) + " are audio tokens); "
                 "shorten the transcription prompt or the audio");
         }
-        position_ids_ = modules::qwen_position_ids(prompt_steps_);
+        position_ids_ = modules::decoder_position_ids(prompt_steps_);
         debug::timing_log_scalar("qwen3_asr.thinker.prefill.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.prefill_prompt_steps", prompt_steps_);
     }
@@ -517,9 +517,9 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        auto decoder_out = modules::QwenCausalDecoderModule(
-                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::AllSteps))
-                               .build(ctx, x, positions, make_qwen_decoder_weights(weights));
+        auto decoder_out = modules::CausalDecoderModule(
+                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::AllSteps))
+                               .build(ctx, x, positions, make_qwen3_decoder_weights(weights));
         auto token_ids = engine::sampling::GreedyDecodeModule().build(ctx, decoder_out.logits);
         token_ids_ = token_ids.tensor;
         ggml_set_output(token_ids_);
@@ -535,7 +535,7 @@ public:
             (engine::core::trim_backend_pools(runtime_->backend()), !try_alloc())) {
             throw std::runtime_error("failed to allocate Qwen3 ASR thinker classification graph");
         }
-        position_ids_ = modules::qwen_position_ids(prompt_steps_);
+        position_ids_ = modules::decoder_position_ids(prompt_steps_);
         debug::timing_log_scalar("qwen3_asr.thinker.classify.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::trace_log_scalar("qwen3_asr.thinker.classify_prompt_steps", prompt_steps_);
     }
@@ -642,14 +642,14 @@ public:
             core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
             GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        auto decoder_out = modules::QwenCausalDecoderModule(
-                               make_qwen_decoder_config(config, modules::QwenCausalDecoderLogitsMode::LastStep))
+        auto decoder_out = modules::CausalDecoderModule(
+                               make_qwen3_decoder_config(config, modules::CausalDecoderLogitsMode::LastStep))
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
                                    x,
                                    positions,
-                                   make_qwen_decoder_weights(weights),
+                                   make_qwen3_decoder_weights(weights),
                                    cache_steps_,
                                    attention_mask,
                                    cache_slot);
@@ -695,7 +695,7 @@ public:
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
         const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
         ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
-        modules::write_qwen_cached_step_mask(
+        modules::write_decoder_cached_step_mask(
             attention_mask_,
             attention_mask_values_,
             cache_steps_,

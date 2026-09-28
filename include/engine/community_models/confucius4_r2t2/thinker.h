@@ -13,7 +13,7 @@ namespace engine::community_models::confucius4_r2t2 {
 /// Greedy decoding of the Confucius4-R2T2 thinker. The Qwen3-style decoder
 /// stack, the audio-embedding injection, the static KV cache, and the graph
 /// lifetimes all come from the shared framework runtime
-/// (runtime::GreedyQwenDecoderRuntime), so this class only maps the family's
+/// (runtime::GreedyCausalDecoderRuntime), so this class only maps the family's
 /// config and tensor layout onto it.
 class R2T2ASRThinkerRuntime {
 public:

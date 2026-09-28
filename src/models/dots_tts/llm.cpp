@@ -6,8 +6,8 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/core/backend.h"
 
@@ -54,7 +54,7 @@ struct LlmWeights {
     std::shared_ptr<core::ExecutionContext> execution_context;
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
-    modules::QwenDecoderStackWeights stack;
+    modules::DecoderStackWeights stack;
     modules::NormWeights final_norm;
     modules::LinearWeights eos_in;
     modules::LinearWeights eos_out;
@@ -70,8 +70,8 @@ int64_t head_dim(const DotsLlmConfig & config) {
     return config.hidden_size / config.num_attention_heads;
 }
 
-modules::QwenDecoderStackConfig stack_config(const DotsLlmConfig & config) {
-    modules::QwenDecoderStackConfig out;
+modules::DecoderStackConfig stack_config(const DotsLlmConfig & config) {
+    modules::DecoderStackConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
     out.num_key_value_heads = config.num_key_value_heads;
@@ -83,34 +83,34 @@ modules::QwenDecoderStackConfig stack_config(const DotsLlmConfig & config) {
     out.attention_precision = GGML_PREC_DEFAULT;
     out.projection_precision = GGML_PREC_DEFAULT;
     out.use_qk_norm = false;
-    out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    out.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
     return out;
 }
 
-modules::QwenCausalDecodeRuntimeConfig make_qwen_decode_runtime_config(const DotsLlmConfig & config) {
-    modules::QwenCausalDecodeRuntimeConfig out;
+modules::CausalDecoderRuntimeConfig make_qwen2_decode_runtime_config(const DotsLlmConfig & config) {
+    modules::CausalDecoderRuntimeConfig out;
     out.trace_name = "dots_tts.llm";
     out.decoder.stack = stack_config(config);
-    out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::AllSteps;
+    out.decoder.logits_mode = modules::CausalDecoderLogitsMode::AllSteps;
     out.prefill_graph_arena_bytes = kLargeGraphContextBytes;
     out.decode_graph_arena_bytes = kLargeGraphContextBytes;
-    out.output_mode = modules::QwenCausalDecodeOutputMode::Hidden;
+    out.output_mode = modules::CausalDecoderOutputMode::Hidden;
     out.return_hidden = true;
     out.readback_round_type = GGML_TYPE_BF16;
     return out;
 }
 
-modules::QwenCausalDecodeRuntimeWeights make_qwen_decode_runtime_weights(const LlmWeights & weights) {
-    modules::QwenCausalDecodeRuntimeWeights out;
+modules::CausalDecoderRuntimeWeights make_qwen2_decode_runtime_weights(const LlmWeights & weights) {
+    modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = weights.token_embedding;
     out.stack = weights.stack;
     out.final_norm = weights.final_norm;
     return out;
 }
 
-modules::QwenDecoderLayerWeights load_layer(
+modules::DecoderLayerWeights load_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const DotsLlmConfig & config,
@@ -118,7 +118,7 @@ modules::QwenDecoderLayerWeights load_layer(
     assets::TensorStorageType storage_type) {
     const int64_t dim = head_dim(config);
     const std::string prefix = "llm.model.layers." + std::to_string(layer);
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = {store.load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size}), std::nullopt};
     out.self_attention.q_weight = store.load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.num_attention_heads * dim, config.hidden_size});
     out.self_attention.q_bias = store.load_f32_tensor(source, prefix + ".self_attn.q_proj.bias", {config.num_attention_heads * dim});
@@ -350,15 +350,15 @@ struct DotsLlmComponent::Impl {
     explicit Impl(std::shared_ptr<const LlmWeights> weights)
         : weights(std::move(weights)),
           embedding_runner(std::make_unique<EmbeddingRunner>(this->weights)),
-          qwen_runtime(std::make_unique<modules::QwenCausalDecodeRuntime>(
+          qwen2_runtime(std::make_unique<modules::CausalDecoderRuntime>(
               *this->weights->execution_context,
-              make_qwen_decode_runtime_config(this->weights->config),
-              make_qwen_decode_runtime_weights(*this->weights))),
+              make_qwen2_decode_runtime_config(this->weights->config),
+              make_qwen2_decode_runtime_weights(*this->weights))),
           eos_runner(std::make_unique<EosRunner>(this->weights)) {}
 
     std::shared_ptr<const LlmWeights> weights;
     std::unique_ptr<EmbeddingRunner> embedding_runner;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> qwen_runtime;
+    std::unique_ptr<modules::CausalDecoderRuntime> qwen2_runtime;
     std::unique_ptr<EosRunner> eos_runner;
     const void * active_decode_state = nullptr;
 };
@@ -412,16 +412,16 @@ DotsLlmHidden DotsLlmComponent::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps,
     DotsLlmState & state) const {
-    if (impl_ == nullptr || impl_->qwen_runtime == nullptr) {
+    if (impl_ == nullptr || impl_->qwen2_runtime == nullptr) {
         throw std::runtime_error("DotTTS LLM is not initialized");
     }
     if (state.impl_ == nullptr || steps > state.impl_->capacity) {
         throw std::runtime_error("DotTTS LLM prefill exceeds state capacity");
     }
-    auto result = impl_->qwen_runtime->prefill_embeddings(embeddings, steps);
+    auto result = impl_->qwen2_runtime->prefill_embeddings(embeddings, steps);
     state.impl_->kv = std::move(result.state);
     state.impl_->decode_advanced = false;
-    impl_->qwen_runtime->start_decode_embeddings(state.impl_->kv, state.impl_->capacity);
+    impl_->qwen2_runtime->start_decode_embeddings(state.impl_->kv, state.impl_->capacity);
     impl_->active_decode_state = state.impl_.get();
     return {
         std::move(result.hidden),
@@ -433,7 +433,7 @@ DotsLlmHidden DotsLlmComponent::prefill_embeddings(
 DotsLlmHidden DotsLlmComponent::decode_embedding(
     const std::vector<float> & embedding,
     DotsLlmState & state) const {
-    if (impl_ == nullptr || impl_->qwen_runtime == nullptr) {
+    if (impl_ == nullptr || impl_->qwen2_runtime == nullptr) {
         throw std::runtime_error("DotTTS LLM is not initialized");
     }
     if (state.impl_ == nullptr) {
@@ -443,16 +443,16 @@ DotsLlmHidden DotsLlmComponent::decode_embedding(
         if (state.impl_->decode_advanced) {
             throw std::runtime_error("DotTTS LLM decode state is not active");
         }
-        impl_->qwen_runtime->start_decode_embeddings(state.impl_->kv, state.impl_->capacity);
+        impl_->qwen2_runtime->start_decode_embeddings(state.impl_->kv, state.impl_->capacity);
         impl_->active_decode_state = state.impl_.get();
     }
     if (state.impl_->kv.current_end >= state.impl_->capacity) {
         throw std::runtime_error("DotTTS LLM decode exceeds state capacity");
     }
-    auto result = impl_->qwen_runtime->decode_embedding(embedding);
-    state.impl_->kv.current_end = impl_->qwen_runtime->decode_current_end();
+    auto result = impl_->qwen2_runtime->decode_embedding(embedding);
+    state.impl_->kv.current_end = impl_->qwen2_runtime->decode_current_end();
     for (auto & layer : state.impl_->kv.layers) {
-        layer.valid_steps = impl_->qwen_runtime->decode_valid_steps();
+        layer.valid_steps = impl_->qwen2_runtime->decode_valid_steps();
     }
     state.impl_->decode_advanced = true;
     return {
@@ -473,8 +473,8 @@ void DotsLlmComponent::release_runtime_graphs() {
     if (impl_ != nullptr && impl_->embedding_runner != nullptr) {
         impl_->embedding_runner->release_graph();
     }
-    if (impl_ != nullptr && impl_->qwen_runtime != nullptr) {
-        impl_->qwen_runtime->release_runtime_graphs();
+    if (impl_ != nullptr && impl_->qwen2_runtime != nullptr) {
+        impl_->qwen2_runtime->release_runtime_graphs();
         impl_->active_decode_state = nullptr;
     }
     if (impl_ != nullptr && impl_->eos_runner != nullptr) {

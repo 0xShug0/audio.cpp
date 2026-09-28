@@ -4,7 +4,7 @@
 #include "engine/community_models/minimax_music3/prompt.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 
 #include <cstdint>
 #include <memory>
@@ -29,7 +29,7 @@ int64_t minimax_music3_lm_head_output_size(
 struct MiniMaxMusic3GlobalLMWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
-    modules::QwenCausalDecodeRuntimeWeights qwen;
+    modules::CausalDecoderRuntimeWeights qwen;
     MiniMaxMusic3LmHeadLayout lm_head_layout = MiniMaxMusic3LmHeadLayout::FullVocab;
 };
 
@@ -39,7 +39,7 @@ MiniMaxMusic3GlobalLMWeights load_minimax_music3_global_lm_weights(
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type);
 
-modules::QwenCausalDecodeRuntimeConfig make_minimax_music3_global_lm_runtime_config(
+modules::CausalDecoderRuntimeConfig make_minimax_music3_global_lm_runtime_config(
     const MiniMaxMusic3Config & config,
     MiniMaxMusic3LmHeadLayout lm_head_layout,
     core::BackendType backend_type,

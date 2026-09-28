@@ -4,7 +4,7 @@
 #include "engine/community_models/minimax_music3/flow_sampler.h"
 #include "engine/community_models/minimax_music3/flow_transformer.h"
 #include "engine/community_models/minimax_music3/vocoder.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 
 #include <iostream>
 #include <memory>
@@ -22,11 +22,11 @@ using engine::models::minimax_music3::MiniMaxMusic3DepthDecoderRuntime;
 using engine::models::minimax_music3::MiniMaxMusic3FlowSamplerRuntime;
 using engine::models::minimax_music3::MiniMaxMusic3FlowTransformerRuntime;
 using engine::models::minimax_music3::MiniMaxMusic3VocoderRuntime;
-using engine::modules::QwenCausalDecodeRuntimeConfig;
+using engine::modules::CausalDecoderRuntimeConfig;
 
 using Assets = std::shared_ptr<const MiniMaxMusic3Assets>;
 
-static_assert(std::is_same_v<decltype(QwenCausalDecodeRuntimeConfig{}.evict_cuda_graph_cache_on_release), bool>);
+static_assert(std::is_same_v<decltype(CausalDecoderRuntimeConfig{}.evict_cuda_graph_cache_on_release), bool>);
 static_assert(std::is_constructible_v<
     MiniMaxMusic3ArRuntime,
     Assets,

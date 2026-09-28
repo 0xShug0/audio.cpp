@@ -1,4 +1,4 @@
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
@@ -16,25 +16,25 @@ namespace {
 using engine::modules::internal::concat_all;
 using engine::modules::internal::validate_sequence_input;
 
-inline const core::ModulePortSpec kQwenDecoderInputs[] = {
+inline const core::ModulePortSpec kDecoderInputs[] = {
     {"input", core::PortKind::Activation, false},
 };
 
-inline const core::ModulePortSpec kQwenDecoderOutputs[] = {
+inline const core::ModulePortSpec kDecoderOutputs[] = {
     {"output", core::PortKind::Activation, false},
 };
 
-inline const core::ModuleSchema kQwenDecoderLayerSchema = {
+inline const core::ModuleSchema kDecoderLayerSchema = {
     "QwenDecoderLayer",
     "nn.block",
-    kQwenDecoderInputs,
+    kDecoderInputs,
     1,
-    kQwenDecoderOutputs,
+    kDecoderOutputs,
     1,
     "Qwen-style decoder block with grouped-query attention, RoPE, q/k RMSNorm, and SwiGLU MLP.",
 };
 
-int64_t require_head_dim(const QwenDecoderLayerConfig & config) {
+int64_t require_head_dim(const DecoderLayerConfig & config) {
     if (config.num_attention_heads <= 0 || config.num_key_value_heads <= 0 || config.head_dim <= 0) {
         throw std::runtime_error("QwenDecoderLayerConfig attention dimensions must be positive");
     }
@@ -54,7 +54,7 @@ int64_t require_head_dim(const QwenDecoderLayerConfig & config) {
     return config.head_dim;
 }
 
-core::TensorValue reshape_qwen_heads(
+core::TensorValue reshape_decoder_heads(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     int64_t heads,
@@ -226,8 +226,8 @@ core::TensorValue cache_view(
 
 void apply_batched_static_rope(
     core::ModuleBuildContext & ctx,
-    const QwenDecoderLayerConfig & config,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerConfig & config,
+    const DecoderLayerWeights & weights,
     const core::TensorValue & positions,
     core::TensorValue & q,
     core::TensorValue & k,
@@ -272,7 +272,7 @@ LinearWeights require_linear(const LinearWeights & weights, bool use_bias, const
 core::TensorValue activation_cast(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const QwenDecoderActivationCastPolicy & policy) {
+    const DecoderActivationCastPolicy & policy) {
     if (policy.type == GGML_TYPE_F32) {
         return core::wrap_tensor(ggml_cast(ctx.ggml, input.tensor, GGML_TYPE_F32), input.shape, GGML_TYPE_F32);
     }
@@ -293,19 +293,19 @@ struct QKVProjections {
     core::TensorValue v;
 };
 
-bool flash_branches_allowed(const QwenDecoderLayerConfig & config) {
+bool flash_branches_allowed(const DecoderLayerConfig & config) {
     return config.runtime.attention.allow_flash_attention;
 }
 
 QKVProjections build_qkv_projections(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const QwenDecoderLayerWeights & weights,
-    const QwenDecoderLayerConfig & config,
+    const DecoderLayerWeights & weights,
+    const DecoderLayerConfig & config,
     int64_t dim) {
     const int64_t q_out = config.num_attention_heads * dim;
     const int64_t kv_out = config.num_key_value_heads * dim;
-    if (config.qkv_layout == QwenDecoderQKVLayout::PackedQKV) {
+    if (config.qkv_layout == DecoderQKVLayout::PackedQKV) {
         if (!weights.self_attention.qkv_weight.has_value()) {
             throw std::runtime_error("Qwen packed QKV layout requires self_attention.qkv_weight");
         }
@@ -361,8 +361,8 @@ QKVProjections build_qkv_projections(
 
 }  // namespace
 
-QwenDecoderLayerConfig qwen_decoder_layer_config_from_stack(const QwenDecoderStackConfig & config) {
-    QwenDecoderLayerConfig out;
+DecoderLayerConfig decoder_layer_config_from_stack(const DecoderStackConfig & config) {
+    DecoderLayerConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
     out.num_key_value_heads = config.num_key_value_heads;
@@ -384,9 +384,9 @@ QwenDecoderLayerConfig qwen_decoder_layer_config_from_stack(const QwenDecoderSta
 core::TensorValue build_mlp(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const QwenDecoderLayerConfig & config,
-    const QwenMLPWeights & weights) {
-    if (config.runtime.mlp.mode == QwenDecoderMLPMode::Exact) {
+    const DecoderLayerConfig & config,
+    const DecoderMLPWeights & weights) {
+    if (config.runtime.mlp.mode == DecoderMLPMode::Exact) {
         auto gate = LinearModule(
                         {
                             config.hidden_size,
@@ -435,7 +435,7 @@ core::TensorValue build_mlp(
     core::TensorValue up;
     std::optional<core::TensorValue> packed_gate_up;
     const auto mlp_mode = config.runtime.mlp.mode;
-    if (mlp_mode == QwenDecoderMLPMode::PackedGateUp) {
+    if (mlp_mode == DecoderMLPMode::PackedGateUp) {
         if (!weights.gate_up_proj.has_value()) {
             throw std::runtime_error("QwenMLPWeights.gate_up_proj is required for packed gate/up mode");
         }
@@ -477,7 +477,7 @@ core::TensorValue build_mlp(
          !config.activation_cast.after_mlp_silu &&
          !config.activation_cast.after_mlp_mul);
     core::TensorValue gated;
-    if (can_use_fused_swiglu && mlp_mode == QwenDecoderMLPMode::PackedGateUp) {
+    if (can_use_fused_swiglu && mlp_mode == DecoderMLPMode::PackedGateUp) {
         gated = core::wrap_tensor(
             ggml_swiglu(ctx.ggml, packed_gate_up->tensor),
             core::TensorShape::from_dims({
@@ -486,7 +486,7 @@ core::TensorValue build_mlp(
                 config.intermediate_size,
             }),
             packed_gate_up->type);
-    } else if (can_use_fused_swiglu && mlp_mode == QwenDecoderMLPMode::FusedSwiGLU) {
+    } else if (can_use_fused_swiglu && mlp_mode == DecoderMLPMode::FusedSwiGLU) {
         gated = core::wrap_tensor(
             ggml_swiglu_split(ctx.ggml, gate.tensor, up.tensor),
             gate.shape,
@@ -519,23 +519,23 @@ core::TensorValue build_mlp(
     return down;
 }
 
-QwenDecoderLayerModule::QwenDecoderLayerModule(QwenDecoderLayerConfig config) : config_(config) {
+DecoderLayerModule::DecoderLayerModule(DecoderLayerConfig config) : config_(config) {
     require_head_dim(config_);
 }
 
-const QwenDecoderLayerConfig & QwenDecoderLayerModule::config() const noexcept {
+const DecoderLayerConfig & DecoderLayerModule::config() const noexcept {
     return config_;
 }
 
-const core::ModuleSchema & QwenDecoderLayerModule::schema() const noexcept {
+const core::ModuleSchema & DecoderLayerModule::schema() const noexcept {
     return static_schema();
 }
 
-QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
+DecoderLayerOutputs DecoderLayerModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const std::optional<core::TensorValue> & prefix_key,
     const std::optional<core::TensorValue> & prefix_value,
     const std::optional<core::TensorValue> & attention_mask) const {
@@ -559,8 +559,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
         qkv.v = activation_cast(ctx, qkv.v, config_.activation_cast);
     }
 
-    auto q = reshape_qwen_heads(ctx, qkv.q, config_.num_attention_heads, dim);
-    auto k = reshape_qwen_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
+    auto q = reshape_decoder_heads(ctx, qkv.q, config_.num_attention_heads, dim);
+    auto k = reshape_decoder_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
     if (config_.use_qk_norm) {
         q = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
         k = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
@@ -569,9 +569,9 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
             k = activation_cast(ctx, k, config_.activation_cast);
         }
     }
-    auto v = reshape_qwen_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
+    auto v = reshape_decoder_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
 
-    if (config_.position_encoding == QwenDecoderPositionEncoding::Rotary) {
+    if (config_.position_encoding == DecoderPositionEncoding::Rotary) {
         const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
             ? &*weights.rope_frequency_factors
             : nullptr;
@@ -590,8 +590,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
     const bool use_prefix_flash =
         allow_flash &&
         prefix_key.has_value() &&
-        config_.runtime.attention.prefix_mode == QwenDecoderPrefixAttentionMode::FlashWithPrefix &&
-        config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGroupedViewKV;
+        config_.runtime.attention.prefix_mode == DecoderPrefixAttentionMode::FlashWithPrefix &&
+        config_.runtime.attention.prefill_mode == DecoderAttentionMode::FlashGroupedViewKV;
     core::TensorValue all_k = k;
     core::TensorValue all_v = v;
     // Cached prefix KV may be stored in a different dtype than the current
@@ -617,7 +617,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
     }
     core::TensorValue context;
     if (allow_flash && !prefix_key.has_value() && attention_mask.has_value() &&
-        config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGroupedViewKV) {
+        config_.runtime.attention.prefill_mode == DecoderAttentionMode::FlashGroupedViewKV) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
         auto k_heads = TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k);
         auto v_heads = TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v);
@@ -642,7 +642,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
             *attention_mask,
             config_.attention_precision);
     } else if (allow_flash && attention_mask.has_value() && !prefix_key.has_value() &&
-               config_.runtime.attention.prefill_mode == QwenDecoderAttentionMode::FlashGrouped) {
+               config_.runtime.attention.prefill_mode == DecoderAttentionMode::FlashGrouped) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
         auto k_heads = TransposeModule({{0, 2, 1, 3}, all_k.shape.rank}).build(ctx, all_k);
         auto v_heads = TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v);
@@ -708,12 +708,12 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build(
     return {output, k, v};
 }
 
-QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
+DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const std::optional<core::TensorValue> & cache_slot,
@@ -722,12 +722,12 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail(
                                    cache_slot, attention_mask, false);
 }
 
-QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_block(
+DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_block(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const std::optional<core::TensorValue> & cache_slot,
@@ -736,12 +736,12 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_block(
                                    cache_slot, attention_mask, true);
 }
 
-QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
+DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
     const std::optional<core::TensorValue> & cache_slot,
@@ -749,7 +749,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
     bool block) const {
     validate_sequence_input(input, config_.hidden_size, "input");
     if (block && (input.shape.dims[0] != 1 ||
-        config_.runtime.static_cache.update_mode != QwenDecoderStaticCacheUpdateMode::DirectSetRows)) {
+        config_.runtime.static_cache.update_mode != DecoderStaticCacheUpdateMode::DirectSetRows)) {
         throw std::runtime_error("Qwen static-cache blocks require a single sequence and DirectSetRows");
     }
     const int64_t dim = require_head_dim(config_);
@@ -767,8 +767,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
         qkv.v = activation_cast(ctx, qkv.v, config_.activation_cast);
     }
 
-    auto q = reshape_qwen_heads(ctx, qkv.q, config_.num_attention_heads, dim);
-    auto k = reshape_qwen_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
+    auto q = reshape_decoder_heads(ctx, qkv.q, config_.num_attention_heads, dim);
+    auto k = reshape_decoder_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
     if (config_.use_qk_norm) {
         q = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
         k = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
@@ -777,9 +777,9 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
             k = activation_cast(ctx, k, config_.activation_cast);
         }
     }
-    auto v = reshape_qwen_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
+    auto v = reshape_decoder_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
 
-    if (config_.position_encoding == QwenDecoderPositionEncoding::Rotary) {
+    if (config_.position_encoding == DecoderPositionEncoding::Rotary) {
         const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
             ? &*weights.rope_frequency_factors
             : nullptr;
@@ -797,12 +797,12 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
     core::TensorValue attention_value_cache = cache_value;
     core::TensorValue stored_key = k;
     core::TensorValue stored_value = v;
-    if (config_.runtime.static_cache.update_mode == QwenDecoderStaticCacheUpdateMode::DirectSetRows) {
+    if (config_.runtime.static_cache.update_mode == DecoderStaticCacheUpdateMode::DirectSetRows) {
         if (!cache_slot.has_value()) {
             throw std::runtime_error("Qwen decoder direct static-cache update requires cache_slot");
         }
         const FastKVSetRowsModule set_rows({
-            config_.runtime.static_cache.set_rows_mode == QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized
+            config_.runtime.static_cache.set_rows_mode == DecoderStaticCacheSetRowsMode::BackendViewOptimized
                 ? FastKVSetRowsMode::BackendViewOptimized
                 : FastKVSetRowsMode::Exact,
         });
@@ -829,7 +829,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
     core::TensorValue context;
     const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
-        config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery &&
+        config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery &&
         config_.runtime.attention.grouped_query_min_steps > 0 &&
         cache_key.shape.dims[1] >= config_.runtime.attention.grouped_query_min_steps &&
         kv_repeats > 1;
@@ -846,12 +846,12 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
             config_.num_key_value_heads,
             attention_mask);
     } else if (!allow_flash ||
-               config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeat ||
-               config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery) {
+               config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeat ||
+               config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery) {
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
         context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::FlashGroupedViewKV) {
+    } else if (config_.runtime.attention.static_mode == DecoderAttentionMode::FlashGroupedViewKV) {
         context = flash_attention_from_grouped_heads_view_kv(
             ctx,
             q_heads,
@@ -913,12 +913,12 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_static_cache_impl(
     return {output, stored_key, stored_value};
 }
 
-QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_batched(
+DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const core::TensorValue & cache_key,
         const core::TensorValue & cache_value,
         const core::TensorValue & cache_slot,
@@ -928,7 +928,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
     if (input.shape.dims[0] <= 0 || input.shape.dims[1] != 1) {
         throw std::runtime_error("Qwen decoder batched static-cache update requires [batch, 1, hidden] input");
     }
-    if (config_.runtime.static_cache.update_mode != QwenDecoderStaticCacheUpdateMode::DirectSetRows) {
+    if (config_.runtime.static_cache.update_mode != DecoderStaticCacheUpdateMode::DirectSetRows) {
         throw std::runtime_error("Qwen decoder batched static-cache update supports only DirectSetRows");
     }
     const int64_t dim = require_head_dim(config_);
@@ -946,8 +946,8 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
         qkv.v = activation_cast(ctx, qkv.v, config_.activation_cast);
     }
 
-    auto q = reshape_qwen_heads(ctx, qkv.q, config_.num_attention_heads, dim);
-    auto k = reshape_qwen_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
+    auto q = reshape_decoder_heads(ctx, qkv.q, config_.num_attention_heads, dim);
+    auto k = reshape_decoder_heads(ctx, qkv.k, config_.num_key_value_heads, dim);
     if (config_.use_qk_norm) {
         q = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, q, weights.q_norm);
         k = RMSNormModule({dim, config_.rms_norm_eps, true, false}).build(ctx, k, weights.k_norm);
@@ -956,9 +956,9 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
             k = activation_cast(ctx, k, config_.activation_cast);
         }
     }
-    auto v = reshape_qwen_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
+    auto v = reshape_decoder_heads(ctx, qkv.v, config_.num_key_value_heads, dim);
 
-    if (config_.position_encoding == QwenDecoderPositionEncoding::Rotary) {
+    if (config_.position_encoding == DecoderPositionEncoding::Rotary) {
         apply_batched_static_rope(ctx, config_, weights, positions, q, k, dim);
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
             q = activation_cast(ctx, q, config_.activation_cast);
@@ -969,7 +969,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
     v = core::ensure_backend_addressable_layout(ctx, v);
 
     const FastKVSetRowsModule set_rows({
-        config_.runtime.static_cache.set_rows_mode == QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized
+        config_.runtime.static_cache.set_rows_mode == DecoderStaticCacheSetRowsMode::BackendViewOptimized
             ? FastKVSetRowsMode::BackendViewOptimized
             : FastKVSetRowsMode::Exact,
     });
@@ -987,7 +987,7 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
     core::TensorValue context;
     const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
-        config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery &&
+        config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery &&
         config_.runtime.attention.grouped_query_min_steps > 0 &&
         cache_key.shape.dims[1] >= config_.runtime.attention.grouped_query_min_steps &&
         kv_repeats > 1;
@@ -1004,12 +1004,12 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
             config_.num_key_value_heads,
             attention_mask);
     } else if (!allow_flash ||
-               config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeat ||
-               config_.runtime.attention.static_mode == QwenDecoderAttentionMode::ManualRepeatThenGroupedQuery) {
+               config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeat ||
+               config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery) {
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
         context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
-    } else if (config_.runtime.attention.static_mode == QwenDecoderAttentionMode::FlashGroupedViewKV) {
+    } else if (config_.runtime.attention.static_mode == DecoderAttentionMode::FlashGroupedViewKV) {
         context = flash_attention_from_grouped_heads_view_kv(
             ctx,
             q_heads,
@@ -1071,27 +1071,27 @@ QwenDecoderLayerOutputs QwenDecoderLayerModule::build_with_static_cache_tail_bat
     return {output, k, v};
 }
 
-const core::ModuleSchema & QwenDecoderLayerModule::static_schema() noexcept {
-    return kQwenDecoderLayerSchema;
+const core::ModuleSchema & DecoderLayerModule::static_schema() noexcept {
+    return kDecoderLayerSchema;
 }
 
-QwenDecoderStackModule::QwenDecoderStackModule(QwenDecoderStackConfig config) : config_(config) {
+DecoderStackModule::DecoderStackModule(DecoderStackConfig config) : config_(config) {
     if (config_.layers <= 0) {
         throw std::runtime_error("QwenDecoderStackConfig.layers must be positive");
     }
-    require_head_dim(qwen_decoder_layer_config_from_stack(config_));
+    require_head_dim(decoder_layer_config_from_stack(config_));
 }
 
-const QwenDecoderStackConfig & QwenDecoderStackModule::config() const noexcept {
+const DecoderStackConfig & DecoderStackModule::config() const noexcept {
     return config_;
 }
 
-QwenDecoderStackOutputs QwenDecoderStackModule::build(
+DecoderStackOutputs DecoderStackModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderStackWeights & weights,
-    const std::optional<QwenDecoderStackState> & prefix_state,
+    const DecoderStackWeights & weights,
+    const std::optional<DecoderStackState> & prefix_state,
     const std::optional<core::TensorValue> & attention_mask) const {
     if (static_cast<int64_t>(weights.layers.size()) != config_.layers) {
         throw std::runtime_error("QwenDecoderStackWeights layer count does not match config.layers");
@@ -1101,9 +1101,9 @@ QwenDecoderStackOutputs QwenDecoderStackModule::build(
     }
 
     auto output = input;
-    QwenDecoderStackState state;
+    DecoderStackState state;
     state.layers.reserve(weights.layers.size());
-    const QwenDecoderLayerModule layer_module(qwen_decoder_layer_config_from_stack(config_));
+    const DecoderLayerModule layer_module(decoder_layer_config_from_stack(config_));
     for (size_t layer_index = 0; layer_index < weights.layers.size(); ++layer_index) {
         const auto * layer_prefix = prefix_state.has_value() ? &prefix_state->layers[layer_index] : nullptr;
         auto layer = layer_module.build(
