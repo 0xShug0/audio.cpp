@@ -38,7 +38,7 @@ private:
     qwen3_asr::Qwen3ASRWhisperFrontend frontend_;
     qwen3_asr::Qwen3ASRAudioEncoderRuntime audio_encoder_;
     Audio8ProjectorRuntime projector_;
-    Audio8ThinkerRuntime thinker_;
+    Audio8Qwen2ThinkerRuntime thinker_;
 };
 
 class Audio8ASRLoadedModel final : public runtime::ILoadedVoiceModel {

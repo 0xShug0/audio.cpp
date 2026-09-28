@@ -25,7 +25,7 @@ VibeVoicePreparedPrompt prepare_vibevoice_prompt(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     uint64_t seed,
     uint64_t start_rng_index,
     const std::vector<float> * prompt_noise_values = nullptr);
@@ -35,7 +35,7 @@ VibeVoiceResult generate_vibevoice(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head);
 
 VibeVoiceResult generate_vibevoice(
@@ -43,17 +43,17 @@ VibeVoiceResult generate_vibevoice(
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head,
-    VibeVoiceDecoderCachedState & positive_cache,
-    VibeVoiceDecoderCachedState & negative_cache);
+    VibeVoiceQwen2CachedState & positive_cache,
+    VibeVoiceQwen2CachedState & negative_cache);
 
 std::vector<VibeVoiceResult> generate_vibevoice_batch(
     const std::vector<VibeVoiceRequest> & requests,
     const VibeVoiceTextTokenizer & text_tokenizer,
     const VibeVoiceTokenizerWeightsRuntime & audio_tokenizer,
     const VibeVoiceConnectorWeightsRuntime & connector,
-    const VibeVoiceDecoderWeightsRuntime & decoder,
+    const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head);
 
 }  // namespace engine::models::vibevoice

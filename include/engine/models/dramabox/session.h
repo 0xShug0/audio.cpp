@@ -83,7 +83,7 @@ private:
     std::unique_ptr<DramaBoxDitRuntime> dit_;
     std::unique_ptr<DramaBoxAudioVaeEncoderRuntime> audio_encoder_;
     std::unique_ptr<DramaBoxAudioVaeDecoderRuntime> audio_decoder_;
-    std::unique_ptr<DramaBoxVocoderRuntime> vocoder_;
+    std::unique_ptr<DramaBoxBigVganRuntime> vocoder_;
     runtime::CacheSlots<PromptCacheKey, DramaBoxConditioningEncoding, PromptCacheKeyEqual> prompt_conditioning_cache_;
     runtime::CacheSlots<PromptCacheKey, DramaBoxConditioningEncoding, PromptCacheKeyEqual> negative_conditioning_cache_;
     runtime::CacheSlots<ReferenceCacheKey, DramaBoxEncodedReferenceLatents, ReferenceCacheKeyEqual> reference_latents_;

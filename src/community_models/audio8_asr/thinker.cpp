@@ -38,7 +38,7 @@ runtime::GreedyCausalDecoderSpec make_qwen2_decoder_spec(const Audio8ASRDecoderC
 
 }  // namespace
 
-Audio8ThinkerRuntime::Audio8ThinkerRuntime(
+Audio8Qwen2ThinkerRuntime::Audio8Qwen2ThinkerRuntime(
     std::shared_ptr<const assets::TensorSource> weights_source,
     const Audio8ASRDecoderConfig & config,
     core::ExecutionContext & execution,
@@ -56,9 +56,9 @@ Audio8ThinkerRuntime::Audio8ThinkerRuntime(
           weight_storage_type),
       config_(std::make_shared<const Audio8ASRDecoderConfig>(config)) {}
 
-Audio8ThinkerRuntime::~Audio8ThinkerRuntime() = default;
+Audio8Qwen2ThinkerRuntime::~Audio8Qwen2ThinkerRuntime() = default;
 
-Audio8ASRGeneratedTokens Audio8ThinkerRuntime::generate(
+Audio8ASRGeneratedTokens Audio8Qwen2ThinkerRuntime::generate(
     const Audio8ASRPrompt & prompt,
     const Audio8ASRAudioEmbeddings & audio_embeddings,
     const Audio8ASRGenerationOptions & options) {

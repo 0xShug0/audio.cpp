@@ -48,7 +48,7 @@ runtime::GreedyCausalDecoderSpec make_qwen3_decoder_spec(const R2T2ASRConfig & c
 
 }  // namespace
 
-struct R2T2ASRThinkerRuntime::Impl {
+struct R2T2ASRQwen3ThinkerRuntime::Impl {
     Impl(
         std::shared_ptr<const R2T2ASRAssets> assets,
         core::ExecutionContext & execution,
@@ -70,7 +70,7 @@ struct R2T2ASRThinkerRuntime::Impl {
     runtime::GreedyCausalDecoderRuntime qwen3_runtime;
 };
 
-R2T2ASRThinkerRuntime::R2T2ASRThinkerRuntime(
+R2T2ASRQwen3ThinkerRuntime::R2T2ASRQwen3ThinkerRuntime(
     std::shared_ptr<const R2T2ASRAssets> assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -85,9 +85,9 @@ R2T2ASRThinkerRuntime::R2T2ASRThinkerRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-R2T2ASRThinkerRuntime::~R2T2ASRThinkerRuntime() = default;
+R2T2ASRQwen3ThinkerRuntime::~R2T2ASRQwen3ThinkerRuntime() = default;
 
-R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
+R2T2ASRGeneratedTokens R2T2ASRQwen3ThinkerRuntime::generate(
     const R2T2ASRPrompt & prompt,
     const R2T2ASRAudioEmbeddings & audio_embeddings,
     const R2T2ASRGenerationOptions & options) {

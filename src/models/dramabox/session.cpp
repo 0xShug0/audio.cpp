@@ -296,7 +296,7 @@ DramaBoxSession::DramaBoxSession(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);
-    vocoder_ = std::make_unique<DramaBoxVocoderRuntime>(
+    vocoder_ = std::make_unique<DramaBoxBigVganRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);

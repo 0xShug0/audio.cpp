@@ -36,7 +36,7 @@ struct VibeVoiceTokenizerConfig {
     std::string decoder_depths;
 };
 
-struct VibeVoiceDecoderConfig {
+struct VibeVoiceQwen2Config {
     int64_t hidden_size = 0;
     int64_t intermediate_size = 0;
     int64_t max_position_embeddings = 0;
@@ -75,7 +75,7 @@ struct VibeVoiceConfig {
     std::string torch_dtype;
     VibeVoiceTokenizerConfig acoustic_tokenizer;
     VibeVoiceTokenizerConfig semantic_tokenizer;
-    VibeVoiceDecoderConfig decoder;
+    VibeVoiceQwen2Config decoder;
     VibeVoiceDiffusionHeadConfig diffusion_head;
 };
 

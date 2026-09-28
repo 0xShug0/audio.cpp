@@ -1060,7 +1060,7 @@ VibeVoiceASRSpeechFeatures VibeVoiceASRSession::encode_streaming_chunk(
 
 VibeVoiceDecoderResult VibeVoiceASRSession::append_stream_embedding(
     const std::vector<float> & embedding,
-    VibeVoiceDecoderCachedState & state,
+    VibeVoiceQwen2CachedState & state,
     int64_t & steps) {
     const int64_t cache_capacity = streaming_decoder_cache_capacity(
         assets_->config.decoder.max_position_embeddings,
@@ -1073,7 +1073,7 @@ VibeVoiceDecoderResult VibeVoiceASRSession::append_stream_embedding(
 VibeVoiceDecoderResult VibeVoiceASRSession::append_stream_suffix(
     const std::vector<float> & embeddings,
     int64_t steps_to_append,
-    VibeVoiceDecoderCachedState & state,
+    VibeVoiceQwen2CachedState & state,
     int64_t & steps) {
     if (steps_to_append <= 0) {
         throw std::runtime_error("VibeVoice-ASR streaming suffix requires positive steps");
@@ -1098,7 +1098,7 @@ void VibeVoiceASRSession::ensure_streaming_decoder_state(const VibeVoiceASRReque
     streaming_history_steps_ = prompt_embeddings.steps;
     text_decoder_.set_pinned_prefix_steps(prompt_embeddings.steps);
     auto prefill = text_decoder_.prefill_embeddings(prompt_embeddings.values, streaming_history_steps_);
-    streaming_decoder_state_ = std::make_unique<VibeVoiceDecoderCachedState>();
+    streaming_decoder_state_ = std::make_unique<VibeVoiceQwen2CachedState>();
     text_decoder_.reset_cached_state(*streaming_decoder_state_, std::move(prefill.state));
     text_decoder_.prepare_cached_state(
         *streaming_decoder_state_,
@@ -1109,7 +1109,7 @@ void VibeVoiceASRSession::ensure_streaming_decoder_state(const VibeVoiceASRReque
 std::string VibeVoiceASRSession::generate_streaming_text_chunk(
     const VibeVoiceASRRequest & request,
     VibeVoiceDecoderResult next_logits,
-    VibeVoiceDecoderCachedState & state,
+    VibeVoiceQwen2CachedState & state,
     int64_t & steps) {
     std::vector<int32_t> generated;
     generated.reserve(static_cast<size_t>(std::min<int64_t>(request.generation.max_new_tokens, 256)));
@@ -1352,7 +1352,7 @@ std::vector<int32_t> VibeVoiceASRSession::generate_greedy_or_sample(
     VibeVoiceDecoderPrefillOutput prefill,
     uint64_t rng_call_offset,
     const std::function<void(const std::vector<int32_t> &)> & token_callback) {
-    VibeVoiceDecoderCachedState state;
+    VibeVoiceQwen2CachedState state;
     text_decoder_.reset_cached_state(state, std::move(prefill.state));
     std::vector<int32_t> generated;
     generated.reserve(static_cast<size_t>(std::min<int64_t>(request.generation.max_new_tokens, 4096)));
@@ -1401,7 +1401,7 @@ std::vector<int32_t> VibeVoiceASRSession::generate_beam(
     const std::function<void(const std::vector<int32_t> &)> & token_callback) {
     struct Beam {
         std::vector<int32_t> generated;
-        std::unique_ptr<VibeVoiceDecoderCachedState> state;
+        std::unique_ptr<VibeVoiceQwen2CachedState> state;
         double score = 0.0;
         bool done = false;
     };
@@ -1428,7 +1428,7 @@ std::vector<int32_t> VibeVoiceASRSession::generate_beam(
     for (const auto & item : first) {
         Beam beam;
         beam.generated.push_back(item.token);
-        beam.state = std::make_unique<VibeVoiceDecoderCachedState>();
+        beam.state = std::make_unique<VibeVoiceQwen2CachedState>();
         text_decoder_.reset_cached_state(*beam.state, prefill.state);
         beam.score = item.log_prob;
         beam.done = item.token == tokenizer_.eos_id();
@@ -1512,13 +1512,13 @@ std::vector<int32_t> VibeVoiceASRSession::generate_beam(
         for (auto & candidate : candidates) {
             ++parent_use_count[candidate.parent];
         }
-        std::vector<std::vector<std::unique_ptr<VibeVoiceDecoderCachedState>>> cloned_parent_states(beams.size());
+        std::vector<std::vector<std::unique_ptr<VibeVoiceQwen2CachedState>>> cloned_parent_states(beams.size());
         for (size_t parent = 0; parent < beams.size(); ++parent) {
             if (parent_use_count[parent] > 1 && beams[parent].state != nullptr) {
                 auto & clones = cloned_parent_states[parent];
                 clones.reserve(parent_use_count[parent] - 1);
                 for (size_t clone = 1; clone < parent_use_count[parent]; ++clone) {
-                    auto state = std::make_unique<VibeVoiceDecoderCachedState>();
+                    auto state = std::make_unique<VibeVoiceQwen2CachedState>();
                     const int64_t cache_capacity = prompt_tokens +
                         static_cast<int64_t>(beams[parent].generated.size()) + 1;
                     text_decoder_.clone_cached_state(*beams[parent].state, *state, cache_capacity);

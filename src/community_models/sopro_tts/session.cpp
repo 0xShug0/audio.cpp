@@ -124,7 +124,7 @@ SoproTTSSession::SoproTTSSession(
         *assets_, execution, kWeightContextBytes, kGraphArenaBytes, matmul_storage, conv_storage);
     semantic_encoder_ = std::make_unique<SoproSemanticEncoderRuntime>(
         *assets_, execution, kWeightContextBytes, kGraphArenaBytes, matmul_storage, conv_storage);
-    vocoder_ = std::make_unique<SoproVocoderRuntime>(
+    vocoder_ = std::make_unique<SoproVocosRuntime>(
         *assets_, execution, kWeightContextBytes, kGraphArenaBytes, matmul_storage, conv_storage);
     semantic_lm_ = std::make_unique<SoproSemanticLMRuntime>(
         *assets_, execution, kGraphArenaBytes, kGraphArenaBytes, kWeightContextBytes, matmul_storage);

@@ -400,7 +400,7 @@ SoproReferenceBuilder::SoproReferenceBuilder(
     const SoproTTSAssets & assets,
     const SoproSpeakerEncoderRuntime & speaker_encoder,
     const SoproSemanticEncoderRuntime & semantic_encoder,
-    const SoproVocoderRuntime & vocoder)
+    const SoproVocosRuntime & vocoder)
     : config_(assets.config),
       speaker_encoder_(speaker_encoder),
       semantic_encoder_(semantic_encoder),

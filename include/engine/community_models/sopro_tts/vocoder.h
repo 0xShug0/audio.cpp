@@ -16,8 +16,8 @@ enum class TensorStorageType;
 
 namespace engine::community_models::sopro_tts {
 
-struct SoproVocoderWeights;
-struct SoproVocoderGraph;
+struct SoproVocosWeights;
+struct SoproVocosGraph;
 
 // ISTFTHead band limit (sopro/vocoder.py band_limit_bin): the first FFT bin the
 // head zeroes, i.e. how many of the n_fft/2 + 1 bins it actually synthesises.
@@ -31,19 +31,19 @@ int64_t band_limit_bin(const SoproVocoderConfig & config);
 //
 // The same object also owns the analysis mel filterbank, because the acoustic
 // stage conditions on the reference mel produced by exactly this extractor.
-class SoproVocoderRuntime final {
+class SoproVocosRuntime final {
 public:
-    SoproVocoderRuntime(
+    SoproVocosRuntime(
         const SoproTTSAssets & assets,
         engine::core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         size_t graph_context_bytes,
         engine::assets::TensorStorageType matmul_storage_type,
         engine::assets::TensorStorageType conv_storage_type);
-    ~SoproVocoderRuntime();
+    ~SoproVocosRuntime();
 
-    SoproVocoderRuntime(const SoproVocoderRuntime &) = delete;
-    SoproVocoderRuntime & operator=(const SoproVocoderRuntime &) = delete;
+    SoproVocosRuntime(const SoproVocosRuntime &) = delete;
+    SoproVocosRuntime & operator=(const SoproVocosRuntime &) = delete;
 
     // mel: [n_mels, frames], channel-major (mel[c * frames + t]).
     // Returns (frames - 1) * hop_length mono samples at config.sample_rate.
@@ -63,8 +63,8 @@ private:
     const SoproVocoderConfig & config_;
     engine::core::ExecutionContext & execution_context_;
     size_t graph_context_bytes_ = 0;
-    std::shared_ptr<const SoproVocoderWeights> weights_;
-    mutable std::unique_ptr<SoproVocoderGraph> graph_;
+    std::shared_ptr<const SoproVocosWeights> weights_;
+    mutable std::unique_ptr<SoproVocosGraph> graph_;
 };
 
 }  // namespace engine::community_models::sopro_tts

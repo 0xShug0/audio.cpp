@@ -20,20 +20,20 @@ class ExecutionContext;
 
 namespace engine::models::vevo2 {
 
-struct Vevo2FMWeights;
-struct Vevo2FMGraph;
-struct Vevo2FMStepGraph;
+struct Vevo2DiffLlamaWeights;
+struct Vevo2DiffLlamaConditionGraph;
+struct Vevo2DiffLlamaStepGraph;
 
-class Vevo2FlowMatchingRuntime final {
+class Vevo2DiffLlamaFlowMatchingRuntime final {
 public:
-    Vevo2FlowMatchingRuntime(
+    Vevo2DiffLlamaFlowMatchingRuntime(
         const Vevo2Assets & assets,
         engine::core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         size_t graph_context_bytes,
         engine::assets::TensorStorageType matmul_weight_storage_type,
         engine::assets::TensorStorageType conv_weight_storage_type);
-    ~Vevo2FlowMatchingRuntime();
+    ~Vevo2DiffLlamaFlowMatchingRuntime();
 
     Vevo2MelSequence generate_mel(
         const runtime::AudioBuffer & timbre_ref_audio,
@@ -68,9 +68,9 @@ private:
     engine::core::ExecutionContext & execution_context_;
     size_t graph_context_bytes_ = 0;
     std::shared_ptr<const engine::assets::TensorSource> weight_source_;
-    std::shared_ptr<const Vevo2FMWeights> weights_;
-    mutable std::unique_ptr<Vevo2FMGraph> graph_;
-    mutable std::unique_ptr<Vevo2FMStepGraph> step_graph_;
+    std::shared_ptr<const Vevo2DiffLlamaWeights> weights_;
+    mutable std::unique_ptr<Vevo2DiffLlamaConditionGraph> graph_;
+    mutable std::unique_ptr<Vevo2DiffLlamaStepGraph> step_graph_;
     mutable runtime::CacheSlots<TimbreMelCacheKey, TimbreMelCacheValue, TimbreMelCacheKeyEqual> timbre_mel_cache_;
     std::string name_;
 };

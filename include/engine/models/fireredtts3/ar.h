@@ -11,9 +11,9 @@
 
 namespace engine::models::fireredtts3 {
 
-class FireRedArRuntime {
+class FireRedQwen3ArRuntime {
 public:
-    FireRedArRuntime(
+    FireRedQwen3ArRuntime(
         std::shared_ptr<const FireRedTTS3Assets> assets,
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
@@ -21,10 +21,10 @@ public:
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type,
         bool instruct);
-    ~FireRedArRuntime();
+    ~FireRedQwen3ArRuntime();
 
-    FireRedArRuntime(const FireRedArRuntime &) = delete;
-    FireRedArRuntime & operator=(const FireRedArRuntime &) = delete;
+    FireRedQwen3ArRuntime(const FireRedQwen3ArRuntime &) = delete;
+    FireRedQwen3ArRuntime & operator=(const FireRedQwen3ArRuntime &) = delete;
 
     std::vector<float> token_embedding(const std::vector<int32_t> & token_ids);
     std::vector<float> speaker_llm(const std::vector<float> & speaker);
