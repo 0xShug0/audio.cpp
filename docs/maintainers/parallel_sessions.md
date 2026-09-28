@@ -79,11 +79,14 @@ of memory or an atomic snapshot of the entire server.
 ## Enabling another model
 
 Follow the [parallel model validation procedure](parallel_model_validation.md)
-before adding or increasing admission. It separates checkpoint quality and
-performance checks from common request-ownership/lifecycle evidence, requires
-validation of every advertised count, and records pending or hardware-blocked
-checks explicitly. The procedure describes required evidence, not tests that
-have all already run.
+before adding or increasing admission. It uses six model entries (M1-M6) and
+references six shared framework entries (F1-F6) once per relevant revision/scope.
+Every advertised count still needs three fresh starts, and the largest count
+needs ten mixed warm waves per start. Exact output/metadata and applicable cache
+history checks remain required. Collect memory in those same runs; independent
+server comparisons are optional performance evidence. Model checks, shared
+framework checks and performance have separate verdicts; admission needs both
+required gates. This defines evidence, not tests that have all already run.
 
 1. Split immutable weights from mutable inference state in the model adapter.
 2. Implement the factory and advertise only audited backend/task/mode combinations.

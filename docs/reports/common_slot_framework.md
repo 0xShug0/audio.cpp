@@ -75,12 +75,26 @@ streaming/native-batch adapter is certified by this extraction. Cross-platform
 CI, sanitizers and every possible lifecycle interleaving are not claimed here.
 
 The [parallel model validation procedure](../maintainers/parallel_model_validation.md)
-now defines the required model gate and additional controlled framework
-lifecycle scenarios arising from the maintainer's request-ownership review.
-This is a documentation update; the newly specified checks are not additional
-completed test results. Its final section identifies existing coverage and
-remaining disconnect, queued-reconfiguration, cross-model, shutdown and
-sanitizer evidence gaps.
+now groups requirements into six shared framework entries (F1-F6) and six
+model entries (M1-M6). Shared ownership/transition evidence is collected once per
+applicable revision/backend and referenced by models; per-model output failures
+remain separate from missing shared coverage. Model runs also sample memory,
+avoiding a duplicate identical quality/lifecycle matrix. Performance has its own
+verdict, and independent-server comparisons are optional.
+
+Quality requirements are retained: exact outputs/meaningful metadata,
+equivalent cache histories where applicable, three fresh starts at every
+advertised count, ten mixed warm waves per start at the largest count,
+overlap/counter checks, recovery and unload/reload. CPU checkpoint tests depend
+on whether CPU behavior is affected; shared compatibility checks still apply.
+Framework disconnect/reconfiguration/load-failure/timeout/cross-model/shutdown
+and supported sanitizer evidence remain required once, with representative
+backend integration. Missing relevant shared evidence still blocks admission.
+
+This documentation update adds no completed test results, runtime changes or
+model admission. Historical reports retain their original procedure/build
+identity until their evidence is mapped to the M/F records; changing the plan
+does not turn pending checks or known AuK/Apollo mismatches into passes.
 
 ## Reproduction and evidence
 

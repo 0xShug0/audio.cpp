@@ -1,182 +1,162 @@
 # Parallel model validation procedure
 
-Use this procedure before enabling or increasing parallel slot admission for a
-model. The common framework is reviewed in PR #715; model adapters, fixes and
-admission are reviewed separately in PR #706. This document defines required
-evidence, not a claim that every check below is implemented or already passed.
-Historical audit passes must be mapped to this procedure, with gaps marked
-pending rather than retroactively declared validated.
+Procedure version: **2026-09-28, shared framework + model gate**.
+PR #715 owns the common framework; PR #706 owns model adapters and admission.
+This procedure defines required evidence, not tests already completed.
 
-The [maintainer's lifecycle review](https://github.com/0xShug0/audio.cpp/pull/706#issuecomment-5859339500)
-identified a timeout regression when unload was waiting. That case has a fix
-and regression coverage, but output parity and mutual exclusion alone cannot
-establish correct request ownership or model state transitions.
+Run shared framework checks once for the relevant revision and reference them
+from model results. Run model checks separately for CUDA/Vulkan and the exact
+checkpoint/task/mode/count being admitted. Performance is a separate report.
 
-## 1. Define the validation case
+| Part | Coverage | Repeat when |
+|---|---|---|
+| Shared framework: F1-F6 | Scheduling, ownership and transitions, with representative real-server/backend integration | Relevant framework, shared-resource or backend behavior changes |
+| Model gate: M1-M6 | Baseline parity, every admitted count, mixed/repeated quality, recovery and memory reuse; applicable execution modes | Adapter, checkpoint, preparation, inference or applicable backend behavior changes |
+| Performance | Actual serial versus shared-slot timings; optional independent-server comparison | Reporting performance for a changed workload/build |
 
-Record the model family, task, offline/streaming/native-batch mode, checkpoint
-and auxiliary-file hashes, quantization, model specification and all runtime
-options. Record baseline/candidate commit and executable hashes, build flags,
-OS, GPU/device index, driver/backend versions, CPU threads, request fixtures,
-seeds and reference inputs. A pass applies to this tested combination; it is
-not certification of all checkpoints, options, tasks or backends in a family.
+## Shared framework gate (once, referenced by models)
 
-Run CUDA and Vulkan independently, using their actual target device indices.
-Verify CPU/default-one-slot and unsupported-mode compatibility when relevant;
-GPU results do not enable CPU, streaming or native-batch parallel execution.
-Run GPU benchmark cases sequentially so unrelated model workloads do not
-distort timing or available memory. Preserve default precision, overlap,
-generation limits and quality settings across compared implementations.
+Keep one framework record per applicable source/build/platform/backend scope,
+instead of copying these requirements into every model checklist. CPU tests
+cover common logic; representative real CUDA/Vulkan integration covers backend
+ownership/resource behavior. Explain which adapter/construction paths the
+representatives cover and expand coverage when another path is affected.
 
-## 2. Establish single-slot quality references
-
-Compare the original implementation with the candidate at one slot on the
-same backend, checkpoint, request and configuration. Record any baseline
-source differences; do not label an older PR executable as pristine upstream.
-Generate cold, warm and repeated-warm references. For cache-sensitive models,
-record each slot's full ordered history, including prompt/reference changes,
-cache resizing and reset/unload. Cold and warm references are separate.
-
-Compare all returned audio/stems, transcripts, artifacts and meaningful
-metadata. Exclude only explicitly identified volatile fields such as timing;
-retain raw responses and hashes. Prefer byte-identical WAV/artifact output and
-exact text for deterministic models. Fixed seeds alone do not prove
-determinism: measure serial repeat variation first. If exact serial parity is
-unavailable, record parity as unverified unless a model-specific quality
-criterion is defined and justified before the parallel test. Do not loosen a
-tolerance after observing a mismatch merely to turn the result into a pass.
-
-## 3. Exercise every advertised slot count
-
-Test two, three and four slots individually when advertised and when they fit;
-extend the same matrix to any higher advertised count. A two-slot pass does not
-justify a larger capacity. Never raise admission for an untested count.
-
-For each count, use at least three fresh server starts. Each start must cover
-a concurrent cold wave, warm wave, unload/reload and corresponding output
-comparison. Include mixed requests at every count: different text/audio lengths,
-seeds, reference voices and preparation settings where supported. Reverse
-admission order and compare each result with its equivalent single-slot
-history, not whichever reference happens to be closest.
-
-Observe the requested number of active loaded slots; concurrent HTTP submission
-alone is not proof of overlapping leases. Record which request occupies which
-session/history when needed for the comparison. Check active/queued counters
-return to zero, then verify serial reuse after the parallel wave. At the largest
-advertised count, additionally run at least ten mixed warm waves to look for
-intermittent mismatches, crashes, state contamination or growing memory.
-Document repetitions and any reduced stress coverage as an explicit gap.
-
-## 4. Check model integration with the lifecycle
-
-Each model/backend validation includes invalid input alongside valid requests,
-queue overflow, busy timeout, targeted/all-model unload during inference,
-unload during first lazy load, reload and failure recovery. Check that healthy
-requests retain correct output, management waits for ownership to drain, and
-no error leaves a stranded slot or queue entry. Exercise idle eviction when
-supported and a subsequent cold request. A failure of one request must not
-silently poison another session or a later inference.
-
-Streaming additionally needs real concurrent streams, disconnect/reset and
-callback ownership checks. Native batching needs concurrent batches with
-independent per-request results and preparation state. Offline parity and
-test-double interface checks do not validate these real model modes.
-
-## 5. Validate the common ownership and transition contract
-
-These checks belong to the framework suite, with representative real-server
-integration. Model admission depends on the relevant framework checks as well
-as its own checkpoint tests. Use controllable test sessions, barriers/latches
-and injected failures to force interleavings; do not rely only on sleeps or
-GPU request duration. Bound test completion externally and preserve a trace
-of request, slot/session, model instance/configuration and transition events.
-
-| Forced scenario | Required assertion |
+| ID | Required assertions |
 |---|---|
-| Client disconnect while queued or running | No abandoned queue accounting. A running lease remains held until its worker finishes or safely stops; disconnect does not imply cancellation of GPU work. |
-| Unload/reconfiguration with queued requests | Document and test whether queued work uses the selected configuration, uses a later configuration, or is rejected. No accidental mixing of instance/configuration state or use of a destroyed session. |
-| Failure during primary/clone/weight loading | No partially published pool; partial ownership is released in the correct order; later load can retry. |
-| Concurrent first requests plus unload | Publish a complete pool once; unload cannot skip a load in progress or destroy sessions still referenced by requests. |
-| Overdue inference plus waiting management | Preserve immediate overdue rejection, including partially occupied pools blocked by management. |
-| Healthy and overdue slots together | Preserve the documented admission/timeout policy; do not infer that one overdue slot makes every active slot overdue. |
-| Multiple managers, manager timeout and timeout zero | Management does not starve, giving up wakes eligible requests, and zero retains its documented waiting behavior. |
-| Two different models loading/running/unloading | No deadlocks, cross-model state contamination, unsafe backend initialization or destruction of another model's live resources; include residency-limit/eviction contention. |
-| Shutdown with active and queued work | Follow the documented drain/reject policy, with finite test workers; no resource destruction while inference/callbacks still reference it. |
+| F1 Scheduling and compatibility | Isolated leases, drained counters/queues and management priority without starvation. Test overdue work with waiting management/spare slots, healthy plus overdue slots, multiple managers, manager timeout and timeout zero. Preserve default one-slot and unsupported-count/mode behavior. Test queue overflow only if a capacity exists; otherwise document timeout rejection. |
+| F2 Load/configuration transitions | Concurrent first requests publish one complete pool; unload cannot skip a load in progress. Force unload/reconfiguration with queued work and test its documented configuration-selection/rejection policy. No mixed configuration or destroyed-session access. |
+| F3 Failure/resource lifetime | Inject primary/clone/weight-load failures, verify rollback/destruction order and retry. Immutable resources outlive users; mutable graphs/caches/RNG/callbacks are private; every error releases ownership. |
+| F4 Disconnect/shutdown | Disconnect running/queued clients without abandoning ownership/accounting. Finite active/queued workers and callbacks follow the documented drain/reject policy; shutdown cannot destroy live resources. Forced process termination does not prove graceful drain. |
+| F5 Multiple models/eviction | Force two models loading/running/unloading, including residency-limit/idle-eviction contention. No deadlock, contamination, unsafe backend initialization or destruction of another model's live resources. |
+| F6 Regressions/sanitizers | Relevant common CTests and reproducible seeded stress after controlled scenarios. Applicable CPU tests under ASan and TSan separately where supported, with explicit platform/unrun-job limitations. Sanitizers do not certify GPU kernels/drivers. |
 
-Assert ownership, not just counters: one request owns one leased session;
-mutable graphs/caches/RNG/callbacks are private; immutable resources remain
-alive while referenced; every completion/error path releases its ownership.
-Counter snapshots alone cannot prove these properties. Add seeded stress runs
-with reproducible traces after the controlled scenarios. Run applicable CPU
-framework tests under AddressSanitizer and ThreadSanitizer separately where
-supported; record platform/backend limitations. Sanitizers do not certify GPU
-driver/kernel concurrency, so retain real CUDA/Vulkan integration checks.
+Use controllable sessions, barriers and injected failures, with representative
+real-server integration. Bound completion externally; retain request/session/
+configuration/transition traces. Counters and concurrent submission alone do
+not prove ownership. These checks retain the
+[maintainer's lifecycle concerns](https://github.com/0xShug0/audio.cpp/pull/706#issuecomment-5859339500).
 
-## 6. Measure memory and performance separately
+CPU checkpoint smoke tests are required when changes affect CPU behavior.
+For unaffected CPU paths, record why and reference common default/unsupported-
+mode coverage; every GPU model need not run on CPU. Real streaming/native-batch
+admission still requires its own model checks.
 
-Measure the actual same workload in three configurations: one slot running
-requests sequentially, one loaded model with N slots, and N separate one-slot
-server instances where memory permits. Do not substitute N times a single
-measurement for a measured sequential run without labeling it an estimate.
+## Model gate (six entries per model/backend/mode)
 
-Report cold startup/loading separately from warm inference. Use at least three
-warm repeats and report sample count, total batch completion time, throughput,
-individual latency (median and tail when sample size supports it), failures and
-queue/timeout rejection latency. A timeout rejection improvement is not an
-inference speedup. Independent slots may improve throughput while increasing
-individual latency, and stage serialization can make a correct model slower.
+Record applicability and evidence for M1-M6. Collect outputs, counters, timing
+and memory in the same runs; do not repeat an identical quality/lifecycle matrix
+only to sample memory. Applicable assertions inside each group remain required.
 
-Sample peak GPU memory throughout loading, reference preparation, generation,
-unload and reload, including first-request peaks. Record retained idle memory,
-host memory and sampling method/interval. State whether values include model
-weights, backend/context overhead and workspaces. Compare the same slot count
-before/after memory changes. Look for bounded reuse over repeated warm waves;
-allocator caching is not by itself proof of a leak. On allocation/VRAM guard
-failure, retain diagnostics and mark that count blocked; do not lower quality
-settings just to obtain a pass.
-
-## 7. Record the outcome and update admission
-
-Keep correctness, quality, performance, memory and lifecycle results separate.
-A correct-but-slower result can support concurrency admission, with the measured
-tradeoff disclosed. A quality mismatch, unexplained reset or relevant lifecycle
-gap cannot be hidden behind a throughput gain.
-
-| Result | Meaning |
+| ID | Required evidence |
 |---|---|
-| Validated | Required correctness, quality and lifecycle evidence for the recorded combination/count is complete. |
-| Correct but slower | The validation gate passes; measured throughput is worse for this workload. |
-| Parity unverified | Execution succeeds, but quality equivalence remains unresolved. |
-| Memory blocked | Hardware capacity/guard prevents completion; no correctness pass is claimed at that count. |
-| Failed | Reproducible crash, mismatch or ownership/lifecycle failure. |
-| Pending / unsupported | A required check has not run, or the backend/mode does not advertise the capability. |
+| M1 Scope/serial quality | One manifest identifies checkpoint/auxiliaries, quantization, task/mode/settings, fixtures/seeds/references, baseline/candidate source/executable hashes, build flags, OS/device/driver/backend and threads. Compare original and candidate one-slot cold, warm and repeated-warm outputs and meaningful metadata. |
+| M2 Every admitted count | At least three fresh server starts at each advertised count that fits. Each start covers true concurrent cold and mixed warm waves, unload/reload, exact comparisons, observed active loaded leases, drained counters and correct serial reuse. |
+| M3 Mixed/repeated quality | Effective length, seed, reference/preparation changes where supported, and reversed admission order. At the largest admitted count, at least ten mixed warm waves in each of the three starts. Cache-sensitive models need equivalent ordered per-session histories including resizing/reset; stateless models need no invented history requirement. |
+| M4 Model recovery | Reuse M2 unload/reload evidence. Once per model/backend at the largest admitted count: invalid input alongside healthy work, primary-load failure followed by retry, and targeted/all-model unload including during first lazy load. Healthy outputs stay correct; no error strands ownership. Shared queue/timeout/eviction semantics reference F1/F5; test adapter-specific overrides separately. |
+| M5 Memory reuse | Sample GPU/host memory during existing cold/preparation/generation/warm/unload/reload runs, including retained idle memory. Report interval, first-request peaks and included weights/context/workspaces. Assess repeated-use stabilization; investigate unexplained continuing growth, OOM/guard failures. Compare the same count/settings with baseline for retention investigations or memory changes. |
+| M6 Execution modes | Offline evidence admits offline only. Streaming needs concurrent streams, disconnect/reset and callback ownership; native batching needs concurrent batches with independent results/preparation. Modes not being admitted are not applicable with a reason; test doubles do not validate real model modes. |
 
-Attach request/config fixtures, raw responses/hashes, timing/memory samples,
-logs, repetition counts and reproduction commands. Maintain a per-count
-coverage matrix: model reference/parity, mixed/repeat operation, lifecycle,
-performance, memory and relevant common-suite evidence. State pending gaps
-explicitly. Update the admission header and its capacity assertions only for
-consecutively validated counts; keep unsupported combinations at one slot.
+### Quality rules that must not be relaxed
 
-For an everyday adapter change, run the affected model/backend gate plus
-relevant common regressions. Before merging the model-support PR, rerun the
-admitted catalogue on available hardware and report blocked/unverified cases.
-After framework changes, rerun common cross-platform tests and representative
-checkpoint integration, expanding to affected models when dispatch, ownership
-or preparation semantics change. Remote CI and local results are distinct.
+- Preserve precision, overlap, generation limits and quality settings across
+  comparisons. A VRAM failure is blocked evidence, not permission to lower them.
+- Compare all audio/stems, transcripts, artifacts and meaningful metadata.
+  Retain raw responses/hashes; exclude only named, justified volatile fields
+  such as timing, never an entire metadata object.
+- Deterministic output requires byte-identical audio/artifacts and exact text.
+  Fixed seeds alone do not establish determinism: measure serial repeat variation.
+  If serial parity varies, mark parity unverified unless a model-specific quality
+  criterion was defined and justified before the parallel test. Never loosen
+  tolerance after a mismatch.
+- Cold and warm references are distinct. Compare equivalent single-slot
+  histories, not the closest reference. Trace actual session/history selection
+  for cache-sensitive models.
+- Variations must change effective inputs: ignored ASR text is not mixed-audio
+  coverage. Retain audio hashes/lengths and applied options.
+- Run the true cold wave before a load-producing probe. Sample loaded leases
+  separately from slow GPU-memory queries so short overlap is not hidden.
+- A two-slot pass does not admit three/four slots. Three fresh starts per count
+  and ten mixed warm waves per start at the largest count are unchanged. Extend
+  the same gate to higher advertised counts; never enable an untested count.
+- An intermittent mismatch remains failed when later repeats pass. Existing
+  AuK/Apollo mismatches are not waived by this procedure change.
 
-## Existing evidence and remaining work
+M5 needs an evidence-backed assessment of finite repeated reuse, not proof of
+leak freedom for every future request. Allocator caching alone is not a leak.
+For stable measurements, state the tested history/range. For uncertain growth,
+keep the diagnostic and M5 pending; do not invent a passing bound after seeing
+it. A baseline issue does not automatically waive an unsafe count.
 
-The [framework report](../reports/common_slot_framework.md) lists completed
-focused tests and real single-slot server probes. Existing common tests cover
-pool contracts/rollback, test-double stream errors, leases/management/timeouts,
-shared-cache ownership and concurrent tensor-source access. The HTTP overdue
-harness is `tests/server/server_busy_timeout_regression.py`; its standalone
-framework configuration uses one slot. Higher counts need model admission.
+## Performance report (separate from admission)
 
-These checks are partial coverage of section 5, not implementation of its
-entire controlled HTTP lifecycle matrix. Real client disconnects, queued
-reconfiguration ownership, cross-model contention, shutdown and sanitizer
-coverage require explicit evidence before being marked complete. Model
-checkpoint validation remains in the model-support follow-up. This procedure
-adds no model admission, new runtime behavior or automatically executed tests.
+Measure the same workload as original one-slot serial, candidate one-slot serial
+and candidate N shared slots. Compare actual N-request serial completion time,
+not an unlabeled `N * one request` estimate. Run GPU benchmarks sequentially
+without unrelated workloads. Keep cold startup/loading separate; use at least
+three warm repeats and retain sample count, batch time, request latencies,
+failures and memory samples from the existing runs.
+
+N independent one-slot server instances are an **optional** deployment comparison
+when memory permits or that comparison is requested. Missing/memory-blocked
+independent-server measurements do not fail model quality. Three batches do not
+support robust tail-latency claims. Rejection latency is separate: quicker HTTP
+503 rejection is not quicker generation.
+
+The comparison table reports backend/model, model checks, shared framework
+checks, base one-request time, candidate one-slot time, time saved percentage,
+measured base N-request serial time, candidate N-slot completion time and time
+saved percentage. `100 * (base - candidate) / base` means elapsed time saved;
+positive means less time. Keep quality and memory verdicts visible. Slower
+models can pass correctness; faster mismatching models cannot.
+
+## Evidence, reporting and admission
+
+Generate one reusable manifest per unchanged build/package/fixture set, with
+model-specific settings attached. Hash unchanged inputs once and reference
+them; changed files/settings need new identities. Attach raw outputs, traces,
+samples, logs and reproduction commands to the six model entries and the shared
+record instead of duplicating every low-level assertion.
+
+| Field | Meaning |
+|---|---|
+| `model_checks` | M1-M6 for the recorded model/backend/task/mode/count, independent of missing shared tests or optional performance measurements. |
+| `framework_checks` | Applicable F1-F6 shared evidence, with record identity/backend scope. Missing shared coverage is pending, not a model output failure. |
+| `admission_ready` | True only when model and applicable framework checks pass, with justified not-applicable entries. Performance speed is not part of this boolean. |
+| `all_plan_rules` | Legacy alias for `admission_ready` under this recorded procedure version; never imply optional benchmarks passed. |
+| `performance` | Measurements/tradeoffs: completed, pending or memory blocked independently. |
+
+Each entry records ID, applicability, PASS/FAIL/PENDING/BLOCKED/UNSUPPORTED/
+NOT_APPLICABLE status, tested identity, evidence, reproduction and limitations.
+NOT_APPLICABLE needs an implementation/platform reason. Relevant missing shared
+evidence still blocks admission; moving it to one record does not waive it.
+Disclose unrelated common-suite failures separately.
+
+Execution finished is not validation complete. Report "evidence collected;
+validation pending" for unresolved required entries. A group cannot pass by
+omitting a failed assertion. Admit only consecutively validated counts; keep
+unsupported combinations at one slot. This documentation adds no admission
+or runtime behavior.
+
+Label historical evidence with its procedure version and tested hashes. Do not
+recalculate old seven-section reports as passes merely by changing the plan.
+First map assertions/evidence to M/F entries, retaining failures, missing raw
+metadata/histories and changed-binary limitations. New executables do not inherit
+quality certification from predecessors. Reviewed evidence reuse must identify
+unchanged relevant source/settings and applicability; changed inference,
+preparation, ownership or backend paths need new coverage. Changed fixtures or
+strengthened observers produce new evidence, not exact historical replay.
+Preserve replaced experimental records separately.
+
+For adapter-only changes, rerun the affected model/backend gate and applicable
+common regressions; justify reuse of unaffected shared evidence. For framework
+changes, rerun F1-F6 and representative checkpoint integration, expanding to
+affected paths. Before model-support merge, run the admitted catalogue on
+available hardware and disclose blocked/unverified combinations. Local and
+remote CI results are distinct. Publishing restrictions neither fail evidence
+nor authorize publication.
+
+See the [session contract](parallel_sessions.md),
+[framework report](../reports/common_slot_framework.md), and
+[scheduler regression](../reports/scheduler_busy_timeout.md) for existing scope
+and reproduction. Historical passes do not certify every requirement here.
