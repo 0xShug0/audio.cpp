@@ -506,7 +506,7 @@ add_library(engine_core OBJECT
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
     src/framework/modules/vocoders/hifigan_vocoder.cpp
     src/framework/modules/vocoders/hift_vocoder.cpp
-    src/framework/modules/speech_encoders/hubert_encoder.cpp
+    src/framework/modules/speech_encoders/wav2vec2_encoder.cpp
     src/framework/modules/speech_encoders/wav2vec2_bert_encoder.cpp
     src/framework/modules/speech_encoders/wavlm_encoder.cpp
     src/framework/modules/speech_encoders/sanm.cpp
@@ -3614,11 +3614,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             COMMAND mms_forced_aligner_assets_test
         )
 
-        add_engine_unittest(mms_hubert_positional_conv_test tests/unittests/test_mms_hubert_positional_conv.cpp)
-        target_include_directories(mms_hubert_positional_conv_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_engine_unittest(mms_wav2vec2_positional_conv_test tests/unittests/test_mms_wav2vec2_positional_conv.cpp)
+        target_include_directories(mms_wav2vec2_positional_conv_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(
-            NAME mms_hubert_positional_conv_test
-            COMMAND mms_hubert_positional_conv_test
+            NAME mms_wav2vec2_positional_conv_test
+            COMMAND mms_wav2vec2_positional_conv_test
         )
 
         add_engine_unittest(mms_emissions_test tests/unittests/test_mms_emissions.cpp)

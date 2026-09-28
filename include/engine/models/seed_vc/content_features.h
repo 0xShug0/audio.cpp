@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "engine/models/seed_vc/astral_quantizer.h"
 
 #include <cstdint>
@@ -26,7 +26,7 @@ class SeedVcContentFeatureExtractor {
 public:
     SeedVcContentFeatureExtractor() = default;
     SeedVcContentFeatureExtractor(
-        const engine::modules::HubertEncoderComponent * hubert,
+        const engine::modules::Wav2Vec2EncoderRuntime * hubert,
         const SeedVcAstralQuantizer * wide_quantizer,
         const SeedVcAstralQuantizer * narrow_quantizer);
 
@@ -39,7 +39,7 @@ private:
         const std::vector<float> & waveform,
         SeedVcContentFeatureKind kind) const;
 
-    const engine::modules::HubertEncoderComponent * hubert_ = nullptr;
+    const engine::modules::Wav2Vec2EncoderRuntime * hubert_ = nullptr;
     const SeedVcAstralQuantizer * wide_quantizer_ = nullptr;
     const SeedVcAstralQuantizer * narrow_quantizer_ = nullptr;
 };

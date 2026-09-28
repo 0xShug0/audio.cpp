@@ -190,17 +190,17 @@ wan_s2v_prepare_audio_encoder_output(const WanS2VAudioFeature &hidden_states,
                               config.batch_frames, config.sample_radius});
 }
 
-WanS2VAudioFeature wan_s2v_audio_feature_from_hubert_layers(
-    const modules::HubertEncoderLayerOutput &layer_output) {
+WanS2VAudioFeature wan_s2v_audio_feature_from_xlsr_layers(
+    const modules::Wav2Vec2EncoderLayerOutput &layer_output) {
   if (layer_output.batch != 1 || layer_output.tokens <= 0 ||
       layer_output.hidden_size <= 0) {
     throw std::runtime_error(
-        "Wan S2V audio requires batch-1 positive HuBERT layer outputs");
+        "Wan S2V audio requires batch-1 positive XLS-R layer outputs");
   }
   if (layer_output.layer_indices.size() != layer_output.hidden_states.size() ||
       layer_output.hidden_states.empty()) {
     throw std::runtime_error(
-        "Wan S2V audio HuBERT layer output count mismatch");
+        "Wan S2V audio XLS-R layer output count mismatch");
   }
   WanS2VAudioFeature feature;
   feature.layers = static_cast<int64_t>(layer_output.hidden_states.size());
@@ -213,7 +213,7 @@ WanS2VAudioFeature wan_s2v_audio_feature_from_hubert_layers(
   for (const auto &hidden : layer_output.hidden_states) {
     if (static_cast<int64_t>(hidden.size()) != per_layer) {
       throw std::runtime_error(
-          "Wan S2V audio HuBERT layer output shape mismatch");
+          "Wan S2V audio XLS-R layer output shape mismatch");
     }
     feature.values.insert(feature.values.end(), hidden.begin(), hidden.end());
   }
