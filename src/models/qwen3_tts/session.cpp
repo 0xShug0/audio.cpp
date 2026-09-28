@@ -357,7 +357,7 @@ Qwen3TTSSession::Qwen3TTSSession(
             speech_encoder_weight_storage_type_,
             conv_weight_storage_type_,
             perf_mode_);
-        speaker_encoder_ = std::make_unique<Qwen3SpeakerEncoderRuntime>(
+        speaker_encoder_ = std::make_unique<Qwen3TTSEcapaTdnnEncoderRuntime>(
             assets_,
             voice_prompt_context_,
             speaker_encoder_graph_arena_bytes_,

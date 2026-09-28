@@ -32,7 +32,7 @@ struct Yue2ModelConfig {
     float timestep_shift = 1.0F;
 };
 
-struct Yue2VaeConfig {
+struct Yue2VAEConfig {
     int sample_rate = 48000;
     int64_t channels = 2;
     int64_t latent_dim = 64;
@@ -61,7 +61,7 @@ struct Yue2GenerationConfig {
 
 struct Yue2Config {
     Yue2ModelConfig model;
-    Yue2VaeConfig vae;
+    Yue2VAEConfig vae;
     Yue2GenerationConfig generation;
 };
 

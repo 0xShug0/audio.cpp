@@ -83,7 +83,7 @@ SupertonicSession::SupertonicSession(
     }
     style_cache_slots_ = resolve_style_cache_slots(options);
     validate_session_options(options);
-    runtime_ = std::make_unique<SupertonicNativeRuntime>(assets_, options.backend, weight_storage_type_, style_cache_slots_);
+    runtime_ = std::make_unique<SupertonicRuntime>(assets_, options.backend, weight_storage_type_, style_cache_slots_);
 }
 
 SupertonicSession::~SupertonicSession() = default;

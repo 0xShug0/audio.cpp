@@ -31,7 +31,7 @@ namespace modules = engine::modules;
 using Clock = std::chrono::steady_clock;
 using H3Config = MiniMaxH3Config;
 
-struct VideoVaeGgmlContextDeleter {
+struct VideoVAEGgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
         if (ctx != nullptr) {
             ggml_free(ctx);
@@ -249,7 +249,7 @@ std::pair<std::vector<int64_t>, std::vector<int64_t>> split_video_tiles(int64_t 
 
 core::TensorValue video_linear(
     core::ModuleBuildContext & ctx,
-    const VideoVaeWeightStore & weights,
+    const VideoVAEWeightStore & weights,
     const std::string & prefix,
     const core::TensorValue & x,
     int64_t in_features,
@@ -298,7 +298,7 @@ core::TensorValue video_apply_rope(
 
 core::TensorValue build_video_vae_attention(
     core::ModuleBuildContext & ctx,
-    const VideoVaeWeightStore & weights,
+    const VideoVAEWeightStore & weights,
     const H3Config & cfg,
     const core::TensorValue & x,
     const core::TensorValue & cos,
@@ -330,7 +330,7 @@ core::TensorValue build_video_vae_attention(
 
 core::TensorValue build_video_vae_decoder_graph(
     core::ModuleBuildContext & ctx,
-    const VideoVaeWeightStore & weights,
+    const VideoVAEWeightStore & weights,
     const H3Config & cfg,
     const core::TensorValue & latents,
     const core::TensorValue & cos,
@@ -380,9 +380,9 @@ core::TensorValue build_video_vae_decoder_graph(
 
 }  // namespace
 
-class VideoVaeTileGraph {
+class VideoVAETileGraph {
 public:
-    VideoVaeTileGraph(VideoVaeWeightStore & weights, const H3Config & cfg, int64_t latent_t, int64_t latent_h, int64_t latent_w)
+    VideoVAETileGraph(VideoVAEWeightStore & weights, const H3Config & cfg, int64_t latent_t, int64_t latent_h, int64_t latent_w)
         : weights_(weights),
           cfg_(cfg),
           latent_t_(latent_t),
@@ -430,7 +430,7 @@ public:
         engine::debug::timing_log_scalar("minimax_h3.video_vae.graph_build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
     }
 
-    ~VideoVaeTileGraph() {
+    ~VideoVAETileGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(weights_.execution.backend(), graph_);
@@ -489,13 +489,13 @@ public:
     }
 
 private:
-    VideoVaeWeightStore & weights_;
+    VideoVAEWeightStore & weights_;
     const H3Config cfg_;
     int64_t latent_t_ = 0;
     int64_t latent_h_ = 0;
     int64_t latent_w_ = 0;
-    std::unique_ptr<ggml_context, VideoVaeGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, VideoVaeGgmlContextDeleter> input_ctx_;
+    std::unique_ptr<ggml_context, VideoVAEGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, VideoVAEGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -533,9 +533,9 @@ std::vector<float> gather_video_tile_latents(
 }
 
 VideoTensor4D decode_video_spatial_tile_set(
-    VideoVaeWeightStore & weights,
+    VideoVAEWeightStore & weights,
     const H3Config & cfg,
-    VideoVaeDecodeCache & cache,
+    VideoVAEDecodeCache & cache,
     const std::vector<float> & latents,
     int64_t t_start,
     int64_t t_len) {
@@ -588,10 +588,10 @@ VideoTensor4D decode_video_spatial_tile_set(
 }
 
 MiniMaxH3VideoFrames run_video_vae_decode_graph_impl(
-    VideoVaeWeightStore & weights,
+    VideoVAEWeightStore & weights,
     const H3Config & cfg,
     const std::vector<float> & video_rows,
-    VideoVaeDecodeCache & cache) {
+    VideoVAEDecodeCache & cache) {
     const auto decode_start = Clock::now();
     const auto latents = unpack_video_rows_to_latents(cfg, video_rows);
     const int64_t pseudo_total_base = cfg.video_latent_t + cfg.video_vae_token_drop;
@@ -703,11 +703,11 @@ MiniMaxH3VideoFrames run_video_vae_decode_graph_impl(
 
 }  // namespace
 
-struct VideoVaeDecodeCache::Impl {
-    std::map<std::tuple<int64_t, int64_t, int64_t>, std::unique_ptr<VideoVaeTileGraph>> graphs;
+struct VideoVAEDecodeCache::Impl {
+    std::map<std::tuple<int64_t, int64_t, int64_t>, std::unique_ptr<VideoVAETileGraph>> graphs;
 };
 
-VideoVaeWeightStore::VideoVaeWeightStore(
+VideoVAEWeightStore::VideoVAEWeightStore(
     core::ExecutionContext & execution_context,
     std::shared_ptr<const assets::TensorSource> tensor_source,
     const MiniMaxH3Config & cfg,
@@ -762,7 +762,7 @@ VideoVaeWeightStore::VideoVaeWeightStore(
     source_->release_storage();
 }
 
-const core::TensorValue & VideoVaeWeightStore::require(std::string_view name) const {
+const core::TensorValue & VideoVAEWeightStore::require(std::string_view name) const {
     const auto it = weights_.find(std::string(name));
     if (it == weights_.end()) {
         throw std::runtime_error("missing MiniMax-H3 video VAE tensor: " + std::string(name));
@@ -770,7 +770,7 @@ const core::TensorValue & VideoVaeWeightStore::require(std::string_view name) co
     return it->second;
 }
 
-const modules::LinearWeights & VideoVaeWeightStore::linear(std::string_view name) const {
+const modules::LinearWeights & VideoVAEWeightStore::linear(std::string_view name) const {
     const auto it = linear_weights_.find(std::string(name));
     if (it == linear_weights_.end()) {
         throw std::runtime_error("missing MiniMax-H3 video VAE linear weights: " + std::string(name));
@@ -778,14 +778,14 @@ const modules::LinearWeights & VideoVaeWeightStore::linear(std::string_view name
     return it->second;
 }
 
-VideoVaeDecodeCache::VideoVaeDecodeCache()
+VideoVAEDecodeCache::VideoVAEDecodeCache()
     : impl_(std::make_unique<Impl>()) {
 }
 
-VideoVaeDecodeCache::~VideoVaeDecodeCache() = default;
+VideoVAEDecodeCache::~VideoVAEDecodeCache() = default;
 
-VideoVaeTileGraph & VideoVaeDecodeCache::graph(
-    VideoVaeWeightStore & weights,
+VideoVAETileGraph & VideoVAEDecodeCache::graph(
+    VideoVAEWeightStore & weights,
     const MiniMaxH3Config & cfg,
     int64_t latent_t,
     int64_t latent_h,
@@ -793,16 +793,16 @@ VideoVaeTileGraph & VideoVaeDecodeCache::graph(
     const auto key = std::make_tuple(latent_t, latent_h, latent_w);
     auto & cached = impl_->graphs[key];
     if (cached == nullptr) {
-        cached = std::make_unique<VideoVaeTileGraph>(weights, cfg, latent_t, latent_h, latent_w);
+        cached = std::make_unique<VideoVAETileGraph>(weights, cfg, latent_t, latent_h, latent_w);
     }
     return *cached;
 }
 
 MiniMaxH3VideoFrames run_video_vae_decode_graph(
-    VideoVaeWeightStore & weights,
+    VideoVAEWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & video_rows,
-    VideoVaeDecodeCache & cache) {
+    VideoVAEDecodeCache & cache) {
     return run_video_vae_decode_graph_impl(weights, cfg, video_rows, cache);
 }
 

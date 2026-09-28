@@ -16,18 +16,18 @@ struct FireRedAudioUnderstandFeatures {
     int64_t tokens = 0;
 };
 
-class FireRedAudioAudioEncoderRuntime {
+class FireRedAudioEncoderRuntime {
 public:
-    FireRedAudioAudioEncoderRuntime(
+    FireRedAudioEncoderRuntime(
         std::shared_ptr<const FireRedAudioAssets> assets,
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type);
-    ~FireRedAudioAudioEncoderRuntime();
+    ~FireRedAudioEncoderRuntime();
 
-    FireRedAudioAudioEncoderRuntime(const FireRedAudioAudioEncoderRuntime &) = delete;
-    FireRedAudioAudioEncoderRuntime & operator=(const FireRedAudioAudioEncoderRuntime &) = delete;
+    FireRedAudioEncoderRuntime(const FireRedAudioEncoderRuntime &) = delete;
+    FireRedAudioEncoderRuntime & operator=(const FireRedAudioEncoderRuntime &) = delete;
 
     FireRedAudioUnderstandFeatures encode(const engine::runtime::AudioBuffer & audio);
     void release_graphs();
@@ -38,4 +38,3 @@ private:
 };
 
 }  // namespace engine::models::firered_audio
-

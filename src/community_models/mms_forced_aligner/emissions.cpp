@@ -83,11 +83,11 @@ std::vector<float> mms_log_softmax_and_star(const float * logits, int64_t frames
     return out;
 }
 
-MmsEmissionRuntime::MmsEmissionRuntime(
+MmsWav2Vec2CtcRuntime::MmsWav2Vec2CtcRuntime(
     std::shared_ptr<const MmsForcedAlignerAssets> assets,
     core::BackendConfig backend,
     engine::assets::TensorStorageType weight_storage_type,
-    MmsEmissionConfig config)
+    MmsWav2Vec2CtcConfig config)
     : assets_(std::move(assets)),
       backend_(std::move(backend)),
       weight_storage_type_(weight_storage_type),
@@ -100,7 +100,7 @@ MmsEmissionRuntime::MmsEmissionRuntime(
     }
 }
 
-void MmsEmissionRuntime::load_encoder() const {
+void MmsWav2Vec2CtcRuntime::load_encoder() const {
     if (mms_encoder_ != nullptr) {
         return;
     }
@@ -149,7 +149,7 @@ void MmsEmissionRuntime::load_encoder() const {
             std::move(mms_binding)));
 }
 
-MmsEmissionOutput MmsEmissionRuntime::compute(const runtime::AudioBuffer & audio) const {
+MmsEmissionOutput MmsWav2Vec2CtcRuntime::compute(const runtime::AudioBuffer & audio) const {
     const auto frontend_start = Clock::now();
     if (audio.sample_rate <= 0 || audio.channels <= 0 || audio.samples.empty() ||
         audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {

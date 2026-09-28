@@ -37,7 +37,7 @@ struct GgmlContextDeleter {
     }
 };
 
-struct Yue2NarWeights {
+struct Yue2NARWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     engine::modules::LinearWeights vae2llm;
     engine::modules::LinearWeights time0;
@@ -107,12 +107,12 @@ engine::modules::DecoderLayerWeights load_nar_layer(
     return out;
 }
 
-std::shared_ptr<const Yue2NarWeights> load_nar_weights(
+std::shared_ptr<const Yue2NARWeights> load_nar_weights(
     const Yue2Assets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
-    auto weights = std::make_shared<Yue2NarWeights>();
+    auto weights = std::make_shared<Yue2NARWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         execution.backend(),
         execution.backend_type(),
@@ -456,7 +456,7 @@ core::TensorValue build_cached_nar_layer(
 
 }  // namespace
 
-struct Yue2NarRuntime::Impl {
+struct Yue2NARRuntime::Impl {
     Impl(
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
@@ -480,7 +480,7 @@ struct Yue2NarRuntime::Impl {
         Graph(
             Impl & owner,
             int64_t frames,
-            const Yue2ArDevicePrefixState & ar_state)
+            const Yue2ARDevicePrefixState & ar_state)
             : owner(&owner),
               frames(frames),
               ar_length(ar_state.current_end) {
@@ -654,7 +654,7 @@ struct Yue2NarRuntime::Impl {
 
     std::vector<float> velocity(
         Graph & graph,
-        const Yue2ArDevicePrefixState & ar_state,
+        const Yue2ARDevicePrefixState & ar_state,
         const std::vector<float> & state,
         float raw_t) {
         const auto & config = assets->config.model;
@@ -673,7 +673,7 @@ struct Yue2NarRuntime::Impl {
     }
 
     std::vector<float> solve_chunk(
-        const Yue2ArDevicePrefixState & ar_state,
+        const Yue2ARDevicePrefixState & ar_state,
         const std::vector<float> & noise,
         int64_t ode_steps) {
         auto state = noise;
@@ -700,7 +700,7 @@ struct Yue2NarRuntime::Impl {
     std::vector<float> synthesize(
         const std::vector<int32_t> & prefix,
         const std::vector<int32_t> & codec,
-        const std::function<Yue2ArDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
+        const std::function<Yue2ARDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
         const std::vector<float> & noise,
         uint64_t seed,
         int64_t ode_steps,
@@ -760,11 +760,11 @@ struct Yue2NarRuntime::Impl {
     size_t graph_arena_bytes = 0;
     bool allow_flash_attention = true;
     int64_t attention_tile_rows = 0;
-    std::shared_ptr<const Yue2NarWeights> weights;
+    std::shared_ptr<const Yue2NARWeights> weights;
     std::unique_ptr<Graph> graph;
 };
 
-Yue2NarRuntime::Yue2NarRuntime(
+Yue2NARRuntime::Yue2NARRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const Yue2Assets> assets,
     assets::TensorStorageType weight_type,
@@ -781,12 +781,12 @@ Yue2NarRuntime::Yue2NarRuntime(
           allow_flash_attention,
           attention_tile_rows)) {}
 
-Yue2NarRuntime::~Yue2NarRuntime() = default;
+Yue2NARRuntime::~Yue2NARRuntime() = default;
 
-std::vector<float> Yue2NarRuntime::synthesize(
+std::vector<float> Yue2NARRuntime::synthesize(
     const std::vector<int32_t> & prefix,
     const std::vector<int32_t> & codec,
-    const std::function<Yue2ArDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
+    const std::function<Yue2ARDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
     const std::vector<float> & noise,
     uint64_t seed,
     int64_t ode_steps,
@@ -794,7 +794,7 @@ std::vector<float> Yue2NarRuntime::synthesize(
     return impl_->synthesize(prefix, codec, prefill_state, noise, seed, ode_steps, context);
 }
 
-void Yue2NarRuntime::release_runtime_graphs() {
+void Yue2NARRuntime::release_runtime_graphs() {
     impl_->graph.reset();
 }
 

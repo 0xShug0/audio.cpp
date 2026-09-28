@@ -30,18 +30,18 @@ struct EchoConditioning {
 // reads those buffers as leaves, so the text and speaker stacks are not
 // re-executed on every sampler step. Upstream gets the same effect by passing
 // Python lists of cached tensors into the forward call.
-class EchoDitRuntime {
+class EchoDiTRuntime {
 public:
-    EchoDitRuntime(
+    EchoDiTRuntime(
         const EchoTtsConfig & config,
         const assets::TensorSource & source,
         const std::string & tensor_prefix,
         core::ExecutionContext & execution,
         assets::TensorStorageType matmul_storage_type);
-    ~EchoDitRuntime();
+    ~EchoDiTRuntime();
 
-    EchoDitRuntime(const EchoDitRuntime &) = delete;
-    EchoDitRuntime & operator=(const EchoDitRuntime &) = delete;
+    EchoDiTRuntime(const EchoDiTRuntime &) = delete;
+    EchoDiTRuntime & operator=(const EchoDiTRuntime &) = delete;
 
     const EchoTtsConfig & config() const noexcept;
 

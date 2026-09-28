@@ -34,7 +34,7 @@ int main(int argc, char ** argv) {
                 throw std::runtime_error("unexpected encoder statistics shape");
             }
             engine::core::ExecutionContext execution({engine::core::BackendType::Cuda, 0, 8});
-            engine::models::auk::VaeEncoderRuntime encoder(execution, *weights, audio.size());
+            engine::models::auk::VAEEncoderRuntime encoder(execution, *weights, audio.size());
             const auto noise = reference->require_f32("vae.encoder_noise");
             std::vector<float> output;
             const auto normalized = encoder.encode(audio, noise, &output);
@@ -138,7 +138,7 @@ int main(int argc, char ** argv) {
             throw std::runtime_error("unexpected FM fixture shape");
         }
         engine::core::ExecutionContext execution({engine::core::BackendType::Cuda, 0, 8});
-        engine::models::auk::VaeDecoderRuntime decoder(execution, *weights, shape[1]);
+        engine::models::auk::VAEDecoderRuntime decoder(execution, *weights, shape[1]);
         const auto latents = reference->require_f32(latent_key);
         const auto output = decoder.decode(latents);
         const auto expected = reference->require_f32("waveform");

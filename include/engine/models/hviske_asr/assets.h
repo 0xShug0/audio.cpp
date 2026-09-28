@@ -23,7 +23,7 @@ struct HviskeFrontendConfig {
     float log_zero_guard = 1.0f / 16777216.0f;
 };
 
-struct HviskeEncoderConfig {
+struct HviskeConformerConfig {
     int64_t feat_in = 128;
     int64_t hidden_size = 1280;
     int64_t intermediate_size = 5120;
@@ -58,7 +58,7 @@ struct HviskeConfig {
     int64_t min_energy_window_samples = 1600;
     std::vector<std::string> supported_languages;
     HviskeFrontendConfig frontend;
-    HviskeEncoderConfig encoder;
+    HviskeConformerConfig encoder;
     HviskeDecoderConfig decoder;
 };
 

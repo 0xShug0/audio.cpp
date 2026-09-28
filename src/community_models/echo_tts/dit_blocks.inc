@@ -164,13 +164,13 @@ EchoAdaLnWeights load_adaln(
     return weights;
 }
 
-EchoDitWeights load_dit_weights(
+EchoDiTWeights load_dit_weights(
     const EchoTtsConfig & config,
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & p,
     assets::TensorStorageType storage) {
-    EchoDitWeights w;
+    EchoDiTWeights w;
     const int64_t D = config.model_size;
     const int64_t TD = config.text_model_size;
     const int64_t SD = config.speaker_model_size;
@@ -205,7 +205,7 @@ EchoDitWeights load_dit_weights(
     const int64_t head_dim = config.head_dim();
     for (int64_t i = 0; i < config.num_layers; ++i) {
         const std::string prefix = p + "blocks." + std::to_string(i);
-        EchoDitBlockWeights block;
+        EchoDiTBlockWeights block;
         auto & a = block.attention;
         a.wq = load_linear(store, source, prefix + ".attention.wq", storage, D, D, false);
         a.wk = load_linear(store, source, prefix + ".attention.wk", storage, D, D, false);

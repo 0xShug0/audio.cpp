@@ -41,18 +41,18 @@ struct MiDashengLmGenFlowWeights {
     engine::modules::LinearWeights final_linear;
 };
 
-class MiDashengLmGenFlowRuntime {
+class MiDashengLmGenDiTFlowRuntime {
 public:
-    MiDashengLmGenFlowRuntime(
+    MiDashengLmGenDiTFlowRuntime(
         std::shared_ptr<const MiDashengLmGenAssets> assets,
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type);
-    ~MiDashengLmGenFlowRuntime();
+    ~MiDashengLmGenDiTFlowRuntime();
 
-    MiDashengLmGenFlowRuntime(const MiDashengLmGenFlowRuntime &) = delete;
-    MiDashengLmGenFlowRuntime & operator=(const MiDashengLmGenFlowRuntime &) = delete;
+    MiDashengLmGenDiTFlowRuntime(const MiDashengLmGenDiTFlowRuntime &) = delete;
+    MiDashengLmGenDiTFlowRuntime & operator=(const MiDashengLmGenDiTFlowRuntime &) = delete;
 
     std::vector<float> sample(
         const MiDashengLmGenFlowInput & input,

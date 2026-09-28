@@ -15,7 +15,7 @@ using Clock = std::chrono::steady_clock;
 
 Audio8TtsGenerator::Audio8TtsGenerator(
     std::shared_ptr<const Audio8TtsAssets> assets,
-    std::unique_ptr<Audio8TtsARRuntime> ar,
+    std::unique_ptr<Audio8TtsDualARRuntime> ar,
     std::unique_ptr<Audio8TtsCodecRuntime> codec)
     : assets_(std::move(assets)),
       tokenizer_(assets_),

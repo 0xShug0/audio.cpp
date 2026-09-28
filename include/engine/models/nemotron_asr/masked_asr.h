@@ -65,8 +65,8 @@ void apply_feature_mask(std::vector<float> & features, const std::vector<float> 
 class MaskedSpeakerStreams {
 public:
     MaskedSpeakerStreams(
-        NemotronEncoderRuntime & encoder,
-        NemotronDecoderRuntime & decoder,
+        NemotronFastConformerEncoderRuntime & encoder,
+        NemotronRnntDecoderRuntime & decoder,
         const NemotronFrontend & frontend,
         const SpeakerProbabilities & probabilities,
         const SpeakerTaggingOptions & options,
@@ -90,8 +90,8 @@ private:
     void run_chunk(int64_t chunk, int64_t new_frames, bool final);
     float group_value(int64_t group, int64_t speaker) const;
 
-    NemotronEncoderRuntime * encoder_;
-    NemotronDecoderRuntime * decoder_;
+    NemotronFastConformerEncoderRuntime * encoder_;
+    NemotronRnntDecoderRuntime * decoder_;
     const SpeakerProbabilities * probabilities_;
     bool audio_mask_;
     int64_t prompt_id_;

@@ -219,7 +219,7 @@ runtime::TransformerBatchedKVState make_cfg_batched_state(
 void apply_repetition_penalty(
     std::vector<float> & logits,
     const std::vector<int32_t> & emitted,
-    const Yue2ArSamplingWindow & window) {
+    const Yue2ARSamplingWindow & window) {
     const float penalty = window.sampling.repetition_penalty;
     if (penalty == 1.0F || emitted.empty()) {
         return;
@@ -357,7 +357,7 @@ int32_t sample_from_allowed_ranges(
 int32_t sample_token(
     std::vector<float> & logits,
     const std::vector<int32_t> & emitted,
-    const Yue2ArSamplingWindow & window,
+    const Yue2ARSamplingWindow & window,
     std::mt19937 & rng,
     Yue2SamplerScratch & scratch) {
     if (window.begin < 0 || window.end <= window.begin ||
@@ -394,7 +394,7 @@ int32_t compact_semantic_index(int32_t token) {
 int32_t sample_semantic_token(
     std::vector<float> & logits,
     const std::vector<int32_t> & emitted,
-    const Yue2ArSamplingWindow & window,
+    const Yue2ARSamplingWindow & window,
     std::mt19937 & rng,
     Yue2SamplerScratch & scratch) {
     if (static_cast<int64_t>(logits.size()) != kCodecSize + 1 ||
@@ -453,7 +453,7 @@ core::TensorValue view_linear_rows(
 
 }  // namespace
 
-struct Yue2ArRuntime::Impl {
+struct Yue2ARRuntime::Impl {
     Impl(
         core::ExecutionContext & execution,
         std::shared_ptr<const Yue2Assets> assets,
@@ -613,13 +613,13 @@ struct Yue2ArRuntime::Impl {
             return out;
         }
 
-        Yue2ArDevicePrefixState run_device(const std::vector<int32_t> & tokens) {
+        Yue2ARDevicePrefixState run_device(const std::vector<int32_t> & tokens) {
             compute(tokens);
             for (size_t layer = 0; layer < keys.size(); ++layer) {
                 ggml_backend_tensor_copy(keys[layer], key_values[layer].tensor);
                 ggml_backend_tensor_copy(values[layer], value_values[layer].tensor);
             }
-            Yue2ArDevicePrefixState out;
+            Yue2ARDevicePrefixState out;
             out.current_end = steps;
             out.keys = key_values;
             out.values = value_values;
@@ -660,7 +660,7 @@ struct Yue2ArRuntime::Impl {
 
     std::vector<int32_t> generate(
         const std::vector<int32_t> & prefix,
-        const Yue2ArSamplingWindow & window,
+        const Yue2ARSamplingWindow & window,
         uint64_t seed,
         const std::vector<int32_t> & forced) {
         if (prefix.empty()) {
@@ -756,7 +756,7 @@ struct Yue2ArRuntime::Impl {
     std::vector<int32_t> generate_cfg(
         const std::vector<int32_t> & positive_prefix,
         const std::vector<int32_t> & negative_prefix,
-        const Yue2ArSamplingWindow & window,
+        const Yue2ARSamplingWindow & window,
         float guidance_scale,
         uint64_t seed,
         const std::vector<int32_t> & forced) {
@@ -858,7 +858,7 @@ struct Yue2ArRuntime::Impl {
         return state;
     }
 
-    Yue2ArDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens) {
+    Yue2ARDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens) {
         const int64_t steps = static_cast<int64_t>(tokens.size());
         if (!prefix_state_graph || !prefix_state_graph->matches(steps)) {
             prefix_state_graph = std::make_unique<PrefixStateGraph>(*this, steps);
@@ -867,13 +867,13 @@ struct Yue2ArRuntime::Impl {
         return state;
     }
 
-    static bool is_semantic_window(const Yue2ArSamplingWindow & window) noexcept {
+    static bool is_semantic_window(const Yue2ARSamplingWindow & window) noexcept {
         return window.begin == kCodecOffset &&
             window.end == kCodecOffset + kCodecSize &&
             window.stop_token == kMusicEndToken;
     }
 
-    static bool is_abc_window(const Yue2ArSamplingWindow & window) noexcept {
+    static bool is_abc_window(const Yue2ARSamplingWindow & window) noexcept {
         return window.begin == 0 &&
             window.end == kEodToken &&
             window.stop_token == kAbcEndToken;
@@ -966,7 +966,7 @@ struct Yue2ArRuntime::Impl {
     std::unique_ptr<PrefixStateGraph> prefix_state_graph;
 };
 
-Yue2ArRuntime::Yue2ArRuntime(
+Yue2ARRuntime::Yue2ARRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const Yue2Assets> assets,
     assets::TensorStorageType weight_type,
@@ -981,35 +981,35 @@ Yue2ArRuntime::Yue2ArRuntime(
           prefill_graph_arena_bytes,
           decode_graph_arena_bytes)) {}
 
-Yue2ArRuntime::~Yue2ArRuntime() = default;
+Yue2ARRuntime::~Yue2ARRuntime() = default;
 
-std::vector<int32_t> Yue2ArRuntime::generate(
+std::vector<int32_t> Yue2ARRuntime::generate(
     const std::vector<int32_t> & prefix,
-    const Yue2ArSamplingWindow & window,
+    const Yue2ARSamplingWindow & window,
     uint64_t seed,
     const std::vector<int32_t> & forced) {
     return impl_->generate(prefix, window, seed, forced);
 }
 
-std::vector<int32_t> Yue2ArRuntime::generate_cfg(
+std::vector<int32_t> Yue2ARRuntime::generate_cfg(
     const std::vector<int32_t> & positive_prefix,
     const std::vector<int32_t> & negative_prefix,
-    const Yue2ArSamplingWindow & window,
+    const Yue2ARSamplingWindow & window,
     float guidance_scale,
     uint64_t seed,
     const std::vector<int32_t> & forced) {
     return impl_->generate_cfg(positive_prefix, negative_prefix, window, guidance_scale, seed, forced);
 }
 
-runtime::TransformerKVState Yue2ArRuntime::prefill_state(const std::vector<int32_t> & tokens) {
+runtime::TransformerKVState Yue2ARRuntime::prefill_state(const std::vector<int32_t> & tokens) {
     return impl_->prefill_state(tokens);
 }
 
-Yue2ArDevicePrefixState Yue2ArRuntime::prefill_device_state(const std::vector<int32_t> & tokens) {
+Yue2ARDevicePrefixState Yue2ARRuntime::prefill_device_state(const std::vector<int32_t> & tokens) {
     return impl_->prefill_device_state(tokens);
 }
 
-void Yue2ArRuntime::release_runtime_graphs() {
+void Yue2ARRuntime::release_runtime_graphs() {
     impl_->prefix_state_graph.reset();
     if (impl_->runtime) {
         impl_->runtime->release_runtime_graphs();

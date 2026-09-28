@@ -181,7 +181,7 @@ ConfuciusSession::ConfuciusSession(
         weight_context_bytes_,
         matmul_weight_storage_type_,
         conv_weight_storage_type_);
-    style_encoder_ = std::make_unique<ConfuciusStyleEncoder>(
+    style_encoder_ = std::make_unique<ConfuciusCampplusStyleEncoder>(
         assets_,
         options.backend,
         conv_weight_storage_type_);

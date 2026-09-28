@@ -8,7 +8,7 @@
 
 namespace engine::models::minimax_h3 {
 
-enum class MiniMaxH3DitAccelerationMode {
+enum class MiniMaxH3DiTAccelerationMode {
     None,
     FirstBlockCache,
     Spectrum,
@@ -39,7 +39,7 @@ struct MiniMaxH3GenerateRequest {
     int64_t text_layerwise_batch = 1;
     int64_t dit_layerwise_batch = 1;
     int64_t dit_mlp_chunk_tokens = 0;
-    MiniMaxH3DitAccelerationMode dit_acceleration = MiniMaxH3DitAccelerationMode::None;
+    MiniMaxH3DiTAccelerationMode dit_acceleration = MiniMaxH3DiTAccelerationMode::None;
     float first_block_cache_threshold = 0.10F;
     float first_block_cache_start_percent = 0.10F;
     float first_block_cache_end_percent = 0.95F;

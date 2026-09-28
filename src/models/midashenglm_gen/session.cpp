@@ -117,13 +117,13 @@ MiDashengLmGenSession::MiDashengLmGenSession(
         kSmallGraphContextBytes,
         kSmallGraphContextBytes,
         storage_type);
-    flow_ = std::make_unique<MiDashengLmGenFlowRuntime>(
+    flow_ = std::make_unique<MiDashengLmGenDiTFlowRuntime>(
         assets_,
         *execution_,
         kLargeGraphContextBytes,
         kWeightContextBytes,
         storage_type);
-    ar_ = std::make_unique<MiDashengLmGenARRuntime>(
+    ar_ = std::make_unique<MiDashengLmGenQwen3ARRuntime>(
         assets_,
         *execution_,
         *flow_,

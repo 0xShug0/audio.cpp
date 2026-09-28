@@ -85,9 +85,9 @@ FireRedAudioFlowConfig parse_flow_config(const json::Value & root) {
     return out;
 }
 
-FireRedAudioAudioEncoderConfig parse_audio_encoder_config(const json::Value & root) {
+FireRedAudioEncoderConfig parse_audio_encoder_config(const json::Value & root) {
     const auto & cfg = root.require("audio_encoder_config");
-    FireRedAudioAudioEncoderConfig out;
+    FireRedAudioEncoderConfig out;
     out.num_mel_bins = json::optional_i64(cfg, "num_mel_bins", out.num_mel_bins);
     out.d_model = json::optional_i64(cfg, "d_model", out.d_model);
     out.encoder_layers = json::optional_i64(cfg, "encoder_layers", out.encoder_layers);

@@ -12,7 +12,7 @@
 #include <vector>
 
 namespace kokoro_ggml {
-class KokoroDecoderRuntime;
+class KokoroIstftNetDecoderRuntime;
 class KokoroPredictorRuntime;
 }
 
@@ -91,7 +91,7 @@ private:
     std::string cached_request_key_;
     std::unique_ptr<KokoroSynthesisInput> cached_input_;
     int64_t prepared_decoder_capacity_ = 0;
-    std::unique_ptr<kokoro_ggml::KokoroDecoderRuntime> prepared_decoder_;
+    std::unique_ptr<kokoro_ggml::KokoroIstftNetDecoderRuntime> prepared_decoder_;
     DecoderCapacityContract prepared_decoder_context_ = {};
     int64_t prepared_session_capacity_ = 0;
     std::unique_ptr<kokoro_ggml::KokoroPredictorRuntime> prepared_predictor_;

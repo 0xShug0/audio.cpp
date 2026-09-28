@@ -35,7 +35,7 @@ protected:
     runtime::TaskSpec task_;
     std::shared_ptr<const Granite5ASRAssets> assets_;
     Granite5Frontend frontend_;
-    std::unique_ptr<Granite5EncoderRuntime> encoder_;
+    std::unique_ptr<Granite5ConformerEncoderRuntime> encoder_;
     std::string vad_model_path_;
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
     std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;

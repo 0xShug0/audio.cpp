@@ -20,7 +20,7 @@ namespace assets = engine::assets;
 namespace core = engine::core;
 namespace modules = engine::modules;
 
-struct AudioVaeGgmlContextDeleter {
+struct AudioVAEGgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {
         if (ctx != nullptr) {
             ggml_free(ctx);
@@ -28,7 +28,7 @@ struct AudioVaeGgmlContextDeleter {
     }
 };
 
-AudioVaeWeightStore::AudioVaeWeightStore(
+AudioVAEWeightStore::AudioVAEWeightStore(
     core::ExecutionContext & execution_context,
     std::shared_ptr<const assets::TensorSource> tensor_source,
     const MiniMaxH3Config & cfg,
@@ -82,9 +82,9 @@ AudioVaeWeightStore::AudioVaeWeightStore(
     source->release_storage();
 }
 
-class AudioVaeDecodeGraph {
+class AudioVAEDecodeGraph {
 public:
-    AudioVaeDecodeGraph(AudioVaeWeightStore & weights, const MiniMaxH3Config & cfg)
+    AudioVAEDecodeGraph(AudioVAEWeightStore & weights, const MiniMaxH3Config & cfg)
         : execution_(weights.execution) {
         ctx_.reset(ggml_init({1024 * 1024 * 1024, nullptr, true}));
         if (ctx_ == nullptr) {
@@ -159,7 +159,7 @@ public:
         core::prepare_host_graph_plan(execution_, graph_, plan_);
     }
 
-    ~AudioVaeDecodeGraph() {
+    ~AudioVAEDecodeGraph() {
         plan_.reset();
         if (graph_ != nullptr) {
             core::release_backend_graph_resources(execution_.backend(), graph_);
@@ -189,8 +189,8 @@ public:
 
 private:
     core::ExecutionContext & execution_;
-    std::unique_ptr<ggml_context, AudioVaeGgmlContextDeleter> ctx_;
-    std::unique_ptr<ggml_context, AudioVaeGgmlContextDeleter> input_ctx_;
+    std::unique_ptr<ggml_context, AudioVAEGgmlContextDeleter> ctx_;
+    std::unique_ptr<ggml_context, AudioVAEGgmlContextDeleter> input_ctx_;
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
     ggml_backend_buffer_t input_buffer_ = nullptr;
@@ -200,7 +200,7 @@ private:
 };
 
 std::vector<float> run_audio_vae_decode_graph(
-    AudioVaeWeightStore & weights,
+    AudioVAEWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & audio_rows) {
     std::vector<float> latents(static_cast<size_t>(cfg.audio_channels * cfg.audio_vae_latent_channels * cfg.audio_steps));
@@ -214,7 +214,7 @@ std::vector<float> run_audio_vae_decode_graph(
         }
     }
 
-    AudioVaeDecodeGraph graph(weights, cfg);
+    AudioVAEDecodeGraph graph(weights, cfg);
     auto decoded_channels = graph.run(latents);
     if (decoded_channels.empty()) {
         return {};

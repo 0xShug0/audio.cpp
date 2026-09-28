@@ -283,7 +283,7 @@ IndexTTS2Session::IndexTTS2Session(
         weight_context_bytes_,
         matmul_weight_storage_type_,
         conv_weight_storage_type_);
-    style_encoder_ = std::make_unique<IndexTTS2StyleEncoder>(
+    style_encoder_ = std::make_unique<IndexTTS2CampplusStyleEncoder>(
         assets_,
         options.backend,
         conv_weight_storage_type_);
@@ -305,7 +305,7 @@ IndexTTS2Session::IndexTTS2Session(
         assets_,
         options.backend,
         conv_weight_storage_type_);
-    qwen_emotion_ = std::make_unique<IndexTTS2QwenEmotionRuntime>(
+    qwen_emotion_ = std::make_unique<IndexTTS2Qwen3EmotionRuntime>(
         assets_,
         execution_context(),
         emotion_text_prefill_graph_arena_bytes_,

@@ -39,7 +39,7 @@ struct ZipVoiceGraphResources {
           backend(std::exchange(other.backend, nullptr)), gallocr(std::exchange(other.gallocr, nullptr)) {}
 };
 
-struct FmDecoderGraph : ZipVoiceGraphResources {
+struct ZipVoiceZipformerFlowDecoderGraph : ZipVoiceGraphResources {
     ggml_tensor * x_cat = nullptr;      // leaf [3F, T, B]
     ggml_tensor * time_emb = nullptr;   // leaf [time_embed_dim]
     ggml_tensor * guidance_emb = nullptr;  // leaf [time_embed_dim] (distill)
@@ -51,7 +51,7 @@ struct FmDecoderGraph : ZipVoiceGraphResources {
     bool cuda = false;
 };
 
-struct TextEncoderGraph : ZipVoiceGraphResources {
+struct ZipVoiceZipformerTextEncoderGraph : ZipVoiceGraphResources {
     ggml_tensor * token_ids = nullptr;  // leaf [S] i32
     ggml_tensor * pad_bias[1] = {};     // [S, 1, 1, 1]
     ggml_tensor * conv_gate[1] = {};    // [1, S, 1]
@@ -64,7 +64,7 @@ struct TextEncoderGraph : ZipVoiceGraphResources {
 
 // Builds the flow-matching decoder graph. `with_guidance` wires the distill
 // guidance-scale embedding input (ignored for the base model).
-FmDecoderGraph build_fm_decoder_graph(
+ZipVoiceZipformerFlowDecoderGraph build_fm_decoder_graph(
     const ZipVoiceWeights & weights,
     const ZipVoiceConfig & config,
     int64_t T,
@@ -74,7 +74,7 @@ FmDecoderGraph build_fm_decoder_graph(
     ggml_backend_t backend);
 
 // Builds the text encoder graph (single stack, no time embedding).
-TextEncoderGraph build_text_encoder_graph(
+ZipVoiceZipformerTextEncoderGraph build_text_encoder_graph(
     const ZipVoiceWeights & weights,
     const ZipVoiceConfig & config,
     int64_t S,

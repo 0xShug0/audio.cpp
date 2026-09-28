@@ -110,7 +110,7 @@ void allocate_graph(
 }  // namespace
 
 PreEncodeGraph::~PreEncodeGraph() { release_graph(backend, ggml, graph, plan, allocator); }
-EncoderGraph::~EncoderGraph() { release_graph(backend, ggml, graph, plan, allocator); }
+Nemotron3DiarTransformerEncoderGraph::~Nemotron3DiarTransformerEncoderGraph() { release_graph(backend, ggml, graph, plan, allocator); }
 
 void ensure_pre_encode_graph(
     std::unique_ptr<PreEncodeGraph> & graph,
@@ -147,7 +147,7 @@ void ensure_pre_encode_graph(
 }
 
 void ensure_encoder_graph(
-    std::unique_ptr<EncoderGraph> & graph,
+    std::unique_ptr<Nemotron3DiarTransformerEncoderGraph> & graph,
     const core::ExecutionContext & execution,
     const Assets & assets,
     const ModelWeights & weights,
@@ -157,7 +157,7 @@ void ensure_encoder_graph(
     bool use_flash_attention) {
     if (graph != nullptr && graph->batch == batch && graph->frames == frames && graph->backend == execution.backend()) return;
     graph.reset();
-    auto next = std::make_unique<EncoderGraph>();
+    auto next = std::make_unique<Nemotron3DiarTransformerEncoderGraph>();
     next->batch = batch;
     next->frames = frames;
     next->backend = execution.backend();

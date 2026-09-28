@@ -183,8 +183,8 @@ int64_t VaeBranchConfig::frames_for_samples(int64_t num_samples) const {
     return length;
 }
 
-VibeASRVaeConfig derive_vae_config(const assets::TensorSource & source) {
-    VibeASRVaeConfig config;
+VibeASRVAEConfig derive_vae_config(const assets::TensorSource & source) {
+    VibeASRVAEConfig config;
     config.acoustic = derive_branch(source, "acoustic");
     config.semantic = derive_branch(source, "semantic");
     if (config.acoustic.connector_hidden != config.semantic.connector_hidden) {
@@ -193,13 +193,13 @@ VibeASRVaeConfig derive_vae_config(const assets::TensorSource & source) {
     return config;
 }
 
-std::shared_ptr<const VibeASRVaeAssets> load_vibeasr_vae_assets(const std::filesystem::path & model_path) {
+std::shared_ptr<const VibeASRVAEAssets> load_vibeasr_vae_assets(const std::filesystem::path & model_path) {
     return make_vibeasr_vae_assets(engine::assets::open_tensor_source(model_path));
 }
 
-std::shared_ptr<const VibeASRVaeAssets> make_vibeasr_vae_assets(
+std::shared_ptr<const VibeASRVAEAssets> make_vibeasr_vae_assets(
     std::shared_ptr<const assets::TensorSource> source) {
-    auto assets = std::make_shared<VibeASRVaeAssets>();
+    auto assets = std::make_shared<VibeASRVAEAssets>();
     assets->config = derive_vae_config(*source);
     assets->source = std::move(source);
     return assets;

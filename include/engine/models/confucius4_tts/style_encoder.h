@@ -13,9 +13,9 @@ struct ConfuciusStyleEmbedding {
     int64_t dims = 0;
 };
 
-class ConfuciusStyleEncoder {
+class ConfuciusCampplusStyleEncoder {
 public:
-    ConfuciusStyleEncoder(
+    ConfuciusCampplusStyleEncoder(
         std::shared_ptr<const ConfuciusAssets> assets,
         core::BackendConfig backend,
         engine::assets::TensorStorageType weight_storage_type);

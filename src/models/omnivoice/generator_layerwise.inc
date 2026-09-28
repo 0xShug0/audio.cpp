@@ -108,7 +108,7 @@ public:
     }
 
     void rebuild(
-        std::shared_ptr<WeightsRuntime> runtime,
+        std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
         int64_t total_token_capacity) {
         clear_graph();
@@ -217,7 +217,7 @@ private:
         compute_ms += engine::debug::elapsed_ms(compute_start, compute_end);
     }
 
-    std::shared_ptr<WeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
     int64_t total_tokens_capacity_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -237,7 +237,7 @@ public:
     }
 
     void rebuild(
-        std::shared_ptr<WeightsRuntime> runtime,
+        std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
         int64_t total_token_capacity,
         int64_t layer_index) {
@@ -289,7 +289,7 @@ public:
     }
 
     void run(
-        std::shared_ptr<WeightsRuntime> runtime,
+        std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
         int64_t total_token_capacity,
         int64_t layer_index,
@@ -334,7 +334,7 @@ public:
     }
 
 private:
-    std::shared_ptr<WeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t layer_index_ = -1;
@@ -354,7 +354,7 @@ public:
     }
 
     void rebuild(
-        std::shared_ptr<WeightsRuntime> runtime,
+        std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
         int64_t total_token_capacity,
         int64_t target_frame_capacity) {
@@ -498,7 +498,7 @@ public:
     }
 
 private:
-    std::shared_ptr<WeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;
@@ -512,10 +512,10 @@ private:
     GraphBufferSet buffers_;
 };
 
-class LayerwiseForwardGraph final : public GeneratorForwardGraph {
+class Qwen3DiffusionLayerwiseGraph final : public Qwen3DiffusionGraph {
 public:
-    LayerwiseForwardGraph(
-        std::shared_ptr<WeightsRuntime> runtime,
+    Qwen3DiffusionLayerwiseGraph(
+        std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
         int64_t total_token_capacity,
         int64_t target_frame_capacity)
@@ -524,7 +524,7 @@ public:
         rebuild(total_token_capacity, target_frame_capacity);
     }
 
-    bool matches(const WeightsRuntime & runtime, int64_t total_tokens, int64_t target_frames) const override {
+    bool matches(const Qwen3DiffusionWeightsRuntime & runtime, int64_t total_tokens, int64_t target_frames) const override {
         return runtime_.get() == &runtime &&
             total_tokens_capacity_ == total_tokens &&
             target_frame_capacity_ == target_frames;
@@ -750,7 +750,7 @@ private:
         }
     }
 
-    std::shared_ptr<WeightsRuntime> runtime_;
+    std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;

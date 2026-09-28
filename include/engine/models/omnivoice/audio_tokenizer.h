@@ -14,7 +14,7 @@ struct OmniVoiceReferenceAudioOptions {
     bool has_reference_text = false;
 };
 
-struct OmniVoiceAudioTokenizerRuntimeStats {
+struct OmniVoiceHiggsAudioV2TokenizerRuntimeStats {
     bool encoder_graph_rebuilt = false;
     int64_t encoder_frame_capacity = 0;
     int64_t encoder_acoustic_sample_capacity = 0;
@@ -26,22 +26,22 @@ struct OmniVoiceAudioTokenizerRuntimeStats {
     double decoder_rebuild_ms = 0.0;
 };
 
-class OmniVoiceAudioTokenizerRuntime {
+class OmniVoiceHiggsAudioV2TokenizerRuntime {
 public:
-    OmniVoiceAudioTokenizerRuntime(
+    OmniVoiceHiggsAudioV2TokenizerRuntime(
         std::shared_ptr<const OmniVoiceAssets> assets,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType weight_storage_type);
-    ~OmniVoiceAudioTokenizerRuntime();
+    ~OmniVoiceHiggsAudioV2TokenizerRuntime();
 
     OmniVoiceAudioTokens encode_reference_audio(
         const runtime::AudioBuffer & audio,
         const OmniVoiceReferenceAudioOptions & options);
     runtime::AudioBuffer decode_audio_tokens(const OmniVoiceGeneratedAudioTokens & audio_tokens);
     void release_runtime_graphs();
-    const OmniVoiceAudioTokenizerRuntimeStats & last_stats() const noexcept;
+    const OmniVoiceHiggsAudioV2TokenizerRuntimeStats & last_stats() const noexcept;
 
 private:
     struct Impl;

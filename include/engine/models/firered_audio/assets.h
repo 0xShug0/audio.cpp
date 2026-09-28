@@ -49,7 +49,7 @@ struct FireRedAudioFlowConfig {
     int64_t history_patches = 2;
 };
 
-struct FireRedAudioAudioEncoderConfig {
+struct FireRedAudioEncoderConfig {
     int64_t sample_rate = 16000;
     int64_t num_mel_bins = 128;
     int64_t n_fft = 400;
@@ -102,7 +102,7 @@ struct FireRedAudioAssets {
     std::filesystem::path gguf_path;
     engine::assets::ResourceBundle resources;
     FireRedAudioBackboneConfig backbone;
-    FireRedAudioAudioEncoderConfig audio_encoder;
+    FireRedAudioEncoderConfig audio_encoder;
     FireRedAudioPatchEncoderConfig patch_encoder;
     FireRedAudioFlowConfig flow;
     FireRedAudioRedAeConfig redae;

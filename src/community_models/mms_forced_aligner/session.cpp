@@ -148,10 +148,10 @@ MmsForcedAlignerSession::MmsForcedAlignerSession(
     const auto weight_storage_type =
         parse_weight_storage_type(RuntimeSessionBase::options());
 
-    MmsEmissionConfig emission_config;
+    MmsWav2Vec2CtcConfig emission_config;
     emission_config.window_sec = window_sec;
     emission_config.context_sec = context_sec;
-    emission_runtime_ = std::make_unique<MmsEmissionRuntime>(
+    emission_runtime_ = std::make_unique<MmsWav2Vec2CtcRuntime>(
         assets_,
         RuntimeSessionBase::options().backend,
         weight_storage_type,

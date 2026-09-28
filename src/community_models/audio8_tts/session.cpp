@@ -396,7 +396,7 @@ Audio8TtsSession::Audio8TtsSession(
     validate_ar_weight_storage(ar_weight_type, "audio8_tts.weight_type");
     validate_codec_weight_storage(codec_weight_type, "audio8_tts.codec_weight_type");
     const int threads = options.backend.threads > 0 ? options.backend.threads : 1;
-    auto ar = std::make_unique<Audio8TtsARRuntime>(
+    auto ar = std::make_unique<Audio8TtsDualARRuntime>(
         assets_,
         options.backend,
         threads,

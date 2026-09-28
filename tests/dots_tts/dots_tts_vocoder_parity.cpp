@@ -155,7 +155,7 @@ int main(int argc, char ** argv) try {
     backend_config.type = backend;
     backend_config.device = device;
     backend_config.threads = threads;
-    auto audio_vae = engine::models::dots_tts::DotsAudioVaeComponent::load_from_tensor_source(
+    auto audio_vae = engine::models::dots_tts::DotsAudioVAEComponent::load_from_tensor_source(
         assets->vocoder_weights,
         backend_config,
         assets->config.vocoder,

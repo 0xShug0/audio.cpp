@@ -82,7 +82,7 @@ MeanVC2Session::MeanVC2Session(
         kWeightContextBytes,
         kGraphContextBytes,
         assets::TensorStorageType::Native);
-    speaker_encoder_ = std::make_unique<MeanVC2WavlmEcapaSpeakerEncoderRuntime>(
+    speaker_encoder_ = std::make_unique<MeanVC2WavlmEcapaEncoderRuntime>(
         assets_->speaker_wavlm_weights,
         assets_->speaker_ecapa_weights,
         execution_context_,

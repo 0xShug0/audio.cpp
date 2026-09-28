@@ -24,7 +24,7 @@ struct Granite5FrontendConfig {
     float logmel_floor_db = 8.0f;
 };
 
-struct Granite5EncoderConfig {
+struct Granite5ConformerEncoderConfig {
     int64_t hidden_size = 1024;
     int64_t intermediate_size = 4096;
     int64_t num_layers = 16;
@@ -47,7 +47,7 @@ struct Granite5ASRConfig {
     int64_t pad_token_id = 0;
     int64_t blank_token_id = 0;
     Granite5FrontendConfig frontend;
-    Granite5EncoderConfig encoder;
+    Granite5ConformerEncoderConfig encoder;
 };
 
 struct Granite5ASRAssets {

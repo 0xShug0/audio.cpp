@@ -18,13 +18,13 @@
 
 namespace engine::models::minimax_h3 {
 
-class MiniMaxH3DitWeightStore {
+class MiniMaxH3DiTWeightStore {
 public:
-    MiniMaxH3DitWeightStore(
+    MiniMaxH3DiTWeightStore(
         engine::core::ExecutionContext & execution_context,
         std::shared_ptr<const engine::assets::TensorSource> tensor_source,
         size_t weight_context_bytes);
-    MiniMaxH3DitWeightStore(
+    MiniMaxH3DiTWeightStore(
         engine::core::ExecutionContext & execution_context,
         std::shared_ptr<const engine::assets::TensorSource> tensor_source,
         size_t weight_context_bytes,
@@ -44,7 +44,7 @@ private:
     std::unordered_map<std::string, engine::core::TensorValue> weights_;
 };
 
-struct DitGraphResult {
+struct DiTGraphResult {
     std::vector<float> video;
     std::vector<float> audio;
     std::vector<float> hidden;
@@ -52,9 +52,9 @@ struct DitGraphResult {
     std::vector<float> next_audio;
 };
 
-class MiniMaxH3DitLayerwiseRuntime {
+class MiniMaxH3DiTLayerwiseRuntime {
 public:
-    MiniMaxH3DitLayerwiseRuntime(
+    MiniMaxH3DiTLayerwiseRuntime(
         engine::core::ExecutionContext & execution,
         std::shared_ptr<const engine::assets::TensorSource> tensor_source,
         const MiniMaxH3Config & cfg,
@@ -73,7 +73,7 @@ public:
         bool split_audio_timestep,
         bool read_logits,
         bool read_next_rows,
-        DitGraphResult & result);
+        DiTGraphResult & result);
 
     double input_upload_ms() const;
     double output_read_ms() const;
@@ -92,14 +92,14 @@ private:
     double output_read_ms_ = 0.0;
 };
 
-class MiniMaxH3DitFirstBlockCacheRuntime {
+class MiniMaxH3DiTFirstBlockCacheRuntime {
 public:
-    MiniMaxH3DitFirstBlockCacheRuntime(
-        MiniMaxH3DitWeightStore & weights,
+    MiniMaxH3DiTFirstBlockCacheRuntime(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
         const MiniMaxH3GenerateRequest & request,
         const std::vector<float> & prompt);
-    ~MiniMaxH3DitFirstBlockCacheRuntime();
+    ~MiniMaxH3DiTFirstBlockCacheRuntime();
 
     void run(
         const std::vector<float> & audio_rows,
@@ -110,7 +110,7 @@ public:
         float sigma_delta_audio,
         float sigma_delta_video,
         bool split_audio_timestep,
-        DitGraphResult & result);
+        DiTGraphResult & result);
 
     double input_upload_ms() const;
     double output_read_ms() const;
@@ -122,7 +122,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-class MiniMaxH3DitGraph {
+class MiniMaxH3DiTGraph {
 public:
     struct PackedSequenceLayout {
         int64_t text_len = 0;
@@ -133,7 +133,7 @@ public:
         int64_t total = 0;
     };
 
-    struct DitOutput {
+    struct DiTOutput {
         engine::core::TensorValue video_logits;
         engine::core::TensorValue audio_logits;
         engine::core::TensorValue hidden;
@@ -141,12 +141,12 @@ public:
         engine::core::TensorValue next_audio;
     };
 
-    MiniMaxH3DitGraph(
-        MiniMaxH3DitWeightStore & weights,
+    MiniMaxH3DiTGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
         const std::vector<float> & prompt,
         bool include_sampler_update = true);
-    ~MiniMaxH3DitGraph();
+    ~MiniMaxH3DiTGraph();
 
     void run(
         const std::vector<float> & audio_rows,
@@ -159,7 +159,7 @@ public:
         bool read_logits,
         bool read_hidden,
         bool read_next_rows,
-        DitGraphResult & result);
+        DiTGraphResult & result);
 
     double input_upload_ms() const;
     double output_read_ms() const;
@@ -170,7 +170,7 @@ public:
     ggml_tensor * audio_logits_tensor() const;
 
 private:
-    MiniMaxH3DitWeightStore & weights_;
+    MiniMaxH3DiTWeightStore & weights_;
     const MiniMaxH3Config cfg_;
     const int64_t text_len_;
     const PackedSequenceLayout layout_;
@@ -193,7 +193,7 @@ private:
     engine::core::TensorValue inverse_t_;
     engine::core::TensorValue cos_t_;
     engine::core::TensorValue sin_t_;
-    DitOutput out_;
+    DiTOutput out_;
     bool include_sampler_update_ = true;
     std::vector<int32_t> combined_shared_timestep_;
     std::vector<int32_t> inverse_shared_timestep_;
@@ -205,13 +205,13 @@ private:
     double output_read_ms_ = 0.0;
 };
 
-class MiniMaxH3DitFinalGraph {
+class MiniMaxH3DiTFinalGraph {
 public:
-    MiniMaxH3DitFinalGraph(
-        MiniMaxH3DitWeightStore & weights,
+    MiniMaxH3DiTFinalGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
-        const MiniMaxH3DitGraph::PackedSequenceLayout & layout);
-    ~MiniMaxH3DitFinalGraph();
+        const MiniMaxH3DiTGraph::PackedSequenceLayout & layout);
+    ~MiniMaxH3DiTFinalGraph();
 
     void run(
         const std::vector<float> & hidden,
@@ -222,7 +222,7 @@ public:
         float sigma_delta_audio,
         float sigma_delta_video,
         bool split_audio_timestep,
-        DitGraphResult & result);
+        DiTGraphResult & result);
 
     double input_upload_ms() const;
     double output_read_ms() const;
@@ -232,15 +232,15 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-class MiniMaxH3DitCfgGraph {
+class MiniMaxH3DiTCfgGraph {
 public:
-    MiniMaxH3DitCfgGraph(
-        MiniMaxH3DitWeightStore & weights,
+    MiniMaxH3DiTCfgGraph(
+        MiniMaxH3DiTWeightStore & weights,
         const MiniMaxH3Config & cfg,
         const std::vector<float> & positive_prompt,
         const std::vector<float> & negative_prompt,
         bool include_sampler_update = true);
-    ~MiniMaxH3DitCfgGraph();
+    ~MiniMaxH3DiTCfgGraph();
 
     void run(
         const std::vector<float> & audio_rows,
@@ -254,11 +254,11 @@ public:
         bool read_logits,
         bool read_hidden,
         bool read_next_rows,
-        DitGraphResult & result);
+        DiTGraphResult & result);
 
     double input_upload_ms() const;
     double output_read_ms() const;
-    const MiniMaxH3DitGraph::PackedSequenceLayout & layout() const;
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & layout() const;
     ggml_tensor * video_state_tensor() const;
     ggml_tensor * audio_state_tensor() const;
     ggml_tensor * video_logits_tensor() const;
@@ -267,7 +267,7 @@ public:
 private:
     struct BranchState {
         int64_t text_len = 0;
-        MiniMaxH3DitGraph::PackedSequenceLayout layout{};
+        MiniMaxH3DiTGraph::PackedSequenceLayout layout{};
         engine::core::TensorValue prompt;
         engine::core::TensorValue audio;
         engine::core::TensorValue video;
@@ -284,7 +284,7 @@ private:
         std::vector<int32_t> inverse_split_timestep;
     };
 
-    MiniMaxH3DitWeightStore & weights_;
+    MiniMaxH3DiTWeightStore & weights_;
     const MiniMaxH3Config cfg_;
     BranchState positive_;
     BranchState negative_;
@@ -298,7 +298,7 @@ private:
     engine::core::TensorValue guidance_scale_t_;
     engine::core::TensorValue sigma_delta_audio_t_;
     engine::core::TensorValue sigma_delta_video_t_;
-    MiniMaxH3DitGraph::DitOutput out_;
+    MiniMaxH3DiTGraph::DiTOutput out_;
     bool include_sampler_update_ = true;
     bool indices_uploaded_ = false;
     bool indices_are_split_ = false;

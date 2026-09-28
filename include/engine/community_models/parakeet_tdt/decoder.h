@@ -27,14 +27,14 @@ struct ParakeetDecodedText {
     std::vector<runtime::WordTimestamp> word_timestamps;
 };
 
-class ParakeetDecoderRuntime {
+class ParakeetTDTDecoderRuntime {
 public:
-    ParakeetDecoderRuntime(
+    ParakeetTDTDecoderRuntime(
         std::shared_ptr<const ParakeetTDTAssets> assets,
         std::shared_ptr<const ParakeetWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
-    ~ParakeetDecoderRuntime();
+    ~ParakeetTDTDecoderRuntime();
 
     void prepare();
 

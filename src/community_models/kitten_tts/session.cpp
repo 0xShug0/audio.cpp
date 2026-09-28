@@ -203,14 +203,14 @@ void KittenTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
     ggml_backend_t backend = execution_context().backend();
     const DecoderCapacityContract contract = make_decoder_capacity_contract(capacity);
     double build_ms = 0.0;
-    KittenDecoderCapacityContract decoder_contract;
+    KittenStyleTTS2DecoderCapacityContract decoder_contract;
     decoder_contract.decoder_frames = contract.decoder_frame_capacity;
     decoder_contract.conditioning_frames = contract.conditioning_frame_capacity;
     if (prepared_decoder_) {
         build_ms = measure_ms([&]() { prepared_decoder_->prepare(decoder_contract); });
     } else {
         build_ms = measure_ms([&]() {
-            prepared_decoder_ = std::make_unique<KittenDecoderRuntime>(weights_, backend, threads, use_device_backend,
+            prepared_decoder_ = std::make_unique<KittenStyleTTS2DecoderRuntime>(weights_, backend, threads, use_device_backend,
                                                                        rng_seed_, decoder_contract);
         });
     }

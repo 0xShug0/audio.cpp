@@ -22,7 +22,7 @@ void require_text_token_limit(size_t actual, int64_t limit, const char * what) {
 Qwen3TTSVoiceClonePromptBuilder::Qwen3TTSVoiceClonePromptBuilder(
     const Qwen3TextTokenizer & tokenizer,
     const Qwen3SpeechTokenizerEncoderRuntime & speech_encoder,
-    const Qwen3SpeakerEncoderRuntime & speaker_encoder,
+    const Qwen3TTSEcapaTdnnEncoderRuntime & speaker_encoder,
     int64_t text_token_limit)
     : tokenizer_(tokenizer),
       speech_encoder_(speech_encoder),

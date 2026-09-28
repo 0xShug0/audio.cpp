@@ -85,7 +85,7 @@ private:
     std::shared_ptr<const model_spec::ModelContract> contract_;
     std::shared_ptr<const ModelWeights> weights_;
     std::unique_ptr<PreEncodeGraph> pre_encode_graph_;
-    std::unique_ptr<EncoderGraph> encoder_graph_;
+    std::unique_ptr<Nemotron3DiarTransformerEncoderGraph> encoder_graph_;
     StreamingConfig streaming_config_;
     std::string latency_profile_;
     std::unique_ptr<StreamScheduler> stream_scheduler_;

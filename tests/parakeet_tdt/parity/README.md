@@ -26,7 +26,7 @@ production-graph debug taps are deliberately avoided here):
    per-layer function — see `encoder.h`), invoked once in a small isolated
    graph, fed NeMo's own captured `pre_encode`/`pos_emb` for layer 0 and the
    real layer-0 weights.
-3. `enc_out` — `ParakeetEncoderRuntime::encode(...)`, straight through the
+3. `enc_out` — `ParakeetFastConformerEncoderRuntime::encode(...)`, straight through the
    real, unmodified full-encoder entry point (all 24 layers + positional
    encoding, one large production graph).
 

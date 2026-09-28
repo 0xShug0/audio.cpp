@@ -22,7 +22,7 @@ public:
     Qwen3TTSVoiceClonePromptBuilder(
         const Qwen3TextTokenizer & tokenizer,
         const Qwen3SpeechTokenizerEncoderRuntime & speech_encoder,
-        const Qwen3SpeakerEncoderRuntime & speaker_encoder,
+        const Qwen3TTSEcapaTdnnEncoderRuntime & speaker_encoder,
         int64_t text_token_limit);
 
     Qwen3VoiceClonePrompt build_voice_prompt(const Qwen3VoiceCloneInput & input) const;
@@ -31,7 +31,7 @@ public:
 private:
     const Qwen3TextTokenizer & tokenizer_;
     const Qwen3SpeechTokenizerEncoderRuntime & speech_encoder_;
-    const Qwen3SpeakerEncoderRuntime & speaker_encoder_;
+    const Qwen3TTSEcapaTdnnEncoderRuntime & speaker_encoder_;
     int64_t text_token_limit_ = 0;
 };
 

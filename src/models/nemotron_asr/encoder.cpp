@@ -187,7 +187,7 @@ engine::core::TensorValue build_causal_subsampling(
     engine::core::ModuleBuildContext & ctx,
     engine::core::TensorValue x,
     const NemotronSubsamplingWeights & weights,
-    const NemotronEncoderConfig & enc,
+    const NemotronFastConformerEncoderConfig & enc,
     const engine::core::TensorValue & mask1,
     const engine::core::TensorValue & mask2,
     const engine::core::TensorValue & mask3) {
@@ -247,8 +247,8 @@ engine::core::TensorValue pad_causal_1d(
 engine::core::TensorValue build_nemotron_conv_module(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input_btc,
-    const NemotronEncoderLayerWeights & weights,
-    const NemotronEncoderConfig & config,
+    const NemotronFastConformerEncoderLayerWeights & weights,
+    const NemotronFastConformerEncoderConfig & config,
     const engine::core::TensorValue & keep_mask) {
     auto x = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input_btc);
     x = engine::modules::LinearModule({config.hidden_size, 2 * config.hidden_size, false}).build(
@@ -279,8 +279,8 @@ StreamingConvModuleOutputs build_nemotron_streaming_conv_module(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input_btc,
     const std::optional<engine::core::TensorValue> & prefix_cache,
-    const NemotronEncoderLayerWeights & weights,
-    const NemotronEncoderConfig & config,
+    const NemotronFastConformerEncoderLayerWeights & weights,
+    const NemotronFastConformerEncoderConfig & config,
     const engine::core::TensorValue & keep_mask) {
     auto x = engine::modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input_btc);
     x = engine::modules::LinearModule({config.hidden_size, 2 * config.hidden_size, false}).build(
@@ -315,8 +315,8 @@ engine::core::TensorValue build_encoder_layer(
     const engine::core::TensorValue & attention_mask,
     const engine::core::TensorValue & keep_mask,
     const engine::core::TensorValue & projected_pos_emb,
-    const NemotronEncoderLayerWeights & weights,
-    const NemotronEncoderConfig & config) {
+    const NemotronFastConformerEncoderLayerWeights & weights,
+    const NemotronFastConformerEncoderConfig & config) {
     auto x_norm = engine::modules::LayerNormModule({config.hidden_size, 1.0e-5f, true, true}).build(ctx, input, weights.norm_feed_forward1);
     auto ff1 = engine::modules::LinearModule({config.hidden_size, config.intermediate_size, false}).build(ctx, x_norm, weights.ff1_linear1);
     ff1 = engine::modules::SiluModule().build(ctx, ff1);
@@ -365,8 +365,8 @@ StreamingLayerOutputs build_projected_cache_streaming_encoder_layer(
     const std::optional<engine::core::TensorValue> & key_cache,
     const std::optional<engine::core::TensorValue> & value_cache,
     const std::optional<engine::core::TensorValue> & conv_cache,
-    const NemotronEncoderLayerWeights & weights,
-    const NemotronEncoderConfig & config) {
+    const NemotronFastConformerEncoderLayerWeights & weights,
+    const NemotronFastConformerEncoderConfig & config) {
     namespace ai = engine::modules::attention::internal;
 
     auto x_norm = engine::modules::LayerNormModule({config.hidden_size, 1.0e-5f, true, true}).build(ctx, input, weights.norm_feed_forward1);
@@ -515,7 +515,7 @@ struct NemotronEncoderSpeakerCaches {
     }
 };
 
-struct NemotronEncoderRuntime::Graph {
+struct NemotronFastConformerEncoderRuntime::Graph {
     int64_t input_frames = 0;
     int64_t feature_dim = 0;
     int64_t encoded_frames = 0;
@@ -592,7 +592,7 @@ struct NemotronEncoderRuntime::Graph {
     }
 };
 
-NemotronEncoderRuntime::NemotronEncoderRuntime(
+NemotronFastConformerEncoderRuntime::NemotronFastConformerEncoderRuntime(
     std::shared_ptr<const NemotronASRAssets> assets,
     std::shared_ptr<const NemotronWeights> weights,
     engine::core::ExecutionContext & execution_context,
@@ -606,9 +606,9 @@ NemotronEncoderRuntime::NemotronEncoderRuntime(
     }
 }
 
-NemotronEncoderRuntime::~NemotronEncoderRuntime() = default;
+NemotronFastConformerEncoderRuntime::~NemotronFastConformerEncoderRuntime() = default;
 
-const std::vector<float> & NemotronEncoderRuntime::relative_positional_encoding(int64_t frames) {
+const std::vector<float> & NemotronFastConformerEncoderRuntime::relative_positional_encoding(int64_t frames) {
     auto cached = relative_positional_encoding_cache_.find(frames);
     if (cached != relative_positional_encoding_cache_.end()) {
         return cached->second;
@@ -633,7 +633,7 @@ const std::vector<float> & NemotronEncoderRuntime::relative_positional_encoding(
     return inserted.first->second;
 }
 
-void NemotronEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_dim, int64_t lookahead_tokens) {
+void NemotronFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_dim, int64_t lookahead_tokens) {
     if (input_frames <= 0 || feature_dim <= 0) {
         throw std::runtime_error("Nemotron ASR encoder graph requires positive input shape");
     }
@@ -784,7 +784,7 @@ void NemotronEncoderRuntime::ensure_graph(int64_t input_frames, int64_t feature_
     debug::trace_log_scalar("nemotron_asr.encoder.graph_lookahead_tokens", lookahead_tokens);
 }
 
-NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
+NemotronFastConformerEncoderRuntime::Graph & NemotronFastConformerEncoderRuntime::ensure_stream_graph(
     int64_t input_frames,
     int64_t feature_dim,
     int64_t lookahead_tokens,
@@ -1145,15 +1145,15 @@ NemotronEncoderRuntime::Graph & NemotronEncoderRuntime::ensure_stream_graph(
     return *built;
 }
 
-void NemotronEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t feature_dim, int64_t lookahead_tokens) {
+void NemotronFastConformerEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t feature_dim, int64_t lookahead_tokens) {
     ensure_graph(input_frames, feature_dim, lookahead_tokens);
 }
 
-void NemotronEncoderRuntime::release_offline_graph() {
+void NemotronFastConformerEncoderRuntime::release_offline_graph() {
     graph_.reset();
 }
 
-void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int64_t lookahead_tokens) {
+void NemotronFastConformerEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int64_t lookahead_tokens) {
     const auto & enc = assets_->config.encoder;
     const int64_t first_frames = std::max<int64_t>(
         enc.subsampling_factor,
@@ -1164,12 +1164,12 @@ void NemotronEncoderRuntime::prepare_streaming_capacity(int64_t feature_dim, int
     (void) ensure_stream_graph(next_frames, feature_dim, lookahead_tokens, 0, false);
 }
 
-NemotronEncoderStreamState NemotronEncoderRuntime::make_stream_state() const {
+NemotronEncoderStreamState NemotronFastConformerEncoderRuntime::make_stream_state() const {
     NemotronEncoderStreamState state;
     return state;
 }
 
-NemotronEncodedAudio NemotronEncoderRuntime::encode(
+NemotronEncodedAudio NemotronFastConformerEncoderRuntime::encode(
     const NemotronFrontendFeatures & features,
     int64_t prompt_id,
     int64_t lookahead_tokens) {
@@ -1242,7 +1242,7 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode(
     return out;
 }
 
-NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
+NemotronEncodedAudio NemotronFastConformerEncoderRuntime::encode_stream_chunk(
     const NemotronFrontendFeatures & features,
     int64_t prompt_id,
     int64_t lookahead_tokens,
@@ -1420,11 +1420,11 @@ NemotronEncodedAudio NemotronEncoderRuntime::encode_stream_chunk(
     return out;
 }
 
-int64_t NemotronEncoderRuntime::pad_and_drop_cache_frames() const {
+int64_t NemotronFastConformerEncoderRuntime::pad_and_drop_cache_frames() const {
     return pad_and_drop_cache(assets_->config.encoder.subsampling_factor);
 }
 
-std::vector<NemotronEncodedAudio> NemotronEncoderRuntime::encode_pad_and_drop_batch(
+std::vector<NemotronEncodedAudio> NemotronFastConformerEncoderRuntime::encode_pad_and_drop_batch(
     const std::vector<const NemotronFrontendFeatures *> & features,
     int64_t prompt_id,
     int64_t lookahead_tokens,

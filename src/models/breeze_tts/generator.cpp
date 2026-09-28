@@ -1442,7 +1442,7 @@ struct BreezeGeneratorRuntime::Impl {
     std::shared_ptr<const BreezeTTSAssets> assets;
     core::ExecutionContext & execution;
     BreezeTextTokenizer tokenizer;
-    BreezeTextEncoderRuntime text_encoder;
+    BreezeT5Gemma2TextEncoderRuntime text_encoder;
     sampling::TorchCudaSamplingPolicy sampling_policy;
     modules::CausalDecoderRuntimeConfig backbone_runtime_config;
     modules::CausalDecoderRuntimeConfig depth_runtime_config;

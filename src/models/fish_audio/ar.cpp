@@ -101,7 +101,7 @@ struct FishLayerWeights {
     core::TensorValue down_proj;
 };
 
-struct FishARWeights {
+struct FishDualARWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     assets::TensorData text_embedding_host;
     assets::TensorData codebook_embedding_host;
@@ -230,7 +230,7 @@ modules::DecoderLayerWeights bind_layer(
 
 modules::CausalDecoderWeights bind_slow_weights(
     core::ConstantTensorCache & constants,
-    const FishARWeights & weights,
+    const FishDualARWeights & weights,
     const FishAudioTextConfig & config) {
     modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.slow_layers.size());
@@ -291,7 +291,7 @@ bool is_semantic_token(const FishAudioConfig & config, int32_t token) {
 
 std::vector<float> build_slow_embeddings(
     const FishAudioConfig & config,
-    const FishARWeights & weights,
+    const FishDualARWeights & weights,
     const int32_t * matrix,
     int64_t steps) {
     const int64_t rows = config.fast.num_codebooks + 1;
@@ -321,7 +321,7 @@ std::vector<float> build_slow_embeddings(
 
 std::vector<float> build_slow_embedding_for_frame(
     const FishAudioConfig & config,
-    const FishARWeights & weights,
+    const FishDualARWeights & weights,
     const std::vector<int32_t> & frame) {
     if (static_cast<int64_t>(frame.size()) != config.fast.num_codebooks + 1) {
         throw std::runtime_error("Fish Audio frame size mismatch");
@@ -331,7 +331,7 @@ std::vector<float> build_slow_embedding_for_frame(
 
 std::vector<float> build_fast_embedding(
     const FishAudioConfig & config,
-    const FishARWeights & weights,
+    const FishDualARWeights & weights,
     int32_t code) {
     return lookup_row(weights.fast_embedding_host, code, config.fast.dim);
 }
@@ -393,7 +393,7 @@ FishLayerWeights load_layer(
     return w;
 }
 
-FishARWeights load_ar_weights(
+FishDualARWeights load_ar_weights(
     const FishAudioAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -401,7 +401,7 @@ FishARWeights load_ar_weights(
     assets::TensorStorageType storage_type) {
     const auto & source = *assets.model_weights;
     const auto & config = assets.config;
-    FishARWeights weights;
+    FishDualARWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -769,9 +769,9 @@ FishStaticDecoderOutputs build_fish_static_decoder(
 
 }  // namespace
 
-class FishARWeightsRuntime {
+class FishDualARWeightsRuntime {
 public:
-    FishARWeightsRuntime(
+    FishDualARWeightsRuntime(
         std::shared_ptr<const FishAudioAssets> assets,
         core::BackendConfig backend_config,
         int threads,
@@ -787,7 +787,7 @@ public:
         backend_config.threads = threads_;
         backend_ = core::init_backend(backend_config);
         backend_type_ = core::backend_type(backend_);
-        weights_ = std::make_shared<FishARWeights>(
+        weights_ = std::make_shared<FishDualARWeights>(
             load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
         slow_step_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
@@ -801,7 +801,7 @@ public:
             256ull * 1024ull * 1024ull);
     }
 
-    ~FishARWeightsRuntime() {
+    ~FishDualARWeightsRuntime() {
         fast_constants_.reset();
         slow_step_constants_.reset();
         weights_.reset();
@@ -810,14 +810,14 @@ public:
         }
     }
 
-    FishARWeightsRuntime(const FishARWeightsRuntime &) = delete;
-    FishARWeightsRuntime & operator=(const FishARWeightsRuntime &) = delete;
+    FishDualARWeightsRuntime(const FishDualARWeightsRuntime &) = delete;
+    FishDualARWeightsRuntime & operator=(const FishDualARWeightsRuntime &) = delete;
 
     const FishAudioAssets & assets() const noexcept {
         return *assets_;
     }
 
-    const FishARWeights & weights() const noexcept {
+    const FishDualARWeights & weights() const noexcept {
         return *weights_;
     }
 
@@ -847,7 +847,7 @@ public:
 
 private:
     std::shared_ptr<const FishAudioAssets> assets_;
-    std::shared_ptr<const FishARWeights> weights_;
+    std::shared_ptr<const FishDualARWeights> weights_;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     ggml_backend_t backend_ = nullptr;
@@ -856,7 +856,7 @@ private:
     std::unique_ptr<core::ConstantTensorCache> fast_constants_;
 };
 
-class FishAudioARRuntime::Impl {
+class FishAudioDualARRuntime::Impl {
 public:
     Impl(
         std::shared_ptr<const FishAudioAssets> assets,
@@ -865,7 +865,7 @@ public:
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type)
-        : runtime_(std::make_shared<FishARWeightsRuntime>(
+        : runtime_(std::make_shared<FishDualARWeightsRuntime>(
               std::move(assets),
               backend_config,
               threads,
@@ -963,7 +963,7 @@ private:
     class PrefillGraph {
     public:
         PrefillGraph(
-            std::shared_ptr<const FishARWeightsRuntime> runtime,
+            std::shared_ptr<const FishDualARWeightsRuntime> runtime,
             int64_t steps,
             FishPrefillCacheTarget target_cache)
             : runtime_(std::move(runtime)),
@@ -1081,7 +1081,7 @@ private:
         int64_t steps() const noexcept { return steps_; }
 
     private:
-        std::shared_ptr<const FishARWeightsRuntime> runtime_;
+        std::shared_ptr<const FishDualARWeightsRuntime> runtime_;
         int64_t steps_ = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
         ggml_tensor * input_ = nullptr;
@@ -1096,7 +1096,7 @@ private:
 
     class StepGraph {
     public:
-        StepGraph(std::shared_ptr<const FishARWeightsRuntime> runtime, int64_t cache_steps)
+        StepGraph(std::shared_ptr<const FishDualARWeightsRuntime> runtime, int64_t cache_steps)
             : runtime_(std::move(runtime)),
               cache_steps_(cache_steps) {
             ggml_init_params state_params{8ull * 1024ull * 1024ull, nullptr, true};
@@ -1268,7 +1268,7 @@ private:
         }
 
     private:
-        std::shared_ptr<const FishARWeightsRuntime> runtime_;
+        std::shared_ptr<const FishDualARWeightsRuntime> runtime_;
         int64_t cache_steps_ = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
@@ -1287,7 +1287,7 @@ private:
 
     class FastGraph {
     public:
-        explicit FastGraph(std::shared_ptr<const FishARWeightsRuntime> runtime)
+        explicit FastGraph(std::shared_ptr<const FishDualARWeightsRuntime> runtime)
             : runtime_(std::move(runtime)) {
             ggml_init_params state_params{8ull * 1024ull * 1024ull, nullptr, true};
             state_ctx_.reset(ggml_init(state_params));
@@ -1549,7 +1549,7 @@ private:
 #endif
 
     private:
-        std::shared_ptr<const FishARWeightsRuntime> runtime_;
+        std::shared_ptr<const FishDualARWeightsRuntime> runtime_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
         ggml_tensor * input_ = nullptr;
@@ -1724,14 +1724,14 @@ private:
         engine::debug::trace_log_scalar("fish_audio.ar.profile.generated_frames", profile.generated_frames);
     }
 
-    std::shared_ptr<const FishARWeightsRuntime> runtime_;
+    std::shared_ptr<const FishDualARWeightsRuntime> runtime_;
     sampling::TorchCudaSamplingPolicy sampling_policy_;
     std::unique_ptr<PrefillGraph> prefill_graph_;
     std::unique_ptr<StepGraph> step_graph_;
     std::unique_ptr<FastGraph> fast_graph_;
 };
 
-FishAudioARRuntime::FishAudioARRuntime(
+FishAudioDualARRuntime::FishAudioDualARRuntime(
     std::shared_ptr<const FishAudioAssets> assets,
     core::BackendConfig backend,
     int threads,
@@ -1746,15 +1746,15 @@ FishAudioARRuntime::FishAudioARRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-FishAudioARRuntime::~FishAudioARRuntime() = default;
+FishAudioDualARRuntime::~FishAudioDualARRuntime() = default;
 
-engine::codecs::FishDacCodes FishAudioARRuntime::generate(
+engine::codecs::FishDacCodes FishAudioDualARRuntime::generate(
     const FishAudioPrompt & prompt,
     const FishAudioGenerationOptions & options) {
     return impl_->generate(prompt, options);
 }
 
-void FishAudioARRuntime::release_runtime_graphs() {
+void FishAudioDualARRuntime::release_runtime_graphs() {
     impl_->release_runtime_graphs();
 }
 

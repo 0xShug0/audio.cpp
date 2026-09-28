@@ -81,7 +81,7 @@ private:
     core::ExecutionContext voice_prompt_context_;
     std::unique_ptr<Qwen3SpeechTokenizerDecoderRuntime> speech_decoder_;
     std::unique_ptr<Qwen3SpeechTokenizerEncoderRuntime> speech_encoder_;
-    std::unique_ptr<Qwen3SpeakerEncoderRuntime> speaker_encoder_;
+    std::unique_ptr<Qwen3TTSEcapaTdnnEncoderRuntime> speaker_encoder_;
     runtime::CacheSlots<VoicePromptCacheKey, VoicePromptCacheEntry, VoicePromptCacheKeyEqual> voice_prompt_cache_;
     std::optional<VoicePromptCacheEntry> uncached_voice_prompt_;
 };

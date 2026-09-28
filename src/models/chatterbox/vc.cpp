@@ -42,7 +42,7 @@ runtime::AudioBuffer trim_mono_audio(
 
 }  // namespace
 
-struct ChatterboxVcComponent::State {
+struct ChatterboxVCComponent::State {
     explicit State(engine::core::BackendConfig backend) : s3_cache(backend) {}
     S3GenSessionCache s3_cache;
 };
@@ -72,7 +72,7 @@ runtime::AudioBuffer normalize_chatterbox_vc_audio_mono(
     };
 }
 
-ChatterboxVcComponent::ChatterboxVcComponent(
+ChatterboxVCComponent::ChatterboxVCComponent(
     engine::models::chatterbox::S3TokenizerComponent tokenizer_component,
     engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder,
     std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights,
@@ -95,7 +95,7 @@ ChatterboxVcComponent::ChatterboxVcComponent(
     }
 }
 
-ChatterboxVoiceConversionOutputs ChatterboxVcComponent::convert(
+ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
     const runtime::AudioBuffer & source_audio,
     const runtime::AudioBuffer & target_voice,
     const ChatterboxVoiceConversionConfig & config) const {

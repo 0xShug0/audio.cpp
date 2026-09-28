@@ -19,9 +19,9 @@ struct MeanVC2GtmMemory {
     std::vector<float> values;
 };
 
-struct MeanVC2FlowWeights;
+struct MeanVC2DiTFlowWeights;
 struct MeanVC2GtmGraph;
-class MeanVC2DenoiserRuntime;
+class MeanVC2DiTDenoiserRuntime;
 
 class MeanVC2FlowSamplerRuntime final {
 public:
@@ -51,10 +51,10 @@ private:
     engine::core::ExecutionContext & execution_context_;
     size_t graph_context_bytes_ = 0;
     std::shared_ptr<const engine::assets::TensorSource> source_;
-    std::shared_ptr<const MeanVC2FlowWeights> weights_;
+    std::shared_ptr<const MeanVC2DiTFlowWeights> weights_;
     engine::sampling::TorchCudaSamplingPolicy rng_policy_;
     mutable std::unique_ptr<MeanVC2GtmGraph> gtm_graph_;
-    mutable MeanVC2DenoiserRuntime * denoiser_ = nullptr;
+    mutable MeanVC2DiTDenoiserRuntime * denoiser_ = nullptr;
     mutable std::unique_ptr<engine::modules::FlowSamplerRuntime> sampler_runtime_;
     std::vector<float> stream_noise_cache_;
     std::vector<float> stream_speaker_embedding_;

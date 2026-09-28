@@ -76,7 +76,7 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     ConfuciusTextTokenizer tokenizer_;
     std::unique_ptr<ConfuciusWav2Vec2BertRuntime> semantic_encoder_;
-    std::unique_ptr<ConfuciusStyleEncoder> style_encoder_;
+    std::unique_ptr<ConfuciusCampplusStyleEncoder> style_encoder_;
     std::unique_ptr<ConfuciusT2SRuntime> t2s_;
     std::unique_ptr<ConfuciusS2ARuntime> s2a_;
     std::unique_ptr<ConfuciusBigVganVocoder> vocoder_;

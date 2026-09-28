@@ -2386,7 +2386,7 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
 
 }  // namespace
 
-struct SupertonicNativeRuntime::State {
+struct SupertonicRuntime::State {
     struct BackendOwner {
         ggml_backend_t backend = nullptr;
 
@@ -2496,16 +2496,16 @@ struct SupertonicNativeRuntime::State {
     Style uncached_style;
 };
 
-SupertonicNativeRuntime::SupertonicNativeRuntime(
+SupertonicRuntime::SupertonicRuntime(
     std::shared_ptr<const SupertonicAssets> assets,
     core::BackendConfig backend_config,
     assets::TensorStorageType weight_storage_type,
     std::size_t style_cache_slots)
     : state_(std::make_unique<State>(std::move(assets), backend_config, weight_storage_type, style_cache_slots)) {}
 
-SupertonicNativeRuntime::~SupertonicNativeRuntime() = default;
+SupertonicRuntime::~SupertonicRuntime() = default;
 
-runtime::AudioBuffer SupertonicNativeRuntime::synthesize(
+runtime::AudioBuffer SupertonicRuntime::synthesize(
     const std::string & text,
     const SupertonicGenerationOptions & options,
     const SupertonicTextTokenizer & tokenizer) {

@@ -78,7 +78,7 @@ std::vector<float> read_f32_dump(const std::filesystem::path & path) {
 
 bool check_features(
     const char * branch,
-    const engine::community_models::vibeasr::VaeEncoderFeatures & features,
+    const engine::community_models::vibeasr::VAEEncoderFeatures & features,
     int64_t expected_dim,
     int64_t expected_frames) {
     if (features.frames != expected_frames || features.dim != expected_dim) {
@@ -115,7 +115,7 @@ bool check_features(
 
 bool compare_reference(
     const char * branch,
-    const engine::community_models::vibeasr::VaeEncoderFeatures & features,
+    const engine::community_models::vibeasr::VAEEncoderFeatures & features,
     const std::filesystem::path & reference_path) {
     const auto reference = read_f32_dump(reference_path);
     if (reference.size() != features.values.size()) {
@@ -214,7 +214,7 @@ int main(int argc, char ** argv) {
         backend_config.threads = threads > 0 ? threads : 1;
         engine::core::ExecutionContext execution_context(backend_config);
 
-        engine::community_models::vibeasr::VibeASRVaeEncoderRuntime runtime(assets, execution_context);
+        engine::community_models::vibeasr::VibeASRVAEEncoderRuntime runtime(assets, execution_context);
 
         const auto num_samples = static_cast<int64_t>(wav.samples.size());
         const double audio_seconds = static_cast<double>(num_samples) / static_cast<double>(wav.sample_rate);

@@ -11,8 +11,8 @@
 namespace engine::models::cosyvoice3 {
 
 class CosyVoice3Frontend;
-class CosyVoice3ArRuntime;
-class CosyVoice3FlowRuntime;
+class CosyVoice3Qwen2ARRuntime;
+class CosyVoice3DiTFlowRuntime;
 class CosyVoice3HiftRuntime;
 
 std::shared_ptr<engine::runtime::IVoiceModelLoader> make_cosyvoice3_loader();
@@ -40,8 +40,8 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<CosyVoice3TextTokenizer> tokenizer_;
     std::unique_ptr<CosyVoice3Frontend> frontend_;
-    std::unique_ptr<CosyVoice3ArRuntime> ar_;
-    std::unique_ptr<CosyVoice3FlowRuntime> flow_;
+    std::unique_ptr<CosyVoice3Qwen2ARRuntime> ar_;
+    std::unique_ptr<CosyVoice3DiTFlowRuntime> flow_;
     std::unique_ptr<CosyVoice3HiftRuntime> hift_;
     bool mem_saver_ = false;
 };
