@@ -1,4 +1,4 @@
-#include "engine/framework/runtime/greedy_qwen_decoder.h"
+#include "engine/framework/runtime/greedy_causal_decoder.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -9,7 +9,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/kv_cache.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/sampling/decode_modules.h"
 
 #include <ggml-backend.h>
@@ -79,10 +79,10 @@ struct PrefillOutput {
     runtime::TransformerKVState kv_state;
 };
 
-modules::QwenDecoderLayerWeights bind_layer_weights(
+modules::DecoderLayerWeights bind_layer_weights(
     const DecoderLayerWeights & weights,
-    const GreedyQwenDecoderSpec & spec) {
-    modules::QwenDecoderLayerWeights out;
+    const GreedyCausalDecoderSpec & spec) {
+    modules::DecoderLayerWeights out;
     out.input_norm = {weights.input_norm, std::nullopt};
     out.self_attention.q_weight = weights.q_proj;
     if (spec.attention_bias) {
@@ -110,10 +110,10 @@ modules::QwenDecoderLayerWeights bind_layer_weights(
     return out;
 }
 
-modules::QwenCausalDecoderWeights bind_decoder_weights(
+modules::CausalDecoderWeights bind_decoder_weights(
     const DecoderWeights & weights,
-    const GreedyQwenDecoderSpec & spec) {
-    modules::QwenCausalDecoderWeights out;
+    const GreedyCausalDecoderSpec & spec) {
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & layer : weights.layers) {
         out.stack.layers.push_back(bind_layer_weights(layer, spec));
@@ -126,7 +126,7 @@ modules::QwenCausalDecoderWeights bind_decoder_weights(
 core::TensorValue prompt_embeddings(
     core::ModuleBuildContext & ctx,
     const DecoderWeights & weights,
-    const GreedyQwenDecoderSpec & spec,
+    const GreedyCausalDecoderSpec & spec,
     ggml_tensor * token_ids,
     int64_t prompt_steps,
     const std::vector<float> & injection_values,
@@ -159,7 +159,7 @@ core::TensorValue prompt_embeddings(
 
 DecoderWeights load_weights(
     const assets::TensorSource & source,
-    const GreedyQwenDecoderSpec & spec,
+    const GreedyCausalDecoderSpec & spec,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
@@ -245,7 +245,7 @@ int32_t argmax_index(const std::vector<float> & values) {
     return static_cast<int32_t>(best);
 }
 
-bool is_eos(const GreedyQwenDecoderSpec & spec, int32_t token) {
+bool is_eos(const GreedyCausalDecoderSpec & spec, int32_t token) {
     return std::find(spec.eos_token_ids.begin(), spec.eos_token_ids.end(), static_cast<int64_t>(token)) !=
         spec.eos_token_ids.end();
 }
@@ -254,11 +254,11 @@ class ThinkerWeightsRuntime {
 public:
     ThinkerWeightsRuntime(
         std::shared_ptr<const assets::TensorSource> source,
-        GreedyQwenDecoderSpec spec,
+        GreedyCausalDecoderSpec spec,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type)
-        : spec_(std::make_shared<const GreedyQwenDecoderSpec>(std::move(spec))),
+        : spec_(std::make_shared<const GreedyCausalDecoderSpec>(std::move(spec))),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
@@ -270,7 +270,7 @@ public:
               weight_context_bytes,
               storage_type))) {}
 
-    const GreedyQwenDecoderSpec & spec() const noexcept {
+    const GreedyCausalDecoderSpec & spec() const noexcept {
         return *spec_;
     }
 
@@ -291,7 +291,7 @@ public:
     }
 
 private:
-    std::shared_ptr<const GreedyQwenDecoderSpec> spec_;
+    std::shared_ptr<const GreedyCausalDecoderSpec> spec_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
@@ -394,7 +394,7 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, prompt_steps_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({prompt_steps_}), GGML_TYPE_I32);
 
-        auto decoder_out = modules::QwenCausalDecoderModule(spec.decoder)
+        auto decoder_out = modules::CausalDecoderModule(spec.decoder)
                                .build(ctx, x, positions, bind_decoder_weights(weights, spec));
         for (const auto & layer : decoder_out.state.layers) {
             if (!layer.key.has_value() || !layer.value.has_value()) {
@@ -438,7 +438,7 @@ public:
                 + std::to_string(prompt_steps_) + " prompt steps, of which "
                 + std::to_string(injection_tokens_) + " are injected tokens)");
         }
-        position_ids_ = modules::qwen_position_ids(prompt_steps_);
+        position_ids_ = modules::decoder_position_ids(prompt_steps_);
         debug::timing_log_scalar("greedy_qwen_decoder.prefill.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
         debug::timing_log_context_reservation("greedy_qwen_decoder.prefill.graph", ctx_.get());
         debug::trace_log_scalar("greedy_qwen_decoder.prefill_prompt_steps", prompt_steps_);
@@ -552,7 +552,7 @@ public:
             core::TensorShape::from_dims({1, 1, 1, cache_steps_}),
             GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
-        auto decoder_out = modules::QwenCausalDecoderModule(spec.decoder)
+        auto decoder_out = modules::CausalDecoderModule(spec.decoder)
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
@@ -605,7 +605,7 @@ public:
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
         const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
         ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
-        modules::write_qwen_cached_step_mask(
+        modules::write_decoder_cached_step_mask(
             attention_mask_,
             attention_mask_values_,
             cache_steps_,
@@ -645,10 +645,10 @@ private:
 
 }  // namespace
 
-struct GreedyQwenDecoderRuntime::Impl {
+struct GreedyCausalDecoderRuntime::Impl {
     Impl(
         std::shared_ptr<const assets::TensorSource> weights_source,
-        GreedyQwenDecoderSpec spec,
+        GreedyCausalDecoderSpec spec,
         core::ExecutionContext & execution,
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
@@ -671,28 +671,28 @@ struct GreedyQwenDecoderRuntime::Impl {
     std::unique_ptr<DecodeGraph> decode_graph;
     core::ExecutionContext * execution;
     std::unique_ptr<PromptEmbeddingGraph> embedding_graph;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> reusable_decoder;
+    std::unique_ptr<modules::CausalDecoderRuntime> reusable_decoder;
 
     std::vector<int32_t> generate_reusing_graphs(
-        const GreedyQwenDecoderRuntime::Prompt & prompt,
+        const GreedyCausalDecoderRuntime::Prompt & prompt,
         int64_t max_new_tokens,
         int64_t cached_prefix_steps,
         int64_t capacity_bucket) {
         const auto & spec = weights->spec();
         if (!reusable_decoder) {
-            modules::QwenCausalDecodeRuntimeConfig config;
+            modules::CausalDecoderRuntimeConfig config;
             config.trace_name = "greedy_qwen_decoder.reusable";
             config.decoder = spec.decoder;
             config.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
             config.decode_graph_arena_bytes = decode_graph_arena_bytes;
             config.evict_cuda_graph_cache_on_release = true;
             const auto bound = bind_decoder_weights(weights->weights(), spec);
-            modules::QwenCausalDecodeRuntimeWeights bound_weights;
+            modules::CausalDecoderRuntimeWeights bound_weights;
             bound_weights.token_embedding = weights->weights().token_embedding;
             bound_weights.stack = bound.stack;
             bound_weights.final_norm = bound.final_norm;
             bound_weights.lm_head = bound.lm_head;
-            reusable_decoder = std::make_unique<modules::QwenCausalDecodeRuntime>(
+            reusable_decoder = std::make_unique<modules::CausalDecoderRuntime>(
                 *execution, config, bound_weights);
         }
         if (!embedding_graph) {
@@ -747,9 +747,9 @@ struct GreedyQwenDecoderRuntime::Impl {
 
 };
 
-GreedyQwenDecoderRuntime::GreedyQwenDecoderRuntime(
+GreedyCausalDecoderRuntime::GreedyCausalDecoderRuntime(
     std::shared_ptr<const assets::TensorSource> weights_source,
-    const GreedyQwenDecoderSpec & spec,
+    const GreedyCausalDecoderSpec & spec,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
@@ -764,13 +764,13 @@ GreedyQwenDecoderRuntime::GreedyQwenDecoderRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-GreedyQwenDecoderRuntime::~GreedyQwenDecoderRuntime() = default;
+GreedyCausalDecoderRuntime::~GreedyCausalDecoderRuntime() = default;
 
 namespace {
 
 void validate_generate_request(
-    const GreedyQwenDecoderSpec & spec,
-    const GreedyQwenDecoderRuntime::Prompt & prompt,
+    const GreedyCausalDecoderSpec & spec,
+    const GreedyCausalDecoderRuntime::Prompt & prompt,
     int64_t max_new_tokens) {
     if (prompt.input_ids.empty()) {
         throw std::runtime_error("greedy Qwen decoder prompt is empty");
@@ -797,7 +797,7 @@ void validate_generate_request(
 
 }  // namespace
 
-std::vector<int32_t> GreedyQwenDecoderRuntime::generate_incremental(
+std::vector<int32_t> GreedyCausalDecoderRuntime::generate_incremental(
     const Prompt & prompt,
     int64_t max_new_tokens,
     int64_t cached_prefix_steps) {
@@ -808,7 +808,7 @@ std::vector<int32_t> GreedyQwenDecoderRuntime::generate_incremental(
     return impl_->generate_reusing_graphs(prompt, max_new_tokens, cached_prefix_steps, /*capacity_bucket=*/512);
 }
 
-std::vector<int32_t> GreedyQwenDecoderRuntime::generate(const Prompt & prompt, int64_t max_new_tokens, bool reuse_graphs) {
+std::vector<int32_t> GreedyCausalDecoderRuntime::generate(const Prompt & prompt, int64_t max_new_tokens, bool reuse_graphs) {
     const auto & spec = impl_->weights->spec();
     validate_generate_request(spec, prompt, max_new_tokens);
     const int64_t prompt_steps = static_cast<int64_t>(prompt.input_ids.size());

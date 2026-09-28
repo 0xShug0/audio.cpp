@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -40,10 +40,10 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderStackConfig make_higgs_qwen_stack_config(
+modules::DecoderStackConfig make_higgs_qwen3_stack_config(
     const HiggsTextConfig & config,
     bool allow_flash_attention = true) {
-    modules::QwenDecoderStackConfig out;
+    modules::DecoderStackConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
     out.num_key_value_heads = config.num_key_value_heads;
@@ -54,54 +54,54 @@ modules::QwenDecoderStackConfig make_higgs_qwen_stack_config(
     out.rope_theta = config.rope_theta;
     out.attention_precision = GGML_PREC_F32;
     out.projection_precision = GGML_PREC_DEFAULT;
-    out.qkv_layout = modules::QwenDecoderQKVLayout::Separate;
+    out.qkv_layout = modules::DecoderQKVLayout::Separate;
     out.use_qk_norm = true;
     // Eager graph for GPUs without a flash kernel (e.g. sm70).
     out.runtime.attention.allow_flash_attention = allow_flash_attention;
     if (allow_flash_attention) {
-        out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        out.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::FlashWithPrefix;
+        out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+        out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+        out.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
     } else {
-        out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-        out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-        out.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::Exact;
+        out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
+        out.runtime.attention.static_mode = modules::DecoderAttentionMode::ManualRepeat;
+        out.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::Exact;
     }
-    out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     return out;
 }
 
-class HiggsQwenDecoderComponent {
+class HiggsQwen3DecoderComponent {
 public:
-    HiggsQwenDecoderComponent(const HiggsTextConfig & config, bool packed_qkv, bool allow_flash_attention = true)
-        : stack_config_(make_higgs_qwen_stack_config(config, allow_flash_attention)),
-          layer_config_(modules::qwen_decoder_layer_config_from_stack(stack_config_)),
+    HiggsQwen3DecoderComponent(const HiggsTextConfig & config, bool packed_qkv, bool allow_flash_attention = true)
+        : stack_config_(make_higgs_qwen3_stack_config(config, allow_flash_attention)),
+          layer_config_(modules::decoder_layer_config_from_stack(stack_config_)),
           layer_module_([&] {
               layer_config_.qkv_layout = packed_qkv
-                  ? modules::QwenDecoderQKVLayout::PackedQKV
-                  : modules::QwenDecoderQKVLayout::Separate;
+                  ? modules::DecoderQKVLayout::PackedQKV
+                  : modules::DecoderQKVLayout::Separate;
               return layer_config_;
           }()) {}
 
-    modules::QwenDecoderLayerOutputs build_prefill_layer(
+    modules::DecoderLayerOutputs build_prefill_layer(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const modules::QwenDecoderLayerWeights & weights,
+        const modules::DecoderLayerWeights & weights,
         const core::TensorValue & attention_mask,
         const std::optional<core::TensorValue> & prefix_key = std::nullopt,
         const std::optional<core::TensorValue> & prefix_value = std::nullopt) const {
         return layer_module_.build(ctx, input, positions, weights, prefix_key, prefix_value, attention_mask);
     }
 
-    modules::QwenDecoderLayerOutputs build_decode_layer(
+    modules::DecoderLayerOutputs build_decode_layer(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const modules::QwenDecoderLayerWeights & weights,
+        const modules::DecoderLayerWeights & weights,
         const core::TensorValue & cache_key,
         const core::TensorValue & cache_value,
         const core::TensorValue & cache_slot,
@@ -119,9 +119,9 @@ public:
     }
 
 private:
-    modules::QwenDecoderStackConfig stack_config_;
-    modules::QwenDecoderLayerConfig layer_config_;
-    modules::QwenDecoderLayerModule layer_module_;
+    modules::DecoderStackConfig stack_config_;
+    modules::DecoderLayerConfig layer_config_;
+    modules::DecoderLayerModule layer_module_;
 };
 
 core::TensorValue higgs_cache_view(
@@ -150,7 +150,7 @@ core::TensorValue higgs_cache_view(
         cache.type);
 }
 
-modules::QwenDecoderLayerWeights load_layer_weights(
+modules::DecoderLayerWeights load_layer_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const HiggsTextConfig & config,
@@ -159,7 +159,7 @@ modules::QwenDecoderLayerWeights load_layer_weights(
     const std::string prefix = "body.layers." + std::to_string(layer_index);
     const int64_t q_out = config.num_attention_heads * config.head_dim;
     const int64_t kv_out = config.num_key_value_heads * config.head_dim;
-    modules::QwenDecoderLayerWeights weights;
+    modules::DecoderLayerWeights weights;
     weights.input_norm = {
         store.load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size}),
         std::nullopt,
@@ -244,12 +244,12 @@ modules::QwenDecoderLayerWeights load_layer_weights(
     return weights;
 }
 
-HiggsQwenDecoderStackWeights load_decoder_weights(
+HiggsQwen3DecoderStackWeights load_decoder_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const HiggsTextConfig & config,
     assets::TensorStorageType storage_type) {
-    HiggsQwenDecoderStackWeights weights;
+    HiggsQwen3DecoderStackWeights weights;
     weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         weights.layers.push_back(load_layer_weights(store, source, config, layer, storage_type));
@@ -668,7 +668,7 @@ struct HiggsARDecodeGraph::Impl {
             GGML_TYPE_F16);
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
-        const HiggsQwenDecoderComponent decoder(
+        const HiggsQwen3DecoderComponent decoder(
             config.text, tensor_weights.packed_qkv, runtime->allow_flash_attention());
         for (size_t layer_index = 0; layer_index < tensor_weights.decoder.layers.size(); ++layer_index) {
             auto out = decoder.build_decode_layer(
@@ -914,7 +914,7 @@ struct HiggsARPrefillGraph::Impl {
         graph = ggml_new_graph_custom(ctx.get(), 262144, false);
         keys.reserve(tensor_weights.decoder.layers.size());
         values.reserve(tensor_weights.decoder.layers.size());
-        const HiggsQwenDecoderComponent decoder(
+        const HiggsQwen3DecoderComponent decoder(
             config.text, tensor_weights.packed_qkv, runtime->allow_flash_attention());
         for (size_t layer_index = 0; layer_index < tensor_weights.decoder.layers.size(); ++layer_index) {
             std::optional<core::TensorValue> prefix_key;
@@ -1000,8 +1000,8 @@ struct HiggsARPrefillGraph::Impl {
         fused_code_id_values.assign(static_cast<size_t>(run_steps * config.audio.num_codebooks), 0);
         text_gate_values.assign(static_cast<size_t>(run_steps), 0.0F);
         code_gate_values.assign(static_cast<size_t>(run_steps), 0.0F);
-        positions_values = modules::qwen_position_ids(run_steps, start_step);
-        attention_mask_values = modules::qwen_causal_suffix_mask_values(1, run_steps, start_step);
+        positions_values = modules::decoder_position_ids(run_steps, start_step);
+        attention_mask_values = modules::causal_suffix_mask_values(1, run_steps, start_step);
         engine::debug::timing_log_scalar(
             "higgs_audio_tts.ar.prefill.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -1098,7 +1098,7 @@ struct HiggsARPrefillGraph::Impl {
     struct LayerGraph {
         LayerGraph(
             const HiggsARRuntime & runtime,
-            const modules::QwenDecoderLayerWeights & layer,
+            const modules::DecoderLayerWeights & layer,
             int64_t steps,
             size_t arena_bytes)
             : runtime(&runtime), steps(steps) {
@@ -1122,7 +1122,7 @@ struct HiggsARPrefillGraph::Impl {
                 attention_mask,
                 core::TensorShape::from_dims({1, 1, steps, steps}),
                 GGML_TYPE_F16);
-            const HiggsQwenDecoderComponent decoder(
+            const HiggsQwen3DecoderComponent decoder(
                 config.text, runtime.weights().packed_qkv, runtime.allow_flash_attention());
             auto out = decoder.build_prefill_layer(
                 build_ctx,
@@ -1141,9 +1141,9 @@ struct HiggsARPrefillGraph::Impl {
                 throw std::runtime_error("failed to allocate Higgs TTS AR layer prefill graph");
             }
 
-            const auto position_values = modules::qwen_position_ids(steps);
+            const auto position_values = modules::decoder_position_ids(steps);
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
-            auto mask = modules::qwen_causal_prefill_mask_values(1, steps);
+            auto mask = modules::causal_prefill_mask_values(1, steps);
             ggml_backend_tensor_set(attention_mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         }
 

@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -173,10 +173,10 @@ ModelWeights load_weights(
     return out;
 }
 
-modules::QwenCausalDecoderConfig decoder_config(
+modules::CausalDecoderConfig decoder_config(
     const OuteTTSConfig & c,
     int64_t logits_size) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = c.hidden_size;
     out.stack.intermediate_size = c.intermediate_size;
     out.stack.num_attention_heads = c.num_attention_heads;
@@ -190,22 +190,22 @@ modules::QwenCausalDecoderConfig decoder_config(
     // audio.cpp preserves the source tensor layout in safetensors and GGUF.
     out.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.stack.use_qk_norm = false;
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = logits_size;
     return out;
 }
 
-modules::QwenCausalDecoderWeights graph_weights(
+modules::CausalDecoderWeights graph_weights(
     const ModelWeights & weights,
     core::ConstantTensorCache & constants,
     core::ModuleBuildContext & build,
     const OutputProjection & projection) {
-    modules::QwenCausalDecoderWeights out;
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & source : weights.layers) {
-        modules::QwenDecoderLayerWeights layer;
+        modules::DecoderLayerWeights layer;
         layer.input_norm = binding::norm_data(constants, source.input_norm);
         layer.self_attention = source.attention;
         layer.post_norm = binding::norm_data(constants, source.post_norm);
@@ -445,7 +445,7 @@ public:
         auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, 1, capacity_}), GGML_TYPE_F16);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         constants_->begin_graph();
-        auto output = modules::QwenCausalDecoderModule(
+        auto output = modules::CausalDecoderModule(
             decoder_config(config_, projection_.count))
             .build_static_cache_tail(
                 build,
@@ -487,7 +487,7 @@ public:
         const int32_t slot = static_cast<int32_t>(cache_.valid_steps());
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(position));
         ggml_backend_tensor_set(cache_slot_, &slot, 0, sizeof(slot));
-        modules::write_qwen_cached_step_mask(mask_, mask_values_, capacity_, cache_.valid_steps(), cache_.valid_steps());
+        modules::write_decoder_cached_step_mask(mask_, mask_values_, capacity_, cache_.valid_steps(), cache_.valid_steps());
         core::set_backend_threads(backend_, threads_);
         const auto status = core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
@@ -599,7 +599,7 @@ struct OuteTTSLlamaRuntime::Impl {
         auto mask_value = core::wrap_tensor(
             mask, core::TensorShape::from_dims({1, 1, steps, steps}), GGML_TYPE_F16);
         constants->begin_graph();
-        auto output = modules::QwenCausalDecoderModule(
+        auto output = modules::CausalDecoderModule(
             decoder_config(c, projection.count))
             .build(
                 build,
@@ -640,8 +640,8 @@ struct OuteTTSLlamaRuntime::Impl {
             throw std::runtime_error("failed to allocate OuteTTS Llama graph");
         }
         const auto build_end = Clock::now();
-        const auto position_values = modules::qwen_position_ids(steps);
-        const auto mask_values = modules::qwen_causal_prefill_mask_values(1, steps);
+        const auto position_values = modules::decoder_position_ids(steps);
+        const auto mask_values = modules::causal_prefill_mask_values(1, steps);
         ggml_backend_tensor_set(ids_tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
         ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
         ggml_backend_tensor_set(mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));

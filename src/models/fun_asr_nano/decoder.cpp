@@ -11,7 +11,7 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/runtime/kv_cache.h"
 
 #include <ggml-backend.h>
@@ -67,9 +67,9 @@ struct PrefillOutput {
   runtime::TransformerKVState kv_state;
 };
 
-modules::QwenDecoderLayerWeights
+modules::DecoderLayerWeights
 to_qwen_layer_weights(const TextLayerWeights &weights) {
-  modules::QwenDecoderLayerWeights out;
+  modules::DecoderLayerWeights out;
   out.input_norm = {weights.input_norm, std::nullopt};
   out.self_attention.q_weight = weights.q_proj;
   out.self_attention.k_weight = weights.k_proj;
@@ -84,9 +84,9 @@ to_qwen_layer_weights(const TextLayerWeights &weights) {
   return out;
 }
 
-modules::QwenCausalDecoderConfig
+modules::CausalDecoderConfig
 make_qwen_decoder_config(const FunAsrNanoTextConfig &config) {
-  modules::QwenCausalDecoderConfig out;
+  modules::CausalDecoderConfig out;
   out.stack.hidden_size = config.hidden_size;
   out.stack.num_attention_heads = config.attention_heads;
   out.stack.num_key_value_heads = config.key_value_heads;
@@ -97,15 +97,15 @@ make_qwen_decoder_config(const FunAsrNanoTextConfig &config) {
   out.stack.rope_theta = config.rope_theta;
   out.stack.use_qk_norm = true;
   out.stack.runtime.static_cache.update_mode =
-      modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+      modules::DecoderStaticCacheUpdateMode::DirectSetRows;
   out.logits_size = config.vocab_size;
-  out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+  out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
   return out;
 }
 
-modules::QwenCausalDecoderWeights
+modules::CausalDecoderWeights
 make_qwen_decoder_weights(const TextDecoderWeights &weights) {
-  modules::QwenCausalDecoderWeights out;
+  modules::CausalDecoderWeights out;
   out.stack.layers.reserve(weights.layers.size());
   for (const auto &layer : weights.layers) {
     out.stack.layers.push_back(to_qwen_layer_weights(layer));
@@ -313,7 +313,7 @@ public:
         GGML_TYPE_I32);
 
     auto decoder_out =
-        modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        modules::CausalDecoderModule(make_qwen_decoder_config(config))
             .build(ctx, x, positions, make_qwen_decoder_weights(weights));
     for (const auto &layer : decoder_out.state.layers) {
       if (!layer.key.has_value() || !layer.value.has_value()) {
@@ -348,7 +348,7 @@ public:
       throw std::runtime_error(
           "failed to allocate Fun-ASR-Nano decoder prefill graph");
     }
-    const auto pos = modules::qwen_position_ids(prompt_steps_);
+    const auto pos = modules::decoder_position_ids(prompt_steps_);
     ggml_backend_tensor_set(positions_, pos.data(), 0,
                             pos.size() * sizeof(int32_t));
     debug::timing_log_scalar(
@@ -501,7 +501,7 @@ public:
         GGML_TYPE_F16);
     graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
     auto decoder_out =
-        modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        modules::CausalDecoderModule(make_qwen_decoder_config(config))
             .build_static_cache_tail(ctx, graph_, x, positions,
                                      make_qwen_decoder_weights(weights),
                                      cache_steps_, attention_mask, cache_slot);
@@ -549,7 +549,7 @@ public:
     ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
     const int32_t cache_slot = static_cast<int32_t>(step_cache_.valid_steps());
     ggml_backend_tensor_set(cache_slot_, &cache_slot, 0, sizeof(int32_t));
-    modules::write_qwen_cached_step_mask(
+    modules::write_decoder_cached_step_mask(
         attention_mask_, attention_mask_values_, cache_steps_,
         step_cache_.valid_steps(), step_cache_.valid_steps());
     core::set_backend_threads(runtime_->backend(), runtime_->threads());

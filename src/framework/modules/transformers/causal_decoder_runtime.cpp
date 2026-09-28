@@ -1,4 +1,4 @@
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
@@ -29,21 +29,21 @@ struct GgmlContextDeleter {
     }
 };
 
-void validate_runtime_config(const QwenCausalDecodeRuntimeConfig & config) {
+void validate_runtime_config(const CausalDecoderRuntimeConfig & config) {
     if (config.prefill_graph_arena_bytes == 0 || config.decode_graph_arena_bytes == 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime requires positive graph arena sizes");
     }
     if (config.decoder.stack.hidden_size <= 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime requires positive hidden size");
     }
-    if (config.output_mode == QwenCausalDecodeOutputMode::Logits && config.decoder.logits_size <= 0) {
+    if (config.output_mode == CausalDecoderOutputMode::Logits && config.decoder.logits_size <= 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime logits mode requires positive logits size");
     }
     if (config.readback_round_type.has_value() && *config.readback_round_type != GGML_TYPE_BF16) {
         throw std::runtime_error("QwenCausalDecodeRuntime readback rounding currently supports only bf16");
     }
     if (!config.logits_readback_token_ids.empty()) {
-        if (config.output_mode != QwenCausalDecodeOutputMode::Logits) {
+        if (config.output_mode != CausalDecoderOutputMode::Logits) {
             throw std::runtime_error("QwenCausalDecodeRuntime compact logits readback requires logits mode");
         }
         for (const int32_t token : config.logits_readback_token_ids) {
@@ -59,8 +59,8 @@ void validate_runtime_config(const QwenCausalDecodeRuntimeConfig & config) {
 
 core::TensorValue token_embedding_input(
     core::ModuleBuildContext & ctx,
-    const QwenCausalDecodeRuntimeWeights & weights,
-    const QwenCausalDecoderConfig & config,
+    const CausalDecoderRuntimeWeights & weights,
+    const CausalDecoderConfig & config,
     ggml_tensor * token_ids,
     int64_t steps) {
     auto ids = core::wrap_tensor(
@@ -77,8 +77,8 @@ core::TensorValue token_embedding_input(
 
 core::TensorValue token_embedding_input_batched(
     core::ModuleBuildContext & ctx,
-    const QwenCausalDecodeRuntimeWeights & weights,
-    const QwenCausalDecoderConfig & config,
+    const CausalDecoderRuntimeWeights & weights,
+    const CausalDecoderConfig & config,
     ggml_tensor * token_ids,
     int64_t batch_size,
     int64_t steps) {
@@ -90,26 +90,26 @@ core::TensorValue token_embedding_input_batched(
         .build(ctx, ids, weights.token_embedding);
 }
 
-QwenDecoderHiddenConfig hidden_config_from_runtime(const QwenCausalDecodeRuntimeConfig & config) {
-    QwenDecoderHiddenConfig out;
+DecoderHiddenConfig hidden_config_from_runtime(const CausalDecoderRuntimeConfig & config) {
+    DecoderHiddenConfig out;
     out.stack = config.decoder.stack;
     out.hidden_mode = config.decoder.logits_mode;
     out.static_cache_type = config.decoder.static_cache_type;
     return out;
 }
 
-QwenDecoderHiddenWeights hidden_weights_from_runtime(const QwenCausalDecodeRuntimeWeights & weights) {
-    QwenDecoderHiddenWeights out;
+DecoderHiddenWeights hidden_weights_from_runtime(const CausalDecoderRuntimeWeights & weights) {
+    DecoderHiddenWeights out;
     out.stack = weights.stack;
     out.final_norm = weights.final_norm;
     return out;
 }
 
-QwenCausalDecoderWeights causal_decoder_weights(const QwenCausalDecodeRuntimeWeights & weights) {
+CausalDecoderWeights causal_decoder_weights(const CausalDecoderRuntimeWeights & weights) {
     if (!weights.lm_head.has_value()) {
         throw std::runtime_error("QwenCausalDecodeRuntime logits mode requires lm_head weights");
     }
-    QwenCausalDecoderWeights out;
+    CausalDecoderWeights out;
     out.stack = weights.stack;
     out.final_norm = weights.final_norm;
     out.lm_head = *weights.lm_head;
@@ -119,7 +119,7 @@ QwenCausalDecoderWeights causal_decoder_weights(const QwenCausalDecodeRuntimeWei
 core::TensorValue apply_readback_rounding(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     core::BackendType backend_type) {
     if (!config.readback_round_type.has_value()) {
         return input;
@@ -130,7 +130,7 @@ core::TensorValue apply_readback_rounding(
     return input;
 }
 
-void round_readback(std::vector<float> & values, const QwenCausalDecodeRuntimeConfig & config) {
+void round_readback(std::vector<float> & values, const CausalDecoderRuntimeConfig & config) {
     if (!config.readback_round_type.has_value()) {
         return;
     }
@@ -140,11 +140,11 @@ void round_readback(std::vector<float> & values, const QwenCausalDecodeRuntimeCo
 }
 
 std::vector<ggml_fp16_t> prefill_attention_mask_values(
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     int64_t batch_size,
     int64_t steps) {
     if (config.sliding_window <= 0) {
-        return qwen_causal_prefill_mask_values(batch_size, steps);
+        return causal_prefill_mask_values(batch_size, steps);
     }
     if (batch_size <= 0) {
         throw std::runtime_error("QwenCausalDecodeRuntime sliding prefill mask requires positive batch size");
@@ -174,7 +174,7 @@ std::vector<ggml_fp16_t> prefill_attention_mask_values(
 }
 
 void write_cached_step_mask(
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     ggml_tensor * tensor,
     std::vector<ggml_fp16_t> & scratch,
     int64_t mask_steps,
@@ -182,7 +182,7 @@ void write_cached_step_mask(
     int64_t current_slot,
     int64_t position) {
     if (config.sliding_window <= 0) {
-        write_qwen_cached_step_mask(tensor, scratch, mask_steps, visible_prefix_steps, current_slot);
+        write_decoder_cached_step_mask(tensor, scratch, mask_steps, visible_prefix_steps, current_slot);
         return;
     }
     if (tensor == nullptr) {
@@ -212,7 +212,7 @@ void write_cached_step_mask(
 }
 
 void write_batched_cached_step_mask(
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     ggml_tensor * tensor,
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
@@ -221,7 +221,7 @@ void write_batched_cached_step_mask(
     int64_t current_slot,
     int64_t position) {
     if (config.sliding_window <= 0) {
-        write_qwen_batched_cached_step_mask(tensor, scratch, batch_size, mask_steps, visible_prefix_steps, current_slot);
+        write_decoder_batched_cached_step_mask(tensor, scratch, batch_size, mask_steps, visible_prefix_steps, current_slot);
         return;
     }
     if (tensor == nullptr) {
@@ -262,7 +262,7 @@ void write_batched_cached_step_mask(
 }
 
 void write_batched_cached_step_mask_variable(
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     ggml_tensor * tensor,
     std::vector<ggml_fp16_t> & scratch,
     int64_t batch_size,
@@ -309,7 +309,7 @@ void write_batched_cached_step_mask_variable(
 
 core::TensorValue compact_logits_readback(
     core::ModuleBuildContext & ctx,
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     const core::TensorValue & logits,
     const core::TensorValue & token_ids) {
     if (logits.shape.last_dim() != config.decoder.logits_size) {
@@ -347,7 +347,7 @@ core::TensorValue compact_logits_readback(
 
 ggml_tensor * make_logits_readback_token_ids(
     ggml_context * ctx,
-    const QwenCausalDecodeRuntimeConfig & config) {
+    const CausalDecoderRuntimeConfig & config) {
     if (config.logits_readback_token_ids.empty()) {
         return nullptr;
     }
@@ -364,7 +364,7 @@ ggml_tensor * make_logits_readback_token_ids(
 
 core::TensorValue wrap_logits_readback_token_ids(
     ggml_tensor * tensor,
-    const QwenCausalDecodeRuntimeConfig & config) {
+    const CausalDecoderRuntimeConfig & config) {
     return core::wrap_tensor(
         tensor,
         core::TensorShape::from_dims({static_cast<int64_t>(config.logits_readback_token_ids.size())}),
@@ -373,7 +373,7 @@ core::TensorValue wrap_logits_readback_token_ids(
 
 void upload_logits_readback_token_ids(
     ggml_tensor * tensor,
-    const QwenCausalDecodeRuntimeConfig & config) {
+    const CausalDecoderRuntimeConfig & config) {
     ggml_backend_tensor_set(
         tensor,
         config.logits_readback_token_ids.data(),
@@ -381,20 +381,20 @@ void upload_logits_readback_token_ids(
         config.logits_readback_token_ids.size() * sizeof(int32_t));
 }
 
-QwenCausalDecoderOutputs build_causal_prefill(
+CausalDecoderOutputs build_causal_prefill(
     core::ModuleBuildContext & ctx,
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenCausalDecodeRuntimeWeights & weights,
+    const CausalDecoderRuntimeWeights & weights,
     const core::TensorValue & attention_mask) {
-    if (config.output_mode == QwenCausalDecodeOutputMode::Logits) {
+    if (config.output_mode == CausalDecoderOutputMode::Logits) {
         auto causal_weights = causal_decoder_weights(weights);
-        return QwenCausalDecoderModule(config.decoder)
+        return CausalDecoderModule(config.decoder)
             .build(ctx, input, positions, causal_weights, std::nullopt, attention_mask);
     }
 
-    auto hidden_out = QwenDecoderHiddenModule(hidden_config_from_runtime(config))
+    auto hidden_out = DecoderHiddenModule(hidden_config_from_runtime(config))
                           .build(
                               ctx,
                               input,
@@ -410,19 +410,19 @@ QwenCausalDecoderOutputs build_causal_prefill(
     };
 }
 
-QwenCausalDecoderStaticCacheOutputs build_causal_decode(
+CausalDecoderStaticCacheOutputs build_causal_decode(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenCausalDecodeRuntimeWeights & weights,
+    const CausalDecoderRuntimeWeights & weights,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
     const core::TensorValue & cache_slot) {
-    if (config.output_mode == QwenCausalDecodeOutputMode::Logits) {
+    if (config.output_mode == CausalDecoderOutputMode::Logits) {
         auto causal_weights = causal_decoder_weights(weights);
-        return QwenCausalDecoderModule(config.decoder)
+        return CausalDecoderModule(config.decoder)
             .build_static_cache_tail(
                 ctx,
                 graph,
@@ -434,7 +434,7 @@ QwenCausalDecoderStaticCacheOutputs build_causal_decode(
                 cache_slot);
     }
 
-    auto hidden_out = QwenDecoderHiddenModule(hidden_config_from_runtime(config))
+    auto hidden_out = DecoderHiddenModule(hidden_config_from_runtime(config))
                           .build_static_cache_tail(
                               ctx,
                               graph,
@@ -452,19 +452,19 @@ QwenCausalDecoderStaticCacheOutputs build_causal_decode(
     };
 }
 
-QwenCausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
+CausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
-    const QwenCausalDecodeRuntimeConfig & config,
+    const CausalDecoderRuntimeConfig & config,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenCausalDecodeRuntimeWeights & weights,
+    const CausalDecoderRuntimeWeights & weights,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
     const core::TensorValue & cache_slot) {
-    if (config.output_mode == QwenCausalDecodeOutputMode::Logits) {
+    if (config.output_mode == CausalDecoderOutputMode::Logits) {
         auto causal_weights = causal_decoder_weights(weights);
-        return QwenCausalDecoderModule(config.decoder)
+        return CausalDecoderModule(config.decoder)
             .build_static_cache_tail_batched(
                 ctx,
                 graph,
@@ -476,7 +476,7 @@ QwenCausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
                 cache_slot);
     }
 
-    auto hidden_out = QwenDecoderHiddenModule(hidden_config_from_runtime(config))
+    auto hidden_out = DecoderHiddenModule(hidden_config_from_runtime(config))
                           .build_static_cache_tail_batched(
                               ctx,
                               graph,
@@ -496,12 +496,12 @@ QwenCausalDecoderBatchedStaticCacheOutputs build_causal_decode_batched(
 
 }  // namespace
 
-class QwenCausalDecodeRuntime::Impl {
+class CausalDecoderRuntime::Impl {
 public:
     Impl(
         core::ExecutionContext & execution,
-        QwenCausalDecodeRuntimeConfig config,
-        QwenCausalDecodeRuntimeWeights weights)
+        CausalDecoderRuntimeConfig config,
+        CausalDecoderRuntimeWeights weights)
         : backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
@@ -517,7 +517,7 @@ public:
         release_runtime_graphs();
     }
 
-    QwenCausalPrefillResult prefill_tokens(const std::vector<int32_t> & token_ids) {
+    CausalDecoderPrefillResult prefill_tokens(const std::vector<int32_t> & token_ids) {
         if (token_ids.empty()) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill requires tokens");
         }
@@ -530,7 +530,7 @@ public:
         return run_prefill();
     }
 
-    QwenCausalPrefillIntoDecodeResult prefill_tokens_into_decode_cache(
+    CausalDecoderPrefillIntoDecodeResult prefill_tokens_into_decode_cache(
         const std::vector<int32_t> & token_ids,
         int64_t required_cache_steps) {
         if (token_ids.empty()) {
@@ -556,7 +556,7 @@ public:
         return run_prefill_into_decode_cache();
     }
 
-    QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps) {
+    CausalDecoderPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps) {
         if (steps <= 0) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill requires positive embedding steps");
         }
@@ -573,7 +573,7 @@ public:
         return run_prefill();
     }
 
-    QwenCausalBatchedPrefillResult prefill_tokens_batched(
+    CausalDecoderBatchedPrefillResult prefill_tokens_batched(
         const std::vector<int32_t> & token_ids,
         int64_t batch_size,
         int64_t steps) {
@@ -592,7 +592,7 @@ public:
         return run_batched_prefill();
     }
 
-    QwenCausalBatchedPrefillResult prefill_embeddings_batched(
+    CausalDecoderBatchedPrefillResult prefill_embeddings_batched(
         const std::vector<float> & embeddings,
         int64_t batch_size,
         int64_t steps) {
@@ -635,15 +635,15 @@ public:
         return keep;
     }
 
-    QwenCausalDecodeStepResult prefill_embeddings_into_cache(
+    CausalDecoderStepResult prefill_embeddings_into_cache(
         const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps,
         int64_t keep_prefix_steps) {
         if (steps <= 0 || chunk_steps <= 0 || cache_steps < steps || keep_prefix_steps < 0 ||
             embeddings.size() != static_cast<size_t>(steps * config_.decoder.stack.hidden_size)) {
             throw std::runtime_error("Qwen chunked prefill has invalid dimensions");
         }
-        if (config_.decoder.stack.runtime.static_cache.update_mode != QwenDecoderStaticCacheUpdateMode::DirectSetRows ||
-            config_.decoder.logits_mode != QwenCausalDecoderLogitsMode::LastStep ||
+        if (config_.decoder.stack.runtime.static_cache.update_mode != DecoderStaticCacheUpdateMode::DirectSetRows ||
+            config_.decoder.logits_mode != CausalDecoderLogitsMode::LastStep ||
             !config_.logits_readback_token_ids.empty()) {
             throw std::runtime_error("Qwen chunked prefill requires DirectSetRows and full last-token readback");
         }
@@ -668,7 +668,7 @@ public:
             const int64_t count = std::min(chunk, steps - offset);
             std::fill(input.begin(), input.end(), 0.f);
             std::copy_n(embeddings.data() + offset * width, count * width, input.data());
-            auto positions = qwen_position_ids(chunk, offset);
+            auto positions = decoder_position_ids(chunk, offset);
             std::fill(mask.begin(), mask.end(), masked);
             for (int64_t q = 0; q < chunk; ++q) {
                 const int64_t begin = config_.sliding_window > 0
@@ -689,7 +689,7 @@ public:
             decode_cache_.advance_after_direct_append(count);
         }
         ggml_backend_synchronize(backend_);
-        QwenCausalDecodeStepResult result;
+        CausalDecoderStepResult result;
         if (block_logits_) { result.logits = core::read_tensor_f32(block_logits_); }
         if (block_hidden_) {
             result.hidden = core::read_tensor_f32(block_hidden_);
@@ -714,7 +714,7 @@ public:
         decode_cache_.import_state(state);
     }
 
-    QwenCausalDecodeStepResult decode_token(int32_t token) {
+    CausalDecoderStepResult decode_token(int32_t token) {
         ensure_decode_started();
         if (decode_input_kind_ != InputKind::Token) {
             throw std::runtime_error("QwenCausalDecodeRuntime decode graph expects embeddings");
@@ -723,7 +723,7 @@ public:
         return run_decode_step();
     }
 
-    void decode_token_into(int32_t token, QwenCausalDecodeStepResult & out) {
+    void decode_token_into(int32_t token, CausalDecoderStepResult & out) {
         ensure_decode_started();
         if (decode_input_kind_ != InputKind::Token) {
             throw std::runtime_error("QwenCausalDecodeRuntime decode graph expects embeddings");
@@ -732,7 +732,7 @@ public:
         run_decode_step_into(out);
     }
 
-    QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding) {
+    CausalDecoderStepResult decode_embedding(const std::vector<float> & embedding) {
         ensure_decode_started();
         if (decode_input_kind_ != InputKind::Embedding) {
             throw std::runtime_error("QwenCausalDecodeRuntime decode graph expects tokens");
@@ -772,7 +772,7 @@ public:
         batched_decode_cache_.import_state(state);
     }
 
-    QwenCausalDecodeStepResult decode_tokens_batched(const std::vector<int32_t> & tokens) {
+    CausalDecoderStepResult decode_tokens_batched(const std::vector<int32_t> & tokens) {
         ensure_batched_decode_started();
         if (batched_decode_input_kind_ != InputKind::Token) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode graph expects tokens");
@@ -784,7 +784,7 @@ public:
         return run_batched_decode_step();
     }
 
-    QwenCausalDecodeStepResult decode_embeddings_batched(
+    CausalDecoderStepResult decode_embeddings_batched(
         const std::vector<float> & embeddings,
         int64_t batch_size) {
         ensure_batched_decode_started();
@@ -932,7 +932,7 @@ private:
                 prefill_values_.push_back(value);
             }
         }
-        if (config_.output_mode == QwenCausalDecodeOutputMode::Logits) {
+        if (config_.output_mode == CausalDecoderOutputMode::Logits) {
             auto logits = decoder_out.logits;
             if (prefill_logits_readback_token_ids_ != nullptr) {
                 logits = compact_logits_readback(
@@ -947,7 +947,7 @@ private:
                 ggml_dup_tensor(prefill_ctx_.get(), logits.tensor));
             ggml_set_output(prefill_logits_);
         }
-        if (config_.return_hidden || config_.output_mode == QwenCausalDecodeOutputMode::Hidden) {
+        if (config_.return_hidden || config_.output_mode == CausalDecoderOutputMode::Hidden) {
             prefill_hidden_ = ggml_cpy(
                 prefill_ctx_.get(),
                 decoder_out.hidden.tensor,
@@ -975,7 +975,7 @@ private:
             !ggml_gallocr_alloc_graph(prefill_gallocr_, prefill_graph_)) {
             throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime prefill graph");
         }
-        prefill_positions_values_ = qwen_position_ids(steps);
+        prefill_positions_values_ = decoder_position_ids(steps);
         ggml_backend_tensor_set(
             prefill_positions_,
             prefill_positions_values_.data(),
@@ -1000,7 +1000,7 @@ private:
         debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
     }
 
-    QwenCausalPrefillResult run_prefill() {
+    CausalDecoderPrefillResult run_prefill() {
         if (prefill_populates_decode_cache_) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill graph populates decode cache");
         }
@@ -1026,7 +1026,7 @@ private:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill graph compute failed");
         }
-        QwenCausalPrefillResult out;
+        CausalDecoderPrefillResult out;
         if (prefill_logits_ != nullptr) {
             out.logits.resize(static_cast<size_t>(ggml_nelements(prefill_logits_)));
             ggml_backend_tensor_get(prefill_logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
@@ -1053,7 +1053,7 @@ private:
         return out;
     }
 
-    QwenCausalPrefillIntoDecodeResult run_prefill_into_decode_cache() {
+    CausalDecoderPrefillIntoDecodeResult run_prefill_into_decode_cache() {
         if (!prefill_populates_decode_cache_) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill graph does not populate decode cache");
         }
@@ -1076,7 +1076,7 @@ private:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill graph compute failed");
         }
-        QwenCausalPrefillIntoDecodeResult out;
+        CausalDecoderPrefillIntoDecodeResult out;
         if (prefill_logits_ != nullptr) {
             out.logits.resize(static_cast<size_t>(ggml_nelements(prefill_logits_)));
             ggml_backend_tensor_get(prefill_logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
@@ -1169,7 +1169,7 @@ private:
             batched_prefill_keys_.push_back(key);
             batched_prefill_values_.push_back(value);
         }
-        if (config_.output_mode == QwenCausalDecodeOutputMode::Logits) {
+        if (config_.output_mode == CausalDecoderOutputMode::Logits) {
             auto logits = decoder_out.logits;
             if (batched_prefill_logits_readback_token_ids_ != nullptr) {
                 logits = compact_logits_readback(
@@ -1184,7 +1184,7 @@ private:
                 ggml_dup_tensor(batched_prefill_ctx_.get(), logits.tensor));
             ggml_set_output(batched_prefill_logits_);
         }
-        if (config_.return_hidden || config_.output_mode == QwenCausalDecodeOutputMode::Hidden) {
+        if (config_.return_hidden || config_.output_mode == CausalDecoderOutputMode::Hidden) {
             batched_prefill_hidden_ = ggml_cpy(
                 batched_prefill_ctx_.get(),
                 decoder_out.hidden.tensor,
@@ -1210,7 +1210,7 @@ private:
             !ggml_gallocr_alloc_graph(batched_prefill_gallocr_, batched_prefill_graph_)) {
             throw std::runtime_error("failed to allocate QwenCausalDecodeRuntime batched prefill graph");
         }
-        batched_prefill_positions_values_ = qwen_position_ids(steps);
+        batched_prefill_positions_values_ = decoder_position_ids(steps);
         ggml_backend_tensor_set(
             batched_prefill_positions_,
             batched_prefill_positions_values_.data(),
@@ -1234,7 +1234,7 @@ private:
         debug::timing_log_context_reservation(config_.trace_name + ".batched_prefill.graph", batched_prefill_ctx_.get());
     }
 
-    QwenCausalBatchedPrefillResult run_batched_prefill() {
+    CausalDecoderBatchedPrefillResult run_batched_prefill() {
         // Re-feed persistent inputs before recompute (see run_prefill note).
         ggml_backend_tensor_set(
             batched_prefill_positions_,
@@ -1256,7 +1256,7 @@ private:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched prefill graph compute failed");
         }
-        QwenCausalBatchedPrefillResult out;
+        CausalDecoderBatchedPrefillResult out;
         if (batched_prefill_logits_ != nullptr) {
             out.logits.resize(static_cast<size_t>(ggml_nelements(batched_prefill_logits_)));
             ggml_backend_tensor_get(
@@ -1363,7 +1363,7 @@ private:
             cache_slot);
         decode_cache_ = std::move(decoder_out.cache);
         decode_logits_readback_token_ids_ = make_logits_readback_token_ids(decode_ctx_.get(), config_);
-        if (config_.output_mode == QwenCausalDecodeOutputMode::Logits) {
+        if (config_.output_mode == CausalDecoderOutputMode::Logits) {
             auto logits = decoder_out.logits;
             if (decode_logits_readback_token_ids_ != nullptr) {
                 logits = compact_logits_readback(
@@ -1378,7 +1378,7 @@ private:
                 ggml_dup_tensor(decode_ctx_.get(), logits.tensor));
             ggml_set_output(decode_logits_);
         }
-        if (config_.return_hidden || config_.output_mode == QwenCausalDecodeOutputMode::Hidden) {
+        if (config_.return_hidden || config_.output_mode == CausalDecoderOutputMode::Hidden) {
             decode_hidden_ = ggml_cpy(
                 decode_ctx_.get(),
                 decoder_out.hidden.tensor,
@@ -1438,7 +1438,7 @@ private:
         if (batch_size <= 0) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode requires positive batch size");
         }
-        if (config_.decoder.stack.runtime.static_cache.update_mode != QwenDecoderStaticCacheUpdateMode::DirectSetRows) {
+        if (config_.decoder.stack.runtime.static_cache.update_mode != DecoderStaticCacheUpdateMode::DirectSetRows) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode supports only DirectSetRows cache update");
         }
         const auto build_start = Clock::now();
@@ -1490,7 +1490,7 @@ private:
         batched_decode_cache_ = std::move(decoder_out.cache);
         batched_decode_logits_readback_token_ids_ =
             make_logits_readback_token_ids(batched_decode_ctx_.get(), config_);
-        if (config_.output_mode == QwenCausalDecodeOutputMode::Logits) {
+        if (config_.output_mode == CausalDecoderOutputMode::Logits) {
             auto logits = decoder_out.logits;
             if (batched_decode_logits_readback_token_ids_ != nullptr) {
                 logits = compact_logits_readback(
@@ -1505,7 +1505,7 @@ private:
                 ggml_dup_tensor(batched_decode_ctx_.get(), logits.tensor));
             ggml_set_output(batched_decode_logits_);
         }
-        if (config_.return_hidden || config_.output_mode == QwenCausalDecodeOutputMode::Hidden) {
+        if (config_.return_hidden || config_.output_mode == CausalDecoderOutputMode::Hidden) {
             batched_decode_hidden_ = ggml_cpy(
                 batched_decode_ctx_.get(),
                 decoder_out.hidden.tensor,
@@ -1574,7 +1574,7 @@ private:
             decode_attention_mask_values_.size() * sizeof(ggml_fp16_t));
     }
 
-    QwenCausalDecodeStepResult run_decode_step() {
+    CausalDecoderStepResult run_decode_step() {
         if (decode_cache_.valid_steps() >= decode_cache_steps_) {
             throw std::runtime_error("QwenCausalDecodeRuntime decode cache exhausted");
         }
@@ -1596,7 +1596,7 @@ private:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("QwenCausalDecodeRuntime decode graph compute failed");
         }
-        QwenCausalDecodeStepResult out;
+        CausalDecoderStepResult out;
         if (decode_logits_ != nullptr) {
             out.logits.resize(static_cast<size_t>(ggml_nelements(decode_logits_)));
             ggml_backend_tensor_get(decode_logits_, out.logits.data(), 0, out.logits.size() * sizeof(float));
@@ -1610,7 +1610,7 @@ private:
         return out;
     }
 
-    void run_decode_step_into(QwenCausalDecodeStepResult & out) {
+    void run_decode_step_into(CausalDecoderStepResult & out) {
         if (decode_cache_.valid_steps() >= decode_cache_steps_) {
             throw std::runtime_error("QwenCausalDecodeRuntime decode cache exhausted");
         }
@@ -1658,7 +1658,7 @@ private:
         decode_cache_.advance_after_direct_append(1);
     }
 
-    QwenCausalDecodeStepResult run_batched_decode_step() {
+    CausalDecoderStepResult run_batched_decode_step() {
         if (batched_decode_cache_.valid_steps() >= batched_decode_cache_steps_) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode cache exhausted");
         }
@@ -1720,7 +1720,7 @@ private:
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("QwenCausalDecodeRuntime batched decode graph compute failed");
         }
-        QwenCausalDecodeStepResult out;
+        CausalDecoderStepResult out;
         if (batched_decode_logits_ != nullptr) {
             out.logits.resize(static_cast<size_t>(ggml_nelements(batched_decode_logits_)));
             ggml_backend_tensor_get(
@@ -1810,7 +1810,7 @@ private:
         block_last_ = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, 1);
         for (auto * tensor : {block_input_, block_positions_, block_mask_, block_last_}) { ggml_set_input(tensor); }
         block_graph_ = ggml_new_graph_custom(ctx.ggml, 65536, false);
-        const QwenDecoderLayerModule layer(qwen_decoder_layer_config_from_stack(config_.decoder.stack));
+        const DecoderLayerModule layer(decoder_layer_config_from_stack(config_.decoder.stack));
         auto hidden = input;
         for (size_t i = 0; i < weights_.stack.layers.size(); ++i) {
             hidden = layer.build_with_static_cache_block(ctx, block_graph_, hidden, positions,
@@ -1823,12 +1823,12 @@ private:
             core::TensorShape::from_dims({1, 1, config_.decoder.stack.hidden_size}), GGML_TYPE_F32);
         hidden = RMSNormModule({config_.decoder.stack.hidden_size, config_.decoder.stack.rms_norm_eps, true, false})
             .build(ctx, hidden, weights_.final_norm);
-        if (config_.return_hidden || config_.output_mode == QwenCausalDecodeOutputMode::Hidden) {
+        if (config_.return_hidden || config_.output_mode == CausalDecoderOutputMode::Hidden) {
             block_hidden_ = hidden.tensor;
             ggml_set_output(block_hidden_);
             ggml_build_forward_expand(block_graph_, block_hidden_);
         }
-        if (config_.output_mode == QwenCausalDecodeOutputMode::Logits) {
+        if (config_.output_mode == CausalDecoderOutputMode::Logits) {
             if (config_.decoder.lm_head_input_type) {
                 hidden = core::wrap_tensor(ggml_cast(ctx.ggml, hidden.tensor, *config_.decoder.lm_head_input_type),
                     hidden.shape, *config_.decoder.lm_head_input_type);
@@ -1920,8 +1920,8 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    QwenCausalDecodeRuntimeConfig config_;
-    QwenCausalDecodeRuntimeWeights weights_;
+    CausalDecoderRuntimeConfig config_;
+    CausalDecoderRuntimeWeights weights_;
 
     std::unique_ptr<ggml_context, GgmlContextDeleter> prefill_ctx_;
     ggml_tensor * prefill_input_ = nullptr;
@@ -2006,118 +2006,118 @@ private:
     bool batched_decode_variable_positions_ = false;
 };
 
-QwenCausalDecodeRuntime::QwenCausalDecodeRuntime(
+CausalDecoderRuntime::CausalDecoderRuntime(
     core::ExecutionContext & execution,
-    QwenCausalDecodeRuntimeConfig config,
-    QwenCausalDecodeRuntimeWeights weights)
+    CausalDecoderRuntimeConfig config,
+    CausalDecoderRuntimeWeights weights)
     : impl_(std::make_unique<Impl>(execution, std::move(config), std::move(weights))) {}
 
-QwenCausalDecodeRuntime::~QwenCausalDecodeRuntime() = default;
+CausalDecoderRuntime::~CausalDecoderRuntime() = default;
 
-QwenCausalPrefillResult QwenCausalDecodeRuntime::prefill_tokens(const std::vector<int32_t> & token_ids) {
+CausalDecoderPrefillResult CausalDecoderRuntime::prefill_tokens(const std::vector<int32_t> & token_ids) {
     return impl_->prefill_tokens(token_ids);
 }
 
-QwenCausalPrefillResult QwenCausalDecodeRuntime::prefill_embeddings(
+CausalDecoderPrefillResult CausalDecoderRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) {
     return impl_->prefill_embeddings(embeddings, steps);
 }
 
-QwenCausalPrefillIntoDecodeResult QwenCausalDecodeRuntime::prefill_tokens_into_decode_cache(
+CausalDecoderPrefillIntoDecodeResult CausalDecoderRuntime::prefill_tokens_into_decode_cache(
     const std::vector<int32_t> & token_ids,
     int64_t required_cache_steps) {
     return impl_->prefill_tokens_into_decode_cache(token_ids, required_cache_steps);
 }
 
-QwenCausalBatchedPrefillResult QwenCausalDecodeRuntime::prefill_tokens_batched(
+CausalDecoderBatchedPrefillResult CausalDecoderRuntime::prefill_tokens_batched(
     const std::vector<int32_t> & token_ids,
     int64_t batch_size,
     int64_t steps) {
     return impl_->prefill_tokens_batched(token_ids, batch_size, steps);
 }
 
-QwenCausalBatchedPrefillResult QwenCausalDecodeRuntime::prefill_embeddings_batched(
+CausalDecoderBatchedPrefillResult CausalDecoderRuntime::prefill_embeddings_batched(
     const std::vector<float> & embeddings,
     int64_t batch_size,
     int64_t steps) {
     return impl_->prefill_embeddings_batched(embeddings, batch_size, steps);
 }
 
-QwenCausalDecodeStepResult QwenCausalDecodeRuntime::prefill_embeddings_into_cache(
+CausalDecoderStepResult CausalDecoderRuntime::prefill_embeddings_into_cache(
     const std::vector<float> & embeddings, int64_t steps, int64_t cache_steps, int64_t chunk_steps,
     int64_t keep_prefix_steps) {
     return impl_->prefill_embeddings_into_cache(embeddings, steps, cache_steps, chunk_steps, keep_prefix_steps);
 }
 
-int64_t QwenCausalDecodeRuntime::retainable_prefix_steps(
+int64_t CausalDecoderRuntime::retainable_prefix_steps(
     int64_t steps, int64_t cache_steps, int64_t chunk_steps, int64_t keep_prefix_steps) const {
     return impl_->retainable_prefix_steps(steps, cache_steps, chunk_steps, keep_prefix_steps);
 }
 
-void QwenCausalDecodeRuntime::start_decode_tokens(
+void CausalDecoderRuntime::start_decode_tokens(
     const runtime::TransformerKVState & state,
     int64_t required_cache_steps) {
     impl_->start_decode_tokens(state, required_cache_steps);
 }
 
-void QwenCausalDecodeRuntime::start_decode_embeddings(
+void CausalDecoderRuntime::start_decode_embeddings(
     const runtime::TransformerKVState & state,
     int64_t required_cache_steps) {
     impl_->start_decode_embeddings(state, required_cache_steps);
 }
 
-QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_token(int32_t token) {
+CausalDecoderStepResult CausalDecoderRuntime::decode_token(int32_t token) {
     return impl_->decode_token(token);
 }
 
-void QwenCausalDecodeRuntime::decode_token_into(int32_t token, QwenCausalDecodeStepResult & out) {
+void CausalDecoderRuntime::decode_token_into(int32_t token, CausalDecoderStepResult & out) {
     impl_->decode_token_into(token, out);
 }
 
-QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_embedding(const std::vector<float> & embedding) {
+CausalDecoderStepResult CausalDecoderRuntime::decode_embedding(const std::vector<float> & embedding) {
     return impl_->decode_embedding(embedding);
 }
 
-void QwenCausalDecodeRuntime::start_decode_tokens_batched(
+void CausalDecoderRuntime::start_decode_tokens_batched(
     const runtime::TransformerBatchedKVState & state,
     int64_t required_cache_steps) {
     impl_->start_decode_tokens_batched(state, required_cache_steps);
 }
 
-void QwenCausalDecodeRuntime::start_decode_embeddings_batched(
+void CausalDecoderRuntime::start_decode_embeddings_batched(
     const runtime::TransformerBatchedKVState & state,
     int64_t required_cache_steps) {
     impl_->start_decode_embeddings_batched(state, required_cache_steps);
 }
 
-QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_tokens_batched(const std::vector<int32_t> & tokens) {
+CausalDecoderStepResult CausalDecoderRuntime::decode_tokens_batched(const std::vector<int32_t> & tokens) {
     return impl_->decode_tokens_batched(tokens);
 }
 
-QwenCausalDecodeStepResult QwenCausalDecodeRuntime::decode_embeddings_batched(
+CausalDecoderStepResult CausalDecoderRuntime::decode_embeddings_batched(
     const std::vector<float> & embeddings,
     int64_t batch_size) {
     return impl_->decode_embeddings_batched(embeddings, batch_size);
 }
 
-runtime::TransformerBatchedKVState QwenCausalDecodeRuntime::export_batched_decode_state() const {
+runtime::TransformerBatchedKVState CausalDecoderRuntime::export_batched_decode_state() const {
     return impl_->export_batched_decode_state();
 }
 
-int64_t QwenCausalDecodeRuntime::decode_cache_steps() const noexcept {
+int64_t CausalDecoderRuntime::decode_cache_steps() const noexcept {
     return impl_->decode_cache_steps();
 }
 
-int64_t QwenCausalDecodeRuntime::decode_current_end() const noexcept {
+int64_t CausalDecoderRuntime::decode_current_end() const noexcept {
     return impl_->decode_current_end();
 }
 
-int64_t QwenCausalDecodeRuntime::decode_valid_steps() const noexcept {
+int64_t CausalDecoderRuntime::decode_valid_steps() const noexcept {
     return impl_->decode_valid_steps();
 }
 
-void QwenCausalDecodeRuntime::release_runtime_graphs() {
+void CausalDecoderRuntime::release_runtime_graphs() {
     impl_->release_runtime_graphs();
 }
 

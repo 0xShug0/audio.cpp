@@ -4,7 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/models/yue2/assets.h"
 #include "engine/models/yue2/types.h"

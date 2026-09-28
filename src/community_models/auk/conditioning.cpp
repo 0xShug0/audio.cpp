@@ -51,7 +51,7 @@ ConditioningWeights load_conditioning_weights(
     weights.layers.reserve(36);
     for (int layer = 0; layer < 36; ++layer) {
         const auto prefix = "thinker.model.layers." + std::to_string(layer);
-        modules::QwenDecoderLayerWeights block;
+        modules::DecoderLayerWeights block;
         block.input_norm = norm_weight_from_source(store, qwen, prefix + ".input_layernorm", 2048);
         block.post_norm = norm_weight_from_source(store, qwen, prefix + ".post_attention_layernorm", 2048);
         const auto q = linear_from_source(store, qwen, prefix + ".self_attn.q_proj", storage, 2048, 2048, true);
@@ -81,9 +81,9 @@ core::TensorValue build_text_conditioning(
     const core::TensorValue & embeddings,
     const core::TensorValue & positions,
     const core::TensorValue & attention_mask,
-    const modules::QwenDecoderActivationCastPolicy & activation_cast,
+    const modules::DecoderActivationCastPolicy & activation_cast,
     std::vector<core::TensorValue> * captured_layers) {
-    modules::QwenDecoderLayerConfig config;
+    modules::DecoderLayerConfig config;
     config.hidden_size = 2048;
     config.num_attention_heads = 16;
     config.num_key_value_heads = 2;
@@ -95,8 +95,8 @@ core::TensorValue build_text_conditioning(
     config.projection_precision = GGML_PREC_F32;
     config.activation_cast = activation_cast;
     config.runtime.attention.prefill_mode = activation_cast.enabled
-        ? modules::QwenDecoderAttentionMode::FlashGrouped : modules::QwenDecoderAttentionMode::ManualRepeat;
-    const modules::QwenDecoderLayerModule decoder(config);
+        ? modules::DecoderAttentionMode::FlashGrouped : modules::DecoderAttentionMode::ManualRepeat;
+    const modules::DecoderLayerModule decoder(config);
     const modules::LayerNormModule layer_norm({2048, 1e-5F, false, false});
     const auto fusion_weights = modules::SoftmaxModule().build(ctx, weights.layer_weights);
     auto hidden = embeddings;
@@ -165,7 +165,7 @@ struct ConditioningGraph {
                 core::TensorShape::from_dims({tokens + audio_tokens, 2048}));
             embeddings = modules::EmbeddingModule({tokens + audio_tokens, 2048}).build(ctx, embedding_rows, table);
         }
-        modules::QwenDecoderActivationCastPolicy casts;
+        modules::DecoderActivationCastPolicy casts;
         casts.enabled = bf16_autocast;
         casts.after_input_norm = true;
         casts.after_qkv_projection = true;

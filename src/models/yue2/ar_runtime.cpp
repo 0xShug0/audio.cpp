@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/lookup_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <algorithm>
@@ -42,14 +42,14 @@ struct Yue2SamplerScratch {
     std::vector<double> weights;
 };
 
-engine::modules::QwenDecoderLayerWeights load_layer(
+engine::modules::DecoderLayerWeights load_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const Yue2ModelConfig & config,
     assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "model.layers." + std::to_string(layer);
-    engine::modules::QwenDecoderLayerWeights out;
+    engine::modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.hidden_size);
     out.self_attention.q_weight = store.load_tensor(
         source,
@@ -101,12 +101,12 @@ engine::modules::QwenDecoderLayerWeights load_layer(
     return out;
 }
 
-engine::modules::QwenCausalDecodeRuntimeWeights load_prefix_weights(
+engine::modules::CausalDecoderRuntimeWeights load_prefix_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const Yue2ModelConfig & config,
     assets::TensorStorageType storage_type) {
-    engine::modules::QwenCausalDecodeRuntimeWeights weights;
+    engine::modules::CausalDecoderRuntimeWeights weights;
     weights.token_embedding = store.load_tensor(
         source,
         "model.embed_tokens.weight",
@@ -120,7 +120,7 @@ engine::modules::QwenCausalDecodeRuntimeWeights load_prefix_weights(
 }
 
 void load_generation_weights(
-    engine::modules::QwenCausalDecodeRuntimeWeights & weights,
+    engine::modules::CausalDecoderRuntimeWeights & weights,
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const Yue2ModelConfig & config,
@@ -136,13 +136,13 @@ void load_generation_weights(
         false);
 }
 
-engine::modules::QwenCausalDecodeRuntimeConfig make_runtime_config(
+engine::modules::CausalDecoderRuntimeConfig make_runtime_config(
     const Yue2ModelConfig & config,
     core::BackendType backend_type,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
     int64_t logits_size = 0) {
-    engine::modules::QwenCausalDecodeRuntimeConfig out;
+    engine::modules::CausalDecoderRuntimeConfig out;
     out.trace_name = "yue2.ar";
     out.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
     out.decode_graph_arena_bytes = decode_graph_arena_bytes;
@@ -156,17 +156,17 @@ engine::modules::QwenCausalDecodeRuntimeConfig make_runtime_config(
     out.decoder.stack.rope_theta = config.rope_theta;
     out.decoder.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.decoder.stack.use_qk_norm = true;
-    out.decoder.stack.runtime.attention.prefill_mode = engine::modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.attention.static_mode = engine::modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.static_cache.update_mode = engine::modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.decoder.stack.runtime.attention.prefill_mode = engine::modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.attention.static_mode = engine::modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.static_cache.update_mode = engine::modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode =
-        engine::modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+        engine::modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
         backend_type == core::BackendType::Vulkan) {
         out.decoder.static_cache_type = GGML_TYPE_F16;
     }
     out.decoder.logits_size = logits_size > 0 ? logits_size : config.vocab_size;
-    out.decoder.logits_mode = engine::modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.decoder.logits_mode = engine::modules::CausalDecoderLogitsMode::LastStep;
     out.readback_round_type = GGML_TYPE_BF16;
     return out;
 }
@@ -522,7 +522,7 @@ struct Yue2ArRuntime::Impl {
             auto x = engine::modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                          .build(build, ids, owner.runtime_weights.token_embedding);
             x = core::reshape_tensor(build, x, core::TensorShape::from_dims({1, steps, config.hidden_size}));
-            auto stack = engine::modules::QwenDecoderStackModule(owner.runtime_config.decoder.stack)
+            auto stack = engine::modules::DecoderStackModule(owner.runtime_config.decoder.stack)
                              .build(build, x, pos, owner.runtime_weights.stack, std::nullopt, mask);
             keys.reserve(stack.state.layers.size());
             values.reserve(stack.state.layers.size());
@@ -575,8 +575,8 @@ struct Yue2ArRuntime::Impl {
             if (state_buffer == nullptr) {
                 throw std::runtime_error("failed to allocate Yue2 AR prefix-state cache");
             }
-            position_values = engine::modules::qwen_position_ids(steps);
-            mask_values = engine::modules::qwen_causal_prefill_mask_values(1, steps);
+            position_values = engine::modules::decoder_position_ids(steps);
+            mask_values = engine::modules::causal_prefill_mask_values(1, steps);
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
             ggml_backend_tensor_set(attention_mask, mask_values.data(), 0, mask_values.size() * sizeof(ggml_fp16_t));
             engine::debug::timing_log_scalar("yue2.ar.prefix_state.graph.build_ms", engine::debug::elapsed_ms(build_start));
@@ -698,7 +698,7 @@ struct Yue2ArRuntime::Impl {
         engine::debug::timing_log_scalar("yue2.ar.generate.prefill_ms", engine::debug::elapsed_ms(prefill_start));
         std::mt19937 rng(static_cast<uint32_t>(seed));
         Yue2SamplerScratch scratch;
-        engine::modules::QwenCausalDecodeStepResult decode_result;
+        engine::modules::CausalDecoderStepResult decode_result;
         decode_result.logits = std::move(prefill.logits);
         decode_result.hidden = std::move(prefill.hidden);
         double sample_ms = 0.0;
@@ -931,13 +931,13 @@ struct Yue2ArRuntime::Impl {
             };
         }
         if (!active_runtime) {
-            active_runtime = std::make_unique<engine::modules::QwenCausalDecodeRuntime>(
+            active_runtime = std::make_unique<engine::modules::CausalDecoderRuntime>(
                 execution,
                 active_config,
                 compact_semantic ? semantic_runtime_weights : (compact_abc ? abc_runtime_weights : runtime_weights));
         }
         if (require_negative && !active_negative_runtime) {
-            active_negative_runtime = std::make_unique<engine::modules::QwenCausalDecodeRuntime>(
+            active_negative_runtime = std::make_unique<engine::modules::CausalDecoderRuntime>(
                 execution,
                 active_config,
                 compact_semantic ? semantic_runtime_weights : (compact_abc ? abc_runtime_weights : runtime_weights));
@@ -951,18 +951,18 @@ struct Yue2ArRuntime::Impl {
     std::shared_ptr<core::BackendWeightStore> generation_store;
     std::unique_ptr<ggml_context, GgmlContextDeleter> generation_view_ctx;
     assets::TensorStorageType weight_type;
-    engine::modules::QwenCausalDecodeRuntimeConfig runtime_config;
-    engine::modules::QwenCausalDecodeRuntimeConfig abc_runtime_config;
-    engine::modules::QwenCausalDecodeRuntimeConfig semantic_runtime_config;
-    engine::modules::QwenCausalDecodeRuntimeWeights runtime_weights;
-    engine::modules::QwenCausalDecodeRuntimeWeights abc_runtime_weights;
-    engine::modules::QwenCausalDecodeRuntimeWeights semantic_runtime_weights;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> runtime;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> negative_runtime;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> abc_runtime;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> abc_negative_runtime;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> semantic_runtime;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> semantic_negative_runtime;
+    engine::modules::CausalDecoderRuntimeConfig runtime_config;
+    engine::modules::CausalDecoderRuntimeConfig abc_runtime_config;
+    engine::modules::CausalDecoderRuntimeConfig semantic_runtime_config;
+    engine::modules::CausalDecoderRuntimeWeights runtime_weights;
+    engine::modules::CausalDecoderRuntimeWeights abc_runtime_weights;
+    engine::modules::CausalDecoderRuntimeWeights semantic_runtime_weights;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> runtime;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> negative_runtime;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> abc_runtime;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> abc_negative_runtime;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> semantic_runtime;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> semantic_negative_runtime;
     std::unique_ptr<PrefixStateGraph> prefix_state_graph;
 };
 

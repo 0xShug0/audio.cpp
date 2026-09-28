@@ -97,7 +97,7 @@ const modules::LinearWeights & require_linear_weight(
     return *weight;
 }
 
-modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
+modules::CausalDecoderRuntimeConfig qwen3_runtime_config(
     const std::string & trace,
     int64_t hidden,
     int64_t intermediate,
@@ -105,13 +105,13 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
     int64_t heads,
     int64_t kv_heads,
     int64_t head_dim,
-    modules::QwenCausalDecoderLogitsMode hidden_mode,
+    modules::CausalDecoderLogitsMode hidden_mode,
     size_t prefill_arena,
     size_t decode_arena,
     core::BackendType backend_type,
     bool bf16_autocast = false,
     int64_t sliding_window = 0) {
-    modules::QwenCausalDecodeRuntimeConfig out;
+    modules::CausalDecoderRuntimeConfig out;
     out.trace_name = trace;
     out.prefill_graph_arena_bytes = prefill_arena;
     out.decode_graph_arena_bytes = decode_arena;
@@ -127,10 +127,10 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
     out.decoder.stack.use_qk_norm = true;
     out.decoder.stack.attention_precision = GGML_PREC_F32;
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
-    out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.decoder.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.decoder.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     out.sliding_window = sliding_window;
     if (bf16_autocast && backend_type != core::BackendType::Cpu && backend_type != core::BackendType::Vulkan &&
         backend_type != core::BackendType::Metal) {
@@ -152,7 +152,7 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
         out.decoder.static_cache_type = GGML_TYPE_BF16;
     }
     out.decoder.logits_mode = hidden_mode;
-    out.output_mode = modules::QwenCausalDecodeOutputMode::Hidden;
+    out.output_mode = modules::CausalDecoderOutputMode::Hidden;
     out.return_hidden = true;
     if (bf16_autocast && backend_type != core::BackendType::Cpu && backend_type != core::BackendType::Vulkan &&
         backend_type != core::BackendType::Metal) {
@@ -161,13 +161,13 @@ modules::QwenCausalDecodeRuntimeConfig qwen_runtime_config(
     return out;
 }
 
-modules::QwenDecoderLayerWeights load_qwen_layer(
+modules::DecoderLayerWeights load_qwen_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
-    const modules::QwenCausalDecoderConfig & config,
+    const modules::CausalDecoderConfig & config,
     assets::TensorStorageType storage_type) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.stack.hidden_size);
     out.self_attention.q_weight = store.load_tensor(
         source,
@@ -219,15 +219,15 @@ modules::QwenDecoderLayerWeights load_qwen_layer(
     return out;
 }
 
-modules::QwenCausalDecodeRuntimeWeights load_qwen_weights(
+modules::CausalDecoderRuntimeWeights load_qwen_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
-    const modules::QwenCausalDecodeRuntimeConfig & runtime_config,
+    const modules::CausalDecoderRuntimeConfig & runtime_config,
     int64_t vocab_size,
     assets::TensorStorageType storage_type) {
     const auto & config = runtime_config.decoder;
-    modules::QwenCausalDecodeRuntimeWeights out;
+    modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = store.load_tensor(
         source,
         prefix + ".embed_tokens.weight",
@@ -255,7 +255,7 @@ struct FireRedAttentionBlockWeights {
 
 struct FireRedArWeights {
     std::shared_ptr<core::BackendWeightStore> store;
-    modules::QwenCausalDecodeRuntimeWeights backbone_qwen;
+    modules::CausalDecoderRuntimeWeights backbone_qwen;
     std::optional<modules::LinearWeights> spk_proj_llm;
     std::optional<modules::LinearWeights> spk_proj_dit;
     modules::LinearWeights patch_in;
@@ -313,7 +313,7 @@ std::shared_ptr<FireRedArWeights> load_base_ar_weights(
         weight_context_bytes);
     const auto & c = assets.base;
     const auto & source = *assets.base_weights;
-    const auto qwen_config = qwen_runtime_config(
+    const auto qwen_config = qwen3_runtime_config(
         "fireredtts3.backbone",
         c.hidden_size,
         c.intermediate_size,
@@ -321,7 +321,7 @@ std::shared_ptr<FireRedArWeights> load_base_ar_weights(
         c.heads,
         c.kv_heads,
         c.head_dim,
-        modules::QwenCausalDecoderLogitsMode::AllSteps,
+        modules::CausalDecoderLogitsMode::AllSteps,
         graph_arena_bytes,
         graph_arena_bytes,
         execution.backend_type());
@@ -375,7 +375,7 @@ std::shared_ptr<FireRedArWeights> load_instruct_ar_weights(
         weight_context_bytes);
     const auto & c = assets.base;
     const auto & source = *assets.instruct_weights;
-    const auto qwen_config = qwen_runtime_config(
+    const auto qwen_config = qwen3_runtime_config(
         "fireredtts3.instruct.backbone",
         c.hidden_size,
         c.intermediate_size,
@@ -383,7 +383,7 @@ std::shared_ptr<FireRedArWeights> load_instruct_ar_weights(
         c.heads,
         c.kv_heads,
         c.head_dim,
-        modules::QwenCausalDecoderLogitsMode::AllSteps,
+        modules::CausalDecoderLogitsMode::AllSteps,
         graph_arena_bytes,
         graph_arena_bytes,
         execution.backend_type());
@@ -945,7 +945,7 @@ public:
         } else {
             speaker_proj_ = std::make_unique<SpeakerProjectionGraph>(execution_, weights_, assets_->base, helper_graph_arena_bytes);
         }
-        const auto backbone_config = qwen_runtime_config(
+        const auto backbone_config = qwen3_runtime_config(
             instruct_ ? "fireredtts3.instruct.backbone" : "fireredtts3.backbone",
             assets_->base.hidden_size,
             assets_->base.intermediate_size,
@@ -953,13 +953,13 @@ public:
             assets_->base.heads,
             assets_->base.kv_heads,
             assets_->base.head_dim,
-            modules::QwenCausalDecoderLogitsMode::AllSteps,
+            modules::CausalDecoderLogitsMode::AllSteps,
             graph_arena_bytes,
             graph_arena_bytes,
             execution_.backend_type(),
             true,
             0);
-        backbone_ = std::make_unique<modules::QwenCausalDecodeRuntime>(execution_, backbone_config, weights_->backbone_qwen);
+        backbone_ = std::make_unique<modules::CausalDecoderRuntime>(execution_, backbone_config, weights_->backbone_qwen);
     }
 
     std::vector<float> token_embedding(const std::vector<int32_t> & token_ids) {
@@ -999,7 +999,7 @@ public:
         return text_lm_head_->run(hidden);
     }
 
-    modules::QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps) {
+    modules::CausalDecoderPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps) {
         return backbone_->prefill_embeddings(embeddings, steps);
     }
 
@@ -1007,7 +1007,7 @@ public:
         backbone_->start_decode_embeddings(state, required_cache_steps);
     }
 
-    modules::QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding) {
+    modules::CausalDecoderStepResult decode_embedding(const std::vector<float> & embedding) {
         return backbone_->decode_embedding(embedding);
     }
 
@@ -1050,7 +1050,7 @@ private:
     std::unique_ptr<PatchEncoderGraph> patch_encoder_;
     std::unique_ptr<DiTHeadGraph> dit_head_;
     std::unique_ptr<StopHeadGraph> stop_head_;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> backbone_;
+    std::unique_ptr<modules::CausalDecoderRuntime> backbone_;
 };
 
 FireRedArRuntime::FireRedArRuntime(
@@ -1100,7 +1100,7 @@ std::vector<float> FireRedArRuntime::text_logits(const std::vector<float> & hidd
     return impl_->text_logits(hidden);
 }
 
-engine::modules::QwenCausalPrefillResult FireRedArRuntime::prefill_embeddings(
+engine::modules::CausalDecoderPrefillResult FireRedArRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) {
     return impl_->prefill_embeddings(embeddings, steps);
@@ -1112,7 +1112,7 @@ void FireRedArRuntime::start_decode_embeddings(
     impl_->start_decode_embeddings(state, required_cache_steps);
 }
 
-engine::modules::QwenCausalDecodeStepResult FireRedArRuntime::decode_embedding(const std::vector<float> & embedding) {
+engine::modules::CausalDecoderStepResult FireRedArRuntime::decode_embedding(const std::vector<float> & embedding) {
     return impl_->decode_embedding(embedding);
 }
 

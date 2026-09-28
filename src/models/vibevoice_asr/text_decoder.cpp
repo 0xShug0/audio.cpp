@@ -5,7 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
@@ -44,10 +44,10 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderLayerWeights to_qwen_layer_weights(
+modules::DecoderLayerWeights to_qwen2_layer_weights(
     const VibeVoiceDecoderLayerWeights & weights,
     core::ConstantTensorCache & constants) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
     out.self_attention = weights.self_attention;
     out.post_norm = binding::norm_data(constants, weights.post_norm);
@@ -57,8 +57,8 @@ modules::QwenDecoderLayerWeights to_qwen_layer_weights(
     return out;
 }
 
-modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoderConfig & config) {
-    modules::QwenCausalDecoderConfig out;
+modules::CausalDecoderConfig make_qwen2_decoder_config(const VibeVoiceDecoderConfig & config) {
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
     out.stack.num_key_value_heads = config.num_key_value_heads;
@@ -68,27 +68,27 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoder
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     out.stack.use_qk_norm = false;
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
     // The suffix path appends onto the prefix KV cache; without this it
     // takes the eager branch and materializes per-head F32 intermediates
     // that scale with the cache size.
-    out.stack.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::FlashWithPrefix;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.static_cache_type = GGML_TYPE_F16;
     return out;
 }
 
-modules::QwenCausalDecoderWeights make_qwen_decoder_weights(
+modules::CausalDecoderWeights make_qwen2_decoder_weights(
     const VibeVoiceDecoderWeights & weights,
     core::ConstantTensorCache & constants) {
-    modules::QwenCausalDecoderWeights out;
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & layer : weights.layers) {
-        out.stack.layers.push_back(to_qwen_layer_weights(layer, constants));
+        out.stack.layers.push_back(to_qwen2_layer_weights(layer, constants));
     }
     out.final_norm = binding::norm_data(constants, weights.norm);
     out.lm_head = binding::linear_data(constants, weights.lm_head);
@@ -403,12 +403,12 @@ public:
             GGML_TYPE_F16);
         auto & constants = runtime_->constants();
         constants.begin_graph();
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen2_decoder_config(config))
                                .build(
                                    ctx,
                                    x,
                                    positions_value,
-                                   make_qwen_decoder_weights(runtime_->weights(), constants),
+                                   make_qwen2_decoder_weights(runtime_->weights(), constants),
                                    std::nullopt,
                                    attention_mask);
         for (const auto & layer : decoder_out.state.layers) {
@@ -444,8 +444,8 @@ public:
             throw std::runtime_error("failed to allocate VibeVoice decoder prefill graph");
         }
 
-        position_values_ = modules::qwen_position_ids(prompt_steps_);
-        attention_mask_values_ = modules::qwen_causal_prefill_mask_values(batch_size_, prompt_steps_);
+        position_values_ = modules::decoder_position_ids(prompt_steps_);
+        attention_mask_values_ = modules::causal_prefill_mask_values(batch_size_, prompt_steps_);
     }
 
     ~VibeVoiceDecoderPrefillGraph() {
@@ -748,17 +748,17 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto & constants = runtime_->constants();
         constants.begin_graph();
-        auto decoder_config = make_qwen_decoder_config(config);
+        auto decoder_config = make_qwen2_decoder_config(config);
         auto layer_input = x;
-        const modules::QwenDecoderLayerModule layer_module(
-            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        const modules::DecoderLayerModule layer_module(
+            modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < runtime_->weights().layers.size(); ++layer_index) {
             auto layer_out = layer_module.build_with_static_cache_tail(
                 ctx,
                 graph_,
                 layer_input,
                 positions_value,
-                to_qwen_layer_weights(runtime_->weights().layers[layer_index], constants),
+                to_qwen2_layer_weights(runtime_->weights().layers[layer_index], constants),
                 cache_->key_tensor(layer_index),
                 cache_->value_tensor(layer_index),
                 cache_slot_value,
@@ -933,11 +933,11 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto & constants = runtime_->constants();
         constants.begin_graph();
-        auto decoder_config = make_qwen_decoder_config(config);
+        auto decoder_config = make_qwen2_decoder_config(config);
         const int64_t step_elems = config.num_key_value_heads * require_head_dim(config);
         auto layer_input = x;
-        const modules::QwenDecoderLayerModule layer_module(
-            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        const modules::DecoderLayerModule layer_module(
+            modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < runtime_->weights().layers.size(); ++layer_index) {
             const auto & key_cache = cache_->key_tensor(layer_index);
             const auto & value_cache = cache_->value_tensor(layer_index);
@@ -945,7 +945,7 @@ public:
                 ctx,
                 layer_input,
                 positions_value,
-                to_qwen_layer_weights(runtime_->weights().layers[layer_index], constants),
+                to_qwen2_layer_weights(runtime_->weights().layers[layer_index], constants),
                 key_cache,
                 value_cache,
                 attention_mask_value);

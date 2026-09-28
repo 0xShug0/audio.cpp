@@ -4,7 +4,7 @@
 #include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/models/higgs_audio_tts/assets.h"
 
@@ -19,15 +19,15 @@ class BackendWeightStore;
 
 namespace engine::models::higgs_audio_tts {
 
-struct HiggsQwenDecoderStackWeights {
-    std::vector<modules::QwenDecoderLayerWeights> layers;
+struct HiggsQwen3DecoderStackWeights {
+    std::vector<modules::DecoderLayerWeights> layers;
 };
 
 struct HiggsARWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue text_embedding;
     core::TensorValue modality_embedding;
-    HiggsQwenDecoderStackWeights decoder;
+    HiggsQwen3DecoderStackWeights decoder;
     core::TensorValue norm;
     bool packed_qkv = false;
 };

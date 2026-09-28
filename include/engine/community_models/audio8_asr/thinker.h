@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/runtime/greedy_qwen_decoder.h"
+#include "engine/framework/runtime/greedy_causal_decoder.h"
 #include "engine/community_models/audio8_asr/types.h"
 
 #include <cstddef>
@@ -34,7 +34,7 @@ public:
         const Audio8ASRGenerationOptions & options);
 
 private:
-    runtime::GreedyQwenDecoderRuntime runtime_;
+    runtime::GreedyCausalDecoderRuntime runtime_;
     std::shared_ptr<const Audio8ASRDecoderConfig> config_;
 };
 

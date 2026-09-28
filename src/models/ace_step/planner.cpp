@@ -5,7 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -41,8 +41,8 @@ namespace {
 
 namespace modules = engine::modules;
 
-using modules::QwenDecoderLayerWeights;
-using modules::QwenDecoderStackWeights;
+using modules::DecoderLayerWeights;
+using modules::DecoderStackWeights;
 
 using Clock = std::chrono::steady_clock;
 
@@ -57,7 +57,7 @@ struct GgmlContextDeleter {
 struct PlannerWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
-    QwenDecoderStackWeights layers;
+    DecoderStackWeights layers;
     core::TensorValue norm;
     core::TensorValue lm_head;
 };
@@ -331,11 +331,11 @@ core::TensorValue planner_cache_view(
         GGML_TYPE_F32);
 }
 
-modules::QwenDecoderLayerOutputs planner_decoder_layer_batched(
+modules::DecoderLayerOutputs planner_decoder_layer_batched(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const AceStepPlannerConfig & config,
     const core::TensorValue & attention_mask,
     const core::TensorValue & query_mask,
@@ -440,12 +440,12 @@ core::TensorValue planner_set_compact_kv_row(
     return core::reshape_tensor(ctx, flat_updated, cache.shape);
 }
 
-modules::QwenDecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batched(
+modules::DecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_batched(
     core::ModuleBuildContext & ctx,
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const AceStepPlannerConfig & config,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
@@ -524,11 +524,11 @@ modules::QwenDecoderLayerOutputs planner_decoder_layer_with_static_cache_tail_ba
     return {output, k, v};
 }
 
-modules::QwenDecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
+modules::DecoderLayerOutputs planner_decoder_layer_with_compact_cache_batched(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const QwenDecoderLayerWeights & weights,
+    const DecoderLayerWeights & weights,
     const AceStepPlannerConfig & config,
     const core::TensorValue & cache_key,
     const core::TensorValue & cache_value,
@@ -1621,7 +1621,7 @@ PlannerWeights load_planner_weights(
     weights.layers.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         const std::string prefix = "layers." + std::to_string(layer);
-        QwenDecoderLayerWeights w;
+        DecoderLayerWeights w;
         w.input_norm.weight = weights.store->load_f32_tensor(
             source, prefix + ".input_layernorm.weight", {config.hidden_size});
         w.q_norm.weight = weights.store->load_f32_tensor(

@@ -451,7 +451,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/host_ops.cpp
     src/framework/runtime/kv_cache.cpp
     src/framework/runtime/bounded_static_kv_decode.cpp
-    src/framework/runtime/greedy_qwen_decoder.cpp
+    src/framework/runtime/greedy_causal_decoder.cpp
     src/framework/runtime/options.cpp
     src/framework/runtime/session_base.cpp
     src/framework/runtime/workspace.cpp
@@ -525,9 +525,9 @@ add_library(engine_core OBJECT
     src/framework/modules/attention/grouped_query_attention.cpp
     src/framework/modules/attention/projected_grouped_self_attention.cpp
     src/framework/modules/attention/streaming_frame_attention_cache.cpp
-    src/framework/modules/transformers/qwen_decoder.cpp
-    src/framework/modules/transformers/qwen_causal_decoder.cpp
-    src/framework/modules/transformers/qwen_causal_decode_runtime.cpp
+    src/framework/modules/transformers/decoder.cpp
+    src/framework/modules/transformers/causal_decoder.cpp
+    src/framework/modules/transformers/causal_decoder_runtime.cpp
     src/framework/modules/transformers/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/attention/transformer_blocks.cpp
@@ -3557,14 +3557,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         )
 
         add_engine_unittest(
-            qwen_decoder_packed_projection_test
-            tests/unittests/test_qwen_decoder_packed_projections.cpp
+            decoder_packed_projection_test
+            tests/unittests/test_decoder_packed_projections.cpp
         )
-        add_engine_unittest(qwen_chunked_prefill_test tests/unittests/test_qwen_chunked_prefill.cpp)
-        add_test(NAME qwen_chunked_prefill_test COMMAND qwen_chunked_prefill_test)
+        add_engine_unittest(causal_decoder_chunked_prefill_test tests/unittests/test_causal_decoder_chunked_prefill.cpp)
+        add_test(NAME causal_decoder_chunked_prefill_test COMMAND causal_decoder_chunked_prefill_test)
         add_test(
-            NAME qwen_decoder_packed_projection_test
-            COMMAND qwen_decoder_packed_projection_test
+            NAME decoder_packed_projection_test
+            COMMAND decoder_packed_projection_test
         )
 
         add_engine_unittest(supertonic_vector_convnext_exp_test tests/unittests/test_supertonic_vector_convnext_exp.cpp)

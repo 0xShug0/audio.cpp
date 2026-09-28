@@ -138,7 +138,7 @@ conda run --no-capture-output -n qwen3-tts python tests/moss_transcribe_diarize/
 Reuse `WhisperFrontendComponent::load_openai_layout` with explicit 16-head,
 24-layer configuration; `WhisperLogMelExtractor`; framework linear, activation,
 normalization, and embedding modules; `LlamaBpeTokenizer` with Qwen2
-pretokenization; and `QwenCausalDecodeRuntime` with managed KV cache. Model code
+pretokenization; and `CausalDecoderRuntime` with managed KV cache. Model code
 owns audio chunk assembly, four-frame merging, prompt time anchors, the adaptor,
 and output parsing. Large/frequent graphs must be session-owned and reused.
 
@@ -353,7 +353,7 @@ Historical `server_saver*` / `saver_*` evidence describes the removed CPU
 offload experiment, not the current implementation.
 
 ```bash
-conda run --no-capture-output -n qwen3-tts build/debug/bin/qwen_chunked_prefill_test \
+conda run --no-capture-output -n qwen3-tts build/debug/bin/causal_decoder_chunked_prefill_test \
   --backend cuda --log build/logs/moss_transcribe_diarize/chunked_unit_cuda.log
 ```
 

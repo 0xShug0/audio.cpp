@@ -3,7 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/models/personaplex/assets.h"
 
 #include "ggml-backend.h"
@@ -19,12 +19,12 @@ constexpr size_t kPersonaPlexDelayedStreamCount = 17;
 
 struct PersonaPlexLMWeights {
     std::shared_ptr<core::BackendWeightStore> store;
-    modules::QwenCausalDecoderWeights main;
+    modules::CausalDecoderWeights main;
     core::TensorValue text_embedding;
     std::vector<core::TensorValue> audio_embeddings;
 };
 
-modules::QwenCausalDecoderConfig personaplex_lm_decoder_config(
+modules::CausalDecoderConfig personaplex_lm_decoder_config(
     const PersonaPlexConfig & config,
     core::BackendType backend_type);
 

@@ -2,7 +2,7 @@
 
 #include "engine/framework/tokenizers/llama_bpe.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/audio/dsp.h"
 
@@ -43,7 +43,7 @@ ConditioningInput prepare_conditioning(
 struct ConditioningWeights {
     core::TensorValue embedding;
     modules::NormWeights final_norm;
-    std::vector<modules::QwenDecoderLayerWeights> layers;
+    std::vector<modules::DecoderLayerWeights> layers;
     core::TensorValue layer_weights;
     core::TensorValue layer_scale;
 };
@@ -59,7 +59,7 @@ core::TensorValue build_text_conditioning(
     const core::TensorValue & embeddings,
     const core::TensorValue & positions,
     const core::TensorValue & attention_mask,
-    const modules::QwenDecoderActivationCastPolicy & activation_cast = {},
+    const modules::DecoderActivationCastPolicy & activation_cast = {},
     std::vector<core::TensorValue> * captured_layers = nullptr);
 
 class ConditioningRuntime {

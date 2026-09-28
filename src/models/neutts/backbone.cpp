@@ -12,8 +12,8 @@ namespace {
 
 namespace binding = engine::modules::binding;
 
-modules::QwenDecoderActivationCastPolicy neutts_activation_cast_policy(core::BackendType backend_type) {
-    modules::QwenDecoderActivationCastPolicy policy;
+modules::DecoderActivationCastPolicy neutts_activation_cast_policy(core::BackendType backend_type) {
+    modules::DecoderActivationCastPolicy policy;
     if (backend_type == core::BackendType::Cpu || backend_type == core::BackendType::Vulkan ||
         backend_type == core::BackendType::Metal) {
         return policy;
@@ -50,14 +50,14 @@ void validate_backbone_storage_type(assets::TensorStorageType storage_type) {
     }
 }
 
-modules::QwenDecoderLayerWeights load_layer_weights(
+modules::DecoderLayerWeights load_layer_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const NeuTTSBackboneConfig & config,
     assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "model.layers." + std::to_string(layer);
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(
         store,
         source,
@@ -127,10 +127,10 @@ modules::QwenDecoderLayerWeights load_layer_weights(
 
 }  // namespace
 
-modules::QwenCausalDecoderConfig make_neutts_qwen_config(
+modules::CausalDecoderConfig make_neutts_qwen3_config(
     const NeuTTSBackboneConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.attention_heads;
     out.stack.num_key_value_heads = config.kv_heads;
@@ -144,11 +144,11 @@ modules::QwenCausalDecoderConfig make_neutts_qwen_config(
     out.stack.projection_precision = GGML_PREC_DEFAULT;
     out.stack.activation_cast = neutts_activation_cast_policy(backend_type);
     out.stack.use_qk_norm = true;
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_DEFAULT;
     if (backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal) {
         out.lm_head_input_type = GGML_TYPE_F16;

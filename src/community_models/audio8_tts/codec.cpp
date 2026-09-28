@@ -101,7 +101,7 @@ struct CodecTransformerLayerWeights {
     modules::AttentionWeights attention;
     modules::LayerScaleWeights attention_scale;
     modules::NormWeights ffn_norm;
-    modules::QwenMLPWeights feed_forward;
+    modules::DecoderMLPWeights feed_forward;
     modules::LayerScaleWeights ffn_scale;
 };
 
@@ -340,7 +340,7 @@ core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::
 core::TensorValue build_mlp(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const modules::QwenMLPWeights & weights,
+    const modules::DecoderMLPWeights & weights,
     int64_t intermediate_size) {
     auto gate = modules::LinearModule({kCodecDim, intermediate_size, false, GGML_PREC_F32})
                     .build(ctx, input, weights.gate_proj);

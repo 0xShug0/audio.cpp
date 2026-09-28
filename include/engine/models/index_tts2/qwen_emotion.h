@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 #include "engine/models/index_tts2/assets.h"
@@ -18,7 +18,7 @@ namespace engine::models::index_tts2 {
 struct IndexTTS2QwenEmotionWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
     engine::core::TensorValue token_embedding;
-    engine::modules::QwenDecoderStackWeights decoder;
+    engine::modules::DecoderStackWeights decoder;
     engine::modules::NormWeights final_norm;
 };
 

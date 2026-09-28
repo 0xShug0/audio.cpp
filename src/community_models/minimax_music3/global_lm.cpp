@@ -25,20 +25,20 @@ void validate_storage_type(assets::TensorStorageType storage_type) {
     }
 }
 
-modules::QwenDecoderActivationCastPolicy activation_cast_policy(core::BackendType backend_type) {
-    modules::QwenDecoderActivationCastPolicy policy;
+modules::DecoderActivationCastPolicy activation_cast_policy(core::BackendType backend_type) {
+    modules::DecoderActivationCastPolicy policy;
     (void)backend_type;
     return policy;
 }
 
-modules::QwenDecoderLayerWeights load_qwen_layer(
+modules::DecoderLayerWeights load_qwen_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const MiniMaxMusic3QwenConfig & config,
     assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "model.layers." + std::to_string(layer);
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.hidden_size);
     out.self_attention.q_weight = store.load_tensor(
         source,
@@ -122,13 +122,13 @@ int64_t minimax_music3_lm_head_output_size(
     return vocab_size;
 }
 
-modules::QwenCausalDecodeRuntimeConfig make_minimax_music3_global_lm_runtime_config(
+modules::CausalDecoderRuntimeConfig make_minimax_music3_global_lm_runtime_config(
     const MiniMaxMusic3Config & config,
     MiniMaxMusic3LmHeadLayout lm_head_layout,
     core::BackendType backend_type,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes) {
-    modules::QwenCausalDecodeRuntimeConfig out;
+    modules::CausalDecoderRuntimeConfig out;
     out.trace_name = "minimax_music3.ar";
     out.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
     out.decode_graph_arena_bytes = decode_graph_arena_bytes;
@@ -145,17 +145,17 @@ modules::QwenCausalDecodeRuntimeConfig make_minimax_music3_global_lm_runtime_con
     out.decoder.stack.projection_precision = GGML_PREC_DEFAULT;
     out.decoder.stack.use_qk_norm = true;
     out.decoder.stack.activation_cast = activation_cast_policy(backend_type);
-    out.decoder.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.decoder.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.decoder.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.decoder.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.decoder.stack.runtime.static_cache.set_rows_mode =
-        modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+        modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     if (backend_type == core::BackendType::Cuda || backend_type == core::BackendType::Hip ||
         backend_type == core::BackendType::Vulkan) {
         out.decoder.static_cache_type = GGML_TYPE_F16;
     }
     out.decoder.logits_size = minimax_music3_lm_head_output_size(lm_head_layout, config.qwen.vocab_size);
-    out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.decoder.lm_head_precision = GGML_PREC_DEFAULT;
     out.readback_round_type = GGML_TYPE_BF16;
     if (backend_type == core::BackendType::Metal) {
