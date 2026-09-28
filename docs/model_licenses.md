@@ -104,6 +104,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `rvc` | [lj1995/VoiceConversionWebUI](https://huggingface.co/lj1995/VoiceConversionWebUI) | MIT | Unclear | The base models (HuBERT, RMVPE) are MIT. The packaged voices (`manthos`, `chocola`, `fraise`) have no documented source or license. | 2026-09-21 |
 | `sam_audio` | [facebook/sam-audio-small](https://huggingface.co/facebook/sam-audio-small) | [SAM License](https://huggingface.co/facebook/sam-audio-small/blob/main/LICENSE) | Yes | The packaged Google T5 Base text encoder retains its Apache-2.0 license. | 2026-09-26 |
 | `samsone` | [SamsungLabs/samsone](https://github.com/SamsungLabs/samsone) | Not stated | Unclear | The upstream repository and v1.0.0 release do not publish model-weight license terms. | 2026-09-26 |
+| `sidon` | [sarulab-speech/sidon-v0.1](https://huggingface.co/sarulab-speech/sidon-v0.1) | MIT | Yes | | 2026-09-28 |
 | `sanotts` | [ampixa/sanoTTS](https://huggingface.co/ampixa/sanoTTS) | GPL-3.0 | Yes | Copyleft. | 2026-09-21 |
 | `seed_vc` | [Plachta/Seed-VC](https://huggingface.co/Plachta/Seed-VC)<br>[mlx-community/SeedVC-MLX](https://huggingface.co/mlx-community/SeedVC-MLX) | GPL-3.0 | Yes | Copyleft. | 2026-09-21 |
 | `sense_asr` | [FunAudioLLM/SenseVoiceSmall](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) | [FunASR Model Open Source License v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) | Yes | Credit the source and authors, and keep the model names. | 2026-09-21 |

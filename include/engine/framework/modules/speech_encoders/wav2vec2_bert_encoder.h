@@ -28,6 +28,10 @@ struct Wav2Vec2BertEncoderConfig {
     int64_t relative_right = 8;
     int64_t conv_kernel = 31;
     float layer_norm_eps = 1.0e-5F;
+    bool apply_semantic_normalization = true;
+    bool mask_padded_frames = true;
+    bool project_relative_keys_first = false;
+    bool pointwise_conv_as_linear = false;
 };
 
 struct Wav2Vec2BertAttentionWeightNames {
@@ -110,6 +114,9 @@ struct Wav2Vec2BertEncoderWeights {
     std::vector<Wav2Vec2BertLayerWeights> layers;
     core::TensorValue semantic_mean;
     core::TensorValue semantic_std;
+    core::TensorValue half_scale;
+    core::TensorValue relative_scale;
+    core::TensorValue left_conv_pad;
 };
 
 struct Wav2Vec2BertEncoderInput {

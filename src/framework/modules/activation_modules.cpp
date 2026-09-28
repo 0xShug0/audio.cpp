@@ -602,15 +602,28 @@ core::TensorValue Snake1dModule::build(
     const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     const auto input_f32 = ensure_f32(ctx, contiguous);
     core::TensorValue alpha_broadcast = {};
-    if (same_shape(weights.alpha.shape, input.shape)) {
+    const auto alpha_shape = make_snake_alpha_shape(input.shape, config_.hidden_size);
+    if (same_shape(weights.alpha.shape, input.shape) || same_shape(weights.alpha.shape, alpha_shape)) {
         alpha_broadcast = ensure_f32(ctx, weights.alpha);
     } else {
         core::validate_shape(weights.alpha, core::TensorShape::from_dims({config_.hidden_size}), "alpha");
-        const auto alpha_shape = make_snake_alpha_shape(input.shape, config_.hidden_size);
         alpha_broadcast = core::reshape_tensor(ctx, ensure_f32(ctx, weights.alpha), alpha_shape);
     }
     const auto ax = core::wrap_tensor(ggml_mul(ctx.ggml, input_f32.tensor, alpha_broadcast.tensor), input_f32.shape, GGML_TYPE_F32);
     const auto s = core::wrap_tensor(ggml_sin(ctx.ggml, ax.tensor), input_f32.shape, GGML_TYPE_F32);
+    if (weights.inverse_alpha) {
+        core::TensorValue inverse;
+        if (same_shape(weights.inverse_alpha->shape, alpha_shape)) {
+            inverse = ensure_f32(ctx, *weights.inverse_alpha);
+        } else {
+            core::validate_shape(*weights.inverse_alpha,
+                core::TensorShape::from_dims({config_.hidden_size}), "inverse_alpha");
+            inverse = core::reshape_tensor(ctx, ensure_f32(ctx, *weights.inverse_alpha), alpha_shape);
+        }
+        const auto squared = ggml_sqr(ctx.ggml, s.tensor);
+        const auto fraction = ggml_mul(ctx.ggml, squared, inverse.tensor);
+        return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, fraction), input.shape, GGML_TYPE_F32);
+    }
     const auto s2 = core::wrap_tensor(ggml_mul(ctx.ggml, s.tensor, s.tensor), input_f32.shape, GGML_TYPE_F32);
     const auto frac = core::wrap_tensor(ggml_div(ctx.ggml, s2.tensor, alpha_broadcast.tensor), input_f32.shape, GGML_TYPE_F32);
     return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, frac.tensor), input_f32.shape, GGML_TYPE_F32);
