@@ -38,6 +38,7 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -103,8 +104,14 @@ const std::vector<std::vector<int32_t>> kAudioBlock = {
 constexpr float kNearTie = 0.05f;
 
 // A spoken reply transcribed back matches its text but for the names the
-// model makes up ("Al-Ula" comes back as "Aula"): 3-11% on the replies seen.
+// model makes up ("Al-Ula" comes back as "Aula"): 4-7% at the median of 30 to
+// 60 seeds per backend. Now and then the ASR answers the reply, paraphrases it
+// or runs on to max_tokens instead of transcribing it (liquid-audio fp32 went
+// over 0.2 on 5 of 60 seeds), and a reply can fail to end its audio within
+// max_tokens. So the check takes the median of three replies, and a reply or
+// transcript that fails counts as a miss.
 constexpr double kMaxReplyWordErrors = 0.2;
+const std::vector<std::string> kReplySeeds = {"1234", "1235", "1236"};
 
 std::filesystem::path repo_path(const std::string & relative) {
     return std::filesystem::path(ENGINE_REPO_ROOT) / relative;
@@ -329,6 +336,7 @@ void check_replies(
     const std::filesystem::path & spec_override,
     const std::string & model_gguf,
     const engine::core::BackendConfig & backend,
+    bool full_precision,
     Checks & checks) {
     auto registry = engine::runtime::make_default_registry();
     engine::runtime::ModelLoadRequest load_request;
@@ -341,10 +349,10 @@ void check_replies(
 
     const auto wav = engine::audio::read_wav_f32(repo_path(kAudio));
     // The README's sampling, temperature 1.0 and top-k 4, by default.
-    const auto question = [&]() {
+    const auto question = [&](const std::string & seed = kReplySeeds[0]) {
         engine::runtime::TaskRequest request;
         request.audio_input = engine::runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
-        request.options["seed"] = "1234";
+        request.options["seed"] = seed;
         return request;
     };
 
@@ -354,19 +362,51 @@ void check_replies(
     checks.expect(has_audio, "the reply is 24 kHz audio");
     checks.expect(!words(text).empty() && text.find("<|") == std::string::npos, "the reply has text without markup", text);
     // Text is greedy, and the first block comes before any audio is sampled.
-    checks.expect(text.rfind(kTextBlockText, 0) == 0, "the reply starts with the text block");
+    // Quantized weights can pick other words for it: Q4_0 does, and Q8_0 is
+    // within 0.1 of a tie on some of its tokens.
+    if (full_precision) {
+        checks.expect(text.rfind(kTextBlockText, 0) == 0, "the reply starts with the text block");
+    }
+
     std::cout << "reply: " << text << "\n";
     if (has_audio) {
         const double seconds = static_cast<double>(reply.audio_output->samples.size()) / 24000.0;
         std::cout << "reply speech: " << seconds << " s\n";
         checks.expect(seconds > 2.0 && seconds < 80.0, "reply length", std::to_string(seconds));
 
-        engine::runtime::TaskRequest transcribe;
-        transcribe.audio_input = reply.audio_output;
-        const auto heard = run(*asr, transcribe);
-        const std::string heard_text = heard.text_output.has_value() ? heard.text_output->text : "";
-        const double errors = word_error_rate(words(text), words(heard_text));
-        checks.expect(errors <= kMaxReplyWordErrors, "the reply says what it writes, word error rate " + std::to_string(errors), heard_text);
+        std::vector<double> errors;
+        std::string heard_texts;
+        const auto round_trip = [&](const std::string & seed, const engine::runtime::TaskResult * given) {
+            std::string spoken_text;
+            std::string heard_text;
+            double error = std::numeric_limits<double>::infinity();
+            try {
+                const auto spoken = given != nullptr ? *given : run(*s2s, question(seed));
+                spoken_text = spoken.text_output.has_value() ? spoken.text_output->text : "";
+                engine::runtime::TaskRequest transcribe;
+                transcribe.audio_input = spoken.audio_output;
+                const auto heard = run(*asr, transcribe);
+                heard_text = heard.text_output.has_value() ? heard.text_output->text : "";
+                if (!words(spoken_text).empty()) {
+                    error = word_error_rate(words(spoken_text), words(heard_text));
+                }
+            } catch (const std::exception & failure) {
+                heard_text = std::string("(failed: ") + failure.what() + ")";
+            }
+
+            errors.push_back(error);
+            std::cout << "seed " << seed << " word error rate " << error << "\n  wrote: " << spoken_text << "\n  heard: " << heard_text << "\n";
+            heard_texts += (heard_texts.empty() ? "" : " | ") + heard_text;
+        };
+
+        round_trip(kReplySeeds[0], &reply);
+        for (size_t i = 1; i < kReplySeeds.size(); ++i) {
+            round_trip(kReplySeeds[i], nullptr);
+        }
+
+        std::sort(errors.begin(), errors.end());
+        const double median = errors[errors.size() / 2];
+        checks.expect(median <= kMaxReplyWordErrors, "the replies say what they write, median word error rate " + std::to_string(median), heard_texts);
     }
 
     const auto rejects = [&](const std::function<void(engine::runtime::TaskRequest &)> & edit, const std::string & needle, const std::string & label) {
@@ -443,9 +483,10 @@ void check_replies(
 
         // The detokenizer runs in graphs of other sizes. Measured with F16 on
         // this 12 s reply: 7.5e-4 on the CPU, 4.4e-2 on CUDA, whose F16 kernels
-        // round differently for each size. A stream that lost context would be
-        // off by the signal itself.
-        checks.expect_close(std::sqrt(difference / energy), 0.0, 0.1, "streamed against offline reply, relative RMS difference");
+        // round differently for each size. Quantized weights widen it: 0.15
+        // with Q4_0 on CUDA. A stream that lost context would be off by the
+        // signal itself.
+        checks.expect_close(std::sqrt(difference / energy), 0.0, full_precision ? 0.1 : 0.3, "streamed against offline reply, relative RMS difference");
     }
 }
 
@@ -479,6 +520,9 @@ int main(int argc, char ** argv) {
     backend.type = backend_name == "cpu" ? engine::core::BackendType::Cpu : engine::core::BackendType::BestAvailable;
     backend.threads = threads > 0 ? threads : 1;
 
+    // Quantized weights move the stage numbers and the greedy text by design;
+    // their replies are still checked.
+    const bool full_precision = model_gguf.find("-F16.") != std::string::npos || model_gguf.find("-F32.") != std::string::npos;
     Checks checks;
     try {
         {
@@ -486,9 +530,6 @@ int main(int argc, char ** argv) {
             const auto components = lfm2::load_lfm2_audio_components(*assets, model_gguf, "");
             const auto output = lfm2::load_lfm2_audio_output_components(*assets, *components, "", "");
             check_prompt(*components, *output, checks);
-            // Quantized weights move these numbers by design; their replies are
-            // still checked below.
-            const bool full_precision = model_gguf.find("-F16.") != std::string::npos || model_gguf.find("-F32.") != std::string::npos;
             if (full_precision) {
                 check_stage_numbers(*components, *output, backend, checks);
             } else {
@@ -496,7 +537,7 @@ int main(int argc, char ** argv) {
             }
         }
 
-        check_replies(model_dir, spec_override, model_gguf, backend, checks);
+        check_replies(model_dir, spec_override, model_gguf, backend, full_precision, checks);
     } catch (const std::exception & error) {
         std::cerr << "FAIL: " << error.what() << "\n";
         return kExitFail;

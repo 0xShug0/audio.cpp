@@ -143,23 +143,6 @@ void check_reply_end(const Lfm2InterleavedGenerator & generator, size_t frames) 
     }
 }
 
-// The bytes of `text` up to its last whole UTF-8 character: tokens are bytes,
-// and one can end in the middle of a character.
-size_t whole_utf8_prefix(const std::string & text) {
-    size_t lead = text.size();
-    while (lead > 0 && text.size() - lead < 4) {
-        const auto byte = static_cast<unsigned char>(text[--lead]);
-        if ((byte & 0xC0) == 0x80) {
-            continue;
-        }
-
-        const size_t length = byte < 0x80 ? 1 : (byte & 0xE0) == 0xC0 ? 2 : (byte & 0xF0) == 0xE0 ? 3 : 4;
-        return text.size() - lead >= length ? text.size() : lead;
-    }
-
-    return text.size();
-}
-
 std::shared_ptr<const Lfm2AudioOutputComponents> select_output_components(
     const std::shared_ptr<const Lfm2AudioAssets> & assets,
     const std::shared_ptr<const Lfm2AudioComponents> & components,
@@ -842,9 +825,9 @@ struct Lfm2AudioChatSession::Stream {
     bool done = false;
     size_t frames = 0;
     std::unique_ptr<Lfm2StreamingIstft> istft;
-    std::string text;            // the reply's text so far
-    size_t text_sent = 0;        // bytes of it already in events
-    runtime::AudioBuffer audio;  // everything emitted
+    std::string text;                        // the reply's text so far
+    runtime::PartialTextPublisher partials;  // what of it is already in events
+    runtime::AudioBuffer audio;              // everything emitted
 };
 
 runtime::StreamingPolicy Lfm2AudioChatSession::streaming_policy() const {
@@ -952,13 +935,12 @@ std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
         st.done = true;
     }
 
-    // Tokens are bytes, so their text adds up token by token.
+    // Tokens are bytes, so their text adds up token by token, and a character
+    // split across tokens waits for the event that completes it.
     runtime::StreamEvent event;
     st.text += tokenizer_.decode(tokens);
-    const size_t whole = whole_utf8_prefix(st.text);
-    if (whole > st.text_sent) {
-        event.partial_text = runtime::Transcript{st.text.substr(st.text_sent, whole - st.text_sent), language_};
-        st.text_sent = whole;
+    if (auto delta = st.partials.publish(st.text); !delta.empty()) {
+        event.partial_text = runtime::Transcript{std::move(delta), language_};
     }
 
     if (!samples.empty()) {

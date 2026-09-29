@@ -39,10 +39,9 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "ASR: transcript tokens per audio chunk. TTS: audio frames (80 ms each) per text chunk. S2S: text tokens and audio frames of the reply together, 1024 by default. A transcript or a text chunk's speech that reaches it is cut off there, with a warning on stderr; a reply that needs more fails the request.",
+        "description": "ASR: transcript tokens per audio chunk, 512 by default. TTS: audio frames (80 ms each) per text chunk, 512 by default. S2S: text tokens and audio frames of the reply together, 1024 by default. A transcript or a text chunk's speech that reaches it is cut off there, with a warning on stderr; a reply that needs more fails the request.",
         "required": false,
-        "min": 1,
-        "default": 512
+        "min": 1
       },
       {
         "name": "audio_chunk_mode",
@@ -68,18 +67,16 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "TTS and S2S: audio code sampling temperature, 1.0 by default for S2S; 0 picks the most likely code.",
+        "description": "TTS and S2S: audio code sampling temperature, 0.8 by default for TTS and 1.0 for S2S; 0 picks the most likely code.",
         "required": false,
-        "min": 0,
-        "default": 0.8
+        "min": 0
       },
       {
         "name": "top_k",
         "type": "int",
-        "description": "TTS and S2S: sample audio codes from the k most likely, 4 by default for S2S; 0 keeps all, 1 is greedy.",
+        "description": "TTS and S2S: sample audio codes from the k most likely, 64 by default for TTS and 4 for S2S; 0 keeps all, 1 is greedy.",
         "required": false,
-        "min": 0,
-        "default": 64
+        "min": 0
       },
       {
         "name": "seed",

@@ -185,9 +185,11 @@ two-sentence English text (6.5 s of speech) and a Japanese one (8.5 s):
 | CPU, Apple M3 Ultra, 16 threads | 150 / 106 / 113 / 308 ms | 0.18-0.57 | 0.18-0.57 |
 
 A frame per event costs no more than four, and streaming about what offline
-speech does. In these runs the streamed audio differed from offline by 5e-4 to
-5e-3 (relative RMS), the detokenizer's arithmetic in graphs of other sizes;
-runs with other texts and seeds can differ more.
+speech does. Across the backends, the streamed audio differs from offline by
+5e-4 to 6e-3 (relative RMS) on the test's short text, the detokenizer's
+arithmetic in graphs of other sizes. CUDA's kernels round differently for each
+size, so over a minute of speech it differs by 2e-2 to 3e-2, and by 0.2 with
+Q4_0, whose coarse detokenizer weights amplify it.
 
 ### Streaming S2S
 
@@ -289,6 +291,17 @@ audio. At the default 200 codepoints a chunk is about 13 s of English speech.
 The shared 6,000-character long-form test text (`tools/audiocpp_cli/audiocpp_cli_longform_tts_clone_cases.json`)
 comes out as about 345 s of speech that transcribes back through the ASR task
 at 1.5-1.6% WER with the EN F16, Q8_0 and Q4_0 packages on CUDA.
+
+Each chunk is its own take: the voice stays, but pitch, pace and loudness can
+shift from one chunk to the next (up to about 3 semitones, 20% and 4 dB on a
+7-chunk English text), which can sound like a new recording. liquid-audio's
+chunks shift the same way, and the model cannot carry context across them. In
+one turn, liquid-audio speaks English reliably up to about 430 characters and
+starts to add or drop words from about 600; given the previous chunk as an
+earlier turn, it answered in text instead of speaking on up to 2 of 7 chunks.
+For English, a larger `text_chunk_size` means fewer joins: 300, 400 and 600
+codepoints transcribed back as well as 200 (0.5-1.5% WER). Keep the default for
+Japanese: at 400 its chunks ran past `max_tokens`.
 
 ## Validation
 
@@ -398,11 +411,24 @@ code torch drew. audio.cpp itself samples with its own generator, so a seed
 does not reproduce a liquid-audio reply. The CUDA waveform differs more because
 CUDA accumulates F16 products in half precision.
 
-A reply's audio says what its text says: transcribed back by the ASR task, it
-matched the text at 3% WER, the names the model makes up aside.
-`test_lfm2_audio_s2s` checks the prompt, the first text and audio blocks, a
-reply's round trip through ASR, and streaming against offline; it runs when
-`lfm2_audio_1_5b_f16` is installed in `models/`.
+A reply's audio says what its text says, with rare exceptions. Over 30 seeds
+of replies to `c.wav` with the F16, Q8_0 and Q4_0 packages, on the CPU and Metal
+(Apple M3 Ultra) and on the CPU and CUDA (x86-64, NVIDIA A10), the ASR task
+heard the text at a median 4-7% WER, the names the model makes up aside.
+Whisper large-v3-turbo heard nearly every reply at 18% or less; one x86 CPU
+reply spoke a question its text did not have. The ASR task sometimes answers a
+reply, paraphrases it or runs on instead of transcribing it: on 0 to 6 of 30
+replies per backend and package, and on 5 of 60 with liquid-audio fp32. It can
+also add a sentence that was never spoken to speech that sounds like an
+assistant: on one Japanese reply, every precision and liquid-audio fp32 added
+「何かご質問はありますか？」. With Q4_0, 2 of 30 replies on the M3 Ultra CPU and 2
+of 30 on CUDA repeated a sentence until `max_tokens` (2 of 60 on the x86 CPU,
+none on Metal). F16 and Q8_0 did not, though one Q8_0 reply (M3 Ultra CPU, 8
+threads) finished its text but not its audio within `max_tokens`.
+`test_lfm2_audio_s2s` checks the prompt, the first text and audio blocks, the
+round trip of three replies through ASR (their median, a failed reply counting
+as a miss), and streaming against offline; it runs when `lfm2_audio_1_5b_f16`
+is installed in `models/`.
 
 ### Memory
 
