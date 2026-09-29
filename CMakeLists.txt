@@ -3234,6 +3234,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             endif()
         endif()
         # Model-specific tests and probes.
+        if (ace_step IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(ace_step_timbre_cache_probe tests/ace_step/timbre_cache_probe.cpp)
+        endif()
         if (zipvoice IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(zipvoice_parity tests/zipvoice/zipvoice_parity_main.cpp)
             target_link_libraries(zipvoice_parity PRIVATE engine_runtime ggml)

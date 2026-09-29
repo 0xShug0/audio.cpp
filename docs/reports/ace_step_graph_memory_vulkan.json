@@ -1,0 +1,112 @@
+[
+  {
+    "variant": "base",
+    "backend": "vulkan",
+    "device": 1,
+    "mem_saver": true,
+    "requests": 14,
+    "exact_outputs": 14,
+    "baseline_sha256": "d243a093c40adb9c428fb06dbeeab4d7cd75c68206cef65f8711a5a67cdfe476",
+    "candidate_sha256": "16825a20ad6a96333e99615fab51c9cba5decc94f00cd3fdc7a89893cbd2d3c7",
+    "cases": [
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        1
+      ],
+      [
+        0
+      ],
+      [
+        2
+      ],
+      [
+        0
+      ],
+      [
+        1
+      ],
+      [
+        0
+      ]
+    ],
+    "timing_reported": false
+  },
+  {
+    "variant": "turbo",
+    "backend": "vulkan",
+    "device": 1,
+    "mem_saver": true,
+    "requests": 14,
+    "exact_outputs": 14,
+    "baseline_sha256": "d243a093c40adb9c428fb06dbeeab4d7cd75c68206cef65f8711a5a67cdfe476",
+    "candidate_sha256": "16825a20ad6a96333e99615fab51c9cba5decc94f00cd3fdc7a89893cbd2d3c7",
+    "cases": [
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        1
+      ],
+      [
+        0
+      ],
+      [
+        2
+      ],
+      [
+        0
+      ],
+      [
+        1
+      ],
+      [
+        0
+      ]
+    ],
+    "timing_reported": false
+  }
+]

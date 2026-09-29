@@ -1,0 +1,102 @@
+[
+  {
+    "variant": "xl-turbo-q8dit",
+    "mem_saver": true,
+    "exact_count": 14,
+    "comparisons": 14,
+    "mismatch_indices": [],
+    "warm_seconds": [
+      0.7436351000214927,
+      0.6181351999985054
+    ],
+    "extra_warm_gib": [
+      2.3729248046875,
+      0.82037353515625
+    ],
+    "full_sequence_peak_gib": [
+      12.772762298583984,
+      12.731319427490234
+    ],
+    "less_time_percent": 16.876543350274897,
+    "less_extra_memory_percent": 65.42774834096404,
+    "executable_hashes": [
+      "55bf629cbecc96ab7fab628da07ce077a7abedd93c1b4e1de6603359477f1149",
+      "0cb919d181b6607d6930427d39c5df01b42c6c5d059b4e3e64097ef4d1e746fb"
+    ]
+  },
+  {
+    "variant": "xl-sft-q8dit",
+    "mem_saver": true,
+    "exact_count": 14,
+    "comparisons": 14,
+    "mismatch_indices": [],
+    "warm_seconds": [
+      0.7209615999599919,
+      0.619511800003238
+    ],
+    "extra_warm_gib": [
+      2.3729248046875,
+      0.82037353515625
+    ],
+    "full_sequence_peak_gib": [
+      13.934688568115234,
+      12.624080657958984
+    ],
+    "less_time_percent": 14.071456782494874,
+    "less_extra_memory_percent": 65.42774834096404,
+    "executable_hashes": [
+      "55bf629cbecc96ab7fab628da07ce077a7abedd93c1b4e1de6603359477f1149",
+      "0cb919d181b6607d6930427d39c5df01b42c6c5d059b4e3e64097ef4d1e746fb"
+    ]
+  },
+  {
+    "variant": "xl-turbo-q8dit",
+    "mem_saver": false,
+    "exact_count": 14,
+    "comparisons": 14,
+    "mismatch_indices": [],
+    "warm_seconds": [
+      0.6044276999891736,
+      0.5858169000130147
+    ],
+    "extra_warm_gib": [
+      0.1046142578125,
+      0.1046142578125
+    ],
+    "full_sequence_peak_gib": [
+      15.813716888427734,
+      14.424617767333984
+    ],
+    "less_time_percent": 3.0790779404207047,
+    "less_extra_memory_percent": 0.0,
+    "executable_hashes": [
+      "55bf629cbecc96ab7fab628da07ce077a7abedd93c1b4e1de6603359477f1149",
+      "0cb919d181b6607d6930427d39c5df01b42c6c5d059b4e3e64097ef4d1e746fb"
+    ]
+  },
+  {
+    "variant": "xl-sft-q8dit",
+    "mem_saver": false,
+    "exact_count": 14,
+    "comparisons": 14,
+    "mismatch_indices": [],
+    "warm_seconds": [
+      0.6196230999776162,
+      0.5878792000003159
+    ],
+    "extra_warm_gib": [
+      0.1046142578125,
+      0.1046142578125
+    ],
+    "full_sequence_peak_gib": [
+      15.706478118896484,
+      14.424800872802734
+    ],
+    "less_time_percent": 5.123098215422739,
+    "less_extra_memory_percent": 0.0,
+    "executable_hashes": [
+      "55bf629cbecc96ab7fab628da07ce077a7abedd93c1b4e1de6603359477f1149",
+      "0cb919d181b6607d6930427d39c5df01b42c6c5d059b4e3e64097ef4d1e746fb"
+    ]
+  }
+]
