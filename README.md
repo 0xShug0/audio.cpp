@@ -940,7 +940,7 @@ For long-form TTS tests, each run uses the same 6,026-character, 1,028-word inpu
 
 ## Runtime Memory Options
 
-Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `dramabox.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, `omnivoice.mem_saver=true`, `voxcpm2.mem_saver=true`, and `echo_tts.memsaver=true`. These options keep the default output path unchanged while reducing graph workspace VRAM or releasing staged graph/cache state after request phases; later requests may rebuild released graphs.
+Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `dramabox.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, `omnivoice.mem_saver=true`, `voxcpm2.mem_saver=true`, and `echo_tts.mem_saver=true`. These options keep the default output path unchanged while reducing graph workspace VRAM or releasing staged graph/cache state after request phases; later requests may rebuild released graphs.
 
 ## Precision/Quantization Support
 

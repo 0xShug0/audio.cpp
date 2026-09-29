@@ -179,6 +179,22 @@ std::shared_ptr<const EchoTtsAssets> load_echo_tts_assets(
     return assets;
 }
 
+runtime::SessionOptions require_supported_session_options(
+    runtime::SessionOptions options,
+    const std::shared_ptr<const engine::model_spec::ModelContract> &contract) {
+  // Older standalone GGUF packages embed a contract that predates the
+  // echo_tts.mem_saver option; keep them usable while still validating
+  // the value below.
+  auto validation_options = options;
+  if (contract->session_option_keys.find("echo_tts.mem_saver") ==
+      contract->session_option_keys.end()) {
+    validation_options.options.erase("echo_tts.mem_saver");
+  }
+  runtime::validate_spec_backed_session_options(
+      validation_options, *contract, kFamily, "Echo-TTS");
+  return options;
+}
+
 }  // namespace
 
 EchoTtsSession::EchoTtsSession(
@@ -186,16 +202,13 @@ EchoTtsSession::EchoTtsSession(
     runtime::SessionOptions options,
     std::shared_ptr<const EchoTtsAssets> assets,
     std::shared_ptr<const engine::model_spec::ModelContract> contract)
-    : RuntimeSessionBase(std::move(options)),
+    : RuntimeSessionBase(require_supported_session_options(std::move(options), contract)),
       task_(task),
       assets_(std::move(assets)),
       contract_(std::move(contract)) {
     if (contract_ == nullptr) {
         throw std::runtime_error("Echo-TTS session requires a model contract");
     }
-    // Without this a typo in server config is silently ignored.
-    runtime::validate_spec_backed_session_options(
-        RuntimeSessionBase::options(), *contract_, kFamily, "Echo-TTS");
     if (const auto value = runtime::find_option(
         RuntimeSessionBase::options().options, {"echo_tts.mem_saver"})) {
             mem_saver_ = runtime::parse_bool_option(*value, "echo_tts.mem_saver");
