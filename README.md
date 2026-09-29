@@ -120,7 +120,7 @@ Model weights keep the license of their original release, which is separate from
 | **canary_asr** | ASR, Translate | en, de, es, fr | Canary 180M Flash | GGUF F32/Q8 |
 | **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
 | **cohere_asr** | ASR | en, fr, de, es, it, pt, nl, pl, el, ar, ja, zh, vi, ko | Cohere Transcribe 03-2026 | GGUF BF16/Q8/Q4_0 |
-| **gigaam_asr** | ASR | ru, kk, ky, uz, en | GigaAM v3 CTC/RNN-T, v3 E2E CTC/RNN-T; Multilingual CTC/Large CTC | GGUF F16/F32 |
+| **gigaam_asr** | ASR | ru, kk, ky, uz, en | GigaAM v3 CTC<br>GigaAM v3 RNN-T<br>GigaAM v3 E2E CTC<br>GigaAM v3 E2E RNN-T<br>GigaAM Multilingual CTC<br>GigaAM Multilingual Large CTC | GGUF F16/F32 |
 | **fun_asr_nano** | ASR | auto, zh, en, ja | Fun-ASR-Nano-2512 | GGUF 16/Q8 |
 | **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
@@ -144,21 +144,22 @@ Model weights keep the license of their original release, which is separate from
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
 | **apollo** | S2S | lang agnostic | Apollo music restoration | GGUF F32 |
-| **sam_audio** | S2S | lang agnostic | SAM Audio Small prompt-conditioned separation | GGUF F32 |
-| **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
+| **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
+| **builtin_audio_utils** | S2S | lang agnostic | RNNoise<br>DeepFilterNet2<br>ZipEnhancer<br>GTCRN Streaming<br>GTCRN DNS3<br>GTCRN VCTK<br>FlashSR | Safetensors |
 | **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |
 | **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft<br>HTDemucs_6stems | GGUF 16/Q8 |
 | **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
-| **tone_color_vc** | VC | lang agnostic | Tone Color VC | GGUF F32/F16 |
 | **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
 | **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |
 | **muscriptor** | MIDI | music | MuScriptor Small audio-to-symbolic transcription | GGUF F32, Stream |
 | **rvc** | VC | lang agnostic | RVC F16 GGUF with packaged v1/v2 voices and optional retrieval blending | GGUF 16 |
+| **sam_audio** | S2S | lang agnostic | SAM Audio Small<br>SAM Audio Base<br>SAM Audio Large | GGUF F32/BF16/Q8 |
 | **seed_vc** | VC | lang agnostic | SeedVC XLS-R + HiFT<br>SeedVC Whisper-small + BigVGAN | GGUF 16/Q8 |
 | **sheetsage2** | MIDI | music | SheetSage2 audio-to-ABC score transcription | GGUF orig |
+| **tone_color_vc** | VC | lang agnostic | Tone Color VC | GGUF F32/F16 |
+| **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 
 ### Music, Media, And Editing
 
@@ -185,6 +186,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **audio8_tts** | TTS, Clone | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es | GGUF Q8, Stream | [@jasonchen31](https://github.com/jasonchen31) | [Audio8 TTS Preview 0.6B](docs/community_models/audio8_tts.md) DualAR multilingual TTS and zero-shot voice cloning with a Qwen backbone and neural codec |
 | **auk** | TTS, audio editing | auto | GGUF F32/F16/Q8 | [@0xShug0](https://github.com/0xShug0) | [AuK Base and AuK-Flash](docs/community_models/auk.md) instruction-guided speech generation and editing with separate generator, Qwen conditioner, and VAE components |
 | **chatterbox_turbo** | TTS (testing) | en | GGUF 16/Q8 | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](docs/community_models/chatterbox_turbo.md) distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder; built-in voice |
+| **confucius4_r2t2** | ASR | 30 languages | Safetensors, GGUF F16/Q8/Q4, Stream | [@davidxifeng](https://github.com/davidxifeng) | [Confucius4-R2T2](docs/community_models/r2t2.md) streaming ASR with context and hotword prompts |
 | **echo_tts** | Clone | en | GGUF 16/Q8 | [@5uck1ess](https://github.com/5uck1ess) | [Echo-TTS](docs/community_models/echo_tts.md) 44.1 kHz zero-shot voice cloning with EchoDiT latents and Fish S1-DAC decoding |
 | **f5_tts** | TTS, Clone | en, ar (Habibi) | GGUF | [@tareko](https://github.com/tareko) | [F5-TTS](docs/community_models/f5_tts.md) flow-matching DiT synthesis and voice cloning, with Habibi Arabic aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/community_models/glm_tts.md) zero-shot synthesis and voice cloning support |
@@ -193,11 +195,13 @@ Community model ports live under `community_models` to make the ownership bounda
 | **inflect_v2** | TTS | en | GGUF FP32 | Jan [@JanWerder](https://github.com/JanWerder) | [Inflect Micro v2 and Nano v2](docs/community_models/inflect_v2.md) native offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Safetensors, GGUF Q8 | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](docs/community_models/kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
 | **kitten_tts** | TTS | en | GGUF FP32 | Community | [KittenTTS Mini 0.8](docs/community_models/kitten_tts.md) native 80M-parameter synthesis with eight built-in voices and the shared eSpeak-ng frontend |
+| **liveavatar** | Audio-to-video | auto | GGUF NVFP4 | [@0xShug0](https://github.com/0xShug0) | [LiveAvatar](docs/community_models/liveavatar.md) audio-to-video avatar generation with Wan2.2 S2V and an optional low-VRAM denoiser path |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | GGUF Q4/INT8 | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](docs/community_models/minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
 | **minimax_music3** | Music | auto | GGUF Q4/Q8 | [@0xShug0](https://github.com/0xShug0), [@JoeMattie](https://github.com/JoeMattie) | [MiniMax Music 3](docs/community_models/minimax_music3.md) text-to-music generation with lyrics conditioning |
 | **mira_tts** | TTS, Clone | en | Local conversion | Mirek [@mirek190](https://github.com/mirek190) | [MiraTTS](docs/community_models/mira_tts.md) experimental native Qwen2 + ECAPA/Perceiver zero-shot voice cloning with progressive segment streaming (CC-BY-NC-SA-4.0 weights) |
 | **mms_forced_aligner** | Align | nl (nld), en (eng); pre-romanized Latin | Safetensors, GGUF 16/Q8 | [@LysanderdeJong](https://github.com/LysanderdeJong) | [MMS-300M-1130 Forced Aligner](docs/community_models/mms_forced_aligner.md) word-timestamp alignment from a wav2vec2 CTC checkpoint (safetensors or local GGUF) |
 | **moss_tts_v15** | TTS, Clone | en, zh | GGUF | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTS-v1.5](docs/community_models/moss_tts_v15.md) 8B delay-pattern zero-shot voice cloning; voice-attribute instructions are followed only loosely, see the limitation note |
+| **moss_ttsd** | TTS, Clone, Dialogue | en, zh | GGUF BF16/Q8/Q4 | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTSD](docs/community_models/moss_ttsd.md) 8B dialogue TTS with speaker-tagged conversations and per-speaker voice cloning |
 | **moss_voicegen** | Voice Design | en, zh | GGUF | Joost [@jrohde](https://github.com/jrohde) | [MOSS-VoiceGenerator](docs/community_models/moss_voicegen.md) speech in a voice designed from a written instruction |
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | GGUF F32/16/Q8, Stream | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](docs/community_models/parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support, plus the Orukeet r3 weight variant |

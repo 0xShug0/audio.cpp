@@ -253,6 +253,14 @@ function packageSessionOptions(entry: PackageEntry): Record<string, string> | un
 }
 
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
+  if (['maya1', 'gigaam_asr', 'samsone', 'sam_audio', 'tone_color_vc', 'moss_ttsd', 'moss_voicegen'].includes(entry.family)) {
+    const stem = (entry.download_id || '').replace(/_(?:q8_0|q4_k|bf16|f16|f32|orig)(?:_codec_f16(?:_decode)?)?$/, '');
+    return packages.filter((candidate) => candidate.family === entry.family && candidate.format === 'gguf' &&
+      candidate.id.replace(/_(?:q8_0|q4_k|bf16|f16|f32|orig)(?:_codec_f16(?:_decode)?)?$/, '') === stem)
+      .sort((left, right) => Number(right.id === entry.download_id) - Number(left.id === entry.download_id))
+      .map((candidate) => ({ id: candidate.id, label: packageLabel(candidate), path: packageModelPath(candidate),
+        format: candidate.format, precision: candidate.precision }));
+  }
   const exposesAllGguf = exposeAllGgufPackageFamilies.has(entry.family);
   if (entry.family === 'auk') {
     const related = packages.filter((candidate) =>
