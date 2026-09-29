@@ -1,5 +1,5 @@
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/framework/audio/gtcrn.h"
+#include "engine/framework/audio/utilities/gtcrn.h"
 
 #include <algorithm>
 #include <cmath>

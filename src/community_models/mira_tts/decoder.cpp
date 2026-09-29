@@ -1,6 +1,6 @@
 #include "engine/community_models/mira_tts/decoder.h"
 
-#include "engine/framework/audio/flashsr.h"
+#include "engine/framework/audio/utilities/flashsr.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"

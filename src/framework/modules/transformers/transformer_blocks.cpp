@@ -1,4 +1,4 @@
-#include "attention_internal.h"
+#include "../attention/attention_internal.h"
 
 namespace engine::modules {
 

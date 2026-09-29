@@ -7,7 +7,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/deferred_tensor_writer.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/self_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"

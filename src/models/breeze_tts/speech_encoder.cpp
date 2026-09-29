@@ -6,7 +6,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/conditioning_modules.h"

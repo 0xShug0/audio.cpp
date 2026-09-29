@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/attention/cross_attention.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/self_attention.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/linear_module.h"

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"

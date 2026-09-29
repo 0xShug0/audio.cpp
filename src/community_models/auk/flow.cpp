@@ -4,10 +4,10 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/positional_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/weight_binding.h"
-#include "engine/framework/modules/flow_sampler_runtime.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 #include "engine/framework/runtime/graph_optimizer.h"
 
 #include <ggml-alloc.h>

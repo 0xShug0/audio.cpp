@@ -3,7 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/projected_grouped_self_attention.h"
 #include "engine/framework/modules/linear_module.h"
 
