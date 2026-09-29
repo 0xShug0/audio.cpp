@@ -72,6 +72,18 @@ packages:
 
 Loading an existing model directory or standalone GGUF does not invoke Python.
 
+### Enhancement and denoising
+
+The **Enhancement / denoising** studio tab contains Apollo, UniverSR, AudioSR,
+RNNoise, DeepFilterNet2, ZipEnhancer, GTCRN, and FlashSR. This grouping does not
+change their API tasks or endpoints.
+
+The built-in utilities use SafeTensors rather than downloadable GGUF packages.
+Use their **Download SafeTensors weights** links, place the files on the server,
+and set **Weights path on server** before loading. Keep the original filenames;
+the default paths are under `Audio-Utilities/` in the selected models folder.
+Then choose an input recording and run it from the studio.
+
 ## Frontend development
 
 Node.js is needed only to modify and rebuild the frontend:

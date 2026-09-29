@@ -1,4 +1,40 @@
 {
+  "maya1": [
+    {"name":"instruct","type":"text","label":"Voice description","default":"Warm female voice with an American accent and conversational pacing.","lines":3},
+    {"name":"temperature","type":"number","label":"Temperature","default":0.4,"minimum":0.01,"step":0.05},
+    {"name":"top_p","type":"number","label":"Top P","default":0.9,"minimum":0,"maximum":1,"step":0.05},
+    {"name":"repetition_penalty","type":"number","label":"Repetition penalty","default":1.1,"minimum":0.01,"step":0.05}
+  ],
+  "gigaam_asr": [
+    {"name":"return_timestamps","type":"bool","label":"Word timestamps","default":false},
+    {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","fixed","quiet_energy","none"]},
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Audio chunk duration (s)","default":25,"minimum":0.02,"maximum":25,"step":0.1}
+  ],
+  "samsone": [
+    {"name":"instruct","type":"text","label":"Question or instruction","default":"describe the audio","lines":3},
+    {"name":"max_tokens","type":"number","label":"Maximum tokens","default":100,"minimum":1,"maximum":512,"step":1}
+  ],
+  "sam_audio": [
+    {"name":"num_inference_steps","type":"number","label":"Inference steps","default":16,"minimum":1,"step":1},
+    {"name":"anchors","type":"text","label":"Time anchors (JSON)","default":"","placeholder":"[[\"+\",0.5,2.0],[\"-\",3.0,4.0]]"}
+  ],
+  "tone_color_vc": [
+    {"name":"temperature","type":"number","label":"Temperature","default":0.3,"minimum":0,"step":0.05}
+  ],
+  "moss_ttsd": [
+    {"name":"instruct","type":"text","label":"Delivery instruction","default":""},
+    {"name":"temperature","type":"number","label":"Temperature","default":1.5,"minimum":0,"step":0.1},
+    {"name":"top_p","type":"number","label":"Top P","default":0.6,"minimum":0,"maximum":1,"step":0.05},
+    {"name":"top_k","type":"number","label":"Top K","default":50,"minimum":0,"step":1},
+    {"name":"repetition_penalty","type":"number","label":"Repetition penalty","default":1.1,"minimum":0,"step":0.05},
+    {"name":"max_frames","type":"number","label":"Maximum audio frames (0 = automatic)","default":0,"minimum":0,"step":1}
+  ],
+  "moss_voicegen": [
+    {"name":"temperature","type":"number","label":"Temperature","default":1.5,"minimum":0,"step":0.1},
+    {"name":"top_p","type":"number","label":"Top P","default":0.6,"minimum":0,"maximum":1,"step":0.05},
+    {"name":"top_k","type":"number","label":"Top K","default":50,"minimum":0,"step":1},
+    {"name":"repetition_penalty","type":"number","label":"Repetition penalty","default":1.1,"minimum":0,"step":0.05}
+  ],
   "canary_asr": [
     {"name": "target_language", "type": "choice", "label": "Target language", "default": "", "choices": ["", "en", "de", "es", "fr"]},
     {"name": "pnc", "type": "bool", "label": "Punctuation and capitalization", "default": true},

@@ -70,6 +70,7 @@
   let errorStatus = '';
   let text = '';
   let language = '';
+  let mossLanguage = 'English';
   let context = '';
   let referenceText = '';
   let instructions = '';
@@ -147,6 +148,13 @@
     demo_4_woman: 'demo_4_woman'
   };
   const exposeAllStudioPackageFamilies = new Set([
+    'maya1',
+    'gigaam_asr',
+    'samsone',
+    'sam_audio',
+    'tone_color_vc',
+    'moss_ttsd',
+    'moss_voicegen',
     'canary_asr',
     'cohere_asr',
     'moss_transcribe_diarize',
@@ -211,8 +219,11 @@
     return translate(`workflow.${translationId}`, {}, fallback);
   }
 
-  function localizedTaskLabel(task: string | undefined, translate = tr) {
+  function localizedTaskLabel(task: string | undefined, translate = tr, entry?: CatalogEntry) {
     if (!task) return translate('studio.title');
+    if (entry && (entry.workflow || workflowForEntry(entry) === 'enhancement')) {
+      return workflowLabel(workflowForEntry(entry), task, translate);
+    }
     return translate(`task.${task}`, {}, taskLabels[task] || task);
   }
 
@@ -276,8 +287,9 @@
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
     { id: 'music', label: 'Music / video generation', filterLabel: 'Music / video generation', tasks: ['gen'] },
     { id: 'conversion', label: 'Voice conversion', filterLabel: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
-    { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep'] },
-    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi'] },
+    { id: 'enhancement', label: 'Enhancement / denoising', filterLabel: 'Enhancement / denoising', tasks: ['s2s'] },
+    { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep', 's2s'] },
+    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi', 'asr'] },
     { id: 'design', label: 'Voice design', filterLabel: 'Voice design', tasks: ['vdes'] }
   ] as const;
 
@@ -290,6 +302,10 @@
   }
 
   const familyLabels: Record<string, string> = {
+    gigaam_asr: 'GigaAM ASR',
+    samsone: 'SAMSONE',
+    sam_audio: 'SAM Audio',
+    builtin_audio_utils: 'Audio utilities',
     qwen3_tts: 'Qwen3-TTS',
     irodori_tts: 'Irodori-TTS',
     chatterbox: 'Chatterbox',
@@ -422,13 +438,12 @@
   $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
   $: workflowModels = activeCatalog
-    .filter((entry) => activeWorkflowSpec.tasks.some((task) => task === entry.task))
+    .filter((entry) => workflowForEntry(entry) === activeWorkflow)
     .sort((left, right) => compareModelNames(left.display_name, right.display_name));
   $: filteredModelGroups = modelGroups.map((group) => ({
     ...group,
     entries: group.entries.filter((entry) => {
-      const workflow = workflowTabs.find((candidate) => candidate.tasks.some((task) => task === entry.task));
-      return Boolean(workflow && modelWorkflowFilters.includes(workflow.id));
+      return modelWorkflowFilters.includes(workflowForEntry(entry));
     })
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
@@ -446,7 +461,7 @@
     selected?.family === 'midashenglm_gen';
   $: supportsTextOnlyTts = (
     selected?.family === 'breeze_tts' ||
-    selected?.family === 'chatterbox_turbo'
+    selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1'
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit || selected?.family === 'liveavatar' ||
@@ -456,11 +471,11 @@
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
     (selected?.task === 'tts' && !['supertonic'].includes(selected?.family) && !supportsTextOnlyTts);
-  $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
+  $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice' || selected?.family === 'moss_ttsd';
   $: usesBuiltInVoiceSelector = Boolean(selected?.builtin_voices?.length);
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
-  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task) && selected?.family !== 'auk';
+  $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task) && !['auk', 'maya1', 'moss_ttsd'].includes(selected?.family);
   $: referenceVoiceRequired = !(allowsQuickStartVoice && quickStartVoice) && (
     (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') || isQwenBase);
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
@@ -481,7 +496,7 @@
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
-    !['apollo', 'universr'].includes(selected?.family) &&
+    !['apollo', 'universr', 'builtin_audio_utils'].includes(selected?.family) &&
     !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming', 'confucius4_r2t2'].includes(selected?.family);
@@ -798,8 +813,10 @@
     return selectableModelIds.has(entry.id);
   }
 
-  function workflowForTask(task: string | undefined): WorkflowId {
-    return (workflowTabs.find((workflow) => workflow.tasks.some((candidate) => candidate === task))?.id || 'tts') as WorkflowId;
+  function workflowForEntry(entry: CatalogEntry): WorkflowId {
+    if (entry.workflow) return entry.workflow as WorkflowId;
+    if (['apollo', 'universr', 'audiosr'].includes(entry.family)) return 'enhancement';
+    return (workflowTabs.find((workflow) => workflow.tasks.some((candidate) => candidate === entry.task))?.id || 'tts') as WorkflowId;
   }
 
   function installButtonLabel(
@@ -1051,7 +1068,7 @@
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
     const hidesDurationSec = selected?.family === 'controlfoley' || selected?.family === 'midashenglm_gen';
     paramSpecs = byId.filter((spec) =>
-      !(selected?.family === 'vibevoice' && spec.name === 'voice_samples') &&
+      !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
@@ -1077,7 +1094,7 @@
       text = '';
       lyrics = '';
       ensureYue2DefaultLyrics();
-    } else if (selected?.family === 'liveavatar') {
+    } else if (['liveavatar', 'moss_ttsd', 'sam_audio'].includes(selected?.family)) {
       text = selected.default_text || '';
     } else if (!text.trim() && selected?.default_text) {
       text = selected.default_text;
@@ -1103,7 +1120,7 @@
     }
     selectedId = next.id;
     selected = next;
-    activeWorkflow = workflowForTask(next.task);
+    activeWorkflow = workflowForEntry(next);
     workflowSelections = { ...workflowSelections, [activeWorkflow]: next.id };
     modelPath = next.path;
     installed = true;
@@ -1151,7 +1168,7 @@
     selected = next;
     quickStartVoice = '';
     configuredVoices = [];
-    activeWorkflow = workflowForTask(next.task);
+    activeWorkflow = workflowForEntry(next);
     workflowSelections = { ...workflowSelections, [activeWorkflow]: id };
     modelPath = selectedModelPath(next);
     chunkBudget = defaultChunkBudget(next.family);
@@ -1165,15 +1182,15 @@
     const workflow = workflowTabs.find((entry) => entry.id === id);
     if (!workflow) return;
     activeWorkflow = id;
-    if (selectedId && workflow.tasks.some((task) => task === selected?.task)) return;
+    if (selectedId && workflowForEntry(selected) === id) return;
 
     const rememberedId = workflowSelections[id];
     const remembered = rememberedId
       ? activeCatalog.find((entry) => entry.id === rememberedId &&
-          workflow.tasks.some((task) => task === entry.task) && entrySelectable(entry))
+          workflowForEntry(entry) === id && entrySelectable(entry))
       : undefined;
     const next = remembered || activeCatalog.find((entry) =>
-      workflow.tasks.some((task) => task === entry.task) && entrySelectable(entry));
+      workflowForEntry(entry) === id && entrySelectable(entry));
     if (next) {
       chooseModel(next.id);
       return;
@@ -1299,6 +1316,13 @@
   }
 
   async function vibeVoiceSamplePaths(): Promise<string | undefined> {
+    if (selected.family === 'moss_ttsd') {
+      const last = vibeVoiceSpeakerFiles.map(Boolean).lastIndexOf(true);
+      if (last < 0) return undefined;
+      const paths = await Promise.all(vibeVoiceSpeakerFiles.slice(0, Math.max(2, last + 1))
+        .map(async (file) => file ? (await stagedPath(file) || '') : ''));
+      return paths.join(',');
+    }
     const firstEmpty = vibeVoiceSpeakerFiles.findIndex((file) => !file);
     const hasLaterFile = firstEmpty >= 0 && vibeVoiceSpeakerFiles.slice(firstEmpty + 1).some(Boolean);
     if (hasLaterFile) {
@@ -1720,7 +1744,7 @@
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
         const effectiveChunkBudget = Math.max(40, chunkBudget);
         if (selected.family === 'voxcpm2') options.text_chunk_size = effectiveChunkBudget;
-        const chunks = longText && selected.task !== 'vdes'
+        const chunks = longText && selected.task !== 'vdes' && selected.family !== 'moss_ttsd'
           ? splitTtsChunks(text, effectiveChunkBudget)
           : [text];
         const audioChunks: Blob[] = [];
@@ -1732,7 +1756,7 @@
           const body: Record<string, unknown> = {
             model: selected.id,
             input: chunks[index],
-            language,
+            language: ['moss_ttsd', 'moss_voicegen'].includes(selected.family) ? mossLanguage : language,
             seed: chunkSeed(resolvedSeed, index),
             options
           };
@@ -2129,7 +2153,7 @@
     selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
     quickStartVoice = '';
     configuredVoices = [];
-    activeWorkflow = workflowForTask(selected.task);
+    activeWorkflow = workflowForEntry(selected);
     if (selectedId) workflowSelections = { ...workflowSelections, [activeWorkflow]: selectedId };
     resetParams();
     await refresh();
@@ -2229,7 +2253,7 @@
         <button class:active={activeWorkflow === workflow.id}
           on:click={() => chooseWorkflow(workflow.id)}>
           {workflowLabel(workflow.id, workflow.label, tr)}
-          <small>{activeCatalog.filter((entry) => workflow.tasks.some((task) => task === entry.task)).length}</small>
+          <small>{activeCatalog.filter((entry) => workflowForEntry(entry) === workflow.id).length}</small>
         </button>
       {/each}
     </nav>
@@ -2237,8 +2261,8 @@
     <section class="hero">
       <div>
         <p class="eyebrow">{tr('studio.eyebrow')}</p>
-        <h1>{selectedId ? localizedTaskLabel(selected?.task, tr) : tr('studio.title')}</h1>
-        <p>{tr(`studio.subtitle.${activeWorkflow}`)}</p>
+        <h1>{selectedId ? localizedTaskLabel(selected?.task, tr, selected) : tr('studio.title')}</h1>
+        <p>{tr(`studio.subtitle.${activeWorkflow === 'conversion' ? 'vc' : activeWorkflow === 'separation' ? 'sep' : activeWorkflow}`)}</p>
       </div>
       <div class="hero-stat">
         <span>{tr('studio.model')}</span>
@@ -2274,6 +2298,12 @@
           <span>{selectedId ? tr('studio.estimatedVram', { value: selected?.min_vram_gb || '?' }) : tr('studio.vram')}</span>
         </div>
 
+        {#if selected.family === 'builtin_audio_utils' && server?.ui_management}
+          <label for="utility-weights">Weights path on server</label>
+          <input id="utility-weights" bind:value={modelPath} on:change={inspectPath} disabled={isLoaded || loadingModel || running} />
+          <a class="utility-weights-link" href={selected.weights_url} target="_blank" rel="noreferrer">Download SafeTensors weights</a>
+        {/if}
+
         {#if selectedId && (selected.install_packages || []).length && !replacesGenericControls.packageButtons}
           <div class="studio-package-buttons" aria-label="Model format">
             {#each studioPackageSlots(selected) as slot}
@@ -2296,7 +2326,7 @@
             title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
             on:click={toggleSingleModel}>
             {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
-              loadingModel ? tr('studio.working') : isLoaded ? tr('studio.bundledLoaded') : tr('studio.load')}
+              loadingModel ? tr('studio.working') : isLoaded ? tr(selected.family === 'builtin_audio_utils' ? 'studio.unload' : 'studio.bundledLoaded') : tr('studio.load')}
           </button>
         {/if}
 
@@ -2318,7 +2348,7 @@
             placeholder={selected.task === 'gen' ? tr('request.soundPlaceholder') : tr('request.textPlaceholder')}></textarea>
         {/if}
 
-        {#if ['tts', 'clon'].includes(selected.task)}
+        {#if ['tts', 'clon'].includes(selected.task) && selected.family !== 'moss_ttsd'}
           <div class="long-text-row">
             <label class="toggle">
               <input type="checkbox" bind:checked={longText} />
@@ -2376,7 +2406,7 @@
           {/if}
         {/if}
 
-        {#if selected.task === 'asr'}
+        {#if selected.task === 'asr' && selected.family !== 'samsone'}
           <label for="context">{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
           <textarea id="context" rows="2" bind:value={context}></textarea>
         {/if}
@@ -2388,10 +2418,12 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize'].includes(selected.family)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1'].includes(selected.family)}
             <div>
               <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
-              {#if asrLanguages[selected.family]}
+              {#if ['moss_ttsd', 'moss_voicegen'].includes(selected.family)}
+                <input id="language" bind:value={mossLanguage} placeholder="English" />
+              {:else if asrLanguages[selected.family]}
                 <select id="language" bind:value={language}>
                   {#each asrLanguages[selected.family] as code}<option value={code}>{code}</option>{/each}
                 </select>
@@ -2400,7 +2432,7 @@
               {/if}
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && selected.family !== 'apollo'}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils'].includes(selected.family)}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
@@ -2589,6 +2621,11 @@
                 </div>
               {/each}
             </div>
+            {#if selected.family === 'moss_ttsd'}
+              <label for="dialogue-reference">Reference transcript</label>
+              <textarea id="dialogue-reference" rows="2" bind:value={referenceText}
+                placeholder="[S1] Words spoken in Speaker 1's reference. [S2] Words spoken in Speaker 2's reference."></textarea>
+            {/if}
           </div>
         {/if}
 
@@ -2756,9 +2793,9 @@
           class:selected={group.entries.some((entry) => entry.id === selectedId)}>
           <div class="model-icon">{group.entries[0].task.toUpperCase()}</div>
           <div class="model-copy family-copy">
-            <span>{group.entries.length} {group.entries.length === 1 ? tr('models.model') : tr('models.variants')}</span>
+            <span>{group.entries.length} {group.family === 'builtin_audio_utils' ? tr('models.tools') : group.entries.length === 1 ? tr('models.model') : tr('models.variants')}</span>
             <h3>{group.label}</h3>
-            <p>{group.entries.map((entry) => localizedTaskLabel(entry.task, tr)).filter((value, index, all) => all.indexOf(value) === index).join(' · ')}</p>
+            <p>{group.entries.map((entry) => localizedTaskLabel(entry.task, tr, entry)).filter((value, index, all) => all.indexOf(value) === index).join(' · ')}</p>
           </div>
           <div class="model-variant-list">
             {#each group.entries as entry}
@@ -2767,7 +2804,7 @@
               <section class="model-variant" class:selected-variant={entry.id === selectedId}>
                 <div class="variant-copy">
                   <strong>{entry.display_name}</strong>
-                  <span>{localizedTaskLabel(entry.task, tr)} · VRAM ~{entry.min_vram_gb || '?'} GB</span>
+                  <span>{localizedTaskLabel(entry.task, tr, entry)} · VRAM ~{entry.min_vram_gb || '?'} GB</span>
                 </div>
                 <div class="model-actions">
                   {#if packageChoices.length}
@@ -2837,6 +2874,8 @@
                         </div>
                       </div>
                     {/if}
+                  {:else if entry.weights_url}
+                    <a class="utility-weights-link" href={entry.weights_url} target="_blank" rel="noreferrer">Download SafeTensors weights</a>
                   {:else if (entry.install_packages || []).length}
                     <div class="shared-package-note">{tr('models.sharedPackage', { name: group.label })}</div>
                   {/if}
