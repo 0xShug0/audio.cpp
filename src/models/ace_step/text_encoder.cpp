@@ -13,6 +13,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
+#include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
@@ -357,13 +358,10 @@ public:
         if (backend_ != nullptr && embedding_graph_ != nullptr) {
             engine::core::release_backend_graph_resources(backend_, embedding_graph_);
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        graph_allocator_.reset();
         if (embedding_buffer_ != nullptr) {
             ggml_backend_buffer_free(embedding_buffer_);
         }
-        buffer_ = nullptr;
         embedding_buffer_ = nullptr;
         ctx_.reset();
         embedding_ctx_.reset();
@@ -448,10 +446,7 @@ private:
         if (backend_ != nullptr && graph_ != nullptr) {
             engine::core::release_backend_graph_resources(backend_, graph_);
         }
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-            buffer_ = nullptr;
-        }
+        graph_allocator_.reset();
         ctx_.reset();
         input_ids_ = nullptr;
         positions_ = nullptr;
@@ -488,10 +483,18 @@ private:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-        if (buffer_ == nullptr) {
+        // Inputs survive every execution; intermediate layer activations can
+        // reuse storage after their last consumer. Weights are externally owned.
+        ggml_set_input(input_ids_);
+        ggml_set_input(positions_);
+        // Positions are uploaded only at construction, unlike request tokens.
+        ggml_set_output(positions_);
+        graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+        if (!graph_allocator_ || !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
             throw std::runtime_error("ACE-Step text encoder backend buffer allocation failed");
         }
+        engine::debug::trace_log_scalar("ace_step.text_encoder.graph_bytes",
+            static_cast<int64_t>(ggml_gallocr_get_buffer_size(graph_allocator_.get(), 0)));
 
         std::vector<int32_t> position_values(static_cast<size_t>(encode_capacity_), 0);
         for (int64_t i = 0; i < encode_capacity_; ++i) {
@@ -511,7 +514,7 @@ private:
     mutable core::TensorValue input_ids_value_;
     mutable ggml_tensor * output_ = nullptr;
     mutable ggml_cgraph * graph_ = nullptr;
-    mutable ggml_backend_buffer_t buffer_ = nullptr;
+    mutable std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
     mutable int64_t encode_capacity_ = 0;
     mutable std::unique_ptr<ggml_context, GgmlContextDeleter> embedding_ctx_;
     mutable ggml_tensor * embedding_input_ids_ = nullptr;

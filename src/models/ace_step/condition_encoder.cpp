@@ -12,11 +12,13 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "helper_utils.h"
 
+#include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -399,9 +401,7 @@ public:
             if (backend_ != nullptr && graph_ != nullptr) {
                 engine::core::release_backend_graph_resources(backend_, graph_);
             }
-            if (buffer_ != nullptr) {
-                ggml_backend_buffer_free(buffer_);
-            }
+            graph_allocator_.reset();
         }
 
         bool can_run(int64_t tokens) const noexcept {
@@ -491,10 +491,22 @@ public:
             ggml_set_output(output_);
             graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
             ggml_build_forward_expand(graph_, output_);
-            buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-            if (buffer_ == nullptr) {
+            // Keep uploaded inputs/constants live across warm executions.
+            // Include the sliding mask even for configurations that do not use it.
+            for (auto * input : {input_.tensor, positions_, sliding_mask_value_.tensor,
+                                 padding_mask_value_.tensor}) {
+                ggml_set_input(input);
+                ggml_build_forward_expand(graph_, input);
+            }
+            // These constants are uploaded once and reused by later requests.
+            ggml_set_output(positions_);
+            ggml_set_output(sliding_mask_value_.tensor);
+            graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
+            if (!graph_allocator_ || !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
                 throw std::runtime_error("ACE-Step lyric encoder backend buffer allocation failed");
             }
+            engine::debug::trace_log_scalar("ace_step.lyric_encoder.graph_bytes",
+                static_cast<int64_t>(ggml_gallocr_get_buffer_size(graph_allocator_.get(), 0)));
 
             std::vector<int32_t> position_values(static_cast<size_t>(tokens_), 0);
             for (int64_t i = 0; i < tokens_; ++i) {
@@ -530,7 +542,7 @@ public:
         core::TensorValue padding_mask_value_;
         ggml_tensor * output_ = nullptr;
         ggml_cgraph * graph_ = nullptr;
-        ggml_backend_buffer_t buffer_ = nullptr;
+        std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
     };
 
     class TimbreEncoderGraph {
@@ -560,6 +572,10 @@ public:
 
         bool can_run(int64_t frames) const noexcept {
             return frames_ >= frames;
+        }
+
+        bool has_exact_capacity(int64_t frames) const noexcept {
+            return frames_ == frames;
         }
 
         AceStepTextConditioning run_one(const std::vector<float> & packed_reference, int64_t frames) const {
@@ -795,6 +811,7 @@ public:
         text_projector_.reset();
         lyric_encoder_.reset();
         timbre_encoder_.reset();
+        timbre_frame_capacity_ = 0;
     }
 
 private:
@@ -839,19 +856,36 @@ private:
         if (static_cast<int64_t>(packed_values.size()) != refer_audio_count * refer_audio_frames * config.timbre_hidden_dim) {
             throw std::runtime_error("ACE-Step timbre encoder packed values shape mismatch");
         }
-        if (!timbre_encoder_ || !timbre_encoder_->can_run(refer_audio_frames)) {
+        for (int32_t order : refer_audio_order_mask) {
+            if (order != 0) {
+                throw std::runtime_error("ACE-Step timbre encoder currently supports only single-batch reference ordering");
+            }
+        }
+        // A session owns immutable weights. Reuse only an identical reference
+        // computed at this exact frame capacity, not one from a larger padded
+        // graph. Keep one bounded CPU entry when memory-saver drops GPU graphs.
+        const int64_t capacity = std::max(timbre_frame_capacity_, refer_audio_frames);
+        if (refer_audio_count == 1 && capacity == refer_audio_frames && cached_timbre_frames_ == refer_audio_frames &&
+            cached_timbre_reference_.size() == packed_values.size() &&
+            std::memcmp(cached_timbre_reference_.data(), packed_values.data(),
+                        packed_values.size() * sizeof(float)) == 0) {
+            engine::debug::trace_log_scalar("ace_step.timbre_encoder.cache_hit", 1);
+            // Preserve the capacity that an uncached execution would create.
+            // A later, shorter reference must use the same padded graph shape.
+            timbre_frame_capacity_ = capacity;
+            return cached_timbre_;
+        }
+        engine::debug::trace_log_scalar("ace_step.timbre_encoder.cache_hit", 0);
+        if (!timbre_encoder_ || !timbre_encoder_->can_run(capacity)) {
             timbre_encoder_.reset();
+            timbre_frame_capacity_ = 0;
             timbre_encoder_ = std::make_unique<TimbreEncoderGraph>(
                 backend_,
                 threads_,
                 assets_,
                 weights_,
-                refer_audio_frames);
-        }
-        for (int32_t order : refer_audio_order_mask) {
-            if (order != 0) {
-                throw std::runtime_error("ACE-Step timbre encoder currently supports only single-batch reference ordering");
-            }
+                capacity);
+            timbre_frame_capacity_ = capacity;
         }
         AceStepPackedConditioning out;
         out.batch = 1;
@@ -869,6 +903,15 @@ private:
                 encoded.values.end(),
                 out.values.begin() + static_cast<std::ptrdiff_t>(i * config.hidden_size));
         }
+        if (refer_audio_count == 1 && timbre_encoder_->has_exact_capacity(refer_audio_frames)) {
+            cached_timbre_frames_ = refer_audio_frames;
+            cached_timbre_reference_ = packed_values;
+            cached_timbre_ = out;
+        } else {
+            cached_timbre_frames_ = 0;
+            cached_timbre_reference_.clear();
+            cached_timbre_ = {};
+        }
         return out;
     }
 
@@ -879,6 +922,10 @@ private:
     mutable std::unique_ptr<TextProjectorGraph> text_projector_;
     mutable std::unique_ptr<LyricEncoderGraph> lyric_encoder_;
     mutable std::unique_ptr<TimbreEncoderGraph> timbre_encoder_;
+    mutable int64_t timbre_frame_capacity_ = 0;
+    mutable int64_t cached_timbre_frames_ = 0;
+    mutable std::vector<float> cached_timbre_reference_;
+    mutable AceStepPackedConditioning cached_timbre_;
 };
 
 AceStepConditionEncoderRuntime::AceStepConditionEncoderRuntime(

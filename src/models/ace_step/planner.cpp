@@ -1806,17 +1806,33 @@ public:
         ggml_set_output(logits_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_);
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), runtime_->backend());
-        if (buffer_ == nullptr) {
+        for (auto * input : {token_ids_, positions_, attention_mask_, query_mask_}) {
+            ggml_set_input(input);
+        }
+        // The CPU reads every layer's KV outputs after graph execution. They
+        // must remain live even after the attention nodes have consumed them.
+        for (size_t layer = 0; layer < keys_.size(); ++layer) {
+            for (auto * output : {keys_[layer], values_[layer]}) {
+                ggml_set_output(output);
+                // A view's output flag alone does not retain its backing storage.
+                if (output->view_src != nullptr) {
+                    ggml_set_output(output->view_src);
+                }
+            }
+            ggml_build_forward_expand(graph_, keys_[layer]);
+            ggml_build_forward_expand(graph_, values_[layer]);
+        }
+        graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(runtime_->backend())));
+        if (!graph_allocator_ || !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
             throw std::runtime_error("failed to allocate ACE-Step planner prefill graph");
         }
+        engine::debug::trace_log_scalar("ace_step.planner.prefill.graph_bytes",
+            static_cast<int64_t>(ggml_gallocr_get_buffer_size(graph_allocator_.get(), 0)));
     }
 
     ~Qwen3PlannerPrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        graph_allocator_.reset();
     }
 
     bool can_run(const Qwen3PlannerWeightsRuntime & runtime, int64_t prompt_steps) const {
@@ -1881,7 +1897,7 @@ private:
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
 };
 
 class Qwen3PlannerDecodeGraph {

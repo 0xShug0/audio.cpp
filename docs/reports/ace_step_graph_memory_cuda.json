@@ -1,0 +1,66 @@
+[
+  {
+    "variant": "base",
+    "extra_vram_gib": [
+      2.3671875,
+      0.845703125
+    ],
+    "memory_reduction_percent": 64.27392739273927,
+    "warm_seconds": [
+      0.9903535000048578,
+      0.9179095000145026
+    ],
+    "time_reduction_percent": 7.314963797270357,
+    "exact_outputs": 8,
+    "baseline_sha256": "d8f6d40cceeb9557ea113eecb4f3b71b89925fdb9b6597b8b195cbc373a74db3",
+    "candidate_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37"
+  },
+  {
+    "variant": "turbo",
+    "extra_vram_gib": [
+      2.3671875,
+      0.845703125
+    ],
+    "memory_reduction_percent": 64.27392739273927,
+    "warm_seconds": [
+      0.9846314000315033,
+      0.9146786000346765
+    ],
+    "time_reduction_percent": 7.104465690875661,
+    "exact_outputs": 8,
+    "baseline_sha256": "d8f6d40cceeb9557ea113eecb4f3b71b89925fdb9b6597b8b195cbc373a74db3",
+    "candidate_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37"
+  },
+  {
+    "variant": "xl-turbo-q8dit",
+    "extra_vram_gib": [
+      2.375,
+      0.869140625
+    ],
+    "memory_reduction_percent": 63.4046052631579,
+    "warm_seconds": [
+      1.15182690002257,
+      1.0860365999978967
+    ],
+    "time_reduction_percent": 5.7118218044208025,
+    "exact_outputs": 8,
+    "baseline_sha256": "d8f6d40cceeb9557ea113eecb4f3b71b89925fdb9b6597b8b195cbc373a74db3",
+    "candidate_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37"
+  },
+  {
+    "variant": "xl-sft-q8dit",
+    "extra_vram_gib": [
+      2.375,
+      0.869140625
+    ],
+    "memory_reduction_percent": 63.4046052631579,
+    "warm_seconds": [
+      1.156766400032211,
+      1.0890130000188947
+    ],
+    "time_reduction_percent": 5.857137621859499,
+    "exact_outputs": 8,
+    "baseline_sha256": "d8f6d40cceeb9557ea113eecb4f3b71b89925fdb9b6597b8b195cbc373a74db3",
+    "candidate_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37"
+  }
+]
