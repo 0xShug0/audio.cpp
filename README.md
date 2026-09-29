@@ -6,11 +6,18 @@
 
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
-Huggingface main repo: https://huggingface.co/audio-cpp/audio.cpp-gguf
+Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio models** in the [Audio Model Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas) to see how they're built, what they share, and where they differ, whether you're learning or building your own.
 
-ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gguf
+[![Hugging Face](https://img.shields.io/badge/Hugging_Face-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/audio-cpp/audio.cpp-gguf) [![ModelScope](https://img.shields.io/badge/ModelScope-624AFF)](https://www.modelscope.cn/models/HereIsMark/audio.cpp-gguf) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/0xShug0/audio.cpp/blob/main/Notebooks/colab_audio_cpp.ipynb) [![Open Architecture Atlas](https://img.shields.io/badge/Open-Architecture_Atlas-007e70?logo=huggingface&logoColor=white)](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/0xShug0/audio.cpp/blob/main/Notebooks/colab_audio_cpp.ipynb)
+<p align="center">
+  <a href="assets/figure/technology_cloud_v1.png">
+    <img src="assets/figure/technology_cloud_v1.png" alt="Core technologies used by audio.cpp models" width="36%" align="top">
+  </a>
+  <a href="https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas">
+    <img src="assets/figure/architecture_atlas.png" alt="Interactive Audio Model Architecture Atlas" width="61.35%" align="top">
+  </a>
+</p>
 
 > [!IMPORTANT]
 >
