@@ -1,4 +1,4 @@
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"

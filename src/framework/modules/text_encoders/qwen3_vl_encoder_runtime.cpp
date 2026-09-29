@@ -1,4 +1,4 @@
-#include "engine/framework/modules/transformers/qwen3_vl_encoder_runtime.h"
+#include "engine/framework/modules/text_encoders/qwen3_vl_encoder_runtime.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"

@@ -14,7 +14,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/kv_cache.h"
-#include "engine/framework/sampling/decode_modules.h"
+#include "engine/framework/sampling/greedy_decode.h"
 
 
 #include <ggml-backend.h>

@@ -3,7 +3,7 @@
 #include "engine/models/seed_vc/assets.h"
 
 #include "engine/framework/modules/vocoders/bigvgan_vocoder.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/vocoders/hift_vocoder.h"

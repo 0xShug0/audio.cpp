@@ -8,7 +8,7 @@
 #include "engine/community_models/minimax_h3/video_vae_decoder.h"
 
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen3_vl_encoder_runtime.h"
+#include "engine/framework/modules/text_encoders/qwen3_vl_encoder_runtime.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <algorithm>

@@ -1,6 +1,6 @@
 #include "engine/community_models/piper_tts/frontend.h"
 
-#include "engine/framework/audio/espeak_phonemizer.h"
+#include "engine/framework/text/espeak_phonemizer.h"
 
 #include <algorithm>
 #include <cctype>

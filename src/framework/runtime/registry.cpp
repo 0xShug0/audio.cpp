@@ -1,7 +1,7 @@
 #include "engine/framework/runtime/registry.h"
 
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/audio/utility_api.h"
+#include "engine/framework/audio/utilities/utility_api.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/config.h"
 #include "engine/framework/io/filesystem.h"

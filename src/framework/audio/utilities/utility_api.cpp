@@ -1,13 +1,13 @@
-#include "engine/framework/audio/utility_api.h"
+#include "engine/framework/audio/utilities/utility_api.h"
 
 #include "engine/framework/audio/conversion.h"
-#include "engine/framework/audio/deepfilternet2.h"
-#include "engine/framework/audio/flashsr.h"
-#include "engine/framework/audio/gtcrn.h"
-#include "engine/framework/audio/rnnoise.h"
+#include "engine/framework/audio/utilities/deepfilternet2.h"
+#include "engine/framework/audio/utilities/flashsr.h"
+#include "engine/framework/audio/utilities/gtcrn.h"
+#include "engine/framework/audio/utilities/rnnoise.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/audio/wav_writer.h"
-#include "engine/framework/audio/zipenhancer.h"
+#include "engine/framework/audio/utilities/zipenhancer.h"
 
 #include <algorithm>
 #include <cctype>

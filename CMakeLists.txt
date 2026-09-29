@@ -457,8 +457,8 @@ add_library(engine_core OBJECT
     src/framework/runtime/workspace.cpp
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
-    src/framework/audio/espeak_phonemizer.cpp
-    src/framework/audio/espeak_data.cpp
+    src/framework/text/espeak_phonemizer.cpp
+    src/framework/text/espeak_data.cpp
     src/framework/io/config.cpp
     src/framework/io/json.cpp
     src/framework/io/text.cpp
@@ -498,9 +498,9 @@ add_library(engine_core OBJECT
     src/framework/modules/zipformer_modules.cpp
     src/framework/modules/speech_encoders/whisper_embedding.cpp
     src/framework/modules/speech_encoders/whisper_frontend.cpp
-    src/framework/modules/speech_encoders/campplus_encoder.cpp
+    src/framework/modules/speaker_encoders/campplus_encoder.cpp
     src/framework/modules/speech_encoders/s3_tokenizer.cpp
-    src/framework/modules/codecs/nemo_nano_codec.cpp
+    src/framework/codecs/nemo_nano_codec_runtime.cpp
     src/framework/codecs/wan_video_vae_runtime.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
@@ -515,7 +515,7 @@ add_library(engine_core OBJECT
     src/framework/modules/recurrent_modules.cpp
     src/framework/modules/streaming_conv_modules.cpp
     src/framework/modules/attention/positional_encoding.cpp
-    src/framework/modules/attention/feed_forward.cpp
+    src/framework/modules/feed_forward_modules.cpp
     src/framework/modules/attention/self_attention.cpp
     src/framework/modules/attention/longformer_attention.cpp
     src/framework/modules/attention/longformer_attention_gpu.cpp
@@ -528,12 +528,12 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/decoder.cpp
     src/framework/modules/transformers/causal_decoder.cpp
     src/framework/modules/transformers/causal_decoder_runtime.cpp
-    src/framework/modules/transformers/qwen3_vl_encoder_runtime.cpp
+    src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
-    src/framework/modules/attention/transformer_blocks.cpp
+    src/framework/modules/transformers/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
     src/framework/modules/conformer_modules.cpp
-    src/framework/modules/flow_sampler_runtime.cpp
+    src/framework/sampling/flow_sampler_runtime.cpp
     src/framework/modules/predictor_modules.cpp
     src/framework/modules/positional_modules.cpp
     src/framework/modules/text_encoders/t5_base_encoder.cpp
@@ -550,25 +550,26 @@ add_library(engine_core OBJECT
     src/framework/audio/fft.cpp
     src/framework/audio/kaldi_fbank.cpp
     src/framework/audio/activity.cpp
+    src/framework/audio/activity_graph.cpp
     src/framework/audio/chunking.cpp
     src/framework/audio/conversion.cpp
-    src/framework/audio/deepfilternet2.cpp
+    src/framework/audio/utilities/deepfilternet2.cpp
     src/framework/audio/dsp.cpp
     src/framework/audio/nemo_mel_frontend.cpp
     src/framework/audio/mel_spectrogram_frontend.cpp
     src/framework/audio/reference_audio_frontend.cpp
-    src/framework/audio/flashsr.cpp
-    src/framework/audio/gtcrn.cpp
+    src/framework/audio/utilities/flashsr.cpp
+    src/framework/audio/utilities/gtcrn.cpp
     src/framework/audio/istft_graph.cpp
     src/framework/audio/mixing.cpp
     src/framework/audio/resampling.cpp
     src/framework/audio/output.cpp
-    src/framework/audio/rnnoise.cpp
-    src/framework/audio/utility_api.cpp
+    src/framework/audio/utilities/rnnoise.cpp
+    src/framework/audio/utilities/utility_api.cpp
     src/framework/audio/waveform_ops.cpp
     src/framework/audio/wav_reader.cpp
     src/framework/audio/wav_writer.cpp
-    src/framework/audio/zipenhancer.cpp
+    src/framework/audio/utilities/zipenhancer.cpp
     src/framework/runtime/flow_kv_cache.cpp
     src/framework/modules/speaker_encoders/ecapa_tdnn_runtime.cpp
     src/framework/modules/speaker_encoders/titanet_runtime.cpp
@@ -587,7 +588,7 @@ add_library(engine_core OBJECT
     src/framework/conditioners/open_clip_conditioner_runtime.cpp
     src/framework/conditioners/synchformer_conditioner_runtime.cpp
     src/models/controlfoley/flow_denoiser.cpp
-    src/framework/sampling/decode_modules.cpp
+    src/framework/sampling/greedy_decode.cpp
     src/framework/sampling/diffusion_math.cpp
     src/framework/sampling/hf_sampler.cpp
     src/framework/sampling/noise.cpp

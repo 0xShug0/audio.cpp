@@ -49,7 +49,7 @@ if(UNIX)
     target_link_libraries(engine_runtime PRIVATE m)
 endif()
 # Data stays separate and relocatable. These are not executable model weights.
-add_executable(audiocpp_espeak_pack tools/espeak_data_pack.cpp src/framework/audio/espeak_data.cpp)
+add_executable(audiocpp_espeak_pack tools/espeak_data_pack.cpp src/framework/text/espeak_data.cpp)
 target_include_directories(audiocpp_espeak_pack PRIVATE "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(audiocpp_espeak_pack PRIVATE ggml-base)
 set(_espeak_package "${_espeak_root}/espeak-ng-data.bin")

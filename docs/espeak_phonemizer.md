@@ -92,7 +92,7 @@ paths are provided but have not been validated locally.
 ## Model integration
 
 ```cpp
-#include "engine/framework/audio/espeak_phonemizer.h"
+#include "engine/framework/text/espeak_phonemizer.h"
 
 engine::audio::EspeakPhonemizer phonemizer(
     library_path,          // empty: static engine if enabled, else library search

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/model_spec/metadata.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/dots_tts/assets.h"

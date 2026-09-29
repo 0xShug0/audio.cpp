@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/flow_sampler_runtime.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/optimizations/fast_projection_modules.h"
 #include "engine/framework/modules/positional_modules.h"

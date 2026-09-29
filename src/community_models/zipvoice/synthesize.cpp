@@ -9,7 +9,7 @@
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/audio/espeak_phonemizer.h"
+#include "engine/framework/text/espeak_phonemizer.h"
 #include "engine/framework/audio/conversion.h"
 
 #include "ggml-alloc.h"

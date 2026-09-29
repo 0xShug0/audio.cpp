@@ -1,7 +1,7 @@
 #include "engine/models/universr/runtime.h"
 
 #include "engine/models/universr/network.h"
-#include "engine/framework/modules/flow_sampler_runtime.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/primitive_modules.h"

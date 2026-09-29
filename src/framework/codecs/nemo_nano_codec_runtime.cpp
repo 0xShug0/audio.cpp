@@ -1,4 +1,4 @@
-#include "engine/framework/modules/codecs/nemo_nano_codec.h"
+#include "engine/framework/codecs/nemo_nano_codec_runtime.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"

@@ -1,5 +1,5 @@
-#include "engine/framework/audio/espeak_phonemizer.h"
-#include "engine/framework/audio/espeak_data.h"
+#include "engine/framework/text/espeak_phonemizer.h"
+#include "engine/framework/text/espeak_data.h"
 #include "engine/framework/io/dynamic_library.h"
 
 #include <memory>

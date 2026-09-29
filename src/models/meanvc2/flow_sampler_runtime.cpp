@@ -6,7 +6,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/flow_sampler_runtime.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"

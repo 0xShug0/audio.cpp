@@ -1,4 +1,4 @@
-#include "engine/framework/audio/espeak_data.h"
+#include "engine/framework/text/espeak_data.h"
 #include "gguf.h"
 #include <algorithm>
 #include <cstdlib>

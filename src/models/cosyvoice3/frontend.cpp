@@ -5,7 +5,7 @@
 #include "engine/framework/audio/kaldi_fbank.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/modules/speech_encoders/s3_tokenizer.h"
 #include "engine/framework/runtime/cache_slots.h"
 

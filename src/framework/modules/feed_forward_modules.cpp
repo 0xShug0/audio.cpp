@@ -1,4 +1,4 @@
-#include "attention_internal.h"
+#include "attention/attention_internal.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 
 namespace engine::modules {
