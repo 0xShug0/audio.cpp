@@ -35,7 +35,7 @@ This recorded table compares complete builds: upstream `bbaa20dc` without slots 
 - Final Vulkan Base/Turbo: 28/28 exact before/after response comparisons, memory saver enabled, eight repeats and six mixed-history requests per package. This includes the new cache and the allocation changes. Timing/memory from this additional run are not reported because a CPU build ran concurrently.
 - Earlier allocation-only Vulkan tests: ten exact Base/Turbo comparisons with memory saver disabled; sampled full-sequence device peak fell by 0.885/1.045 GiB respectively.
 
-Warm cache savings apply to identical references, especially memory saver mode. Cold requests compute the original timbre graph; the cache does not remove first-request timbre allocation. Without memory saver, retained graphs dominate and warm speed differences were negligible. Longer lyrics or other graphs can dominate a mixed-workload peak. CPU, Metal, Vulkan XL, editing routes, longer songs and parallel sessions have not been validated by this focused PR.
+Warm cache savings apply to identical references, especially memory saver mode. Cold requests compute the original timbre graph; the cache does not remove first-request timbre allocation. Without memory saver, retained graphs dominate and warm speed differences were negligible. Longer lyrics or other graphs can dominate a mixed-workload peak. CPU, Metal, editing routes, longer songs and parallel sessions have not been validated by this focused PR.
 
 ## Standalone PR branch validation
 
@@ -43,7 +43,7 @@ Ported only the three model changes onto upstream `ed96b730`, without the develo
 
 On Windows MSVC, configure `CMAKE_CXX_FLAGS="/utf-8 /EHsc"`: without `/utf-8`, two unrelated Unicode-literal unit tests fail; both pass with the setting. The remaining `http_live_body_test` process crash (0xc0000409) also reproduces on the unchanged upstream executable. It is not an ACE-Step inference test. Final CTest: 97 passed, four skipped (missing model assets), one failed out of 102. These targeted results do not claim a fully passing repository gate.
 
-The portable graph/cache source was also built and exercised on the existing Vulkan development branch (28 exact Base/Turbo comparisons above); the standalone PR branch itself was freshly built on CUDA.
+The portable graph/cache source was also built and exercised on the existing Vulkan development branch (28 exact Base/Turbo comparisons above); the standalone PR branch has now also been built on Vulkan and validated with both XL variants (see below).
 
 ## Reproduction
 
@@ -62,3 +62,16 @@ For Vulkan, build with CUDA off and Vulkan on, then pass `vulkan` and the NVIDIA
 Server request configuration: `backend=cuda`, `device=0`, `threads=8`, `lazy_load=true`; a single `ace_step` generation model with `session_options.ace_step.mem_saver=true`. Select XL explicitly with `load_options.ace_step.dit_model_path=acestep-v15-xl-turbo` or `acestep-v15-xl-sft`, and bf16 text/planner session weight types. Submit the caption eight times to `/v1/tasks/run` with `duration_seconds=5`, `seed=1234`, `thinking=false`, and all `use_cot_*` switches false. Compare decoded audio SHA-256 and meaningful response fields against an identical baseline sequence; exclude profiling/timing metadata. Measure warm medians separately from cold load and subtract each request's prior idle memory reading, not the GGUF file size.
 
 Raw local WAVs/traces/executables are retained under `outputs/ace-graph-memory-20260929/` and `outputs/ace-next-20260929/` in the test workspace; those large artifacts are not part of the repository. The compact recorded CUDA summary is adjacent to this document.
+
+## Follow-up: standalone XL Vulkan validation
+
+Both XL Turbo and XL SFT Q8-DiT passed **56/56 exact server comparisons** across memory saver on/off, plus **20/20 direct conditioning histories**. Both CLI/server and the conditioning probe built with Vulkan on the standalone PR branch. Controls used the same server/framework/build settings, with only the three ACE-Step model files restored to upstream `ed96b730`; candidate sources were restored byte-for-byte and rebuilt afterward.
+
+| Model | Original warm time (s) | Optimized warm time (s) | Less time | Original extra warm VRAM (GiB) | Optimized extra warm VRAM (GiB) | Less extra VRAM |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| XL Turbo Q8 DiT | 0.744 | 0.618 | 16.9% | 2.373 | 0.820 | 65.4% |
+| XL SFT Q8 DiT | 0.721 | 0.620 | 14.1% | 2.373 | 0.820 | 65.4% |
+
+Memory saver enabled, one session, RTX 3090, same supplied caption, seed 1234, five seconds, eight diffusion steps. Warm medians: requests 2-8. Extra VRAM is sampled request peak minus preceding loaded idle, not all non-weight bytes. No compilation/other GPU workload overlapped measurements. With memory saver disabled, measured warm latency fell by 3.1%/5.1%; incremental warm memory stayed unchanged, while full mixed-sequence device peaks (including weights) fell from 15.814/15.706 to 14.425 GiB. These measurements do not certify arbitrary requests or a particular smaller GPU capacity; optimized mixed-sequence peaks with memory saver on were 12.731/12.624 GiB.
+
+See [the XL Vulkan report](ace_step_xl_vulkan.md) and [compact results](ace_step_xl_vulkan.json) for the full matrix, executable hashes, probes and reproduction. Multi-slot Vulkan XL, editing routes and longer songs remain outside this validation.
