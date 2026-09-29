@@ -87,6 +87,7 @@ private:
     std::unique_ptr<EchoDiTRuntime> dit_;
     std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec_;
     int64_t reference_max_samples_ = 0;
+    bool mem_saver_ = false;
     std::vector<float> speaker_latent_;
     int64_t speaker_frames_ = 0;
     runtime::CacheSlots<EchoReferenceIdentity, EchoPreparedSpeaker, EchoReferenceIdentityEqual>

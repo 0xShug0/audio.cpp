@@ -222,10 +222,11 @@ buffers. These are regenerated at runtime rather than shipped in the GGUF.
 | `seed` | int | 0 | RNG seed for the initial latent. |
 | `reference_duration_sec` | float | 15.0 | Trim the speaker reference before encoding. Also available as a session default. |
 | `max_duration_sec` | float | — | Cap the generation window (up to 29.7215 s). Quantised down to a 46.44 ms latent frame; larger values clamp. Unset, the window is estimated per chunk. |
+| `mem_saver` | bool | false | Release Fish S1-DAC decode graph state when prior to and encode graph state after encoding reference speaker audio to reduce peak VRAM usage and steady-state VRAM usage when speakers are already cached.
 | `guidance_interval` | int | 1 | Refresh the two unconditional CFG lanes only every Nth guided step. 1 reproduces upstream exactly. See [performance notes](echo_tts_performance.md). |
 
-Session options are `echo_tts.reference_duration_sec` and
-`echo_tts.reference_cache_slots`.
+Session options are `echo_tts.reference_duration_sec`,
+`echo_tts.reference_cache_slots`, and `echo_tts.mem_saver`.
 
 ## Text format
 
