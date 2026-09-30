@@ -7,7 +7,8 @@
 //   depthformer logits, the greedy frames, and the detokenizer's head output
 //   and waveform for the reference frames;
 // - end-to-end speech through the registry, transcribed back by the ASR task,
-//   and streamed.
+//   and streamed;
+// - speech cut off at max_tokens, offline and streamed.
 //
 // --model is the directory of LiquidAI/LFM2.5-Audio-1.5B-GGUF (default
 // models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install);
@@ -17,6 +18,7 @@
 #include "engine/community_models/lfm2_audio/backbone.h"
 #include "engine/community_models/lfm2_audio/depthformer.h"
 #include "engine/community_models/lfm2_audio/detokenizer.h"
+#include "engine/community_models/lfm2_audio/session.h"
 #include "engine/community_models/lfm2_audio/tokenizer.h"
 #include "engine/community_models/lfm2_audio/tts.h"
 #include "engine/framework/core/execution_context.h"
@@ -306,6 +308,32 @@ engine::runtime::TaskResult run(engine::runtime::IVoiceTaskSession & session, co
     return offline->run(request);
 }
 
+// What `call` writes to std::cerr, where the family's warnings go.
+std::string stderr_of(const std::function<void()> & call) {
+    std::ostringstream captured;
+    auto * const previous = std::cerr.rdbuf(captured.rdbuf());
+    try {
+        call();
+    } catch (...) {
+        std::cerr.rdbuf(previous);
+        throw;
+    }
+
+    std::cerr.rdbuf(previous);
+    return captured.str();
+}
+
+double relative_rms(const std::vector<float> & actual, const std::vector<float> & expected, size_t count) {
+    double difference = 0.0;
+    double energy = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        difference += (static_cast<double>(actual[i]) - expected[i]) * (static_cast<double>(actual[i]) - expected[i]);
+        energy += static_cast<double>(expected[i]) * expected[i];
+    }
+
+    return std::sqrt(difference / energy);
+}
+
 // Speech through the registry, greedy and sampled, and back through ASR.
 void check_round_trip(
     const std::filesystem::path & model_dir,
@@ -321,6 +349,7 @@ void check_round_trip(
     auto model = registry.load(load_request);
     auto tts = open_session(*model, engine::runtime::VoiceTaskKind::Tts, model_gguf, backend);
     auto asr = open_session(*model, engine::runtime::VoiceTaskKind::Asr, model_gguf, backend);
+    const auto & tts_session = dynamic_cast<const lfm2::Lfm2AudioTtsSession &>(*tts);
 
     struct Sampling {
         const char * label;
@@ -358,7 +387,35 @@ void check_round_trip(
         const auto text = run(*asr, transcribe);
         const std::string actual = text.text_output.has_value() ? text.text_output->text : "<no transcript>";
         checks.expect(actual == kText, std::string(sampling.label) + " speech transcribes back", "got \"" + actual + "\"");
+        checks.expect(!tts_session.reached_max_tokens(), std::string(sampling.label) + " speech ends before max_tokens");
     }
+
+    // A turn that reaches max_tokens keeps the speech it has, as liquid-audio
+    // keeps what it generated at max_new_tokens, with a warning, and the next
+    // text chunk still gets its turn. The greedy speech runs to 32 frames of
+    // 1920 samples, so max_tokens=10 keeps up to 10 of them.
+    auto cut_request = speech_request("0");
+    cut_request.options["max_tokens"] = "10";
+    engine::runtime::TaskResult cut;
+    const auto cut_warnings = stderr_of([&] { cut = run(*tts, cut_request); });
+    const std::vector<float> cut_speech = cut.audio_output.has_value() ? cut.audio_output->samples : std::vector<float>();
+    checks.expect(!cut_speech.empty() && cut_speech.size() <= 10 * 1920 && cut_speech.size() % 1920 == 0,
+        "max_tokens=10 keeps up to 10 frames of speech", std::to_string(cut_speech.size()) + " samples");
+    checks.expect(tts_session.reached_max_tokens(), "the session reports speech cut off at max_tokens");
+    checks.expect(cut_warnings.find("[warning][lfm2_audio] the speech reached max_tokens=10") != std::string::npos &&
+                      cut_warnings.find("raise max_tokens") != std::string::npos,
+        "a warning says what to raise", cut_warnings);
+
+    auto two_chunks = cut_request;
+    two_chunks.text_input->text = std::string(kText) + " " + kText;
+    two_chunks.options["text_chunk_size"] = "50";
+    two_chunks.options["max_tokens"] = "5";
+    const auto chunk_warnings = stderr_of([&] { cut = run(*tts, two_chunks); });
+    const size_t chunk_samples = cut.audio_output.has_value() ? cut.audio_output->samples.size() : 0;
+    checks.expect(chunk_samples > 5 * 1920 && chunk_samples <= 10 * 1920, "two text chunks cut at 5 frames each",
+        std::to_string(chunk_samples) + " samples");
+    checks.expect(chunk_warnings.find("text chunk 1 of 2") != std::string::npos && chunk_warnings.find("text chunk 2 of 2") != std::string::npos,
+        "each text chunk is cut on its own", chunk_warnings);
 
     const auto rejects = [&](const std::function<void(engine::runtime::TaskRequest &)> & edit, const std::string & needle, const std::string & label) {
         engine::runtime::TaskRequest request;
@@ -419,6 +476,31 @@ void check_round_trip(
             // Measured with F16: 1.2e-4 on Metal, 3e-4 to 6e-4 on CPUs, 5.7e-3 on
             // CUDA, whose kernels change with the graph size.
             checks.expect_close(std::sqrt(difference / energy), 0.0, 0.02, "streamed against offline speech, relative RMS difference");
+        }
+
+        // Cut off at max_tokens, the stream is the offline cut speech. Its
+        // frames are the first of the greedy stream's, decoded the same way,
+        // so its samples are the same but for the last 20 ms, which the ISTFT
+        // completes without the frame that came next.
+        std::vector<float> streamed_cut;
+        const auto stream_warnings = stderr_of([&] {
+            streaming->start_stream(cut_request);
+            while (auto event = streaming->next_stream_event()) {
+                if (event->audio_output.has_value()) {
+                    streamed_cut.insert(streamed_cut.end(), event->audio_output->samples.begin(), event->audio_output->samples.end());
+                }
+            }
+        });
+
+        const auto & streaming_tts = dynamic_cast<const lfm2::Lfm2AudioTtsSession &>(*streaming_session);
+        checks.expect(streaming_tts.reached_max_tokens() && stream_warnings.find("reached max_tokens=10") != std::string::npos,
+            "the cut stream warns and reports it", stream_warnings);
+        const auto cut_finished = streaming->finish_stream();
+        checks.expect(cut_finished.audio_output.has_value() && cut_finished.audio_output->samples == streamed_cut, "the cut stream's result is its events");
+        checks.expect(streamed_cut.size() == cut_speech.size(), "the cut stream has the offline cut length", std::to_string(streamed_cut.size()));
+        if (streamed_cut.size() == cut_speech.size() && streamed_cut.size() > 480 && streamed.size() >= streamed_cut.size()) {
+            checks.expect_close(relative_rms(streamed_cut, streamed, streamed_cut.size() - 480), 0.0, 1e-3,
+                "cut stream against the start of the greedy stream, relative RMS difference");
         }
     }
 }

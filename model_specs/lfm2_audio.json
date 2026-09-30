@@ -38,7 +38,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "ASR: transcript tokens per audio chunk; a transcript that reaches it is cut off there, with a warning on stderr. TTS: audio frames (80 ms each) per text chunk; a text chunk that needs more fails the request.",
+        "description": "ASR: transcript tokens per audio chunk. TTS: audio frames (80 ms each) per text chunk. A transcript or a text chunk's speech that reaches it is cut off there, with a warning on stderr.",
         "required": false,
         "min": 1,
         "default": 512

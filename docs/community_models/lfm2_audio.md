@@ -135,7 +135,9 @@ decoded as soon as the depthformer picks it: the detokenizer is causal, so a
 frame needs only the 17 frames before it, and the ISTFT releases a sample once
 no later window reaches it. Each event carries one frame (80 ms,
 `stream_frames_per_event` to change it), plus a last 20 ms event per text
-chunk; the events add up to the offline speech for the same seed.
+chunk; the events add up to the offline speech for the same seed. A text chunk
+that reaches `max_tokens` ends its speech there, streamed as offline, with the
+same warning.
 
 ```bash
 curl -N http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
@@ -164,7 +166,7 @@ the same frames.
 | Option | Task | Default | Meaning |
 |---|---|---|---|
 | `language` | both | The checkpoint's | `en` or `ja`; must match the checkpoint. |
-| `max_tokens` | both | `512` | ASR: transcript tokens per audio chunk; a transcript that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. Transcript tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript at the last whole character. TTS: 80 ms audio frames per text chunk; a text chunk that needs more fails the request rather than returning cut-off speech. |
+| `max_tokens` | both | `512` | ASR: transcript tokens per audio chunk. TTS: 80 ms audio frames per text chunk. A transcript or a text chunk's speech that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. Transcript tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript at the last whole character. |
 | `audio_chunk_mode` | ASR | `auto` | `auto`, `vad`, `fixed` or `none`; see [Long audio](#long-audio). |
 | `audio_chunk_seconds` | ASR | `30` | Longest chunk in seconds, at least 1. |
 | `temperature` | TTS | `0.8` | Audio code sampling temperature; 0 is greedy. |
@@ -285,8 +287,9 @@ framework's Vocos ISTFT would clamp at 100, so the ISTFT here is the
 reference's. Long audio is detokenized in chunks that overlap by the model's
 receptive field (97 steps); with F32 weights the chunked output matches one
 pass to 3e-5. `test_lfm2_audio_tts` checks the prompt, the stage numbers, the
-greedy frames, the chunking and a round trip through ASR, greedy and sampled;
-it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
+greedy frames, the chunking, a round trip through ASR, greedy and sampled, and
+speech cut off at `max_tokens`, offline and streamed; it runs when
+`lfm2_audio_1_5b_f16` is installed in `models/`.
 
 Real-time factor through `audiocpp_server` (processing time divided by audio
 length, model loaded; short = three sentences of 3-7 s, long = the 345 s

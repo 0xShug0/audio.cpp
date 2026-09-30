@@ -107,15 +107,24 @@ void reject_options(const runtime::TaskRequest & request, std::initializer_list<
     }
 }
 
-// A turn has to end on end-of-audio, with speech before it.
-void check_turn_end(const Lfm2SpeechGenerator & generator, size_t frames) {
-    if (!generator.ended()) {
-        throw std::runtime_error("LFM2-Audio reached max_tokens before the end of the speech; increase max_tokens or lower text_chunk_size");
+// A turn ends on end-of-audio, or at max_tokens, where its speech is cut off
+// and kept, with a warning, as liquid-audio's generate_sequential keeps what
+// it generated when max_new_tokens runs out. Either way it needs speech.
+// Returns whether max_tokens cut it.
+bool check_turn_end(const Lfm2SpeechGenerator & generator, size_t frames, size_t turn, size_t turns, int64_t max_frames) {
+    if (frames == 0) {
+        throw std::runtime_error(generator.ended() ? "LFM2-Audio produced no speech for the text"
+                                                   : "LFM2-Audio reached max_tokens before any speech for the text; raise max_tokens");
     }
 
-    if (frames == 0) {
-        throw std::runtime_error("LFM2-Audio produced no speech for the text");
+    if (generator.ended()) {
+        return false;
     }
+
+    const std::string which = turns > 1 ? " of text chunk " + std::to_string(turn + 1) + " of " + std::to_string(turns) : "";
+    warn("the speech" + which + " reached max_tokens=" + std::to_string(max_frames) +
+         " and is cut off there; raise max_tokens or lower text_chunk_size for the rest");
+    return true;
 }
 
 std::shared_ptr<const Lfm2AudioOutputComponents> select_output_components(
@@ -504,14 +513,22 @@ std::vector<float> Lfm2AudioTtsSession::speak(const RequestOptions & options, si
         frames.push_back(std::move(*frame));
     }
 
-    check_turn_end(*generator, frames.size());
+    if (check_turn_end(*generator, frames.size(), turn, options.texts.size(), options.speech.max_frames)) {
+        reached_max_tokens_ = true;
+    }
+
     debug_dump("audio_codes.i32", codes.data(), codes.size() * sizeof(int32_t));
     debug::trace_log_scalar("lfm2_audio.session.audio_frames", static_cast<int64_t>(frames.size()));
     return detokenizer_.decode(frames);
 }
 
+bool Lfm2AudioTtsSession::reached_max_tokens() const {
+    return reached_max_tokens_;
+}
+
 runtime::TaskResult Lfm2AudioTtsSession::run(const runtime::TaskRequest & request) {
     require_prepared("LFM2-Audio run()");
+    reached_max_tokens_ = false;
     const auto wall_start = std::chrono::steady_clock::now();
     const auto options = parse_request(request);
 
@@ -546,6 +563,7 @@ runtime::StreamingPolicy Lfm2AudioTtsSession::streaming_policy() const {
 
 void Lfm2AudioTtsSession::start_stream(const runtime::TaskRequest & request) {
     require_prepared("LFM2-Audio start_stream()");
+    reached_max_tokens_ = false;
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("LFM2-Audio start_stream() needs a streaming session");
     }
@@ -598,7 +616,10 @@ std::optional<runtime::StreamEvent> Lfm2AudioTtsSession::next_stream_event() {
         }
 
         if (turn_over) {
-            check_turn_end(*st.generator, st.frames.size());
+            if (check_turn_end(*st.generator, st.frames.size(), st.next_turn - 1, st.options.texts.size(), st.options.speech.max_frames)) {
+                reached_max_tokens_ = true;
+            }
+
             const auto rest = st.istft->finish();
             samples.insert(samples.end(), rest.begin(), rest.end());
             st.generator.reset();
