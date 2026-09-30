@@ -10,8 +10,8 @@
 
 #include "busy_guard.h"
 #if defined(AUDIOCPP_TEST_MODEL_SLOTS)
-#include "model_slots.h"
-class TestedGuard : public minitts::server::ModelSlots {
+#include "model_execution_guard.h"
+class TestedGuard : public minitts::server::ModelExecutionGuard {
 public:
     Lock acquire(int timeout, std::string_view label) { return acquire_run(timeout, label); }
 };

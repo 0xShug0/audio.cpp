@@ -161,7 +161,10 @@ or in `server.json`:
 
 ### Experimental parallel model slots
 
-Each model entry accepts `"slots"` from 1 to 16 (default: 1). The server leases
+Each model entry accepts `"slots"` from 1 to 16 (default: 1). Omitting this field
+or setting `"slots": 1` uses the original single session and busy guard.
+Setting `"slots": 2` or higher explicitly selects the experimental scheduler
+and session pool; no additional flag is needed. On that path, the server leases
 one independent session to each request and queues work when admission is
 blocked. The requested count must fit the model's advertised parallel capacity;
 this setting does not make an arbitrary model safe to run concurrently.
@@ -173,7 +176,13 @@ in PR #706. Unsupported counts fail before a partial session pool is published.
 `GET /v1/models` reports configured `slots`, `active_slots`, `queued_requests`
 and the loaded model's `max_parallel_slots` (`null` when unloaded). Unload,
 eviction and reconfiguration wait for all active sessions to finish. Waiting
-management operations block new requests so management cannot starve.
+management operations block new requests on the parallel path so management
+cannot starve. The legacy path keeps its original mutex admission without
+management priority and skips unpublished first loads during bulk unload.
+
+An existing model ID cannot switch between one and multiple slots. Such a
+reconfiguration returns HTTP 400 before unloading the model; use a new model ID
+or restart. Changing a parallel count, such as 2 to 4, remains supported.
 
 Each slot needs private execution contexts, graphs, KV/reference caches,
 stream state and sampling state. Immutable assets/weights can be shared.

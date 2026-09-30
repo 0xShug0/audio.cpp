@@ -2883,6 +2883,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME server_single_slot_compat_test COMMAND server_single_slot_compat_test)
         set_tests_properties(server_single_slot_compat_test PROPERTIES TIMEOUT 60)
 
+        add_executable(model_execution_guard_test tests/unittests/test_model_execution_guard.cpp)
+        target_include_directories(model_execution_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(model_execution_guard_test PRIVATE Threads::Threads)
+        add_test(NAME model_execution_guard_test COMMAND model_execution_guard_test)
+        set_tests_properties(model_execution_guard_test PROPERTIES TIMEOUT 60)
+
         add_executable(server_model_slots_test tests/unittests/test_server_model_slots.cpp)
         target_include_directories(server_model_slots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
         target_link_libraries(server_model_slots_test PRIVATE Threads::Threads)

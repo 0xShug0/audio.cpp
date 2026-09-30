@@ -109,3 +109,58 @@ Local evidence is outside the repository under
 `smoke-results.json`, `canary-{cuda,vulkan}/results.json`, per-server logs/configs,
 PCM fixture and executable hashes. Build logs are retained in
 `outputs/scheduler-timeout-fix/build-{cpu,cuda,vulkan}-framework.log`.
+
+## Legacy default and explicit parallel opt-in (2026-09-30)
+
+Omitting `slots`, or using `slots: 1`, selects the original BusyGuard and direct
+session construction. Only an explicit count above one selects the new scheduler
+and pool. Legacy bulk unload skips unpublished first loads and stops counting a
+session as resident before destruction, using atomic residency instead of racing
+on a session pointer. Bulk snapshots use immutable registered IDs without waiting
+for metadata under the registry mutex. Queued targeted unload responses retain
+upstream behavior.
+
+The guard identity stays fixed at registration. Changing an existing ID between
+one and multiple slots returns HTTP 400 before unloading it; use a new ID or
+restart. Resizing within the parallel path remains supported. This uses the
+existing per-model setting, with no additional CLI flag. The original BusyGuard
+is unchanged; no model arithmetic, GPU kernels or admission tables change.
+
+| Validation scope | Result |
+|---|---|
+| Clean standalone framework CPU build, Windows/MSVC Release | Server built; eight focused CTests pass |
+| Clean standalone Canary/Piper CPU checkpoint smoke | Four default/explicit-one cases pass; exact upstream parity, unsupported two-slot rejection, recovery and unload/reload |
+| Integrated model-adapter CUDA/Vulkan builds, RTX 3090 | Five focused CTests per backend pass |
+| CPU/CUDA/Vulkan Canary ASR and Piper TTS, upstream/default/explicit one | 18 scenarios pass with exact output and meaningful metadata |
+| CUDA/Vulkan Canary/Piper concurrent cold/warm, 2 and 4 slots | Eight smoke scenarios pass, including rejection of path changes and resizing within the parallel path |
+| Unpublished NeuTTS first load plus idle Piper bulk unload | Three scopes pass: CUDA upstream/candidate and Vulkan candidate |
+| Two queued targeted unloads behind Canary inference | Six scopes pass: upstream/candidate on CPU/CUDA/Vulkan |
+
+The standalone CPU tests are `server_config_test`, `server_busy_guard_test`,
+`server_single_slot_compat_test`, `model_execution_guard_test`,
+`server_model_slots_test`, `session_pool_test`, `shared_weight_cache_test` and
+`gguf_tensor_source_test`. The existing cross-platform CI build/filter lists now
+include the execution-guard test. The local clean CPU composite includes Canary,
+Piper and built-in audio utilities; the remote workflow keeps its existing model
+selection.
+
+Checkpoint comparisons use freshly built clean upstream `ff0d9809`; only top-level
+timing is excluded from exact response parity. GPU model integration uses the
+existing adapter follow-up worktree with this execution-path change applied. Its
+other existing model changes are outside this framework commit. Standalone
+admission remains empty, so the model smoke tests do not newly admit those models
+in this PR. Upstream Vulkan NeuTTS first-load behavior was not compared because
+that baseline composite does not link NeuTTS.
+
+Evidence is retained locally in `outputs/slots-legacy-default-20260930/`: the
+report, source/executable/checkpoint manifests, raw responses, configs, captured
+CMake caches, build/CTest logs, first-load and queued-unload records. The clean
+published-source CPU build is recorded in `build-publish-cpu.log` and
+`ctest-publish-cpu.xml`; checkpoint smoke is recorded in `publish-cpu-smoke.json`.
+Earlier sections describe earlier revisions.
+
+This is focused compatibility evidence, not completion of the full F1-F6/model
+validation gate. Metal/macOS, Linux and new sanitizer runs have not been performed
+locally. The reported opt-in ordering, fairness, management-priority, first-load
+bulk-delay and retirement-accounting issues remain for separate work. No claim
+is made that these smoke tests resolve or validate those issues.

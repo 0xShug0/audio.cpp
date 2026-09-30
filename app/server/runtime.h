@@ -1,6 +1,6 @@
 #pragma once
 
-#include "model_slots.h"
+#include "model_execution_guard.h"
 #include "config.h"
 #include "frontend.h"
 #include "http.h"
@@ -58,8 +58,17 @@ private:
         };
 
         ServerModelConfig config;
+        // Stable registration identity, independent of configuration replacement.
+        std::string registered_id;
         engine::runtime::TaskSpec task;
         std::unique_ptr<engine::runtime::ILoadedVoiceModel> model;
+        // The original direct session is used only for the legacy one-slot path.
+        std::unique_ptr<engine::runtime::IVoiceTaskSession> session;
+        engine::runtime::IOfflineVoiceTaskSession * offline = nullptr;
+        engine::runtime::IStreamingVoiceTaskSession * streaming = nullptr;
+        // Mirrors main's session-pointer residency without an unsynchronized
+        // pointer read during loading/destruction.
+        std::atomic<bool> legacy_session_present{false};
         std::unique_ptr<engine::runtime::VoiceTaskSessionPool> sessions;
         // Zero means unknown (not loaded); status reads this without touching
         // session pointers that may be concurrently unloaded.
@@ -86,18 +95,27 @@ private:
         bool accepts_speed = true;
         bool accepts_speaking_rate = true;
         // Leases isolated sessions to requests; management requires all slots idle.
-        ModelSlots busy;
+        ModelExecutionGuard busy;
         std::mutex initialization_mutex;
 
         // Release the loaded model and session from memory (frees VRAM on GPU backends).
         // The next request will trigger a reload via ensure_model_loaded_locked().
+        bool resident() const noexcept {
+            return busy.parallel() ? loaded.load() : legacy_session_present.load();
+        }
+        engine::runtime::IVoiceTaskSession & leased_session(size_t slot) {
+            return busy.parallel() ? sessions->at(slot) : *session;
+        }
+        template<class Interface> Interface * leased_interface(size_t slot) {
+            return dynamic_cast<Interface *>(&leased_session(slot));
+        }
         void unload();
     };
 
     // Acquire the model's run guard. `request_timeout_ms` is the caller-supplied
     // override, clamped by this model's configured ceiling. Throws ServerBusyError
     // (-> HTTP 503) once the effective timeout has elapsed.
-    ModelSlots::Lock acquire_model_run(LoadedModel & model, std::optional<int> request_timeout_ms, bool exclusive = false);
+    ModelExecutionGuard::Lock acquire_model_run(LoadedModel & model, std::optional<int> request_timeout_ms, bool exclusive = false);
 
     // Server policy for this model: its own busy_timeout_ms if set, else the
     // top-level config value.

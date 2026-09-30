@@ -5,6 +5,15 @@ streaming and native-batch requests. Existing models keep their single-session
 behavior by default. Parallel model adapters and audited admission rules are
 the separate PR #706 follow-up; no model is newly enabled by this foundation.
 
+Omitting `slots`, or setting `slots: 1`, uses the original `BusyGuard` and
+direct session construction. It does not create a session pool, apply parallel
+admission, or give management priority over waiting inference. `slots >= 2`
+explicitly opts that model into `ModelSlots` and pool construction. No additional
+command-line flag is needed. A registered model cannot switch between these
+execution paths: reconfiguration returns HTTP 400 before unloading it. Use a
+new model ID or restart to change paths; counts within the parallel path can
+still be reconfigured under an exclusive lease.
+
 The optional loaded-model factory creates extra sessions sequentially before
 publishing a pool. Assets can be shared while execution state remains private.
 Explicit parallel adapters take precedence, including a rejection of the chosen
@@ -47,7 +56,9 @@ has actually isolated all mutable state; that requires adapter review and tests.
 
 ## Server lifecycle
 
-`app/server/model_slots.h` leases one session per request. A lease spans
+`app/server/model_execution_guard.h` selects the legacy or parallel guard at
+registration. On the parallel path, `app/server/model_slots.h` leases one session
+per request. A lease spans
 preparation and execution, including the entire stream or native batch. RAII
 releases it on completion or exception. Native batching within one session and
 multiple concurrent sessions are independent capabilities.
@@ -58,13 +69,23 @@ waiting management operations block new requests so management cannot starve.
 Leases must drain before destroying the pool. This does not cancel an in-flight
 GPU operation or provide continuous token batching.
 
-First-load requests serialize pool construction through a per-model
+Parallel first-load requests serialize pool construction through a per-model
 initialization mutex. The complete pool is published only after every clone has
 been created successfully. Failed loads can be retried. Eviction checks atomic
 loaded state rather than accessing session pointers without a lease.
-Unload leases the model even before its first pool has been published, so an
+Parallel unload leases the model even before its first pool has been published, so an
 in-progress lazy load cannot be skipped. Model-list lookup/snapshot locks are
 released before waiting for that lease.
+
+The legacy path retains main's bulk-unload behavior: an unpublished first load
+is skipped, and a session being destroyed no longer counts as resident.
+Residency is mirrored with an atomic flag instead of reading a session pointer
+concurrently. Bulk snapshots use immutable registered IDs without acquiring
+metadata locks under the global registry mutex.
+
+Preserving this default is not a resolution of the reported parallel scheduler
+ordering, fairness, retirement and bulk-operation issues. Validate those under
+F1/F2/F5 before claiming the opt-in path has passed the complete framework gate.
 
 Do not hold the model metadata lock while loading: status reads acquire the
 global model-list lock before metadata, while loading can acquire the model-list

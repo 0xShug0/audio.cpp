@@ -1,8 +1,17 @@
 # Parallel model validation procedure
 
-Procedure version: **2026-09-28, shared framework + model gate**.
+Procedure version: **2026-09-30, shared framework + model gate, explicit parallel opt-in**.
 PR #715 owns the common framework; PR #706 owns model adapters and admission.
 This procedure defines required evidence, not tests already completed.
+
+Execution-path scope: omitted `slots` and explicit `slots: 1` select the legacy
+busy guard and direct session; `slots >= 2` selects the opt-in parallel framework.
+Compare both default forms against upstream single-session behavior. Apply
+parallel management-priority and complete first-load pool-drain assertions only
+to the opt-in path. Legacy bulk unload intentionally skips unpublished loads.
+Cross-path reconfiguration must return HTTP 400 without unloading the existing
+model; changing the path requires a new model ID or restart. Neither restoring
+the default nor passing model parity proves parallel fairness/ordering safety.
 
 Run shared framework checks once for the relevant revision and reference them
 from model results. Run model checks separately for CUDA/Vulkan and the exact
@@ -24,8 +33,8 @@ representatives cover and expand coverage when another path is affected.
 
 | ID | Required assertions |
 |---|---|
-| F1 Scheduling and compatibility | Isolated leases, drained counters/queues and management priority without starvation. Test overdue work with waiting management/spare slots, healthy plus overdue slots, multiple managers, manager timeout and timeout zero. Preserve default one-slot and unsupported-count/mode behavior. Test queue overflow only if a capacity exists; otherwise document timeout rejection. |
-| F2 Load/configuration transitions | Concurrent first requests publish one complete pool; unload cannot skip a load in progress. Force unload/reconfiguration with queued work and test its documented configuration-selection/rejection policy. No mixed configuration or destroyed-session access. |
+| F1 Scheduling and compatibility | Isolated leases and drained counters/queues. On the opt-in path, test management priority without starvation, overdue work with waiting management/spare slots, healthy plus overdue slots and multiple managers. Both paths require manager/request timeout and timeout-zero coverage. Compare omitted/explicit one-slot admission against the original guard; preserve unsupported-count/mode behavior. Test queue overflow only if a capacity exists; otherwise document timeout rejection. |
+| F2 Load/configuration transitions | Concurrent first requests publish one legacy session or one complete parallel pool. Parallel unload cannot skip a load in progress; legacy bulk unload must retain upstream's unpublished-load skip. Force unload/reconfiguration with queued work and test the documented configuration-selection/rejection policy, including rejection of execution-path changes without destructive side effects. No mixed configuration or destroyed-session access. |
 | F3 Failure/resource lifetime | Inject primary/clone/weight-load failures, verify rollback/destruction order and retry. Immutable resources outlive users; mutable graphs/caches/RNG/callbacks are private; every error releases ownership. |
 | F4 Disconnect/shutdown | Disconnect running/queued clients without abandoning ownership/accounting. Finite active/queued workers and callbacks follow the documented drain/reject policy; shutdown cannot destroy live resources. Forced process termination does not prove graceful drain. |
 | F5 Multiple models/eviction | Force two models loading/running/unloading, including residency-limit/idle-eviction contention. No deadlock, contamination, unsafe backend initialization or destruction of another model's live resources. |
