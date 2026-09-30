@@ -145,7 +145,8 @@ void print_help() {
         << "       OpenAI-style streaming: speech stream_format=sse|audio, transcription stream=true\n"
         << "  POST /v1/audio/transcriptions/live?model=<id>\n"
         << "       raw PCM in a chunked body, transcript deltas as SSE on the same connection\n"
-        << "  POST /v1/tasks/run\n";
+        << "  POST /v1/tasks/run\n"
+        << "  POST /v1/tasks/batch\n";
 }
 
 }  // namespace

@@ -617,6 +617,30 @@ curl http://127.0.0.1:8080/v1/tasks/run \
   }'
 ```
 
+### `POST /v1/tasks/batch`
+
+Runs multiple generic requests through a model's native offline batch path. The
+selected model must implement native batching; unsupported models are rejected
+instead of being run sequentially. Each entry uses the same fields as the
+`request` object accepted by `/v1/tasks/run`.
+
+```bash
+curl -N http://127.0.0.1:8080/v1/tasks/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "reuse",
+    "requests": [
+      {"audio": "/path/to/first.wav"},
+      {"audio": "/path/to/second.wav"}
+    ]
+  }'
+```
+
+The SSE response emits `task.batch.result` events with the original request
+index as results become available, followed by `task.batch.done` with aggregate
+batch timing. Per-result `timing` is `null` because fused execution does not
+produce an independent wall time for each request.
+
 ### `POST /v1/tasks/unload_models`
 
 Unload specific models from memory to free resources (e.g. VRAM on GPU backends). Subsequent requests to an unloaded model will trigger a transparent reload. The server waits for any in-flight inference on each target model to complete before unloading it.
