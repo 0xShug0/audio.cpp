@@ -15,6 +15,8 @@ struct LatentSyncSdVaeConfig {
     int64_t latent_channels = 4;
     int64_t layers_per_block = 2;
     int64_t norm_groups = 32;
+    bool cuda_cudnn = false;
+    bool cuda_f16_activations = false;
 };
 
 struct SdVaeResnetWeights {

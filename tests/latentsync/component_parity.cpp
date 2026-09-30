@@ -15,7 +15,9 @@
 #include "engine/models/latentsync/face_restore.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/model_spec/schema.h"
 #include "engine/framework/modules/structural_modules.h"
 
@@ -175,6 +177,10 @@ int main(int argc, char ** argv) {
         }
         if (component != "whisper" && component != "whisper-runtime" && component != "whisper-audio" && component != "vae-encoder" && component != "vae-decoder" &&
             component != "vae-encoder-runtime" && component != "vae-decoder-runtime" &&
+            component != "vae-encoder-runtime-cudnn-f16" && component != "vae-decoder-runtime-cudnn-f16" &&
+            component != "vae-production-encoder" && component != "vae-production-decoder" &&
+            component != "vae-production-encoder-cudnn" && component != "vae-production-decoder-cudnn" &&
+            component != "vae-production-encoder-cudnn-f16" && component != "vae-production-decoder-cudnn-f16" &&
             component != "spatial" && component != "temporal" && component != "unet" && component != "unet-runtime" && component != "denoise" && component != "landmarks" && component != "scrfd" && component != "face-runtime" && component != "face-frame" && component != "pipeline") {
             throw std::runtime_error("unknown component");
         }
@@ -183,6 +189,53 @@ int main(int argc, char ** argv) {
         else if (name != "cpu") throw std::runtime_error("unknown backend");
         backend.threads = 8;
         core::ExecutionContext execution(backend);
+        if (component == "vae-production-encoder" || component == "vae-production-decoder" ||
+            component == "vae-production-encoder-cudnn" || component == "vae-production-decoder-cudnn" ||
+            component == "vae-production-encoder-cudnn-f16" || component == "vae-production-decoder-cudnn-f16") {
+            const auto resources = model_spec::load_resource_bundle_for_family(root, "latentsync");
+            const auto source = resources.open_tensor_source("weights");
+            const bool cudnn = component.find("-cudnn") != std::string::npos;
+            const bool f16 = component.find("-cudnn-f16") != std::string::npos;
+            models::latentsync::LatentSyncSdVaeRuntime runtime(execution, *source, assets::TensorStorageType::F16, 512, cudnn, f16);
+            const bool encoder = component.find("encoder") != std::string::npos;
+            const size_t elements = encoder ? 3ull * 512 * 512 : 4ull * 64 * 64;
+            const std::vector<float> input(elements, encoder ? 0.5F : 0.1F);
+            auto output = encoder ? runtime.encode_moments(input) : runtime.decode(input);
+            const auto start = std::chrono::steady_clock::now();
+            const int iterations = encoder ? 36 : 18;
+            for (int i = 0; i < iterations; ++i) {
+                output = encoder ? runtime.encode_moments(input) : runtime.decode(input);
+            }
+            const double wall_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+            debug::timing_log_scalar("session.wall_ms", wall_ms);
+            std::cout << "vae=" << (encoder ? "encoder" : "decoder") << " batch=1 iterations=" << iterations
+                      << " wall_ms=" << wall_ms << " output_size=" << output.size() << '\n';
+            if (f16) {
+                std::vector<float> varied_input(elements);
+                for (size_t i = 0; i < elements; ++i) {
+                    varied_input[i] = encoder ? float(i % 251) / 125.0F - 1.0F :
+                        0.1F * std::sin(float(i % 4096) * 0.013F);
+                }
+                const auto candidate = encoder ? runtime.encode_moments(varied_input) : runtime.decode(varied_input);
+                models::latentsync::LatentSyncSdVaeRuntime baseline(execution, *source, assets::TensorStorageType::F16);
+                const auto reference = encoder ? baseline.encode_moments(varied_input) : baseline.decode(varied_input);
+                double squared_error = 0.0, squared_reference = 0.0, dot = 0.0, squared_candidate = 0.0;
+                float max_abs = 0.0F;
+                for (size_t i = 0; i < candidate.size(); ++i) {
+                    const double difference = double(candidate[i]) - reference[i];
+                    squared_error += difference * difference;
+                    squared_reference += double(reference[i]) * reference[i];
+                    squared_candidate += double(candidate[i]) * candidate[i];
+                    dot += double(reference[i]) * candidate[i];
+                    max_abs = std::max(max_abs, float(std::abs(difference)));
+                }
+                std::cout << "relative_rmse=" << std::sqrt(squared_error / squared_reference)
+                          << " cosine=" << dot / std::sqrt(squared_reference * squared_candidate)
+                          << " max_abs=" << max_abs << '\n';
+            }
+            return 0;
+        }
         if (component == "pipeline") {
             const auto config = io::json::parse_file(root / "config.json");
             models::latentsync::LatentSyncPipelineSources sources;
@@ -309,10 +362,13 @@ int main(int argc, char ** argv) {
             if (selected != reference->require_f32("windows")) throw std::runtime_error("Whisper frame-window indexing mismatch");
             debug::timing_log_scalar("session.wall_ms",
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
-        } else if (component == "vae-encoder-runtime" || component == "vae-decoder-runtime") {
-            models::latentsync::LatentSyncSdVaeRuntime runtime(execution, *source, assets::TensorStorageType::F32);
+        } else if (component == "vae-encoder-runtime" || component == "vae-decoder-runtime" ||
+                   component == "vae-encoder-runtime-cudnn-f16" || component == "vae-decoder-runtime-cudnn-f16") {
+            const bool f16 = component.find("-cudnn-f16") != std::string::npos;
+            models::latentsync::LatentSyncSdVaeRuntime runtime(execution, *source,
+                f16 ? assets::TensorStorageType::F16 : assets::TensorStorageType::F32, 512, f16, f16);
             auto input = input_data.values;
-            const bool encoder = component == "vae-encoder-runtime";
+            const bool encoder = component.find("vae-encoder") == 0;
             if (!encoder) for (auto & value : input) value *= 0.18215F;
             const auto start = std::chrono::steady_clock::now();
             actual = encoder ? runtime.encode_moments(input) : runtime.decode(input);
@@ -513,7 +569,8 @@ int main(int argc, char ** argv) {
             std::cout << "faces=" << faces.size() << " detection_max_abs=" << maximum << '\n';
             passed = maximum < 0.5;
         }
-        const size_t groups = component == "scrfd" ? 9 : ((component == "vae-encoder" || component == "vae-encoder-runtime") ? 2 : 1);
+        const size_t groups = component == "scrfd" ? 9 : ((component == "vae-encoder" ||
+            component == "vae-encoder-runtime" || component == "vae-encoder-runtime-cudnn-f16") ? 2 : 1);
         size_t offset = 0;
         for (size_t group = 0; group < groups; ++group) {
             const size_t count = component == "scrfd"

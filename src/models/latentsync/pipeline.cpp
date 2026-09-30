@@ -21,17 +21,20 @@ struct LatentSyncPipeline::Impl {
     LatentSyncSdVaeRuntime vae;
     LatentSyncUnetRuntime unet;
     sampling::TorchCudaSamplingPolicy random_policy;
-    Impl(core::ExecutionContext & execution_in, const LatentSyncPipelineSources & source, assets::TensorStorageType type)
+    Impl(core::ExecutionContext & execution_in, const LatentSyncPipelineSources & source,
+        assets::TensorStorageType type, bool vae_cudnn_f16)
         : execution(execution_in),
           face(execution, *source.detector, source.detector_config, *source.landmarks, source.landmark_config, type),
           whisper(execution, *source.whisper, {80, 1500, 384, 6, 4}, type),
-          vae(execution, *source.vae, type), unet(execution, *source.unet, {}, type),
+          vae(execution, *source.vae, vae_cudnn_f16 ? assets::TensorStorageType::F16 : type,
+              512, vae_cudnn_f16, vae_cudnn_f16), unet(execution, *source.unet, {}, type),
           random_policy(sampling::resolve_torch_cuda_sampling_policy(execution.backend_type(), execution.config().device,
               "latentsync.sampling", "LatentSync", sampling::TorchCudaSamplingPolicyFailureMode::FallbackToDefault)) {}
 };
 
 LatentSyncPipeline::LatentSyncPipeline(core::ExecutionContext & execution, const LatentSyncPipelineSources & sources,
-    assets::TensorStorageType weight_type) : impl_(std::make_unique<Impl>(execution, sources, weight_type)) {}
+    assets::TensorStorageType weight_type, bool vae_cudnn_f16)
+    : impl_(std::make_unique<Impl>(execution, sources, weight_type, vae_cudnn_f16)) {}
 LatentSyncPipeline::~LatentSyncPipeline() = default;
 
 void LatentSyncPipeline::run(const std::vector<std::vector<uint8_t>> & frames, int height, int width,

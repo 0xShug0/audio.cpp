@@ -9,7 +9,8 @@ namespace engine::models::latentsync {
 class LatentSyncSdVaeRuntime {
 public:
     LatentSyncSdVaeRuntime(core::ExecutionContext & execution, const assets::TensorSource & source,
-        assets::TensorStorageType weight_type, int64_t resolution = 512);
+        assets::TensorStorageType weight_type, int64_t resolution = 512,
+        bool cuda_cudnn = false, bool cuda_f16_activations = false);
     ~LatentSyncSdVaeRuntime();
     std::vector<float> encode_moments(const std::vector<float> & image);
     std::vector<float> encode(const std::vector<float> & image, const std::vector<float> & posterior_noise);

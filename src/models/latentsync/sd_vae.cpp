@@ -80,17 +80,17 @@ core::TensorValue LatentSyncSdVae::build_resnet(core::ModuleBuildContext & ctx,
     using namespace modules;
     const int64_t in = input.shape.dims[1];
     const int64_t out = weights.conv1.weight.shape.dims[0];
-    auto x = GroupNormModule({in, config_.norm_groups, 1e-6F}).build(ctx, input, weights.norm1);
-    x = SiluModule().build(ctx, x);
-    x = Conv2dModule({in, out, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.conv1);
-    x = GroupNormModule({out, config_.norm_groups, 1e-6F}).build(ctx, x, weights.norm2);
-    x = SiluModule().build(ctx, x);
-    x = Conv2dModule({out, out, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.conv2);
+    auto x = GroupNormModule({in, config_.norm_groups, 1e-6F, true, true, config_.cuda_f16_activations}).build(ctx, input, weights.norm1);
+    x = SiluModule(config_.cuda_f16_activations).build(ctx, x);
+    x = Conv2dModule({in, out, 3, 3, 1, 1, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, weights.conv1);
+    x = GroupNormModule({out, config_.norm_groups, 1e-6F, true, true, config_.cuda_f16_activations}).build(ctx, x, weights.norm2);
+    x = SiluModule(config_.cuda_f16_activations).build(ctx, x);
+    x = Conv2dModule({out, out, 3, 3, 1, 1, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, weights.conv2);
     auto residual = input;
     if (weights.shortcut) {
-        residual = Conv2dModule({in, out, 1, 1}).build(ctx, input, *weights.shortcut);
+        residual = Conv2dModule({in, out, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, input, *weights.shortcut);
     }
-    return AddModule().build(ctx, residual, x);
+    return AddModule(config_.cuda_f16_activations).build(ctx, residual, x);
 }
 
 core::TensorValue LatentSyncSdVae::build_mid(core::ModuleBuildContext & ctx,
@@ -99,7 +99,9 @@ core::TensorValue LatentSyncSdVae::build_mid(core::ModuleBuildContext & ctx,
     const auto x = build_resnet(ctx, input, weights.mid_resnets[0]);
     const int64_t batch = x.shape.dims[0], channels = x.shape.dims[1];
     const int64_t steps = x.shape.dims[2] * x.shape.dims[3];
-    auto sequence = GroupNormModule({channels, config_.norm_groups, 1e-6F}).build(ctx, x, weights.attention_norm);
+    auto attention_input = config_.cuda_f16_activations
+        ? core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32) : x;
+    auto sequence = GroupNormModule({channels, config_.norm_groups, 1e-6F}).build(ctx, attention_input, weights.attention_norm);
     sequence = core::reshape_tensor(ctx, sequence, core::TensorShape::from_dims({batch, channels, steps}));
     sequence = TransposeModule({{0, 2, 1}, 3}).build(ctx, sequence);
     const auto project = [&](const LinearWeights & projection) {
@@ -114,43 +116,50 @@ core::TensorValue LatentSyncSdVae::build_mid(core::ModuleBuildContext & ctx,
     attended = LinearModule({channels, channels, true}).build(ctx, attended, weights.attention.out);
     attended = TransposeModule({{0, 2, 1}, 3}).build(ctx, attended);
     attended = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, attended), x.shape);
-    return build_resnet(ctx, AddModule().build(ctx, x, attended), weights.mid_resnets[1]);
+    if (config_.cuda_f16_activations) {
+        attended = core::wrap_tensor(ggml_cast(ctx.ggml, attended.tensor, GGML_TYPE_F16), attended.shape, GGML_TYPE_F16);
+    }
+    return build_resnet(ctx, AddModule(config_.cuda_f16_activations).build(ctx, x, attended), weights.mid_resnets[1]);
 }
 
 core::TensorValue LatentSyncSdVae::build_encoder(core::ModuleBuildContext & ctx,
     const core::TensorValue & image, const SdVaeTowerWeights & weights) const {
     using namespace modules;
-    auto x = Conv2dModule({3, config_.channels.front(), 3, 3, 1, 1, 1, 1}).build(ctx, image, weights.input);
+    auto x = Conv2dModule({3, config_.channels.front(), 3, 3, 1, 1, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, image, weights.input);
     for (const auto & stage : weights.stages) {
         for (const auto & block : stage.resnets) x = build_resnet(ctx, x, block);
         if (stage.resample) {
             x = Pad2dModule({0, 1, 0, 1}).build(ctx, x);
-            x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 2, 2}).build(ctx, x, *stage.resample);
+            x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 2, 2}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, *stage.resample);
         }
     }
     x = build_mid(ctx, x, weights);
-    x = GroupNormModule({config_.channels.back(), config_.norm_groups, 1e-6F}).build(ctx, x, weights.output_norm);
-    x = SiluModule().build(ctx, x);
-    x = Conv2dModule({config_.channels.back(), config_.latent_channels * 2, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.output);
-    return Conv2dModule({config_.latent_channels * 2, config_.latent_channels * 2, 1, 1}).build(ctx, x, weights.quant);
+    x = GroupNormModule({config_.channels.back(), config_.norm_groups, 1e-6F, true, true, config_.cuda_f16_activations}).build(ctx, x, weights.output_norm);
+    x = SiluModule(config_.cuda_f16_activations).build(ctx, x);
+    x = Conv2dModule({config_.channels.back(), config_.latent_channels * 2, 3, 3, 1, 1, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, weights.output);
+    x = Conv2dModule({config_.latent_channels * 2, config_.latent_channels * 2, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, weights.quant);
+    return config_.cuda_f16_activations ? core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32) : x;
 }
 
 core::TensorValue LatentSyncSdVae::build_decoder(core::ModuleBuildContext & ctx,
     const core::TensorValue & latent, const SdVaeTowerWeights & weights) const {
     using namespace modules;
-    auto x = Conv2dModule({config_.latent_channels, config_.latent_channels, 1, 1}).build(ctx, latent, weights.quant);
-    x = Conv2dModule({config_.latent_channels, config_.channels.back(), 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.input);
+    auto x = Conv2dModule({config_.latent_channels, config_.latent_channels, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, latent, weights.quant);
+    x = Conv2dModule({config_.latent_channels, config_.channels.back(), 3, 3, 1, 1, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, weights.input);
     x = build_mid(ctx, x, weights);
     for (const auto & stage : weights.stages) {
         for (const auto & block : stage.resnets) x = build_resnet(ctx, x, block);
         if (stage.resample) {
-            x = NearestUpsample2dModule({x.shape.dims[2] * 2, x.shape.dims[3] * 2}).build(ctx, x);
-            x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 1, 1, 1, 1}).build(ctx, x, *stage.resample);
+            const auto upsample_input = config_.cuda_f16_activations
+                ? core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32) : x;
+            x = NearestUpsample2dModule({x.shape.dims[2] * 2, x.shape.dims[3] * 2}).build(ctx, upsample_input);
+            x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 1, 1, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, *stage.resample);
         }
     }
-    x = GroupNormModule({config_.channels.front(), config_.norm_groups, 1e-6F}).build(ctx, x, weights.output_norm);
-    x = SiluModule().build(ctx, x);
-    return Conv2dModule({config_.channels.front(), 3, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.output);
+    x = GroupNormModule({config_.channels.front(), config_.norm_groups, 1e-6F, true, true, config_.cuda_f16_activations}).build(ctx, x, weights.output_norm);
+    x = SiluModule(config_.cuda_f16_activations).build(ctx, x);
+    x = Conv2dModule({config_.channels.front(), 3, 3, 3, 1, 1, 1, 1}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, weights.output);
+    return config_.cuda_f16_activations ? core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32) : x;
 }
 
 }  // namespace engine::models::latentsync

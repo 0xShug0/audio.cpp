@@ -14,7 +14,7 @@ constexpr float kLatentScale = 0.18215F;
 class LatentSyncSdVaeGraph {
 public:
     LatentSyncSdVaeGraph(core::ExecutionContext & execution, const SdVaeTowerWeights & weights,
-        int64_t resolution, bool encoder) : backend_(execution.backend()) {
+        int64_t resolution, bool encoder, bool cuda_cudnn, bool cuda_f16_activations) : backend_(execution.backend()) {
         constexpr size_t nodes = 4096;
         context_.reset(ggml_init({nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(nodes, false), nullptr, true}));
         if (!context_) throw std::runtime_error("LatentSync VAE graph context allocation failed");
@@ -22,7 +22,10 @@ public:
         const int64_t side = encoder ? resolution : resolution / 8;
         input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, encoder ? 3 : 4, side, side}));
         ggml_set_input(input_.tensor);
-        const LatentSyncSdVae vae({});
+        LatentSyncSdVaeConfig config;
+        config.cuda_cudnn = cuda_cudnn;
+        config.cuda_f16_activations = cuda_f16_activations;
+        const LatentSyncSdVae vae(config);
         output_ = encoder ? vae.build_encoder(ctx, input_, weights) : vae.build_decoder(ctx, input_, weights);
         ggml_set_output(output_.tensor);
         graph_ = ggml_new_graph_custom(context_.get(), nodes, false);
@@ -50,13 +53,25 @@ private:
 struct LatentSyncSdVaeRuntime::Impl {
     core::ExecutionContext & execution;
     int64_t resolution;
+    bool cuda_cudnn;
+    bool cuda_f16_activations;
     core::BackendWeightStore store;
     SdVaeTowerWeights encoder_weights, decoder_weights;
     std::unique_ptr<LatentSyncSdVaeGraph> encoder, decoder;
     Impl(core::ExecutionContext & execution_in, const assets::TensorSource & source,
-        assets::TensorStorageType type, int64_t resolution_in)
-        : execution(execution_in), resolution(resolution_in),
+        assets::TensorStorageType type, int64_t resolution_in, bool cuda_cudnn_in, bool cuda_f16_activations_in)
+        : execution(execution_in), resolution(resolution_in), cuda_cudnn(cuda_cudnn_in),
+          cuda_f16_activations(cuda_f16_activations_in),
           store(execution.backend(), execution.backend_type(), "latentsync.vae.weights", 4 * 1024 * 1024) {
+        if (cuda_f16_activations && !cuda_cudnn) {
+            throw std::runtime_error("LatentSync VAE FP16 activations require cuDNN lowering");
+        }
+#ifndef GGML_CUDA_CUDNN_CONV2D
+        if (cuda_cudnn) throw std::runtime_error("LatentSync VAE cuDNN lowering is not enabled in this build");
+#endif
+        if (cuda_cudnn && execution.backend_type() != core::BackendType::Cuda) {
+            throw std::runtime_error("LatentSync VAE cuDNN lowering requires CUDA");
+        }
         if (resolution <= 0 || resolution % 8) throw std::runtime_error("LatentSync VAE resolution must be a positive multiple of 8");
         encoder_weights = load_sd_vae_weights(store, source, {}, true, type);
         decoder_weights = load_sd_vae_weights(store, source, {}, false, type);
@@ -65,13 +80,14 @@ struct LatentSyncSdVaeRuntime::Impl {
 };
 
 LatentSyncSdVaeRuntime::LatentSyncSdVaeRuntime(core::ExecutionContext & execution,
-    const assets::TensorSource & source, assets::TensorStorageType weight_type, int64_t resolution)
-    : impl_(std::make_unique<Impl>(execution, source, weight_type, resolution)) {}
+    const assets::TensorSource & source, assets::TensorStorageType weight_type, int64_t resolution,
+    bool cuda_cudnn, bool cuda_f16_activations)
+    : impl_(std::make_unique<Impl>(execution, source, weight_type, resolution, cuda_cudnn, cuda_f16_activations)) {}
 LatentSyncSdVaeRuntime::~LatentSyncSdVaeRuntime() = default;
 
 std::vector<float> LatentSyncSdVaeRuntime::encode_moments(const std::vector<float> & image) {
     const auto start = std::chrono::steady_clock::now();
-    if (!impl_->encoder) impl_->encoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution, impl_->encoder_weights, impl_->resolution, true);
+    if (!impl_->encoder) impl_->encoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution, impl_->encoder_weights, impl_->resolution, true, impl_->cuda_cudnn, impl_->cuda_f16_activations);
     auto output = impl_->encoder->run(image);
     debug::timing_log_scalar("latentsync.vae_encoder.wall_ms",
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
@@ -92,7 +108,7 @@ std::vector<float> LatentSyncSdVaeRuntime::encode(const std::vector<float> & ima
 
 std::vector<float> LatentSyncSdVaeRuntime::decode(const std::vector<float> & scaled_latent) {
     const auto start = std::chrono::steady_clock::now();
-    if (!impl_->decoder) impl_->decoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution, impl_->decoder_weights, impl_->resolution, false);
+    if (!impl_->decoder) impl_->decoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution, impl_->decoder_weights, impl_->resolution, false, impl_->cuda_cudnn, impl_->cuda_f16_activations);
     auto latent = scaled_latent;
     for (auto & value : latent) value /= kLatentScale;
     auto output = impl_->decoder->run(latent);

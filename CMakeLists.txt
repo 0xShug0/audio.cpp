@@ -1251,6 +1251,9 @@ audiocpp_add_model(latentsync
     LOADERS
         engine::models::latentsync::make_latentsync_loader
 )
+if (GGML_CUDA_CUDNN_CONV2D)
+    target_compile_definitions(engine_model_latentsync PRIVATE GGML_CUDA_CUDNN_CONV2D=1)
+endif()
 
 audiocpp_add_model(liveavatar
     SOURCES

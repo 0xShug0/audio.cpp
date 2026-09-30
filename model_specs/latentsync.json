@@ -103,6 +103,13 @@
         ],
         "default": "native",
         "description": "Weight storage type; native preserves packaged tensor types."
+      },
+      {
+        "name": "vae_cudnn_f16",
+        "required": false,
+        "type": "bool",
+        "default": false,
+        "description": "Use cuDNN FP16 VAE execution on CUDA. Requires a build with GGML_CUDA_CUDNN_CONV2D=ON; VAE weights are converted to FP16."
       }
     ],
     "load": []

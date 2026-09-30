@@ -43,7 +43,11 @@ public:
         runtime::validate_spec_backed_session_options(RuntimeSessionBase::options(), *contract_, "latentsync", "LatentSync");
         auto type = assets::TensorStorageType::Native;
         if (const auto value = runtime::find_option(RuntimeSessionBase::options().options, {"latentsync.weight_type"})) type = assets::parse_tensor_storage_type(*value);
-        pipeline_ = std::make_unique<LatentSyncPipeline>(execution_context(), assets_->sources, type);
+        bool vae_cudnn_f16 = false;
+        if (const auto value = runtime::find_option(RuntimeSessionBase::options().options, {"latentsync.vae_cudnn_f16"})) {
+            vae_cudnn_f16 = runtime::parse_bool_option(*value, "latentsync.vae_cudnn_f16");
+        }
+        pipeline_ = std::make_unique<LatentSyncPipeline>(execution_context(), assets_->sources, type, vae_cudnn_f16);
     }
     std::string family() const override { return "latentsync"; }
     runtime::VoiceTaskKind task_kind() const override { return task_.task; }
