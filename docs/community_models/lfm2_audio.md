@@ -124,7 +124,12 @@ conversation under liquid-audio's chat system prompt, `Respond with interleaved
 text and audio.`; `--text` replaces that prompt, which the checkpoints were
 trained with, so leave it out unless experimenting. The reply is sampled like
 liquid-audio's README and demo (temperature 1.0, top-k 4) and may run to 1024
-steps, text tokens and audio frames together, about a minute of speech.
+steps, text tokens and audio frames together, about a minute of speech. Text
+tokens stand for bytes, not characters. Bytes that make no whole character,
+which replies in scripts such as Thai can have, come out as U+FFFD, as the
+Hugging Face tokenizer decodes them, in replies and transcripts alike; a
+character left open at the end of the text is dropped, as in a transcript cut
+at `max_tokens`.
 
 The server takes the same directory and session options:
 
@@ -164,8 +169,9 @@ keys and values and the short-conv layers' last inputs), so a frame costs
 only its own six steps, and the ISTFT releases a sample once no later window
 reaches it. Each event carries one frame (80 ms, `stream_frames_per_event` to
 change it), plus a last 20 ms event per text chunk; the events add up to the
-offline speech for the same seed. A text chunk that reaches `max_tokens` ends
-its speech there, streamed as offline, with the same warning.
+offline speech for the same seed, up to the detokenizer's arithmetic (below).
+A text chunk that reaches `max_tokens` ends its speech there, streamed as
+offline, with the same warning.
 
 ```bash
 curl -N http://127.0.0.1:8080/v1/audio/speech -H 'Content-Type: application/json' \
@@ -185,11 +191,20 @@ two-sentence English text (6.5 s of speech) and a Japanese one (8.5 s):
 | CPU, Apple M3 Ultra, 16 threads | 150 / 106 / 113 / 308 ms | 0.18-0.57 | 0.18-0.57 |
 
 A frame per event costs no more than four, and streaming about what offline
-speech does. Across the backends, the streamed audio differs from offline by
-5e-4 to 6e-3 (relative RMS) on the test's short text, the detokenizer's
-arithmetic in graphs of other sizes. CUDA's kernels round differently for each
-size, so over a minute of speech it differs by 2e-2 to 3e-2, and by 0.2 with
-Q4_0, whose coarse detokenizer weights amplify it.
+speech does. The streamed audio differs from offline (relative RMS) by the
+detokenizer's arithmetic in graphs of other sizes. With F16 that is 5e-4 to
+6e-3 on the test's short text across the backends; on CUDA, whose cuBLAS
+accumulates the offline products in half precision, it is 5e-3 to 3.2e-2 over
+English and Japanese texts of 1.5 to 18 s and 2e-2 over a minute of speech.
+Quantized packages round the activations to 8 bits on the CPU and CUDA, and
+graphs of other sizes round them differently: on CUDA, over texts of 2.5 to
+19 s, the stream differs by 2.2e-2 to 4.6e-2 with Q8_0 and by 0.06 to 0.32 with
+Q4_0 (3.4e-2 and 0.22 over a minute). The stream decodes a frame at a
+time, and at that size ggml-cuda multiplies Q4_0 weights with its MMVQ kernel,
+whose dot product makes the rounding error two to three times larger than in
+the kernel offline decoding uses. By log-spectral distance, the offline Q4_0
+audio on CUDA is the closer to exact arithmetic with the same weights (0.21 to
+0.26 dB against 0.53 to 0.64 dB for the stream).
 
 ### Streaming S2S
 
@@ -197,10 +212,15 @@ With `--mode streaming` (CLI) or `"mode": "streaming"` (server entry), the
 question comes in as audio chunks, live PCM included (`--audio -` on the CLI).
 The reply starts when the input ends and streams like TTS: each event carries
 the audio of one frame (`stream_frames_per_event`) and the text written since
-the last event, in whole characters; together they are the offline reply for
-the same seed. The server's live route, `/v1/audio/speech/live`, takes the
-question as chunked raw PCM and requires an `input` query parameter, which
-becomes the system prompt, so pass liquid-audio's:
+the last event, in whole characters. Together they are the offline reply for
+the same seed: the same text, and the same audio up to the detokenizer's
+arithmetic, as for TTS. On CUDA, streamed replies to
+`assets/resources/c.wav` differ from offline by 4.3e-2 with F16 (one reply),
+2.2e-2 to 4.5e-2 with Q8_0 and 0.06 to 0.15 with Q4_0 (five replies each). A
+stream finished before its reply is over returns the text its events carried.
+The server's live route, `/v1/audio/speech/live`, takes the question as
+chunked raw PCM and requires an `input` query parameter, which becomes the
+system prompt, so pass liquid-audio's:
 
 ```bash
 ffmpeg -i question.wav -ar 16000 -ac 1 -f s16le - \
@@ -252,9 +272,11 @@ Each task rejects the options it does not take.
 
 ## Long Audio
 
-liquid-audio transcribes a whole file in one pass, which the model handles up
-to about a minute; longer audio loses words and then repeats itself. audio.cpp
-keeps short input whole and splits longer input:
+liquid-audio transcribes a whole file in one pass. The English model handles
+that up to about a minute; longer audio loses words and then repeats itself.
+The Japanese model holds to about 40 s; past that it starts to skip whole
+sentences, and at 60 s it leaves out 18 to 29% of the text. audio.cpp keeps
+short input whole and splits longer input:
 
 | Mode | Behavior |
 |---|---|
@@ -264,23 +286,74 @@ keeps short input whole and splits longer input:
 | `none` | One pass over the whole input, as liquid-audio does. |
 
 Each chunk is transcribed on its own, and the transcripts are joined with a
-space between English words and without one in Japanese text.
+space between English words and without one in Japanese text. Audio the VAD
+does not mark as speech is not transcribed. That is usually silence, but it
+can be speech too quiet for the VAD: a sentence recorded over 30 dB below the
+others around it, or a whole 40 s file turned down by 60 dB (7 of 8 such files
+came back empty). A split can also land on a short pause inside a sentence,
+and the model may then leave out the words that open the next chunk (1 of 12
+such sentences in the Japanese tests below).
 
 Word error rate by input length, EN F16 on CUDA, 8 files per length built from
-consecutive LibriSpeech test-clean utterances joined with 0.3 s gaps:
+consecutive LibriSpeech test-clean utterances joined with 0.3 s gaps (each file
+up to about 5 s longer than its length):
 
 | Length | liquid-audio (one pass) | `auto` | `fixed` |
 |---|---|---|---|
 | 30 s | 2.8% | 2.3% | 2.9% |
+| 40 s | 1.7% | 1.7% | 1.8% |
+| 50 s | 1.7% | 1.5% | 2.5% |
 | 60 s | 2.1% | 2.0% | 2.8% |
 | 90 s | 9.4% | 1.3% | 2.7% |
 | 120 s | 83% | 1.9% | 2.6% |
 | 180 s | 296% | 1.4% | 2.4% |
 
-`none` follows liquid-audio up to 90 s (2.6%, 2.0% and 9.4%). At 120 s it
-finishes all 8 files at 29%, 6 of them word for word as liquid-audio. At 180 s,
-7 of the 8 reach `max_tokens` and come back cut off there, repetitions included,
-with a warning.
+`none` follows liquid-audio up to 90 s (2.6%, 1.7%, 1.7%, 2.0% and 9.4%).
+At 120 s it finishes all 8 files at 29%, 6 of them word for word as
+liquid-audio. At 180 s, 7 of the 8 reach `max_tokens` and come back cut off
+there, repetitions included, with a warning.
+
+Character error rate by input length, JP F32 on CUDA, 8 files per length built
+from consecutive Common Voice ja test clips (one sentence each) joined with
+0.3 s gaps. The clips keep their own silence at both ends, so sentences are
+about 1.5 s apart and `auto` cuts the files over 30 s about one sentence per
+chunk; each file is up to 3.7 s shorter than its length, so `auto` keeps the
+20 and 30 s files whole. Punctuation and spaces are removed before scoring.
+The model's own errors on the single clips, often a different kanji or number
+form (1500円 for 千五百円), already come to 9 to 12%. In parentheses: sentences
+lost (less than half of their characters in the transcript) out of all
+sentences.
+
+| Length | liquid-audio (one pass) | `auto` |
+|---|---|---|
+| 20 s | 16.6% (1 of 32) | 16.6% (1 of 32) |
+| 30 s | 13.7% (1 of 46) | 13.7% (1 of 46) |
+| 40 s | 15.2% (1 of 61) | 12.7% (0 of 61) |
+| 45 s | 15.4% (4 of 65) | 10.8% (0 of 65) |
+| 50 s | 24.0% (10 of 73) | 11.3% (0 of 73) |
+| 60 s | 36.1% (26 of 89) | 10.3% (0 of 89) |
+| 90 s | 177% (81 of 131) | 10.0% (0 of 131) |
+
+The sentence lost at 20 to 40 s is the same recording in each file, over
+30 dB quieter than the others; liquid-audio drops it from a 16 s file too. At
+90 s one file repeats itself up to the test's 2,048-token cap. With `auto`,
+Q8_0 on CUDA and on Metal is within 0.3 points of F32. `none` gives
+liquid-audio's transcripts with F32 on CUDA (71 of 71 files at 20 to 90 s,
+compared without punctuation and spaces); on the repeating file it reaches
+`max_tokens` and returns the repetition cut off there, with a warning.
+
+The limit follows the seconds, not the amount of text. Files built other ways
+(FLEURS ja clips, or Common Voice clips in reverse order, with 0.8 s gaps, with
+their silence trimmed or played 1.3 times faster) lost no other sentence
+entirely (under 30% of it transcribed) in one pass up to 40 s, and those run
+further first lost one between 41 and 45 s; the fastest also kept under half of
+a few sentences from 34 s. For whole sentences, 30 s chunks leave about 10 s of
+margin. Where pauses are short, `auto` packs chunks of 26 to 30 s: with the
+clips trimmed to their speech and joined with pauses of about 0.4 s, it gives
+12.1 to 12.9% at 31 to 35 s (one pass 11.6 to 12.6% on the same files) and 9.8
+to 10.9% at 45 to 180 s, with no repeats, though it can still drop a sentence
+now and then. All of these files are recordings of read sentences; the
+Japanese TTS voice's speech lost sentences in one pass from 28 s.
 
 ## Long Text
 
@@ -326,8 +399,13 @@ that, the quantized weights change close token choices.
 Stage by stage on CPU with the F32 weights, the adapter output matches
 liquid-audio within 1.4e-6 relative error and the first-step logits within 9e-7.
 `test_lfm2_audio_asr` (`ENGINE_BUILD_MODEL_TESTS`) checks the prompt, the
-tokenizer, the stage numbers and the transcripts against liquid-audio; it runs
-when `lfm2_audio_1_5b_f16` is installed in `models/` and skips otherwise.
+tokenizer, the stage numbers (English F16) and the transcripts against
+liquid-audio: two LibriSpeech clips with the English packages and, with the
+Japanese ones, a Common Voice clip that every JP package transcribes exactly
+on the CPU, Metal and CUDA. It runs when `lfm2_audio_1_5b_f16` is installed in
+`models/` and skips otherwise; for a JP package, pass
+`--model models/LFM2.5-Audio-1.5B-JP-GGUF --model-gguf LFM2.5-Audio-1.5B-JP-Q8_0.gguf`
+(or the F16, F32 or Q4_0 file).
 The `lfm2_audio_*_test` unit tests run on small synthetic GGUFs.
 
 Real-time factor over each 200-utterance set (processing time divided by audio
@@ -427,8 +505,8 @@ none on Metal). F16 and Q8_0 did not, though one Q8_0 reply (M3 Ultra CPU, 8
 threads) finished its text but not its audio within `max_tokens`.
 `test_lfm2_audio_s2s` checks the prompt, the first text and audio blocks, the
 round trip of three replies through ASR (their median, a failed reply counting
-as a miss), and streaming against offline; it runs when `lfm2_audio_1_5b_f16`
-is installed in `models/`.
+as a miss), well-formed text, streaming against offline, and a stream finished
+early; it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
 
 ### Memory
 

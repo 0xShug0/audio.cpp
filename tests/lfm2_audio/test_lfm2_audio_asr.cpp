@@ -2,15 +2,18 @@
 // (LFM2.5-Audio-1.5B revision c362a0625dfe45aa588dce5f0ada28a7e5707628,
 // fp32 on CPU):
 // - the prompt ChatState builds and the tokenizer on tricky text;
-// - for F16/F32 GGUFs, the numbers at each stage for one clip: features,
-//   adapter output, prompt length, the first step's log-probabilities and the
-//   greedy tokens;
-// - end-to-end transcripts of the bundled 16 kHz LibriSpeech clips through the
-//   registry.
+// - for F16/F32 GGUFs of the English checkpoint, the numbers at each stage for
+//   one clip: features, adapter output, prompt length, the first step's
+//   log-probabilities and the greedy tokens;
+// - end-to-end transcripts through the registry, in the package's language:
+//   the bundled 16 kHz LibriSpeech clips, or a Common Voice clip against
+//   LFM2.5-Audio-1.5B-JP revision 6c34b4d590f80563f8cb2939c2ebd7686d952394
+//   (fp32 on CUDA without TF32).
 //
 // --model is the directory of LiquidAI/LFM2.5-Audio-1.5B-GGUF (default
-// models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install);
-// --model-gguf picks the backbone. Skips with 125 when the files are not there.
+// models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install)
+// or of LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF; --model-gguf picks the backbone.
+// Skips with 125 when the files are not there.
 #include "engine/community_models/lfm2_audio/asr_inputs.h"
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
@@ -53,8 +56,8 @@ const std::vector<int32_t> kPrefixEn = {1, 6, 24131, 708, 8173, 1199, 11866, 559
 const std::vector<int32_t> kPrefixJa = {1, 6, 24131, 708, 8173, 1199, 11866, 559, 797, 41035, 3391, 523, 7, 708, 6, 6423, 708};
 const std::vector<int32_t> kSuffix = {7, 708, 6, 64015, 708};
 
-// The HF tokenizer's ids for text the Llama 3 split, the byte fallback and the
-// added tokens all have to get right.
+// The HF tokenizer's ids for text the Llama 3 split, the byte-level tokens and
+// the added tokens all have to get right.
 struct TokenizerCase {
     const char * text;
     std::vector<int32_t> ids;
@@ -123,11 +126,16 @@ struct Case {
     const char * expected;
 };
 
-const Case kCases[] = {
+const std::vector<Case> kCasesEn = {
     {"assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
      "Concord returned to its place amidst the tents."},
     {"assets/asr_validation/librispeech/librispeech_test_other_7902-96591-0000.wav",
      "I'm from the cutter lying off the coast."},
+};
+
+// Every JP package gives this transcript on the CPU, Metal and CUDA.
+const std::vector<Case> kCasesJa = {
+    {"assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav", "日本語で書かれた本を読みます。"},
 };
 
 std::filesystem::path repo_path(const std::string & relative) {
@@ -214,7 +222,7 @@ void check_stage_numbers(
     engine::core::ExecutionContext execution(backend);
     const lfm2::Lfm2TextTokenizer tokenizer(components.vocabulary);
     const auto prompt = lfm2::make_lfm2_asr_prompt(tokenizer, "en");
-    const auto wav = engine::audio::read_wav_f32(repo_path(kCases[0].audio));
+    const auto wav = engine::audio::read_wav_f32(repo_path(kCasesEn[0].audio));
     const auto samples = lfm2::lfm2_audio_mono_16k({wav.sample_rate, wav.channels, wav.samples});
 
     const auto features = lfm2::Lfm2AudioFeatureExtractor(components.encoder.n_mels, backend.threads).extract(samples);
@@ -279,6 +287,7 @@ void check_transcripts(
     const std::filesystem::path & spec_override,
     const std::string & model_gguf,
     const engine::core::BackendConfig & backend,
+    const std::vector<Case> & cases,
     Checks & checks) {
     auto registry = engine::runtime::make_default_registry();
     engine::runtime::ModelLoadRequest load_request;
@@ -299,7 +308,7 @@ void check_transcripts(
     }
 
     offline->prepare({});
-    for (const auto & test_case : kCases) {
+    for (const auto & test_case : cases) {
         const auto wav = engine::audio::read_wav_f32(repo_path(test_case.audio));
         engine::runtime::TaskRequest request;
         request.audio_input = engine::runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
@@ -308,6 +317,12 @@ void check_transcripts(
         checks.expect(actual == test_case.expected, "transcript of " + std::filesystem::path(test_case.audio).filename().string(),
             "got \"" + actual + "\", expected \"" + test_case.expected + "\"");
     }
+}
+
+// The package's language, from general.languages as the session reads it.
+std::string package_language(const lfm2::Lfm2AudioComponents & components) {
+    const auto & languages = components.languages;
+    return std::find(languages.begin(), languages.end(), "ja") != languages.end() ? "ja" : "en";
 }
 
 }  // namespace
@@ -341,20 +356,25 @@ int main(int argc, char ** argv) {
 
     Checks checks;
     try {
+        std::string language;
         {
             const auto components = lfm2::load_lfm2_audio_components(*lfm2::load_lfm2_audio_assets(model_dir), model_gguf, "");
+            language = package_language(*components);
             check_prompt_and_tokenizer(*components, checks);
-            // Quantized weights move these numbers by design; their transcripts
-            // are still checked below.
+            // Quantized weights move these numbers by design, and the Japanese
+            // checkpoint has other weights; their transcripts are still checked
+            // below.
             const bool full_precision = model_gguf.find("-F16.") != std::string::npos || model_gguf.find("-F32.") != std::string::npos;
-            if (full_precision) {
-                check_stage_numbers(*components, backend, checks);
-            } else {
+            if (!full_precision) {
                 std::cout << "SKIP stage numbers: " << model_gguf << " is quantized\n";
+            } else if (language != "en") {
+                std::cout << "SKIP stage numbers: " << model_gguf << " is not the English checkpoint\n";
+            } else {
+                check_stage_numbers(*components, backend, checks);
             }
         }
 
-        check_transcripts(model_dir, spec_override, model_gguf, backend, checks);
+        check_transcripts(model_dir, spec_override, model_gguf, backend, language == "ja" ? kCasesJa : kCasesEn, checks);
     } catch (const std::exception & error) {
         std::cerr << "FAIL: " << error.what() << "\n";
         return kExitFail;

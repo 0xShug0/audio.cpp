@@ -6,7 +6,6 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/silero_vad/session.h"
@@ -289,13 +288,16 @@ Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const r
 }
 
 // liquid-audio transcribes the whole input in one pass, which holds up to
-// about a minute: on joined LibriSpeech test-clean clips its WER is 2% at
-// 60 s, 9% at 90 s (dropped words) and over 80% from 120 s (repetition).
+// about a minute in English and about 40 s in Japanese: on joined LibriSpeech
+// test-clean clips its WER is 2% at 60 s, 9% at 90 s (dropped words) and over
+// 80% from 120 s (repetition); on joined Japanese clips it starts to skip
+// whole sentences between 41 and 45 s.
 // auto therefore keeps input that fits one chunk whole, like liquid-audio,
 // and splits longer audio at pauses found by the bundled Silero VAD, as the
-// other ASR families do (vad mode forces that). That stays at 1-2% WER up to
-// 180 s; silence between the spans is not transcribed, so it cannot come back
-// as words. fixed cuts at the chunk length regardless (2.4-2.9%: words get cut).
+// other ASR families do (vad mode forces that). In English that stays at 1-2%
+// WER up to 180 s; silence between the spans is not transcribed, so it cannot
+// come back as words. fixed cuts at the chunk length regardless (1.8-2.9%:
+// words get cut).
 std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
     const runtime::TaskRequest & request, const std::vector<float> & samples) {
     const auto total = static_cast<int64_t>(samples.size());
@@ -377,9 +379,9 @@ std::string Lfm2AudioSession::transcribe(
 
     // Byte-level tokens need not end on a character boundary, and the next
     // chunk cannot complete one: end the text at its last whole character.
-    auto text = tokenizer_.decode(result.tokens);
-    text.resize(runtime::transcript_publishable_end(text));
-    return text;
+    // Bytes that can never make a character become U+FFFD (lfm2_take_text).
+    auto bytes = tokenizer_.decode(result.tokens);
+    return lfm2_take_text(bytes);
 }
 
 bool Lfm2AudioSession::reached_max_tokens() const {
@@ -808,9 +810,12 @@ runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & reque
     debug::trace_log_scalar("lfm2_audio.session.text_tokens", static_cast<int64_t>(tokens.size()));
     debug::trace_log_scalar("lfm2_audio.session.audio_frames", static_cast<int64_t>(frames.size()));
 
+    // A character the reply's bytes leave open stays in `bytes` and is
+    // dropped, as the stream drops it.
+    auto bytes = tokenizer_.decode(tokens);
     runtime::TaskResult result;
     result.audio_output = runtime::AudioBuffer{output_->detokenizer_config.sample_rate, 1, detokenizer_.decode(frames)};
-    result.text_output = runtime::Transcript{tokenizer_.decode(tokens), language_};
+    result.text_output = runtime::Transcript{lfm2_take_text(bytes), language_};
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
@@ -825,9 +830,8 @@ struct Lfm2AudioChatSession::Stream {
     bool done = false;
     size_t frames = 0;
     std::unique_ptr<Lfm2StreamingIstft> istft;
-    std::string text;                        // the reply's text so far
-    runtime::PartialTextPublisher partials;  // what of it is already in events
-    runtime::AudioBuffer audio;              // everything emitted
+    Lfm2StreamedText text;       // the reply's text, and what of it is in events
+    runtime::AudioBuffer audio;  // everything emitted
 };
 
 runtime::StreamingPolicy Lfm2AudioChatSession::streaming_policy() const {
@@ -936,10 +940,11 @@ std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
     }
 
     // Tokens are bytes, so their text adds up token by token, and a character
-    // split across tokens waits for the event that completes it.
+    // split across tokens waits for the event that completes it. Bytes that
+    // make no character are U+FFFD, and one the reply leaves open is left
+    // out, as offline.
     runtime::StreamEvent event;
-    st.text += tokenizer_.decode(tokens);
-    if (auto delta = st.partials.publish(st.text); !delta.empty()) {
+    if (auto delta = st.text.add(tokenizer_.decode(tokens)); !delta.empty()) {
         event.partial_text = runtime::Transcript{std::move(delta), language_};
     }
 
@@ -962,9 +967,11 @@ runtime::TaskResult Lfm2AudioChatSession::finish_stream() {
         throw std::runtime_error("LFM2-Audio streaming has not been started");
     }
 
+    // The text the events carried: a stream finished before its reply is
+    // over leaves out a character the reply has not finished.
     runtime::TaskResult result;
     result.audio_output = std::move(stream_->audio);
-    result.text_output = runtime::Transcript{stream_->text, language_};
+    result.text_output = runtime::Transcript{stream_->text.text(), language_};
     reset();
     return result;
 }

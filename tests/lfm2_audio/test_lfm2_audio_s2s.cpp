@@ -189,6 +189,13 @@ std::vector<std::string> words(const std::string & text) {
     return out;
 }
 
+// Whether `text` is well-formed UTF-8: decoding it as the reply's bytes keeps
+// it as it is.
+bool well_formed(const std::string & text) {
+    auto bytes = text;
+    return lfm2::lfm2_take_text(bytes) == text;
+}
+
 double word_error_rate(const std::vector<std::string> & reference, const std::vector<std::string> & hypothesis) {
     std::vector<size_t> row(hypothesis.size() + 1);
     for (size_t j = 0; j < row.size(); ++j) {
@@ -441,20 +448,24 @@ void check_replies(
 
     checks.expect(streaming->streaming_policy().input == engine::runtime::StreamingInputKind::AudioChunks, "the stream takes audio chunks");
     auto request = question();
-    streaming->start_stream(request);
-    const auto & input = *request.audio_input;
-    for (size_t start = 0; start < input.samples.size(); start += 4800) {
-        engine::runtime::AudioChunk chunk;
-        chunk.sample_rate = input.sample_rate;
-        chunk.channels = input.channels;
-        chunk.samples.assign(input.samples.begin() + static_cast<std::ptrdiff_t>(start),
-            input.samples.begin() + static_cast<std::ptrdiff_t>(std::min(input.samples.size(), start + 4800)));
-        (void)streaming->process_audio_chunk(chunk);
-    }
+    const auto ask = [&] {
+        streaming->start_stream(request);
+        const auto & input = *request.audio_input;
+        for (size_t start = 0; start < input.samples.size(); start += 4800) {
+            engine::runtime::AudioChunk chunk;
+            chunk.sample_rate = input.sample_rate;
+            chunk.channels = input.channels;
+            chunk.samples.assign(input.samples.begin() + static_cast<std::ptrdiff_t>(start),
+                input.samples.begin() + static_cast<std::ptrdiff_t>(std::min(input.samples.size(), start + 4800)));
+            (void)streaming->process_audio_chunk(chunk);
+        }
+    };
 
+    ask();
     std::vector<float> streamed;
     std::string streamed_text;
     size_t events = 0;
+    bool deltas_well_formed = true;
     while (auto event = streaming->next_stream_event()) {
         ++events;
         if (event->audio_output.has_value()) {
@@ -463,12 +474,17 @@ void check_replies(
 
         if (event->partial_text.has_value()) {
             streamed_text += event->partial_text->text;
+            deltas_well_formed = deltas_well_formed && well_formed(event->partial_text->text);
         }
     }
 
+    // This English reply leaves no character open, so the text checks here and
+    // below guard how the stream is put together; lfm2_audio_tokenizer_test
+    // covers open characters.
     const auto finished = streaming->finish_stream();
     checks.expect(finished.audio_output.has_value() && finished.audio_output->samples == streamed, "the stream's audio is its events");
     checks.expect(finished.text_output.has_value() && finished.text_output->text == streamed_text, "the stream's text is its events");
+    checks.expect(deltas_well_formed && well_formed(streamed_text) && well_formed(text), "the texts are well-formed UTF-8");
     checks.expect(streamed_text == text, "the streamed reply has the offline text", streamed_text);
     const auto & offline = reply.audio_output->samples;
     checks.expect(events == offline.size() / 1920 + 1, "one event per frame and one for the tail", std::to_string(events) + " events");
@@ -481,13 +497,36 @@ void check_replies(
             energy += static_cast<double>(offline[i]) * offline[i];
         }
 
-        // The detokenizer runs in graphs of other sizes. Measured with F16 on
-        // this 12 s reply: 7.5e-4 on the CPU, 4.4e-2 on CUDA, whose F16 kernels
-        // round differently for each size. Quantized weights widen it: 0.15
-        // with Q4_0 on CUDA. A stream that lost context would be off by the
-        // signal itself.
+        // The detokenizer runs in graphs of other sizes, which backends compute
+        // with other kernels. On this reply with F16: about 1e-3 on the CPUs
+        // (9e-4 on x86, 1.7e-3 to 1.8e-3 on the M3 Ultra), 4.3e-2 on CUDA, whose
+        // cuBLAS accumulates the offline products in half precision. Quantized
+        // packages round activations to 8 bits on the CPU and CUDA, and graphs
+        // of other sizes round them differently: 1e-3 to 5e-2 on the CPUs,
+        // depending on the reply and the thread count; on CUDA, over this and
+        // four more seeds, 2.2e-2 to 4.5e-2 with Q8_0 and 0.06 to 0.15 with
+        // Q4_0 (0.15 here). The stream's six-row Q4_0 matmuls run ggml-cuda's
+        // MMVQ kernel, whose dot product makes the rounding error two to three
+        // times larger than in the kernel offline decoding uses. A stream that
+        // lost its context measures 1.3 to 1.4.
         checks.expect_close(std::sqrt(difference / energy), 0.0, full_precision ? 0.1 : 0.3, "streamed against offline reply, relative RMS difference");
     }
+
+    // A client can finish the stream before the reply is over. Its text is
+    // then what the events carried, which starts the reply's text.
+    ask();
+    std::string early_text;
+    for (int i = 0; i < 20; ++i) {
+        const auto event = streaming->next_stream_event();
+        if (event.has_value() && event->partial_text.has_value()) {
+            early_text += event->partial_text->text;
+        }
+    }
+
+    const auto early = streaming->finish_stream();
+    const std::string early_final = early.text_output.has_value() ? early.text_output->text : "";
+    checks.expect(early_final == early_text && well_formed(early_final), "a stream finished early has the text of its events", early_final);
+    checks.expect(!early_text.empty() && streamed_text.rfind(early_text, 0) == 0, "the early text starts the reply's text", early_text);
 }
 
 }  // namespace
