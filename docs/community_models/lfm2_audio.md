@@ -394,7 +394,13 @@ on CPU and CUDA (NVIDIA A10) and on CPU and Metal (Apple M3 Ultra):
 
 At F32 and F16, the few differences are near-ties in liquid-audio's own
 output, where its two best tokens are within 0.04 in log-probability. Below
-that, the quantized weights change close token choices.
+that, the quantized weights change close token choices. On the x86 CPU a Q8_0
+transcript at such a tie can also depend on `--threads` and `max_tokens`: on
+one Japanese S2S reply whose two best tokens in liquid-audio are 0.04 apart,
+the Q8_0 package added a sentence at 4, 5, 7 and 8 threads but not at 1, 2, 3
+and 6, nor at 4 threads with `max_tokens` 128 or 1024. F32 and F16 gave the
+same transcript at every thread count, and Q8_0 on the M3 Ultra CPU, Metal and
+CUDA added the sentence in every run.
 
 Stage by stage on CPU with the F32 weights, the adapter output matches
 liquid-audio within 1.4e-6 relative error and the first-step logits within 9e-7.
@@ -498,8 +504,15 @@ reply spoke a question its text did not have. The ASR task sometimes answers a
 reply, paraphrases it or runs on instead of transcribing it: on 0 to 6 of 30
 replies per backend and package, and on 5 of 60 with liquid-audio fp32. It can
 also add a sentence that was never spoken to speech that sounds like an
-assistant: on one Japanese reply, every precision and liquid-audio fp32 added
-「何かご質問はありますか？」. With Q4_0, 2 of 30 replies on the M3 Ultra CPU and 2
+assistant. Over 450 Japanese replies to 13 questions, this happened only after
+the ending 「何かご質問があれば、いつでもお手伝いしますよ！」 (or 「ね！」), where the
+model is close to a tie between ending the transcript and going on. Of the 50
+replies with that ending, liquid-audio fp32 added a sentence, mostly
+「何かご質問はありますか？」, to 7, the F16 package to 6 or 7 of the same replies,
+and the Q8_0 package to 11 on every backend (the CPUs at 8 threads).
+liquid-audio with the Q8_0 weights added one to the same 11, so the four extra
+come from the quantized weights. With F16 and Q8_0, none of the other 400
+replies gained a sentence. With Q4_0, 2 of 30 replies on the M3 Ultra CPU and 2
 of 30 on CUDA repeated a sentence until `max_tokens` (2 of 60 on the x86 CPU,
 none on Metal). F16 and Q8_0 did not, though one Q8_0 reply (M3 Ultra CPU, 8
 threads) finished its text but not its audio within `max_tokens`.
