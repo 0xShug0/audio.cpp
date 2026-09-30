@@ -21,7 +21,7 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 
 > [!IMPORTANT]
 >
-> **2026-09-23 - Release v0.8.2:** Day-zero support for NVIDIA Nemotron 3 Diarization, with streaming and batched inference. AuK and LiveAvatar are now available in the WebUI.
+> **2026-09-30 - Release v0.9.0:** In the project's first 100 days, audio.cpp has reached **100+ audio models and 170+ variants**, running locally! Thank you to the community for bringing new models, optimizations, testing, and feedback to audio.cpp. Your contributions make this possible!
 >
 > **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
@@ -60,11 +60,11 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-09-15 - Release 0.8.0:** Since v0.7.0, audio.cpp has added YuE2 song generation, SheetSage2 audio-to-score transcription, BreezeTTS 2, CosyVoice3, Kokoro 82M, Moonshine Streaming ASR, Niagara ASR, and VibeVoice ASR Streaming 7B. The community lineup also grows with Audio8 ASR/TTS, Echo-TTS, Chatterbox Turbo, MiraTTS, Sopro, Soprano, sanoTTS, VoxCPM1, VibeASR, and Sortformer v2.1, alongside Irodori v4.1 Anime support. This brings audio.cpp to **80+ model families and 120+ model variants**!  This release also brings improvements to performance, stability, and usability across the project. Thanks to the community for the contributions, testing, and feedback!
+> **2026-09-30 - Release v0.9.0:** New models include Maya1, GigaAM v3 and Multilingual, SAM Audio, SAMSONE, Tone Color VC, HTDemucs six-stem separation, and MOSS-TTSD. The WebUI adds an enhancement and denoising tab and more model controls. This release also brings speaker-tagged Nemotron ASR, ZipVoice streaming, and performance and memory improvements for Higgs Audio, MOSS-TTS, Echo-TTS, ACE-Step, and BS-RoFormer. Explore **100+ audio models** in the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to everyone contributing models, optimizations, fixes, and feedback!
 >
-> Optional server frontend modules add MP3 support, HTTPS listeners, and more customization for server integrations.
+> **2026-09-15 - Release v0.8.0:** YuE2 song generation, SheetSage2 audio-to-score transcription, and expanded TTS, ASR, and diarization support bring audio.cpp to **80+ model families and 120+ variants**. Optional server frontend modules add MP3 and HTTPS support, alongside performance, stability, and usability improvements.
 >
-> Thanks to [@DrewThomasson](https://github.com/DrewThomasson) for the Colab UI, [@christopherthompson81](https://github.com/christopherthompson81) for the C ABI, and [@XsquirrelC](https://github.com/XsquirrelC)/VibeASR for the official VibeASR port, extending audio.cpp with support for BitNet models!
+> Thanks to [@DrewThomasson](https://github.com/DrewThomasson) for Colab, [@christopherthompson81](https://github.com/christopherthompson81) for the C ABI, and [@XsquirrelC](https://github.com/XsquirrelC)/VibeASR for the official port and BitNet support!
 >
 > **2026-08-26 - Release 0.7:** This release adds MiniMax Music 3, MagpieTTS, PersonaPlex, MeanVC2, AudioSR, ControlFoley, FireRedTTS3, FireRedAudio, MiDashengLM-Gen, F5-TTS/Habibi, Granite Speech 5.0 TurboCTC, MMS Forced Aligner, and MOSS-VoiceGenerator, plus DotTTS Edit and ACE-Step 1.5 XL variants, bringing audio.cpp to **62** total model families and **85+** model variants! It also introduces the new Arena UI for side-by-side TTS, voice-conversion, and ASR comparison with shared inputs, queued runs, metrics, and result sorting.
 >
