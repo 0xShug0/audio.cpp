@@ -325,6 +325,7 @@
     universr: 'UniverSR',
     pulsevad: 'PulseVAD',
     nemotron_3_diar: 'Nemotron 3 Diarization',
+    lfm2_audio: 'LFM2.5-Audio',
     personaplex: 'PersonaPlex'
   };
 
