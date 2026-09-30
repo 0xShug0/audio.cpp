@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "family": "audio_flamingo_next",
+  "display_name": "Audio Flamingo Next",
+  "description": "Audio-language model for speech transcription, captioning, and questions about speech, music, and environmental sounds.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {},
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "instruct",
+        "type": "string",
+        "default": "Transcribe the speech.",
+        "required": false,
+        "description": "Question or instruction about the input audio."
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "default": 2048,
+        "min": 1,
+        "required": false,
+        "description": "Maximum generated response tokens."
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "description": "Sample tokens instead of greedy decoding."
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "default": 1,
+        "min": 0.01,
+        "required": false,
+        "description": "Sampling temperature."
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "default": 50,
+        "min": 0,
+        "required": false,
+        "description": "Sampling candidate count; zero disables top-k filtering."
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "default": 1,
+        "min": 0.01,
+        "max": 1,
+        "required": false,
+        "description": "Nucleus sampling probability."
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "default": 1,
+        "min": 0.01,
+        "required": false,
+        "description": "Token repetition penalty."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "default": 42,
+        "min": 0,
+        "required": false,
+        "description": "Sampling seed."
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "default": "native",
+        "required": false,
+        "description": "Weight storage type; native preserves the packaged tensor types."
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "audio_flamingo_next_bf16",
+      "display_name": "Audio Flamingo Next GGUF BF16",
+      "default": true,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Audio-Flamingo-Next-GGUF",
+      "files": [
+        "Audio-Flamingo-Next-GGUF/audio-flamingo-next-bf16.gguf"
+      ],
+      "strip_prefix": "Audio-Flamingo-Next-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/audio_flamingo_next.md"
+    ],
+    "recommended_package": "audio_flamingo_next_bf16"
+  },
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": {
+          "source": "model:model.safetensors"
+        }
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}
