@@ -107,6 +107,7 @@ Status labels:
 | `kitten_tts` | Done | --- | Pass (drift) | --- | --- |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
 | `kugelaudio` | Done | --- | --- | Pass (ASR match, drift) | --- |
+| `latentsync` | Done | --- | Pass (short CUDA parity, Vulkan smoke) | --- | --- |
 | `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
 | `maya1` | Done | --- | Pass | --- | --- |

@@ -1228,6 +1228,30 @@ audiocpp_add_model(minimax_h3
         engine::models::minimax_h3::make_minimax_h3_loader
 )
 
+audiocpp_add_model(latentsync
+    SOURCES
+        src/models/latentsync/whisper_encoder.cpp
+        src/models/latentsync/whisper_runtime.cpp
+        src/models/latentsync/unet_attention.cpp
+        src/models/latentsync/unet.cpp
+        src/models/latentsync/unet_runtime.cpp
+        src/models/latentsync/sampling.cpp
+        src/models/latentsync/pipeline.cpp
+        src/models/latentsync/face_landmarks.cpp
+        src/models/latentsync/scrfd.cpp
+        src/models/latentsync/face_runtime.cpp
+        src/models/latentsync/face_alignment.cpp
+        src/models/latentsync/face_restore.cpp
+        src/models/latentsync/sd_vae.cpp
+        src/models/latentsync/sd_vae_runtime.cpp
+        src/models/latentsync/video.cpp
+        src/models/latentsync/session.cpp
+    INCLUDES
+        engine/models/latentsync/session.h
+    LOADERS
+        engine::models::latentsync::make_latentsync_loader
+)
+
 audiocpp_add_model(liveavatar
     SOURCES
         src/community_models/liveavatar/assets.cpp
@@ -4147,6 +4171,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(plapre_codec_parity PRIVATE engine_runtime ggml)
         endif()
 
+        if (latentsync IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(latentsync_component_parity tests/latentsync/component_parity.cpp)
+            target_link_libraries(latentsync_component_parity PRIVATE engine_runtime ggml)
+        endif()
         if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS AND inflect_v2 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(espeak_frontend_probe tests/unittests/espeak_frontend_probe.cpp)
             if(AUDIOCPP_STATIC_ESPEAK)
