@@ -39,7 +39,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "ASR: transcript tokens per audio chunk, 512 by default. TTS: audio frames (80 ms each) per text chunk, 512 by default. S2S: text tokens and audio frames of the reply together, 1024 by default. A transcript or a text chunk's speech that reaches it is cut off there, with a warning on stderr; a reply that needs more fails the request.",
+        "description": "ASR: transcript tokens per audio chunk, 512 by default. TTS: audio frames (80 ms each) per text chunk, 512 by default. S2S: text tokens and audio frames of the reply together, 1024 by default. A transcript, a text chunk's speech or a reply that reaches it is cut off there, with a warning on stderr.",
         "required": false,
         "min": 1
       },

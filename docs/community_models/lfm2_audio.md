@@ -124,7 +124,12 @@ conversation under liquid-audio's chat system prompt, `Respond with interleaved
 text and audio.`; `--text` replaces that prompt, which the checkpoints were
 trained with, so leave it out unless experimenting. The reply is sampled like
 liquid-audio's README and demo (temperature 1.0, top-k 4) and may run to 1024
-steps, text tokens and audio frames together, about a minute of speech. Text
+steps, text tokens and audio frames together, about a minute of speech. A reply
+that reaches `max_tokens` is cut off there, its text and speech kept, as
+liquid-audio keeps what it generated, and a warning goes to stderr. Greedy
+audio (`--temperature 0`) can go on speaking after the text until
+`max_tokens`, as liquid-audio's greedy decoding does: to one Japanese
+question both gave the same text and 972 audio frames, all 1024 steps. Text
 tokens stand for bytes, not characters. Bytes that make no whole character,
 which replies in scripts such as Thai can have, come out as U+FFFD, as the
 Hugging Face tokenizer decodes them, in replies and transcripts alike; a
@@ -217,7 +222,9 @@ the same seed: the same text, and the same audio up to the detokenizer's
 arithmetic, as for TTS. On CUDA, streamed replies to
 `assets/resources/c.wav` differ from offline by 4.3e-2 with F16 (one reply),
 2.2e-2 to 4.5e-2 with Q8_0 and 0.06 to 0.15 with Q4_0 (five replies each). A
-stream finished before its reply is over returns the text its events carried.
+reply cut off at `max_tokens` streams as it does offline, with the same
+warning; a character left open at the cut is dropped in both. A stream
+finished before its reply is over returns the text its events carried.
 The server's live route, `/v1/audio/speech/live`, takes the question as
 chunked raw PCM and requires an `input` query parameter, which becomes the
 system prompt, so pass liquid-audio's:
@@ -248,7 +255,7 @@ English reply in 2.1 s on CUDA (F16).
 | Option | Task | Default | Meaning |
 |---|---|---|---|
 | `language` | all | The checkpoint's | `en` or `ja`; must match the checkpoint. |
-| `max_tokens` | all | `512`; S2S `1024` | ASR: transcript tokens per audio chunk. TTS: 80 ms audio frames per text chunk. S2S: text tokens and audio frames of the reply together. A transcript or a text chunk's speech that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. A reply that needs more fails the request rather than returning a cut-off result. Transcript tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript at the last whole character. |
+| `max_tokens` | all | `512`; S2S `1024` | ASR: transcript tokens per audio chunk. TTS: 80 ms audio frames per text chunk. S2S: text tokens and audio frames of the reply together. A transcript, a text chunk's speech or a reply that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. Text tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript or reply at the last whole character. |
 | `audio_chunk_mode` | ASR | `auto` | `auto`, `vad`, `fixed` or `none`; see [Long audio](#long-audio). |
 | `audio_chunk_seconds` | ASR | `30` | Longest chunk in seconds, at least 1. |
 | `temperature` | TTS, S2S | `0.8`; S2S `1.0` | Audio code sampling temperature; 0 is greedy. |
@@ -517,9 +524,11 @@ of 30 on CUDA repeated a sentence until `max_tokens` (2 of 60 on the x86 CPU,
 none on Metal). F16 and Q8_0 did not, though one Q8_0 reply (M3 Ultra CPU, 8
 threads) finished its text but not its audio within `max_tokens`.
 `test_lfm2_audio_s2s` checks the prompt, the first text and audio blocks, the
-round trip of three replies through ASR (their median, a failed reply counting
-as a miss), well-formed text, streaming against offline, and a stream finished
-early; it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
+round trip of three replies through ASR (their median, a reply that fails or is
+cut off at `max_tokens` counting as a miss), well-formed text, streaming
+against offline, a stream finished early, and a reply cut off at `max_tokens`,
+offline and streamed; it runs when `lfm2_audio_1_5b_f16` is installed in
+`models/`.
 
 ### Memory
 

@@ -8,7 +8,8 @@
 //   the text logits, the backbone output after the text and the first
 //   frame's depthformer logits;
 // - replies through the registry, offline and streamed, whose audio says what
-//   their text says, checked by transcribing it back with the ASR task.
+//   their text says, checked by transcribing it back with the ASR task;
+// - a reply cut off at max_tokens, offline and streamed.
 //
 // --model is the directory of LiquidAI/LFM2.5-Audio-1.5B-GGUF (default
 // models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install);
@@ -21,6 +22,7 @@
 #include "engine/community_models/lfm2_audio/backbone.h"
 #include "engine/community_models/lfm2_audio/depthformer.h"
 #include "engine/community_models/lfm2_audio/interleaved.h"
+#include "engine/community_models/lfm2_audio/session.h"
 #include "engine/community_models/lfm2_audio/tokenizer.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/execution_context.h"
@@ -109,7 +111,7 @@ constexpr float kNearTie = 0.05f;
 // or runs on to max_tokens instead of transcribing it (liquid-audio fp32 went
 // over 0.2 on 5 of 60 seeds), and a reply can fail to end its audio within
 // max_tokens. So the check takes the median of three replies, and a reply or
-// transcript that fails counts as a miss.
+// transcript that fails or is cut off at max_tokens counts as a miss.
 constexpr double kMaxReplyWordErrors = 0.2;
 const std::vector<std::string> kReplySeeds = {"1234", "1235", "1236"};
 
@@ -337,6 +339,21 @@ engine::runtime::TaskResult run(engine::runtime::IVoiceTaskSession & session, co
     return offline->run(request);
 }
 
+// What `call` writes to std::cerr, where the family's warnings go.
+std::string stderr_of(const std::function<void()> & call) {
+    std::ostringstream captured;
+    auto * const previous = std::cerr.rdbuf(captured.rdbuf());
+    try {
+        call();
+    } catch (...) {
+        std::cerr.rdbuf(previous);
+        throw;
+    }
+
+    std::cerr.rdbuf(previous);
+    return captured.str();
+}
+
 // Replies through the registry, and their audio back through ASR.
 void check_replies(
     const std::filesystem::path & model_dir,
@@ -353,6 +370,8 @@ void check_replies(
     auto model = registry.load(load_request);
     auto s2s = open_session(*model, engine::runtime::VoiceTaskKind::SpeechToSpeech, model_gguf, backend);
     auto asr = open_session(*model, engine::runtime::VoiceTaskKind::Asr, model_gguf, backend);
+    const auto & chat = dynamic_cast<const lfm2::Lfm2AudioChatSession &>(*s2s);
+    const auto & transcriber = dynamic_cast<const lfm2::Lfm2AudioSession &>(*asr);
 
     const auto wav = engine::audio::read_wav_f32(repo_path(kAudio));
     // The README's sampling, temperature 1.0 and top-k 4, by default.
@@ -364,6 +383,7 @@ void check_replies(
     };
 
     const auto reply = run(*s2s, question());
+    const bool reply_cut = chat.reached_max_tokens();
     const bool has_audio = reply.audio_output.has_value() && reply.audio_output->sample_rate == 24000 && !reply.audio_output->samples.empty();
     const std::string text = reply.text_output.has_value() ? reply.text_output->text : "";
     checks.expect(has_audio, "the reply is 24 kHz audio");
@@ -390,10 +410,18 @@ void check_replies(
             try {
                 const auto spoken = given != nullptr ? *given : run(*s2s, question(seed));
                 spoken_text = spoken.text_output.has_value() ? spoken.text_output->text : "";
+                if (given != nullptr ? reply_cut : chat.reached_max_tokens()) {
+                    throw std::runtime_error("the reply reached max_tokens");
+                }
+
                 engine::runtime::TaskRequest transcribe;
                 transcribe.audio_input = spoken.audio_output;
                 const auto heard = run(*asr, transcribe);
                 heard_text = heard.text_output.has_value() ? heard.text_output->text : "";
+                if (transcriber.reached_max_tokens()) {
+                    throw std::runtime_error("the transcript reached max_tokens: " + heard_text);
+                }
+
                 if (!words(spoken_text).empty()) {
                     error = word_error_rate(words(spoken_text), words(heard_text));
                 }
@@ -434,6 +462,27 @@ void check_replies(
         "takes no voice", "a voice");
     rejects([](auto & r) { r.options["text_chunk_size"] = "64"; }, "does not take request option text_chunk_size", "a TTS option");
     rejects([](auto & r) { r.options["language"] = "ja"; }, "speaks en", "another language");
+    // The first 6 steps are the first text block.
+    rejects([](auto & r) { r.options["max_tokens"] = "6"; }, "before the reply spoke", "a max_tokens that ends the reply before it speaks");
+
+    // A reply that reaches max_tokens keeps its text and speech, as
+    // liquid-audio keeps what it generated at max_new_tokens, with a warning.
+    // 40 steps are blocks of 6 text tokens and 12 frames: 16 text tokens and
+    // 24 frames of 1920 samples, fewer if a frame picks end-of-audio for a
+    // codebook and so has no sound.
+    auto cut_question = question();
+    cut_question.options["max_tokens"] = "40";
+    engine::runtime::TaskResult cut;
+    const auto cut_warnings = stderr_of([&] { cut = run(*s2s, cut_question); });
+    const std::string cut_text = cut.text_output.has_value() ? cut.text_output->text : "";
+    const std::vector<float> cut_speech = cut.audio_output.has_value() ? cut.audio_output->samples : std::vector<float>();
+    checks.expect(chat.reached_max_tokens(), "the session reports a reply cut off at max_tokens");
+    checks.expect(!words(cut_text).empty() && well_formed(cut_text), "the cut reply keeps its text", cut_text);
+    checks.expect(!cut_speech.empty() && cut_speech.size() <= 24 * 1920, "the cut reply keeps up to 24 frames of speech",
+        std::to_string(cut_speech.size()) + " samples");
+    checks.expect(cut_warnings.find("[warning][lfm2_audio] the reply reached max_tokens=40") != std::string::npos &&
+                      cut_warnings.find("raise max_tokens") != std::string::npos,
+        "a warning says what to raise", cut_warnings);
 
     // Streamed with the same seed: the same reply, its audio decoded a frame
     // at a time. The other sessions go first, so one set of weights is loaded.
@@ -527,6 +576,44 @@ void check_replies(
     const std::string early_final = early.text_output.has_value() ? early.text_output->text : "";
     checks.expect(early_final == early_text && well_formed(early_final), "a stream finished early has the text of its events", early_final);
     checks.expect(!early_text.empty() && streamed_text.rfind(early_text, 0) == 0, "the early text starts the reply's text", early_text);
+
+    // Streamed, the reply cut off at max_tokens is the offline one: the same
+    // text, which leaves out a character left open at the cut in both, and
+    // the same audio up to the detokenizer's arithmetic.
+    request = cut_question;
+    std::string cut_streamed_text;
+    std::vector<float> cut_streamed;
+    const auto stream_warnings = stderr_of([&] {
+        ask();
+        while (auto event = streaming->next_stream_event()) {
+            if (event->audio_output.has_value()) {
+                cut_streamed.insert(cut_streamed.end(), event->audio_output->samples.begin(), event->audio_output->samples.end());
+            }
+
+            if (event->partial_text.has_value()) {
+                cut_streamed_text += event->partial_text->text;
+            }
+        }
+    });
+
+    const auto & streaming_chat = dynamic_cast<const lfm2::Lfm2AudioChatSession &>(*streaming_session);
+    checks.expect(streaming_chat.reached_max_tokens() && stream_warnings.find("reached max_tokens=40") != std::string::npos,
+        "the cut stream warns and reports it", stream_warnings);
+    const auto cut_finished = streaming->finish_stream();
+    checks.expect(cut_finished.text_output.has_value() && cut_finished.text_output->text == cut_streamed_text, "the cut stream's text is its events");
+    checks.expect(cut_finished.audio_output.has_value() && cut_finished.audio_output->samples == cut_streamed, "the cut stream's audio is its events");
+    checks.expect(cut_streamed_text == cut_text, "the cut stream has the offline cut text", cut_streamed_text);
+    checks.expect(cut_streamed.size() == cut_speech.size(), "the cut stream has the offline cut length", std::to_string(cut_streamed.size()));
+    if (!cut_speech.empty() && cut_streamed.size() == cut_speech.size()) {
+        double difference = 0.0;
+        double energy = 0.0;
+        for (size_t i = 0; i < cut_streamed.size(); ++i) {
+            difference += (static_cast<double>(cut_streamed[i]) - cut_speech[i]) * (static_cast<double>(cut_streamed[i]) - cut_speech[i]);
+            energy += static_cast<double>(cut_speech[i]) * cut_speech[i];
+        }
+
+        checks.expect_close(std::sqrt(difference / energy), 0.0, full_precision ? 0.1 : 0.3, "streamed against offline cut reply, relative RMS difference");
+    }
 }
 
 }  // namespace

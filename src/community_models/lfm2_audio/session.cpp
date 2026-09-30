@@ -131,15 +131,22 @@ bool check_turn_end(const Lfm2SpeechGenerator & generator, size_t frames, size_t
     return true;
 }
 
-// A reply has to end on <|im_end|>, with speech in it.
-void check_reply_end(const Lfm2InterleavedGenerator & generator, size_t frames) {
-    if (!generator.ended()) {
-        throw std::runtime_error("LFM2-Audio reached max_tokens before the end of the reply; increase max_tokens");
+// A reply ends on <|im_end|>, or at max_tokens, where its text and speech are
+// cut off and kept, with a warning, as liquid-audio's generate_interleaved
+// keeps what it generated when max_new_tokens runs out. Either way it needs
+// speech. Returns whether max_tokens cut it.
+bool check_reply_end(const Lfm2InterleavedGenerator & generator, size_t frames, int64_t max_steps) {
+    if (frames == 0) {
+        throw std::runtime_error(generator.ended() ? "LFM2-Audio replied without speech"
+                                                   : "LFM2-Audio reached max_tokens before the reply spoke; raise max_tokens");
     }
 
-    if (frames == 0) {
-        throw std::runtime_error("LFM2-Audio replied without speech");
+    if (generator.ended()) {
+        return false;
     }
+
+    warn("the reply reached max_tokens=" + std::to_string(max_steps) + " and is cut off there; raise max_tokens for the rest");
+    return true;
 }
 
 std::shared_ptr<const Lfm2AudioOutputComponents> select_output_components(
@@ -783,8 +790,13 @@ std::unique_ptr<Lfm2InterleavedGenerator> Lfm2AudioChatSession::start_reply(
         backbone_, depthformer_, tokenizer_, std::move(prompt), std::move(embeddings), output_->depthformer.end_of_audio(), options.reply);
 }
 
+bool Lfm2AudioChatSession::reached_max_tokens() const {
+    return reached_max_tokens_;
+}
+
 runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & request) {
     require_prepared("LFM2-Audio run()");
+    reached_max_tokens_ = false;
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("LFM2-Audio s2s requires audio_input");
     }
@@ -806,7 +818,7 @@ runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & reque
         }
     }
 
-    check_reply_end(*generator, frames.size());
+    reached_max_tokens_ = check_reply_end(*generator, frames.size(), options.reply.max_steps);
     debug::trace_log_scalar("lfm2_audio.session.text_tokens", static_cast<int64_t>(tokens.size()));
     debug::trace_log_scalar("lfm2_audio.session.audio_frames", static_cast<int64_t>(frames.size()));
 
@@ -845,6 +857,7 @@ runtime::StreamingPolicy Lfm2AudioChatSession::streaming_policy() const {
 
 void Lfm2AudioChatSession::start_stream(const runtime::TaskRequest & request) {
     require_prepared("LFM2-Audio start_stream()");
+    reached_max_tokens_ = false;
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("LFM2-Audio start_stream() needs a streaming session");
     }
@@ -933,7 +946,7 @@ std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
     }
 
     if (reply_over) {
-        check_reply_end(*st.generator, st.frames);
+        reached_max_tokens_ = check_reply_end(*st.generator, st.frames, st.options.reply.max_steps);
         const auto rest = st.istft->finish();
         samples.insert(samples.end(), rest.begin(), rest.end());
         st.done = true;
@@ -941,8 +954,8 @@ std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
 
     // Tokens are bytes, so their text adds up token by token, and a character
     // split across tokens waits for the event that completes it. Bytes that
-    // make no character are U+FFFD, and one the reply leaves open is left
-    // out, as offline.
+    // make no character are U+FFFD, and one the reply leaves open (as a cut at
+    // max_tokens can) is left out, as offline.
     runtime::StreamEvent event;
     if (auto delta = st.text.add(tokenizer_.decode(tokens)); !delta.empty()) {
         event.partial_text = runtime::Transcript{std::move(delta), language_};

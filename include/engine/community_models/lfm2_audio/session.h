@@ -172,6 +172,10 @@ public:
     runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
     runtime::TaskResult finalize() override;
 
+    // Whether max_tokens cut the reply off, in the last run() or in the
+    // stream since start_stream().
+    [[nodiscard]] bool reached_max_tokens() const;
+
 private:
     struct RequestOptions {
         std::string system_prompt;
@@ -197,6 +201,7 @@ private:
     Lfm2DetokenizerRuntime detokenizer_;
     std::string language_;
     std::unique_ptr<Stream> stream_;
+    bool reached_max_tokens_ = false;
 };
 
 }  // namespace engine::community_models::lfm2_audio
