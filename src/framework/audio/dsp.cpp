@@ -76,6 +76,13 @@ std::vector<float> make_hann_window(int64_t win_length, STFTFamily family) {
         }
         return window;
     }
+    if (family == STFTFamily::PeriodicF32) {
+        const float step = static_cast<float>(2.0 * static_cast<double>(kPi) / win_length);
+        for (int64_t i = 0; i < win_length; ++i) {
+            window[static_cast<size_t>(i)] = 0.5f - 0.5f * std::cos(step * static_cast<float>(i));
+        }
+        return window;
+    }
     const float denom = family == STFTFamily::Kokoro
                             ? static_cast<float>(win_length)
                             : static_cast<float>(win_length - 1);

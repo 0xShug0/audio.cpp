@@ -13,6 +13,7 @@ struct LinearConfig {
     bool use_bias = true;
     ggml_prec precision = GGML_PREC_DEFAULT;
     bool cuda_nvfp4_f16_activation_lowering = false;
+    bool vulkan_f32_activation_lowering = false;
 };
 
 struct LinearWeights {

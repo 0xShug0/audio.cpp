@@ -1,0 +1,91 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : require
+
+layout(constant_id = 0) const uint WORKGROUP_SIZE = 128;
+
+const uint D_STATE = 16;
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) readonly buffer Src0 { float s0[]; };
+layout(binding = 1) readonly buffer Src1 { float x[]; };
+layout(binding = 2) readonly buffer Src2 { float dt[]; };
+layout(binding = 3) readonly buffer Src3 { float A[]; };
+layout(binding = 4) readonly buffer Src4 { float B[]; };
+layout(binding = 5) readonly buffer Src5 { float C[]; };
+layout(binding = 6) readonly buffer Src6 { int ids[]; };
+layout(binding = 7) buffer Dst { float d[]; };
+
+layout(push_constant) uniform PushConstants {
+    uint nb02; uint nb03; uint nb12; uint nb13;
+    uint nb21; uint nb22; uint nb31;
+    uint nb42; uint nb43; uint nb52; uint nb53;
+    uint s_off;
+    uint n_head;
+    uint d_head;
+    uint n_group;
+    uint n_tok;
+};
+
+shared float shared_B[D_STATE];
+shared float shared_C[D_STATE];
+
+float softplus(float value) {
+    return value <= 20.0 ? log(1.0 + exp(value)) : value;
+}
+
+void main() {
+    const uint channel = gl_GlobalInvocationID.x;
+    const uint seq_idx = gl_WorkGroupID.y;
+    const bool channel_valid = channel < n_head;
+
+    const uint s0_base_idx = (uint(ids[seq_idx]) * nb03 + channel * nb02) / 4;
+    const uint x_base_idx = (seq_idx * nb13 + channel * 4) / 4;
+    const uint dt_base_idx = (seq_idx * nb22 + channel * 4) / 4;
+    const uint A_base_idx = channel * nb31 / 4;
+    const uint B_base_idx = seq_idx * nb43 / 4;
+    const uint C_base_idx = seq_idx * nb53 / 4;
+    const uint y_base_idx = seq_idx * n_tok * n_head + channel;
+    const uint s_base_idx = (s_off + seq_idx * nb03 + channel * nb02) / 4;
+
+    const uint stride_x = nb12 / 4;
+    const uint stride_dt = nb21 / 4;
+    const uint stride_B = nb42 / 4;
+    const uint stride_C = nb52 / 4;
+
+    float state[D_STATE];
+    float decay[D_STATE];
+    if (channel_valid) {
+        [[unroll]] for (uint i = 0; i < D_STATE; ++i) {
+            state[i] = s0[s0_base_idx + i];
+            decay[i] = A[A_base_idx + i];
+        }
+    }
+
+    for (uint token = 0; token < n_tok; ++token) {
+        if (gl_LocalInvocationID.x < D_STATE) {
+            shared_B[gl_LocalInvocationID.x] = B[B_base_idx + token * stride_B + gl_LocalInvocationID.x];
+            shared_C[gl_LocalInvocationID.x] = C[C_base_idx + token * stride_C + gl_LocalInvocationID.x];
+        }
+        barrier();
+
+        if (channel_valid) {
+            const float delta = softplus(dt[dt_base_idx + token * stride_dt]);
+            const float x_delta = x[x_base_idx + token * stride_x] * delta;
+            float sum = 0.0;
+            [[unroll]] for (uint i = 0; i < D_STATE; ++i) {
+                state[i] = fma(state[i], exp(delta * decay[i]), shared_B[i] * x_delta);
+                sum = fma(state[i], shared_C[i], sum);
+            }
+            d[y_base_idx + token * n_head] = sum;
+        }
+        barrier();
+    }
+
+    if (channel_valid) {
+        [[unroll]] for (uint i = 0; i < D_STATE; ++i) {
+            d[s_base_idx + i] = state[i];
+        }
+    }
+}
