@@ -8,7 +8,7 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "wan_s2v_audio_conditioner.h"
 #include "engine/framework/modules/text_encoders/t5_base_encoder.h"
 
@@ -41,7 +41,7 @@ class LiveAvatarDenoiserStaticCache;
 
 struct LiveAvatarPreparedAudio {
     WanS2VAudioBuckets buckets;
-    std::vector<float> hubert_layer_stack;
+    std::vector<float> xlsr_layer_stack;
 };
 
 struct LiveAvatarDenoiserAttentionWeights {
@@ -276,7 +276,7 @@ public:
         const std::vector<int64_t> & token_counts);
     LiveAvatarPreparedAudio prepare_audio_buckets(
         engine::core::ExecutionContext & execution,
-        const std::vector<float> & audio_hubert_input,
+        const std::vector<float> & audio_xlsr_input,
         int64_t batch_frames,
         int64_t audio_layers);
 

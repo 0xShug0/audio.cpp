@@ -9,7 +9,7 @@
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/audio/espeak_phonemizer.h"
+#include "engine/framework/text/espeak_phonemizer.h"
 #include "engine/framework/audio/conversion.h"
 
 #include "ggml-alloc.h"
@@ -179,14 +179,14 @@ struct LoadedModel {
     bool owns_backend = true;  // false when the backend was injected by the caller
     core::BackendType backend_type = core::BackendType::Cpu;  // concrete resolved type
     std::mutex mutex;  // serializes graph use (graphs are not thread-safe)
-    runtime::CacheSlots<int64_t, std::unique_ptr<TextEncoderGraph>> text_graphs{1};
+    runtime::CacheSlots<int64_t, std::unique_ptr<ZipVoiceZipformerTextEncoderGraph>> text_graphs{1};
     struct FmKey {
         int64_t t;
         int64_t b;
         bool guidance;
         bool operator==(const FmKey & o) const { return t == o.t && b == o.b && guidance == o.guidance; }
     };
-    runtime::CacheSlots<FmKey, std::unique_ptr<FmDecoderGraph>> fm_graphs{1};
+    runtime::CacheSlots<FmKey, std::unique_ptr<ZipVoiceZipformerFlowDecoderGraph>> fm_graphs{1};
     runtime::CacheSlots<std::vector<std::string>, std::unique_ptr<EmiliaTokenizer>> tokenizers{1};
     std::unique_ptr<modules::VocosVocoder> vocos_graph;
     std::string vocos_path;
@@ -365,7 +365,7 @@ int compute_threads(const ZipVoiceComputeDevice & device) {
 void fill_masks(
     ggml_backend_t backend,
     const ZipVoiceConfig & config,
-    FmDecoderGraph & g,
+    ZipVoiceZipformerFlowDecoderGraph & g,
     int64_t valid_frames) {
     for (size_t s = 0; s < config.fm_downsampling_factor.size(); ++s) {
         const int64_t ds = config.fm_downsampling_factor[s];
@@ -408,7 +408,7 @@ std::vector<float> run_velocity(
     const auto & config = model.config;
     const bool with_guidance = guidance_embedding != nullptr;
     std::lock_guard<std::mutex> lock(model.mutex);
-    FmDecoderGraph * g = nullptr;
+    ZipVoiceZipformerFlowDecoderGraph * g = nullptr;
     const LoadedModel::FmKey key{T, B, with_guidance};
     if (const auto * slot = model.fm_graphs.find(key)) {
         g = slot->get();
@@ -416,7 +416,7 @@ std::vector<float> run_velocity(
         model.fm_graphs.clear();
         auto built = build_fm_decoder_graph(
             model.weights, config, T, B, with_guidance, false, model.backend);
-        model.fm_graphs.put(key, std::make_unique<FmDecoderGraph>(std::move(built)));
+        model.fm_graphs.put(key, std::make_unique<ZipVoiceZipformerFlowDecoderGraph>(std::move(built)));
         g = model.fm_graphs.find(key)->get();
     }
 
@@ -510,13 +510,13 @@ TextConditionResult compute_text_condition(
     const int64_t T = features_len;
 
     std::lock_guard<std::mutex> lock(model.mutex);
-    TextEncoderGraph * g = nullptr;
+    ZipVoiceZipformerTextEncoderGraph * g = nullptr;
     if (const auto * slot = model.text_graphs.find(S)) {
         g = slot->get();
     } else {
         model.text_graphs.clear();
         auto built = build_text_encoder_graph(model.weights, model.config, S, false, model.backend);
-        model.text_graphs.put(S, std::make_unique<TextEncoderGraph>(std::move(built)));
+        model.text_graphs.put(S, std::make_unique<ZipVoiceZipformerTextEncoderGraph>(std::move(built)));
         g = model.text_graphs.find(S)->get();
     }
     upload_leaf(model.backend, g->token_ids, cat.data(), cat.size() * sizeof(int32_t));
@@ -754,13 +754,13 @@ std::vector<float> zipvoice_text_encoder_raw(
     const int64_t S = static_cast<int64_t>(cat.size());
 
     std::lock_guard<std::mutex> lock(model.mutex);
-    TextEncoderGraph * g = nullptr;
+    ZipVoiceZipformerTextEncoderGraph * g = nullptr;
     if (const auto * slot = model.text_graphs.find(S)) {
         g = slot->get();
     } else {
         model.text_graphs.clear();
         auto built = build_text_encoder_graph(model.weights, model.config, S, false, model.backend);
-        model.text_graphs.put(S, std::make_unique<TextEncoderGraph>(std::move(built)));
+        model.text_graphs.put(S, std::make_unique<ZipVoiceZipformerTextEncoderGraph>(std::move(built)));
         g = model.text_graphs.find(S)->get();
     }
     upload_leaf(model.backend, g->token_ids, cat.data(), cat.size() * sizeof(int32_t));

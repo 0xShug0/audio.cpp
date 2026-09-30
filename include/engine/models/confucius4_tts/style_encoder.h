@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/models/confucius4_tts/assets.h"
 
 #include <memory>
@@ -13,9 +13,9 @@ struct ConfuciusStyleEmbedding {
     int64_t dims = 0;
 };
 
-class ConfuciusStyleEncoder {
+class ConfuciusCampplusStyleEncoder {
 public:
-    ConfuciusStyleEncoder(
+    ConfuciusCampplusStyleEncoder(
         std::shared_ptr<const ConfuciusAssets> assets,
         core::BackendConfig backend,
         engine::assets::TensorStorageType weight_storage_type);

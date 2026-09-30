@@ -1,0 +1,42 @@
+[
+  {
+    "variant": "base",
+    "backend": "cuda",
+    "mem_saver": true,
+    "requests": 14,
+    "exact_outputs": 14,
+    "baseline_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37",
+    "candidate_sha256": "b58704aa979826d11fcdf4c998bab215f25d3e1a00dea47b61416269d46f5a74",
+    "timing_reported": false
+  },
+  {
+    "variant": "turbo",
+    "backend": "cuda",
+    "mem_saver": true,
+    "requests": 14,
+    "exact_outputs": 14,
+    "baseline_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37",
+    "candidate_sha256": "b58704aa979826d11fcdf4c998bab215f25d3e1a00dea47b61416269d46f5a74",
+    "timing_reported": false
+  },
+  {
+    "variant": "xl-turbo-q8dit",
+    "backend": "cuda",
+    "mem_saver": true,
+    "requests": 14,
+    "exact_outputs": 14,
+    "baseline_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37",
+    "candidate_sha256": "b58704aa979826d11fcdf4c998bab215f25d3e1a00dea47b61416269d46f5a74",
+    "timing_reported": false
+  },
+  {
+    "variant": "xl-sft-q8dit",
+    "backend": "cuda",
+    "mem_saver": true,
+    "requests": 14,
+    "exact_outputs": 14,
+    "baseline_sha256": "5a9a165c782037e986d7299ad392ee54e4a48379da291ec503bce5fa2151ee37",
+    "candidate_sha256": "b58704aa979826d11fcdf4c998bab215f25d3e1a00dea47b61416269d46f5a74",
+    "timing_reported": false
+  }
+]

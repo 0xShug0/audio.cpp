@@ -22,14 +22,14 @@ struct Maya1GenerationResult {
   std::vector<int32_t> snac_tokens;
 };
 
-class Maya1Generator {
+class Maya1LlamaGenerator {
 public:
-  Maya1Generator(std::shared_ptr<const Maya1Assets> assets,
+  Maya1LlamaGenerator(std::shared_ptr<const Maya1Assets> assets,
                  core::ExecutionContext &execution,
                  size_t prefill_graph_arena_bytes,
                  size_t decode_graph_arena_bytes, size_t weight_context_bytes,
                  assets::TensorStorageType weight_storage_type);
-  ~Maya1Generator();
+  ~Maya1LlamaGenerator();
 
   Maya1GenerationResult generate(const std::vector<int32_t> &prompt_ids,
                                  const Maya1GenerationOptions &options);

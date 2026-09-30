@@ -25,7 +25,7 @@ struct ParakeetSubsamplingWeights {
     engine::modules::LinearWeights linear;
 };
 
-struct ParakeetEncoderLayerWeights {
+struct ParakeetFastConformerLayerWeights {
     engine::modules::NormWeights norm_ff1;
     engine::modules::LinearWeights ff1_linear1;
     engine::modules::LinearWeights ff1_linear2;
@@ -45,12 +45,12 @@ struct ParakeetEncoderLayerWeights {
     engine::modules::NormWeights norm_out;
 };
 
-struct ParakeetEncoderWeights {
+struct ParakeetFastConformerWeights {
     ParakeetSubsamplingWeights subsampling;
-    std::vector<ParakeetEncoderLayerWeights> layers;
+    std::vector<ParakeetFastConformerLayerWeights> layers;
 };
 
-struct ParakeetDecoderWeights {
+struct ParakeetTDTDecoderWeights {
     engine::core::TensorValue embedding;
     std::vector<engine::modules::LSTMCellWeights> lstm_layers;
     engine::modules::LinearWeights decoder_projector;
@@ -60,8 +60,8 @@ struct ParakeetDecoderWeights {
 
 struct ParakeetWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
-    ParakeetEncoderWeights encoder;
-    ParakeetDecoderWeights decoder;
+    ParakeetFastConformerWeights encoder;
+    ParakeetTDTDecoderWeights decoder;
 };
 
 std::shared_ptr<const ParakeetWeights> load_parakeet_weights(

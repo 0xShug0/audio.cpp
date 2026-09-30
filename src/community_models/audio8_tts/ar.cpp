@@ -5,8 +5,8 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -128,7 +128,7 @@ struct FalconH1LayerWeights {
     core::TensorValue ffn_down;                      // slow.layers.*.feed_forward.down_proj.weight [512,768]
 };
 
-struct ArkttsARWeights {
+struct Audio8TtsDualARWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     assets::TensorData text_embedding_host;
     assets::TensorData codebook_embedding_host;
@@ -157,8 +157,8 @@ struct ArkttsPrefillCacheTarget {
     std::vector<core::TensorValue> values;
 };
 
-modules::QwenDecoderActivationCastPolicy arktts_activation_cast_policy(core::BackendType backend_type) {
-    modules::QwenDecoderActivationCastPolicy policy;
+modules::DecoderActivationCastPolicy arktts_activation_cast_policy(core::BackendType backend_type) {
+    modules::DecoderActivationCastPolicy policy;
     if (backend_type == core::BackendType::Vulkan) {
         return policy;
     }
@@ -180,10 +180,10 @@ modules::QwenDecoderActivationCastPolicy arktts_activation_cast_policy(core::Bac
     return policy;
 }
 
-modules::QwenCausalDecoderConfig make_slow_decoder_config(
+modules::CausalDecoderConfig make_slow_decoder_config(
     const Audio8TtsTextConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.dim;
     out.stack.num_attention_heads = config.n_head;
     out.stack.num_key_value_heads = config.n_local_heads;
@@ -194,24 +194,24 @@ modules::QwenCausalDecoderConfig make_slow_decoder_config(
     out.stack.rope_theta = config.rope_base;
     out.stack.rope_type = GGML_ROPE_TYPE_NORMAL;
     out.stack.attention_precision = GGML_PREC_F32;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
     out.stack.use_qk_norm = config.attention_qk_norm;
     out.stack.activation_cast = arktts_activation_cast_policy(backend_type);
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_F32;
     return out;
 }
 
-modules::QwenCausalDecoderConfig make_fast_decoder_config(
+modules::CausalDecoderConfig make_fast_decoder_config(
     const Audio8TtsFastConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.dim;
     out.stack.num_attention_heads = config.n_head;
     out.stack.num_key_value_heads = config.n_local_heads;
@@ -222,25 +222,25 @@ modules::QwenCausalDecoderConfig make_fast_decoder_config(
     out.stack.rope_theta = config.rope_base;
     out.stack.rope_type = GGML_ROPE_TYPE_NORMAL;
     out.stack.attention_precision = GGML_PREC_F32;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+    out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
     out.stack.use_qk_norm = config.attention_qk_norm;
     out.stack.activation_cast = arktts_activation_cast_policy(backend_type);
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.lm_head_precision = GGML_PREC_F32;
     return out;
 }
 
-modules::QwenDecoderLayerWeights bind_layer(
+modules::DecoderLayerWeights bind_layer(
     core::ConstantTensorCache & constants,
     const ArkttsLayerWeights & weights,
     bool use_qk_norm) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
     out.self_attention.qkv_weight = weights.qkv_proj;
     if (weights.qkv_bias.has_value()) {
@@ -260,11 +260,11 @@ modules::QwenDecoderLayerWeights bind_layer(
     return out;
 }
 
-modules::QwenCausalDecoderWeights bind_slow_weights(
+modules::CausalDecoderWeights bind_slow_weights(
     core::ConstantTensorCache & constants,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     const Audio8TtsTextConfig & config) {
-    modules::QwenCausalDecoderWeights out;
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.slow_layers.size());
     for (const auto & layer : weights.slow_layers) {
         out.stack.layers.push_back(bind_layer(constants, layer, config.attention_qk_norm));
@@ -274,7 +274,7 @@ modules::QwenCausalDecoderWeights bind_slow_weights(
     return out;
 }
 
-modules::QwenDecoderLayerWeights bind_fast_layer(
+modules::DecoderLayerWeights bind_fast_layer(
     core::ConstantTensorCache & constants,
     const ArkttsLayerWeights & weights,
     const Audio8TtsFastConfig & config) {
@@ -323,7 +323,7 @@ bool is_semantic_token(const Audio8TtsConfig & config, int32_t token) {
 
 std::vector<float> build_slow_embeddings(
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     const int32_t * matrix,
     int64_t steps) {
     const int64_t hidden = config.text.dim;
@@ -349,7 +349,7 @@ std::vector<float> build_slow_embeddings(
 
 std::vector<float> build_slow_embedding_for_frame(
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     const std::vector<int32_t> & frame) {
     if (static_cast<int64_t>(frame.size()) != config.fast.num_codebooks + 1) {
         throw std::runtime_error("Audio8 TTS frame size mismatch");
@@ -359,7 +359,7 @@ std::vector<float> build_slow_embedding_for_frame(
 
 std::vector<float> build_fast_embedding(
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     int32_t code) {
     return lookup_row(weights.fast_embedding_host, code, config.fast.dim);
 }
@@ -512,7 +512,7 @@ FalconH1LayerWeights load_falcon_layer(
     return w;
 }
 
-ArkttsARWeights load_ar_weights(
+Audio8TtsDualARWeights load_ar_weights(
     const Audio8TtsAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -520,7 +520,7 @@ ArkttsARWeights load_ar_weights(
     assets::TensorStorageType storage_type) {
     const auto & source = *assets.model_weights;
     const auto & config = assets.config;
-    ArkttsARWeights weights;
+    Audio8TtsDualARWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -755,7 +755,7 @@ core::TensorValue make_arktts_causal_mask(
     core::ModuleBuildContext &,
     core::ConstantTensorCache & constants,
     int64_t steps) {
-    auto values = modules::qwen_causal_prefill_mask_values(1, steps);
+    auto values = modules::causal_prefill_mask_values(1, steps);
     return constants.make_tensor(
         core::TensorShape::from_dims({1, 1, steps, steps}),
         GGML_TYPE_F16,
@@ -766,7 +766,7 @@ core::TensorValue make_arktts_causal_mask(
 struct ArkttsCausalDecoderOutputs {
     core::TensorValue hidden;
     core::TensorValue logits;
-    modules::QwenDecoderStackState state;
+    modules::DecoderStackState state;
 };
 
 ArkttsCausalDecoderOutputs build_arktts_causal_decoder(
@@ -774,15 +774,15 @@ ArkttsCausalDecoderOutputs build_arktts_causal_decoder(
     core::ConstantTensorCache & constants,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const modules::QwenCausalDecoderWeights & weights,
-    const modules::QwenCausalDecoderConfig & config,
+    const modules::CausalDecoderWeights & weights,
+    const modules::CausalDecoderConfig & config,
     bool norm_fastlayer_input) {
     auto mask = make_arktts_causal_mask(ctx, constants, input.shape.dims[1]);
     auto x = input;
-    modules::QwenDecoderStackState state;
+    modules::DecoderStackState state;
     state.layers.reserve(weights.stack.layers.size());
-    const auto layer_config = modules::qwen_decoder_layer_config_from_stack(config.stack);
-    const modules::QwenDecoderLayerModule layer_module(layer_config);
+    const auto layer_config = modules::decoder_layer_config_from_stack(config.stack);
+    const modules::DecoderLayerModule layer_module(layer_config);
     for (const auto & layer : weights.stack.layers) {
         auto out = layer_module.build(ctx, x, positions, layer, std::nullopt, std::nullopt, mask);
         x = out.output;
@@ -813,8 +813,8 @@ ArkttsStaticDecoderOutputs build_arktts_static_decoder(
     ggml_cgraph * graph,
     const core::TensorValue & input,
     const core::TensorValue & positions,
-    const modules::QwenCausalDecoderWeights & weights,
-    const modules::QwenCausalDecoderConfig & config,
+    const modules::CausalDecoderWeights & weights,
+    const modules::CausalDecoderConfig & config,
     int64_t cache_steps,
     const core::TensorValue & attention_mask,
     const core::TensorValue & cache_slot,
@@ -826,8 +826,8 @@ ArkttsStaticDecoderOutputs build_arktts_static_decoder(
     }
     const int64_t step_elems = config.stack.num_key_value_heads * config.stack.head_dim;
     auto x = input;
-    const auto layer_config = modules::qwen_decoder_layer_config_from_stack(config.stack);
-    const modules::QwenDecoderLayerModule layer_module(layer_config);
+    const auto layer_config = modules::decoder_layer_config_from_stack(config.stack);
+    const modules::DecoderLayerModule layer_module(layer_config);
     for (size_t layer_index = 0; layer_index < weights.stack.layers.size(); ++layer_index) {
         auto out = layer_module.build_with_static_cache_tail(
             ctx,
@@ -867,7 +867,7 @@ ArkttsStaticDecoderOutputs build_arktts_static_decoder(
 
 std::vector<float> build_falcon_embeddings(
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     const int32_t * matrix,
     int64_t steps) {
     const int64_t hidden = config.text.dim;
@@ -1024,7 +1024,7 @@ void grow_falcon_kv_pad(FalconH1StepState & state, int64_t head_dim, int64_t n_k
 // per mamba head, D expanded per channel.
 void precompute_falcon_constants(
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     FalconH1StepState & state) {
     if (state.constants_ready) return;
     const int64_t n_layer = config.text.n_layer;
@@ -1065,7 +1065,7 @@ std::unique_ptr<FalconStepPlan> build_falcon_step_plan(
     ggml_backend_t backend,
     size_t arena_bytes,
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     FalconH1StepState & state,
     ArkttsARProfile * profile) {
     const int64_t dim = config.text.dim;
@@ -1345,7 +1345,7 @@ SlowForwardOutput falcon_forward_step_zero_copy(
     int threads,
     size_t arena_bytes,
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     const std::vector<float> & embedding,
     FalconH1StepState & state,
     int64_t position,
@@ -1399,7 +1399,7 @@ SlowForwardOutput falcon_forward_step(
     int threads,
     size_t arena_bytes,
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     const std::vector<float> & embedding,  // [dim]
     FalconH1StepState & state,
     int64_t position,
@@ -1961,7 +1961,7 @@ SlowForwardOutput falcon_forward_step(
 // + sum(codebook_embeddings) for semantic tokens. `matrix` is [codebook_rows][steps].
 std::vector<float> build_falcon_embedding_step(
     const Audio8TtsConfig & config,
-    const ArkttsARWeights & weights,
+    const Audio8TtsDualARWeights & weights,
     const int32_t * matrix,
     int64_t steps,
     int64_t step) {
@@ -2005,9 +2005,9 @@ void copy_tensor_bytes(const core::TensorValue & src, const core::TensorValue & 
     ggml_backend_tensor_set(dst.tensor, host.data(), 0, bytes);
 }
 
-class ArkttsARWeightsRuntime {
+class Audio8TtsDualARWeightsRuntime {
 public:
-    ArkttsARWeightsRuntime(
+    Audio8TtsDualARWeightsRuntime(
         std::shared_ptr<const Audio8TtsAssets> assets,
         core::BackendConfig backend_config,
         int threads,
@@ -2023,7 +2023,7 @@ public:
         backend_config.threads = threads_;
         backend_ = core::init_backend(backend_config);
         backend_type_ = core::backend_type(backend_);
-        ArkttsARWeights loaded =
+        Audio8TtsDualARWeights loaded =
             load_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type);
         if (backend_type_ == core::BackendType::Metal) {
             // Fast AR is submit+sync latency bound on Metal. Use a dedicated
@@ -2041,7 +2041,7 @@ public:
                 retarget_falcon_weights(loaded);
             }
         }
-        weights_ = std::make_shared<const ArkttsARWeights>(std::move(loaded));
+        weights_ = std::make_shared<const Audio8TtsDualARWeights>(std::move(loaded));
         slow_step_constants_ = std::make_unique<core::ConstantTensorCache>(
             backend_,
             threads_,
@@ -2054,7 +2054,7 @@ public:
             256ull * 1024ull * 1024ull);
     }
 
-    ~ArkttsARWeightsRuntime() {
+    ~Audio8TtsDualARWeightsRuntime() {
         fast_constants_.reset();
         slow_step_constants_.reset();
         weights_.reset();
@@ -2074,14 +2074,14 @@ public:
         }
     }
 
-    ArkttsARWeightsRuntime(const ArkttsARWeightsRuntime &) = delete;
-    ArkttsARWeightsRuntime & operator=(const ArkttsARWeightsRuntime &) = delete;
+    Audio8TtsDualARWeightsRuntime(const Audio8TtsDualARWeightsRuntime &) = delete;
+    Audio8TtsDualARWeightsRuntime & operator=(const Audio8TtsDualARWeightsRuntime &) = delete;
 
     const Audio8TtsAssets & assets() const noexcept {
         return *assets_;
     }
 
-    const ArkttsARWeights & weights() const noexcept {
+    const Audio8TtsDualARWeights & weights() const noexcept {
         return *weights_;
     }
 
@@ -2130,7 +2130,7 @@ private:
     // CPU fast backend. The projections are byte copies of the tensors the
     // weight store uploaded to the main backend; norms stay host TensorData
     // and upload through the (CPU-backed) fast constants cache at graph build.
-    void retarget_fast_weights(ArkttsARWeights & weights) {
+    void retarget_fast_weights(Audio8TtsDualARWeights & weights) {
         ggml_init_params params{8ull * 1024ull * 1024ull, nullptr, true};
         fast_weight_ctx_.reset(ggml_init(params));
         if (fast_weight_ctx_ == nullptr) {
@@ -2189,7 +2189,7 @@ private:
     // dedicated CPU backend, mirroring retarget_fast_weights. ssm_A / ssm_D are
     // included so the per-step A=-exp(A_log) / D-expansion reads become plain
     // CPU memcpys instead of GPU->host syncs.
-    void retarget_falcon_weights(ArkttsARWeights & weights) {
+    void retarget_falcon_weights(Audio8TtsDualARWeights & weights) {
         ggml_init_params params{8ull * 1024ull * 1024ull, nullptr, true};
         falcon_weight_ctx_.reset(ggml_init(params));
         if (falcon_weight_ctx_ == nullptr) {
@@ -2252,7 +2252,7 @@ private:
     }
 
     std::shared_ptr<const Audio8TtsAssets> assets_;
-    std::shared_ptr<const ArkttsARWeights> weights_;
+    std::shared_ptr<const Audio8TtsDualARWeights> weights_;
     int threads_ = 1;
     size_t graph_arena_bytes_ = 0;
     ggml_backend_t backend_ = nullptr;
@@ -2267,7 +2267,7 @@ private:
     std::unique_ptr<core::ConstantTensorCache> fast_constants_;
 };
 
-class Audio8TtsARRuntime::Impl {
+class Audio8TtsDualARRuntime::Impl {
 public:
     Impl(
         std::shared_ptr<const Audio8TtsAssets> assets,
@@ -2276,7 +2276,7 @@ public:
         size_t graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type)
-        : runtime_(std::make_shared<ArkttsARWeightsRuntime>(
+        : runtime_(std::make_shared<Audio8TtsDualARWeightsRuntime>(
               std::move(assets),
               backend_config,
               threads,
@@ -2468,7 +2468,7 @@ private:
     class PrefillGraph {
     public:
         PrefillGraph(
-            std::shared_ptr<const ArkttsARWeightsRuntime> runtime,
+            std::shared_ptr<const Audio8TtsDualARWeightsRuntime> runtime,
             int64_t steps,
             ArkttsPrefillCacheTarget target_cache)
             : runtime_(std::move(runtime)),
@@ -2545,7 +2545,7 @@ private:
                 !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
                 throw std::runtime_error("failed to allocate Audio8 TTS AR prefill graph");
             }
-            auto positions = modules::qwen_position_ids(steps_);
+            auto positions = modules::decoder_position_ids(steps_);
             ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
         }
 
@@ -2586,7 +2586,7 @@ private:
         int64_t steps() const noexcept { return steps_; }
 
     private:
-        std::shared_ptr<const ArkttsARWeightsRuntime> runtime_;
+        std::shared_ptr<const Audio8TtsDualARWeightsRuntime> runtime_;
         int64_t steps_ = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
         ggml_tensor * input_ = nullptr;
@@ -2601,7 +2601,7 @@ private:
 
     class StepGraph {
     public:
-        StepGraph(std::shared_ptr<const ArkttsARWeightsRuntime> runtime, int64_t cache_steps)
+        StepGraph(std::shared_ptr<const Audio8TtsDualARWeightsRuntime> runtime, int64_t cache_steps)
             : runtime_(std::move(runtime)),
               cache_steps_(cache_steps) {
             ggml_init_params state_params{8ull * 1024ull * 1024ull, nullptr, true};
@@ -2773,7 +2773,7 @@ private:
         }
 
     private:
-        std::shared_ptr<const ArkttsARWeightsRuntime> runtime_;
+        std::shared_ptr<const Audio8TtsDualARWeightsRuntime> runtime_;
         int64_t cache_steps_ = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
@@ -2792,7 +2792,7 @@ private:
 
     class FastGraph {
     public:
-        explicit FastGraph(std::shared_ptr<const ArkttsARWeightsRuntime> runtime)
+        explicit FastGraph(std::shared_ptr<const Audio8TtsDualARWeightsRuntime> runtime)
             : runtime_(std::move(runtime)) {
             ggml_init_params state_params{8ull * 1024ull * 1024ull, nullptr, true};
             state_ctx_.reset(ggml_init(state_params));
@@ -2858,7 +2858,7 @@ private:
             graph_ = ggml_new_graph_custom(graph_ctx_.get(), 32768, false);
             auto & constants = runtime_->fast_constants();
             constants.begin_graph();
-            modules::QwenCausalDecoderWeights decoder_weights;
+            modules::CausalDecoderWeights decoder_weights;
             decoder_weights.stack.layers.reserve(weights.fast_layers.size());
             for (const auto & layer : weights.fast_layers) {
                 decoder_weights.stack.layers.push_back(bind_fast_layer(constants, layer, config));
@@ -2944,7 +2944,7 @@ private:
         }
 
     private:
-        std::shared_ptr<const ArkttsARWeightsRuntime> runtime_;
+        std::shared_ptr<const Audio8TtsDualARWeightsRuntime> runtime_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> graph_ctx_;
         ggml_tensor * input_ = nullptr;
@@ -3101,14 +3101,14 @@ private:
         engine::debug::trace_log_scalar("audio8_tts.ar.profile.generated_frames", profile.generated_frames);
     }
 
-    std::shared_ptr<const ArkttsARWeightsRuntime> runtime_;
+    std::shared_ptr<const Audio8TtsDualARWeightsRuntime> runtime_;
     sampling::TorchCudaSamplingPolicy sampling_policy_;
     std::unique_ptr<PrefillGraph> prefill_graph_;
     std::unique_ptr<StepGraph> step_graph_;
     std::unique_ptr<FastGraph> fast_graph_;
 };
 
-Audio8TtsARRuntime::Audio8TtsARRuntime(
+Audio8TtsDualARRuntime::Audio8TtsDualARRuntime(
     std::shared_ptr<const Audio8TtsAssets> assets,
     core::BackendConfig backend,
     int threads,
@@ -3123,15 +3123,15 @@ Audio8TtsARRuntime::Audio8TtsARRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-Audio8TtsARRuntime::~Audio8TtsARRuntime() = default;
+Audio8TtsDualARRuntime::~Audio8TtsDualARRuntime() = default;
 
-Audio8TtsCodes Audio8TtsARRuntime::generate(
+Audio8TtsCodes Audio8TtsDualARRuntime::generate(
     const Audio8TtsPrompt & prompt,
     const Audio8TtsGenerationOptions & options) {
     return impl_->generate(prompt, options);
 }
 
-void Audio8TtsARRuntime::release_runtime_graphs() {
+void Audio8TtsDualARRuntime::release_runtime_graphs() {
     impl_->release_runtime_graphs();
 }
 

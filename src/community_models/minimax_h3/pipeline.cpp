@@ -8,7 +8,7 @@
 #include "engine/community_models/minimax_h3/video_vae_decoder.h"
 
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen3_vl_encoder_runtime.h"
+#include "engine/framework/modules/text_encoders/qwen3_vl_encoder_runtime.h"
 #include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <algorithm>
@@ -36,7 +36,7 @@ std::shared_ptr<const MiniMaxH3Assets> require_runtime_assets(std::shared_ptr<co
 
 MiniMaxH3SamplerGraphSpec sampler_graph_spec(
     const MiniMaxH3Config & cfg,
-    const MiniMaxH3DitGraph::PackedSequenceLayout & layout) {
+    const MiniMaxH3DiTGraph::PackedSequenceLayout & layout) {
     const int64_t video_dim = cfg.video_latents_dim * 4;
     const int64_t audio_rows = cfg.audio_steps * cfg.audio_channels;
     return MiniMaxH3SamplerGraphSpec{
@@ -118,10 +118,10 @@ struct MiniMaxH3PipelineRuntime::Impl {
     size_t weight_context_bytes = 0;
     bool mem_saver = false;
     std::unique_ptr<engine::modules::Qwen3VlEncoderRuntime> text_encoder;
-    std::unique_ptr<MiniMaxH3DitWeightStore> dit_weights;
-    std::unique_ptr<AudioVaeWeightStore> audio_vae_weights;
-    std::unique_ptr<VideoVaeWeightStore> video_vae_weights;
-    VideoVaeDecodeCache video_vae_decode_cache;
+    std::unique_ptr<MiniMaxH3DiTWeightStore> dit_weights;
+    std::unique_ptr<AudioVAEWeightStore> audio_vae_weights;
+    std::unique_ptr<VideoVAEWeightStore> video_vae_weights;
+    VideoVAEDecodeCache video_vae_decode_cache;
 
     Impl(
         core::ExecutionContext & execution,
@@ -228,35 +228,35 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
     const float video_sigma_max = *video_sigma_max_it;
     const auto step_timestep_values = build_step_timestep_values(cfg, audio_sigmas, video_sigmas);
     MiniMaxH3GenerateRequest first_block_request = request;
-    if (request.dit_acceleration == MiniMaxH3DitAccelerationMode::FirstBlockCache &&
+    if (request.dit_acceleration == MiniMaxH3DiTAccelerationMode::FirstBlockCache &&
         !request.first_block_cache_sigma_window) {
         first_block_request.first_block_cache_start_sigma =
             sigma_at_denoise_percent(video_sigmas, request.first_block_cache_start_percent);
         first_block_request.first_block_cache_end_sigma =
             sigma_at_denoise_percent(video_sigmas, request.first_block_cache_end_percent);
     }
-    if (request.dit_acceleration == MiniMaxH3DitAccelerationMode::FirstBlockCache) {
+    if (request.dit_acceleration == MiniMaxH3DiTAccelerationMode::FirstBlockCache) {
         engine::debug::trace_log_scalar("minimax_h3.config.first_block_cache_threshold", first_block_request.first_block_cache_threshold);
         engine::debug::trace_log_scalar("minimax_h3.config.first_block_cache_start_sigma", first_block_request.first_block_cache_start_sigma);
         engine::debug::trace_log_scalar("minimax_h3.config.first_block_cache_end_sigma", first_block_request.first_block_cache_end_sigma);
     }
-    std::unique_ptr<MiniMaxH3DitWeightStore> scoped_dit_weights;
-    std::unique_ptr<MiniMaxH3DitLayerwiseRuntime> layerwise_dit;
-    std::unique_ptr<MiniMaxH3DitLayerwiseRuntime> negative_layerwise_dit;
-    MiniMaxH3DitWeightStore * dit_weights = impl_->dit_weights.get();
-    if (request.dit_acceleration != MiniMaxH3DitAccelerationMode::None && request.dit_layerwise) {
+    std::unique_ptr<MiniMaxH3DiTWeightStore> scoped_dit_weights;
+    std::unique_ptr<MiniMaxH3DiTLayerwiseRuntime> layerwise_dit;
+    std::unique_ptr<MiniMaxH3DiTLayerwiseRuntime> negative_layerwise_dit;
+    MiniMaxH3DiTWeightStore * dit_weights = impl_->dit_weights.get();
+    if (request.dit_acceleration != MiniMaxH3DiTAccelerationMode::None && request.dit_layerwise) {
         throw std::runtime_error("MiniMax-H3 DiT acceleration is only wired for the full DiT graph path");
     }
-    if (request.dit_acceleration != MiniMaxH3DitAccelerationMode::None &&
+    if (request.dit_acceleration != MiniMaxH3DiTAccelerationMode::None &&
         request.sampler != MiniMaxH3SamplerMode::Euler) {
         throw std::runtime_error("MiniMax-H3 DiT acceleration currently requires the Euler sampler");
     }
-    if (request.dit_acceleration == MiniMaxH3DitAccelerationMode::Spectrum && cfg_enabled) {
+    if (request.dit_acceleration == MiniMaxH3DiTAccelerationMode::Spectrum && cfg_enabled) {
         throw std::runtime_error("MiniMax-H3 Spectrum acceleration currently requires guidance_scale=1.0");
     }
     if (request.dit_layerwise) {
         const auto weight_start = Clock::now();
-        layerwise_dit = std::make_unique<MiniMaxH3DitLayerwiseRuntime>(
+        layerwise_dit = std::make_unique<MiniMaxH3DiTLayerwiseRuntime>(
             execution_,
             assets_->dit_weights,
                 cfg,
@@ -265,7 +265,7 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
                 request.dit_layerwise_batch,
                 request.dit_mlp_chunk_tokens);
         if (cfg_enabled) {
-            negative_layerwise_dit = std::make_unique<MiniMaxH3DitLayerwiseRuntime>(
+            negative_layerwise_dit = std::make_unique<MiniMaxH3DiTLayerwiseRuntime>(
                 execution_,
                 assets_->dit_weights,
                 cfg,
@@ -277,12 +277,12 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
         engine::debug::timing_log_scalar("minimax_h3.dit.weights_load_ms", engine::debug::elapsed_ms(weight_start, Clock::now()));
     } else if (impl_->mem_saver) {
         const auto weight_start = Clock::now();
-        scoped_dit_weights = std::make_unique<MiniMaxH3DitWeightStore>(execution_, assets_->dit_weights, impl_->weight_context_bytes);
+        scoped_dit_weights = std::make_unique<MiniMaxH3DiTWeightStore>(execution_, assets_->dit_weights, impl_->weight_context_bytes);
         engine::debug::timing_log_scalar("minimax_h3.dit.weights_load_ms", engine::debug::elapsed_ms(weight_start, Clock::now()));
         dit_weights = scoped_dit_weights.get();
     } else if (dit_weights == nullptr) {
         const auto weight_start = Clock::now();
-        impl_->dit_weights = std::make_unique<MiniMaxH3DitWeightStore>(execution_, assets_->dit_weights, impl_->weight_context_bytes);
+        impl_->dit_weights = std::make_unique<MiniMaxH3DiTWeightStore>(execution_, assets_->dit_weights, impl_->weight_context_bytes);
         engine::debug::timing_log_scalar("minimax_h3.dit.weights_load_ms", engine::debug::elapsed_ms(weight_start, Clock::now()));
         dit_weights = impl_->dit_weights.get();
     } else {
@@ -303,8 +303,8 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
     double negative_input_upload_ms = 0.0;
     double negative_output_read_ms = 0.0;
     if (request.dit_layerwise) {
-        DitGraphResult pred;
-        DitGraphResult negative_pred;
+        DiTGraphResult pred;
+        DiTGraphResult negative_pred;
         const int64_t timestep_width = cfg.adaln_curve_grid > 0 ? cfg.time_embed_dim : cfg.timestep_input_dim;
         for (int64_t step = 0; step < cfg.denoise_steps; ++step) {
             const size_t timestep_offset = static_cast<size_t>(step * 2 * timestep_width);
@@ -376,42 +376,42 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
             negative_output_read_ms = negative_layerwise_dit->output_read_ms();
         }
     } else {
-        std::unique_ptr<MiniMaxH3DitGraph> positive_dit;
-        std::unique_ptr<MiniMaxH3DitFirstBlockCacheRuntime> first_block_runtime;
-        std::unique_ptr<MiniMaxH3DitFirstBlockCacheRuntime> negative_first_block_runtime;
-        std::unique_ptr<MiniMaxH3DitCfgGraph> cfg_dit;
+        std::unique_ptr<MiniMaxH3DiTGraph> positive_dit;
+        std::unique_ptr<MiniMaxH3DiTFirstBlockCacheRuntime> first_block_runtime;
+        std::unique_ptr<MiniMaxH3DiTFirstBlockCacheRuntime> negative_first_block_runtime;
+        std::unique_ptr<MiniMaxH3DiTCfgGraph> cfg_dit;
         std::unique_ptr<MiniMaxH3SamplerGraph> sampler;
         MiniMaxH3SamplerOutput sampler_out;
-        if (request.dit_acceleration == MiniMaxH3DitAccelerationMode::FirstBlockCache) {
-            first_block_runtime = std::make_unique<MiniMaxH3DitFirstBlockCacheRuntime>(*dit_weights, cfg, first_block_request, prompt_out);
+        if (request.dit_acceleration == MiniMaxH3DiTAccelerationMode::FirstBlockCache) {
+            first_block_runtime = std::make_unique<MiniMaxH3DiTFirstBlockCacheRuntime>(*dit_weights, cfg, first_block_request, prompt_out);
             if (cfg_enabled) {
-                negative_first_block_runtime = std::make_unique<MiniMaxH3DitFirstBlockCacheRuntime>(*dit_weights, cfg, first_block_request, negative_prompt_out);
+                negative_first_block_runtime = std::make_unique<MiniMaxH3DiTFirstBlockCacheRuntime>(*dit_weights, cfg, first_block_request, negative_prompt_out);
             }
-        } else if (request.dit_acceleration == MiniMaxH3DitAccelerationMode::Spectrum) {
+        } else if (request.dit_acceleration == MiniMaxH3DiTAccelerationMode::Spectrum) {
             if (cfg_enabled) {
-                cfg_dit = std::make_unique<MiniMaxH3DitCfgGraph>(*dit_weights, cfg, prompt_out, negative_prompt_out);
+                cfg_dit = std::make_unique<MiniMaxH3DiTCfgGraph>(*dit_weights, cfg, prompt_out, negative_prompt_out);
             } else {
-                positive_dit = std::make_unique<MiniMaxH3DitGraph>(*dit_weights, cfg, prompt_out);
+                positive_dit = std::make_unique<MiniMaxH3DiTGraph>(*dit_weights, cfg, prompt_out);
             }
         } else if (cfg_enabled) {
-            cfg_dit = std::make_unique<MiniMaxH3DitCfgGraph>(*dit_weights, cfg, prompt_out, negative_prompt_out, false);
+            cfg_dit = std::make_unique<MiniMaxH3DiTCfgGraph>(*dit_weights, cfg, prompt_out, negative_prompt_out, false);
             sampler = std::make_unique<MiniMaxH3SamplerGraph>(execution_, sampler_graph_spec(cfg, cfg_dit->layout()), request.sampler);
         } else {
-            positive_dit = std::make_unique<MiniMaxH3DitGraph>(*dit_weights, cfg, prompt_out, false);
+            positive_dit = std::make_unique<MiniMaxH3DiTGraph>(*dit_weights, cfg, prompt_out, false);
             sampler = std::make_unique<MiniMaxH3SamplerGraph>(execution_, sampler_graph_spec(cfg, positive_dit->layout()), request.sampler);
         }
-        DitGraphResult pred;
-        DitGraphResult negative_pred;
+        DiTGraphResult pred;
+        DiTGraphResult negative_pred;
         const int64_t timestep_width = cfg.adaln_curve_grid > 0 ? cfg.time_embed_dim : cfg.timestep_input_dim;
         std::unique_ptr<MiniMaxH3SpectrumForecaster> spectrum;
-        std::unique_ptr<MiniMaxH3DitFinalGraph> spectrum_final;
-        if (request.dit_acceleration == MiniMaxH3DitAccelerationMode::Spectrum) {
+        std::unique_ptr<MiniMaxH3DiTFinalGraph> spectrum_final;
+        if (request.dit_acceleration == MiniMaxH3DiTAccelerationMode::Spectrum) {
             const auto & layout = positive_dit->layout();
             spectrum = std::make_unique<MiniMaxH3SpectrumForecaster>(
                 request,
                 cfg.denoise_steps,
                 static_cast<size_t>(layout.total * cfg.hidden));
-            spectrum_final = std::make_unique<MiniMaxH3DitFinalGraph>(*dit_weights, cfg, layout);
+            spectrum_final = std::make_unique<MiniMaxH3DiTFinalGraph>(*dit_weights, cfg, layout);
         }
         for (int64_t step = 0; step < cfg.denoise_steps; ++step) {
             const size_t timestep_offset = static_cast<size_t>(step * 2 * timestep_width);
@@ -633,16 +633,16 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
 
     const auto decode_start = Clock::now();
     std::vector<float> wav;
-    std::unique_ptr<AudioVaeWeightStore> scoped_audio_weights;
-    AudioVaeWeightStore * audio_weights = impl_->audio_vae_weights.get();
+    std::unique_ptr<AudioVAEWeightStore> scoped_audio_weights;
+    AudioVAEWeightStore * audio_weights = impl_->audio_vae_weights.get();
     if (impl_->mem_saver) {
         const auto audio_weight_start = Clock::now();
-        scoped_audio_weights = std::make_unique<AudioVaeWeightStore>(execution_, assets_->audio_vae_weights, cfg, impl_->weight_context_bytes);
+        scoped_audio_weights = std::make_unique<AudioVAEWeightStore>(execution_, assets_->audio_vae_weights, cfg, impl_->weight_context_bytes);
         engine::debug::timing_log_scalar("minimax_h3.audio_vae.weights_load_ms", engine::debug::elapsed_ms(audio_weight_start, Clock::now()));
         audio_weights = scoped_audio_weights.get();
     } else if (audio_weights == nullptr) {
         const auto audio_weight_start = Clock::now();
-        impl_->audio_vae_weights = std::make_unique<AudioVaeWeightStore>(execution_, assets_->audio_vae_weights, cfg, impl_->weight_context_bytes);
+        impl_->audio_vae_weights = std::make_unique<AudioVAEWeightStore>(execution_, assets_->audio_vae_weights, cfg, impl_->weight_context_bytes);
         engine::debug::timing_log_scalar("minimax_h3.audio_vae.weights_load_ms", engine::debug::elapsed_ms(audio_weight_start, Clock::now()));
         audio_weights = impl_->audio_vae_weights.get();
     } else {
@@ -653,11 +653,11 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
     std::optional<MiniMaxH3VideoFrames> video_frames;
     if (request.return_video) {
         const auto video_decode_start = Clock::now();
-        std::unique_ptr<VideoVaeWeightStore> scoped_video_weights;
-        VideoVaeWeightStore * video_weights = impl_->video_vae_weights.get();
+        std::unique_ptr<VideoVAEWeightStore> scoped_video_weights;
+        VideoVAEWeightStore * video_weights = impl_->video_vae_weights.get();
         if (impl_->mem_saver || video_weights == nullptr) {
             const auto video_weight_start = Clock::now();
-            scoped_video_weights = std::make_unique<VideoVaeWeightStore>(execution_, assets_->video_vae_weights, cfg, impl_->weight_context_bytes);
+            scoped_video_weights = std::make_unique<VideoVAEWeightStore>(execution_, assets_->video_vae_weights, cfg, impl_->weight_context_bytes);
             engine::debug::timing_log_scalar("minimax_h3.video_vae.weights_load_ms", engine::debug::elapsed_ms(video_weight_start, Clock::now()));
             video_weights = scoped_video_weights.get();
             if (!impl_->mem_saver) {
@@ -668,7 +668,7 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
             engine::debug::timing_log_scalar("minimax_h3.video_vae.weights_load_ms", 0.0);
         }
         if (impl_->mem_saver) {
-            VideoVaeDecodeCache scoped_video_decode_cache;
+            VideoVAEDecodeCache scoped_video_decode_cache;
             video_frames = run_video_vae_decode_graph(*video_weights, cfg, video, scoped_video_decode_cache);
         } else {
             video_frames = run_video_vae_decode_graph(*video_weights, cfg, video, impl_->video_vae_decode_cache);

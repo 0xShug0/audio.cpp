@@ -773,7 +773,7 @@ GraphBuildResult finish_graph(
 
 }  // namespace
 
-FmDecoderGraph build_fm_decoder_graph(
+ZipVoiceZipformerFlowDecoderGraph build_fm_decoder_graph(
     const ZipVoiceWeights & weights,
     const ZipVoiceConfig & config,
     int64_t T,
@@ -787,7 +787,7 @@ FmDecoderGraph build_fm_decoder_graph(
     // leaves + constants get their own context and backend buffer so the
     // graph arena (gallocr) never aliases them (see skill: gallocr aliasing)
     ggml_context * tensor_ctx = ggml_init({64ULL * 1024ULL * 1024ULL, nullptr, true});
-    FmDecoderGraph g;
+    ZipVoiceZipformerFlowDecoderGraph g;
     g.ctx = ctx;
     g.tensor_ctx = tensor_ctx;
     g.T = T;
@@ -844,7 +844,7 @@ FmDecoderGraph build_fm_decoder_graph(
     return g;
 }
 
-TextEncoderGraph build_text_encoder_graph(
+ZipVoiceZipformerTextEncoderGraph build_text_encoder_graph(
     const ZipVoiceWeights & weights,
     const ZipVoiceConfig & config,
     int64_t S,
@@ -854,7 +854,7 @@ TextEncoderGraph build_text_encoder_graph(
     const size_t ctx_bytes = 256ULL * 1024ULL * 1024ULL;
     ggml_context * ctx = ggml_init({ctx_bytes, nullptr, true});
     ggml_context * tensor_ctx = ggml_init({16ULL * 1024ULL * 1024ULL, nullptr, true});
-    TextEncoderGraph g;
+    ZipVoiceZipformerTextEncoderGraph g;
     g.ctx = ctx;
     g.tensor_ctx = tensor_ctx;
     g.S = S;

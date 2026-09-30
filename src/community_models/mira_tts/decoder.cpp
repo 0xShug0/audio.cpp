@@ -1,6 +1,6 @@
 #include "engine/community_models/mira_tts/decoder.h"
 
-#include "engine/framework/audio/flashsr.h"
+#include "engine/framework/audio/utilities/flashsr.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -201,7 +201,7 @@ core::TensorValue residual(
 
 }  // namespace
 
-struct MiraDecoder::Impl {
+struct MiraSnakeConvDecoder::Impl {
     Impl(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution_in,
@@ -303,7 +303,7 @@ struct MiraDecoder::Impl {
     audio::FlashSrModel upsampler;
 };
 
-MiraDecoder::MiraDecoder(
+MiraSnakeConvDecoder::MiraSnakeConvDecoder(
     const MiraTTSAssets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
@@ -312,9 +312,9 @@ MiraDecoder::MiraDecoder(
     : impl_(std::make_unique<Impl>(
           assets, execution, weight_context_bytes, graph_context_bytes, storage_type)) {}
 
-MiraDecoder::~MiraDecoder() = default;
+MiraSnakeConvDecoder::~MiraSnakeConvDecoder() = default;
 
-runtime::AudioBuffer MiraDecoder::decode(
+runtime::AudioBuffer MiraSnakeConvDecoder::decode(
     const std::vector<float> & latents,
     int64_t frames) {
     return impl_->decode(latents, frames);

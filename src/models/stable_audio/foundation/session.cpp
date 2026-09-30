@@ -228,7 +228,7 @@ void FoundationSession::prepare(const runtime::SessionPreparationRequest & reque
             max_batch_);
     }
     if (!rf_dit_) {
-        rf_dit_ = std::make_unique<FoundationRfDitRuntime>(
+        rf_dit_ = std::make_unique<FoundationRFDiTRuntime>(
             execution_context(),
             assets_,
             weight_storage_type_);

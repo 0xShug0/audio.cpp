@@ -1,7 +1,7 @@
 #include "engine/community_models/minimax_music3/ar_runtime.h"
 
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/sampling/hf_sampler.h"
 
 #include <algorithm>
@@ -338,7 +338,7 @@ struct MiniMaxMusic3ArRuntime::Impl {
         if (global_weights.lm_head_layout == MiniMaxMusic3LmHeadLayout::FullVocab) {
             qwen_config.logits_readback_token_ids = semantic_logits_readback_token_ids(MiniMaxMusic3Prompt{});
         }
-        global_runtime = std::make_unique<modules::QwenCausalDecodeRuntime>(
+        global_runtime = std::make_unique<modules::CausalDecoderRuntime>(
             execution,
             qwen_config,
             global_weights.qwen);
@@ -777,8 +777,8 @@ struct MiniMaxMusic3ArRuntime::Impl {
     core::ExecutionContext & execution;
     bool evict_cuda_graph_cache_on_release = false;
     MiniMaxMusic3PromptBuilder prompt_builder;
-    MiniMaxMusic3GlobalLMWeights global_weights;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> global_runtime;
+    MiniMaxMusic3Qwen3GlobalLMWeights global_weights;
+    std::unique_ptr<modules::CausalDecoderRuntime> global_runtime;
     std::unique_ptr<MiniMaxMusic3DepthDecoderRuntime> depth;
     sampling::TorchCudaSamplingPolicy sampling_policy;
     sampling::HfSamplerScratch semantic_scratch;

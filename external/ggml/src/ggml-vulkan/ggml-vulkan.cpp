@@ -706,6 +706,7 @@ struct vk_device_struct {
     vk::DescriptorSetLayout dsl;
 
     vk_matmul_pipeline pipeline_matmul_f32 {};
+    vk_matmul_pipeline pipeline_matmul_f32_inputs {};
     vk_matmul_pipeline pipeline_matmul_f32_f16 {};
     vk_matmul_pipeline pipeline_matmul_bf16 {};
     vk_matmul_pipeline2 pipeline_matmul_f16;
@@ -870,6 +871,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_rwkv_wkv7_f32;
     // [size_idx][kda] where size_idx: 0=d32, 1=d64, 2=d128
     vk_pipeline pipeline_gated_delta_net[3][2];
+    vk_pipeline pipeline_ssm_scan_mamba1_f32;
     vk_pipeline pipeline_ssm_scan_f32_d128;
     vk_pipeline pipeline_ssm_scan_f32_d256;
     vk_pipeline pipeline_ssm_conv_f32;
@@ -3595,6 +3597,9 @@ static void ggml_vk_load_shaders(vk_device& device) {
     if (!device->pipeline_matmul_f32) {
         device->pipeline_matmul_f32 = std::make_shared<vk_matmul_pipeline_struct>();
     }
+    if (!device->pipeline_matmul_f32_inputs) {
+        device->pipeline_matmul_f32_inputs = std::make_shared<vk_matmul_pipeline_struct>();
+    }
     if (!device->pipeline_matmul_f32_f16) {
         device->pipeline_matmul_f32_f16 = std::make_shared<vk_matmul_pipeline_struct>();
     }
@@ -4292,6 +4297,16 @@ static void ggml_vk_load_shaders(vk_device& device) {
         CREATE_MM(GGML_TYPE_BF16, pipeline_matmul_bf16, matmul_bf16, , wg_denoms, warptile, vk_mat_mat_push_constants, 3, , 0);
         CREATE_MM(GGML_TYPE_BF16, pipeline_matmul_id_bf16, matmul_id_bf16, , wg_denoms, warptile, vk_mat_mat_id_push_constants, mul_mat_id_param_count, _id, 0);
     }
+
+    const uint32_t f32_s_warptile_wm = device->subgroup_size == 8 ? 8 : 32;
+    l_warptile = {128, 128, 128, 16, subgroup_size_8 * 2, 64, 2, 4, 4, 1, subgroup_size_8};
+    m_warptile = {128,  64,  64, 16, subgroup_size_8,     32, 2, 4, 2, 1, subgroup_size_8};
+    s_warptile = {subgroup_size_32, 32, 32, 16, f32_s_warptile_wm, 32, 2, 2, 2, 1, subgroup_size_8};
+    l_wg_denoms = {128, 128, 1};
+    m_wg_denoms = { 64,  64, 1};
+    s_wg_denoms = { 32,  32, 1};
+    CREATE_MM(GGML_TYPE_F32, pipeline_matmul_f32_inputs, matmul_f32_f32, , wg_denoms, warptile,
+        vk_mat_mat_push_constants, 3, , 0);
 #undef CREATE_MM
 
     // mul mat vec
@@ -4940,6 +4955,8 @@ static void ggml_vk_load_shaders(vk_device& device) {
             }
         }
     }
+
+    ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_mamba1_f32, "ssm_scan_mamba1_f32", ssm_scan_mamba1_f32_len, ssm_scan_mamba1_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {128, 1, 1}, {128}, 1, true);
 
     if (device->subgroup_arithmetic && device->subgroup_require_full_support) {
         ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_f32_d128, "ssm_scan_128_f32", ssm_scan_subgroup_f32_len, ssm_scan_subgroup_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {1, 1, 1}, {128, device->subgroup_size}, 1, true, true);
@@ -6342,9 +6359,13 @@ static vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type 
     return ctx->device->pipeline_dequant[type];
 }
 
-static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_context * ctx, ggml_type src0_type, ggml_type src1_type, ggml_prec prec) {
+static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_context * ctx, ggml_type src0_type,
+        ggml_type src1_type, ggml_prec prec, ggml_mul_mat_lowering lowering) {
     VK_LOG_DEBUG("ggml_vk_get_mul_mat_mat_pipeline(" << ggml_type_name(src0_type) << ", " << ggml_type_name(src1_type) << ", " << prec << ")");
     if (src0_type == GGML_TYPE_F32 && src1_type == GGML_TYPE_F32) {
+        if (lowering == GGML_MUL_MAT_LOWERING_VULKAN_F32_INPUTS) {
+            return ctx->device->pipeline_matmul_f32_inputs;
+        }
         return ctx->device->pipeline_matmul_f32;
     }
     if (src0_type == GGML_TYPE_F32 && src1_type == GGML_TYPE_F16) {
@@ -7801,10 +7822,13 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
         src1_uma = d_Qy != nullptr;
     }
 
-    // Reformat and convert to fp16 if non-contiguous, or for coopmat2 for better perf
-    const bool x_non_contig = (ctx->device->coopmat2 && src0->type == GGML_TYPE_F32) ||
+    const auto lowering = (ggml_mul_mat_lowering)ggml_get_op_params_i32(dst, 1);
+    const bool f32_inputs = lowering == GGML_MUL_MAT_LOWERING_VULKAN_F32_INPUTS;
+
+    // Reformat and convert to fp16 if non-contiguous, or for coopmat2 for better perf.
+    const bool x_non_contig = (!f32_inputs && ctx->device->coopmat2 && src0->type == GGML_TYPE_F32) ||
                               !ggml_vk_dim01_contiguous(src0);
-    const bool y_non_contig = (ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
+    const bool y_non_contig = (!f32_inputs && ctx->device->coopmat2 && src1->type == GGML_TYPE_F32) ||
                               (src0->type == GGML_TYPE_BF16 && src1->type != GGML_TYPE_BF16) ||
                               !ggml_vk_dim01_contiguous(src1);
 
@@ -7816,11 +7840,13 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
     bool quantize_y = ctx->device->integer_dot_product && src1->type == GGML_TYPE_F32 && ggml_is_contiguous(src1) && !y_non_contig && (ne11 * ne10) % 4 == 0;
 
     // Check for mmq first
-    vk_matmul_pipeline mmp = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline(ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0]) : nullptr;
+    vk_matmul_pipeline mmp = quantize_y ? ggml_vk_get_mul_mat_mat_pipeline(
+        ctx, src0->type, GGML_TYPE_Q8_1, (ggml_prec)dst->op_params[0], lowering) : nullptr;
 
     if (mmp == nullptr) {
         // Fall back to f16 dequant mul mat
-        mmp = ggml_vk_get_mul_mat_mat_pipeline(ctx, src0->type, y_non_contig ? f16_type : src1->type, (ggml_prec)dst->op_params[0]);
+        mmp = ggml_vk_get_mul_mat_mat_pipeline(
+            ctx, src0->type, y_non_contig ? f16_type : src1->type, (ggml_prec)dst->op_params[0], lowering);
         quantize_y = false;
     }
 
@@ -7829,7 +7855,8 @@ static void ggml_vk_mul_mat_q_f16(ggml_backend_vk_context * ctx, vk_context& sub
 
     if (qx_needs_dequant) {
         // Fall back to dequant + f16 mulmat
-        mmp = ggml_vk_get_mul_mat_mat_pipeline(ctx, f16_type, y_f32_kernel ? GGML_TYPE_F32 : f16_type, (ggml_prec)dst->op_params[0]);
+        mmp = ggml_vk_get_mul_mat_mat_pipeline(
+            ctx, f16_type, y_f32_kernel ? GGML_TYPE_F32 : f16_type, (ggml_prec)dst->op_params[0], lowering);
     }
 
     // Not implemented
@@ -10035,6 +10062,10 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
     case GGML_OP_SSM_SCAN:
         if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
             const uint32_t d_state = src0->ne[0];
+            const bool is_mamba2 = dst->src[3]->nb[1] == sizeof(float);
+            if (!is_mamba2 && d_state == 16) {
+                return ctx->device->pipeline_ssm_scan_mamba1_f32;
+            }
             if (d_state == 128) {
                 return ctx->device->pipeline_ssm_scan_f32_d128;
             } else if (d_state == 256) {
@@ -10960,8 +10991,7 @@ static void ggml_vk_ssm_scan(ggml_backend_vk_context * ctx, vk_context& subctx, 
     const uint32_t n_tok = src1->ne[2];
     const uint32_t n_seq = src1->ne[3];
 
-    bool is_mamba2 = (src3->nb[1] == sizeof(float));
-    GGML_ASSERT(is_mamba2);
+    const bool is_mamba2 = src3->nb[1] == sizeof(float);
 
     vk_pipeline pipeline = ggml_vk_op_get_pipeline(ctx, src0, src1, src2, dst, dst->op);
     GGML_ASSERT(pipeline != nullptr);
@@ -10990,6 +11020,15 @@ static void ggml_vk_ssm_scan(ggml_backend_vk_context * ctx, vk_context& subctx, 
     std::array<uint32_t, 3> elements;
 
     const uint32_t d_state = src0->ne[0];
+    if (!is_mamba2) {
+        GGML_ASSERT(d_state == 16 && head_dim == 1 && n_group == 1);
+        elements = {n_head, n_seq, 1};
+        ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
+            {src_buf[0], src_buf[1], src_buf[2], src_buf[3], src_buf[4], src_buf[5], src_buf[6], dst_buf},
+            pc, elements);
+        return;
+    }
+
     uint32_t num_subgroups = d_state / ctx->device->subgroup_size;
     const uint32_t num_workgroups_x = CEIL_DIV(n_head * head_dim, num_subgroups);
     const uint32_t num_workgroups_y = n_seq;
@@ -16266,9 +16305,15 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 const uint32_t d_state = op->src[0]->ne[0];
                 const uint32_t head_dim = op->src[0]->ne[1];
 
-                bool is_mamba2 = (op->src[3] && op->src[3]->nb[1] == sizeof(float));
+                const bool is_mamba2 = op->src[3] && op->src[3]->nb[1] == sizeof(float);
                 if (!is_mamba2) {
-                    return false;
+                    for (int i = 1; i < 6; ++i) {
+                        if (op->src[i] == nullptr || op->src[i]->type != GGML_TYPE_F32) {
+                            return false;
+                        }
+                    }
+                    return op->src[6] != nullptr && op->src[6]->type == GGML_TYPE_I32 &&
+                           d_state == 16 && head_dim == 1 && op->src[4]->ne[1] == 1;
                 }
 
                 if ((d_state != 128 && d_state != 256) || head_dim % 16 != 0) {

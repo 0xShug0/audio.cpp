@@ -18,19 +18,19 @@ class ExecutionContext;
 
 namespace engine::models::vevo2 {
 
-struct Vevo2VocoderWeights;
-struct Vevo2VocoderGraph;
+struct Vevo2VocosWeights;
+struct Vevo2VocosGraph;
 
-class Vevo2VocoderRuntime final {
+class Vevo2VocosRuntime final {
 public:
-    Vevo2VocoderRuntime(
+    Vevo2VocosRuntime(
         const Vevo2Assets & assets,
         engine::core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         size_t graph_context_bytes,
         engine::assets::TensorStorageType matmul_weight_storage_type,
         engine::assets::TensorStorageType conv_weight_storage_type);
-    ~Vevo2VocoderRuntime();
+    ~Vevo2VocosRuntime();
 
     runtime::AudioBuffer decode(const Vevo2MelSequence & mel) const;
 
@@ -39,8 +39,8 @@ private:
     engine::core::ExecutionContext & execution_context_;
     size_t graph_context_bytes_ = 0;
     std::shared_ptr<const engine::assets::TensorSource> weight_source_;
-    std::shared_ptr<const Vevo2VocoderWeights> weights_;
-    mutable std::unique_ptr<Vevo2VocoderGraph> graph_;
+    std::shared_ptr<const Vevo2VocosWeights> weights_;
+    mutable std::unique_ptr<Vevo2VocosGraph> graph_;
     std::string name_;
 };
 

@@ -1,6 +1,6 @@
 #include "../../src/models/kokoro_tts/cpu_kernels.h"
 
-#include <ggml-cpu.h>
+#include "engine/framework/core/execution_context.h"
 
 #include <cstring>
 #include <cmath>
@@ -21,8 +21,9 @@ void compare(ggml_context * ctx, ggml_tensor * expected, ggml_tensor * actual, i
     ggml_cgraph * graph = ggml_new_graph(ctx);
     ggml_build_forward_expand(graph, expected);
     ggml_build_forward_expand(graph, actual);
+    engine::core::ExecutionContext execution({engine::core::BackendType::Cpu, 0, threads});
     for (int repeat = 0; repeat < 2; ++repeat) {
-        if (ggml_graph_compute_with_ctx(ctx, graph, threads) != GGML_STATUS_SUCCESS ||
+        if (ggml_backend_graph_compute(execution.backend(), graph) != GGML_STATUS_SUCCESS ||
             ggml_nbytes(expected) != ggml_nbytes(actual)) {
             throw std::runtime_error(std::string(kernel) + " CPU kernel execution failed");
         }

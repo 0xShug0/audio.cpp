@@ -41,8 +41,8 @@ private:
     std::unique_ptr<engine::core::ExecutionContext> execution_;
     std::unique_ptr<MiDashengLmGenTextTokenizer> tokenizer_;
     std::unique_ptr<MiDashengLmGenPromptEncoderRuntime> prompt_encoder_;
-    std::unique_ptr<MiDashengLmGenFlowRuntime> flow_;
-    std::unique_ptr<MiDashengLmGenARRuntime> ar_;
+    std::unique_ptr<MiDashengLmGenDiTFlowRuntime> flow_;
+    std::unique_ptr<MiDashengLmGenQwen3ARRuntime> ar_;
     std::unique_ptr<MiDashengLmGenAudioTokenizerRuntime> audio_tokenizer_;
 };
 

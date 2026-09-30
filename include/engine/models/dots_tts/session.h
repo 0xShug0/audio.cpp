@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/model_spec/metadata.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/dots_tts/assets.h"
@@ -86,7 +86,7 @@ private:
         const std::string & text,
         size_t segment_index,
         PromptConditioning & conditioning,
-        DotsAudioVaeStreamState & stream_state,
+        DotsAudioVAEStreamState & stream_state,
         const runtime::StreamEventCallback & sink);
     runtime::AudioBuffer synthesize_chunked(
         const runtime::TaskRequest & request,
@@ -106,9 +106,9 @@ private:
     DotsTokenizer tokenizer_;
     DotsLatentCodec latent_codec_;
     engine::modules::CampplusEncoderComponent speaker_encoder_;
-    DotsAudioVaeComponent audio_vae_;
+    DotsAudioVAEComponent audio_vae_;
     DotsPatchEncoderComponent patch_encoder_;
-    DotsLlmComponent llm_;
+    DotsQwen2Component llm_;
     DotsFlowComponent flow_;
     runtime::CacheSlots<PromptFeatureCacheKey, PromptFeatureCacheEntry, PromptFeatureCacheKeyEqual> prompt_feature_cache_;
     std::optional<DotsRequest> prepared_defaults_;

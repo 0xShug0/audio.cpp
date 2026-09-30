@@ -14,12 +14,12 @@ struct InflectV2GenerationOptions {
     uint32_t seed = 0;
 };
 
-class InflectV2NativeRuntime {
+class InflectV2VitsRuntime {
 public:
-    InflectV2NativeRuntime(
+    InflectV2VitsRuntime(
         std::shared_ptr<const InflectV2Assets> assets,
         core::BackendConfig backend_config);
-    ~InflectV2NativeRuntime();
+    ~InflectV2VitsRuntime();
 
     runtime::AudioBuffer synthesize(
         const std::vector<int32_t> & token_ids,

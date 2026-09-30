@@ -43,7 +43,7 @@ public:
         core::ExecutionContext & execution_context,
         size_t projection_graph_arena_bytes,
         size_t projection_weight_context_bytes,
-        const MossBackboneRuntime & backbone,
+        const MossTTSLocalQwen3BackboneRuntime & backbone,
         const MossDepthTransformer & depth);
     ~MossGenerator();
 
@@ -61,7 +61,7 @@ public:
 
 private:
     std::shared_ptr<const MossTTSLocalAssets> assets_;
-    const MossBackboneRuntime & backbone_;
+    const MossTTSLocalQwen3BackboneRuntime & backbone_;
     const MossDepthTransformer & depth_;
     int64_t hidden_size_ = 0;
     int64_t num_codebooks_ = 0;

@@ -6,7 +6,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/conformer_modules.h"
-#include "engine/framework/modules/attention/transformer_blocks.h"
+#include "engine/framework/modules/transformers/transformer_blocks.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/tokenizers/sentencepiece.h"
 

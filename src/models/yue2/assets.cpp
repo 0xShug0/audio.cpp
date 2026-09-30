@@ -61,9 +61,9 @@ Yue2ModelConfig parse_model_config(const std::filesystem::path & path) {
     return out;
 }
 
-Yue2VaeConfig parse_vae_config(const std::filesystem::path & path) {
+Yue2VAEConfig parse_vae_config(const std::filesystem::path & path) {
     const auto root = json::parse_file(path);
-    Yue2VaeConfig out;
+    Yue2VAEConfig out;
     out.sample_rate = static_cast<int>(json::optional_i64(root, "sample_rate", out.sample_rate));
     out.channels = json::optional_i64(root, "audio_channels", out.channels);
     out.latent_dim = json::optional_i64(root, "latent_dim", out.latent_dim);

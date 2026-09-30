@@ -163,7 +163,7 @@ core::TensorValue scale_bias_tensor(core::ModuleBuildContext & ctx, const core::
 core::TensorValue build_timestep_embedding(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & features,
-    const FoundationRfDitWeights & weights,
+    const FoundationRFDiTWeights & weights,
     const StableAudioConfig & config) {
     auto hidden = modules::LinearModule({kTimestepFeaturesDim, config.embed_dim, true, GGML_PREC_F32})
                       .build(ctx, features, weights.timestep_embed_0);
@@ -376,7 +376,7 @@ FoundationRfLayerWeights load_layer(
 
 }  // namespace
 
-FoundationRfDitWeights load_foundation_rf_dit_weights(
+FoundationRFDiTWeights load_foundation_rf_dit_weights(
     const StableAudioAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -384,7 +384,7 @@ FoundationRfDitWeights load_foundation_rf_dit_weights(
     assets::TensorStorageType weight_storage_type) {
     const auto & config = assets.config;
     const auto & source = *assets.model_weights;
-    FoundationRfDitWeights weights;
+    FoundationRFDiTWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -415,12 +415,12 @@ FoundationRfDitWeights load_foundation_rf_dit_weights(
     return weights;
 }
 
-class FoundationRfDitRuntime::Graph {
+class FoundationRFDiTRuntime::Graph {
 public:
     Graph(
         core::ExecutionContext & execution,
         std::shared_ptr<const StableAudioAssets> assets,
-        const FoundationRfDitWeights & weights,
+        const FoundationRFDiTWeights & weights,
         const StableAudioSamplingState & sampling,
         bool use_cfg)
         : backend_(execution.backend()),
@@ -1118,7 +1118,7 @@ private:
     int64_t latent_tokens_ = 0;
     bool use_cfg_ = false;
     std::vector<float> timestep_freqs_;
-    const FoundationRfDitWeights & weights_;
+    const FoundationRFDiTWeights & weights_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue x_;
     core::TensorValue timestep_features_;
@@ -1137,7 +1137,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-FoundationRfDitRuntime::FoundationRfDitRuntime(
+FoundationRFDiTRuntime::FoundationRFDiTRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const StableAudioAssets> assets,
     assets::TensorStorageType weight_storage_type)
@@ -1152,15 +1152,15 @@ FoundationRfDitRuntime::FoundationRfDitRuntime(
     }
 }
 
-FoundationRfDitRuntime::~FoundationRfDitRuntime() = default;
+FoundationRFDiTRuntime::~FoundationRFDiTRuntime() = default;
 
-const FoundationRfDitWeights & require_rf_weights(
-    std::unique_ptr<FoundationRfDitWeights> & weights,
+const FoundationRFDiTWeights & require_rf_weights(
+    std::unique_ptr<FoundationRFDiTWeights> & weights,
     core::ExecutionContext & execution,
     const std::shared_ptr<const StableAudioAssets> & assets,
     assets::TensorStorageType weight_storage_type) {
     if (!weights) {
-        weights = std::make_unique<FoundationRfDitWeights>(load_foundation_rf_dit_weights(
+        weights = std::make_unique<FoundationRFDiTWeights>(load_foundation_rf_dit_weights(
             *assets,
             execution.backend(),
             execution.backend_type(),
@@ -1170,7 +1170,7 @@ const FoundationRfDitWeights & require_rf_weights(
     return *weights;
 }
 
-void FoundationRfDitRuntime::prepare(const StableAudioSamplingState & sampling, float cfg_scale) const {
+void FoundationRFDiTRuntime::prepare(const StableAudioSamplingState & sampling, float cfg_scale) const {
     const bool use_cfg = cfg_scale != 1.0F;
     const auto & weights = require_rf_weights(weights_, *execution_, assets_, weight_storage_type_);
     if (!graph_ || !graph_->matches(sampling) || !graph_->matches_cfg(use_cfg)) {
@@ -1178,7 +1178,7 @@ void FoundationRfDitRuntime::prepare(const StableAudioSamplingState & sampling, 
     }
 }
 
-std::vector<float> FoundationRfDitRuntime::sample(
+std::vector<float> FoundationRFDiTRuntime::sample(
     const StableAudioSamplingState & sampling,
     const StableAudioConditioningInputs & conditioning,
     uint64_t seed,

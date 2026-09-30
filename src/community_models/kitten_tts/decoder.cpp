@@ -973,7 +973,7 @@ class GeneratorGraphRuntime {
 
 } // namespace
 
-struct KittenDecoderRuntime::Impl {
+struct KittenStyleTTS2DecoderRuntime::Impl {
     std::shared_ptr<const KittenWeights> weights;
     int n_threads = 1;
     bool use_device_backend = false;
@@ -984,7 +984,7 @@ struct KittenDecoderRuntime::Impl {
     GeneratorGraphRuntime generator_graph;
 
     Impl(std::shared_ptr<const KittenWeights> weights_in, ggml_backend_t backend_in, int n_threads_in,
-         bool use_device_backend_in, uint64_t rng_seed_in, KittenDecoderCapacityContract contract_in)
+         bool use_device_backend_in, uint64_t rng_seed_in, KittenStyleTTS2DecoderCapacityContract contract_in)
         : weights(std::move(weights_in)), n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in), rng_seed(rng_seed_in), backend(backend_in),
           inverse_stft_config({
@@ -999,7 +999,7 @@ struct KittenDecoderRuntime::Impl {
         prepare(contract_in);
     }
 
-    void prepare(KittenDecoderCapacityContract contract) {
+    void prepare(KittenStyleTTS2DecoderCapacityContract contract) {
         if (!conditioning_graph) {
             conditioning_graph =
                 std::make_unique<ConditioningGraphRuntime>(weights->decoder.generator, backend, contract.decoder_frames,
@@ -1011,16 +1011,16 @@ struct KittenDecoderRuntime::Impl {
     }
 };
 
-KittenDecoderRuntime::KittenDecoderRuntime(std::shared_ptr<const KittenWeights> weights, ggml_backend_t backend,
+KittenStyleTTS2DecoderRuntime::KittenStyleTTS2DecoderRuntime(std::shared_ptr<const KittenWeights> weights, ggml_backend_t backend,
                                            int n_threads, bool use_device_backend, uint64_t rng_seed,
-                                           KittenDecoderCapacityContract contract)
+                                           KittenStyleTTS2DecoderCapacityContract contract)
     : impl_(std::make_unique<Impl>(std::move(weights), backend, n_threads, use_device_backend, rng_seed, contract)) {}
 
-KittenDecoderRuntime::~KittenDecoderRuntime() = default;
+KittenStyleTTS2DecoderRuntime::~KittenStyleTTS2DecoderRuntime() = default;
 
-void KittenDecoderRuntime::prepare(KittenDecoderCapacityContract contract) { impl_->prepare(contract); }
+void KittenStyleTTS2DecoderRuntime::prepare(KittenStyleTTS2DecoderCapacityContract contract) { impl_->prepare(contract); }
 
-std::vector<float> KittenDecoderRuntime::decode(const PredictorOutputs &predictor, const std::vector<float> &ref_s) {
+std::vector<float> KittenStyleTTS2DecoderRuntime::decode(const PredictorOutputs &predictor, const std::vector<float> &ref_s) {
     if (static_cast<int64_t>(ref_s.size()) != 256) {
         throw std::runtime_error("Kitten decoder requires ref_s with 256 elements");
     }

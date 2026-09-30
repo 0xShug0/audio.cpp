@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -12,7 +12,7 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <ggml-alloc.h>
@@ -777,7 +777,7 @@ private:
         }
         const auto pos = position_ids(steps);
         ggml_backend_tensor_set(positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
-        const auto mask = modules::qwen_causal_prefill_mask_values(1, steps);
+        const auto mask = modules::causal_prefill_mask_values(1, steps);
         ggml_backend_tensor_set(attention_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         const size_t state_values = static_cast<size_t>(
             config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads);
@@ -1105,7 +1105,7 @@ public:
         const int32_t slot = static_cast<int32_t>(valid_steps_);
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
         ggml_backend_tensor_set(cache_slot_, &slot, 0, sizeof(int32_t));
-        modules::write_qwen_cached_step_mask(
+        modules::write_decoder_cached_step_mask(
             attention_mask_,
             attention_mask_values_,
             cache_steps_,
@@ -1220,7 +1220,7 @@ private:
         }
         const auto pos = position_ids(steps);
         ggml_backend_tensor_set(prefill_positions_, pos.data(), 0, pos.size() * sizeof(int32_t));
-        const auto mask = modules::qwen_causal_prefill_mask_values(1, steps);
+        const auto mask = modules::causal_prefill_mask_values(1, steps);
         ggml_backend_tensor_set(prefill_attention_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         std::vector<float> zero_state(static_cast<size_t>(state_values), 0.0F);
         for (ggml_tensor * state : prefill_state_inputs_) {

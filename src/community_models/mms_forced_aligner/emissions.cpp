@@ -22,11 +22,11 @@ constexpr int64_t kFrameStrideSamples = 320;
 constexpr double kVarianceEpsilon = 1.0e-7;
 
 std::vector<float> encode_window(
-    const modules::HubertEncoderComponent & encoder,
+    const modules::Wav2Vec2EncoderRuntime & mms_encoder,
     const std::vector<float> & window) {
-    modules::HubertEncoderRunConfig run_config;
+    modules::Wav2Vec2EncoderRunConfig run_config;
     run_config.apply_final_projection = true;
-    const auto output = encoder.encode(window, 1, static_cast<int64_t>(window.size()), run_config);
+    const auto output = mms_encoder.encode(window, 1, static_cast<int64_t>(window.size()), run_config);
     return std::move(output.hidden_states);
 }
 
@@ -83,11 +83,11 @@ std::vector<float> mms_log_softmax_and_star(const float * logits, int64_t frames
     return out;
 }
 
-MmsEmissionRuntime::MmsEmissionRuntime(
+MmsWav2Vec2CtcRuntime::MmsWav2Vec2CtcRuntime(
     std::shared_ptr<const MmsForcedAlignerAssets> assets,
     core::BackendConfig backend,
     engine::assets::TensorStorageType weight_storage_type,
-    MmsEmissionConfig config)
+    MmsWav2Vec2CtcConfig config)
     : assets_(std::move(assets)),
       backend_(std::move(backend)),
       weight_storage_type_(weight_storage_type),
@@ -100,56 +100,56 @@ MmsEmissionRuntime::MmsEmissionRuntime(
     }
 }
 
-void MmsEmissionRuntime::load_encoder() const {
-    if (encoder_ != nullptr) {
+void MmsWav2Vec2CtcRuntime::load_encoder() const {
+    if (mms_encoder_ != nullptr) {
         return;
     }
     if (assets_->model_weights == nullptr) {
         throw std::runtime_error("MMS forced aligner tensor source must not be null");
     }
     const auto & model = assets_->model_config;
-    modules::HubertEncoderConfig config;
-    config.hidden_size = model.hidden_size;
-    config.intermediate_size = model.intermediate_size;
-    config.num_hidden_layers = model.num_hidden_layers;
-    config.output_hidden_layer = model.num_hidden_layers;
-    config.num_attention_heads = model.num_attention_heads;
-    config.conv_dim = model.conv_dim;
-    config.conv_kernel = model.conv_kernel;
-    config.conv_stride = model.conv_stride;
-    config.layer_norm_eps = model.layer_norm_eps;
-    config.num_conv_pos_embeddings = model.num_conv_pos_embeddings;
-    config.num_conv_pos_embedding_groups = model.num_conv_pos_embedding_groups;
-    config.final_projection_size = model.vocab_size;
-    config.feature_extractor_norm = modules::HubertFeatureExtractorNorm::LayerNormEveryLayer;
-    config.encoder_layer_norm_order = modules::HubertEncoderLayerNormOrder::PreNorm;
-    config.apply_encoder_input_layer_norm = false;
-    config.apply_final_layer_norm = true;
+    modules::Wav2Vec2EncoderConfig mms_config;
+    mms_config.hidden_size = model.hidden_size;
+    mms_config.intermediate_size = model.intermediate_size;
+    mms_config.num_hidden_layers = model.num_hidden_layers;
+    mms_config.output_hidden_layer = model.num_hidden_layers;
+    mms_config.num_attention_heads = model.num_attention_heads;
+    mms_config.conv_dim = model.conv_dim;
+    mms_config.conv_kernel = model.conv_kernel;
+    mms_config.conv_stride = model.conv_stride;
+    mms_config.layer_norm_eps = model.layer_norm_eps;
+    mms_config.num_conv_pos_embeddings = model.num_conv_pos_embeddings;
+    mms_config.num_conv_pos_embedding_groups = model.num_conv_pos_embedding_groups;
+    mms_config.final_projection_size = model.vocab_size;
+    mms_config.feature_extractor_norm = modules::Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer;
+    mms_config.encoder_layer_norm_order = modules::Wav2Vec2EncoderLayerNormOrder::PreNorm;
+    mms_config.apply_encoder_input_layer_norm = false;
+    mms_config.apply_final_layer_norm = true;
 
-    modules::HubertEncoderWeightBinding binding;
-    binding.feature_extractor_layers = "wav2vec2.feature_extractor.conv_layers";
-    binding.feature_projection_layer_norm = "wav2vec2.feature_projection.layer_norm";
-    binding.feature_projection_projection = "wav2vec2.feature_projection.projection";
-    binding.positional_conv = "wav2vec2.encoder.pos_conv_embed.conv";
-    binding.encoder_layer_norm = "wav2vec2.encoder.layer_norm";
-    binding.encoder_layers = "wav2vec2.encoder.layers";
-    binding.final_projection = "lm_head";
-    binding.conv_storage_type = weight_storage_type_;
-    binding.positional_conv_storage_type = weight_storage_type_;
-    binding.projection_storage_type = weight_storage_type_;
-    binding.attention_storage_type = weight_storage_type_;
-    binding.feed_forward_storage_type = weight_storage_type_;
-    binding.final_projection_storage_type = weight_storage_type_;
+    modules::Wav2Vec2EncoderWeightBinding mms_binding;
+    mms_binding.feature_extractor_layers = "wav2vec2.feature_extractor.conv_layers";
+    mms_binding.feature_projection_layer_norm = "wav2vec2.feature_projection.layer_norm";
+    mms_binding.feature_projection_projection = "wav2vec2.feature_projection.projection";
+    mms_binding.positional_conv = "wav2vec2.encoder.pos_conv_embed.conv";
+    mms_binding.encoder_layer_norm = "wav2vec2.encoder.layer_norm";
+    mms_binding.encoder_layers = "wav2vec2.encoder.layers";
+    mms_binding.final_projection = "lm_head";
+    mms_binding.conv_storage_type = weight_storage_type_;
+    mms_binding.positional_conv_storage_type = weight_storage_type_;
+    mms_binding.projection_storage_type = weight_storage_type_;
+    mms_binding.attention_storage_type = weight_storage_type_;
+    mms_binding.feed_forward_storage_type = weight_storage_type_;
+    mms_binding.final_projection_storage_type = weight_storage_type_;
 
-    encoder_ = std::make_unique<modules::HubertEncoderComponent>(
-        modules::HubertEncoderComponent::load_from_tensor_source(
+    mms_encoder_ = std::make_unique<modules::Wav2Vec2EncoderRuntime>(
+        modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
             assets_->model_weights,
             backend_,
-            std::move(config),
-            std::move(binding)));
+            std::move(mms_config),
+            std::move(mms_binding)));
 }
 
-MmsEmissionOutput MmsEmissionRuntime::compute(const runtime::AudioBuffer & audio) const {
+MmsEmissionOutput MmsWav2Vec2CtcRuntime::compute(const runtime::AudioBuffer & audio) const {
     const auto frontend_start = Clock::now();
     if (audio.sample_rate <= 0 || audio.channels <= 0 || audio.samples.empty() ||
         audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
@@ -167,7 +167,7 @@ MmsEmissionOutput MmsEmissionRuntime::compute(const runtime::AudioBuffer & audio
 
     const auto encoder_start = Clock::now();
     load_encoder();
-    const auto & encoder = *encoder_;
+    const auto & mms_encoder = *mms_encoder_;
 
     // Checked seconds-to-samples rounding: disqualify absurd values before
     // llround so a malformed configuration cannot overflow into invalid window
@@ -195,7 +195,7 @@ MmsEmissionOutput MmsEmissionRuntime::compute(const runtime::AudioBuffer & audio
         if (audio_samples < win_samples) {
             // Short audio runs un-windowed, exactly like the reference.
             const auto normalized = mms_normalize_waveform_16k(mono_16k);
-            const auto hidden = encode_window(encoder, normalized);
+            const auto hidden = encode_window(mms_encoder, normalized);
             const int64_t tokens = static_cast<int64_t>(hidden.size()) / vocab_size;
             if (hidden.size() % static_cast<size_t>(vocab_size) != 0) {
                 throw std::runtime_error("MMS forced aligner encoder output width mismatch");
@@ -218,7 +218,7 @@ MmsEmissionOutput MmsEmissionRuntime::compute(const runtime::AudioBuffer & audio
             const auto copy_end = mono_16k.begin() + std::min(window_start + win_samples + ctx_samples, audio_samples);
             std::copy(copy_start, copy_end, window.begin() + std::max<int64_t>(0, ctx_samples - window_start));
             const auto normalized = mms_normalize_waveform_16k(window);
-            const auto hidden = encode_window(encoder, normalized);
+            const auto hidden = encode_window(mms_encoder, normalized);
             const int64_t tokens = static_cast<int64_t>(hidden.size()) / vocab_size;
             // The in-tree feature-extractor convolutions use zero padding (vs the
             // reference's kernel//2 padding), so the last window can come back two

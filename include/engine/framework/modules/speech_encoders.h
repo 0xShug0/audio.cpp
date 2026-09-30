@@ -1,7 +1,6 @@
 #pragma once
 
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "engine/framework/modules/speech_encoders/wavlm_encoder.h"
 #include "engine/framework/modules/speech_encoders/wav2vec2_bert_encoder.h"
 #include "engine/framework/modules/speech_encoders/whisper_embedding.h"

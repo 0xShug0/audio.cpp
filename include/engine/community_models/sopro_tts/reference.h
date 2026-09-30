@@ -11,7 +11,7 @@ namespace engine::community_models::sopro_tts {
 
 class SoproSpeakerEncoderRuntime;
 class SoproSemanticEncoderRuntime;
-class SoproVocoderRuntime;
+class SoproVocosRuntime;
 
 // Ports of sopro/audio.py. All of them operate on mono float waveforms.
 namespace audio_ops {
@@ -82,7 +82,7 @@ public:
         const SoproTTSAssets & assets,
         const SoproSpeakerEncoderRuntime & speaker_encoder,
         const SoproSemanticEncoderRuntime & semantic_encoder,
-        const SoproVocoderRuntime & vocoder);
+        const SoproVocosRuntime & vocoder);
 
     // audio24: mono 24 kHz reference waveform.
     SoproReference build(
@@ -92,7 +92,7 @@ private:
     const SoproTTSConfig & config_;
     const SoproSpeakerEncoderRuntime & speaker_encoder_;
     const SoproSemanticEncoderRuntime & semantic_encoder_;
-    const SoproVocoderRuntime & vocoder_;
+    const SoproVocosRuntime & vocoder_;
     // SoproModel.cond_proj = Sequential(Linear, SiLU, Identity, Linear).
     std::vector<float> cond_proj_w0;
     std::vector<float> cond_proj_b0;

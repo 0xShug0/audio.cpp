@@ -43,14 +43,14 @@ struct NemotronDecoderStreamState {
     NemotronPredictorState predictor;
 };
 
-class NemotronDecoderRuntime {
+class NemotronRnntDecoderRuntime {
 public:
-    NemotronDecoderRuntime(
+    NemotronRnntDecoderRuntime(
         std::shared_ptr<const NemotronASRAssets> assets,
         std::shared_ptr<const NemotronWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
-    ~NemotronDecoderRuntime();
+    ~NemotronRnntDecoderRuntime();
 
     void prepare();
     NemotronDecodedText decode(const NemotronEncodedAudio & encoded, const NemotronDecodeOptions & options);

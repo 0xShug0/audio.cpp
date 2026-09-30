@@ -104,7 +104,7 @@ InflectV2Session::InflectV2Session(
     frontend_ = std::make_unique<InflectV2Frontend>(
         session_path(options, "inflect_v2.espeak_library_path"),
         session_path(options, "inflect_v2.espeak_data_path"));
-    runtime_ = std::make_unique<InflectV2NativeRuntime>(
+    runtime_ = std::make_unique<InflectV2VitsRuntime>(
         assets_,
         options.backend);
 }

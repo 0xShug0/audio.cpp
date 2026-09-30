@@ -11,7 +11,7 @@
 
 namespace engine::models::minimax_h3 {
 
-struct AudioVaeWeightStore {
+struct AudioVAEWeightStore {
     engine::core::ExecutionContext & execution;
     std::shared_ptr<const engine::assets::TensorSource> source;
     engine::core::BackendWeightStore store;
@@ -20,7 +20,7 @@ struct AudioVaeWeightStore {
     engine::modules::Conv1dWeights dec_in;
     engine::modules::BigVganVocoderWeights decoder;
 
-    AudioVaeWeightStore(
+    AudioVAEWeightStore(
         engine::core::ExecutionContext & execution_context,
         std::shared_ptr<const engine::assets::TensorSource> tensor_source,
         const MiniMaxH3Config & cfg,
@@ -28,7 +28,7 @@ struct AudioVaeWeightStore {
 };
 
 std::vector<float> run_audio_vae_decode_graph(
-    AudioVaeWeightStore & weights,
+    AudioVAEWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & audio_rows);
 

@@ -29,15 +29,15 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
     return contract;
 }
 
-MiniMaxH3DitAccelerationMode parse_dit_acceleration_mode(const std::string & value) {
+MiniMaxH3DiTAccelerationMode parse_dit_acceleration_mode(const std::string & value) {
     if (value == "none" || value == "off" || value == "0") {
-        return MiniMaxH3DitAccelerationMode::None;
+        return MiniMaxH3DiTAccelerationMode::None;
     }
     if (value == "first_block_cache" || value == "first-block-cache") {
-        return MiniMaxH3DitAccelerationMode::FirstBlockCache;
+        return MiniMaxH3DiTAccelerationMode::FirstBlockCache;
     }
     if (value == "spectrum") {
-        return MiniMaxH3DitAccelerationMode::Spectrum;
+        return MiniMaxH3DiTAccelerationMode::Spectrum;
     }
     throw std::runtime_error("MiniMax-H3 unsupported dit_acceleration mode: " + value);
 }

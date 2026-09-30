@@ -148,7 +148,7 @@ struct ResStackWeights {
     std::vector<Conv1dWeights> convs2;
 };
 
-struct DotsAudioVaeWeights {
+struct DotsAudioVAEWeights {
     DotsVocoderConfig config;
     std::shared_ptr<core::ExecutionContext> execution_context;
     std::shared_ptr<core::BackendWeightStore> store;
@@ -339,7 +339,7 @@ core::TensorValue apply_slstm(
 
 EncoderGraphOutputs build_encoder_graph(
     core::ModuleBuildContext & ctx,
-    const DotsAudioVaeWeights & weights,
+    const DotsAudioVAEWeights & weights,
     const core::TensorValue & waveform) {
     const int64_t initial_left_pad = kProjectionKernel - 1;
     auto * initial_padded = ggml_pad_ext(
@@ -512,7 +512,7 @@ EncoderGraphOutputs build_encoder_graph(
 
 core::TensorValue build_decoder_graph(
     core::ModuleBuildContext & ctx,
-    const DotsAudioVaeWeights & weights,
+    const DotsAudioVAEWeights & weights,
     const core::TensorValue & latents) {
     auto x = Conv1dModule({
         weights.config.latent_dim,
@@ -544,7 +544,7 @@ core::TensorValue build_decoder_graph(
 
 core::TensorValue build_decoder_waveform_graph(
     core::ModuleBuildContext & ctx,
-    const DotsAudioVaeWeights & weights,
+    const DotsAudioVAEWeights & weights,
     const core::TensorValue & decoder_input) {
     auto x = Conv1dModule({
         weights.config.latent_dim,
@@ -625,7 +625,7 @@ struct DecoderStreamFrontendValues {
 
 DecoderStreamFrontendOutputs build_decoder_stream_frontend_graph(
     core::ModuleBuildContext & ctx,
-    const DotsAudioVaeWeights & weights,
+    const DotsAudioVAEWeights & weights,
     const core::TensorValue & latents,
     const std::vector<core::TensorValue> & initial_hidden,
     const std::vector<core::TensorValue> & initial_cell) {
@@ -674,7 +674,7 @@ DecoderStreamFrontendOutputs build_decoder_stream_frontend_graph(
 
 class EncoderRunner {
 public:
-    explicit EncoderRunner(std::shared_ptr<const DotsAudioVaeWeights> weights)
+    explicit EncoderRunner(std::shared_ptr<const DotsAudioVAEWeights> weights)
         : weights_(std::move(weights)) {}
 
     ~EncoderRunner() { release_graph(); }
@@ -743,7 +743,7 @@ private:
         samples_ = samples;
     }
 
-    std::shared_ptr<const DotsAudioVaeWeights> weights_;
+    std::shared_ptr<const DotsAudioVAEWeights> weights_;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
@@ -756,7 +756,7 @@ private:
 
 class DecoderRunner {
 public:
-    explicit DecoderRunner(std::shared_ptr<const DotsAudioVaeWeights> weights)
+    explicit DecoderRunner(std::shared_ptr<const DotsAudioVAEWeights> weights)
         : weights_(std::move(weights)) {}
 
     ~DecoderRunner() { release_graph(); }
@@ -825,7 +825,7 @@ private:
         frames_ = frames;
     }
 
-    std::shared_ptr<const DotsAudioVaeWeights> weights_;
+    std::shared_ptr<const DotsAudioVAEWeights> weights_;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
@@ -838,7 +838,7 @@ private:
 
 class DecoderWindowRunner {
 public:
-    explicit DecoderWindowRunner(std::shared_ptr<const DotsAudioVaeWeights> weights)
+    explicit DecoderWindowRunner(std::shared_ptr<const DotsAudioVAEWeights> weights)
         : weights_(std::move(weights)) {}
 
     ~DecoderWindowRunner() { release_graph(); }
@@ -906,7 +906,7 @@ private:
         frames_ = frames;
     }
 
-    std::shared_ptr<const DotsAudioVaeWeights> weights_;
+    std::shared_ptr<const DotsAudioVAEWeights> weights_;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
@@ -919,7 +919,7 @@ private:
 
 class StreamFrontendRunner {
 public:
-    explicit StreamFrontendRunner(std::shared_ptr<const DotsAudioVaeWeights> weights)
+    explicit StreamFrontendRunner(std::shared_ptr<const DotsAudioVAEWeights> weights)
         : weights_(std::move(weights)) {}
 
     ~StreamFrontendRunner() { release_graph(); }
@@ -1034,7 +1034,7 @@ private:
         frames_ = frames;
     }
 
-    std::shared_ptr<const DotsAudioVaeWeights> weights_;
+    std::shared_ptr<const DotsAudioVAEWeights> weights_;
     std::mutex mutex_;
     ggml_context * ggml_ = nullptr;
     ggml_gallocr_t gallocr_ = nullptr;
@@ -1068,7 +1068,7 @@ void validate_config(const DotsVocoderConfig & config) {
     }
 }
 
-std::shared_ptr<DotsAudioVaeWeights> load_weights(
+std::shared_ptr<DotsAudioVAEWeights> load_weights(
     std::shared_ptr<const assets::TensorSource> source,
     core::BackendConfig backend,
     DotsVocoderConfig config,
@@ -1078,7 +1078,7 @@ std::shared_ptr<DotsAudioVaeWeights> load_weights(
     if (source == nullptr) {
         throw std::runtime_error("DotTTS AudioVAE requires tensor source");
     }
-    auto weights = std::make_shared<DotsAudioVaeWeights>();
+    auto weights = std::make_shared<DotsAudioVAEWeights>();
     weights->config = std::move(config);
     weights->execution_context = std::make_shared<core::ExecutionContext>(backend);
     weights->store = std::make_shared<core::BackendWeightStore>(
@@ -1396,7 +1396,7 @@ std::vector<float> slice_stream_audio(
 
 }  // namespace
 
-struct DotsAudioVaeStreamState::Impl {
+struct DotsAudioVAEStreamState::Impl {
     int64_t chunk_frames = 0;
     int64_t window_frames = 0;
     int64_t total_frames = 0;
@@ -1406,26 +1406,26 @@ struct DotsAudioVaeStreamState::Impl {
     std::vector<float> decoder_window;
 };
 
-DotsAudioVaeStreamState::DotsAudioVaeStreamState() : impl_(std::make_unique<Impl>()) {}
-DotsAudioVaeStreamState::~DotsAudioVaeStreamState() = default;
-DotsAudioVaeStreamState::DotsAudioVaeStreamState(DotsAudioVaeStreamState &&) noexcept = default;
-DotsAudioVaeStreamState & DotsAudioVaeStreamState::operator=(DotsAudioVaeStreamState &&) noexcept = default;
+DotsAudioVAEStreamState::DotsAudioVAEStreamState() : impl_(std::make_unique<Impl>()) {}
+DotsAudioVAEStreamState::~DotsAudioVAEStreamState() = default;
+DotsAudioVAEStreamState::DotsAudioVAEStreamState(DotsAudioVAEStreamState &&) noexcept = default;
+DotsAudioVAEStreamState & DotsAudioVAEStreamState::operator=(DotsAudioVAEStreamState &&) noexcept = default;
 
-struct DotsAudioVaeComponent::Impl {
-    std::shared_ptr<const DotsAudioVaeWeights> weights;
+struct DotsAudioVAEComponent::Impl {
+    std::shared_ptr<const DotsAudioVAEWeights> weights;
     std::unique_ptr<EncoderRunner> encoder;
     std::unique_ptr<DecoderRunner> decoder;
     std::unique_ptr<StreamFrontendRunner> stream_frontend;
     std::unique_ptr<DecoderWindowRunner> stream_decoder;
 };
 
-DotsAudioVaeComponent DotsAudioVaeComponent::load_from_tensor_source(
+DotsAudioVAEComponent DotsAudioVAEComponent::load_from_tensor_source(
     std::shared_ptr<const assets::TensorSource> source,
     core::BackendConfig backend,
     DotsVocoderConfig config,
     assets::TensorStorageType weight_storage_type,
     assets::TensorStorageType conv_weight_storage_type) {
-    DotsAudioVaeComponent component;
+    DotsAudioVAEComponent component;
     component.impl_ = std::make_unique<Impl>();
     component.impl_->weights = load_weights(
         std::move(source),
@@ -1440,34 +1440,34 @@ DotsAudioVaeComponent DotsAudioVaeComponent::load_from_tensor_source(
     return component;
 }
 
-DotsAudioVaeComponent::DotsAudioVaeComponent() = default;
-DotsAudioVaeComponent::DotsAudioVaeComponent(DotsAudioVaeComponent &&) noexcept = default;
-DotsAudioVaeComponent & DotsAudioVaeComponent::operator=(DotsAudioVaeComponent &&) noexcept = default;
-DotsAudioVaeComponent::~DotsAudioVaeComponent() = default;
+DotsAudioVAEComponent::DotsAudioVAEComponent() = default;
+DotsAudioVAEComponent::DotsAudioVAEComponent(DotsAudioVAEComponent &&) noexcept = default;
+DotsAudioVAEComponent & DotsAudioVAEComponent::operator=(DotsAudioVAEComponent &&) noexcept = default;
+DotsAudioVAEComponent::~DotsAudioVAEComponent() = default;
 
-int64_t DotsAudioVaeComponent::sample_rate() const noexcept {
+int64_t DotsAudioVAEComponent::sample_rate() const noexcept {
     return impl_ == nullptr || impl_->weights == nullptr ? 0 : impl_->weights->config.sample_rate;
 }
 
-int64_t DotsAudioVaeComponent::hop_size() const noexcept {
+int64_t DotsAudioVAEComponent::hop_size() const noexcept {
     if (impl_ == nullptr || impl_->weights == nullptr) {
         return 0;
     }
     return audio_vae_hop_size(impl_->weights->config);
 }
 
-bool DotsAudioVaeComponent::is_loaded() const noexcept {
+bool DotsAudioVAEComponent::is_loaded() const noexcept {
     return impl_ != nullptr && impl_->weights != nullptr;
 }
 
-DotsEncoderLatents DotsAudioVaeComponent::extract_latents(const std::vector<float> & waveform) const {
+DotsEncoderLatents DotsAudioVAEComponent::extract_latents(const std::vector<float> & waveform) const {
     if (impl_ == nullptr || impl_->encoder == nullptr) {
         throw std::runtime_error("DotTTS AudioVAE component is not initialized");
     }
     return impl_->encoder->run(waveform);
 }
 
-DotsDecodedAudio DotsAudioVaeComponent::decode_latents(const std::vector<float> & latents, int64_t frames) const {
+DotsDecodedAudio DotsAudioVAEComponent::decode_latents(const std::vector<float> & latents, int64_t frames) const {
     if (impl_ == nullptr || impl_->decoder == nullptr) {
         throw std::runtime_error("DotTTS AudioVAE component is not initialized");
     }
@@ -1477,14 +1477,14 @@ DotsDecodedAudio DotsAudioVaeComponent::decode_latents(const std::vector<float> 
         frames);
 }
 
-DotsAudioVaeStreamState DotsAudioVaeComponent::create_stream_state(int64_t chunk_frames) const {
+DotsAudioVAEStreamState DotsAudioVAEComponent::create_stream_state(int64_t chunk_frames) const {
     if (impl_ == nullptr || impl_->weights == nullptr) {
         throw std::runtime_error("DotTTS AudioVAE component is not initialized");
     }
     if (chunk_frames <= 0) {
         throw std::runtime_error("DotTTS AudioVAE stream chunk_frames must be positive");
     }
-    DotsAudioVaeStreamState state;
+    DotsAudioVAEStreamState state;
     state.impl_->chunk_frames = chunk_frames;
     state.impl_->window_frames = stream_window_size(impl_->weights->config, chunk_frames);
     const int64_t hidden_size = impl_->weights->config.latent_dim * 4;
@@ -1495,10 +1495,10 @@ DotsAudioVaeStreamState DotsAudioVaeComponent::create_stream_state(int64_t chunk
     return state;
 }
 
-DotsDecodedAudio DotsAudioVaeComponent::stream_step(
+DotsDecodedAudio DotsAudioVAEComponent::stream_step(
     const std::vector<float> & latents,
     int64_t frames,
-    DotsAudioVaeStreamState & state) const {
+    DotsAudioVAEStreamState & state) const {
     if (impl_ == nullptr || impl_->weights == nullptr || impl_->stream_frontend == nullptr || impl_->stream_decoder == nullptr || state.impl_ == nullptr) {
         throw std::runtime_error("DotTTS AudioVAE stream state is not initialized");
     }
@@ -1540,7 +1540,7 @@ DotsDecodedAudio DotsAudioVaeComponent::stream_step(
     return window_audio;
 }
 
-DotsDecodedAudio DotsAudioVaeComponent::flush_stream(DotsAudioVaeStreamState & state) const {
+DotsDecodedAudio DotsAudioVAEComponent::flush_stream(DotsAudioVAEStreamState & state) const {
     if (impl_ == nullptr || impl_->weights == nullptr || impl_->stream_decoder == nullptr || state.impl_ == nullptr) {
         throw std::runtime_error("DotTTS AudioVAE stream state is not initialized");
     }
@@ -1556,7 +1556,7 @@ DotsDecodedAudio DotsAudioVaeComponent::flush_stream(DotsAudioVaeStreamState & s
     return window_audio;
 }
 
-void DotsAudioVaeComponent::release_runtime_graphs() {
+void DotsAudioVAEComponent::release_runtime_graphs() {
     if (impl_ == nullptr) {
         return;
     }

@@ -35,7 +35,7 @@ struct SoproVocoderConvNeXtWeights {
     engine::core::TensorValue gamma;
 };
 
-struct SoproVocoderWeights {
+struct SoproVocosWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
     engine::modules::Conv1dWeights embed;
     engine::modules::NormWeights norm;
@@ -74,7 +74,7 @@ engine::modules::TransposeConfig swap_channel_time() {
     return engine::modules::TransposeConfig{{0, 2, 1, 3}, 3};
 }
 
-std::shared_ptr<const SoproVocoderWeights> load_vocoder_weights(
+std::shared_ptr<const SoproVocosWeights> load_vocoder_weights(
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
     const engine::assets::TensorSource & source,
@@ -82,7 +82,7 @@ std::shared_ptr<const SoproVocoderWeights> load_vocoder_weights(
     size_t weight_context_bytes,
     engine::assets::TensorStorageType matmul_storage_type,
     engine::assets::TensorStorageType conv_storage_type) {
-    auto weights = std::make_shared<SoproVocoderWeights>();
+    auto weights = std::make_shared<SoproVocosWeights>();
     require_frontend_buffers(
         source, "vocoder",
         {"feature_extractor.mel_spec.spectrogram.window",
@@ -152,7 +152,7 @@ engine::core::TensorValue build_convnext_block(
 engine::core::TensorValue build_vocoder_head(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & mel_bct,
-    const SoproVocoderWeights & weights,
+    const SoproVocosWeights & weights,
     const SoproVocoderConfig & config) {
     auto hidden = engine::modules::Conv1dModule({
         config.n_mels, config.dim, 7, 1, 3, 1, weights.embed.bias.has_value(),
@@ -288,13 +288,13 @@ std::vector<float> istft_from_head(
 
 }  // namespace
 
-struct SoproVocoderGraph {
-    SoproVocoderGraph(
+struct SoproVocosGraph {
+    SoproVocosGraph(
         ggml_backend_t backend_in,
         engine::core::BackendType backend_type,
         size_t graph_context_bytes,
         const SoproVocoderConfig & config_in,
-        std::shared_ptr<const SoproVocoderWeights> weights_in,
+        std::shared_ptr<const SoproVocosWeights> weights_in,
         int64_t frames_in)
         : backend(backend_in),
           weights(std::move(weights_in)),
@@ -330,14 +330,14 @@ struct SoproVocoderGraph {
         }
     }
 
-    ~SoproVocoderGraph() {
+    ~SoproVocosGraph() {
         if (gallocr != nullptr) {
             ggml_gallocr_free(gallocr);
             gallocr = nullptr;
         }
     }
 
-    bool matches(const SoproVocoderWeights & other, int64_t other_frames) const noexcept {
+    bool matches(const SoproVocosWeights & other, int64_t other_frames) const noexcept {
         return weights.get() == &other && frames == other_frames;
     }
 
@@ -354,7 +354,7 @@ struct SoproVocoderGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const SoproVocoderWeights> weights;
+    std::shared_ptr<const SoproVocosWeights> weights;
     int64_t frames = 0;
     int64_t head_dim = 0;
     const SoproVocoderConfig * config = nullptr;
@@ -365,7 +365,7 @@ struct SoproVocoderGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-SoproVocoderRuntime::SoproVocoderRuntime(
+SoproVocosRuntime::SoproVocosRuntime(
     const SoproTTSAssets & assets,
     engine::core::ExecutionContext & execution_context,
     size_t weight_context_bytes,
@@ -384,9 +384,9 @@ SoproVocoderRuntime::SoproVocoderRuntime(
           matmul_storage_type,
           conv_storage_type)) {}
 
-SoproVocoderRuntime::~SoproVocoderRuntime() = default;
+SoproVocosRuntime::~SoproVocosRuntime() = default;
 
-std::vector<float> SoproVocoderRuntime::decode(
+std::vector<float> SoproVocosRuntime::decode(
     const std::vector<float> & mel,
     int64_t frames) const {
     if (frames <= 0 || static_cast<int64_t>(mel.size()) != frames * config_.n_mels) {
@@ -396,7 +396,7 @@ std::vector<float> SoproVocoderRuntime::decode(
         // Free the previous arena first; otherwise both are resident while the
         // replacement is allocated, and every segment rebuilds this graph.
         graph_.reset();
-        graph_ = std::make_unique<SoproVocoderGraph>(
+        graph_ = std::make_unique<SoproVocosGraph>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,
@@ -407,7 +407,7 @@ std::vector<float> SoproVocoderRuntime::decode(
     return graph_->run(mel, static_cast<size_t>(execution_context_.config().threads));
 }
 
-std::vector<float> SoproVocoderRuntime::log_mel(const std::vector<float> & audio) const {
+std::vector<float> SoproVocosRuntime::log_mel(const std::vector<float> & audio) const {
     if (audio.empty()) {
         throw std::runtime_error("Sopro vocoder mel extraction requires a non-empty waveform");
     }
@@ -447,12 +447,12 @@ std::vector<float> SoproVocoderRuntime::log_mel(const std::vector<float> & audio
     return mel;
 }
 
-int64_t SoproVocoderRuntime::mel_frames(int64_t samples) const noexcept {
+int64_t SoproVocosRuntime::mel_frames(int64_t samples) const noexcept {
     return samples / config_.hop_length + 1;  // centred STFT
 }
 
-int64_t SoproVocoderRuntime::hop_length() const noexcept { return config_.hop_length; }
-int64_t SoproVocoderRuntime::n_mels() const noexcept { return config_.n_mels; }
-int SoproVocoderRuntime::sample_rate() const noexcept { return static_cast<int>(config_.sample_rate); }
+int64_t SoproVocosRuntime::hop_length() const noexcept { return config_.hop_length; }
+int64_t SoproVocosRuntime::n_mels() const noexcept { return config_.n_mels; }
+int SoproVocosRuntime::sample_rate() const noexcept { return static_cast<int>(config_.sample_rate); }
 
 }  // namespace engine::community_models::sopro_tts

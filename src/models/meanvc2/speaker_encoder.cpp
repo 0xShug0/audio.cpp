@@ -229,7 +229,7 @@ void instance_norm_channels_first(std::vector<float> & values, int64_t frames, i
 
 }  // namespace
 
-MeanVC2SpeakerEncoderRuntime::MeanVC2SpeakerEncoderRuntime(
+MeanVC2WavlmEcapaEncoderRuntime::MeanVC2WavlmEcapaEncoderRuntime(
     std::shared_ptr<const engine::assets::TensorSource> wavlm_source,
     std::shared_ptr<const engine::assets::TensorSource> ecapa_source,
     engine::core::ExecutionContext & execution_context,
@@ -250,9 +250,9 @@ MeanVC2SpeakerEncoderRuntime::MeanVC2SpeakerEncoderRuntime(
     wavlm_source->release_storage();
 }
 
-MeanVC2SpeakerEncoderRuntime::~MeanVC2SpeakerEncoderRuntime() = default;
+MeanVC2WavlmEcapaEncoderRuntime::~MeanVC2WavlmEcapaEncoderRuntime() = default;
 
-MeanVC2SpeakerFeatures MeanVC2SpeakerEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
+MeanVC2SpeakerFeatures MeanVC2WavlmEcapaEncoderRuntime::extract_features(const runtime::AudioBuffer & audio) const {
     const auto prepared = prepare_meanvc2_audio_16k(audio);
     std::vector<int64_t> output_layers;
     output_layers.reserve(static_cast<size_t>(kWavlmLayers + 1));
@@ -287,7 +287,7 @@ MeanVC2SpeakerFeatures MeanVC2SpeakerEncoderRuntime::extract_features(const runt
     return out;
 }
 
-std::vector<float> MeanVC2SpeakerEncoderRuntime::embed(const runtime::AudioBuffer & audio) const {
+std::vector<float> MeanVC2WavlmEcapaEncoderRuntime::embed(const runtime::AudioBuffer & audio) const {
     if (ecapa_ == nullptr) {
         throw std::runtime_error("MeanVC2 speaker encoder is not initialized");
     }

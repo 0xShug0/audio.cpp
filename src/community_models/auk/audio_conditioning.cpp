@@ -1,5 +1,5 @@
 #include "engine/community_models/auk/conditioning.h"
-#include "engine/framework/modules/attention/transformer_blocks.h"
+#include "engine/framework/modules/transformers/transformer_blocks.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/graph_optimizer.h"
 #include "engine/framework/audio/conversion.h"
@@ -15,7 +15,7 @@ namespace {
 using core::TensorValue;
 using core::TensorShape;
 
-struct AudioWeights {
+struct AuKQwen25OmniAudioEncoderWeights {
     modules::Conv1dWeights conv1;
     modules::Conv1dWeights conv2;
     std::array<modules::TransformerEncoderBlockWeights, 32> layers;
@@ -24,13 +24,13 @@ struct AudioWeights {
     TensorValue positions;
 };
 
-AudioWeights load_audio_weights(core::BackendWeightStore & store, const assets::TensorSource & source) {
+AuKQwen25OmniAudioEncoderWeights load_audio_weights(core::BackendWeightStore & store, const assets::TensorSource & source) {
     const std::string root = "thinker.audio_tower.";
     const auto linear = [&](const std::string & name, int out, int in, bool bias = true) {
         return modules::binding::linear_from_source(store, source, root + name,
             assets::TensorStorageType::Native, out, in, bias);
     };
-    AudioWeights weights;
+    AuKQwen25OmniAudioEncoderWeights weights;
     weights.conv1 = {store.load_tensor(source, root + "conv1.weight", assets::TensorStorageType::Native, {1280, 128, 3}),
                      store.load_f32_tensor(source, root + "conv1.bias", {1280})};
     weights.conv2 = {store.load_tensor(source, root + "conv2.weight", assets::TensorStorageType::Native, {1280, 1280, 3}),
@@ -75,7 +75,7 @@ AudioWeights load_audio_weights(core::BackendWeightStore & store, const assets::
     return weights;
 }
 
-struct AudioGraph {
+struct AuKQwen25OmniAudioEncoderGraph {
     core::ExecutionContext & execution;
     int64_t frames;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
@@ -84,7 +84,7 @@ struct AudioGraph {
     TensorValue input;
     TensorValue output;
 
-    AudioGraph(core::ExecutionContext & execution_, const AudioWeights & weights, int64_t frames_)
+    AuKQwen25OmniAudioEncoderGraph(core::ExecutionContext & execution_, const AuKQwen25OmniAudioEncoderWeights & weights, int64_t frames_)
         : execution(execution_), frames(frames_) {
         const size_t chunks = (frames + 199) / 200;
         const size_t groups = (frames >= 200 ? 1 : 0) + (frames % 200 != 0 ? 1 : 0);
@@ -153,7 +153,7 @@ struct AudioGraph {
             throw std::runtime_error("AuK audio conditioning graph allocation failed");
         }
     }
-    ~AudioGraph() { core::release_backend_graph_resources(execution.backend(), graph, true); }
+    ~AuKQwen25OmniAudioEncoderGraph() { core::release_backend_graph_resources(execution.backend(), graph, true); }
 };
 }  // namespace
 
@@ -190,29 +190,29 @@ audio::WhisperLogMelFeatures extract_audio_features(
     return output;
 }
 
-struct AudioConditioningRuntime::State {
+struct AuKQwen25OmniAudioEncoderRuntime::State {
     core::ExecutionContext & execution;
     core::BackendWeightStore store;
-    AudioWeights weights;
-    std::unique_ptr<AudioGraph> prepared;
+    AuKQwen25OmniAudioEncoderWeights weights;
+    std::unique_ptr<AuKQwen25OmniAudioEncoderGraph> prepared;
     State(core::ExecutionContext & execution_, const assets::TensorSource & source)
         : execution(execution_), store(execution.backend(), execution.backend_type(), "auk.audio_conditioning", 2 * 1024 * 1024),
           weights(load_audio_weights(store, source)) { store.upload(); }
 };
 
-AudioConditioningRuntime::AudioConditioningRuntime(core::ExecutionContext & execution,
+AuKQwen25OmniAudioEncoderRuntime::AuKQwen25OmniAudioEncoderRuntime(core::ExecutionContext & execution,
     const assets::TensorSource & qwen, int64_t frames) : state_(std::make_unique<State>(execution, qwen)) { prepare(frames); }
-AudioConditioningRuntime::~AudioConditioningRuntime() = default;
+AuKQwen25OmniAudioEncoderRuntime::~AuKQwen25OmniAudioEncoderRuntime() = default;
 
-void AudioConditioningRuntime::prepare(int64_t frames) {
+void AuKQwen25OmniAudioEncoderRuntime::prepare(int64_t frames) {
     if (frames < 3) throw std::runtime_error("AuK audio conditioning requires at least three mel frames");
     auto & state = *state_;
     if (state.prepared && state.prepared->frames == frames) return;
     state.prepared.reset();
-    state.prepared = std::make_unique<AudioGraph>(state.execution, state.weights, frames);
+    state.prepared = std::make_unique<AuKQwen25OmniAudioEncoderGraph>(state.execution, state.weights, frames);
 }
 
-std::vector<float> AudioConditioningRuntime::encode(const std::vector<float> & features) {
+std::vector<float> AuKQwen25OmniAudioEncoderRuntime::encode(const std::vector<float> & features) {
     if (!state_->prepared) throw std::runtime_error("AuK audio conditioning graph is not prepared");
     auto & graph = *state_->prepared;
     if (features.size() != static_cast<size_t>(graph.frames * 128)) {

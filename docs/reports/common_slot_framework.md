@@ -197,3 +197,25 @@ tests use a supported shorter prompt without changing model code/settings.
 Metal/Linux runtime, TSan and the complete model/framework admission matrix
 remain unvalidated here. This targeted fix record does not mark the full gate
 complete or replace the maintainer's platform-specific retest.
+
+## CI integration follow-up, 2026-09-30
+
+The first sanitizer run failed while compiling the synthetic merge with newer
+upstream, before sanitizer tests executed. Upstream's new `/v1/tasks/batch`
+handler still declared `BusyGuard::Lock` for an acquisition that now returns
+`ModelExecutionGuard::Lock`. The Linux/macOS build jobs and ASan job reported
+the same conversion error; this was not a TSan race report.
+
+Current upstream `9a02e613` is merged here. The generic batch handler now uses
+the common request lease, addresses its leased session, and retains ownership
+from request preparation through the deferred SSE callback. Legacy one-slot
+execution keeps its original acquisition behavior. Added actual-handler tests
+cover legacy batches, invalid input, queued replacement at two/four slots, and
+two independent deferred batches holding separate slots until completion.
+
+The updated standalone Windows CPU server builds and all nine focused CTests
+pass; the three guard/lifecycle MSVC AddressSanitizer tests also pass. Remote
+sanitizer and cross-platform results require a fresh CI run; the
+earlier GPU/checkpoint results above apply to their recorded revisions, not
+automatically to this newer upstream integration. Local logs and JUnit evidence
+are retained in `outputs/slot-tsan-ci-20260930/` in the enclosing workspace.

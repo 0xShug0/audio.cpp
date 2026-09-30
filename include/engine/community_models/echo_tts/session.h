@@ -14,7 +14,7 @@
 
 namespace engine::models::echo_tts {
 
-class EchoDitRuntime;
+class EchoDiTRuntime;
 
 struct EchoTtsAssets {
     assets::ResourceBundle resources;
@@ -84,9 +84,10 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const EchoTtsAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
-    std::unique_ptr<EchoDitRuntime> dit_;
+    std::unique_ptr<EchoDiTRuntime> dit_;
     std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec_;
     int64_t reference_max_samples_ = 0;
+    bool mem_saver_ = false;
     std::vector<float> speaker_latent_;
     int64_t speaker_frames_ = 0;
     runtime::CacheSlots<EchoReferenceIdentity, EchoPreparedSpeaker, EchoReferenceIdentityEqual>

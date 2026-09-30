@@ -21,36 +21,36 @@ struct DotsDecodedAudio {
     int64_t sample_rate = 0;
 };
 
-class DotsAudioVaeStreamState {
+class DotsAudioVAEStreamState {
 public:
-    DotsAudioVaeStreamState();
-    ~DotsAudioVaeStreamState();
-    DotsAudioVaeStreamState(DotsAudioVaeStreamState &&) noexcept;
-    DotsAudioVaeStreamState & operator=(DotsAudioVaeStreamState &&) noexcept;
-    DotsAudioVaeStreamState(const DotsAudioVaeStreamState &) = delete;
-    DotsAudioVaeStreamState & operator=(const DotsAudioVaeStreamState &) = delete;
+    DotsAudioVAEStreamState();
+    ~DotsAudioVAEStreamState();
+    DotsAudioVAEStreamState(DotsAudioVAEStreamState &&) noexcept;
+    DotsAudioVAEStreamState & operator=(DotsAudioVAEStreamState &&) noexcept;
+    DotsAudioVAEStreamState(const DotsAudioVAEStreamState &) = delete;
+    DotsAudioVAEStreamState & operator=(const DotsAudioVAEStreamState &) = delete;
 
 private:
-    friend class DotsAudioVaeComponent;
+    friend class DotsAudioVAEComponent;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 
-class DotsAudioVaeComponent {
+class DotsAudioVAEComponent {
 public:
-    static DotsAudioVaeComponent load_from_tensor_source(
+    static DotsAudioVAEComponent load_from_tensor_source(
         std::shared_ptr<const assets::TensorSource> source,
         core::BackendConfig backend,
         DotsVocoderConfig config,
         assets::TensorStorageType weight_storage_type,
         assets::TensorStorageType conv_weight_storage_type);
 
-    DotsAudioVaeComponent();
-    DotsAudioVaeComponent(DotsAudioVaeComponent &&) noexcept;
-    DotsAudioVaeComponent & operator=(DotsAudioVaeComponent &&) noexcept;
-    DotsAudioVaeComponent(const DotsAudioVaeComponent &) = delete;
-    DotsAudioVaeComponent & operator=(const DotsAudioVaeComponent &) = delete;
-    ~DotsAudioVaeComponent();
+    DotsAudioVAEComponent();
+    DotsAudioVAEComponent(DotsAudioVAEComponent &&) noexcept;
+    DotsAudioVAEComponent & operator=(DotsAudioVAEComponent &&) noexcept;
+    DotsAudioVAEComponent(const DotsAudioVAEComponent &) = delete;
+    DotsAudioVAEComponent & operator=(const DotsAudioVAEComponent &) = delete;
+    ~DotsAudioVAEComponent();
 
     int64_t sample_rate() const noexcept;
     int64_t hop_size() const noexcept;
@@ -59,12 +59,12 @@ public:
     DotsEncoderLatents extract_latents(const std::vector<float> & waveform) const;
     DotsDecodedAudio decode_latents(const std::vector<float> & latents, int64_t frames) const;
 
-    DotsAudioVaeStreamState create_stream_state(int64_t chunk_frames) const;
+    DotsAudioVAEStreamState create_stream_state(int64_t chunk_frames) const;
     DotsDecodedAudio stream_step(
         const std::vector<float> & latents,
         int64_t frames,
-        DotsAudioVaeStreamState & state) const;
-    DotsDecodedAudio flush_stream(DotsAudioVaeStreamState & state) const;
+        DotsAudioVAEStreamState & state) const;
+    DotsDecodedAudio flush_stream(DotsAudioVAEStreamState & state) const;
 
     void release_runtime_graphs();
 

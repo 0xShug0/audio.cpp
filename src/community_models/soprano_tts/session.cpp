@@ -118,10 +118,10 @@ SopranoTTSOfflineSession::SopranoTTSOfflineSession(
         {assets::TensorStorageType::Native,
          assets::TensorStorageType::F32,
          assets::TensorStorageType::F16});
-    generator_ = std::make_unique<SopranoTTSGenerator>(
+    generator_ = std::make_unique<SopranoQwen3Generator>(
         *assets_, execution, kDefaultGraphArenaBytes, kDefaultGraphArenaBytes,
         kDefaultWeightContextBytes, backbone_storage);
-    decoder_ = std::make_unique<SopranoDecoderRuntime>(
+    decoder_ = std::make_unique<SopranoVocosRuntime>(
         *assets_, execution, kDefaultWeightContextBytes, kDefaultGraphArenaBytes,
         decoder_storage, decoder_storage);
 }

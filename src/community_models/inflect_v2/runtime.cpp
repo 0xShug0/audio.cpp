@@ -1060,7 +1060,7 @@ ExpandedPrior expand_prior(
 
 }  // namespace
 
-struct InflectV2NativeRuntime::State {
+struct InflectV2VitsRuntime::State {
     struct BackendOwner {
         ggml_backend_t value = nullptr;
         ~BackendOwner() {
@@ -1173,14 +1173,14 @@ struct InflectV2NativeRuntime::State {
     runtime::CacheSlots<int64_t, std::unique_ptr<DecoderGraph>> decoder_graphs{2};
 };
 
-InflectV2NativeRuntime::InflectV2NativeRuntime(
+InflectV2VitsRuntime::InflectV2VitsRuntime(
     std::shared_ptr<const InflectV2Assets> assets,
     core::BackendConfig backend_config)
     : state_(std::make_unique<State>(std::move(assets), backend_config)) {}
 
-InflectV2NativeRuntime::~InflectV2NativeRuntime() = default;
+InflectV2VitsRuntime::~InflectV2VitsRuntime() = default;
 
-runtime::AudioBuffer InflectV2NativeRuntime::synthesize(
+runtime::AudioBuffer InflectV2VitsRuntime::synthesize(
     const std::vector<int32_t> & token_ids,
     const InflectV2GenerationOptions & options) {
     if (token_ids.empty()) {

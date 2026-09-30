@@ -23,7 +23,7 @@ struct PreEncodeGraph {
     ~PreEncodeGraph();
 };
 
-struct EncoderGraph {
+struct Nemotron3DiarTransformerEncoderGraph {
     int64_t batch = 0;
     int64_t frames = 0;
     ggml_backend_t backend = nullptr;
@@ -38,7 +38,7 @@ struct EncoderGraph {
     core::TensorValue rope_cos;
     core::TensorValue rope_sin;
     core::TensorValue probabilities;
-    ~EncoderGraph();
+    ~Nemotron3DiarTransformerEncoderGraph();
 };
 
 void ensure_pre_encode_graph(
@@ -51,7 +51,7 @@ void ensure_pre_encode_graph(
     int64_t frames);
 
 void ensure_encoder_graph(
-    std::unique_ptr<EncoderGraph> & graph,
+    std::unique_ptr<Nemotron3DiarTransformerEncoderGraph> & graph,
     const core::ExecutionContext & execution,
     const Assets & assets,
     const ModelWeights & weights,

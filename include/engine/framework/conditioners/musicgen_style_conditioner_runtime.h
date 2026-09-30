@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 
 #include <ggml.h>
 
@@ -14,7 +14,7 @@
 namespace engine::conditioners {
 
 struct MusicGenStyleConfig {
-    modules::HubertEncoderConfig mert;
+    modules::Wav2Vec2EncoderConfig mert;
     int64_t hidden_size = 512;
     int64_t mert_hidden_size = 768;
     int64_t output_dim = 1536;

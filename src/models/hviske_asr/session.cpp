@@ -177,7 +177,7 @@ HviskeASRSession::HviskeASRSession(
         matmul_weight_storage_type_,
         conv_weight_storage_type_,
         weight_context_bytes_);
-    encoder_ = std::make_unique<HviskeEncoderRuntime>(
+    encoder_ = std::make_unique<HviskeConformerEncoderRuntime>(
         assets_,
         weights_,
         execution_context(),

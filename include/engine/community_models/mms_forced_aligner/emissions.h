@@ -2,7 +2,7 @@
 
 #include "engine/community_models/mms_forced_aligner/assets.h"
 #include "engine/framework/core/backend.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>
@@ -12,7 +12,7 @@
 
 namespace engine::community_models::mms_forced_aligner {
 
-struct MmsEmissionConfig {
+struct MmsWav2Vec2CtcConfig {
     double window_sec = 30.0;
     double context_sec = 2.0;
 };
@@ -35,16 +35,16 @@ std::vector<float> mms_normalize_waveform_16k(const std::vector<float> & wavefor
 // virtual <star> column (log-probability 0.0). Output is [frames, classes + 1].
 std::vector<float> mms_log_softmax_and_star(const float * logits, int64_t frames, int64_t classes);
 
-class MmsEmissionRuntime {
+class MmsWav2Vec2CtcRuntime {
 public:
-    MmsEmissionRuntime(
+    MmsWav2Vec2CtcRuntime(
         std::shared_ptr<const MmsForcedAlignerAssets> assets,
         core::BackendConfig backend,
         engine::assets::TensorStorageType weight_storage_type,
-        MmsEmissionConfig config = {});
+        MmsWav2Vec2CtcConfig config = {});
 
     // Mixdown/resample to 16 kHz, normalize, window with left/right context,
-    // encode through the HuBERT component with the CTC head, and convert to
+    // encode through the MMS Wav2Vec2 encoder with the CTC head, and convert to
     // [frames, 32] CPU log probabilities. Mirrors the reference
     // ctc-forced-aligner generate_emissions (30s center + 2s context windows;
     // short audio runs un-windowed).
@@ -56,9 +56,9 @@ private:
     std::shared_ptr<const MmsForcedAlignerAssets> assets_;
     core::BackendConfig backend_;
     engine::assets::TensorStorageType weight_storage_type_;
-    MmsEmissionConfig config_;
+    MmsWav2Vec2CtcConfig config_;
     // Lazily loaded on first compute; a loaded encoder is non-null.
-    mutable std::unique_ptr<modules::HubertEncoderComponent> encoder_;
+    mutable std::unique_ptr<modules::Wav2Vec2EncoderRuntime> mms_encoder_;
 };
 
 }  // namespace engine::community_models::mms_forced_aligner

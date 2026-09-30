@@ -17,10 +17,10 @@ namespace engine::community_models::mira_tts {
 std::shared_ptr<runtime::IVoiceModelLoader> make_mira_tts_loader();
 
 class MiraPromptBuilder;
-class MiraSpeakerEncoder;
-class MiraGenerator;
-class MiraAcousticProcessor;
-class MiraDecoder;
+class MiraEcapaPerceiverEncoder;
+class MiraQwen2Generator;
+class MiraConvNeXtAcousticProcessor;
+class MiraSnakeConvDecoder;
 
 class MiraTTSOfflineSession final : public runtime::RuntimeSessionBase,
                                     public runtime::IOfflineVoiceTaskSession,
@@ -77,10 +77,10 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::optional<runtime::AudioBuffer> prepared_reference_;
     std::unique_ptr<MiraPromptBuilder> prompt_;
-    std::unique_ptr<MiraSpeakerEncoder> speaker_encoder_;
-    std::unique_ptr<MiraGenerator> generator_;
-    std::unique_ptr<MiraAcousticProcessor> processor_;
-    std::unique_ptr<MiraDecoder> decoder_;
+    std::unique_ptr<MiraEcapaPerceiverEncoder> speaker_encoder_;
+    std::unique_ptr<MiraQwen2Generator> generator_;
+    std::unique_ptr<MiraConvNeXtAcousticProcessor> processor_;
+    std::unique_ptr<MiraSnakeConvDecoder> decoder_;
     runtime::CacheSlots<ReferenceCacheKey, std::vector<int32_t>, ReferenceCacheKeyEqual>
         reference_cache_;
     std::optional<std::vector<int32_t>> uncached_context_codes_;

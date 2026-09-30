@@ -1,6 +1,6 @@
 #include "engine/community_models/confucius4_r2t2/thinker.h"
 
-#include "engine/framework/runtime/greedy_qwen_decoder.h"
+#include "engine/framework/runtime/greedy_causal_decoder.h"
 
 #include <stdexcept>
 #include <utility>
@@ -10,9 +10,9 @@ namespace {
 
 namespace modules = engine::modules;
 
-runtime::GreedyQwenDecoderSpec make_decoder_spec(const R2T2ASRConfig & config) {
+runtime::GreedyCausalDecoderSpec make_qwen3_decoder_spec(const R2T2ASRConfig & config) {
     const auto & text = config.text_decoder;
-    runtime::GreedyQwenDecoderSpec spec;
+    runtime::GreedyCausalDecoderSpec spec;
     // Qwen3-style stack: Q/K norms, no attention biases, separate QKV.
     spec.decoder.stack.hidden_size = text.hidden_size;
     spec.decoder.stack.num_attention_heads = text.num_attention_heads;
@@ -24,9 +24,9 @@ runtime::GreedyQwenDecoderSpec make_decoder_spec(const R2T2ASRConfig & config) {
     spec.decoder.stack.rope_theta = text.rope_theta;
     spec.decoder.stack.use_qk_norm = true;
     spec.decoder.stack.runtime.static_cache.update_mode =
-        modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+        modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     spec.decoder.logits_size = text.output_size;
-    spec.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    spec.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     spec.vocab_size = text.vocab_size;
     spec.max_position_embeddings = text.max_position_embeddings;
     spec.tie_word_embeddings = config.tie_word_embeddings;
@@ -48,7 +48,7 @@ runtime::GreedyQwenDecoderSpec make_decoder_spec(const R2T2ASRConfig & config) {
 
 }  // namespace
 
-struct R2T2ASRThinkerRuntime::Impl {
+struct R2T2ASRQwen3ThinkerRuntime::Impl {
     Impl(
         std::shared_ptr<const R2T2ASRAssets> assets,
         core::ExecutionContext & execution,
@@ -57,9 +57,9 @@ struct R2T2ASRThinkerRuntime::Impl {
         size_t weight_context_bytes,
         assets::TensorStorageType weight_storage_type)
         : config(assets == nullptr ? throw std::runtime_error("R2T2 ASR thinker requires assets") : assets->config),
-          runtime(
+          qwen3_runtime(
               assets->model_weights,
-              make_decoder_spec(assets->config),
+              make_qwen3_decoder_spec(assets->config),
               execution,
               prefill_graph_arena_bytes,
               decode_graph_arena_bytes,
@@ -67,10 +67,10 @@ struct R2T2ASRThinkerRuntime::Impl {
               weight_storage_type) {}
 
     R2T2ASRConfig config;
-    runtime::GreedyQwenDecoderRuntime runtime;
+    runtime::GreedyCausalDecoderRuntime qwen3_runtime;
 };
 
-R2T2ASRThinkerRuntime::R2T2ASRThinkerRuntime(
+R2T2ASRQwen3ThinkerRuntime::R2T2ASRQwen3ThinkerRuntime(
     std::shared_ptr<const R2T2ASRAssets> assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -85,9 +85,9 @@ R2T2ASRThinkerRuntime::R2T2ASRThinkerRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-R2T2ASRThinkerRuntime::~R2T2ASRThinkerRuntime() = default;
+R2T2ASRQwen3ThinkerRuntime::~R2T2ASRQwen3ThinkerRuntime() = default;
 
-R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
+R2T2ASRGeneratedTokens R2T2ASRQwen3ThinkerRuntime::generate(
     const R2T2ASRPrompt & prompt,
     const R2T2ASRAudioEmbeddings & audio_embeddings,
     const R2T2ASRGenerationOptions & options) {
@@ -105,7 +105,7 @@ R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
             throw std::runtime_error("R2T2 ASR audio placeholder position out of range");
         }
     }
-    runtime::GreedyQwenDecoderRuntime::Prompt decoder_prompt;
+    runtime::GreedyCausalDecoderRuntime::Prompt decoder_prompt;
     decoder_prompt.input_ids = prompt.input_ids;
     decoder_prompt.injection.values = audio_embeddings.values;
     decoder_prompt.injection.tokens = audio_embeddings.tokens;
@@ -113,8 +113,8 @@ R2T2ASRGeneratedTokens R2T2ASRThinkerRuntime::generate(
 
     R2T2ASRGeneratedTokens out;
     out.token_ids = options.incremental_prefill
-        ? impl_->runtime.generate_incremental(decoder_prompt, options.max_new_tokens, options.cached_prefix_steps)
-        : impl_->runtime.generate(decoder_prompt, options.max_new_tokens, options.reuse_graphs);
+        ? impl_->qwen3_runtime.generate_incremental(decoder_prompt, options.max_new_tokens, options.cached_prefix_steps)
+        : impl_->qwen3_runtime.generate(decoder_prompt, options.max_new_tokens, options.reuse_graphs);
     return out;
 }
 

@@ -7,8 +7,8 @@ grouped FlashAttention, packed SwiGLU, direct KV updates, and the
 `ROPE -> VIEW -> SET_ROWS` fusion pattern.
 
 ```powershell
-cmake --build build/windows-cuda-release --config Release --target qwen_decoder_packed_projection_test higgs_audio_tts_warm_bench -j 8
-ctest --test-dir build/windows-cuda-release -C Release -R qwen_decoder_packed_projection_test --output-on-failure
+cmake --build build/windows-cuda-release --config Release --target decoder_packed_projection_test higgs_audio_tts_warm_bench -j 8
+ctest --test-dir build/windows-cuda-release -C Release -R decoder_packed_projection_test --output-on-failure
 ```
 
 Run the fixed-seed, five-request CUDA benchmark and save every generated WAV:

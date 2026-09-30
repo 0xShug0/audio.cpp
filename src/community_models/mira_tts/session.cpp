@@ -142,14 +142,14 @@ MiraTTSOfflineSession::MiraTTSOfflineSession(
          assets::TensorStorageType::F16, assets::TensorStorageType::BF16});
     auto & execution = execution_context();
     prompt_ = std::make_unique<MiraPromptBuilder>(assets_);
-    speaker_encoder_ = std::make_unique<MiraSpeakerEncoder>(
+    speaker_encoder_ = std::make_unique<MiraEcapaPerceiverEncoder>(
         *assets_, execution, kWeightBytes, kGraphBytes, linear_type, conv_type);
-    generator_ = std::make_unique<MiraGenerator>(
+    generator_ = std::make_unique<MiraQwen2Generator>(
         *assets_, execution, kGraphBytes, kGraphBytes, kWeightBytes, lm_type);
-    processor_ = std::make_unique<MiraAcousticProcessor>(
+    processor_ = std::make_unique<MiraConvNeXtAcousticProcessor>(
         *assets_, execution, kWeightBytes, kGraphBytes, linear_type, conv_type);
     // ggml's current CUDA ConvTranspose1d kernel requires F32 weights.
-    decoder_ = std::make_unique<MiraDecoder>(
+    decoder_ = std::make_unique<MiraSnakeConvDecoder>(
         *assets_, execution, kWeightBytes, kGraphBytes,
         assets::TensorStorageType::F32);
 }

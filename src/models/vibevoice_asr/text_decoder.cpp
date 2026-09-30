@@ -5,7 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
@@ -44,10 +44,10 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderLayerWeights to_qwen_layer_weights(
-    const VibeVoiceDecoderLayerWeights & weights,
+modules::DecoderLayerWeights to_qwen2_layer_weights(
+    const VibeVoiceQwen2LayerWeights & weights,
     core::ConstantTensorCache & constants) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
     out.self_attention = weights.self_attention;
     out.post_norm = binding::norm_data(constants, weights.post_norm);
@@ -57,8 +57,8 @@ modules::QwenDecoderLayerWeights to_qwen_layer_weights(
     return out;
 }
 
-modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoderConfig & config) {
-    modules::QwenCausalDecoderConfig out;
+modules::CausalDecoderConfig make_qwen2_decoder_config(const VibeVoiceQwen2Config & config) {
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
     out.stack.num_key_value_heads = config.num_key_value_heads;
@@ -68,34 +68,34 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(const VibeVoiceDecoder
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     out.stack.use_qk_norm = false;
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
     // The suffix path appends onto the prefix KV cache; without this it
     // takes the eager branch and materializes per-head F32 intermediates
     // that scale with the cache size.
-    out.stack.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::FlashWithPrefix;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.stack.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.stack.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.static_cache_type = GGML_TYPE_F16;
     return out;
 }
 
-modules::QwenCausalDecoderWeights make_qwen_decoder_weights(
-    const VibeVoiceDecoderWeights & weights,
+modules::CausalDecoderWeights make_qwen2_decoder_weights(
+    const VibeVoiceQwen2Weights & weights,
     core::ConstantTensorCache & constants) {
-    modules::QwenCausalDecoderWeights out;
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(weights.layers.size());
     for (const auto & layer : weights.layers) {
-        out.stack.layers.push_back(to_qwen_layer_weights(layer, constants));
+        out.stack.layers.push_back(to_qwen2_layer_weights(layer, constants));
     }
     out.final_norm = binding::norm_data(constants, weights.norm);
     out.lm_head = binding::linear_data(constants, weights.lm_head);
     return out;
 }
 
-int64_t require_head_dim(const VibeVoiceDecoderConfig & config) {
+int64_t require_head_dim(const VibeVoiceQwen2Config & config) {
     if (config.hidden_size <= 0 || config.intermediate_size <= 0) {
         throw std::runtime_error("VibeVoice decoder hidden sizes must be positive");
     }
@@ -111,15 +111,15 @@ int64_t require_head_dim(const VibeVoiceDecoderConfig & config) {
     return config.head_dim;
 }
 
-VibeVoiceDecoderLayerWeights load_layer_weights(
+VibeVoiceQwen2LayerWeights load_layer_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
-    const VibeVoiceDecoderConfig & config,
+    const VibeVoiceQwen2Config & config,
     int64_t layer,
     assets::TensorStorageType weight_storage_type) {
     const int64_t dim = require_head_dim(config);
     const std::string prefix = "model.language_model.layers." + std::to_string(layer);
-    VibeVoiceDecoderLayerWeights weights;
+    VibeVoiceQwen2LayerWeights weights;
     weights.input_norm = source.require_f32_tensor(prefix + ".input_layernorm.weight", {config.hidden_size});
     weights.self_attention.q_weight = store.load_tensor(
         source,
@@ -199,7 +199,7 @@ runtime::TransformerKVState empty_decoder_state(size_t layers) {
 
 }  // namespace
 
-VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
+VibeVoiceQwen2Weights load_vibevoice_decoder_weights(
     const VibeVoiceASRAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -210,7 +210,7 @@ VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
     }
     const auto & config = assets.config.decoder;
     require_head_dim(config);
-    VibeVoiceDecoderWeights weights;
+    VibeVoiceQwen2Weights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -252,10 +252,10 @@ VibeVoiceDecoderWeights load_vibevoice_decoder_weights(
     return weights;
 }
 
-class VibeVoiceDecoderEmbeddingGraph {
+class VibeVoiceQwen2EmbeddingGraph {
 public:
-    VibeVoiceDecoderEmbeddingGraph(
-        const VibeVoiceDecoderWeightsRuntime & runtime,
+    VibeVoiceQwen2EmbeddingGraph(
+        const VibeVoiceQwen2WeightsRuntime & runtime,
         int64_t steps,
         size_t graph_arena_bytes)
         : runtime_(&runtime),
@@ -291,7 +291,7 @@ public:
         }
     }
 
-    ~VibeVoiceDecoderEmbeddingGraph() {
+    ~VibeVoiceQwen2EmbeddingGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -299,7 +299,7 @@ public:
         engine::core::trim_backend_pools(runtime_->backend());
     }
 
-    bool matches(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t steps) const {
+    bool matches(const VibeVoiceQwen2WeightsRuntime & runtime, int64_t steps) const {
         return runtime_ == &runtime && steps_ == steps;
     }
 
@@ -325,7 +325,7 @@ public:
     }
 
 private:
-    const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
+    const VibeVoiceQwen2WeightsRuntime * runtime_ = nullptr;
     int64_t steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ids_ = nullptr;
@@ -334,10 +334,10 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class VibeVoiceDecoderPrefillGraph {
+class VibeVoiceQwen2PrefillGraph {
 public:
-    VibeVoiceDecoderPrefillGraph(
-        const VibeVoiceDecoderWeightsRuntime & runtime,
+    VibeVoiceQwen2PrefillGraph(
+        const VibeVoiceQwen2WeightsRuntime & runtime,
         int64_t batch_size,
         int64_t prompt_steps,
         int64_t speech_tokens,
@@ -403,12 +403,12 @@ public:
             GGML_TYPE_F16);
         auto & constants = runtime_->constants();
         constants.begin_graph();
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen2_decoder_config(config))
                                .build(
                                    ctx,
                                    x,
                                    positions_value,
-                                   make_qwen_decoder_weights(runtime_->weights(), constants),
+                                   make_qwen2_decoder_weights(runtime_->weights(), constants),
                                    std::nullopt,
                                    attention_mask);
         for (const auto & layer : decoder_out.state.layers) {
@@ -444,11 +444,11 @@ public:
             throw std::runtime_error("failed to allocate VibeVoice decoder prefill graph");
         }
 
-        position_values_ = modules::qwen_position_ids(prompt_steps_);
-        attention_mask_values_ = modules::qwen_causal_prefill_mask_values(batch_size_, prompt_steps_);
+        position_values_ = modules::decoder_position_ids(prompt_steps_);
+        attention_mask_values_ = modules::causal_prefill_mask_values(batch_size_, prompt_steps_);
     }
 
-    ~VibeVoiceDecoderPrefillGraph() {
+    ~VibeVoiceQwen2PrefillGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -457,7 +457,7 @@ public:
     }
 
     bool matches(
-        const VibeVoiceDecoderWeightsRuntime & runtime,
+        const VibeVoiceQwen2WeightsRuntime & runtime,
         int64_t batch_size,
         int64_t prompt_steps,
         int64_t speech_tokens) const {
@@ -585,7 +585,7 @@ public:
     }
 
 private:
-    const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
+    const VibeVoiceQwen2WeightsRuntime * runtime_ = nullptr;
     int64_t batch_size_ = 0;
     int64_t prompt_steps_ = 0;
     int64_t speech_tokens_ = 0;
@@ -606,10 +606,10 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-class VibeVoiceDecoderKVCache {
+class VibeVoiceQwen2KVCache {
 public:
-    VibeVoiceDecoderKVCache(
-        const VibeVoiceDecoderWeightsRuntime & runtime,
+    VibeVoiceQwen2KVCache(
+        const VibeVoiceQwen2WeightsRuntime & runtime,
         int64_t cache_steps)
         : runtime_(&runtime),
           cache_steps_(cache_steps) {
@@ -656,13 +656,13 @@ public:
         }
     }
 
-    ~VibeVoiceDecoderKVCache() {
+    ~VibeVoiceQwen2KVCache() {
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
     }
 
-    bool can_run(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t required_steps) const {
+    bool can_run(const VibeVoiceQwen2WeightsRuntime & runtime, int64_t required_steps) const {
         return runtime_ == &runtime && cache_steps_ >= required_steps;
     }
 
@@ -703,18 +703,18 @@ public:
     }
 
 private:
-    const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
+    const VibeVoiceQwen2WeightsRuntime * runtime_ = nullptr;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     runtime::TransformerKVCache cache_;
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-class VibeVoiceDecoderCachedStepGraph {
+class VibeVoiceQwen2CachedStepGraph {
 public:
-    VibeVoiceDecoderCachedStepGraph(
-        const VibeVoiceDecoderWeightsRuntime & runtime,
-        VibeVoiceDecoderKVCache & cache,
+    VibeVoiceQwen2CachedStepGraph(
+        const VibeVoiceQwen2WeightsRuntime & runtime,
+        VibeVoiceQwen2KVCache & cache,
         size_t graph_arena_bytes)
         : runtime_(&runtime),
           cache_(&cache),
@@ -748,17 +748,17 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto & constants = runtime_->constants();
         constants.begin_graph();
-        auto decoder_config = make_qwen_decoder_config(config);
+        auto decoder_config = make_qwen2_decoder_config(config);
         auto layer_input = x;
-        const modules::QwenDecoderLayerModule layer_module(
-            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        const modules::DecoderLayerModule layer_module(
+            modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < runtime_->weights().layers.size(); ++layer_index) {
             auto layer_out = layer_module.build_with_static_cache_tail(
                 ctx,
                 graph_,
                 layer_input,
                 positions_value,
-                to_qwen_layer_weights(runtime_->weights().layers[layer_index], constants),
+                to_qwen2_layer_weights(runtime_->weights().layers[layer_index], constants),
                 cache_->key_tensor(layer_index),
                 cache_->value_tensor(layer_index),
                 cache_slot_value,
@@ -788,7 +788,7 @@ public:
         attention_mask_buffer_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
     }
 
-    ~VibeVoiceDecoderCachedStepGraph() {
+    ~VibeVoiceQwen2CachedStepGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
@@ -796,7 +796,7 @@ public:
         engine::core::trim_backend_pools(runtime_->backend());
     }
 
-    bool can_decode(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t required_capacity) const {
+    bool can_decode(const VibeVoiceQwen2WeightsRuntime & runtime, int64_t required_capacity) const {
         return runtime_ == &runtime && cache_ != nullptr && cache_->can_run(runtime, required_capacity);
     }
 
@@ -865,8 +865,8 @@ public:
     }
 
 private:
-    const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
-    VibeVoiceDecoderKVCache * cache_ = nullptr;
+    const VibeVoiceQwen2WeightsRuntime * runtime_ = nullptr;
+    VibeVoiceQwen2KVCache * cache_ = nullptr;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
@@ -880,12 +880,12 @@ private:
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-class VibeVoiceDecoderCachedSuffixGraph {
+class VibeVoiceQwen2CachedSuffixGraph {
 public:
-    VibeVoiceDecoderCachedSuffixGraph(
-        const VibeVoiceDecoderWeightsRuntime & runtime,
+    VibeVoiceQwen2CachedSuffixGraph(
+        const VibeVoiceQwen2WeightsRuntime & runtime,
         int64_t suffix_steps,
-        VibeVoiceDecoderKVCache & cache,
+        VibeVoiceQwen2KVCache & cache,
         size_t graph_arena_bytes)
         : runtime_(&runtime),
           cache_(&cache),
@@ -933,11 +933,11 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         auto & constants = runtime_->constants();
         constants.begin_graph();
-        auto decoder_config = make_qwen_decoder_config(config);
+        auto decoder_config = make_qwen2_decoder_config(config);
         const int64_t step_elems = config.num_key_value_heads * require_head_dim(config);
         auto layer_input = x;
-        const modules::QwenDecoderLayerModule layer_module(
-            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        const modules::DecoderLayerModule layer_module(
+            modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < runtime_->weights().layers.size(); ++layer_index) {
             const auto & key_cache = cache_->key_tensor(layer_index);
             const auto & value_cache = cache_->value_tensor(layer_index);
@@ -945,7 +945,7 @@ public:
                 ctx,
                 layer_input,
                 positions_value,
-                to_qwen_layer_weights(runtime_->weights().layers[layer_index], constants),
+                to_qwen2_layer_weights(runtime_->weights().layers[layer_index], constants),
                 key_cache,
                 value_cache,
                 attention_mask_value);
@@ -1003,7 +1003,7 @@ public:
         attention_mask_buffer_.resize(static_cast<size_t>(suffix_steps_ * attention_key_steps_));
     }
 
-    ~VibeVoiceDecoderCachedSuffixGraph() {
+    ~VibeVoiceQwen2CachedSuffixGraph() {
         engine::core::release_backend_graph_resources(runtime_->backend(), graph_, true);
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
@@ -1011,7 +1011,7 @@ public:
         engine::core::trim_backend_pools(runtime_->backend());
     }
 
-    bool can_decode(const VibeVoiceDecoderWeightsRuntime & runtime, int64_t suffix_steps, int64_t required_capacity) const {
+    bool can_decode(const VibeVoiceQwen2WeightsRuntime & runtime, int64_t suffix_steps, int64_t required_capacity) const {
         return runtime_ == &runtime && this->suffix_steps_ == suffix_steps && cache_ != nullptr &&
             cache_->can_run(runtime, required_capacity);
     }
@@ -1090,8 +1090,8 @@ public:
     }
 
 private:
-    const VibeVoiceDecoderWeightsRuntime * runtime_ = nullptr;
-    VibeVoiceDecoderKVCache * cache_ = nullptr;
+    const VibeVoiceQwen2WeightsRuntime * runtime_ = nullptr;
+    VibeVoiceQwen2KVCache * cache_ = nullptr;
     int64_t suffix_steps_ = 0;
     int64_t cache_steps_ = 0;
     int64_t attention_key_steps_ = 0;
@@ -1109,12 +1109,12 @@ private:
     ggml_backend_buffer_t buffer_ = nullptr;
 };
 
-VibeVoiceDecoderCachedState::VibeVoiceDecoderCachedState() = default;
-VibeVoiceDecoderCachedState::~VibeVoiceDecoderCachedState() = default;
-VibeVoiceDecoderCachedState::VibeVoiceDecoderCachedState(VibeVoiceDecoderCachedState &&) noexcept = default;
-VibeVoiceDecoderCachedState & VibeVoiceDecoderCachedState::operator=(VibeVoiceDecoderCachedState &&) noexcept = default;
+VibeVoiceQwen2CachedState::VibeVoiceQwen2CachedState() = default;
+VibeVoiceQwen2CachedState::~VibeVoiceQwen2CachedState() = default;
+VibeVoiceQwen2CachedState::VibeVoiceQwen2CachedState(VibeVoiceQwen2CachedState &&) noexcept = default;
+VibeVoiceQwen2CachedState & VibeVoiceQwen2CachedState::operator=(VibeVoiceQwen2CachedState &&) noexcept = default;
 
-VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
+VibeVoiceQwen2WeightsRuntime::VibeVoiceQwen2WeightsRuntime(
     std::shared_ptr<const VibeVoiceASRAssets> assets,
     core::BackendType backend_type,
     int device,
@@ -1141,7 +1141,7 @@ VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
         "vibevoice.runtime.decoder_backend_init_ms",
         engine::debug::elapsed_ms(backend_started));
     const auto weights_started = std::chrono::steady_clock::now();
-    weights_ = std::make_shared<VibeVoiceDecoderWeights>(
+    weights_ = std::make_shared<VibeVoiceQwen2Weights>(
         load_vibevoice_decoder_weights(
             *assets_,
             backend_,
@@ -1158,7 +1158,7 @@ VibeVoiceDecoderWeightsRuntime::VibeVoiceDecoderWeightsRuntime(
         constant_context_bytes);
 }
 
-VibeVoiceDecoderWeightsRuntime::~VibeVoiceDecoderWeightsRuntime() {
+VibeVoiceQwen2WeightsRuntime::~VibeVoiceQwen2WeightsRuntime() {
     prefill_graph_.reset();
     embedding_graph_.reset();
     constants_.reset();
@@ -1168,43 +1168,43 @@ VibeVoiceDecoderWeightsRuntime::~VibeVoiceDecoderWeightsRuntime() {
     }
 }
 
-const VibeVoiceASRAssets & VibeVoiceDecoderWeightsRuntime::assets() const noexcept {
+const VibeVoiceASRAssets & VibeVoiceQwen2WeightsRuntime::assets() const noexcept {
     return *assets_;
 }
 
-const VibeVoiceDecoderWeights & VibeVoiceDecoderWeightsRuntime::weights() const noexcept {
+const VibeVoiceQwen2Weights & VibeVoiceQwen2WeightsRuntime::weights() const noexcept {
     return *weights_;
 }
 
-ggml_backend_t VibeVoiceDecoderWeightsRuntime::backend() const noexcept {
+ggml_backend_t VibeVoiceQwen2WeightsRuntime::backend() const noexcept {
     return backend_;
 }
 
-core::ConstantTensorCache & VibeVoiceDecoderWeightsRuntime::constants() const noexcept {
+core::ConstantTensorCache & VibeVoiceQwen2WeightsRuntime::constants() const noexcept {
     return *constants_;
 }
 
-int VibeVoiceDecoderWeightsRuntime::threads() const noexcept {
+int VibeVoiceQwen2WeightsRuntime::threads() const noexcept {
     return threads_;
 }
 
-void VibeVoiceDecoderWeightsRuntime::set_pinned_prefix_steps(int64_t steps) {
+void VibeVoiceQwen2WeightsRuntime::set_pinned_prefix_steps(int64_t steps) {
     if (steps < 0) {
         throw std::runtime_error("VibeVoice decoder pinned prefix steps must be >= 0");
     }
     pinned_prefix_steps_ = steps;
 }
 
-int64_t VibeVoiceDecoderWeightsRuntime::pinned_prefix_steps() const noexcept {
+int64_t VibeVoiceQwen2WeightsRuntime::pinned_prefix_steps() const noexcept {
     return pinned_prefix_steps_;
 }
 
-int64_t VibeVoiceDecoderWeightsRuntime::max_history_steps() const noexcept {
+int64_t VibeVoiceQwen2WeightsRuntime::max_history_steps() const noexcept {
     return max_history_steps_;
 }
 
-int64_t VibeVoiceDecoderWeightsRuntime::cached_state_end_plus(
-    const VibeVoiceDecoderCachedState & state,
+int64_t VibeVoiceQwen2WeightsRuntime::cached_state_end_plus(
+    const VibeVoiceQwen2CachedState & state,
     int64_t incoming_steps) {
     const int64_t current_end = state.cache_has_state_ && state.cache_ != nullptr
         ? state.cache_->current_end()
@@ -1212,7 +1212,7 @@ int64_t VibeVoiceDecoderWeightsRuntime::cached_state_end_plus(
     return current_end + incoming_steps;
 }
 
-int64_t VibeVoiceDecoderWeightsRuntime::apply_history_window(int64_t unbounded_required) const {
+int64_t VibeVoiceQwen2WeightsRuntime::apply_history_window(int64_t unbounded_required) const {
     // Clamp before tiering: tiering throws past model capacity, which a long
     // stream's absolute history can exceed while the window stays small.
     if (max_history_steps_ <= 0) {
@@ -1221,7 +1221,7 @@ int64_t VibeVoiceDecoderWeightsRuntime::apply_history_window(int64_t unbounded_r
     return cache_graph_capacity(max_history_steps_, assets_->config.decoder.max_position_embeddings);
 }
 
-VibeVoiceTokenEmbeddings VibeVoiceDecoderWeightsRuntime::embed_tokens(
+VibeVoiceTokenEmbeddings VibeVoiceQwen2WeightsRuntime::embed_tokens(
     const std::vector<int32_t> & input_ids) const {
     if (input_ids.empty()) {
         throw std::runtime_error("VibeVoice decoder embedding requires at least one token");
@@ -1229,7 +1229,7 @@ VibeVoiceTokenEmbeddings VibeVoiceDecoderWeightsRuntime::embed_tokens(
     const int64_t steps = static_cast<int64_t>(input_ids.size());
     if (embedding_graph_ == nullptr || !embedding_graph_->matches(*this, steps)) {
         embedding_graph_.reset();
-        embedding_graph_ = std::make_unique<VibeVoiceDecoderEmbeddingGraph>(
+        embedding_graph_ = std::make_unique<VibeVoiceQwen2EmbeddingGraph>(
             *this,
             steps,
             64ull * 1024ull * 1024ull);
@@ -1237,7 +1237,7 @@ VibeVoiceTokenEmbeddings VibeVoiceDecoderWeightsRuntime::embed_tokens(
     return embedding_graph_->run(input_ids);
 }
 
-VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_embeddings(
+VibeVoiceDecoderPrefillOutput VibeVoiceQwen2WeightsRuntime::prefill_embeddings(
     const std::vector<float> & embeddings,
     int64_t steps) const {
     const auto & config = assets_->config.decoder;
@@ -1249,7 +1249,7 @@ VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_embeddings
     }
     if (prefill_graph_ == nullptr || !prefill_graph_->matches(*this, 1, steps, 0)) {
         prefill_graph_.reset();
-        prefill_graph_ = std::make_unique<VibeVoiceDecoderPrefillGraph>(
+        prefill_graph_ = std::make_unique<VibeVoiceQwen2PrefillGraph>(
             *this,
             1,
             steps,
@@ -1259,7 +1259,7 @@ VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_embeddings
     return prefill_graph_->run(embeddings);
 }
 
-VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_prompt(
+VibeVoiceDecoderPrefillOutput VibeVoiceQwen2WeightsRuntime::prefill_prompt(
     const std::vector<int32_t> & input_ids,
     const std::vector<float> & speech_features,
     const std::vector<int32_t> & speech_positions) const {
@@ -1277,7 +1277,7 @@ VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_prompt(
     }
     if (prefill_graph_ == nullptr || !prefill_graph_->matches(*this, 1, steps, speech_tokens)) {
         prefill_graph_.reset();
-        prefill_graph_ = std::make_unique<VibeVoiceDecoderPrefillGraph>(
+        prefill_graph_ = std::make_unique<VibeVoiceQwen2PrefillGraph>(
             *this,
             1,
             steps,
@@ -1287,8 +1287,8 @@ VibeVoiceDecoderPrefillOutput VibeVoiceDecoderWeightsRuntime::prefill_prompt(
     return prefill_graph_->run_prompt(input_ids, speech_features, speech_positions);
 }
 
-void VibeVoiceDecoderWeightsRuntime::reset_cached_state(
-    VibeVoiceDecoderCachedState & state,
+void VibeVoiceQwen2WeightsRuntime::reset_cached_state(
+    VibeVoiceQwen2CachedState & state,
     runtime::TransformerKVState prefill_state) const {
     state.graph_.reset();
     state.suffix_graph_.reset();
@@ -1297,8 +1297,8 @@ void VibeVoiceDecoderWeightsRuntime::reset_cached_state(
     state.cache_has_state_ = false;
 }
 
-void VibeVoiceDecoderWeightsRuntime::prepare_cached_state(
-    VibeVoiceDecoderCachedState & state,
+void VibeVoiceQwen2WeightsRuntime::prepare_cached_state(
+    VibeVoiceQwen2CachedState & state,
     int64_t cache_capacity) const {
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached state prepare requires positive cache capacity");
@@ -1315,7 +1315,7 @@ void VibeVoiceDecoderWeightsRuntime::prepare_cached_state(
     if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
         state.graph_.reset();
         state.suffix_graph_.reset();
-        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+        state.cache_ = std::make_unique<VibeVoiceQwen2KVCache>(*this, required_capacity);
     }
     if (!state.cache_has_state_) {
         if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
@@ -1327,8 +1327,8 @@ void VibeVoiceDecoderWeightsRuntime::prepare_cached_state(
     }
 }
 
-runtime::TransformerKVState VibeVoiceDecoderWeightsRuntime::export_cached_state(
-    VibeVoiceDecoderCachedState & state) const {
+runtime::TransformerKVState VibeVoiceQwen2WeightsRuntime::export_cached_state(
+    VibeVoiceQwen2CachedState & state) const {
     if (state.cache_has_state_ && state.cache_ != nullptr) {
         state.pending_state_ = state.cache_->export_state();
         state.cache_has_state_ = false;
@@ -1336,9 +1336,9 @@ runtime::TransformerKVState VibeVoiceDecoderWeightsRuntime::export_cached_state(
     return state.pending_state_;
 }
 
-void VibeVoiceDecoderWeightsRuntime::clone_cached_state(
-    const VibeVoiceDecoderCachedState & source,
-    VibeVoiceDecoderCachedState & target,
+void VibeVoiceQwen2WeightsRuntime::clone_cached_state(
+    const VibeVoiceQwen2CachedState & source,
+    VibeVoiceQwen2CachedState & target,
     int64_t cache_capacity) const {
     if (cache_capacity <= 0) {
         throw std::runtime_error("VibeVoice decoder cached state clone requires positive cache capacity");
@@ -1352,16 +1352,16 @@ void VibeVoiceDecoderWeightsRuntime::clone_cached_state(
     if (target.cache_ == nullptr || !target.cache_->can_run(*this, required_capacity)) {
         target.graph_.reset();
         target.suffix_graph_.reset();
-        target.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+        target.cache_ = std::make_unique<VibeVoiceQwen2KVCache>(*this, required_capacity);
     }
     target.cache_->import_state(source_state);
     target.pending_state_ = {};
     target.cache_has_state_ = true;
 }
 
-VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
+VibeVoiceDecoderResult VibeVoiceQwen2WeightsRuntime::cached_step(
     const std::vector<float> & embedding,
-    VibeVoiceDecoderCachedState & state,
+    VibeVoiceQwen2CachedState & state,
     int64_t cache_capacity) const {
     const auto & config = assets_->config.decoder;
     if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
@@ -1382,7 +1382,7 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
         state.graph_.reset();
         state.suffix_graph_.reset();
-        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+        state.cache_ = std::make_unique<VibeVoiceQwen2KVCache>(*this, required_capacity);
     }
     if (!state.cache_has_state_) {
         if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
@@ -1396,7 +1396,7 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
         state.graph_.reset();
         const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
-        state.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
+        state.graph_ = std::make_unique<VibeVoiceQwen2CachedStepGraph>(
             *this,
             *state.cache_,
             graph_arena_bytes);
@@ -1404,9 +1404,9 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_step(
     return state.graph_->run_step(embedding);
 }
 
-void VibeVoiceDecoderWeightsRuntime::append_cached_step(
+void VibeVoiceQwen2WeightsRuntime::append_cached_step(
     const std::vector<float> & embedding,
-    VibeVoiceDecoderCachedState & state,
+    VibeVoiceQwen2CachedState & state,
     int64_t cache_capacity) const {
     const auto & config = assets_->config.decoder;
     if (static_cast<int64_t>(embedding.size()) != config.hidden_size) {
@@ -1427,7 +1427,7 @@ void VibeVoiceDecoderWeightsRuntime::append_cached_step(
     if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
         state.graph_.reset();
         state.suffix_graph_.reset();
-        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+        state.cache_ = std::make_unique<VibeVoiceQwen2KVCache>(*this, required_capacity);
     }
     if (!state.cache_has_state_) {
         if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
@@ -1441,7 +1441,7 @@ void VibeVoiceDecoderWeightsRuntime::append_cached_step(
     if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
         state.graph_.reset();
         const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
-        state.graph_ = std::make_unique<VibeVoiceDecoderCachedStepGraph>(
+        state.graph_ = std::make_unique<VibeVoiceQwen2CachedStepGraph>(
             *this,
             *state.cache_,
             graph_arena_bytes);
@@ -1449,10 +1449,10 @@ void VibeVoiceDecoderWeightsRuntime::append_cached_step(
     state.graph_->run_step_no_readback(embedding);
 }
 
-VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_suffix(
+VibeVoiceDecoderResult VibeVoiceQwen2WeightsRuntime::cached_suffix(
     const std::vector<float> & embeddings,
     int64_t steps,
-    VibeVoiceDecoderCachedState & state,
+    VibeVoiceQwen2CachedState & state,
     int64_t cache_capacity) const {
     const auto & config = assets_->config.decoder;
     if (steps <= 0) {
@@ -1476,7 +1476,7 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_suffix(
     if (state.cache_ == nullptr || !state.cache_->can_run(*this, required_capacity)) {
         state.graph_.reset();
         state.suffix_graph_.reset();
-        state.cache_ = std::make_unique<VibeVoiceDecoderKVCache>(*this, required_capacity);
+        state.cache_ = std::make_unique<VibeVoiceQwen2KVCache>(*this, required_capacity);
     }
     if (!state.cache_has_state_) {
         if (state.pending_state_.layers.empty() && state.pending_state_.current_end == 0) {
@@ -1490,7 +1490,7 @@ VibeVoiceDecoderResult VibeVoiceDecoderWeightsRuntime::cached_suffix(
     if (state.suffix_graph_ == nullptr || !state.suffix_graph_->can_decode(*this, steps, required_capacity)) {
         state.suffix_graph_.reset();
         const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
-        state.suffix_graph_ = std::make_unique<VibeVoiceDecoderCachedSuffixGraph>(
+        state.suffix_graph_ = std::make_unique<VibeVoiceQwen2CachedSuffixGraph>(
             *this,
             steps,
             *state.cache_,

@@ -46,10 +46,10 @@ private:
     VibeVoiceTextTokenizer text_tokenizer_;
     VibeVoiceTokenizerWeightsRuntime audio_tokenizer_;
     VibeVoiceConnectorWeightsRuntime connector_;
-    VibeVoiceDecoderWeightsRuntime decoder_;
+    VibeVoiceQwen2WeightsRuntime decoder_;
     VibeVoiceDiffusionHeadWeightsRuntime diffusion_head_;
-    VibeVoiceDecoderCachedState positive_decoder_cache_;
-    VibeVoiceDecoderCachedState negative_decoder_cache_;
+    VibeVoiceQwen2CachedState positive_decoder_cache_;
+    VibeVoiceQwen2CachedState negative_decoder_cache_;
     mutable std::vector<ReferenceVoiceStateCacheEntry> reference_voice_state_cache_;
 };
 

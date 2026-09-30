@@ -30,7 +30,7 @@ struct GgmlContextDeleter {
     }
 };
 
-int64_t count_qwen_layers(const engine::assets::TensorSource & source) {
+int64_t count_qwen3_layers(const engine::assets::TensorSource & source) {
     int64_t layers = 0;
     while (source.has_tensor(
         "model.mdl_model.decoder.model.layers." + std::to_string(layers) +
@@ -43,41 +43,41 @@ int64_t count_qwen_layers(const engine::assets::TensorSource & source) {
     return layers;
 }
 
-modules::QwenCausalDecoderConfig qwen_config(
+modules::CausalDecoderConfig qwen3_config(
     const MiDashengLmGenConfig & config,
     const engine::assets::TensorSource & source) {
     const auto q = source.require_metadata("model.mdl_model.decoder.model.layers.0.self_attn.q_proj.weight");
     const auto k = source.require_metadata("model.mdl_model.decoder.model.layers.0.self_attn.k_proj.weight");
     const auto q_norm = source.require_metadata("model.mdl_model.decoder.model.layers.0.self_attn.q_norm.weight");
     const auto mlp = source.require_metadata("model.mdl_model.decoder.model.layers.0.mlp.gate_proj.weight");
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = q.shape.at(0) / q_norm.shape.at(0);
     out.stack.num_key_value_heads = k.shape.at(0) / q_norm.shape.at(0);
     out.stack.head_dim = q_norm.shape.at(0);
     out.stack.intermediate_size = mlp.shape.at(0);
-    out.stack.layers = count_qwen_layers(source);
+    out.stack.layers = count_qwen3_layers(source);
     out.stack.rms_norm_eps = 1.0e-6F;
     out.stack.rope_theta = 1000000.0F;
     out.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.stack.attention_precision = GGML_PREC_F32;
     out.stack.projection_precision = GGML_PREC_DEFAULT;
     out.stack.use_qk_norm = true;
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     return out;
 }
 
-modules::QwenDecoderLayerWeights load_qwen_layer(
+modules::DecoderLayerWeights load_qwen3_layer(
     core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
-    const modules::QwenCausalDecoderConfig & config,
+    const modules::CausalDecoderConfig & config,
     engine::assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "model.mdl_model.decoder.model.layers." + std::to_string(layer);
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.stack.hidden_size);
     out.self_attention.q_weight = store.load_tensor(source, prefix + ".self_attn.q_proj.weight", storage_type, {config.stack.num_attention_heads * config.stack.head_dim, config.stack.hidden_size});
     out.self_attention.k_weight = store.load_tensor(source, prefix + ".self_attn.k_proj.weight", storage_type, {config.stack.num_key_value_heads * config.stack.head_dim, config.stack.hidden_size});
@@ -92,21 +92,21 @@ modules::QwenDecoderLayerWeights load_qwen_layer(
     return out;
 }
 
-std::shared_ptr<const MiDashengLmGenARWeights> load_weights(
+std::shared_ptr<const MiDashengLmGenQwen3ARWeights> load_weights(
     const MiDashengLmGenAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     engine::assets::TensorStorageType storage_type,
-    modules::QwenCausalDecoderConfig & qwen) {
-    auto weights = std::make_shared<MiDashengLmGenARWeights>();
+    modules::CausalDecoderConfig & qwen) {
+    auto weights = std::make_shared<MiDashengLmGenQwen3ARWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
         "midashenglm_gen.ar.weights",
         weight_context_bytes);
     const auto & source = *assets.weights;
-    qwen = qwen_config(assets.config, source);
+    qwen = qwen3_config(assets.config, source);
     weights->qwen.token_embedding = weights->store->load_tensor(
         source,
         "model.mdl_model.decoder.model.embed_tokens.weight",
@@ -114,7 +114,7 @@ std::shared_ptr<const MiDashengLmGenARWeights> load_weights(
         {assets.config.vocab_size, assets.config.hidden_size});
     weights->qwen.stack.layers.reserve(static_cast<size_t>(qwen.stack.layers));
     for (int64_t layer = 0; layer < qwen.stack.layers; ++layer) {
-        weights->qwen.stack.layers.push_back(load_qwen_layer(*weights->store, source, qwen, storage_type, layer));
+        weights->qwen.stack.layers.push_back(load_qwen3_layer(*weights->store, source, qwen, storage_type, layer));
     }
     weights->qwen.final_norm = binding::norm_weight_from_source(
         *weights->store,
@@ -176,11 +176,11 @@ float stop_probability(const std::vector<float> & logits) {
 
 }  // namespace
 
-class MiDashengLmGenARRuntime::ProjectorGraph {
+class MiDashengLmGenQwen3ARRuntime::ProjectorGraph {
 public:
     ProjectorGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const MiDashengLmGenARWeights> weights,
+        std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights,
         MiDashengLmGenConfig config,
         int64_t batch,
         size_t graph_arena_bytes)
@@ -257,7 +257,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const MiDashengLmGenARWeights> weights_;
+    std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights_;
     MiDashengLmGenConfig config_;
     int64_t batch_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
@@ -269,11 +269,11 @@ private:
     ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
-class MiDashengLmGenARRuntime::StopHeadGraph {
+class MiDashengLmGenQwen3ARRuntime::StopHeadGraph {
 public:
     StopHeadGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const MiDashengLmGenARWeights> weights,
+        std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights,
         MiDashengLmGenConfig config,
         int64_t batch,
         size_t graph_arena_bytes)
@@ -347,7 +347,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const MiDashengLmGenARWeights> weights_;
+    std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights_;
     MiDashengLmGenConfig config_;
     int64_t batch_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> input_ctx_;
@@ -359,10 +359,10 @@ private:
     ggml_backend_buffer_t input_buffer_ = nullptr;
 };
 
-MiDashengLmGenARRuntime::MiDashengLmGenARRuntime(
+MiDashengLmGenQwen3ARRuntime::MiDashengLmGenQwen3ARRuntime(
     std::shared_ptr<const MiDashengLmGenAssets> assets,
     core::ExecutionContext & execution,
-    MiDashengLmGenFlowRuntime & flow,
+    MiDashengLmGenDiTFlowRuntime & flow,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes,
     size_t helper_graph_arena_bytes,
@@ -375,7 +375,7 @@ MiDashengLmGenARRuntime::MiDashengLmGenARRuntime(
     if (assets_ == nullptr) {
         throw std::runtime_error("MiDashengLM-Gen AR runtime requires assets");
     }
-    modules::QwenCausalDecoderConfig qwen_decoder;
+    modules::CausalDecoderConfig qwen_decoder;
     weights_ = load_weights(
         *assets_,
         execution.backend(),
@@ -383,22 +383,22 @@ MiDashengLmGenARRuntime::MiDashengLmGenARRuntime(
         weight_context_bytes,
         storage_type,
         qwen_decoder);
-    modules::QwenCausalDecodeRuntimeConfig qwen_config;
+    modules::CausalDecoderRuntimeConfig qwen_config;
     qwen_config.trace_name = "midashenglm_gen.ar.qwen";
     qwen_config.decoder = qwen_decoder;
     qwen_config.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
     qwen_config.decode_graph_arena_bytes = decode_graph_arena_bytes;
-    qwen_config.output_mode = modules::QwenCausalDecodeOutputMode::Hidden;
+    qwen_config.output_mode = modules::CausalDecoderOutputMode::Hidden;
     qwen_config.return_hidden = true;
-    qwen_ = std::make_unique<modules::QwenCausalDecodeRuntime>(
+    qwen3_runtime_ = std::make_unique<modules::CausalDecoderRuntime>(
         execution,
         qwen_config,
         weights_->qwen);
 }
 
-MiDashengLmGenARRuntime::~MiDashengLmGenARRuntime() = default;
+MiDashengLmGenQwen3ARRuntime::~MiDashengLmGenQwen3ARRuntime() = default;
 
-MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
+MiDashengLmGenAROutput MiDashengLmGenQwen3ARRuntime::generate(
     const MiDashengLmGenPromptEncoderOutput & prompt,
     const MiDashengLmGenGenerationOptions & options) {
     const auto & config = assets_->config;
@@ -429,7 +429,7 @@ MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
         if (valid_tokens <= 0) {
             throw std::runtime_error("MiDashengLM-Gen AR prompt has no valid tokens");
         }
-        qwen_->release_runtime_graphs();
+        qwen3_runtime_->release_runtime_graphs();
         std::vector<float> prompt_embeddings(static_cast<size_t>(valid_tokens * config.hidden_size));
         for (int64_t t = 0; t < valid_tokens; ++t) {
             const size_t src = static_cast<size_t>((b * prompt.tokens + t) * config.hidden_size);
@@ -439,8 +439,8 @@ MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
                 prompt.embeddings.begin() + static_cast<std::ptrdiff_t>(src + config.hidden_size),
                 prompt_embeddings.begin() + static_cast<std::ptrdiff_t>(dst));
         }
-        auto prefill = qwen_->prefill_embeddings(prompt_embeddings, valid_tokens);
-        qwen_->start_decode_embeddings(prefill.state, valid_tokens + num_iter + 1);
+        auto prefill = qwen3_runtime_->prefill_embeddings(prompt_embeddings, valid_tokens);
+        qwen3_runtime_->start_decode_embeddings(prefill.state, valid_tokens + num_iter + 1);
         auto hidden = last_hidden_row(prefill.hidden, valid_tokens, config.hidden_size);
         std::vector<float> latent_history(static_cast<size_t>(config.patch_size * config.target_embedding_size), 0.0F);
         for (int64_t step = 0; step < num_iter; ++step) {
@@ -457,7 +457,7 @@ MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
             out.stop_probs[static_cast<size_t>(b * num_iter + step)] = stop_probability(stop_logits);
             const auto audio_embedding = projector_->run(sampled);
             if (step + 1 < num_iter) {
-                auto decoded = qwen_->decode_embedding(audio_embedding);
+                auto decoded = qwen3_runtime_->decode_embedding(audio_embedding);
                 hidden = decoded.hidden;
             }
         }
@@ -465,9 +465,9 @@ MiDashengLmGenAROutput MiDashengLmGenARRuntime::generate(
     return out;
 }
 
-void MiDashengLmGenARRuntime::release_graphs() {
-    if (qwen_ != nullptr) {
-        qwen_->release_runtime_graphs();
+void MiDashengLmGenQwen3ARRuntime::release_graphs() {
+    if (qwen3_runtime_ != nullptr) {
+        qwen3_runtime_->release_runtime_graphs();
     }
     projector_.reset();
     stop_head_.reset();

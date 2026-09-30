@@ -32,9 +32,9 @@ struct ChatterboxVoiceConversionOutputs {
     S3GenTimingBreakdown s3gen_timing;
 };
 
-class ChatterboxVcComponent {
+class ChatterboxVCComponent {
 public:
-    ChatterboxVcComponent(
+    ChatterboxVCComponent(
         engine::models::chatterbox::S3TokenizerComponent tokenizer_component,
         engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder,
         std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights,

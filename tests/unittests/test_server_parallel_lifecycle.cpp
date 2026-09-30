@@ -351,7 +351,7 @@ void deferred_stream_ownership(int count, bool disconnect) {
     require(s.active == 0 && s.waiting_management == 0, "stream completion/disconnect leaked ownership");
 }
 
-void deferred_batch_ownership(int count) {
+void deferred_batch_ownership(int count, bool generic = false) {
     Fixture f(count); auto c = f.add("batch"); f.asset("replacement");
     const auto wav_path = f.root / "input.wav";
     engine::audio::write_pcm16_wav(wav_path, 16000, 1, {0.1f, -0.1f});
@@ -366,6 +366,11 @@ void deferred_batch_ownership(int count) {
                         "Content-Type: audio/wav\r\n\r\n" + audio + "\r\n";
     }
     request.body += "--test_boundary--\r\n";
+    if (generic) {
+        request.path = "/v1/tasks/batch";
+        request.headers["content-type"] = "application/json";
+        request.body = "{\"model\":\"batch\",\"requests\":[{\"text\":\"first\"},{\"text\":\"second\"}]}";
+    }
     auto response = f.state->handle(request); success(response);
     require(bool(response.stream_body), "missing native batch callback");
     auto manager = std::async(std::launch::async, [&] { return f.replace("batch", "replacement"); });
@@ -375,10 +380,44 @@ void deferred_batch_ownership(int count) {
     success(manager.get());
     require(queued && protected_state && c->loads == 1 && c->runs == 2,
             "batch validation/execution crossed a configuration transition");
-    require(writer.output.find("batch.transcription.done") != std::string::npos &&
+    require(writer.output.find(generic ? "task.batch.done" : "batch.transcription.done") != std::string::npos &&
             writer.output.find("\"text\":\"batch\"") != std::string::npos,
             "native batch returned replacement output");
     require(Access::slots(*f.state, "batch").active == 0, "native batch leaked a lease");
+}
+void generic_batches_hold_independent_slots(int count) {
+    Fixture f(count); auto c = f.add("batch"); f.asset("replacement");
+    const std::string body = "{\"model\":\"batch\",\"requests\":[{\"text\":\"first\"},{\"text\":\"second\"}]}";
+    auto first = post(*f.state, "/v1/tasks/batch", body);
+    auto second = post(*f.state, "/v1/tasks/batch", body);
+    success(first); success(second);
+    require(Access::slots(*f.state, "batch").active == 2, "generic batches did not lease independent slots");
+    auto manager = std::async(std::launch::async, [&] { return f.replace("batch", "replacement"); });
+    const bool queued = f.queued("batch", 1, true);
+    Writer one, two;
+    first.stream_body(one); first.stream_body = {};
+    const bool retained = Access::slots(*f.state, "batch").active == 1 &&
+        manager.wait_for(0ms) == std::future_status::timeout;
+    second.stream_body(two); second.stream_body = {};
+    success(manager.get());
+    require(queued && retained && c->runs == 4, "generic batch management did not wait for both callbacks");
+    require(one.output.find("task.batch.done") != std::string::npos &&
+            two.output.find("task.batch.done") != std::string::npos &&
+            one.output.find("\"text\":\"batch\"") != std::string::npos &&
+            two.output.find("\"text\":\"batch\"") != std::string::npos,
+            "generic batches used replacement state");
+    require(Access::slots(*f.state, "batch").active == 0, "generic batch callbacks stranded ownership");
+}
+
+void generic_batch_legacy_and_invalid_input() {
+    Fixture f(1); f.add("batch");
+    auto response = post(*f.state, "/v1/tasks/batch",
+        "{\"model\":\"batch\",\"requests\":[{\"text\":\"hello\"}]}");
+    success(response); Writer writer; response.stream_body(writer); response.stream_body = {};
+    require(writer.output.find("task.batch.done") != std::string::npos, "legacy generic batch failed");
+    require(post(*f.state, "/v1/tasks/batch", "{\"model\":\"batch\",\"requests\":[]}").status == 400,
+            "empty generic batch was accepted");
+    require(Access::slots(*f.state, "batch").active == 0, "legacy generic batch leaked ownership");
 }
 
 void rejected_preparation_releases_lease(int count) {
@@ -400,6 +439,7 @@ void rejected_preparation_releases_lease(int count) {
 
 int main() {
     try {
+        generic_batch_legacy_and_invalid_input();
         for (int count : {2, 4}) {
             older_work_before_management(count, false);
             older_work_before_management(count, true);
@@ -411,6 +451,8 @@ int main() {
             deferred_stream_ownership(count, false);
             deferred_stream_ownership(count, true);
             deferred_batch_ownership(count);
+            deferred_batch_ownership(count, true);
+            generic_batches_hold_independent_slots(count);
             rejected_preparation_releases_lease(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"

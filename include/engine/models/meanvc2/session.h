@@ -56,10 +56,10 @@ private:
     engine::core::ExecutionContext vocoder_execution_context_;
     MeanVC2StreamingFrontend frontend_;
     MeanVC2BnStreamAdapter bn_adapter_;
-    std::unique_ptr<MeanVC2AsrEncoderRuntime> asr_encoder_;
-    std::unique_ptr<MeanVC2SpeakerEncoderRuntime> speaker_encoder_;
+    std::unique_ptr<MeanVC2WenetConformerRuntime> asr_encoder_;
+    std::unique_ptr<MeanVC2WavlmEcapaEncoderRuntime> speaker_encoder_;
     std::unique_ptr<MeanVC2FlowSamplerRuntime> flow_;
-    std::unique_ptr<MeanVC2VocoderRuntime> vocoder_;
+    std::unique_ptr<MeanVC2VocosRuntime> vocoder_;
     runtime::TaskRequest streaming_request_;
     runtime::AudioBuffer streaming_output_;
     std::vector<float> streaming_bn_buffer_;

@@ -9,7 +9,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/lookup_modules.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "wan_s2v_audio_conditioner.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -596,20 +596,20 @@ struct LiveAvatarPipelineState::Data {
         if (assets_->config.text_dim != text_config.hidden_size) {
             throw std::runtime_error("LiveAvatar text encoder config does not match model config");
         }
-        audio_binding = {};
-        audio_binding.feature_extractor_layers = "wav2vec2.feature_extractor.conv_layers";
-        audio_binding.feature_projection_layer_norm = "wav2vec2.feature_projection.layer_norm";
-        audio_binding.feature_projection_projection = "wav2vec2.feature_projection.projection";
-        audio_binding.positional_conv = "wav2vec2.encoder.pos_conv_embed.conv";
-        audio_binding.encoder_layer_norm = "wav2vec2.encoder.layer_norm";
-        audio_binding.encoder_layers = "wav2vec2.encoder.layers";
-        audio_config = {};
-        audio_config.record_final_layer_after_final_norm = true;
-        audio_encoder = engine::modules::HubertEncoderComponent::load_from_tensor_source(
+        xlsr_binding = {};
+        xlsr_binding.feature_extractor_layers = "wav2vec2.feature_extractor.conv_layers";
+        xlsr_binding.feature_projection_layer_norm = "wav2vec2.feature_projection.layer_norm";
+        xlsr_binding.feature_projection_projection = "wav2vec2.feature_projection.projection";
+        xlsr_binding.positional_conv = "wav2vec2.encoder.pos_conv_embed.conv";
+        xlsr_binding.encoder_layer_norm = "wav2vec2.encoder.layer_norm";
+        xlsr_binding.encoder_layers = "wav2vec2.encoder.layers";
+        xlsr_config = {};
+        xlsr_config.record_final_layer_after_final_norm = true;
+        xlsr_encoder = engine::modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
             assets_->audio_encoder_weights,
             execution.config(),
-            audio_config,
-            audio_binding);
+            xlsr_config,
+            xlsr_binding);
         assets_->audio_encoder_weights->release_storage();
         text_encoder = std::make_unique<LiveAvatarTextEncoderRuntime>(execution, assets_, text_config);
         vae = std::make_unique<LiveAvatarVAERuntime>(assets_);
@@ -626,9 +626,9 @@ struct LiveAvatarPipelineState::Data {
 
     std::shared_ptr<const LiveAvatarAssets> assets_;
     engine::modules::T5BaseEncoderConfig text_config;
-    engine::modules::HubertEncoderConfig audio_config;
-    engine::modules::HubertEncoderWeightBinding audio_binding;
-    engine::modules::HubertEncoderComponent audio_encoder;
+    engine::modules::Wav2Vec2EncoderConfig xlsr_config;
+    engine::modules::Wav2Vec2EncoderWeightBinding xlsr_binding;
+    engine::modules::Wav2Vec2EncoderRuntime xlsr_encoder;
     std::unique_ptr<LiveAvatarTextEncoderRuntime> text_encoder;
     std::unique_ptr<LiveAvatarVAERuntime> vae;
     std::unique_ptr<LiveAvatarDenoiserRuntime> denoiser;
@@ -659,37 +659,37 @@ std::vector<std::vector<float>> LiveAvatarPipelineState::encode_text_batch(
 
 LiveAvatarPreparedAudio LiveAvatarPipelineState::prepare_audio_buckets(
     engine::core::ExecutionContext & execution,
-    const std::vector<float> & audio_hubert_input,
+    const std::vector<float> & audio_xlsr_input,
     int64_t batch_frames,
     int64_t audio_layers) {
-    if (data_->audio_encoder.weights() == nullptr) {
-        data_->audio_encoder = engine::modules::HubertEncoderComponent::load_from_tensor_source(
+    if (data_->xlsr_encoder.weights() == nullptr) {
+        data_->xlsr_encoder = engine::modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
             data_->assets_->audio_encoder_weights,
             execution.config(),
-            data_->audio_config,
-            data_->audio_binding);
+            data_->xlsr_config,
+            data_->xlsr_binding);
         data_->assets_->audio_encoder_weights->release_storage();
     }
     WanS2VAudioConditionerConfig audio_config;
     audio_config.batch_frames = batch_frames;
     std::vector<int64_t> layers(static_cast<size_t>(audio_layers));
     std::iota(layers.begin(), layers.end(), 0);
-    const auto hubert_layers = data_->audio_encoder.encode_layers(
-        audio_hubert_input,
+    const auto xlsr_layers = data_->xlsr_encoder.encode_layers(
+        audio_xlsr_input,
         1,
-        static_cast<int64_t>(audio_hubert_input.size()),
+        static_cast<int64_t>(audio_xlsr_input.size()),
         layers);
     LiveAvatarPreparedAudio prepared;
-    prepared.hubert_layer_stack.reserve(static_cast<size_t>(
-        hubert_layers.hidden_states.size() * hubert_layers.tokens * hubert_layers.hidden_size));
-    for (const auto & layer : hubert_layers.hidden_states) {
-        prepared.hubert_layer_stack.insert(prepared.hubert_layer_stack.end(), layer.begin(), layer.end());
+    prepared.xlsr_layer_stack.reserve(static_cast<size_t>(
+        xlsr_layers.hidden_states.size() * xlsr_layers.tokens * xlsr_layers.hidden_size));
+    for (const auto & layer : xlsr_layers.hidden_states) {
+        prepared.xlsr_layer_stack.insert(prepared.xlsr_layer_stack.end(), layer.begin(), layer.end());
     }
     prepared.buckets = wan_s2v_prepare_audio_encoder_output(
-        wan_s2v_audio_feature_from_hubert_layers(hubert_layers),
+        wan_s2v_audio_feature_from_xlsr_layers(xlsr_layers),
         audio_config);
-    data_->audio_encoder.release_runtime_graph();
-    data_->audio_encoder = engine::modules::HubertEncoderComponent{};
+    data_->xlsr_encoder.release_runtime_graph();
+    data_->xlsr_encoder = engine::modules::Wav2Vec2EncoderRuntime{};
     return prepared;
 }
 
@@ -880,13 +880,13 @@ LiveAvatarGenerateShared prepare_liveavatar_generate_shared(
             request.audio.sample_rate,
             16000);
     }
-    const auto audio_hubert_input = normalize_wav2vec2_input(audio_mono_16k);
+    const auto audio_xlsr_input = normalize_wav2vec2_input(audio_mono_16k);
     const int64_t latent_target_frames = (request.frames_per_clip - 1) / 4 + 1;
     WanS2VAudioConditionerConfig audio_config;
     audio_config.batch_frames = latent_target_frames * 4;
     const auto prepared_audio = impl_->prepare_audio_buckets(
         execution_,
-        audio_hubert_input,
+        audio_xlsr_input,
         audio_config.batch_frames,
         assets_->config.audio_layers);
     engine::core::trim_backend_pools(execution_.backend());

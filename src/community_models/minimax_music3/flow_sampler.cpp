@@ -1,7 +1,7 @@
 #include "engine/community_models/minimax_music3/flow_sampler.h"
 
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/flow_sampler_runtime.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 
 #include <algorithm>
 #include <cmath>

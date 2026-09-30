@@ -5,17 +5,17 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/attention/cross_attention.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/self_attention.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/codecs/nemo_nano_codec.h"
+#include "engine/framework/codecs/nemo_nano_codec_runtime.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/sampling/torch_random.h"
@@ -1036,7 +1036,7 @@ struct MagpieTTSRuntime::Impl {
         ggml_build_forward_expand(graph, encoded.tensor);
         arena.allocate(graph);
         const auto mask_values = make_mask(1, steps, steps);
-        const auto attention_mask_values = modules::qwen_causal_prefill_mask_values(1, steps);
+        const auto attention_mask_values = modules::causal_prefill_mask_values(1, steps);
         ggml_backend_tensor_set(token_ids.tensor, tokens.data(), 0, tokens.size() * sizeof(int32_t));
         ggml_backend_tensor_set(mask.tensor, mask_values.data(), 0, mask_values.size() * sizeof(int32_t));
         ggml_backend_tensor_set(
@@ -1129,7 +1129,7 @@ struct MagpieTTSRuntime::Impl {
         ggml_build_forward_expand(graph, last.tensor);
         arena.allocate(graph);
         auto input_mask_values = make_mask(batch, steps, steps);
-        auto self_attention_mask_values = modules::qwen_causal_prefill_mask_values(batch, steps);
+        auto self_attention_mask_values = modules::causal_prefill_mask_values(batch, steps);
         ggml_backend_tensor_set(input.tensor, decoder_input.data(), 0, decoder_input.size() * sizeof(float));
         ggml_backend_tensor_set(input_mask.tensor, input_mask_values.data(), 0, input_mask_values.size() * sizeof(int32_t));
         ggml_backend_tensor_set(

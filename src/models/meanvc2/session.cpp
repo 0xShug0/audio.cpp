@@ -76,13 +76,13 @@ MeanVC2Session::MeanVC2Session(
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("MeanVC2 supports offline and streaming modes");
     }
-    asr_encoder_ = std::make_unique<MeanVC2AsrEncoderRuntime>(
+    asr_encoder_ = std::make_unique<MeanVC2WenetConformerRuntime>(
         assets_->asr_weights,
         execution_context_,
         kWeightContextBytes,
         kGraphContextBytes,
         assets::TensorStorageType::Native);
-    speaker_encoder_ = std::make_unique<MeanVC2SpeakerEncoderRuntime>(
+    speaker_encoder_ = std::make_unique<MeanVC2WavlmEcapaEncoderRuntime>(
         assets_->speaker_wavlm_weights,
         assets_->speaker_ecapa_weights,
         execution_context_,
@@ -93,7 +93,7 @@ MeanVC2Session::MeanVC2Session(
         kWeightContextBytes,
         kGraphContextBytes,
         assets::TensorStorageType::Native);
-    vocoder_ = std::make_unique<MeanVC2VocoderRuntime>(
+    vocoder_ = std::make_unique<MeanVC2VocosRuntime>(
         assets_->vocos_weights,
         vocoder_execution_context_,
         kWeightContextBytes,

@@ -3,7 +3,7 @@
 #include "engine/community_models/minimax_music3/assets.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,7 +21,7 @@ struct MiniMaxMusic3DepthWeights {
     core::TensorValue audio_embeddings;
     modules::LinearWeights projection;
     core::TensorValue position_embedding;
-    modules::QwenDecoderStackWeights stack;
+    modules::DecoderStackWeights stack;
     modules::NormWeights norm;
     std::vector<modules::LinearWeights> audio_heads;
 };

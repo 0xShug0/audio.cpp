@@ -73,7 +73,7 @@ private:
     size_t codec_encode_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
     assets::TensorStorageType ar_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType codec_weight_storage_type_ = assets::TensorStorageType::Native;
-    std::shared_ptr<HiggsARRuntime> ar_;
+    std::shared_ptr<HiggsQwen3ARRuntime> ar_;
     std::shared_ptr<HiggsCodecRuntime> codec_;
     std::unique_ptr<HiggsGenerator> generator_;
     runtime::CacheSlots<ReferenceCacheKey, ReferenceCacheEntry, ReferenceCacheKeyEqual> reference_cache_;

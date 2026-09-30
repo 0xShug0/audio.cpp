@@ -6268,6 +6268,13 @@ struct ggml_tensor * ggml_ssm_conv(
     return result;
 }
 
+void ggml_ssm_conv_set_fusion(
+        struct ggml_tensor        * tensor,
+        enum ggml_ssm_conv_fusion   fusion) {
+    GGML_ASSERT(tensor->op == GGML_OP_SSM_CONV);
+    ggml_set_op_params_i32(tensor, 0, (int32_t) fusion);
+}
+
 // ggml_ssm_scan
 
 struct ggml_tensor * ggml_ssm_scan(

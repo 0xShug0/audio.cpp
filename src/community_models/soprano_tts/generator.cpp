@@ -4,8 +4,8 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/sampling/torch_random.h"
@@ -23,10 +23,10 @@
 
 namespace engine::community_models::soprano_tts {
 
-struct SopranoQwenWeights {
+struct SopranoQwen3Weights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
     engine::core::TensorValue token_embedding;
-    engine::modules::QwenDecoderStackWeights stack;
+    engine::modules::DecoderStackWeights stack;
     engine::modules::NormWeights final_norm;
     engine::modules::LinearWeights lm_head;
 };
@@ -43,18 +43,18 @@ std::shared_ptr<const SopranoTTSAssets> require_assets(
     return assets;
 }
 
-modules::QwenDecoderLayerWeights load_layer_weights(
+modules::DecoderLayerWeights load_layer_weights(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     const SopranoTTSConfig & config,
     engine::assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "model.layers." + std::to_string(layer);
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(
         store, source, prefix + ".input_layernorm", config.hidden_size);
     // Fused QKV projection: concatenate Q|K|V rows so the decoder runs a
-    // single GEMM per layer (QwenDecoderQKVLayout::PackedQKV).
+    // single GEMM per layer (DecoderQKVLayout::PackedQKV).
     const int64_t q_out = config.attention_heads * config.head_dim;
     const int64_t kv_out = config.kv_heads * config.head_dim;
     std::vector<float> qkv_rows = source.require_f32(
@@ -99,17 +99,17 @@ modules::QwenDecoderLayerWeights load_layer_weights(
         config.hidden_size, config.intermediate_size, false);
     return out;
 }
-modules::QwenDecoderActivationCastPolicy soprano_activation_cast_policy(
+modules::DecoderActivationCastPolicy soprano_activation_cast_policy(
     core::BackendType backend_type) {
     // No activation cast for Soprano — keep everything in F32 for parity.
     (void)backend_type;
-    return modules::QwenDecoderActivationCastPolicy{};
+    return modules::DecoderActivationCastPolicy{};
 }
 
-modules::QwenCausalDecoderConfig make_soprano_qwen_config(
+modules::CausalDecoderConfig make_soprano_qwen3_config(
     const SopranoTTSConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.attention_heads;
     out.stack.num_key_value_heads = config.kv_heads;
@@ -125,13 +125,13 @@ modules::QwenCausalDecoderConfig make_soprano_qwen_config(
     out.stack.use_qk_norm = true;
     // Fused projections: single QKV GEMM + single gate/up GEMM with the
     // fused swiglu kernel (Soprano has no activation casts, so it qualifies).
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
-    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
-    out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
+    out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.use_lm_head_bias = false;
     out.lm_head_precision = GGML_PREC_DEFAULT;
     if (backend_type == core::BackendType::Vulkan || backend_type == core::BackendType::Metal) {
@@ -142,13 +142,13 @@ modules::QwenCausalDecoderConfig make_soprano_qwen_config(
     return out;
 }
 
-std::shared_ptr<const SopranoQwenWeights> load_soprano_qwen_weights(
+std::shared_ptr<const SopranoQwen3Weights> load_soprano_qwen3_weights(
     const SopranoTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
-    auto weights = std::make_shared<SopranoQwenWeights>();
+    auto weights = std::make_shared<SopranoQwen3Weights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend, backend_type, "soprano_tts.lm.weights", weight_context_bytes);
     const auto & config = assets.config;
@@ -170,25 +170,25 @@ weights->final_norm = binding::norm_weight_from_source(
     return weights;
 }
 
-modules::QwenCausalDecodeRuntimeConfig make_soprano_decode_runtime_config(
+modules::CausalDecoderRuntimeConfig make_soprano_decode_runtime_config(
     const SopranoTTSConfig & config,
     core::BackendType backend_type,
     size_t prefill_graph_arena_bytes,
     size_t decode_graph_arena_bytes) {
-    modules::QwenCausalDecodeRuntimeConfig out;
+    modules::CausalDecoderRuntimeConfig out;
     out.trace_name = "soprano_tts.lm";
-    out.decoder = make_soprano_qwen_config(config, backend_type);
+    out.decoder = make_soprano_qwen3_config(config, backend_type);
     out.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
     out.decode_graph_arena_bytes = decode_graph_arena_bytes;
     // Both logits (sampling + EOS) and the 512-d hidden frame (audio) are needed.
-    out.output_mode = modules::QwenCausalDecodeOutputMode::Logits;
+    out.output_mode = modules::CausalDecoderOutputMode::Logits;
     out.return_hidden = true;
     return out;
 }
 
-modules::QwenCausalDecodeRuntimeWeights make_soprano_decode_weights(
-    const SopranoQwenWeights & weights) {
-    modules::QwenCausalDecodeRuntimeWeights out;
+modules::CausalDecoderRuntimeWeights make_soprano_decode_weights(
+    const SopranoQwen3Weights & weights) {
+    modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = weights.token_embedding;
     out.stack = weights.stack;
     out.final_norm = weights.final_norm;
@@ -202,7 +202,7 @@ modules::QwenCausalDecodeRuntimeWeights make_soprano_decode_weights(
 
 }  // namespace
 
-class SopranoTTSGenerator::Impl {
+class SopranoQwen3Generator::Impl {
 public:
     Impl(
         std::shared_ptr<const SopranoTTSAssets> assets,
@@ -214,13 +214,13 @@ public:
         : assets_(require_assets(std::move(assets))),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
-          weights_(std::make_shared<SopranoQwenWeights>(std::move(*load_soprano_qwen_weights(
+          weights_(std::make_shared<SopranoQwen3Weights>(std::move(*load_soprano_qwen3_weights(
               *assets_, execution.backend(), backend_type_, weight_context_bytes,
               weight_storage_type)))) {
         if (backend_ == nullptr) {
             throw std::runtime_error("Soprano LM backend is not initialized");
         }
-        qwen_runtime = std::make_unique<modules::QwenCausalDecodeRuntime>(
+        qwen3_runtime = std::make_unique<modules::CausalDecoderRuntime>(
             execution,
             make_soprano_decode_runtime_config(
                 assets_->config, backend_type_,
@@ -240,7 +240,7 @@ public:
         // Single-pass AR generation capturing both logits and hidden states.
         // With F32 weights + correct tokenizer, return_hidden=true now
         // produces correct results.
-        auto prefill = qwen_runtime->prefill_tokens(prompt_ids);
+        auto prefill = qwen3_runtime->prefill_tokens(prompt_ids);
         // Honor the requested token limit (matches HF max_new_tokens), capped
         // so prompt + generated always fits the model context window.
         const int64_t max_new_tokens = std::max<int64_t>(
@@ -252,7 +252,7 @@ public:
         // Size the KV cache to the actual worst-case need (prompt + generated
         // frames) instead of the full 1024-token context. Smaller cache means
         // less KV memory for attention to walk on every decode step.
-        qwen_runtime->start_decode_tokens(prefill.state, max_new_tokens +
+        qwen3_runtime->start_decode_tokens(prefill.state, max_new_tokens +
             static_cast<int64_t>(prompt_ids.size()));
 
         // First feature: last prompt token's post-norm hidden state.
@@ -287,7 +287,7 @@ public:
             }
             history.push_back(token);
             tokens.push_back(token);
-            auto decode = qwen_runtime->decode_token(token);
+            auto decode = qwen3_runtime->decode_token(token);
             features.insert(features.end(), decode.hidden.begin(), decode.hidden.end());
             logits = std::move(decode.logits);
         }
@@ -305,17 +305,17 @@ public:
     }
 
     void release_runtime_graphs() {
-        qwen_runtime->release_runtime_graphs();
+        qwen3_runtime->release_runtime_graphs();
     }
 
     std::shared_ptr<const SopranoTTSAssets> assets_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
-    std::shared_ptr<const SopranoQwenWeights> weights_;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> qwen_runtime;
+    std::shared_ptr<const SopranoQwen3Weights> weights_;
+    std::unique_ptr<modules::CausalDecoderRuntime> qwen3_runtime;
 };
 
-SopranoTTSGenerator::SopranoTTSGenerator(
+SopranoQwen3Generator::SopranoQwen3Generator(
     const SopranoTTSAssets & assets,
     engine::core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -327,15 +327,15 @@ SopranoTTSGenerator::SopranoTTSGenerator(
           prefill_graph_arena_bytes, decode_graph_arena_bytes,
           weight_context_bytes, weight_storage_type)) {}
 
-SopranoTTSGenerator::~SopranoTTSGenerator() = default;
+SopranoQwen3Generator::~SopranoQwen3Generator() = default;
 
-SopranoTTSGenerator::Result SopranoTTSGenerator::generate(
+SopranoQwen3Generator::Result SopranoQwen3Generator::generate(
     const std::vector<int32_t> & prompt_ids,
     const SopranoGenerationOptions & options) {
     return impl_->generate(prompt_ids, options);
 }
 
-void SopranoTTSGenerator::release_runtime_graphs() {
+void SopranoQwen3Generator::release_runtime_graphs() {
     impl_->release_runtime_graphs();
 }
 

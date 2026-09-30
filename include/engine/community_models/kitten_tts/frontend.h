@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/community_models/kitten_tts/assets.h"
-#include "engine/framework/audio/espeak_phonemizer.h"
+#include "engine/framework/text/espeak_phonemizer.h"
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>

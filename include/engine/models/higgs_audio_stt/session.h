@@ -71,8 +71,8 @@ private:
     engine::assets::TensorStorageType text_decoder_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     HiggsAudioSTTTextTokenizer tokenizer_;
     HiggsAudioSTTWhisperFrontend frontend_;
-    HiggsAudioSTTAudioEncoderRuntime audio_encoder_;
-    HiggsAudioSTTTextDecoderRuntime text_decoder_;
+    HiggsAudioSTTWhisperEncoderRuntime audio_encoder_;
+    HiggsAudioSTTQwen3DecoderRuntime text_decoder_;
     HiggsAudioSTTPromptBuilder prompt_builder_;
     HiggsAudioSTTPostprocessor postprocessor_;
     runtime::TaskRequest streaming_request_;

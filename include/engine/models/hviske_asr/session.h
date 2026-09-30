@@ -62,7 +62,7 @@ private:
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     HviskeFrontend frontend_;
-    std::unique_ptr<HviskeEncoderRuntime> encoder_;
+    std::unique_ptr<HviskeConformerEncoderRuntime> encoder_;
     std::unique_ptr<HviskeDecoderRuntime> decoder_;
 };
 

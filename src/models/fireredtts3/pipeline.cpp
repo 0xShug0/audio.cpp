@@ -7,7 +7,7 @@
 #include "engine/framework/audio/kaldi_fbank.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/sampling/torch_random.h"
@@ -140,7 +140,7 @@ public:
             runtime::CacheSlots<ReferenceVoiceCacheKey, ReferenceVoiceCacheEntry, ReferenceVoiceCacheKeyEqual>(
                 reference_cache_slots);
         storage_type_ = storage_type;
-        ar_ = std::make_unique<FireRedArRuntime>(
+        ar_ = std::make_unique<FireRedQwen3ARRuntime>(
             assets_,
             execution_,
             graph_arena_bytes,
@@ -413,7 +413,7 @@ private:
     assets::TensorStorageType storage_type_ = assets::TensorStorageType::Native;
     modules::CampplusEncoderComponent campplus_;
     runtime::CacheSlots<ReferenceVoiceCacheKey, ReferenceVoiceCacheEntry, ReferenceVoiceCacheKeyEqual> reference_voice_cache_;
-    std::unique_ptr<FireRedArRuntime> ar_;
+    std::unique_ptr<FireRedQwen3ARRuntime> ar_;
     std::unique_ptr<FireRedRedAeRuntime> redae_;
     std::unique_ptr<FireRedFlowRuntime> flow_;
 };
@@ -465,7 +465,7 @@ public:
         if (assets_ == nullptr) {
             throw std::runtime_error("FireRedTTS3 instruct runtime requires assets");
         }
-        ar_ = std::make_unique<FireRedArRuntime>(
+        ar_ = std::make_unique<FireRedQwen3ARRuntime>(
             assets_,
             execution_,
             graph_arena_bytes,
@@ -825,7 +825,7 @@ private:
     FireRedTTS3TextTokenizer tokenizer_;
     bool mem_saver_ = false;
     sampling::TorchCudaSamplingPolicy sampling_policy_;
-    std::unique_ptr<FireRedArRuntime> ar_;
+    std::unique_ptr<FireRedQwen3ARRuntime> ar_;
     std::unique_ptr<FireRedRedAeRuntime> redae_;
     std::unique_ptr<FireRedFlowRuntime> flow_;
 };

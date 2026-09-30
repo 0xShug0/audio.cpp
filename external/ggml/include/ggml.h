@@ -456,6 +456,7 @@ extern "C" {
         GGML_MUL_MAT_LOWERING_DEFAULT                    = 0,
         GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION  = 2,
         GGML_MUL_MAT_LOWERING_CUDA_TILE_F16_ACCUM_OUTPUT = 3,
+        GGML_MUL_MAT_LOWERING_VULKAN_F32_INPUTS           = 4,
     };
 
     // model file types
@@ -712,6 +713,11 @@ extern "C" {
     enum ggml_ssm_scan_fusion {
         GGML_SSM_SCAN_FUSION_NONE = 0,
         GGML_SSM_SCAN_FUSION_GATE = 1,
+    };
+
+    enum ggml_ssm_conv_fusion {
+        GGML_SSM_CONV_FUSION_NONE = 0,
+        GGML_SSM_CONV_FUSION_CAUSAL_PAD = 1,
     };
 
     enum ggml_rms_norm_channels_lowering {
@@ -2744,6 +2750,10 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * sx,
             struct ggml_tensor  * c);
+
+    GGML_API void ggml_ssm_conv_set_fusion(
+            struct ggml_tensor         * tensor,
+            enum ggml_ssm_conv_fusion   fusion);
 
     GGML_API struct ggml_tensor * ggml_ssm_scan(
             struct ggml_context * ctx,

@@ -6,7 +6,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/flow_sampler_runtime.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -107,7 +107,7 @@ struct MeanVC2BlockWeights {
     modules::LinearWeights ff2;
 };
 
-struct MeanVC2FlowWeights {
+struct MeanVC2DiTFlowWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     MeanVC2GtmWeights key;
     MeanVC2GtmWeights value;
@@ -287,13 +287,13 @@ MeanVC2BlockWeights load_block(
     };
 }
 
-std::shared_ptr<const MeanVC2FlowWeights> load_flow_weights(
+std::shared_ptr<const MeanVC2DiTFlowWeights> load_flow_weights(
     ggml_backend_t backend,
     core::BackendType backend_type,
     const assets::TensorSource & source,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
-    auto weights = std::make_shared<MeanVC2FlowWeights>();
+    auto weights = std::make_shared<MeanVC2DiTFlowWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -539,7 +539,7 @@ core::TensorValue build_dit_velocity(
     const std::array<core::TensorValue, kDepth> & attention_masks,
     const core::TensorValue & query_positions,
     const std::array<core::TensorValue, kDepth> & key_positions,
-    const MeanVC2FlowWeights & weights,
+    const MeanVC2DiTFlowWeights & weights,
     std::array<core::TensorValue, kDepth> & current_keys,
     std::array<core::TensorValue, kDepth> & current_values) {
     const auto t_emb = build_time_embedding(ctx, t_hidden, weights.t_time);
@@ -587,7 +587,7 @@ struct MeanVC2GtmGraph {
         ggml_backend_t backend,
         core::BackendType backend_type,
         size_t graph_context_bytes,
-        std::shared_ptr<const MeanVC2FlowWeights> weights)
+        std::shared_ptr<const MeanVC2DiTFlowWeights> weights)
         : backend(backend),
           weights(std::move(weights)) {
         if (backend == nullptr || this->weights == nullptr) {
@@ -646,7 +646,7 @@ struct MeanVC2GtmGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const MeanVC2FlowWeights> weights;
+    std::shared_ptr<const MeanVC2DiTFlowWeights> weights;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     core::TensorValue speaker;
     core::TensorValue key_output;
@@ -655,18 +655,18 @@ struct MeanVC2GtmGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-struct MeanVC2DitStepOutput {
+struct MeanVC2DiTStepOutput {
     std::vector<float> velocity;
     std::array<std::vector<std::byte>, kDepth> current_keys;
     std::array<std::vector<std::byte>, kDepth> current_values;
 };
 
-struct MeanVC2DitStepGraph {
-    MeanVC2DitStepGraph(
+struct MeanVC2DiTStepGraph {
+    MeanVC2DiTStepGraph(
         ggml_backend_t backend,
         core::BackendType backend_type,
         size_t graph_context_bytes,
-        std::shared_ptr<const MeanVC2FlowWeights> weights)
+        std::shared_ptr<const MeanVC2DiTFlowWeights> weights)
         : backend(backend),
           weights(std::move(weights)) {
         if (backend == nullptr || this->weights == nullptr) {
@@ -746,7 +746,7 @@ struct MeanVC2DitStepGraph {
         }
     }
 
-    ~MeanVC2DitStepGraph() {
+    ~MeanVC2DiTStepGraph() {
         if (backend != nullptr) {
             core::release_backend_graph_resources(backend, graph);
         }
@@ -756,7 +756,7 @@ struct MeanVC2DitStepGraph {
         }
     }
 
-    MeanVC2DitStepOutput run(
+    MeanVC2DiTStepOutput run(
         const std::vector<float> & x_values,
         const std::vector<float> & condition_values,
         const std::vector<float> & speaker_values,
@@ -792,7 +792,7 @@ struct MeanVC2DitStepGraph {
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("MeanVC2 DiT graph compute failed");
         }
-        MeanVC2DitStepOutput output;
+        MeanVC2DiTStepOutput output;
         output.velocity = core::read_tensor_float(velocity.tensor);
         for (size_t i = 0; i < kDepth; ++i) {
             output.current_keys[i] = core::read_tensor_bytes(current_keys[i].tensor);
@@ -864,7 +864,7 @@ struct MeanVC2DitStepGraph {
     }
 
     ggml_backend_t backend = nullptr;
-    std::shared_ptr<const MeanVC2FlowWeights> weights;
+    std::shared_ptr<const MeanVC2DiTFlowWeights> weights;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     core::TensorValue x;
     core::TensorValue condition;
@@ -885,13 +885,13 @@ struct MeanVC2DitStepGraph {
     ggml_gallocr_t gallocr = nullptr;
 };
 
-class MeanVC2DenoiserRuntime final : public modules::FlowSamplerDenoiserRuntime {
+class MeanVC2DiTDenoiserRuntime final : public modules::FlowSamplerDenoiserRuntime {
 public:
-    MeanVC2DenoiserRuntime(
+    MeanVC2DiTDenoiserRuntime(
         ggml_backend_t backend,
         core::BackendType backend_type,
         size_t graph_context_bytes,
-        std::shared_ptr<const MeanVC2FlowWeights> weights)
+        std::shared_ptr<const MeanVC2DiTFlowWeights> weights)
         : backend_(backend),
           backend_type_(backend_type),
           graph_context_bytes_(graph_context_bytes),
@@ -955,7 +955,7 @@ public:
     void rebuild_sampler_graph(
         const modules::FlowSamplerGraphKey &,
         const modules::FlowSamplerStepState &) override {
-        graph_ = std::make_unique<MeanVC2DitStepGraph>(
+        graph_ = std::make_unique<MeanVC2DiTStepGraph>(
             backend_,
             backend_type_,
             graph_context_bytes_,
@@ -1019,14 +1019,14 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     size_t graph_context_bytes_ = 0;
-    std::shared_ptr<const MeanVC2FlowWeights> weights_;
+    std::shared_ptr<const MeanVC2DiTFlowWeights> weights_;
     runtime::RollingFlowKVCache kv_cache_;
     int64_t offset_ = 0;
     bool has_window_inputs_ = false;
     std::vector<float> condition_;
     std::vector<float> speaker_;
     MeanVC2GtmMemory memory_;
-    std::unique_ptr<MeanVC2DitStepGraph> graph_;
+    std::unique_ptr<MeanVC2DiTStepGraph> graph_;
 };
 
 modules::FlowSamplerRuntimeConfig make_meanvc2_sampler_config() {
@@ -1097,7 +1097,7 @@ void MeanVC2FlowSamplerRuntime::start_streaming(
         throw std::runtime_error("MeanVC2 streaming VC speaker state shape mismatch");
     }
     if (sampler_runtime_ == nullptr) {
-        auto denoiser = std::make_unique<MeanVC2DenoiserRuntime>(
+        auto denoiser = std::make_unique<MeanVC2DiTDenoiserRuntime>(
             execution_context_.backend(),
             execution_context_.backend_type(),
             graph_context_bytes_,

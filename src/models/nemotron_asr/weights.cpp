@@ -123,7 +123,7 @@ NemotronSubsamplingWeights load_subsampling(
     return weights;
 }
 
-NemotronEncoderLayerWeights load_encoder_layer(
+NemotronFastConformerEncoderLayerWeights load_encoder_layer(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     const NemotronConfig & config,
@@ -134,7 +134,7 @@ NemotronEncoderLayerWeights load_encoder_layer(
     const auto & enc = config.encoder;
     const int64_t hidden = enc.hidden_size;
     const int64_t head_dim = hidden / enc.heads;
-    NemotronEncoderLayerWeights layer;
+    NemotronFastConformerEncoderLayerWeights layer;
     layer.norm_feed_forward1 = binding::norm_from_source(store, source, prefix + ".norm_feed_forward1", hidden);
     layer.norm_self_att = binding::norm_from_source(store, source, prefix + ".norm_self_att", hidden);
     layer.norm_conv = binding::norm_from_source(store, source, prefix + ".norm_conv", hidden);
@@ -171,13 +171,13 @@ NemotronEncoderLayerWeights load_encoder_layer(
     return layer;
 }
 
-NemotronEncoderWeights load_encoder_weights(
+NemotronFastConformerEncoderWeights load_encoder_weights(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     const NemotronConfig & config,
     engine::assets::TensorStorageType matmul_storage_type,
     engine::assets::TensorStorageType conv_storage_type) {
-    NemotronEncoderWeights weights;
+    NemotronFastConformerEncoderWeights weights;
     weights.subsampling = load_subsampling(store, source, config, matmul_storage_type, conv_storage_type);
     weights.layers.reserve(static_cast<size_t>(config.encoder.layers));
     for (int64_t i = 0; i < config.encoder.layers; ++i) {
@@ -210,12 +210,12 @@ NemotronEncoderWeights load_encoder_weights(
     return weights;
 }
 
-NemotronDecoderWeights load_decoder_weights(
+NemotronRnntDecoderWeights load_decoder_weights(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     const NemotronConfig & config,
     engine::assets::TensorStorageType storage_type) {
-    NemotronDecoderWeights weights;
+    NemotronRnntDecoderWeights weights;
     weights.embedding = store.load_tensor(
         source,
         "decoder.embedding.weight",

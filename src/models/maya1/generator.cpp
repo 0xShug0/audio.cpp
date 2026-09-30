@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/hf_sampler.h"
 #include "engine/framework/sampling/torch_random.h"
@@ -26,11 +26,11 @@ constexpr int32_t kCodeEnd = 128258;
 constexpr int32_t kSnacMin = 128266;
 constexpr int32_t kSnacMax = 156937;
 
-struct Maya1Weights {
+struct Maya1LlamaWeights {
   std::shared_ptr<core::BackendWeightStore> store;
   std::shared_ptr<ggml_context> head_context;
   core::TensorValue embedding;
-  modules::QwenDecoderStackWeights stack;
+  modules::DecoderStackWeights stack;
   modules::NormWeights final_norm;
   modules::LinearWeights lm_head;
   int64_t lm_head_row_offset = 0;
@@ -71,9 +71,9 @@ std::vector<float> llama3_rope_factors(const Maya1Config &config) {
   return factors;
 }
 
-modules::QwenDecoderActivationCastPolicy
+modules::DecoderActivationCastPolicy
 activation_cast_policy(core::BackendType backend_type) {
-  modules::QwenDecoderActivationCastPolicy policy;
+  modules::DecoderActivationCastPolicy policy;
   if (backend_type != core::BackendType::Cuda) {
     return policy;
   }
@@ -95,12 +95,12 @@ activation_cast_policy(core::BackendType backend_type) {
   return policy;
 }
 
-Maya1Weights load_weights(const Maya1Assets &assets, ggml_backend_t backend,
+Maya1LlamaWeights load_weights(const Maya1Assets &assets, ggml_backend_t backend,
                           core::BackendType backend_type, size_t context_bytes,
                           assets::TensorStorageType storage_type) {
   const auto &config = assets.config;
   const auto &source = *assets.model_weights;
-  Maya1Weights out;
+  Maya1LlamaWeights out;
   out.store = std::make_shared<core::BackendWeightStore>(
       backend, backend_type, "maya1.ar.weights", context_bytes);
   out.embedding =
@@ -112,7 +112,7 @@ Maya1Weights load_weights(const Maya1Assets &assets, ggml_backend_t backend,
   out.stack.layers.reserve(static_cast<size_t>(config.layers));
   for (int64_t layer_index = 0; layer_index < config.layers; ++layer_index) {
     const std::string prefix = "model.layers." + std::to_string(layer_index);
-    modules::QwenDecoderLayerWeights layer;
+    modules::DecoderLayerWeights layer;
     layer.input_norm = binding::norm_weight_from_source(
         *out.store, source, prefix + ".input_layernorm", config.hidden_size);
     layer.self_attention.q_weight = out.store->load_tensor(
@@ -171,9 +171,9 @@ Maya1Weights load_weights(const Maya1Assets &assets, ggml_backend_t backend,
   return out;
 }
 
-modules::QwenCausalDecoderConfig
-decoder_config(const Maya1Config &config, core::BackendType backend_type) {
-  modules::QwenCausalDecoderConfig out;
+modules::CausalDecoderConfig
+llama_decoder_config(const Maya1Config &config, core::BackendType backend_type) {
+  modules::CausalDecoderConfig out;
   out.stack.hidden_size = config.hidden_size;
   out.stack.intermediate_size = config.intermediate_size;
   out.stack.num_attention_heads = config.attention_heads;
@@ -186,18 +186,18 @@ decoder_config(const Maya1Config &config, core::BackendType backend_type) {
   out.stack.use_qk_norm = false;
   out.stack.activation_cast = activation_cast_policy(backend_type);
   out.stack.runtime.attention.prefill_mode =
-      modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+      modules::DecoderAttentionMode::FlashGroupedViewKV;
   out.stack.runtime.attention.static_mode =
-      modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+      modules::DecoderAttentionMode::FlashGroupedViewKV;
   out.stack.runtime.static_cache.update_mode =
-      modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+      modules::DecoderStaticCacheUpdateMode::DirectSetRows;
   if (backend_type != core::BackendType::Cpu) {
     out.stack.runtime.static_cache.set_rows_mode =
-        modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
+        modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
     out.static_cache_type = GGML_TYPE_F16;
   }
   out.logits_size = config.vocab_size;
-  out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+  out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
   if (backend_type == core::BackendType::Cuda) {
     out.lm_head_input_type = GGML_TYPE_BF16;
   } else if (backend_type == core::BackendType::Vulkan ||
@@ -207,22 +207,22 @@ decoder_config(const Maya1Config &config, core::BackendType backend_type) {
   return out;
 }
 
-modules::QwenCausalDecodeRuntimeConfig
-runtime_config(const Maya1Config &config, core::BackendType backend_type,
-               const Maya1Weights &weights, size_t prefill_bytes,
+modules::CausalDecoderRuntimeConfig
+llama_runtime_config(const Maya1Config &config, core::BackendType backend_type,
+               const Maya1LlamaWeights &weights, size_t prefill_bytes,
                size_t decode_bytes) {
-  modules::QwenCausalDecodeRuntimeConfig out;
+  modules::CausalDecoderRuntimeConfig out;
   out.trace_name = "maya1.ar";
-  out.decoder = decoder_config(config, backend_type);
+  out.decoder = llama_decoder_config(config, backend_type);
   out.decoder.logits_size = weights.lm_head.weight.shape.dims[0];
   out.prefill_graph_arena_bytes = prefill_bytes;
   out.decode_graph_arena_bytes = decode_bytes;
   return out;
 }
 
-modules::QwenCausalDecodeRuntimeWeights
-runtime_weights(const Maya1Weights &weights) {
-  modules::QwenCausalDecodeRuntimeWeights out;
+modules::CausalDecoderRuntimeWeights
+llama_runtime_weights(const Maya1LlamaWeights &weights) {
+  modules::CausalDecoderRuntimeWeights out;
   out.token_embedding = weights.embedding;
   out.stack = weights.stack;
   out.final_norm = weights.final_norm;
@@ -240,7 +240,7 @@ void apply_min_token_limit(std::vector<float> &logits, int64_t generated_tokens,
 
 } // namespace
 
-struct Maya1Generator::Impl {
+struct Maya1LlamaGenerator::Impl {
   Impl(std::shared_ptr<const Maya1Assets> assets_in,
        core::ExecutionContext &execution, size_t prefill_bytes,
        size_t decode_bytes, size_t weight_bytes,
@@ -249,11 +249,11 @@ struct Maya1Generator::Impl {
         device(execution.config().device),
         weights(load_weights(*assets, execution.backend(), backend_type,
                              weight_bytes, storage_type)),
-        runtime(std::make_unique<modules::QwenCausalDecodeRuntime>(
+        llama_runtime(std::make_unique<modules::CausalDecoderRuntime>(
             execution,
-            runtime_config(assets->config, backend_type, weights, prefill_bytes,
+            llama_runtime_config(assets->config, backend_type, weights, prefill_bytes,
                            decode_bytes),
-            runtime_weights(weights))),
+            llama_runtime_weights(weights))),
         sampling_policy(sampling::resolve_torch_cuda_sampling_policy(
             backend_type, device, "maya1.ar.sampling", "Maya1 AR",
             sampling::TorchCudaSamplingPolicyFailureMode::FallbackToDefault)) {}
@@ -273,8 +273,8 @@ struct Maya1Generator::Impl {
     }
 
     const auto prefill_start = Clock::now();
-    auto prefill = runtime->prefill_tokens(prompt_ids);
-    runtime->start_decode_tokens(prefill.state, required);
+    auto prefill = llama_runtime->prefill_tokens(prompt_ids);
+    llama_runtime->start_decode_tokens(prefill.state, required);
     debug::timing_log_scalar("maya1.ar.prefill_ms",
                              debug::elapsed_ms(prefill_start, Clock::now()));
 
@@ -339,7 +339,7 @@ struct Maya1Generator::Impl {
         result.snac_tokens.push_back(token);
       }
       const auto decode_graph_start = Clock::now();
-      logits = runtime->decode_token(token).logits;
+      logits = llama_runtime->decode_token(token).logits;
       decode_graph_ms += debug::elapsed_ms(decode_graph_start, Clock::now());
     }
     debug::timing_log_scalar("maya1.ar.decode_ms",
@@ -354,12 +354,12 @@ struct Maya1Generator::Impl {
   std::shared_ptr<const Maya1Assets> assets;
   core::BackendType backend_type;
   int device;
-  Maya1Weights weights;
-  std::unique_ptr<modules::QwenCausalDecodeRuntime> runtime;
+  Maya1LlamaWeights weights;
+  std::unique_ptr<modules::CausalDecoderRuntime> llama_runtime;
   sampling::TorchCudaSamplingPolicy sampling_policy;
 };
 
-Maya1Generator::Maya1Generator(std::shared_ptr<const Maya1Assets> assets,
+Maya1LlamaGenerator::Maya1LlamaGenerator(std::shared_ptr<const Maya1Assets> assets,
                                core::ExecutionContext &execution,
                                size_t prefill_graph_arena_bytes,
                                size_t decode_graph_arena_bytes,
@@ -371,10 +371,10 @@ Maya1Generator::Maya1Generator(std::shared_ptr<const Maya1Assets> assets,
                                    weight_context_bytes, weight_storage_type)) {
 }
 
-Maya1Generator::~Maya1Generator() = default;
+Maya1LlamaGenerator::~Maya1LlamaGenerator() = default;
 
 Maya1GenerationResult
-Maya1Generator::generate(const std::vector<int32_t> &prompt_ids,
+Maya1LlamaGenerator::generate(const std::vector<int32_t> &prompt_ids,
                          const Maya1GenerationOptions &options) {
   return impl_->generate(prompt_ids, options);
 }

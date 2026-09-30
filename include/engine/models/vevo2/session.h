@@ -102,11 +102,11 @@ private:
     engine::assets::TensorStorageType vocoder_matmul_weight_storage_type_;
     engine::assets::TensorStorageType vocoder_conv_weight_storage_type_;
     engine::modules::WhisperFrontendComponent whisper_frontend_;
-    Vevo2ProsodyTokenizerRuntime prosody_tokenizer_;
-    Vevo2ContentStyleTokenizerRuntime content_style_tokenizer_;
-    Vevo2AutoregressiveRuntime autoregressive_model_;
-    Vevo2FlowMatchingRuntime flow_matching_model_;
-    Vevo2VocoderRuntime vocoder_;
+    Vevo2CocoProsodyTokenizerRuntime prosody_tokenizer_;
+    Vevo2CocoContentStyleTokenizerRuntime content_style_tokenizer_;
+    Vevo2Qwen2ARRuntime autoregressive_model_;
+    Vevo2DiffLlamaFlowMatchingRuntime flow_matching_model_;
+    Vevo2VocosRuntime vocoder_;
     runtime::CacheSlots<AudioCacheKey, AudioFeatureCacheValue, AudioCacheKeyEqual> whisper_feature_cache_;
     runtime::CacheSlots<AudioCacheKey, AudioTokenCacheValue, AudioCacheKeyEqual> content_style_token_cache_;
 };

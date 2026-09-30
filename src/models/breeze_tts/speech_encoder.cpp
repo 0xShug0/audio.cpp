@@ -6,7 +6,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/conditioning_modules.h"
@@ -17,7 +17,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include "engine/framework/core/constant_tensor_cache.h"
@@ -628,7 +628,7 @@ public:
             positions_data_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
         }
         if (attention_mask_ != nullptr) {
-            auto mask = modules::qwen_causal_prefill_mask_values(1, frames_);
+            auto mask = modules::causal_prefill_mask_values(1, frames_);
             attention_mask_data_ = std::move(mask);
         }
         upload_static_inputs();

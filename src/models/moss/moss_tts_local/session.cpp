@@ -236,7 +236,7 @@ MossTTSLocalSession::MossTTSLocalSession(
       task_(task),
       assets_(require_assets(std::move(assets))),
       reference_voice_cache_(resolve_reference_cache_slots(this->options())) {
-    backbone_ = std::make_unique<MossBackboneRuntime>(
+    backbone_ = std::make_unique<MossTTSLocalQwen3BackboneRuntime>(
         assets_,
         execution_context(),
         kBackboneGraphArenaBytes,

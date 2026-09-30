@@ -4,7 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/transformers/qwen_decoder.h"
+#include "engine/framework/modules/transformers/decoder.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -39,7 +39,7 @@ struct GgmlContextDeleter {
     }
 };
 
-struct BackboneLayerWeights {
+struct MossTTSLocalQwen3LayerWeights {
     core::TensorValue input_norm;
     core::TensorValue q_proj;
     core::TensorValue k_proj;
@@ -53,10 +53,10 @@ struct BackboneLayerWeights {
     core::TensorValue down_proj;
 };
 
-struct BackboneWeights {
+struct MossTTSLocalQwen3Weights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue embed_tokens;
-    std::vector<BackboneLayerWeights> layers;
+    std::vector<MossTTSLocalQwen3LayerWeights> layers;
     core::TensorValue norm;
 };
 
@@ -74,7 +74,7 @@ void validate_weight_storage_type(assets::TensorStorageType storage_type) {
     }
 }
 
-BackboneWeights load_backbone_weights(
+MossTTSLocalQwen3Weights load_backbone_weights(
     const MossTTSLocalAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -83,7 +83,7 @@ BackboneWeights load_backbone_weights(
     validate_weight_storage_type(storage_type);
     const auto & config = assets.config.backbone;
     const auto & source = *assets.model_weights;
-    BackboneWeights weights;
+    MossTTSLocalQwen3Weights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -98,7 +98,7 @@ BackboneWeights load_backbone_weights(
     weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         const std::string prefix = "transformer.layers." + std::to_string(layer);
-        BackboneLayerWeights w;
+        MossTTSLocalQwen3LayerWeights w;
         w.input_norm = weights.store->load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size});
         w.q_proj = weights.store->load_tensor(
             source,
@@ -148,8 +148,8 @@ BackboneWeights load_backbone_weights(
     return weights;
 }
 
-modules::QwenDecoderLayerWeights qwen_layer_weights(const BackboneLayerWeights & weights) {
-    modules::QwenDecoderLayerWeights out;
+modules::DecoderLayerWeights qwen_layer_weights(const MossTTSLocalQwen3LayerWeights & weights) {
+    modules::DecoderLayerWeights out;
     out.input_norm = {weights.input_norm, std::nullopt};
     out.self_attention.q_weight = weights.q_proj;
     out.self_attention.k_weight = weights.k_proj;
@@ -164,8 +164,8 @@ modules::QwenDecoderLayerWeights qwen_layer_weights(const BackboneLayerWeights &
     return out;
 }
 
-modules::QwenDecoderLayerConfig qwen_layer_config(const MossBackboneConfig & config) {
-    modules::QwenDecoderLayerConfig out;
+modules::DecoderLayerConfig qwen_layer_config(const MossTTSLocalQwen3Config & config) {
+    modules::DecoderLayerConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
     out.num_key_value_heads = config.num_key_value_heads;
@@ -175,21 +175,21 @@ modules::QwenDecoderLayerConfig qwen_layer_config(const MossBackboneConfig & con
     out.rope_theta = config.rope_theta;
     out.attention_precision = GGML_PREC_F32;
     out.use_qk_norm = true;
-    out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-    out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
-    out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
+    out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGrouped;
+    out.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     return out;
 }
 
 }  // namespace
 
-struct MossBackboneRuntime::Impl {
+struct MossTTSLocalQwen3BackboneRuntime::Impl {
     std::shared_ptr<const MossTTSLocalAssets> assets;
     ggml_backend_t backend = nullptr;
     core::BackendType backend_type = core::BackendType::Cpu;
     int threads = 1;
     size_t graph_arena_bytes = 0;
-    BackboneWeights weights;
+    MossTTSLocalQwen3Weights weights;
 
     // Cached-generation step graph (built once by begin_generation, reused every step).
     std::unique_ptr<ggml_context, GgmlContextDeleter> step_ctx;
@@ -242,7 +242,7 @@ struct MossBackboneRuntime::Impl {
     }
 };
 
-MossBackboneRuntime::MossBackboneRuntime(
+MossTTSLocalQwen3BackboneRuntime::MossTTSLocalQwen3BackboneRuntime(
     std::shared_ptr<const MossTTSLocalAssets> assets,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
@@ -271,13 +271,13 @@ MossBackboneRuntime::MossBackboneRuntime(
     impl_->assets = std::move(assets);
 }
 
-MossBackboneRuntime::~MossBackboneRuntime() = default;
+MossTTSLocalQwen3BackboneRuntime::~MossTTSLocalQwen3BackboneRuntime() = default;
 
-int64_t MossBackboneRuntime::hidden_size() const noexcept {
+int64_t MossTTSLocalQwen3BackboneRuntime::hidden_size() const noexcept {
     return impl_->assets->config.backbone.hidden_size;
 }
 
-void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
+void MossTTSLocalQwen3BackboneRuntime::build_step_graph(int64_t cache_steps) const {
     auto & impl = *impl_;
     const auto graph_build_start = Clock::now();
     const auto & config = impl.assets->config.backbone;
@@ -310,7 +310,7 @@ void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     cache_values.reserve(static_cast<size_t>(config.num_hidden_layers));
 
     impl.step_graph = ggml_new_graph_custom(gctx, 65536, false);
-    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
+    const modules::DecoderLayerModule layer_module(qwen_layer_config(config));
 
     auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                  .build(ctx, token_input, weights.embed_tokens);
@@ -367,7 +367,7 @@ void MossBackboneRuntime::build_step_graph(int64_t cache_steps) const {
     impl.step_graph_build_ms += engine::debug::elapsed_ms(graph_build_start);
 }
 
-void MossBackboneRuntime::begin_generation(int64_t max_positions) const {
+void MossTTSLocalQwen3BackboneRuntime::begin_generation(int64_t max_positions) const {
     if (max_positions <= 0) {
         throw std::runtime_error("MOSS-TTS-Local backbone begin_generation requires max_positions > 0");
     }
@@ -396,13 +396,13 @@ void MossBackboneRuntime::begin_generation(int64_t max_positions) const {
     impl.step_cache.retain_prefix(0);
 }
 
-std::vector<float> MossBackboneRuntime::step(int32_t token_id, const std::vector<float> & audio_bias_row) const {
+std::vector<float> MossTTSLocalQwen3BackboneRuntime::step(int32_t token_id, const std::vector<float> & audio_bias_row) const {
     std::vector<float> hidden_state;
     step_into(token_id, audio_bias_row, hidden_state);
     return hidden_state;
 }
 
-void MossBackboneRuntime::step_into(
+void MossTTSLocalQwen3BackboneRuntime::step_into(
     int32_t token_id,
     const std::vector<float> & audio_bias_row,
     std::vector<float> & hidden_state) const {
@@ -452,7 +452,7 @@ void MossBackboneRuntime::step_into(
     ++impl.step_calls;
 }
 
-std::vector<float> MossBackboneRuntime::prefill(
+std::vector<float> MossTTSLocalQwen3BackboneRuntime::prefill(
     const std::vector<int32_t> & token_ids,
     const std::vector<float> & audio_bias) const {
     auto & impl = *impl_;
@@ -499,7 +499,7 @@ std::vector<float> MossBackboneRuntime::prefill(
     std::vector<core::TensorValue> layer_values;
     layer_keys.reserve(impl.weights.layers.size());
     layer_values.reserve(impl.weights.layers.size());
-    const modules::QwenDecoderLayerModule layer_module(qwen_layer_config(config));
+    const modules::DecoderLayerModule layer_module(qwen_layer_config(config));
     for (const auto & layer : impl.weights.layers) {
         auto out = layer_module.build(
             ctx,
@@ -601,15 +601,15 @@ std::vector<float> MossBackboneRuntime::prefill(
     return last_hidden;
 }
 
-int64_t MossBackboneRuntime::cached_positions() const noexcept {
+int64_t MossTTSLocalQwen3BackboneRuntime::cached_positions() const noexcept {
     return impl_->step_cache.valid_steps();
 }
 
-int64_t MossBackboneRuntime::release_cached_step_graph() const {
+int64_t MossTTSLocalQwen3BackboneRuntime::release_cached_step_graph() const {
     return impl_->release_step_graph();
 }
 
-void MossBackboneRuntime::reset_timing() const {
+void MossTTSLocalQwen3BackboneRuntime::reset_timing() const {
     auto & impl = *impl_;
     impl.step_graph_build_ms = 0.0;
     impl.step_input_upload_ms = 0.0;
@@ -624,7 +624,7 @@ void MossBackboneRuntime::reset_timing() const {
     impl.prefill_calls = 0;
 }
 
-void MossBackboneRuntime::log_timing() const {
+void MossTTSLocalQwen3BackboneRuntime::log_timing() const {
     const auto & impl = *impl_;
     engine::debug::timing_log_scalar("moss_tts_local.backbone.step.graph.build_ms", impl.step_graph_build_ms);
     engine::debug::timing_log_scalar("moss_tts_local.backbone.step.input_upload_ms", impl.step_input_upload_ms);

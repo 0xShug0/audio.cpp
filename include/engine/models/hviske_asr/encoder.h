@@ -19,19 +19,19 @@ struct HviskeEncodedAudio {
     int64_t hidden_size = 0;
 };
 
-class HviskeEncoderRuntime {
+class HviskeConformerEncoderRuntime {
 public:
-    HviskeEncoderRuntime(
+    HviskeConformerEncoderRuntime(
         std::shared_ptr<const HviskeASRAssets> assets,
         std::shared_ptr<const HviskeWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes);
-    ~HviskeEncoderRuntime();
+    ~HviskeConformerEncoderRuntime();
 
-    HviskeEncoderRuntime(const HviskeEncoderRuntime &) = delete;
-    HviskeEncoderRuntime & operator=(const HviskeEncoderRuntime &) = delete;
-    HviskeEncoderRuntime(HviskeEncoderRuntime &&) noexcept;
-    HviskeEncoderRuntime & operator=(HviskeEncoderRuntime &&) noexcept;
+    HviskeConformerEncoderRuntime(const HviskeConformerEncoderRuntime &) = delete;
+    HviskeConformerEncoderRuntime & operator=(const HviskeConformerEncoderRuntime &) = delete;
+    HviskeConformerEncoderRuntime(HviskeConformerEncoderRuntime &&) noexcept;
+    HviskeConformerEncoderRuntime & operator=(HviskeConformerEncoderRuntime &&) noexcept;
 
     void prepare_capacity(int64_t input_frames, int64_t input_features);
     HviskeEncodedAudio encode(const HviskeFrontendFeatures & features);

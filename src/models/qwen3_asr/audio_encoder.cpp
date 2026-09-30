@@ -6,7 +6,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
-#include "engine/framework/modules/attention/transformer_blocks.h"
+#include "engine/framework/modules/transformers/transformer_blocks.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"

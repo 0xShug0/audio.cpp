@@ -3,7 +3,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/transformer_blocks.h"
+#include "engine/framework/modules/transformers/transformer_blocks.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"

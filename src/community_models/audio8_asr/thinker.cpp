@@ -8,8 +8,8 @@ namespace {
 
 namespace modules = engine::modules;
 
-runtime::GreedyQwenDecoderSpec make_decoder_spec(const Audio8ASRDecoderConfig & config) {
-    runtime::GreedyQwenDecoderSpec spec;
+runtime::GreedyCausalDecoderSpec make_qwen2_decoder_spec(const Audio8ASRDecoderConfig & config) {
+    runtime::GreedyCausalDecoderSpec spec;
     // Qwen2-style decoder: attention biases, no Q/K norms, RoPE theta 1e6.
     spec.decoder.stack.hidden_size = config.hidden_size;
     spec.decoder.stack.num_attention_heads = config.num_attention_heads;
@@ -21,9 +21,9 @@ runtime::GreedyQwenDecoderSpec make_decoder_spec(const Audio8ASRDecoderConfig & 
     spec.decoder.stack.rope_theta = config.rope_theta;
     spec.decoder.stack.use_qk_norm = false;
     spec.decoder.stack.runtime.static_cache.update_mode =
-        modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+        modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     spec.decoder.logits_size = config.vocab_size;
-    spec.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    spec.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     spec.vocab_size = config.vocab_size;
     spec.max_position_embeddings = config.max_position_embeddings;
     spec.tie_word_embeddings = config.tie_word_embeddings;
@@ -38,7 +38,7 @@ runtime::GreedyQwenDecoderSpec make_decoder_spec(const Audio8ASRDecoderConfig & 
 
 }  // namespace
 
-Audio8ThinkerRuntime::Audio8ThinkerRuntime(
+Audio8Qwen2ThinkerRuntime::Audio8Qwen2ThinkerRuntime(
     std::shared_ptr<const assets::TensorSource> weights_source,
     const Audio8ASRDecoderConfig & config,
     core::ExecutionContext & execution,
@@ -46,9 +46,9 @@ Audio8ThinkerRuntime::Audio8ThinkerRuntime(
     size_t decode_graph_arena_bytes,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type)
-    : runtime_(
+    : qwen2_runtime_(
           std::move(weights_source),
-          make_decoder_spec(config),
+          make_qwen2_decoder_spec(config),
           execution,
           prefill_graph_arena_bytes,
           decode_graph_arena_bytes,
@@ -56,9 +56,9 @@ Audio8ThinkerRuntime::Audio8ThinkerRuntime(
           weight_storage_type),
       config_(std::make_shared<const Audio8ASRDecoderConfig>(config)) {}
 
-Audio8ThinkerRuntime::~Audio8ThinkerRuntime() = default;
+Audio8Qwen2ThinkerRuntime::~Audio8Qwen2ThinkerRuntime() = default;
 
-Audio8ASRGeneratedTokens Audio8ThinkerRuntime::generate(
+Audio8ASRGeneratedTokens Audio8Qwen2ThinkerRuntime::generate(
     const Audio8ASRPrompt & prompt,
     const Audio8ASRAudioEmbeddings & audio_embeddings,
     const Audio8ASRGenerationOptions & options) {
@@ -75,13 +75,13 @@ Audio8ASRGeneratedTokens Audio8ThinkerRuntime::generate(
             throw std::runtime_error("Audio8 ASR audio placeholder position out of range");
         }
     }
-    runtime::GreedyQwenDecoderRuntime::Prompt decoder_prompt;
+    runtime::GreedyCausalDecoderRuntime::Prompt decoder_prompt;
     decoder_prompt.input_ids = prompt.input_ids;
     decoder_prompt.injection.values = audio_embeddings.values;
     decoder_prompt.injection.tokens = audio_embeddings.tokens;
     decoder_prompt.injection.positions = prompt.audio_token_positions;
     Audio8ASRGeneratedTokens out;
-    out.token_ids = runtime_.generate(decoder_prompt, options.max_new_tokens);
+    out.token_ids = qwen2_runtime_.generate(decoder_prompt, options.max_new_tokens);
     return out;
 }
 

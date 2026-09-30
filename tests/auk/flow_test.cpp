@@ -232,7 +232,7 @@ int main(int argc, char ** argv) {
         }
         engine::core::ExecutionContext execution({engine::core::BackendType::Cuda, 0, 8});
         bool parity_passed = true;
-        std::unique_ptr<engine::models::auk::ConditioningRuntime> encoder;
+        std::unique_ptr<engine::models::auk::AuKQwen25OmniConditioningRuntime> encoder;
         std::shared_ptr<engine::tokenizers::LlamaBpeTokenizer> tokenizer;
         std::string instruction;
         uint64_t seed = 0;
@@ -287,7 +287,7 @@ int main(int argc, char ** argv) {
             const auto condition = engine::models::auk::prepare_conditioning(
                 *tokenizer, manifest.require("instruction").as_string());
             const auto qwen = engine::assets::open_tensor_source(qwen_dir / "model.safetensors.index.json");
-            encoder = std::make_unique<engine::models::auk::ConditioningRuntime>(execution, *qwen, *source, condition.token_ids.size(), false, false);
+            encoder = std::make_unique<engine::models::auk::AuKQwen25OmniConditioningRuntime>(execution, *qwen, *source, condition.token_ids.size(), false, false);
             text = encoder->encode(condition);
             compare("fm.first.text", text);
             if (!parity_passed) throw std::runtime_error("conditioning gate failed before sampling");
@@ -296,7 +296,7 @@ int main(int argc, char ** argv) {
             reference_frames, valid_reference_frames);
         if (sample) {
             const auto vae = engine::assets::open_tensor_source(std::filesystem::path(argv[1]).parent_path() / "vae.safetensors");
-            engine::models::auk::VaeDecoderRuntime decoder(execution, *vae, audio_shape[1]);
+            engine::models::auk::VAEDecoderRuntime decoder(execution, *vae, audio_shape[1]);
             engine::debug::log_message("Teacher-forced VAE before native sampling");
             const std::string generated_key = reference_frames ? "vae.normalized_input" : "fm.output";
             compare("waveform", decoder.decode(inputs->require_f32(generated_key)));

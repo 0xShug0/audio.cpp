@@ -6,7 +6,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 
 #include <memory>
 #include <vector>
@@ -29,29 +29,29 @@ struct MiDashengLmGenAROutput {
     int64_t dims = 0;
 };
 
-struct MiDashengLmGenARWeights {
+struct MiDashengLmGenQwen3ARWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
-    engine::modules::QwenCausalDecodeRuntimeWeights qwen;
+    engine::modules::CausalDecoderRuntimeWeights qwen;
     engine::modules::LinearWeights audio_projector_in;
     engine::modules::LinearWeights audio_projector_out;
     engine::modules::LinearWeights stop_head;
 };
 
-class MiDashengLmGenARRuntime {
+class MiDashengLmGenQwen3ARRuntime {
 public:
-    MiDashengLmGenARRuntime(
+    MiDashengLmGenQwen3ARRuntime(
         std::shared_ptr<const MiDashengLmGenAssets> assets,
         engine::core::ExecutionContext & execution,
-        MiDashengLmGenFlowRuntime & flow,
+        MiDashengLmGenDiTFlowRuntime & flow,
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         size_t helper_graph_arena_bytes,
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type);
-    ~MiDashengLmGenARRuntime();
+    ~MiDashengLmGenQwen3ARRuntime();
 
-    MiDashengLmGenARRuntime(const MiDashengLmGenARRuntime &) = delete;
-    MiDashengLmGenARRuntime & operator=(const MiDashengLmGenARRuntime &) = delete;
+    MiDashengLmGenQwen3ARRuntime(const MiDashengLmGenQwen3ARRuntime &) = delete;
+    MiDashengLmGenQwen3ARRuntime & operator=(const MiDashengLmGenQwen3ARRuntime &) = delete;
 
     MiDashengLmGenAROutput generate(
         const MiDashengLmGenPromptEncoderOutput & prompt,
@@ -65,10 +65,10 @@ private:
 
     std::shared_ptr<const MiDashengLmGenAssets> assets_;
     engine::core::ExecutionContext * execution_ = nullptr;
-    MiDashengLmGenFlowRuntime * flow_ = nullptr;
+    MiDashengLmGenDiTFlowRuntime * flow_ = nullptr;
     size_t helper_graph_arena_bytes_ = 0;
-    std::shared_ptr<const MiDashengLmGenARWeights> weights_;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> qwen_;
+    std::shared_ptr<const MiDashengLmGenQwen3ARWeights> weights_;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> qwen3_runtime_;
     std::unique_ptr<ProjectorGraph> projector_;
     std::unique_ptr<StopHeadGraph> stop_head_;
 };

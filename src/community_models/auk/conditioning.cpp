@@ -37,12 +37,12 @@ ConditioningInput prepare_conditioning(
     return input;
 }
 
-ConditioningWeights load_conditioning_weights(
+AuKQwen25OmniConditioningWeights load_conditioning_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & qwen,
     const assets::TensorSource & auk) {
     using namespace modules::binding;
-    ConditioningWeights weights;
+    AuKQwen25OmniConditioningWeights weights;
     constexpr auto storage = assets::TensorStorageType::Native;
     // Lookup converts selected rows to F32; expanding the whole source table is unnecessary.
     weights.embedding = store.load_tensor(
@@ -51,7 +51,7 @@ ConditioningWeights load_conditioning_weights(
     weights.layers.reserve(36);
     for (int layer = 0; layer < 36; ++layer) {
         const auto prefix = "thinker.model.layers." + std::to_string(layer);
-        modules::QwenDecoderLayerWeights block;
+        modules::DecoderLayerWeights block;
         block.input_norm = norm_weight_from_source(store, qwen, prefix + ".input_layernorm", 2048);
         block.post_norm = norm_weight_from_source(store, qwen, prefix + ".post_attention_layernorm", 2048);
         const auto q = linear_from_source(store, qwen, prefix + ".self_attn.q_proj", storage, 2048, 2048, true);
@@ -77,13 +77,13 @@ ConditioningWeights load_conditioning_weights(
 
 core::TensorValue build_text_conditioning(
     core::ModuleBuildContext & ctx,
-    const ConditioningWeights & weights,
+    const AuKQwen25OmniConditioningWeights & weights,
     const core::TensorValue & embeddings,
     const core::TensorValue & positions,
     const core::TensorValue & attention_mask,
-    const modules::QwenDecoderActivationCastPolicy & activation_cast,
+    const modules::DecoderActivationCastPolicy & activation_cast,
     std::vector<core::TensorValue> * captured_layers) {
-    modules::QwenDecoderLayerConfig config;
+    modules::DecoderLayerConfig config;
     config.hidden_size = 2048;
     config.num_attention_heads = 16;
     config.num_key_value_heads = 2;
@@ -95,8 +95,8 @@ core::TensorValue build_text_conditioning(
     config.projection_precision = GGML_PREC_F32;
     config.activation_cast = activation_cast;
     config.runtime.attention.prefill_mode = activation_cast.enabled
-        ? modules::QwenDecoderAttentionMode::FlashGrouped : modules::QwenDecoderAttentionMode::ManualRepeat;
-    const modules::QwenDecoderLayerModule decoder(config);
+        ? modules::DecoderAttentionMode::FlashGrouped : modules::DecoderAttentionMode::ManualRepeat;
+    const modules::DecoderLayerModule decoder(config);
     const modules::LayerNormModule layer_norm({2048, 1e-5F, false, false});
     const auto fusion_weights = modules::SoftmaxModule().build(ctx, weights.layer_weights);
     auto hidden = embeddings;
@@ -121,7 +121,7 @@ core::TensorValue build_text_conditioning(
     return core::wrap_tensor(ggml_mul(ctx.ggml, fused.tensor, weights.layer_scale.tensor), fused.shape);
 }
 
-struct ConditioningGraph {
+struct AuKQwen25OmniConditioningGraph {
     core::ExecutionContext & execution;
     int64_t tokens;
     int64_t audio_tokens;
@@ -136,7 +136,7 @@ struct ConditioningGraph {
     core::TensorValue output;
     std::vector<core::TensorValue> layer_outputs;
 
-    ConditioningGraph(core::ExecutionContext & execution_, const ConditioningWeights & weights,
+    AuKQwen25OmniConditioningGraph(core::ExecutionContext & execution_, const AuKQwen25OmniConditioningWeights & weights,
                       int64_t tokens_, int64_t audio_tokens_, bool capture_layers, bool bf16_autocast)
         : execution(execution_), tokens(tokens_), audio_tokens(audio_tokens_) {
         if (tokens <= 0) {
@@ -165,7 +165,7 @@ struct ConditioningGraph {
                 core::TensorShape::from_dims({tokens + audio_tokens, 2048}));
             embeddings = modules::EmbeddingModule({tokens + audio_tokens, 2048}).build(ctx, embedding_rows, table);
         }
-        modules::QwenDecoderActivationCastPolicy casts;
+        modules::DecoderActivationCastPolicy casts;
         casts.enabled = bf16_autocast;
         casts.after_input_norm = true;
         casts.after_qkv_projection = true;
@@ -215,18 +215,18 @@ struct ConditioningGraph {
         }
     }
 
-    ~ConditioningGraph() {
+    ~AuKQwen25OmniConditioningGraph() {
         core::release_backend_graph_resources(execution.backend(), graph, true);
     }
 };
 
-struct ConditioningRuntime::State {
+struct AuKQwen25OmniConditioningRuntime::State {
     core::ExecutionContext & execution;
     bool capture_layers;
     bool bf16_autocast;
     core::BackendWeightStore store;
-    ConditioningWeights weights;
-    std::unique_ptr<ConditioningGraph> prepared;
+    AuKQwen25OmniConditioningWeights weights;
+    std::unique_ptr<AuKQwen25OmniConditioningGraph> prepared;
 
     State(core::ExecutionContext & execution_, const assets::TensorSource & qwen,
           const assets::TensorSource & auk, bool capture_layers_, bool bf16_autocast_)
@@ -237,7 +237,7 @@ struct ConditioningRuntime::State {
     }
 };
 
-ConditioningRuntime::ConditioningRuntime(core::ExecutionContext & execution,
+AuKQwen25OmniConditioningRuntime::AuKQwen25OmniConditioningRuntime(core::ExecutionContext & execution,
                                        const assets::TensorSource & qwen,
                                        const assets::TensorSource & auk,
                                        int64_t tokens, bool capture_layers, bool bf16_autocast, int64_t audio_tokens)
@@ -245,19 +245,19 @@ ConditioningRuntime::ConditioningRuntime(core::ExecutionContext & execution,
     prepare(tokens, audio_tokens);
 }
 
-ConditioningRuntime::~ConditioningRuntime() = default;
+AuKQwen25OmniConditioningRuntime::~AuKQwen25OmniConditioningRuntime() = default;
 
-void ConditioningRuntime::prepare(int64_t tokens, int64_t audio_tokens) {
+void AuKQwen25OmniConditioningRuntime::prepare(int64_t tokens, int64_t audio_tokens) {
     if (tokens <= 0) throw std::runtime_error("AuK conditioning token count must be positive");
     auto & state = *state_;
     if (audio_tokens < 0 || audio_tokens > tokens) throw std::runtime_error("AuK audio token count exceeds sequence length");
     if (state.prepared && state.prepared->tokens == tokens && state.prepared->audio_tokens == audio_tokens) return;
     state.prepared.reset();
-    state.prepared = std::make_unique<ConditioningGraph>(
+    state.prepared = std::make_unique<AuKQwen25OmniConditioningGraph>(
         state.execution, state.weights, tokens, audio_tokens, state.capture_layers, state.bf16_autocast);
 }
 
-std::vector<std::vector<float>> ConditioningRuntime::captured_layers() const {
+std::vector<std::vector<float>> AuKQwen25OmniConditioningRuntime::captured_layers() const {
     if (!state_->prepared) throw std::runtime_error("AuK conditioning graph is not prepared");
     std::vector<std::vector<float>> outputs;
     for (const auto & tensor : state_->prepared->layer_outputs) {
@@ -266,7 +266,7 @@ std::vector<std::vector<float>> ConditioningRuntime::captured_layers() const {
     return outputs;
 }
 
-std::vector<float> ConditioningRuntime::encode(const ConditioningInput & input, const std::vector<float> & audio_embeddings) {
+std::vector<float> AuKQwen25OmniConditioningRuntime::encode(const ConditioningInput & input, const std::vector<float> & audio_embeddings) {
     if (!state_->prepared) throw std::runtime_error("AuK conditioning graph is not prepared");
     auto & state = *state_->prepared;
     const auto tokens = static_cast<size_t>(state.tokens);

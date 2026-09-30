@@ -172,12 +172,12 @@ NemotronASRSessionBase::NemotronASRSessionBase(
         matmul_weight_storage_type_,
         conv_weight_storage_type_,
         weight_context_bytes_);
-    encoder_ = std::make_unique<NemotronEncoderRuntime>(
+    encoder_ = std::make_unique<NemotronFastConformerEncoderRuntime>(
         assets_,
         weights_,
         execution_context(),
         encoder_graph_arena_bytes_);
-    decoder_ = std::make_unique<NemotronDecoderRuntime>(
+    decoder_ = std::make_unique<NemotronRnntDecoderRuntime>(
         assets_,
         weights_,
         execution_context(),

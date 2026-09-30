@@ -28,9 +28,9 @@ struct ChatterboxTurboGenerateConfig {
 
 // Orchestrates the full Turbo TTS pipeline (T3 GPT2 backbone -> S3Gen meanflow decoder -> HiFT
 // vocoder) using only the built-in default voice baked into the T3 GGUF's `conds.*` tensors.
-class ChatterboxTurboTtsComponent {
+class ChatterboxTurboTTSComponent {
 public:
-    ChatterboxTurboTtsComponent(
+    ChatterboxTurboTTSComponent(
         std::shared_ptr<const ChatterboxTurboAssets> assets,
         const engine::core::ExecutionContext & execution_context);
 

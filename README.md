@@ -6,15 +6,22 @@
 
 Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
 
-Huggingface main repo: https://huggingface.co/audio-cpp/audio.cpp-gguf
+Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio models** in the [Audio Model Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas) to see how they're built, what they share, and where they differ, whether you're learning or building your own.
 
-ModelScope repo mirror: https://www.modelscope.cn/models/HereIsMark/audio.cpp-gguf
+[![Hugging Face](https://img.shields.io/badge/Hugging_Face-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/audio-cpp/audio.cpp-gguf) [![ModelScope](https://img.shields.io/badge/ModelScope-624AFF)](https://www.modelscope.cn/models/HereIsMark/audio.cpp-gguf) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/0xShug0/audio.cpp/blob/main/Notebooks/colab_audio_cpp.ipynb) [![Open Architecture Atlas](https://img.shields.io/badge/Open-Architecture_Atlas-007e70?logo=huggingface&logoColor=white)](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/0xShug0/audio.cpp/blob/main/Notebooks/colab_audio_cpp.ipynb)
+<p align="center">
+  <a href="assets/figure/technology_cloud_v1.png">
+    <img src="assets/figure/technology_cloud_v1.png" alt="Core technologies used by audio.cpp models" width="36%" align="top">
+  </a>
+  <a href="https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas">
+    <img src="assets/figure/architecture_atlas.png" alt="Interactive Audio Model Architecture Atlas" width="61.35%" align="top">
+  </a>
+</p>
 
 > [!IMPORTANT]
 >
-> **2026-09-23 - Release v0.8.2:** Day-zero support for NVIDIA Nemotron 3 Diarization, with streaming and batched inference. AuK and LiveAvatar are now available in the WebUI.
+> **2026-09-30 - Release v0.9.0:** In the project's first 100 days, audio.cpp has reached **100+ audio models and 170+ variants**, running locally! Thank you to the community for bringing new models, optimizations, testing, and feedback to audio.cpp. Your contributions make this possible!
 >
 > **Arena UI:** The new Arena tab makes it easier to compare local models side by side for TTS, voice conversion, and ASR. Use one shared input, queue multiple models or GGUF variants, then review outputs with metrics!
 >
@@ -53,11 +60,11 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **2026-09-15 - Release 0.8.0:** Since v0.7.0, audio.cpp has added YuE2 song generation, SheetSage2 audio-to-score transcription, BreezeTTS 2, CosyVoice3, Kokoro 82M, Moonshine Streaming ASR, Niagara ASR, and VibeVoice ASR Streaming 7B. The community lineup also grows with Audio8 ASR/TTS, Echo-TTS, Chatterbox Turbo, MiraTTS, Sopro, Soprano, sanoTTS, VoxCPM1, VibeASR, and Sortformer v2.1, alongside Irodori v4.1 Anime support. This brings audio.cpp to **80+ model families and 120+ model variants**!  This release also brings improvements to performance, stability, and usability across the project. Thanks to the community for the contributions, testing, and feedback!
+> **2026-09-30 - Release v0.9.0:** New models include Maya1, GigaAM v3 and Multilingual, SAM Audio, SAMSONE, Tone Color VC, HTDemucs six-stem separation, and MOSS-TTSD. The WebUI adds an enhancement and denoising tab and more model controls. This release also brings speaker-tagged Nemotron ASR, ZipVoice streaming, and performance and memory improvements for Higgs Audio, MOSS-TTS, Echo-TTS, ACE-Step, and BS-RoFormer. Explore **100+ audio models** in the [Architecture Atlas](https://huggingface.co/spaces/audio-cpp/Audio-Model-Architecture-Atlas). Thanks to everyone contributing models, optimizations, fixes, and feedback!
 >
-> Optional server frontend modules add MP3 support, HTTPS listeners, and more customization for server integrations.
+> **2026-09-15 - Release v0.8.0:** YuE2 song generation, SheetSage2 audio-to-score transcription, and expanded TTS, ASR, and diarization support bring audio.cpp to **80+ model families and 120+ variants**. Optional server frontend modules add MP3 and HTTPS support, alongside performance, stability, and usability improvements.
 >
-> Thanks to [@DrewThomasson](https://github.com/DrewThomasson) for the Colab UI, [@christopherthompson81](https://github.com/christopherthompson81) for the C ABI, and [@XsquirrelC](https://github.com/XsquirrelC)/VibeASR for the official VibeASR port, extending audio.cpp with support for BitNet models!
+> Thanks to [@DrewThomasson](https://github.com/DrewThomasson) for Colab, [@christopherthompson81](https://github.com/christopherthompson81) for the C ABI, and [@XsquirrelC](https://github.com/XsquirrelC)/VibeASR for the official port and BitNet support!
 >
 > **2026-08-26 - Release 0.7:** This release adds MiniMax Music 3, MagpieTTS, PersonaPlex, MeanVC2, AudioSR, ControlFoley, FireRedTTS3, FireRedAudio, MiDashengLM-Gen, F5-TTS/Habibi, Granite Speech 5.0 TurboCTC, MMS Forced Aligner, and MOSS-VoiceGenerator, plus DotTTS Edit and ACE-Step 1.5 XL variants, bringing audio.cpp to **62** total model families and **85+** model variants! It also introduces the new Arena UI for side-by-side TTS, voice-conversion, and ASR comparison with shared inputs, queued runs, metrics, and result sorting.
 >
@@ -113,7 +120,7 @@ Model weights keep the license of their original release, which is separate from
 | **canary_asr** | ASR, Translate | en, de, es, fr | Canary 180M Flash | GGUF F32/Q8 |
 | **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
 | **cohere_asr** | ASR | en, fr, de, es, it, pt, nl, pl, el, ar, ja, zh, vi, ko | Cohere Transcribe 03-2026 | GGUF BF16/Q8/Q4_0 |
-| **gigaam_asr** | ASR | ru, kk, ky, uz, en | GigaAM v3 CTC/RNN-T, v3 E2E CTC/RNN-T; Multilingual CTC/Large CTC | GGUF F16/F32 |
+| **gigaam_asr** | ASR | ru, kk, ky, uz, en | GigaAM v3 CTC<br>GigaAM v3 RNN-T<br>GigaAM v3 E2E CTC<br>GigaAM v3 E2E RNN-T<br>GigaAM Multilingual CTC<br>GigaAM Multilingual Large CTC | GGUF F16/F32 |
 | **fun_asr_nano** | ASR | auto, zh, en, ja | Fun-ASR-Nano-2512 | GGUF 16/Q8 |
 | **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
@@ -137,11 +144,10 @@ Model weights keep the license of their original release, which is separate from
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
-| **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
 | **apollo** | S2S | lang agnostic | Apollo music restoration | GGUF F32 |
-| **sam_audio** | S2S | lang agnostic | SAM Audio Small prompt-conditioned separation | GGUF F32 |
-| **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
+| **audiosr** | S2S | lang agnostic | AudioSR Basic audio super-resolution package | GGUF F32 |
 | **bs_roformer** | Sep | lang agnostic | BS-RoFormer vocal separation checkpoints | GGUF Q8 |
+| **builtin_audio_utils** | S2S | lang agnostic | RNNoise<br>DeepFilterNet2<br>ZipEnhancer<br>GTCRN Streaming<br>GTCRN DNS3<br>GTCRN VCTK<br>FlashSR | Safetensors |
 | **controlfoley** | SFX | auto | ControlFoley 44 kHz multimodal Foley generation from text, video, and reference audio conditioning | GGUF F32/Q8 |
 | **htdemucs** | Sep | lang agnostic | HTDemucs<br>HTDemucs_ft<br>HTDemucs_6stems | GGUF 16/Q8 |
 | **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
@@ -149,8 +155,11 @@ Model weights keep the license of their original release, which is separate from
 | **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |
 | **muscriptor** | MIDI | music | MuScriptor Small audio-to-symbolic transcription | GGUF F32, Stream |
 | **rvc** | VC | lang agnostic | RVC F16 GGUF with packaged v1/v2 voices and optional retrieval blending | GGUF 16 |
+| **sam_audio** | S2S | lang agnostic | SAM Audio Small<br>SAM Audio Base<br>SAM Audio Large | GGUF F32/BF16/Q8 |
 | **seed_vc** | VC | lang agnostic | SeedVC XLS-R + HiFT<br>SeedVC Whisper-small + BigVGAN | GGUF 16/Q8 |
 | **sheetsage2** | MIDI | music | SheetSage2 audio-to-ABC score transcription | GGUF orig |
+| **tone_color_vc** | VC | lang agnostic | Tone Color VC | GGUF F32/F16 |
+| **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 
 ### Music, Media, And Editing
 
@@ -176,7 +185,9 @@ Community model ports live under `community_models` to make the ownership bounda
 | **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | GGUF Q8, Safetensors | [@gqf2008](https://github.com/gqf2008) | [Audio8-ASR-0.1B](docs/community_models/audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
 | **audio8_tts** | TTS, Clone | auto, yue, zh, nl, en, fr, de, it, ja, ko, pl, es | GGUF Q8, Stream | [@jasonchen31](https://github.com/jasonchen31) | [Audio8 TTS Preview 0.6B](docs/community_models/audio8_tts.md) DualAR multilingual TTS and zero-shot voice cloning with a Qwen backbone and neural codec |
 | **auk** | TTS, audio editing | auto | GGUF F32/F16/Q8 | [@0xShug0](https://github.com/0xShug0) | [AuK Base and AuK-Flash](docs/community_models/auk.md) instruction-guided speech generation and editing with separate generator, Qwen conditioner, and VAE components |
+| **reuse** | S2S | lang agnostic | GGUF F32/F16/Q8_0 | [@0xShug0](https://github.com/0xShug0) | RE-USE speech restoration |
 | **chatterbox_turbo** | TTS (testing) | en | GGUF 16/Q8 | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](docs/community_models/chatterbox_turbo.md) distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder; built-in voice |
+| **confucius4_r2t2** | ASR | 30 languages | Safetensors, GGUF F16/Q8/Q4, Stream | [@davidxifeng](https://github.com/davidxifeng) | [Confucius4-R2T2](docs/community_models/r2t2.md) streaming ASR with context and hotword prompts |
 | **echo_tts** | Clone | en | GGUF 16/Q8 | [@5uck1ess](https://github.com/5uck1ess) | [Echo-TTS](docs/community_models/echo_tts.md) 44.1 kHz zero-shot voice cloning with EchoDiT latents and Fish S1-DAC decoding |
 | **f5_tts** | TTS, Clone | en, ar (Habibi) | GGUF | [@tareko](https://github.com/tareko) | [F5-TTS](docs/community_models/f5_tts.md) flow-matching DiT synthesis and voice cloning, with Habibi Arabic aliases `habibi`/`habibi_tts` |
 | **glm_tts** | TTS, Clone | zh, en | GGUF | Mirek [@mirek190](https://github.com/mirek190) | [GLM-TTS](docs/community_models/glm_tts.md) zero-shot synthesis and voice cloning support |
@@ -185,11 +196,13 @@ Community model ports live under `community_models` to make the ownership bounda
 | **inflect_v2** | TTS | en | GGUF FP32 | Jan [@JanWerder](https://github.com/JanWerder) | [Inflect Micro v2 and Nano v2](docs/community_models/inflect_v2.md) native offline synthesis |
 | **kroko_asr** | ASR | de, en, es, fr, it, he, nl, pt, sv, tr | Safetensors, GGUF Q8 | Mirek [@mirek190](https://github.com/mirek190) | [Kroko Community ASR](docs/community_models/kroko_asr.md) native offline/streaming Zipformer2/RNN-T transcription with word timestamps |
 | **kitten_tts** | TTS | en | GGUF FP32 | Community | [KittenTTS Mini 0.8](docs/community_models/kitten_tts.md) native 80M-parameter synthesis with eight built-in voices and the shared eSpeak-ng frontend |
+| **liveavatar** | Audio-to-video | auto | GGUF NVFP4 | [@0xShug0](https://github.com/0xShug0) | [LiveAvatar](docs/community_models/liveavatar.md) audio-to-video avatar generation with Wan2.2 S2V and an optional low-VRAM denoiser path |
 | **minimax_h3** | Video, Music, TTS/Dialogue | auto | GGUF Q4/INT8 | [@0xShug0](https://github.com/0xShug0) | [MiniMax-H3](docs/community_models/minimax_h3.md) text-to-audio/video generation with Q4_K and optional INT8 ConvRot DiT |
 | **minimax_music3** | Music | auto | GGUF Q4/Q8 | [@0xShug0](https://github.com/0xShug0), [@JoeMattie](https://github.com/JoeMattie) | [MiniMax Music 3](docs/community_models/minimax_music3.md) text-to-music generation with lyrics conditioning |
 | **mira_tts** | TTS, Clone | en | Local conversion | Mirek [@mirek190](https://github.com/mirek190) | [MiraTTS](docs/community_models/mira_tts.md) experimental native Qwen2 + ECAPA/Perceiver zero-shot voice cloning with progressive segment streaming (CC-BY-NC-SA-4.0 weights) |
 | **mms_forced_aligner** | Align | nl (nld), en (eng); pre-romanized Latin | Safetensors, GGUF 16/Q8 | [@LysanderdeJong](https://github.com/LysanderdeJong) | [MMS-300M-1130 Forced Aligner](docs/community_models/mms_forced_aligner.md) word-timestamp alignment from a wav2vec2 CTC checkpoint (safetensors or local GGUF) |
 | **moss_tts_v15** | TTS, Clone | en, zh | GGUF | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTS-v1.5](docs/community_models/moss_tts_v15.md) 8B delay-pattern zero-shot voice cloning; voice-attribute instructions are followed only loosely, see the limitation note |
+| **moss_ttsd** | TTS, Clone, Dialogue | en, zh | GGUF BF16/Q8/Q4 | Chris [@christopherthompson81](https://github.com/christopherthompson81) | [MOSS-TTSD](docs/community_models/moss_ttsd.md) 8B dialogue TTS with speaker-tagged conversations and per-speaker voice cloning |
 | **moss_voicegen** | Voice Design | en, zh | GGUF | Joost [@jrohde](https://github.com/jrohde) | [MOSS-VoiceGenerator](docs/community_models/moss_voicegen.md) speech in a voice designed from a written instruction |
 | **outetts** | TTS, Clone | en, ar, zh, nl, fr, de, it, ja, ko, lt, ru, es, pt, be, bn, ka, hu, lv, fa, pl, sw, ta, uk | GGUF | Mirek [@mirek190](https://github.com/mirek190) | Llama-OuteTTS-1.0-1B TTS and voice cloning support |
 | **parakeet_tdt** | ASR | auto, bg, cs, da, de, el, en, es, et, fi, fr, hr, hu, it, lt, lv, mt, nl, pl, pt, ro, ru, sk, sl, sv, uk | GGUF F32/16/Q8, Stream | [@dleiferives](https://github.com/dleiferives) | [Parakeet-TDT 0.6B v3](docs/community_models/parakeet_tdt.md) offline, long-form, and buffered-streaming ASR support, plus the Orukeet r3 weight variant |
@@ -785,6 +798,7 @@ The server exposes:
 - `POST /v1/audio/transcriptions/details`
 - `POST /v1/audio/alignments`
 - `POST /v1/tasks/run`
+- `POST /v1/tasks/batch`
 
 More server examples are in [app/server/README.md](app/server/README.md).
 
@@ -932,7 +946,7 @@ For long-form TTS tests, each run uses the same 6,026-character, 1,028-word inpu
 
 ## Runtime Memory Options
 
-Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `dramabox.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, `omnivoice.mem_saver=true`, and `voxcpm2.mem_saver=true`. These options keep the default output path unchanged while reducing graph workspace VRAM or releasing staged graph/cache state after request phases; later requests may rebuild released graphs.
+Some models expose memory-saver session options such as `ace_step.mem_saver=true`, `dramabox.mem_saver=true`, `heartmula.mem_saver=true`, `stable_audio.mem_saver=true`, `omnivoice.mem_saver=true`, `voxcpm2.mem_saver=true`, and `echo_tts.mem_saver=true`. These options keep the default output path unchanged while reducing graph workspace VRAM or releasing staged graph/cache state after request phases; later requests may rebuild released graphs.
 
 ## Precision/Quantization Support
 

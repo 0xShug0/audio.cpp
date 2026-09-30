@@ -289,6 +289,32 @@ void test_stft_istft_round_trip_matches_waveform() {
         "stft_istft_round_trip");
 }
 
+void test_hann_window_modes_and_cache() {
+    using engine::audio::STFTFamily;
+    constexpr long double pi = 3.14159265358979323846264338327950288L;
+    for (const int64_t length : {1, 20, 640, 1764}) {
+        for (const auto family : {STFTFamily::Default, STFTFamily::Kokoro, STFTFamily::PeriodicF32}) {
+            const engine::audio::STFTConfig config{length, 1, length, true,
+                engine::audio::STFTPadMode::Reflect, family};
+            const auto & actual = engine::audio::get_cached_stft_window(config);
+            std::vector<float> expected(length, 1.0f);
+            for (int64_t i = 0; length > 1 && i < length; ++i) {
+                if (family == STFTFamily::PeriodicF32) {
+                    const float step = static_cast<float>(2.0 * static_cast<double>(pi) / length);
+                    expected[i] = 0.5f - 0.5f * std::cos(step * static_cast<float>(i));
+                } else {
+                    const float denominator = static_cast<float>(length - (family == STFTFamily::Default));
+                    expected[i] = 0.5f - 0.5f * std::cos(2.0f * pi * static_cast<float>(i) / denominator);
+                }
+            }
+            require_close(actual, expected, 0.0f, 0.0, "hann_window_mode");
+            if (&actual != &engine::audio::get_cached_stft_window(config)) {
+                throw std::runtime_error("Hann window cache did not reuse its entry");
+            }
+        }
+    }
+}
+
 void test_istft_matches_reference_across_configs_and_variants() {
     const std::vector<engine::audio::STFTConfig> configs{
         engine::audio::STFTConfig{
@@ -357,6 +383,7 @@ void test_istft_matches_reference_across_configs_and_variants() {
 int main() {
     try {
         test_log_mel_matches_reference_pipeline();
+        test_hann_window_modes_and_cache();
         test_stft_istft_round_trip_matches_waveform();
         test_istft_matches_reference_across_configs_and_variants();
         std::cout << "audio_dsp_test: ok\n";

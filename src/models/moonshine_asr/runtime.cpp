@@ -6,7 +6,7 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -16,7 +16,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/sampling/hf_sampler.h"
@@ -588,7 +588,7 @@ public:
             }
             engine::core::prepare_host_graph_plan(execution_context, graph_, plan_);
         }
-        const auto pos_values = engine::modules::qwen_position_ids(memory_frames_);
+        const auto pos_values = engine::modules::decoder_position_ids(memory_frames_);
         engine::core::write_tensor_i32(positions_, pos_values);
         for (const auto & mask : masks_) {
             engine::core::write_tensor_f16(mask.tensor, mask.values);
@@ -755,7 +755,7 @@ public:
         ggml_backend_tensor_set(token_id_, &token, 0, sizeof(token));
         ggml_backend_tensor_set(position_, &position, 0, sizeof(position));
         ggml_backend_tensor_set(cache_slot_, &position, 0, sizeof(position));
-        engine::modules::write_qwen_cached_step_mask(
+        engine::modules::write_decoder_cached_step_mask(
             attention_mask_,
             attention_mask_values_,
             cache_steps_,

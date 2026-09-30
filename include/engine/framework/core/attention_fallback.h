@@ -37,7 +37,7 @@ AttentionPreference parse_attention_preference(const std::string & value, const 
 // Adopting in other families (currently wired for higgs_audio_tts and
 // breeze_tts only): resolve once per runtime with the model's head_dim and
 // the family's "<family>.attention" session option, then switch the
-// QwenDecoder prefill/static modes (or SDPA/GQA lowerings) between flash and
+// Decoder prefill/static modes (or SDPA/GQA lowerings) between flash and
 // their ManualRepeat/Explicit equivalents based on the result.
 bool resolve_flash_attention(ggml_backend_t backend, int64_t head_dim, AttentionPreference preference);
 

@@ -289,7 +289,7 @@ core::TensorValue conditional_norm(
 
 }  // namespace
 
-struct MiraAcousticProcessor::Impl {
+struct MiraConvNeXtAcousticProcessor::Impl {
     Impl(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution_in,
@@ -407,7 +407,7 @@ struct MiraAcousticProcessor::Impl {
     ProcessorWeights weights;
 };
 
-MiraAcousticProcessor::MiraAcousticProcessor(
+MiraConvNeXtAcousticProcessor::MiraConvNeXtAcousticProcessor(
     const MiraTTSAssets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
@@ -418,9 +418,9 @@ MiraAcousticProcessor::MiraAcousticProcessor(
           assets, execution, weight_context_bytes, graph_context_bytes,
           linear_storage_type, conv_storage_type)) {}
 
-MiraAcousticProcessor::~MiraAcousticProcessor() = default;
+MiraConvNeXtAcousticProcessor::~MiraConvNeXtAcousticProcessor() = default;
 
-std::vector<float> MiraAcousticProcessor::process(
+std::vector<float> MiraConvNeXtAcousticProcessor::process(
     const std::vector<int32_t> & speech_codes,
     const std::vector<int32_t> & context_codes) {
     return impl_->process(speech_codes, context_codes);

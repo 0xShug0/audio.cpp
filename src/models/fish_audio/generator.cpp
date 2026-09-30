@@ -15,7 +15,7 @@ using Clock = std::chrono::steady_clock;
 
 FishAudioGenerator::FishAudioGenerator(
     std::shared_ptr<const FishAudioAssets> assets,
-    std::unique_ptr<FishAudioARRuntime> ar,
+    std::unique_ptr<FishAudioDualARRuntime> ar,
     std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec)
     : assets_(std::move(assets)),
       tokenizer_(assets_),

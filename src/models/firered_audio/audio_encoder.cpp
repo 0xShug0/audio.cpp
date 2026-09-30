@@ -6,7 +6,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -218,7 +218,7 @@ core::TensorValue audio_self_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const AudioAttentionWeights & weights,
-    const FireRedAudioAudioEncoderConfig & config) {
+    const FireRedAudioEncoderConfig & config) {
     const int64_t dim = config.d_model / config.encoder_attention_heads;
     auto q = modules::LinearModule({config.d_model, config.d_model, true}).build(ctx, input, weights.q_proj);
     auto k = modules::LinearModule({config.d_model, config.d_model, false}).build(ctx, input, weights.k_proj);
@@ -245,7 +245,7 @@ core::TensorValue encoder_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const AudioEncoderLayerWeights & weights,
-    const FireRedAudioAudioEncoderConfig & config) {
+    const FireRedAudioEncoderConfig & config) {
     auto h = modules::LayerNormModule({config.d_model, config.layer_norm_eps, true, true}).build(ctx, input, weights.self_attn_norm);
     h = audio_self_attention(ctx, h, weights.attention, config);
     auto x = modules::AddModule().build(ctx, input, h);
@@ -261,7 +261,7 @@ core::TensorValue encoder_layer(
 
 std::vector<float> prepare_understanding_audio(
     const runtime::AudioBuffer & audio,
-    const FireRedAudioAudioEncoderConfig & config) {
+    const FireRedAudioEncoderConfig & config) {
     if (audio.sample_rate <= 0 || audio.channels <= 0 || audio.samples.empty()) {
         throw std::runtime_error("FireRedAudio understanding audio input is invalid");
     }
@@ -282,7 +282,7 @@ struct FrontendOutput {
 
 FrontendOutput extract_log_mel(
     const runtime::AudioBuffer & audio,
-    const FireRedAudioAudioEncoderConfig & config,
+    const FireRedAudioEncoderConfig & config,
     engine::audio::WhisperLogMelExtractor & extractor) {
     auto samples = prepare_understanding_audio(audio, config);
     const int64_t real_frames = static_cast<int64_t>(samples.size()) / config.hop_length;
@@ -307,7 +307,7 @@ public:
     ChunkEncoderGraph(
         core::ExecutionContext & execution,
         std::shared_ptr<const AudioEncoderWeights> weights,
-        FireRedAudioAudioEncoderConfig config,
+        FireRedAudioEncoderConfig config,
         size_t graph_arena_bytes)
         : execution_(execution),
           weights_(std::move(weights)),
@@ -384,7 +384,7 @@ private:
 
     core::ExecutionContext & execution_;
     std::shared_ptr<const AudioEncoderWeights> weights_;
-    FireRedAudioAudioEncoderConfig config_;
+    FireRedAudioEncoderConfig config_;
     size_t graph_arena_bytes_;
     GraphMemory mem_;
     int64_t frames_ = 0;
@@ -397,7 +397,7 @@ public:
     AdapterGraph(
         core::ExecutionContext & execution,
         std::shared_ptr<const AudioEncoderWeights> weights,
-        FireRedAudioAudioEncoderConfig config,
+        FireRedAudioEncoderConfig config,
         size_t graph_arena_bytes)
         : execution_(execution),
           weights_(std::move(weights)),
@@ -467,7 +467,7 @@ private:
 
     core::ExecutionContext & execution_;
     std::shared_ptr<const AudioEncoderWeights> weights_;
-    FireRedAudioAudioEncoderConfig config_;
+    FireRedAudioEncoderConfig config_;
     size_t graph_arena_bytes_;
     GraphMemory mem_;
     int64_t tokens_ = 0;
@@ -477,7 +477,7 @@ private:
 
 }  // namespace
 
-class FireRedAudioAudioEncoderRuntime::Impl {
+class FireRedAudioEncoderRuntime::Impl {
 public:
     Impl(
         std::shared_ptr<const FireRedAudioAssets> assets,
@@ -551,7 +551,7 @@ private:
     AdapterGraph adapter_;
 };
 
-FireRedAudioAudioEncoderRuntime::FireRedAudioAudioEncoderRuntime(
+FireRedAudioEncoderRuntime::FireRedAudioEncoderRuntime(
     std::shared_ptr<const FireRedAudioAssets> assets,
     engine::core::ExecutionContext & execution,
     size_t graph_arena_bytes,
@@ -559,13 +559,13 @@ FireRedAudioAudioEncoderRuntime::FireRedAudioAudioEncoderRuntime(
     engine::assets::TensorStorageType storage_type)
     : impl_(std::make_unique<Impl>(std::move(assets), execution, graph_arena_bytes, weight_context_bytes, storage_type)) {}
 
-FireRedAudioAudioEncoderRuntime::~FireRedAudioAudioEncoderRuntime() = default;
+FireRedAudioEncoderRuntime::~FireRedAudioEncoderRuntime() = default;
 
-FireRedAudioUnderstandFeatures FireRedAudioAudioEncoderRuntime::encode(const engine::runtime::AudioBuffer & audio) {
+FireRedAudioUnderstandFeatures FireRedAudioEncoderRuntime::encode(const engine::runtime::AudioBuffer & audio) {
     return impl_->encode(audio);
 }
 
-void FireRedAudioAudioEncoderRuntime::release_graphs() {
+void FireRedAudioEncoderRuntime::release_graphs() {
     impl_->release_graphs();
 }
 

@@ -63,14 +63,14 @@ engine::core::BackendMemorySnapshot capture_backend_memory_snapshot(const engine
 
 }  // namespace
 
-struct ChatterboxTtsComponent::State {
+struct ChatterboxTTSComponent::State {
     explicit State(engine::core::BackendConfig backend)
         : s3_cache(backend) {}
 
     S3GenSessionCache s3_cache;
 };
 
-ChatterboxTtsComponent::ChatterboxTtsComponent(
+ChatterboxTTSComponent::ChatterboxTTSComponent(
     std::shared_ptr<const T3InferenceWeights> t3_weights,
     std::shared_ptr<const ChatterboxEnglishTokenizerModel> tokenizer,
     engine::models::chatterbox::VoiceEncoderComponent voice_encoder,
@@ -105,7 +105,7 @@ ChatterboxTtsComponent::ChatterboxTtsComponent(
     }
 }
 
-ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone(
+ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone(
     const std::string & text,
     const runtime::AudioBuffer & reference_audio,
     const ChatterboxVoiceCloneConfig & config) const {
@@ -128,20 +128,20 @@ ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone(
     return outputs;
 }
 
-ChatterboxConditionalsOutputs ChatterboxTtsComponent::prepare_voice_clone_conditionals(
+ChatterboxConditionalsOutputs ChatterboxTTSComponent::prepare_voice_clone_conditionals(
     const runtime::AudioBuffer & reference_audio,
     const ChatterboxVoiceCloneConfig & config) const {
     return conditionals_.prepare(reference_audio, config.exaggeration);
 }
 
-ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_with_conditionals(
+ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone_with_conditionals(
     const std::string & text,
     const ChatterboxConditionalsOutputs & conditionals,
     const ChatterboxVoiceCloneConfig & config) const {
     return synthesize_voice_clone_impl(text, conditionals, config);
 }
 
-ChatterboxVoiceCloneOutputs ChatterboxTtsComponent::synthesize_voice_clone_impl(
+ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone_impl(
     const std::string & text,
     const ChatterboxConditionalsOutputs & conds,
     const ChatterboxVoiceCloneConfig & config) const {

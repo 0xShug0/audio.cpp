@@ -86,7 +86,7 @@ struct CodecTransformerLayerWeights {
     modules::AttentionWeights attention;
     modules::LayerScaleWeights attention_scale;
     modules::NormWeights ffn_norm;
-    modules::QwenMLPWeights feed_forward;
+    modules::DecoderMLPWeights feed_forward;
     modules::LayerScaleWeights ffn_scale;
 };
 
@@ -339,7 +339,7 @@ core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::
 core::TensorValue build_mlp(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const modules::QwenMLPWeights & weights) {
+    const modules::DecoderMLPWeights & weights) {
     auto gate = modules::LinearModule({kCodecDim, kCodecIntermediate, false, GGML_PREC_F32})
                     .build(ctx, input, weights.gate_proj);
     gate = modules::SiluModule{}.build(ctx, gate);
@@ -1238,6 +1238,7 @@ public:
         const int64_t samples = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length) * config.frame_length;
         const int64_t frames = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length);
         if (encode_graph_ == nullptr || !encode_graph_->matches(samples, frames, execution_.backend(), threads_, false)) {
+            encode_graph_.reset();
             encode_graph_ = std::make_unique<EncodeGraph>(
                 config,
                 component_->impl_->weights,
@@ -1256,6 +1257,7 @@ public:
         const int64_t samples = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length) * config.frame_length;
         const int64_t frames = ceil_div(static_cast<int64_t>(mono.size()), config.frame_length);
         if (encode_graph_ == nullptr || !encode_graph_->matches(samples, frames, execution_.backend(), threads_, true)) {
+            encode_graph_.reset();
             encode_graph_ = std::make_unique<EncodeGraph>(
                 config,
                 component_->impl_->weights,
@@ -1271,6 +1273,7 @@ public:
 
     runtime::AudioBuffer decode_codes(const FishDacCodes & codes) {
         if (decode_graph_ == nullptr || !decode_graph_->matches(codes.frames, execution_.backend(), threads_)) {
+            decode_graph_.reset();
             decode_graph_ = std::make_unique<DecodeGraph>(
                 component_->impl_->config,
                 component_->impl_->weights,
@@ -1283,6 +1286,7 @@ public:
 
     runtime::AudioBuffer decode_latents(const FishDacLatents & latents) {
         if (latent_decode_graph_ == nullptr || !latent_decode_graph_->matches(latents.frames, execution_.backend(), threads_)) {
+            latent_decode_graph_.reset();
             latent_decode_graph_ = std::make_unique<LatentDecodeGraph>(
                 component_->impl_->config,
                 component_->impl_->weights,
@@ -1299,6 +1303,11 @@ public:
         latents.frames = frames;
         latents.channels = component_->impl_->config.latent_dim;
         return decode_latents(latents);
+    }
+
+    void release_decode_graphs() {
+        decode_graph_.reset();
+        latent_decode_graph_.reset();
     }
 
     void release_encode_graph() {
@@ -1386,6 +1395,10 @@ runtime::AudioBuffer FishDacCodecRuntime::decode_latents(const FishDacLatents & 
 
 runtime::AudioBuffer FishDacCodecRuntime::decode_latents(const std::vector<float> & values, int64_t frames) {
     return impl_->decode_latents(values, frames);
+}
+
+void FishDacCodecRuntime::release_decode_graphs() {
+    impl_->release_decode_graphs();
 }
 
 void FishDacCodecRuntime::release_encode_graph() {

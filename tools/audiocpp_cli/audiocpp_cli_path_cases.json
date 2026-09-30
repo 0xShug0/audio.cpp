@@ -1,6 +1,21 @@
 {
   "cases": [
     {
+      "id": "tone_color_vc_vc",
+      "coverage": "Tone Color VC reference conditioning, resampling, posterior sampling, and same-session voice changes",
+      "family": "tone_color_vc",
+      "model": "models/Tone-Color-VC-GGUF/tone-color-vc-f32.gguf",
+      "task": "vc",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "reference_a", "audio": "assets/resources/sample_16k.wav", "voice_ref": "assets/resources/a.wav", "seed": 1234},
+        {"id": "reference_b", "audio": "assets/resources/sample_16k.wav", "voice_ref": "assets/resources/b.wav", "seed": 1234},
+        {"id": "reference_a_repeat", "audio": "assets/resources/sample_16k.wav", "voice_ref": "assets/resources/a.wav", "seed": 1234},
+        {"id": "no_noise", "audio": "assets/resources/a.wav", "voice_ref": "assets/resources/b.wav", "options": {"temperature": 0}, "seed": 1234}
+      ]
+    },
+    {
       "id": "maya1_voice_design",
       "coverage": "Maya1 voice-design TTS with inline emotion control",
       "family": "maya1",

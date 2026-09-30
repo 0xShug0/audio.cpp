@@ -219,7 +219,7 @@ void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
     ggml_backend_t backend = execution_context().backend();
     const DecoderCapacityContract contract = make_decoder_capacity_contract(capacity);
     double build_ms = 0.0;
-    kokoro_ggml::KokoroDecoderCapacityContract decoder_contract;
+    kokoro_ggml::KokoroIstftNetDecoderCapacityContract decoder_contract;
     decoder_contract.decoder_frames = contract.decoder_frame_capacity;
     decoder_contract.conditioning_frames = contract.conditioning_frame_capacity;
     if (prepared_decoder_) {
@@ -228,7 +228,7 @@ void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
         });
     } else {
         build_ms = measure_ms([&]() {
-            prepared_decoder_ = std::make_unique<kokoro_ggml::KokoroDecoderRuntime>(
+            prepared_decoder_ = std::make_unique<kokoro_ggml::KokoroIstftNetDecoderRuntime>(
                 weights_,
                 backend,
                 threads,

@@ -4,7 +4,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -220,12 +220,12 @@ core::TensorValue cache_view(
 }
 
 template <typename Config>
-modules::QwenCausalDecoderConfig make_qwen_decoder_config(
+modules::CausalDecoderConfig make_qwen_decoder_config(
     const Config & config,
     int64_t logits_size,
     bool is_vieneu = false,
     bool is_acoustic_decoder = false) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.num_attention_heads;
     out.stack.num_key_value_heads = config.num_key_value_heads;
@@ -235,22 +235,22 @@ modules::QwenCausalDecoderConfig make_qwen_decoder_config(
     out.stack.rms_norm_eps = config.rms_norm_eps;
     out.stack.rope_theta = config.rope_theta;
     if (is_vieneu && is_acoustic_decoder) {
-        out.stack.position_encoding = modules::QwenDecoderPositionEncoding::None; // Bypass RoPE
-        out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
+        out.stack.position_encoding = modules::DecoderPositionEncoding::None; // Bypass RoPE
+        out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
     }
     out.stack.attention_precision = GGML_PREC_F32;
     out.stack.use_qk_norm = true;
-    out.stack.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = logits_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     return out;
 }
 
-modules::QwenDecoderLayerWeights make_qwen_decoder_layer_weights(
+modules::DecoderLayerWeights make_qwen_decoder_layer_weights(
     core::ConstantTensorCache & constants,
     const TalkerLayerWeights & weights,
     bool is_vieneu = false) {
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_data(constants, weights.input_norm);
     if (is_vieneu) {
         out.self_attention.qkv_weight = binding::tensor_data(constants, weights.q_proj);
@@ -269,13 +269,13 @@ modules::QwenDecoderLayerWeights make_qwen_decoder_layer_weights(
     return out;
 }
 
-modules::QwenCausalDecoderWeights make_qwen_decoder_weights(
+modules::CausalDecoderWeights make_qwen_decoder_weights(
     core::ConstantTensorCache & constants,
     const std::vector<TalkerLayerWeights> & layers,
     const assets::TensorDataF32 & norm,
     const core::TensorValue & lm_head,
     bool is_vieneu = false) {
-    modules::QwenCausalDecoderWeights out;
+    modules::CausalDecoderWeights out;
     out.stack.layers.reserve(layers.size());
     for (const auto & layer : layers) {
         out.stack.layers.push_back(make_qwen_decoder_layer_weights(constants, layer, is_vieneu));
@@ -1189,7 +1189,7 @@ public:
         constants.begin_graph();
         const auto & root_config = weights_->assets().config;
         const int64_t logits_size = root_config.is_vieneu ? config.text_vocab_size : config.vocab_size;
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, logits_size, root_config.is_vieneu))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen_decoder_config(config, logits_size, root_config.is_vieneu))
                                .build(
                                    ctx,
                                    x,
@@ -1320,7 +1320,7 @@ public:
         constants.begin_graph();
         const auto & root_config = weights_->assets().config;
         const int64_t logits_size = root_config.is_vieneu ? config.text_vocab_size : config.vocab_size;
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, logits_size, root_config.is_vieneu))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen_decoder_config(config, logits_size, root_config.is_vieneu))
                                .build_static_cache_tail(
                                    ctx,
                                    graph_,
@@ -1827,7 +1827,7 @@ private:
         }
         const int64_t head_dim = attention_head_dim(config);
         prefill_graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
-        auto decoder_out = modules::QwenCausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size, root_config.is_vieneu, true))
+        auto decoder_out = modules::CausalDecoderModule(make_qwen_decoder_config(config, config.vocab_size, root_config.is_vieneu, true))
                                .build(
                                    ctx,
                                    x,
@@ -1908,8 +1908,8 @@ private:
         step.graph = ggml_new_graph_custom(ctx_.get(), 32768, false);
         const auto & step_head = tensor_weights.code_predictor.lm_heads.at(static_cast<size_t>(group));
         const auto decoder_config = make_qwen_decoder_config(config, config.vocab_size, root_config.is_vieneu, true);
-        const modules::QwenDecoderLayerModule layer_module(
-            modules::qwen_decoder_layer_config_from_stack(decoder_config.stack));
+        const modules::DecoderLayerModule layer_module(
+            modules::decoder_layer_config_from_stack(decoder_config.stack));
         for (size_t layer_index = 0; layer_index < tensor_weights.code_predictor.layers.size(); ++layer_index) {
             auto layer_out = layer_module.build_with_static_cache_tail(
                 ctx,

@@ -538,7 +538,7 @@ curl http://127.0.0.1:8080/v1/audio/alignments \
   -F file=@/path/to/input.wav
 ```
 
-`file`, `model`, and `text` are required; `language` is optional. The selected model must be configured with `task: "align"` and `mode: "offline"`. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. The response includes word timestamps in seconds plus sample offsets.
+`file`, `model`, and `text` are required. `language` is model-dependent: Qwen3 Forced Aligner requires it (for example, `English` or `Chinese`). The selected model must be configured with `task: "align"` and `mode: "offline"`. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. The response includes word timestamps in seconds plus sample offsets.
 
 ### `POST /v1/audio/transcriptions/live`
 
@@ -659,6 +659,30 @@ curl http://127.0.0.1:8080/v1/tasks/run \
     }
   }'
 ```
+
+### `POST /v1/tasks/batch`
+
+Runs multiple generic requests through a model's native offline batch path. The
+selected model must implement native batching; unsupported models are rejected
+instead of being run sequentially. Each entry uses the same fields as the
+`request` object accepted by `/v1/tasks/run`.
+
+```bash
+curl -N http://127.0.0.1:8080/v1/tasks/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "reuse",
+    "requests": [
+      {"audio": "/path/to/first.wav"},
+      {"audio": "/path/to/second.wav"}
+    ]
+  }'
+```
+
+The SSE response emits `task.batch.result` events with the original request
+index as results become available, followed by `task.batch.done` with aggregate
+batch timing. Per-result `timing` is `null` because fused execution does not
+produce an independent wall time for each request.
 
 ### `POST /v1/tasks/unload_models`
 

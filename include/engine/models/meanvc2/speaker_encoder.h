@@ -19,14 +19,14 @@ struct MeanVC2SpeakerFeatures {
     int64_t dims = 0;
 };
 
-class MeanVC2SpeakerEncoderRuntime final {
+class MeanVC2WavlmEcapaEncoderRuntime final {
 public:
-    MeanVC2SpeakerEncoderRuntime(
+    MeanVC2WavlmEcapaEncoderRuntime(
         std::shared_ptr<const engine::assets::TensorSource> wavlm_source,
         std::shared_ptr<const engine::assets::TensorSource> ecapa_source,
         engine::core::ExecutionContext & execution_context,
         engine::assets::TensorStorageType weight_storage_type);
-    ~MeanVC2SpeakerEncoderRuntime();
+    ~MeanVC2WavlmEcapaEncoderRuntime();
 
     MeanVC2SpeakerFeatures extract_features(const runtime::AudioBuffer & audio) const;
     std::vector<float> embed(const runtime::AudioBuffer & audio) const;

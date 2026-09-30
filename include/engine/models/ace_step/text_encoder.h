@@ -9,13 +9,13 @@
 
 namespace engine::models::ace_step {
 
-class AceStepQwenTextEncoderRuntime {
+class AceStepQwen3TextEncoderRuntime {
 public:
-    AceStepQwenTextEncoderRuntime(
+    AceStepQwen3TextEncoderRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const AceStepAssets> assets,
         assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native);
-    ~AceStepQwenTextEncoderRuntime();
+    ~AceStepQwen3TextEncoderRuntime();
 
     AceStepTextConditioning encode(const AceStepTokenizedText & tokens) const;
     AceStepTextConditioning embed_tokens(const AceStepTokenizedText & tokens) const;

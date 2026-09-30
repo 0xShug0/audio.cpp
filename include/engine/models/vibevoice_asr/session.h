@@ -68,17 +68,17 @@ private:
         const VibeVoiceASRRequest & request);
     VibeVoiceDecoderResult append_stream_embedding(
         const std::vector<float> & embedding,
-        VibeVoiceDecoderCachedState & state,
+        VibeVoiceQwen2CachedState & state,
         int64_t & steps);
     VibeVoiceDecoderResult append_stream_suffix(
         const std::vector<float> & embeddings,
         int64_t steps_to_append,
-        VibeVoiceDecoderCachedState & state,
+        VibeVoiceQwen2CachedState & state,
         int64_t & steps);
     std::string generate_streaming_text_chunk(
         const VibeVoiceASRRequest & request,
         VibeVoiceDecoderResult next_logits,
-        VibeVoiceDecoderCachedState & state,
+        VibeVoiceQwen2CachedState & state,
         int64_t & steps);
     std::vector<AudioChunkPlan> streaming_audio_chunk_plan(const runtime::AudioBuffer & audio) const;
     std::vector<int32_t> generate_tokens(
@@ -117,12 +117,12 @@ private:
     VibeVoiceASRTextTokenizer tokenizer_;
     VibeVoiceASRFrontend frontend_;
     VibeVoiceASRSpeechEncoder speech_encoder_;
-    VibeVoiceDecoderWeightsRuntime text_decoder_;
+    VibeVoiceQwen2WeightsRuntime text_decoder_;
     VibeVoiceASRPostprocessor postprocessor_;
     std::filesystem::path vad_model_path_;
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
     std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
-    std::unique_ptr<VibeVoiceDecoderCachedState> streaming_decoder_state_;
+    std::unique_ptr<VibeVoiceQwen2CachedState> streaming_decoder_state_;
     runtime::AudioBuffer streaming_audio_buffer_;
     runtime::TaskRequest streaming_request_;
     runtime::TaskResult streaming_result_;

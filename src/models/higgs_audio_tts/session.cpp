@@ -198,7 +198,7 @@ HiggsTTSSession::HiggsTTSSession(
 
     const auto attention_preference = resolve_attention_preference(options);
     trace_attention_preference(attention_preference);
-    ar_ = std::make_shared<HiggsARRuntime>(
+    ar_ = std::make_shared<HiggsQwen3ARRuntime>(
         assets_,
         execution_context(),
         ar_weight_context_bytes_,

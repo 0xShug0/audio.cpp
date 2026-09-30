@@ -26,9 +26,9 @@ engine::modules::WhisperEmbeddingConfig parse_whisper_config(const json::Value &
     return config;
 }
 
-Vevo2ARConfig parse_ar_config(const assets::ResourceBundle & resources) {
+Vevo2Qwen2ARConfig parse_ar_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("ar_config");
-    Vevo2ARConfig config;
+    Vevo2Qwen2ARConfig config;
     config.model_type = json::require_string(root, "model_type");
     config.vocab_size = json::require_i64(root, "vocab_size");
     config.hidden_size = json::require_i64(root, "hidden_size");

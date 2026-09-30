@@ -80,10 +80,10 @@ private:
     std::unique_ptr<DramaBoxGemmaTokenizer> tokenizer_;
     std::unique_ptr<DramaBoxGemma3PromptRuntime> gemma_prompt_;
     std::unique_ptr<DramaBoxPromptConnectorRuntime> prompt_connector_;
-    std::unique_ptr<DramaBoxDitRuntime> dit_;
-    std::unique_ptr<DramaBoxAudioVaeEncoderRuntime> audio_encoder_;
-    std::unique_ptr<DramaBoxAudioVaeDecoderRuntime> audio_decoder_;
-    std::unique_ptr<DramaBoxVocoderRuntime> vocoder_;
+    std::unique_ptr<DramaBoxDiTRuntime> dit_;
+    std::unique_ptr<DramaBoxAudioVAEEncoderRuntime> audio_encoder_;
+    std::unique_ptr<DramaBoxAudioVAEDecoderRuntime> audio_decoder_;
+    std::unique_ptr<DramaBoxBigVganRuntime> vocoder_;
     runtime::CacheSlots<PromptCacheKey, DramaBoxConditioningEncoding, PromptCacheKeyEqual> prompt_conditioning_cache_;
     runtime::CacheSlots<PromptCacheKey, DramaBoxConditioningEncoding, PromptCacheKeyEqual> negative_conditioning_cache_;
     runtime::CacheSlots<ReferenceCacheKey, DramaBoxEncodedReferenceLatents, ReferenceCacheKeyEqual> reference_latents_;

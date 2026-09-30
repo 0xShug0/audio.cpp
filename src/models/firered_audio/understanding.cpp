@@ -80,7 +80,7 @@ public:
         bool mem_saver)
         : assets_(std::move(assets)),
           tokenizer_(std::make_unique<FireRedAudioTokenizer>(assets_)),
-          audio_encoder_(std::make_unique<FireRedAudioAudioEncoderRuntime>(
+          audio_encoder_(std::make_unique<FireRedAudioEncoderRuntime>(
               assets_,
               execution,
               graph_arena_bytes,
@@ -202,7 +202,7 @@ public:
 private:
     std::shared_ptr<const FireRedAudioAssets> assets_;
     std::unique_ptr<FireRedAudioTokenizer> tokenizer_;
-    std::unique_ptr<FireRedAudioAudioEncoderRuntime> audio_encoder_;
+    std::unique_ptr<FireRedAudioEncoderRuntime> audio_encoder_;
     std::unique_ptr<FireRedAudioQwen35Runtime> qwen_;
     bool mem_saver_ = false;
 };

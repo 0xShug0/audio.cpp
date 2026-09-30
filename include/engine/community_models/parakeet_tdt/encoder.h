@@ -35,22 +35,22 @@ engine::core::TensorValue build_encoder_layer(
     const engine::core::TensorValue & attention_mask,
     const engine::core::TensorValue & keep_mask,
     const engine::core::TensorValue & projected_pos_emb,
-    const ParakeetEncoderLayerWeights & weights,
+    const ParakeetFastConformerLayerWeights & weights,
     int64_t hidden_size,
     int64_t intermediate_size,
     int64_t heads,
     int64_t conv_kernel,
     bool use_flash_attention = false);
 
-class ParakeetEncoderRuntime {
+class ParakeetFastConformerEncoderRuntime {
 public:
-    ParakeetEncoderRuntime(
+    ParakeetFastConformerEncoderRuntime(
         std::shared_ptr<const ParakeetTDTAssets> assets,
         std::shared_ptr<const ParakeetWeights> weights,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         bool use_flash_attention = false);
-    ~ParakeetEncoderRuntime();
+    ~ParakeetFastConformerEncoderRuntime();
 
     void prepare_capacity(int64_t input_frames, int64_t feature_dim);
     void release_offline_graph();

@@ -67,7 +67,7 @@ std::vector<float> make_relative_positional_encoding(int64_t batch, int64_t hidd
 
 }  // namespace
 
-struct HviskeEncoderRuntime::Graph {
+struct HviskeConformerEncoderRuntime::Graph {
     int64_t input_frames = 0;
     int64_t input_features = 0;
     int64_t encoded_frames = 0;
@@ -108,7 +108,7 @@ struct HviskeEncoderRuntime::Graph {
     }
 };
 
-HviskeEncoderRuntime::HviskeEncoderRuntime(
+HviskeConformerEncoderRuntime::HviskeConformerEncoderRuntime(
     std::shared_ptr<const HviskeASRAssets> assets,
     std::shared_ptr<const HviskeWeights> weights,
     engine::core::ExecutionContext & execution_context,
@@ -125,11 +125,11 @@ HviskeEncoderRuntime::HviskeEncoderRuntime(
     }
 }
 
-HviskeEncoderRuntime::~HviskeEncoderRuntime() = default;
-HviskeEncoderRuntime::HviskeEncoderRuntime(HviskeEncoderRuntime &&) noexcept = default;
-HviskeEncoderRuntime & HviskeEncoderRuntime::operator=(HviskeEncoderRuntime &&) noexcept = default;
+HviskeConformerEncoderRuntime::~HviskeConformerEncoderRuntime() = default;
+HviskeConformerEncoderRuntime::HviskeConformerEncoderRuntime(HviskeConformerEncoderRuntime &&) noexcept = default;
+HviskeConformerEncoderRuntime & HviskeConformerEncoderRuntime::operator=(HviskeConformerEncoderRuntime &&) noexcept = default;
 
-void HviskeEncoderRuntime::ensure_graph(int64_t input_frames, int64_t input_features) {
+void HviskeConformerEncoderRuntime::ensure_graph(int64_t input_frames, int64_t input_features) {
     if (input_frames <= 0 || input_features <= 0) {
         throw std::runtime_error("Hviske encoder graph requires positive input shape");
     }
@@ -353,11 +353,11 @@ void HviskeEncoderRuntime::ensure_graph(int64_t input_frames, int64_t input_feat
     debug::trace_log_scalar("hviske_asr.encoder.encoded_frames", stage3_frames);
 }
 
-void HviskeEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t input_features) {
+void HviskeConformerEncoderRuntime::prepare_capacity(int64_t input_frames, int64_t input_features) {
     ensure_graph(input_frames, input_features);
 }
 
-HviskeEncodedAudio HviskeEncoderRuntime::encode(const HviskeFrontendFeatures & features) {
+HviskeEncodedAudio HviskeConformerEncoderRuntime::encode(const HviskeFrontendFeatures & features) {
     if (execution_context_ == nullptr) {
         throw std::runtime_error("Hviske encoder execution context is null");
     }

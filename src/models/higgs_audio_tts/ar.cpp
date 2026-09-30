@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -40,10 +40,10 @@ struct GgmlContextDeleter {
     }
 };
 
-modules::QwenDecoderStackConfig make_higgs_qwen_stack_config(
+modules::DecoderStackConfig make_higgs_qwen3_stack_config(
     const HiggsTextConfig & config,
     bool allow_flash_attention = true) {
-    modules::QwenDecoderStackConfig out;
+    modules::DecoderStackConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
     out.num_key_value_heads = config.num_key_value_heads;
@@ -54,54 +54,54 @@ modules::QwenDecoderStackConfig make_higgs_qwen_stack_config(
     out.rope_theta = config.rope_theta;
     out.attention_precision = GGML_PREC_F32;
     out.projection_precision = GGML_PREC_DEFAULT;
-    out.qkv_layout = modules::QwenDecoderQKVLayout::Separate;
+    out.qkv_layout = modules::DecoderQKVLayout::Separate;
     out.use_qk_norm = true;
     // Eager graph for GPUs without a flash kernel (e.g. sm70).
     out.runtime.attention.allow_flash_attention = allow_flash_attention;
     if (allow_flash_attention) {
-        out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-        out.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::FlashWithPrefix;
+        out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+        out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
+        out.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
     } else {
-        out.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-        out.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::ManualRepeat;
-        out.runtime.attention.prefix_mode = modules::QwenDecoderPrefixAttentionMode::Exact;
+        out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
+        out.runtime.attention.static_mode = modules::DecoderAttentionMode::ManualRepeat;
+        out.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::Exact;
     }
-    out.runtime.static_cache.update_mode = modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
-    out.runtime.static_cache.set_rows_mode = modules::QwenDecoderStaticCacheSetRowsMode::BackendViewOptimized;
-    out.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
+    out.runtime.static_cache.set_rows_mode = modules::DecoderStaticCacheSetRowsMode::BackendViewOptimized;
+    out.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     return out;
 }
 
-class HiggsQwenDecoderComponent {
+class HiggsQwen3DecoderComponent {
 public:
-    HiggsQwenDecoderComponent(const HiggsTextConfig & config, bool packed_qkv, bool allow_flash_attention = true)
-        : stack_config_(make_higgs_qwen_stack_config(config, allow_flash_attention)),
-          layer_config_(modules::qwen_decoder_layer_config_from_stack(stack_config_)),
+    HiggsQwen3DecoderComponent(const HiggsTextConfig & config, bool packed_qkv, bool allow_flash_attention = true)
+        : stack_config_(make_higgs_qwen3_stack_config(config, allow_flash_attention)),
+          layer_config_(modules::decoder_layer_config_from_stack(stack_config_)),
           layer_module_([&] {
               layer_config_.qkv_layout = packed_qkv
-                  ? modules::QwenDecoderQKVLayout::PackedQKV
-                  : modules::QwenDecoderQKVLayout::Separate;
+                  ? modules::DecoderQKVLayout::PackedQKV
+                  : modules::DecoderQKVLayout::Separate;
               return layer_config_;
           }()) {}
 
-    modules::QwenDecoderLayerOutputs build_prefill_layer(
+    modules::DecoderLayerOutputs build_prefill_layer(
         core::ModuleBuildContext & ctx,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const modules::QwenDecoderLayerWeights & weights,
+        const modules::DecoderLayerWeights & weights,
         const core::TensorValue & attention_mask,
         const std::optional<core::TensorValue> & prefix_key = std::nullopt,
         const std::optional<core::TensorValue> & prefix_value = std::nullopt) const {
         return layer_module_.build(ctx, input, positions, weights, prefix_key, prefix_value, attention_mask);
     }
 
-    modules::QwenDecoderLayerOutputs build_decode_layer(
+    modules::DecoderLayerOutputs build_decode_layer(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
         const core::TensorValue & input,
         const core::TensorValue & positions,
-        const modules::QwenDecoderLayerWeights & weights,
+        const modules::DecoderLayerWeights & weights,
         const core::TensorValue & cache_key,
         const core::TensorValue & cache_value,
         const core::TensorValue & cache_slot,
@@ -119,9 +119,9 @@ public:
     }
 
 private:
-    modules::QwenDecoderStackConfig stack_config_;
-    modules::QwenDecoderLayerConfig layer_config_;
-    modules::QwenDecoderLayerModule layer_module_;
+    modules::DecoderStackConfig stack_config_;
+    modules::DecoderLayerConfig layer_config_;
+    modules::DecoderLayerModule layer_module_;
 };
 
 core::TensorValue higgs_cache_view(
@@ -150,7 +150,7 @@ core::TensorValue higgs_cache_view(
         cache.type);
 }
 
-modules::QwenDecoderLayerWeights load_layer_weights(
+modules::DecoderLayerWeights load_layer_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const HiggsTextConfig & config,
@@ -159,7 +159,7 @@ modules::QwenDecoderLayerWeights load_layer_weights(
     const std::string prefix = "body.layers." + std::to_string(layer_index);
     const int64_t q_out = config.num_attention_heads * config.head_dim;
     const int64_t kv_out = config.num_key_value_heads * config.head_dim;
-    modules::QwenDecoderLayerWeights weights;
+    modules::DecoderLayerWeights weights;
     weights.input_norm = {
         store.load_f32_tensor(source, prefix + ".input_layernorm.weight", {config.hidden_size}),
         std::nullopt,
@@ -244,12 +244,12 @@ modules::QwenDecoderLayerWeights load_layer_weights(
     return weights;
 }
 
-HiggsQwenDecoderStackWeights load_decoder_weights(
+HiggsQwen3DecoderStackWeights load_decoder_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const HiggsTextConfig & config,
     assets::TensorStorageType storage_type) {
-    HiggsQwenDecoderStackWeights weights;
+    HiggsQwen3DecoderStackWeights weights;
     weights.layers.reserve(static_cast<size_t>(config.num_hidden_layers));
     for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
         weights.layers.push_back(load_layer_weights(store, source, config, layer, storage_type));
@@ -259,7 +259,7 @@ HiggsQwenDecoderStackWeights load_decoder_weights(
 
 core::TensorValue build_higgs_decode_code_embedding(
     core::ModuleBuildContext & ctx,
-    const HiggsARWeights & weights,
+    const HiggsQwen3ARWeights & weights,
     const HiggsConfig & config,
     ggml_tensor * fused_code_ids) {
     auto code_ids = core::wrap_tensor(
@@ -275,7 +275,7 @@ core::TensorValue build_higgs_decode_code_embedding(
 
 core::TensorValue build_higgs_prefill_input_embedding(
     core::ModuleBuildContext & ctx,
-    const HiggsARWeights & weights,
+    const HiggsQwen3ARWeights & weights,
     const HiggsConfig & config,
     ggml_tensor * text_tokens,
     ggml_tensor * fused_code_ids,
@@ -318,7 +318,7 @@ core::TensorValue build_higgs_prefill_input_embedding(
 core::TensorValue build_modality_logits(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & hidden,
-    const HiggsARWeights & weights,
+    const HiggsQwen3ARWeights & weights,
     const HiggsConfig & config) {
     const int64_t out_features = config.audio.num_codebooks * config.audio.vocab_size;
     const bool use_fast_projection =
@@ -338,7 +338,7 @@ core::TensorValue build_modality_logits(
 
 }  // namespace
 
-HiggsARWeights load_higgs_ar_weights(
+HiggsQwen3ARWeights load_higgs_ar_weights(
     const HiggsAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -352,7 +352,7 @@ HiggsARWeights load_higgs_ar_weights(
     }
     const auto & config = assets.config;
     const auto & source = *assets.weights;
-    HiggsARWeights weights;
+    HiggsQwen3ARWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -383,7 +383,7 @@ void HiggsARDecodeTiming::add(const HiggsARDecodeTiming & other) noexcept {
     steps += other.steps;
 }
 
-HiggsARRuntime::HiggsARRuntime(
+HiggsQwen3ARRuntime::HiggsQwen3ARRuntime(
     std::shared_ptr<const HiggsAssets> assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
@@ -405,40 +405,40 @@ HiggsARRuntime::HiggsARRuntime(
     if (assets_->weights == nullptr) {
         throw std::runtime_error("Higgs TTS AR runtime requires tensor source");
     }
-    weights_ = std::make_shared<HiggsARWeights>(
+    weights_ = std::make_shared<HiggsQwen3ARWeights>(
         load_higgs_ar_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type));
 }
 
-const HiggsAssets & HiggsARRuntime::assets() const noexcept {
+const HiggsAssets & HiggsQwen3ARRuntime::assets() const noexcept {
     return *assets_;
 }
 
-const HiggsARWeights & HiggsARRuntime::weights() const noexcept {
+const HiggsQwen3ARWeights & HiggsQwen3ARRuntime::weights() const noexcept {
     return *weights_;
 }
 
-ggml_backend_t HiggsARRuntime::backend() const noexcept {
+ggml_backend_t HiggsQwen3ARRuntime::backend() const noexcept {
     return backend_;
 }
 
-bool HiggsARRuntime::allow_flash_attention() const noexcept {
+bool HiggsQwen3ARRuntime::allow_flash_attention() const noexcept {
     return allow_flash_attention_;
 }
 
-core::BackendType HiggsARRuntime::backend_type() const noexcept {
+core::BackendType HiggsQwen3ARRuntime::backend_type() const noexcept {
     return backend_type_;
 }
 
-int HiggsARRuntime::device() const noexcept {
+int HiggsQwen3ARRuntime::device() const noexcept {
     return device_;
 }
 
-int HiggsARRuntime::threads() const noexcept {
+int HiggsQwen3ARRuntime::threads() const noexcept {
     return threads_;
 }
 
-struct HiggsARKVCache::Impl {
-    Impl(std::shared_ptr<HiggsARRuntime> input_runtime, int64_t input_cache_steps)
+struct HiggsQwen3KVCache::Impl {
+    Impl(std::shared_ptr<HiggsQwen3ARRuntime> input_runtime, int64_t input_cache_steps)
         : runtime(std::move(input_runtime)),
           cache_steps(input_cache_steps) {
         if (runtime == nullptr) {
@@ -492,7 +492,7 @@ struct HiggsARKVCache::Impl {
         }
     }
 
-    bool can_run(const HiggsARRuntime & candidate_runtime, int64_t required_steps) const {
+    bool can_run(const HiggsQwen3ARRuntime & candidate_runtime, int64_t required_steps) const {
         return runtime.get() == &candidate_runtime && cache_steps >= required_steps;
     }
 
@@ -526,7 +526,7 @@ struct HiggsARKVCache::Impl {
         cache.advance_after_direct_append(steps);
     }
 
-    std::shared_ptr<HiggsARRuntime> runtime;
+    std::shared_ptr<HiggsQwen3ARRuntime> runtime;
     int64_t cache_steps = 0;
     size_t cache_layer_count = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
@@ -534,40 +534,40 @@ struct HiggsARKVCache::Impl {
     ggml_backend_buffer_t buffer = nullptr;
 };
 
-HiggsARKVCache::HiggsARKVCache(std::shared_ptr<HiggsARRuntime> runtime, int64_t cache_steps)
+HiggsQwen3KVCache::HiggsQwen3KVCache(std::shared_ptr<HiggsQwen3ARRuntime> runtime, int64_t cache_steps)
     : impl_(std::make_unique<Impl>(std::move(runtime), cache_steps)) {}
 
-HiggsARKVCache::~HiggsARKVCache() = default;
+HiggsQwen3KVCache::~HiggsQwen3KVCache() = default;
 
-bool HiggsARKVCache::can_run(const HiggsARRuntime & runtime, int64_t required_steps) const {
+bool HiggsQwen3KVCache::can_run(const HiggsQwen3ARRuntime & runtime, int64_t required_steps) const {
     return impl_->can_run(runtime, required_steps);
 }
 
-int64_t HiggsARKVCache::cache_steps() const {
+int64_t HiggsQwen3KVCache::cache_steps() const {
     return impl_->cache.cache_steps();
 }
 
-int64_t HiggsARKVCache::valid_steps() const {
+int64_t HiggsQwen3KVCache::valid_steps() const {
     return impl_->cache.valid_steps();
 }
 
-int64_t HiggsARKVCache::current_end() const {
+int64_t HiggsQwen3KVCache::current_end() const {
     return impl_->cache.current_end();
 }
 
-void HiggsARKVCache::reset() {
+void HiggsQwen3KVCache::reset() {
     impl_->reset();
 }
 
-void HiggsARKVCache::retain_prefix(int64_t prefix_steps) {
+void HiggsQwen3KVCache::retain_prefix(int64_t prefix_steps) {
     impl_->retain_prefix(prefix_steps);
 }
 
-void HiggsARKVCache::import_state(const runtime::TransformerKVState & state) {
+void HiggsQwen3KVCache::import_state(const runtime::TransformerKVState & state) {
     impl_->import_state(state);
 }
 
-void HiggsARKVCache::copy_from(const HiggsARKVCache & source) {
+void HiggsQwen3KVCache::copy_from(const HiggsQwen3KVCache & source) {
     if (impl_->runtime.get() != source.impl_->runtime.get() || valid_steps() != 0 ||
         source.current_end() != source.valid_steps() || cache_steps() < source.valid_steps()) {
         throw std::runtime_error("Higgs TTS AR cache copy requires an empty, compatible destination");
@@ -606,27 +606,27 @@ void HiggsARKVCache::copy_from(const HiggsARKVCache & source) {
     advance_after_direct_append(steps);
 }
 
-runtime::TransformerKVState HiggsARKVCache::export_state() const {
+runtime::TransformerKVState HiggsQwen3KVCache::export_state() const {
     return impl_->export_state();
 }
 
-void HiggsARKVCache::advance_after_direct_append(int64_t steps) {
+void HiggsQwen3KVCache::advance_after_direct_append(int64_t steps) {
     impl_->advance_after_direct_append(steps);
 }
 
-const core::TensorValue & HiggsARKVCache::key_tensor(size_t layer) const {
+const core::TensorValue & HiggsQwen3KVCache::key_tensor(size_t layer) const {
     return impl_->cache.key_tensor(layer);
 }
 
-const core::TensorValue & HiggsARKVCache::value_tensor(size_t layer) const {
+const core::TensorValue & HiggsQwen3KVCache::value_tensor(size_t layer) const {
     return impl_->cache.value_tensor(layer);
 }
 
-struct HiggsARDecodeGraph::Impl {
+struct HiggsQwen3DecodeGraph::Impl {
     Impl(
-        std::shared_ptr<HiggsARRuntime> input_runtime,
+        std::shared_ptr<HiggsQwen3ARRuntime> input_runtime,
         int64_t input_cache_steps,
-        HiggsARKVCache & input_cache,
+        HiggsQwen3KVCache & input_cache,
         size_t graph_arena_bytes)
         : runtime(std::move(input_runtime)),
           cache(&input_cache),
@@ -668,7 +668,7 @@ struct HiggsARDecodeGraph::Impl {
             GGML_TYPE_F16);
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
-        const HiggsQwenDecoderComponent decoder(
+        const HiggsQwen3DecoderComponent decoder(
             config.text, tensor_weights.packed_qkv, runtime->allow_flash_attention());
         for (size_t layer_index = 0; layer_index < tensor_weights.decoder.layers.size(); ++layer_index) {
             auto out = decoder.build_decode_layer(
@@ -710,7 +710,7 @@ struct HiggsARDecodeGraph::Impl {
         }
     }
 
-    bool can_run(const HiggsARRuntime & candidate_runtime, int64_t required_steps) const {
+    bool can_run(const HiggsQwen3ARRuntime & candidate_runtime, int64_t required_steps) const {
         return runtime.get() == &candidate_runtime && cache != nullptr && cache->can_run(candidate_runtime, required_steps);
     }
 
@@ -829,8 +829,8 @@ struct HiggsARDecodeGraph::Impl {
         ++steps;
     }
 
-    std::shared_ptr<HiggsARRuntime> runtime;
-    HiggsARKVCache * cache = nullptr;
+    std::shared_ptr<HiggsQwen3ARRuntime> runtime;
+    HiggsQwen3KVCache * cache = nullptr;
     int64_t cache_steps = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
     ggml_tensor * fused_code_ids = nullptr;
@@ -849,12 +849,12 @@ struct HiggsARDecodeGraph::Impl {
     int64_t steps = 0;
 };
 
-struct HiggsARPrefillGraph::Impl {
+struct HiggsQwen3PrefillGraph::Impl {
     Impl(
-        std::shared_ptr<HiggsARRuntime> input_runtime,
+        std::shared_ptr<HiggsQwen3ARRuntime> input_runtime,
         int64_t input_prompt_steps,
         int64_t input_start_step,
-        HiggsARKVCache * input_cache,
+        HiggsQwen3KVCache * input_cache,
         size_t graph_arena_bytes)
         : runtime(std::move(input_runtime)),
           target_cache(input_cache),
@@ -914,7 +914,7 @@ struct HiggsARPrefillGraph::Impl {
         graph = ggml_new_graph_custom(ctx.get(), 262144, false);
         keys.reserve(tensor_weights.decoder.layers.size());
         values.reserve(tensor_weights.decoder.layers.size());
-        const HiggsQwenDecoderComponent decoder(
+        const HiggsQwen3DecoderComponent decoder(
             config.text, tensor_weights.packed_qkv, runtime->allow_flash_attention());
         for (size_t layer_index = 0; layer_index < tensor_weights.decoder.layers.size(); ++layer_index) {
             std::optional<core::TensorValue> prefix_key;
@@ -974,7 +974,7 @@ struct HiggsARPrefillGraph::Impl {
         ggml_set_output(logits_output);
         ggml_build_forward_expand(graph, logits_output);
 
-        if ((runtime->backend_type() == core::BackendType::Cuda ||
+        if ((core::uses_ggml_cuda_or_hip_backend(runtime->backend_type()) ||
              runtime->backend_type() == core::BackendType::Vulkan) &&
             target_cache != nullptr) {
             // Prefill intermediates are needed only until their last consumer.
@@ -1000,8 +1000,8 @@ struct HiggsARPrefillGraph::Impl {
         fused_code_id_values.assign(static_cast<size_t>(run_steps * config.audio.num_codebooks), 0);
         text_gate_values.assign(static_cast<size_t>(run_steps), 0.0F);
         code_gate_values.assign(static_cast<size_t>(run_steps), 0.0F);
-        positions_values = modules::qwen_position_ids(run_steps, start_step);
-        attention_mask_values = modules::qwen_causal_suffix_mask_values(1, run_steps, start_step);
+        positions_values = modules::decoder_position_ids(run_steps, start_step);
+        attention_mask_values = modules::causal_suffix_mask_values(1, run_steps, start_step);
         engine::debug::timing_log_scalar(
             "higgs_audio_tts.ar.prefill.graph.build_ms",
             engine::debug::elapsed_ms(build_start, Clock::now()));
@@ -1015,7 +1015,7 @@ struct HiggsARPrefillGraph::Impl {
     }
 
     bool matches(
-        const HiggsARRuntime & candidate_runtime,
+        const HiggsQwen3ARRuntime & candidate_runtime,
         int64_t candidate_prompt_steps,
         int64_t candidate_start_step) const {
         return runtime.get() == &candidate_runtime &&
@@ -1024,7 +1024,7 @@ struct HiggsARPrefillGraph::Impl {
     }
 
     struct EmbeddingGraph {
-        EmbeddingGraph(const HiggsARRuntime & runtime, int64_t steps, size_t arena_bytes)
+        EmbeddingGraph(const HiggsQwen3ARRuntime & runtime, int64_t steps, size_t arena_bytes)
             : runtime(&runtime), steps(steps) {
             const auto & config = runtime.assets().config;
             ggml_init_params params{arena_bytes, nullptr, true};
@@ -1083,7 +1083,7 @@ struct HiggsARPrefillGraph::Impl {
             return hidden;
         }
 
-        const HiggsARRuntime * runtime = nullptr;
+        const HiggsQwen3ARRuntime * runtime = nullptr;
         int64_t steps = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
         ggml_tensor * text_tokens = nullptr;
@@ -1097,8 +1097,8 @@ struct HiggsARPrefillGraph::Impl {
 
     struct LayerGraph {
         LayerGraph(
-            const HiggsARRuntime & runtime,
-            const modules::QwenDecoderLayerWeights & layer,
+            const HiggsQwen3ARRuntime & runtime,
+            const modules::DecoderLayerWeights & layer,
             int64_t steps,
             size_t arena_bytes)
             : runtime(&runtime), steps(steps) {
@@ -1122,7 +1122,7 @@ struct HiggsARPrefillGraph::Impl {
                 attention_mask,
                 core::TensorShape::from_dims({1, 1, steps, steps}),
                 GGML_TYPE_F16);
-            const HiggsQwenDecoderComponent decoder(
+            const HiggsQwen3DecoderComponent decoder(
                 config.text, runtime.weights().packed_qkv, runtime.allow_flash_attention());
             auto out = decoder.build_prefill_layer(
                 build_ctx,
@@ -1141,9 +1141,9 @@ struct HiggsARPrefillGraph::Impl {
                 throw std::runtime_error("failed to allocate Higgs TTS AR layer prefill graph");
             }
 
-            const auto position_values = modules::qwen_position_ids(steps);
+            const auto position_values = modules::decoder_position_ids(steps);
             ggml_backend_tensor_set(positions, position_values.data(), 0, position_values.size() * sizeof(int32_t));
-            auto mask = modules::qwen_causal_prefill_mask_values(1, steps);
+            auto mask = modules::causal_prefill_mask_values(1, steps);
             ggml_backend_tensor_set(attention_mask, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         }
 
@@ -1184,7 +1184,7 @@ struct HiggsARPrefillGraph::Impl {
             return out;
         }
 
-        const HiggsARRuntime * runtime = nullptr;
+        const HiggsQwen3ARRuntime * runtime = nullptr;
         int64_t steps = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
         ggml_tensor * input = nullptr;
@@ -1198,7 +1198,7 @@ struct HiggsARPrefillGraph::Impl {
     };
 
     struct FinalGraph {
-        FinalGraph(const HiggsARRuntime & runtime, size_t arena_bytes) : runtime(&runtime) {
+        FinalGraph(const HiggsQwen3ARRuntime & runtime, size_t arena_bytes) : runtime(&runtime) {
             const auto & config = runtime.assets().config;
             ggml_init_params params{arena_bytes, nullptr, true};
             ctx.reset(ggml_init(params));
@@ -1248,7 +1248,7 @@ struct HiggsARPrefillGraph::Impl {
             return logits;
         }
 
-        const HiggsARRuntime * runtime = nullptr;
+        const HiggsQwen3ARRuntime * runtime = nullptr;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
         ggml_tensor * input = nullptr;
         ggml_tensor * output = nullptr;
@@ -1367,8 +1367,8 @@ struct HiggsARPrefillGraph::Impl {
         return out;
     }
 
-    std::shared_ptr<HiggsARRuntime> runtime;
-    HiggsARKVCache * target_cache = nullptr;
+    std::shared_ptr<HiggsQwen3ARRuntime> runtime;
+    HiggsQwen3KVCache * target_cache = nullptr;
     int64_t prompt_steps = 0;
     int64_t start_step = 0;
     int64_t run_steps = 0;
@@ -1396,58 +1396,58 @@ struct HiggsARPrefillGraph::Impl {
     std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator{nullptr, ggml_gallocr_free};
 };
 
-HiggsARPrefillGraph::HiggsARPrefillGraph(
-    std::shared_ptr<HiggsARRuntime> runtime,
+HiggsQwen3PrefillGraph::HiggsQwen3PrefillGraph(
+    std::shared_ptr<HiggsQwen3ARRuntime> runtime,
     int64_t prompt_steps,
     int64_t start_step,
-    HiggsARKVCache * cache,
+    HiggsQwen3KVCache * cache,
     size_t graph_arena_bytes)
     : impl_(std::make_unique<Impl>(std::move(runtime), prompt_steps, start_step, cache, graph_arena_bytes)) {}
 
-HiggsARPrefillGraph::~HiggsARPrefillGraph() = default;
+HiggsQwen3PrefillGraph::~HiggsQwen3PrefillGraph() = default;
 
-bool HiggsARPrefillGraph::matches(
-    const HiggsARRuntime & runtime,
+bool HiggsQwen3PrefillGraph::matches(
+    const HiggsQwen3ARRuntime & runtime,
     int64_t prompt_steps,
     int64_t start_step) const {
     return impl_->matches(runtime, prompt_steps, start_step);
 }
 
-HiggsARPrefillOutput HiggsARPrefillGraph::run(const HiggsARPrefillInput & input, int64_t start_step) {
+HiggsARPrefillOutput HiggsQwen3PrefillGraph::run(const HiggsARPrefillInput & input, int64_t start_step) {
     return impl_->run(input, start_step);
 }
 
 
-HiggsARDecodeGraph::HiggsARDecodeGraph(
-    std::shared_ptr<HiggsARRuntime> runtime,
+HiggsQwen3DecodeGraph::HiggsQwen3DecodeGraph(
+    std::shared_ptr<HiggsQwen3ARRuntime> runtime,
     int64_t cache_steps,
-    HiggsARKVCache & cache,
+    HiggsQwen3KVCache & cache,
     size_t graph_arena_bytes)
     : impl_(std::make_unique<Impl>(std::move(runtime), cache_steps, cache, graph_arena_bytes)) {}
 
-HiggsARDecodeGraph::~HiggsARDecodeGraph() = default;
+HiggsQwen3DecodeGraph::~HiggsQwen3DecodeGraph() = default;
 
-bool HiggsARDecodeGraph::can_run(const HiggsARRuntime & runtime, int64_t required_steps) const {
+bool HiggsQwen3DecodeGraph::can_run(const HiggsQwen3ARRuntime & runtime, int64_t required_steps) const {
     return impl_->can_run(runtime, required_steps);
 }
 
-int64_t HiggsARDecodeGraph::cache_steps() const {
+int64_t HiggsQwen3DecodeGraph::cache_steps() const {
     return impl_->cache_steps_value();
 }
 
-void HiggsARDecodeGraph::import_prefill_state(const runtime::TransformerKVState & state) {
+void HiggsQwen3DecodeGraph::import_prefill_state(const runtime::TransformerKVState & state) {
     impl_->import_prefill_state(state);
 }
 
-void HiggsARDecodeGraph::begin_decode_run() {
+void HiggsQwen3DecodeGraph::begin_decode_run() {
     impl_->begin_decode_run();
 }
 
-HiggsARDecodeTiming HiggsARDecodeGraph::timing() const {
+HiggsARDecodeTiming HiggsQwen3DecodeGraph::timing() const {
     return impl_->timing();
 }
 
-void HiggsARDecodeGraph::run_step_into(
+void HiggsQwen3DecodeGraph::run_step_into(
     const HiggsARDecodeInput & input,
     HiggsARDecodeOutput & output,
     bool log_timing) {

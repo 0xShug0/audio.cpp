@@ -597,7 +597,7 @@ MioTTSSession::MioTTSSession(
         runtime::find_option(options.options, {"miotts.best_of_n_language"}).value_or("auto"));
     best_of_n_asr_model_path_ = resolve_best_of_n_asr_model_path(options, *assets_);
     tokenizer_ = std::make_unique<MioTTSTokenizer>(assets_);
-    language_model_ = std::make_unique<MioTTSCausalLMRuntime>(
+    language_model_ = std::make_unique<MioTTSQwen3Runtime>(
         assets_,
         execution_context(),
         runtime::parse_size_mb_option(options.options, {"miotts.prefill_graph_arena_mb"}, kDefaultLmPrefillGraphArenaBytes),

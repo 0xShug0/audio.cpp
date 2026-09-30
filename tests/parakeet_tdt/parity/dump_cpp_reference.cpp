@@ -12,7 +12,7 @@
 //
 //   1. mel_features + enc_out: driven straight through the real, unmodified
 //      production entry points (ParakeetFrontend::extract,
-//      ParakeetEncoderRuntime::encode) exactly as inference does. This is
+//      ParakeetFastConformerEncoderRuntime::encode) exactly as inference does. This is
 //      the most end-to-end signal available and needs no isolation.
 //
 //   2. layer_0: built via the exported build_encoder_layer(...) function in
@@ -59,8 +59,8 @@ std::string arg_value(int argc, char ** argv, const std::string & name, const st
 // graph at all.
 std::vector<float> run_isolated_layer(
     engine::core::ExecutionContext & exec,
-    const ParakeetEncoderLayerWeights & layer_weights,
-    const ParakeetEncoderConfig & enc_cfg,
+    const ParakeetFastConformerLayerWeights & layer_weights,
+    const ParakeetFastConformerConfig & enc_cfg,
     const std::vector<float> & pre_encode,  // [T, D], row-major, D fastest
     const std::vector<float> & pos_emb_raw,  // [P, D], row-major, D fastest (P = 2T-1)
     int64_t frames,
@@ -189,7 +189,7 @@ int main(int argc, char ** argv) {
         std::printf("mel_features: frames=%lld feature_dim=%lld\n", (long long)feats.frames, (long long)feats.feature_dim);
 
         // --- 1b. full encoder: straight through the real entry point ---
-        ParakeetEncoderRuntime encoder(assets, weights, exec, 1024ull * 1024ull * 1024ull, use_flash_attention);
+        ParakeetFastConformerEncoderRuntime encoder(assets, weights, exec, 1024ull * 1024ull * 1024ull, use_flash_attention);
         encoder.prepare_capacity(feats.frames, feats.feature_dim);
         const auto encoded = encoder.encode(feats);
         // encoded.values is time-major [frames, hidden_size].

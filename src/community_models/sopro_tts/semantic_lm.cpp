@@ -5,8 +5,8 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
-#include "engine/framework/modules/transformers/qwen_causal_decoder.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <algorithm>
@@ -50,7 +50,7 @@ struct SoproSemanticLMHostWeights {
 struct SoproSemanticLMBackendWeights {
     std::shared_ptr<engine::core::BackendWeightStore> store;
     engine::core::TensorValue token_embedding;
-    engine::modules::QwenDecoderStackWeights stack;
+    engine::modules::DecoderStackWeights stack;
     engine::modules::NormWeights final_norm;
     engine::modules::LinearWeights token_head;
 };
@@ -105,10 +105,10 @@ std::vector<float> scale_rows(std::vector<float> weight, const std::vector<float
     return weight;
 }
 
-engine::modules::QwenCausalDecoderConfig make_decoder_config(
+engine::modules::CausalDecoderConfig make_decoder_config(
     const SoproModelConfig & config,
     engine::core::BackendType backend_type) {
-    engine::modules::QwenCausalDecoderConfig out;
+    engine::modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.ar_model_dim;
     out.stack.num_attention_heads = config.ar_heads;
     out.stack.num_key_value_heads = config.ar_kv_heads;
@@ -123,20 +123,20 @@ engine::modules::QwenCausalDecoderConfig make_decoder_config(
     out.stack.attention_precision = GGML_PREC_DEFAULT;
     out.stack.projection_precision = GGML_PREC_DEFAULT;
     out.stack.use_qk_norm = config.ar_qk_rms_norm;
-    out.stack.qkv_layout = engine::modules::QwenDecoderQKVLayout::PackedQKV;
-    out.stack.runtime.mlp.mode = engine::modules::QwenDecoderMLPMode::PackedGateUp;
-    out.stack.runtime.attention.prefill_mode = engine::modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.attention.static_mode = engine::modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
-    out.stack.runtime.static_cache.update_mode = engine::modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+    out.stack.qkv_layout = engine::modules::DecoderQKVLayout::PackedQKV;
+    out.stack.runtime.mlp.mode = engine::modules::DecoderMLPMode::PackedGateUp;
+    out.stack.runtime.attention.prefill_mode = engine::modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.attention.static_mode = engine::modules::DecoderAttentionMode::FlashGroupedViewKV;
+    out.stack.runtime.static_cache.update_mode = engine::modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     out.logits_size = config.semantic_vocab_size + 2;
-    out.logits_mode = engine::modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = engine::modules::CausalDecoderLogitsMode::LastStep;
     out.use_lm_head_bias = true;  // SemanticLM.token_head is a biased Linear
     out.lm_head_precision = GGML_PREC_DEFAULT;
     (void) backend_type;
     return out;
 }
 
-engine::modules::QwenDecoderLayerWeights load_layer(
+engine::modules::DecoderLayerWeights load_layer(
     engine::core::BackendWeightStore & store,
     const engine::assets::TensorSource & source,
     const SoproModelConfig & config,
@@ -149,7 +149,7 @@ engine::modules::QwenDecoderLayerWeights load_layer(
     const int64_t kv_out = config.ar_kv_heads * head_dim;
     const int64_t ffn = config.ar_ffn_dim();
 
-    engine::modules::QwenDecoderLayerWeights out;
+    engine::modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".attn_norm", dim);
     auto qkv = source.require_f32(prefix + ".attn.q_proj.weight", {q_out, dim});
     const auto k_rows = source.require_f32(prefix + ".attn.k_proj.weight", {kv_out, dim});
@@ -455,20 +455,20 @@ public:
             config_.semantic_vocab_size + 2, config_.ar_model_dim, true);
         store.upload();
 
-        engine::modules::QwenCausalDecodeRuntimeConfig runtime_config;
+        engine::modules::CausalDecoderRuntimeConfig runtime_config;
         runtime_config.trace_name = "sopro_tts.semantic_lm";
         runtime_config.decoder = make_decoder_config(config_, execution.backend_type());
         runtime_config.prefill_graph_arena_bytes = prefill_graph_arena_bytes;
         runtime_config.decode_graph_arena_bytes = decode_graph_arena_bytes;
-        runtime_config.output_mode = engine::modules::QwenCausalDecodeOutputMode::Logits;
+        runtime_config.output_mode = engine::modules::CausalDecoderOutputMode::Logits;
         runtime_config.return_hidden = false;
 
-        engine::modules::QwenCausalDecodeRuntimeWeights runtime_weights;
+        engine::modules::CausalDecoderRuntimeWeights runtime_weights;
         runtime_weights.token_embedding = backend_.token_embedding;
         runtime_weights.stack = backend_.stack;
         runtime_weights.final_norm = backend_.final_norm;
         runtime_weights.lm_head = backend_.token_head;
-        decoder_ = std::make_unique<engine::modules::QwenCausalDecodeRuntime>(
+        decoder_ = std::make_unique<engine::modules::CausalDecoderRuntime>(
             execution, std::move(runtime_config), std::move(runtime_weights));
     }
 
@@ -565,7 +565,7 @@ private:
     const SoproModelConfig & config_;
     SoproSemanticLMHostWeights host_;
     SoproSemanticLMBackendWeights backend_;
-    std::unique_ptr<engine::modules::QwenCausalDecodeRuntime> decoder_;
+    std::unique_ptr<engine::modules::CausalDecoderRuntime> decoder_;
 };
 
 SoproSemanticLMRuntime::SoproSemanticLMRuntime(

@@ -76,7 +76,7 @@ int main(int argc, char ** argv) {
             }
             const auto qwen = engine::assets::open_tensor_source(qwen_dir / "model.safetensors.index.json");
             engine::core::ExecutionContext execution({engine::core::BackendType::Cuda, 0, 8});
-            engine::models::auk::AudioConditioningRuntime runtime(execution, *qwen, frames);
+            engine::models::auk::AuKQwen25OmniAudioEncoderRuntime runtime(execution, *qwen, frames);
             const auto actual = runtime.encode(features);
             const auto expected = reference->require_f32("qwen.audio_output");
             if (actual.size() != expected.size()) throw std::runtime_error("audio tower output shape mismatch");
@@ -205,12 +205,12 @@ int main(int argc, char ** argv) {
             const bool bf16 = manifest.require("dtype").as_string() == "bf16";
             const bool native_audio = argc == 9 && std::string(argv[7]) == "--native-audio";
             auto audio_embeddings = audio_tokens > 0 ? reference->require_f32("qwen.audio_output") : std::vector<float>{};
-            std::unique_ptr<engine::models::auk::AudioConditioningRuntime> audio_runtime;
+            std::unique_ptr<engine::models::auk::AuKQwen25OmniAudioEncoderRuntime> audio_runtime;
             if (native_audio) {
                 if (audio_tokens == 0 || bf16) throw std::runtime_error("native audio test requires an FP32 audio fixture");
                 const auto wav = engine::audio::read_wav_f32(std::filesystem::path(argv[8]));
                 const auto features = engine::models::auk::extract_audio_features(wav.samples, wav.sample_rate, wav.channels, 8);
-                audio_runtime = std::make_unique<engine::models::auk::AudioConditioningRuntime>(execution, *qwen, features.frames);
+                audio_runtime = std::make_unique<engine::models::auk::AuKQwen25OmniAudioEncoderRuntime>(execution, *qwen, features.frames);
                 audio_embeddings = audio_runtime->encode(features.values);
                 if (audio_embeddings.size() != static_cast<size_t>(audio_tokens * 2048)) {
                     throw std::runtime_error("native audio token count differs from Python");
@@ -219,7 +219,7 @@ int main(int argc, char ** argv) {
                     manifest.require("instruction").as_string(), audio_embeddings.size() / 2048);
                 if (native_input.token_ids != input.token_ids) throw std::runtime_error("native audio prompt differs from Python");
             }
-            engine::models::auk::ConditioningRuntime runtime(execution, *qwen, *auk, ids.size(),
+            engine::models::auk::AuKQwen25OmniConditioningRuntime runtime(execution, *qwen, *auk, ids.size(),
                 reference->has_tensor("qwen.layer.0") || audio_tokens > 0, bf16, audio_tokens);
             const auto output = runtime.encode(input, audio_embeddings);
             const auto layers = runtime.captured_layers();

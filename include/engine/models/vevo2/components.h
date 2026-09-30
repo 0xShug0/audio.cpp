@@ -21,16 +21,16 @@ namespace engine::models::vevo2 {
 struct Vevo2CocoTokenizerWeights;
 struct Vevo2CocoTokenizerGraph;
 
-class Vevo2ProsodyTokenizerRuntime final {
+class Vevo2CocoProsodyTokenizerRuntime final {
 public:
-    Vevo2ProsodyTokenizerRuntime(
+    Vevo2CocoProsodyTokenizerRuntime(
         const Vevo2Assets & assets,
         engine::core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         size_t graph_context_bytes,
         engine::assets::TensorStorageType matmul_weight_storage_type,
         engine::assets::TensorStorageType conv_weight_storage_type);
-    ~Vevo2ProsodyTokenizerRuntime();
+    ~Vevo2CocoProsodyTokenizerRuntime();
 
     Vevo2TokenSequence encode(
         const runtime::AudioBuffer & prosody_audio,
@@ -52,16 +52,16 @@ private:
     std::string name_;
 };
 
-class Vevo2ContentStyleTokenizerRuntime final {
+class Vevo2CocoContentStyleTokenizerRuntime final {
 public:
-    Vevo2ContentStyleTokenizerRuntime(
+    Vevo2CocoContentStyleTokenizerRuntime(
         const Vevo2Assets & assets,
         engine::core::ExecutionContext & execution_context,
         size_t weight_context_bytes,
         size_t graph_context_bytes,
         engine::assets::TensorStorageType matmul_weight_storage_type,
         engine::assets::TensorStorageType conv_weight_storage_type);
-    ~Vevo2ContentStyleTokenizerRuntime();
+    ~Vevo2CocoContentStyleTokenizerRuntime();
 
     Vevo2TokenSequence encode_style_reference(
         const std::optional<runtime::AudioBuffer> & style_ref_audio,

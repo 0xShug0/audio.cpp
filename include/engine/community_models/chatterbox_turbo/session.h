@@ -28,7 +28,7 @@ public:
 private:
     runtime::TaskSpec task_;
     std::shared_ptr<const ChatterboxTurboAssets> assets_;
-    std::unique_ptr<ChatterboxTurboTtsComponent> component_;
+    std::unique_ptr<ChatterboxTurboTTSComponent> component_;
 };
 
 }  // namespace engine::community_models::chatterbox_turbo

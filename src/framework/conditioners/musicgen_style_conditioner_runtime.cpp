@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/module.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/positional_encoding.h"
 #include "engine/framework/modules/attention/self_attention.h"
 #include "engine/framework/modules/linear_module.h"
@@ -416,8 +416,8 @@ MusicGenStyleConfig MusicGenStyleConfig::mert_default() {
     config.mert.materialize_output = true;
     config.mert.release_graph_after_encode = true;
     config.mert.final_projection_size = 0;
-    config.mert.feature_extractor_norm = modules::HubertFeatureExtractorNorm::FirstLayerGroupNorm;
-    config.mert.encoder_layer_norm_order = modules::HubertEncoderLayerNormOrder::PostNorm;
+    config.mert.feature_extractor_norm = modules::Wav2Vec2FeatureExtractorNorm::FirstLayerGroupNorm;
+    config.mert.encoder_layer_norm_order = modules::Wav2Vec2EncoderLayerNormOrder::PostNorm;
     return config;
 }
 
@@ -431,7 +431,7 @@ struct MusicGenStyleConditionerRuntime::Impl {
         : execution(execution_ref),
           config(std::move(config_value)),
           options(options_value),
-          mert(modules::HubertEncoderComponent::load_from_tensor_source(
+          mert(modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
               std::move(mert_source),
               execution_ref.config(),
               config.mert,
@@ -440,8 +440,8 @@ struct MusicGenStyleConditionerRuntime::Impl {
         validate_config(config);
     }
 
-    static modules::HubertEncoderWeightBinding mert_binding(const MusicGenStyleRuntimeOptions & options) {
-        modules::HubertEncoderWeightBinding binding;
+    static modules::Wav2Vec2EncoderWeightBinding mert_binding(const MusicGenStyleRuntimeOptions & options) {
+        modules::Wav2Vec2EncoderWeightBinding binding;
         binding.conv_storage_type = options.weight_storage_type;
         binding.positional_conv_storage_type = options.weight_storage_type;
         binding.projection_storage_type = options.weight_storage_type;
@@ -454,7 +454,7 @@ struct MusicGenStyleConditionerRuntime::Impl {
     core::ExecutionContext & execution;
     MusicGenStyleConfig config;
     MusicGenStyleRuntimeOptions options;
-    modules::HubertEncoderComponent mert;
+    modules::Wav2Vec2EncoderRuntime mert;
     StyleWeights weights;
     std::unique_ptr<StyleGraph> style_graph;
     std::unique_ptr<ProjectionGraph> projection_graph;

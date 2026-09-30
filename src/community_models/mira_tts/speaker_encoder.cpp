@@ -475,7 +475,7 @@ std::vector<float> compute_mira_reference_mel(const runtime::AudioBuffer & audio
     return get_cached_mel_spectrogram_frontend(config)->extract_mono(waveform, threads).values;
 }
 
-struct MiraSpeakerEncoder::Impl {
+struct MiraEcapaPerceiverEncoder::Impl {
     Impl(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution,
@@ -566,7 +566,7 @@ struct MiraSpeakerEncoder::Impl {
     ggml_tensor * output_tensor = nullptr;
 };
 
-MiraSpeakerEncoder::MiraSpeakerEncoder(
+MiraEcapaPerceiverEncoder::MiraEcapaPerceiverEncoder(
     const MiraTTSAssets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
@@ -577,9 +577,9 @@ MiraSpeakerEncoder::MiraSpeakerEncoder(
           assets, execution, weight_context_bytes, graph_context_bytes,
           linear_storage_type, conv_storage_type)) {}
 
-MiraSpeakerEncoder::~MiraSpeakerEncoder() = default;
+MiraEcapaPerceiverEncoder::~MiraEcapaPerceiverEncoder() = default;
 
-std::vector<int32_t> MiraSpeakerEncoder::encode(
+std::vector<int32_t> MiraEcapaPerceiverEncoder::encode(
     const runtime::AudioBuffer & reference_audio) {
     return impl_->encode(reference_audio);
 }

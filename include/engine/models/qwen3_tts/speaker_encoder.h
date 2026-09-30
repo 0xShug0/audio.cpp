@@ -13,8 +13,8 @@
 
 namespace engine::models::qwen3_tts {
 
-class Qwen3SpeakerEncoderGraph;
-struct Qwen3SpeakerEncoderWeights;
+class Qwen3TTSEcapaTdnnEncoderGraph;
+struct Qwen3TTSEcapaTdnnEncoderWeights;
 
 struct Qwen3SpeakerFeatures {
     std::vector<float> values;
@@ -24,14 +24,14 @@ struct Qwen3SpeakerFeatures {
 
 audio::AudioTensor compute_qwen3_speaker_mel(const runtime::AudioBuffer & audio, int threads);
 
-class Qwen3SpeakerEncoderRuntime {
+class Qwen3TTSEcapaTdnnEncoderRuntime {
 public:
-    Qwen3SpeakerEncoderRuntime(
+    Qwen3TTSEcapaTdnnEncoderRuntime(
         std::shared_ptr<const Qwen3TTSAssets> assets,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         engine::assets::TensorStorageType conv_weight_storage_type);
-    ~Qwen3SpeakerEncoderRuntime();
+    ~Qwen3TTSEcapaTdnnEncoderRuntime();
 
     Qwen3SpeakerEmbedding encode(const runtime::AudioBuffer & audio) const;
     Qwen3SpeakerFeatures extract_features(const runtime::AudioBuffer & audio) const;
@@ -39,10 +39,10 @@ public:
 
 private:
     std::shared_ptr<const Qwen3TTSAssets> assets_;
-    std::shared_ptr<const Qwen3SpeakerEncoderWeights> weights_;
+    std::shared_ptr<const Qwen3TTSEcapaTdnnEncoderWeights> weights_;
     core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;
-    mutable std::unique_ptr<Qwen3SpeakerEncoderGraph> graph_;
+    mutable std::unique_ptr<Qwen3TTSEcapaTdnnEncoderGraph> graph_;
 };
 
 }  // namespace engine::models::qwen3_tts

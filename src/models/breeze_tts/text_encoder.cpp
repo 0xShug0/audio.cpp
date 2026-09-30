@@ -83,18 +83,18 @@ modules::T5GemmaEncoderLayerWeights load_text_layer(
     return out;
 }
 
-struct BreezeTextWeights {
+struct BreezeT5Gemma2TextWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::T5GemmaEncoderWeights encoder;
     modules::LinearWeights projector;
 };
 
-std::shared_ptr<const BreezeTextWeights> load_text_weights(
+std::shared_ptr<const BreezeT5Gemma2TextWeights> load_text_weights(
     const BreezeTTSAssets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
-    auto out = std::make_shared<BreezeTextWeights>();
+    auto out = std::make_shared<BreezeT5Gemma2TextWeights>();
     out->store = std::make_shared<core::BackendWeightStore>(
         execution.backend(),
         execution.backend_type(),
@@ -130,13 +130,13 @@ std::vector<float> full_attention_mask(int64_t heads, int64_t tokens) {
 
 }  // namespace
 
-struct BreezeTextEncoderRuntime::Impl {
+struct BreezeT5Gemma2TextEncoderRuntime::Impl {
     struct Graph {
         Graph(
             core::ExecutionContext & execution,
             size_t graph_arena_bytes,
             const BreezeTTSConfig & config,
-            std::shared_ptr<const BreezeTextWeights> weights,
+            std::shared_ptr<const BreezeT5Gemma2TextWeights> weights,
             int64_t tokens)
             : execution(execution),
               config(config),
@@ -210,7 +210,7 @@ struct BreezeTextEncoderRuntime::Impl {
 
         core::ExecutionContext & execution;
         BreezeTTSConfig config;
-        std::shared_ptr<const BreezeTextWeights> weights;
+        std::shared_ptr<const BreezeT5Gemma2TextWeights> weights;
         int64_t tokens = 0;
         std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
         core::TensorValue input_ids_value;
@@ -257,11 +257,11 @@ struct BreezeTextEncoderRuntime::Impl {
     std::shared_ptr<const BreezeTTSAssets> assets;
     core::ExecutionContext & execution;
     size_t graph_arena_bytes = 0;
-    std::shared_ptr<const BreezeTextWeights> weights;
+    std::shared_ptr<const BreezeT5Gemma2TextWeights> weights;
     std::unique_ptr<Graph> graph;
 };
 
-BreezeTextEncoderRuntime::BreezeTextEncoderRuntime(
+BreezeT5Gemma2TextEncoderRuntime::BreezeT5Gemma2TextEncoderRuntime(
     std::shared_ptr<const BreezeTTSAssets> assets,
     engine::core::ExecutionContext & execution,
     size_t graph_arena_bytes,
@@ -269,13 +269,13 @@ BreezeTextEncoderRuntime::BreezeTextEncoderRuntime(
     engine::assets::TensorStorageType storage_type)
     : impl_(std::make_unique<Impl>(std::move(assets), execution, graph_arena_bytes, weight_context_bytes, storage_type)) {}
 
-BreezeTextEncoderRuntime::~BreezeTextEncoderRuntime() = default;
+BreezeT5Gemma2TextEncoderRuntime::~BreezeT5Gemma2TextEncoderRuntime() = default;
 
-BreezeProjectedText BreezeTextEncoderRuntime::encode(const std::vector<int32_t> & input_ids) {
+BreezeProjectedText BreezeT5Gemma2TextEncoderRuntime::encode(const std::vector<int32_t> & input_ids) {
     return impl_->encode(input_ids);
 }
 
-void BreezeTextEncoderRuntime::release_runtime_graphs() {
+void BreezeT5Gemma2TextEncoderRuntime::release_runtime_graphs() {
     impl_->release_runtime_graphs();
 }
 

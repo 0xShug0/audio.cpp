@@ -34,7 +34,7 @@ int32_t argmax_dur(const std::vector<float>& v, int64_t vocab_sz, int64_t n_dur)
 
 }  // namespace
 
-struct ParakeetDecoderRuntime::StepGraph {
+struct ParakeetTDTDecoderRuntime::StepGraph {
     std::unique_ptr<ggml_context, GgmlDeleter> ggml;
     ggml_cgraph* graph = nullptr;
     ggml_gallocr_t alloc = nullptr;
@@ -45,7 +45,7 @@ struct ParakeetDecoderRuntime::StepGraph {
     ~StepGraph() { if (alloc) ggml_gallocr_free(alloc); }
 };
 
-struct ParakeetDecoderRuntime::JointGraph {
+struct ParakeetTDTDecoderRuntime::JointGraph {
     std::unique_ptr<ggml_context, GgmlDeleter> ggml;
     ggml_cgraph* graph = nullptr;
     ggml_gallocr_t alloc = nullptr;
@@ -54,16 +54,16 @@ struct ParakeetDecoderRuntime::JointGraph {
     ~JointGraph() { if (alloc) ggml_gallocr_free(alloc); }
 };
 
-ParakeetDecoderRuntime::ParakeetDecoderRuntime(
+ParakeetTDTDecoderRuntime::ParakeetTDTDecoderRuntime(
     std::shared_ptr<const ParakeetTDTAssets> a, std::shared_ptr<const ParakeetWeights> w,
     engine::core::ExecutionContext& ec, size_t arena)
     : assets_(std::move(a)), weights_(std::move(w)), execution_context_(&ec), graph_arena_bytes_(arena) {
     if (!assets_ || !weights_) throw std::runtime_error("decoder requires assets/weights");
 }
-ParakeetDecoderRuntime::~ParakeetDecoderRuntime() = default;
-void ParakeetDecoderRuntime::prepare() { ensure_step_graph(); ensure_joint_graph(); }
+ParakeetTDTDecoderRuntime::~ParakeetTDTDecoderRuntime() = default;
+void ParakeetTDTDecoderRuntime::prepare() { ensure_step_graph(); ensure_joint_graph(); }
 
-void ParakeetDecoderRuntime::ensure_step_graph() {
+void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     if (step_graph_) return;
     const auto t0 = Clock::now();
     const auto& cfg = assets_->config; const auto& dw = weights_->decoder;
@@ -118,7 +118,7 @@ void ParakeetDecoderRuntime::ensure_step_graph() {
     debug::timing_log_scalar("parakeet.decoder.graph_build_ms", engine::debug::elapsed_ms(t0, Clock::now()));
 }
 
-void ParakeetDecoderRuntime::ensure_joint_graph() {
+void ParakeetTDTDecoderRuntime::ensure_joint_graph() {
     if (joint_graph_) return;
     const auto t0 = Clock::now(); const auto& cfg = assets_->config;
     auto g = std::make_unique<JointGraph>();
@@ -142,7 +142,7 @@ void ParakeetDecoderRuntime::ensure_joint_graph() {
     debug::timing_log_scalar("parakeet.decoder.joint_graph_build_ms", engine::debug::elapsed_ms(t0, Clock::now()));
 }
 
-int32_t ParakeetDecoderRuntime::run_joint_step(const float* enc, int32_t* out_dur_id) {
+int32_t ParakeetTDTDecoderRuntime::run_joint_step(const float* enc, int32_t* out_dur_id) {
     auto& g = *joint_graph_;
     const auto& cfg = assets_->config;
     engine::core::write_tensor_f32(g.enc_frame, enc, static_cast<size_t>(cfg.encoder.hidden_size));
@@ -154,7 +154,7 @@ int32_t ParakeetDecoderRuntime::run_joint_step(const float* enc, int32_t* out_du
     return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
 }
 
-int32_t ParakeetDecoderRuntime::run_step(int32_t tok, const float* enc, bool pred_valid, int32_t* out_dur_id) {
+int32_t ParakeetTDTDecoderRuntime::run_step(int32_t tok, const float* enc, bool pred_valid, int32_t* out_dur_id) {
     auto& g = *step_graph_;
     const auto& cfg = assets_->config;
     const int32_t blank = static_cast<int32_t>(cfg.blank_token_id);
@@ -184,7 +184,7 @@ int32_t ParakeetDecoderRuntime::run_step(int32_t tok, const float* enc, bool pre
     return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
 }
 
-std::string ParakeetDecoderRuntime::decode_text(const std::vector<int32_t>& ids, bool keep_tags) const {
+std::string ParakeetTDTDecoderRuntime::decode_text(const std::vector<int32_t>& ids, bool keep_tags) const {
     std::vector<int32_t> f; f.reserve(ids.size());
     for (auto id : ids) {
         if (id == static_cast<int32_t>(assets_->config.blank_token_id) || id == static_cast<int32_t>(assets_->config.pad_token_id)) continue;
@@ -194,7 +194,7 @@ std::string ParakeetDecoderRuntime::decode_text(const std::vector<int32_t>& ids,
     return assets_->tokenizer->decode_ids(f);
 }
 
-std::vector<runtime::WordTimestamp> ParakeetDecoderRuntime::build_word_timestamps(
+std::vector<runtime::WordTimestamp> ParakeetTDTDecoderRuntime::build_word_timestamps(
     const std::vector<int32_t>& ids,
     const std::vector<int32_t>& frame_indices,
     const std::vector<int32_t>& durs,
@@ -263,7 +263,7 @@ std::vector<runtime::WordTimestamp> ParakeetDecoderRuntime::build_word_timestamp
     return out;
 }
 
-void ParakeetDecoderRuntime::reset_state() {
+void ParakeetTDTDecoderRuntime::reset_state() {
     const auto& cfg = assets_->config;
     hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
@@ -273,7 +273,7 @@ void ParakeetDecoderRuntime::reset_state() {
     state_initialized_ = true;
 }
 
-ParakeetDecodedText ParakeetDecoderRuntime::decode_incremental(
+ParakeetDecodedText ParakeetTDTDecoderRuntime::decode_incremental(
     const ParakeetEncodedAudio& enc,
     const ParakeetDecodeOptions& opts,
     int64_t frame_offset) {
@@ -347,7 +347,7 @@ ParakeetDecodedText ParakeetDecoderRuntime::decode_incremental(
     return out;
 }
 
-ParakeetDecodedText ParakeetDecoderRuntime::format_tokens(
+ParakeetDecodedText ParakeetTDTDecoderRuntime::format_tokens(
     std::vector<int32_t> token_ids,
     std::vector<int32_t> token_frame_indices,
     std::vector<int32_t> durations,
@@ -366,7 +366,7 @@ ParakeetDecodedText ParakeetDecoderRuntime::format_tokens(
     return out;
 }
 
-ParakeetDecodedText ParakeetDecoderRuntime::decode(
+ParakeetDecodedText ParakeetTDTDecoderRuntime::decode(
     const ParakeetEncodedAudio& enc,
     const ParakeetDecodeOptions& opts) {
     reset_state();

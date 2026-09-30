@@ -3,11 +3,11 @@
 #include "engine/models/seed_vc/assets.h"
 
 #include "engine/framework/modules/vocoders/bigvgan_vocoder.h"
-#include "engine/framework/modules/speech_encoders/campplus_encoder.h"
+#include "engine/framework/modules/speaker_encoders/campplus_encoder.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/vocoders/hift_vocoder.h"
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -133,8 +133,8 @@ struct SeedVcRouteRuntime {
     engine::modules::CampplusEncoderComponent campplus;
     engine::modules::BigVganVocoderComponent bigvgan;
     engine::modules::HiftVocoderComponent hift;
-    engine::modules::HubertEncoderComponent hubert_large;
-    engine::modules::HubertEncoderComponent wav2vec2_xlsr;
+    engine::modules::Wav2Vec2EncoderRuntime hubert_large;
+    engine::modules::Wav2Vec2EncoderRuntime wav2vec2_xlsr;
     SeedVcV1CfmEstimator v1_cfm_estimator;
     SeedVcRmvpeF0Extractor rmvpe_extractor;
     SeedVcWhisperContentEncoder whisper_content;
@@ -1213,10 +1213,10 @@ std::shared_ptr<SeedVcRouteRuntime> open_route_runtime(
             assets.bigvgan_22k_weights,
             backend,
             make_bigvgan_config(assets.config.bigvgan_22k, default_weight_storage_type));
-        engine::modules::HubertEncoderConfig hubert_config;
+        engine::modules::Wav2Vec2EncoderConfig hubert_config;
         hubert_config.output_hidden_layer = assets.config.v2_astral_wide.ssl_output_layer;
         hubert_config.apply_final_layer_norm = false;
-        sources->hubert_large = engine::modules::HubertEncoderComponent::load_from_tensor_source(
+        sources->hubert_large = engine::modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
             assets.hubert_large_weights,
             backend,
             hubert_config);
@@ -1282,10 +1282,10 @@ std::shared_ptr<SeedVcRouteRuntime> open_route_runtime(
             assets.config.v1_xlsr_hift_dit,
             assets.config.v1_xlsr_hift_wavenet,
             assets.config.v1_xlsr_hift_style_dim);
-        engine::modules::HubertEncoderConfig xlsr_config;
+        engine::modules::Wav2Vec2EncoderConfig xlsr_config;
         xlsr_config.output_hidden_layer = 12;
         xlsr_config.apply_final_layer_norm = true;
-        sources->wav2vec2_xlsr = engine::modules::HubertEncoderComponent::load_from_tensor_source(
+        sources->wav2vec2_xlsr = engine::modules::Wav2Vec2EncoderRuntime::load_from_tensor_source(
             assets.wav2vec2_xlsr_weights,
             backend,
             xlsr_config);

@@ -32,7 +32,7 @@ std::vector<int32_t> require_i32_array(
 
 }  // namespace
 
-ChatterboxTurboTtsComponent::ChatterboxTurboTtsComponent(
+ChatterboxTurboTTSComponent::ChatterboxTurboTTSComponent(
     std::shared_ptr<const ChatterboxTurboAssets> assets,
     const engine::core::ExecutionContext & execution_context)
     : assets_(std::move(assets)) {
@@ -64,7 +64,7 @@ ChatterboxTurboTtsComponent::ChatterboxTurboTtsComponent(
     builtin_ref_dict_.embedding_size = embedding_shape.at(0);
 }
 
-engine::models::chatterbox::S3GenInferenceOutputs ChatterboxTurboTtsComponent::generate(
+engine::models::chatterbox::S3GenInferenceOutputs ChatterboxTurboTTSComponent::generate(
     const std::string & text,
     const ChatterboxTurboGenerateConfig & config) const {
     T3TurboGenerateRequest request;

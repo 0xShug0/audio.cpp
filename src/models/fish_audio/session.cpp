@@ -317,7 +317,7 @@ FishAudioSession::FishAudioSession(
     validate_ar_weight_storage(ar_weight_type, "fish_audio.weight_type");
     validate_codec_weight_storage(codec_weight_type, "fish_audio.codec_weight_type");
     const int threads = options.backend.threads > 0 ? options.backend.threads : 1;
-    auto ar = std::make_unique<FishAudioARRuntime>(
+    auto ar = std::make_unique<FishAudioDualARRuntime>(
         assets_,
         options.backend,
         threads,

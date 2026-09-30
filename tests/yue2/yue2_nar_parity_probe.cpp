@@ -1,6 +1,6 @@
 // Standalone YuE2 NAR acoustic-flow parity probe.
 //
-// The probe drives Yue2ArRuntime/Yue2NarRuntime directly instead of adding
+// The probe drives Yue2ARRuntime/Yue2NARRuntime directly instead of adding
 // reference-only inputs to the request surface: everything the acoustic flow
 // consumes is read from a directory produced by
 // tests/yue2/yue2_nar_reference_dump.py, and the latents it produces are
@@ -212,9 +212,9 @@ int main(int argc, char ** argv) {
         const size_t ar_decode_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--ar-decode-arena-mb", 1536)) * kMib;
         const size_t nar_arena_bytes = static_cast<size_t>(int_arg(argc, argv, "--nar-arena-mb", 6144)) * kMib;
 
-        engine::models::yue2::Yue2ArRuntime ar(
+        engine::models::yue2::Yue2ARRuntime ar(
             execution, assets, weight_type, weight_context_bytes, ar_prefill_arena_bytes, ar_decode_arena_bytes);
-        engine::models::yue2::Yue2NarRuntime nar(
+        engine::models::yue2::Yue2NARRuntime nar(
             execution, assets, weight_type, weight_context_bytes, nar_arena_bytes);
 
         std::cout << "prefix_tokens=" << prefix.size() << " codec_frames=" << codec.size()

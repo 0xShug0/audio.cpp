@@ -56,8 +56,8 @@ protected:
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     NemotronFrontend frontend_;
-    std::unique_ptr<NemotronEncoderRuntime> encoder_;
-    std::unique_ptr<NemotronDecoderRuntime> decoder_;
+    std::unique_ptr<NemotronFastConformerEncoderRuntime> encoder_;
+    std::unique_ptr<NemotronRnntDecoderRuntime> decoder_;
     std::string streaming_language_;
     std::unordered_map<std::string, std::string> streaming_options_;
 };

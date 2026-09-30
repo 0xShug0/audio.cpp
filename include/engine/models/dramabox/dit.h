@@ -26,7 +26,7 @@ struct DramaBoxAdaLayerNormWeights {
     int64_t output_coefficient = 0;
 };
 
-struct DramaBoxDitSelfAttentionWeights {
+struct DramaBoxDiTSelfAttentionWeights {
     modules::LinearWeights qkv_gate;
     std::optional<modules::LinearWeights> q;
     std::optional<modules::LinearWeights> k;
@@ -37,7 +37,7 @@ struct DramaBoxDitSelfAttentionWeights {
     core::TensorValue k_norm;
 };
 
-struct DramaBoxDitCrossAttentionWeights {
+struct DramaBoxDiTCrossAttentionWeights {
     modules::LinearWeights q_gate;
     modules::LinearWeights kv;
     modules::LinearWeights out;
@@ -45,26 +45,26 @@ struct DramaBoxDitCrossAttentionWeights {
     core::TensorValue k_norm;
 };
 
-struct DramaBoxDitBlockWeights {
+struct DramaBoxDiTBlockWeights {
     core::TensorValue audio_scale_shift_table;
     core::TensorValue audio_prompt_scale_shift_table;
-    DramaBoxDitSelfAttentionWeights self_attention;
-    DramaBoxDitCrossAttentionWeights cross_attention;
+    DramaBoxDiTSelfAttentionWeights self_attention;
+    DramaBoxDiTCrossAttentionWeights cross_attention;
     modules::LinearWeights ff_in;
     modules::LinearWeights ff_out;
 };
 
-struct DramaBoxDitWeights {
+struct DramaBoxDiTWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::LinearWeights patchify_proj;
     DramaBoxAdaLayerNormWeights adaln;
     DramaBoxAdaLayerNormWeights prompt_adaln;
-    std::vector<DramaBoxDitBlockWeights> blocks;
+    std::vector<DramaBoxDiTBlockWeights> blocks;
     core::TensorValue output_scale_shift_table;
     modules::LinearWeights output_proj;
 };
 
-struct DramaBoxDitInputs {
+struct DramaBoxDiTInputs {
     int64_t batch = 0;
     int64_t tokens = 0;
     bool stg_enabled = false;
@@ -73,7 +73,7 @@ struct DramaBoxDitInputs {
     const std::vector<float> * sigma_features = nullptr;
 };
 
-DramaBoxDitWeights load_dramabox_dit_weights(
+DramaBoxDiTWeights load_dramabox_dit_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -81,17 +81,17 @@ DramaBoxDitWeights load_dramabox_dit_weights(
     assets::TensorStorageType weight_storage_type,
     DramaBoxPerfMode perf_mode = DramaBoxPerfMode::Exact);
 
-class DramaBoxDitRuntime {
+class DramaBoxDiTRuntime {
 public:
-    DramaBoxDitRuntime(
+    DramaBoxDiTRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const DramaBoxAssets> assets,
         assets::TensorStorageType weight_storage_type,
         DramaBoxPerfMode perf_mode);
-    ~DramaBoxDitRuntime();
+    ~DramaBoxDiTRuntime();
 
-    DramaBoxDitRuntime(const DramaBoxDitRuntime &) = delete;
-    DramaBoxDitRuntime & operator=(const DramaBoxDitRuntime &) = delete;
+    DramaBoxDiTRuntime(const DramaBoxDiTRuntime &) = delete;
+    DramaBoxDiTRuntime & operator=(const DramaBoxDiTRuntime &) = delete;
 
     void prepare(int64_t batch, int64_t tokens, int64_t context_tokens, bool stg_enabled, int64_t ref_tokens) const;
     void prepare_static_inputs(
@@ -103,7 +103,7 @@ public:
         const std::vector<float> & rope_cos,
         const std::vector<float> & rope_sin,
         const std::vector<float> & timestep_mask) const;
-    std::vector<float> forward(const DramaBoxDitInputs & inputs) const;
+    std::vector<float> forward(const DramaBoxDiTInputs & inputs) const;
     void release_runtime_state() const;
 
 private:
@@ -113,7 +113,7 @@ private:
     std::shared_ptr<const DramaBoxAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
     DramaBoxPerfMode perf_mode_ = DramaBoxPerfMode::Exact;
-    mutable std::unique_ptr<DramaBoxDitWeights> weights_;
+    mutable std::unique_ptr<DramaBoxDiTWeights> weights_;
     mutable std::unique_ptr<Graph> graph_;
 };
 

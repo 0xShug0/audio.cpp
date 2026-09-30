@@ -82,9 +82,9 @@ struct ChatterboxVoiceCloneOutputs {
     int64_t mel_frames = 0;
 };
 
-class ChatterboxTtsComponent {
+class ChatterboxTTSComponent {
 public:
-    ChatterboxTtsComponent(
+    ChatterboxTTSComponent(
         std::shared_ptr<const T3InferenceWeights> t3_weights,
         std::shared_ptr<const ChatterboxEnglishTokenizerModel> tokenizer,
         engine::models::chatterbox::VoiceEncoderComponent voice_encoder,

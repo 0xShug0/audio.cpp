@@ -7,7 +7,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/deferred_tensor_writer.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/self_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -412,7 +412,7 @@ std::vector<float> preprocess_reference_mono(
 
 NormalizedReferenceAudio normalize_reference_audio(
     const runtime::AudioBuffer & audio,
-    const OmniVoiceAudioTokenizerConfig & config,
+    const OmniVoiceHiggsAudioV2TokenizerConfig & config,
     const OmniVoiceReferenceAudioOptions & options) {
     auto mono = to_mono(audio);
     if (audio.sample_rate != config.sample_rate) {
@@ -453,7 +453,7 @@ int64_t conv1d_output_length(int64_t input, int64_t kernel, int stride, int padd
     return ((input + 2 * padding - dilation * (kernel - 1) - 1) / stride) + 1;
 }
 
-int64_t acoustic_encoder_output_length(int64_t input_samples, const OmniVoiceAudioTokenizerConfig & config) {
+int64_t acoustic_encoder_output_length(int64_t input_samples, const OmniVoiceHiggsAudioV2TokenizerConfig & config) {
     int64_t length = input_samples;
     length = conv1d_output_length(length, 7, 1, 3, 1);
     for (const int64_t stride_value : config.acoustic_model.downsampling_ratios) {
@@ -464,7 +464,7 @@ int64_t acoustic_encoder_output_length(int64_t input_samples, const OmniVoiceAud
     return length;
 }
 
-int64_t semantic_downsample_factor(const OmniVoiceAudioTokenizerConfig & config) {
+int64_t semantic_downsample_factor(const OmniVoiceHiggsAudioV2TokenizerConfig & config) {
     const double factor =
         static_cast<double>(checked_positive(config.hop_length, "hop_length")) /
         (static_cast<double>(checked_positive(config.sample_rate, "sample_rate")) /
@@ -477,7 +477,7 @@ int64_t semantic_downsample_factor(const OmniVoiceAudioTokenizerConfig & config)
     return rounded;
 }
 
-int64_t semantic_feature_frames(const OmniVoiceAudioTokenizerConfig & config, int64_t semantic_samples) {
+int64_t semantic_feature_frames(const OmniVoiceHiggsAudioV2TokenizerConfig & config, int64_t semantic_samples) {
     const auto & semantic = config.semantic_model;
     if (semantic.conv_dim.empty() || semantic.conv_dim.size() != semantic.conv_kernel.size() ||
         semantic.conv_dim.size() != semantic.conv_stride.size()) {
@@ -498,7 +498,7 @@ int64_t semantic_feature_frames(const OmniVoiceAudioTokenizerConfig & config, in
 
 std::vector<float> pad_acoustic_input_if_needed(
     const std::vector<float> & input,
-    const OmniVoiceAudioTokenizerConfig & config,
+    const OmniVoiceHiggsAudioV2TokenizerConfig & config,
     int64_t frame_count) {
     const int64_t output_frames = acoustic_encoder_output_length(static_cast<int64_t>(input.size()), config);
     if (output_frames == frame_count) {
@@ -700,7 +700,7 @@ struct QuantizerWeights {
     modules::LinearWeights project_out;
 };
 
-struct AudioTokenizerWeights {
+struct HiggsAudioV2TokenizerWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     HubertFeatureExtractorWeights feature_extractor;
     HubertFeatureProjectionWeights feature_projection;
@@ -965,7 +965,7 @@ modules::FeedForwardWeights load_feed_forward(
     };
 }
 
-std::shared_ptr<const AudioTokenizerWeights> load_weights(
+std::shared_ptr<const HiggsAudioV2TokenizerWeights> load_weights(
     const OmniVoiceAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -973,7 +973,7 @@ std::shared_ptr<const AudioTokenizerWeights> load_weights(
     assets_ns::TensorStorageType storage_type) {
     const auto & config = assets.config.audio_tokenizer;
     const auto & source = *assets.audio_tokenizer_weights;
-    auto weights = std::make_shared<AudioTokenizerWeights>();
+    auto weights = std::make_shared<HiggsAudioV2TokenizerWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -1580,8 +1580,8 @@ core::TensorValue build_self_attention(
 core::TensorValue build_hubert_sequence_mean(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & hidden,
-    const AudioTokenizerWeights & weights,
-    const OmniVoiceAudioTokenizerConfig & config) {
+    const HiggsAudioV2TokenizerWeights & weights,
+    const OmniVoiceHiggsAudioV2TokenizerConfig & config) {
     const auto & semantic = config.semantic_model;
     auto x = hidden;
     auto summed = x;
@@ -1616,8 +1616,8 @@ core::TensorValue build_hubert_sequence_mean(
 core::TensorValue build_semantic_encoder(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_bct,
-    const AudioTokenizerWeights & weights,
-    const OmniVoiceAudioTokenizerConfig & config) {
+    const HiggsAudioV2TokenizerWeights & weights,
+    const OmniVoiceHiggsAudioV2TokenizerConfig & config) {
     const auto & semantic = config.semantic_model;
     auto x = modules::Conv1dModule({
         semantic.hidden_size,
@@ -1658,8 +1658,8 @@ core::TensorValue build_semantic_encoder(
 core::TensorValue build_acoustic_encoder(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_bct,
-    const AudioTokenizerWeights & weights,
-    const OmniVoiceAudioTokenizerConfig & config) {
+    const HiggsAudioV2TokenizerWeights & weights,
+    const OmniVoiceHiggsAudioV2TokenizerConfig & config) {
     const auto & acoustic = config.acoustic_model;
     auto x = modules::Conv1dModule({1, acoustic.encoder_hidden_size, 7, 1, 3, 1, true})
                  .build(ctx, input_bct, make_conv1d_weights(ctx, weights.acoustic_encoder.conv1));
@@ -1691,8 +1691,8 @@ core::TensorValue build_acoustic_encoder(
 core::TensorValue build_acoustic_decoder(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input_bct,
-    const AudioTokenizerWeights & weights,
-    const OmniVoiceAudioTokenizerConfig & config,
+    const HiggsAudioV2TokenizerWeights & weights,
+    const OmniVoiceHiggsAudioV2TokenizerConfig & config,
     const core::TensorValue * frame_mask,
     const std::vector<core::TensorValue> * block_masks) {
     const auto & acoustic = config.acoustic_model;
@@ -1745,7 +1745,7 @@ core::TensorValue build_acoustic_decoder(
 core::TensorValue build_quantizer_decode_sequence(
     core::ModuleBuildContext & ctx,
     const std::vector<ggml_tensor *> & code_inputs,
-    const AudioTokenizerWeights & weights,
+    const HiggsAudioV2TokenizerWeights & weights,
     int64_t frames) {
     std::optional<core::TensorValue> latent;
     for (size_t quantizer_index = 0; quantizer_index < code_inputs.size(); ++quantizer_index) {
@@ -1771,10 +1771,10 @@ core::TensorValue build_quantizer_decode_sequence(
     return *latent;
 }
 
-struct EncoderGraph {
-    EncoderGraph(
+struct HiggsAudioV2EncoderGraph {
+    HiggsAudioV2EncoderGraph(
         std::shared_ptr<const OmniVoiceAssets> assets,
-        std::shared_ptr<const AudioTokenizerWeights> weights,
+        std::shared_ptr<const HiggsAudioV2TokenizerWeights> weights,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         int64_t acoustic_samples,
@@ -1939,7 +1939,7 @@ struct EncoderGraph {
         tensor_writer_.flush();
     }
 
-    ~EncoderGraph() {
+    ~HiggsAudioV2EncoderGraph() {
         engine::core::release_backend_graph_resources(backend_, graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -2010,7 +2010,7 @@ struct EncoderGraph {
 
 private:
     std::shared_ptr<const OmniVoiceAssets> assets_;
-    std::shared_ptr<const AudioTokenizerWeights> weights_;
+    std::shared_ptr<const HiggsAudioV2TokenizerWeights> weights_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int compute_threads_ = 1;
@@ -2028,10 +2028,10 @@ private:
     std::vector<ggml_tensor *> code_outputs_;
 };
 
-struct DecoderGraph {
-    DecoderGraph(
+struct HiggsAudioV2DecoderGraph {
+    HiggsAudioV2DecoderGraph(
         std::shared_ptr<const OmniVoiceAssets> assets,
-        std::shared_ptr<const AudioTokenizerWeights> weights,
+        std::shared_ptr<const HiggsAudioV2TokenizerWeights> weights,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
         int64_t frames,
@@ -2125,7 +2125,7 @@ struct DecoderGraph {
         }
     }
 
-    ~DecoderGraph() {
+    ~HiggsAudioV2DecoderGraph() {
         clear_graph();
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -2216,7 +2216,7 @@ private:
     }
 
     std::shared_ptr<const OmniVoiceAssets> assets_;
-    std::shared_ptr<const AudioTokenizerWeights> weights_;
+    std::shared_ptr<const HiggsAudioV2TokenizerWeights> weights_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int compute_threads_ = 1;
@@ -2237,17 +2237,17 @@ private:
 
 }  // namespace
 
-struct OmniVoiceAudioTokenizerRuntime::Impl {
+struct OmniVoiceHiggsAudioV2TokenizerRuntime::Impl {
     std::shared_ptr<const OmniVoiceAssets> assets;
-    std::shared_ptr<const AudioTokenizerWeights> weights;
+    std::shared_ptr<const HiggsAudioV2TokenizerWeights> weights;
     core::ExecutionContext * execution_context = nullptr;
     size_t graph_arena_bytes = 0;
-    std::unique_ptr<EncoderGraph> encoder_graph;
-    std::unique_ptr<DecoderGraph> decoder_graph;
-    OmniVoiceAudioTokenizerRuntimeStats last_stats = {};
+    std::unique_ptr<HiggsAudioV2EncoderGraph> encoder_graph;
+    std::unique_ptr<HiggsAudioV2DecoderGraph> decoder_graph;
+    OmniVoiceHiggsAudioV2TokenizerRuntimeStats last_stats = {};
 };
 
-OmniVoiceAudioTokenizerRuntime::OmniVoiceAudioTokenizerRuntime(
+OmniVoiceHiggsAudioV2TokenizerRuntime::OmniVoiceHiggsAudioV2TokenizerRuntime(
     std::shared_ptr<const OmniVoiceAssets> assets,
     core::ExecutionContext & execution_context,
     size_t graph_arena_bytes,
@@ -2269,13 +2269,13 @@ OmniVoiceAudioTokenizerRuntime::OmniVoiceAudioTokenizerRuntime(
         weight_storage_type);
 }
 
-OmniVoiceAudioTokenizerRuntime::~OmniVoiceAudioTokenizerRuntime() = default;
+OmniVoiceHiggsAudioV2TokenizerRuntime::~OmniVoiceHiggsAudioV2TokenizerRuntime() = default;
 
-const OmniVoiceAudioTokenizerRuntimeStats & OmniVoiceAudioTokenizerRuntime::last_stats() const noexcept {
+const OmniVoiceHiggsAudioV2TokenizerRuntimeStats & OmniVoiceHiggsAudioV2TokenizerRuntime::last_stats() const noexcept {
     return impl_->last_stats;
 }
 
-OmniVoiceAudioTokens OmniVoiceAudioTokenizerRuntime::encode_reference_audio(
+OmniVoiceAudioTokens OmniVoiceHiggsAudioV2TokenizerRuntime::encode_reference_audio(
     const runtime::AudioBuffer & audio,
     const OmniVoiceReferenceAudioOptions & options) {
     const auto normalized = normalize_reference_audio(audio, impl_->assets->config.audio_tokenizer, options);
@@ -2299,7 +2299,7 @@ OmniVoiceAudioTokens OmniVoiceAudioTokenizerRuntime::encode_reference_audio(
             impl_->execution_context->config().threads)) {
         const auto rebuild_start = Clock::now();
         impl_->encoder_graph.reset();
-        impl_->encoder_graph = std::make_unique<EncoderGraph>(
+        impl_->encoder_graph = std::make_unique<HiggsAudioV2EncoderGraph>(
             impl_->assets,
             impl_->weights,
             *impl_->execution_context,
@@ -2319,7 +2319,7 @@ OmniVoiceAudioTokens OmniVoiceAudioTokenizerRuntime::encode_reference_audio(
     return impl_->encoder_graph->run(graph_audio);
 }
 
-runtime::AudioBuffer OmniVoiceAudioTokenizerRuntime::decode_audio_tokens(
+runtime::AudioBuffer OmniVoiceHiggsAudioV2TokenizerRuntime::decode_audio_tokens(
     const OmniVoiceGeneratedAudioTokens & audio_tokens) {
     if (audio_tokens.frames <= 0 || audio_tokens.codebooks <= 0) {
         throw std::runtime_error("OmniVoice generated audio tokens are empty");
@@ -2344,7 +2344,7 @@ runtime::AudioBuffer OmniVoiceAudioTokenizerRuntime::decode_audio_tokens(
     if (needs_rebuild) {
         const auto rebuild_start = Clock::now();
         if (impl_->decoder_graph == nullptr) {
-            impl_->decoder_graph = std::make_unique<DecoderGraph>(
+            impl_->decoder_graph = std::make_unique<HiggsAudioV2DecoderGraph>(
                 impl_->assets,
                 impl_->weights,
                 *impl_->execution_context,
@@ -2363,7 +2363,7 @@ runtime::AudioBuffer OmniVoiceAudioTokenizerRuntime::decode_audio_tokens(
     return impl_->decoder_graph->run(audio_tokens);
 }
 
-void OmniVoiceAudioTokenizerRuntime::release_runtime_graphs() {
+void OmniVoiceHiggsAudioV2TokenizerRuntime::release_runtime_graphs() {
     impl_->encoder_graph.reset();
     impl_->decoder_graph.reset();
 }

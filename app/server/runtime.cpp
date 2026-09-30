@@ -1257,6 +1257,9 @@ HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_f
     else if (request.method == "POST" && request.path == "/v1/tasks/run") {
         response = handle_generic_run(request.body);
     }
+    else if (request.method == "POST" && request.path == "/v1/tasks/batch") {
+        response = handle_generic_batch(request.body);
+    }
     else if (request.method == "POST" && request.path == "/v1/tasks/stream") {
         response = handle_generic_stream(request.body);
     }
@@ -1282,6 +1285,15 @@ HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_f
     // sent. (Streaming requests acquire the lock inside the stream body, after
     // headers are sent, so there it becomes a stream error event instead.)
     response = error_response(503, ex.what(), "server_busy");
+  } catch (const std::exception & ex) {
+    if (allowed_origin.empty()) {
+        throw;
+    }
+    // Keep the transport's error response, but attach CORS before returning it.
+    if (engine::debug::log_enabled()) {
+        engine::debug::log_message(std::string("[SERVER_HTTP_DEBUG] http.error ") + ex.what());
+    }
+    response = error_response(500, ex.what(), "server_error");
   }
   if (!allowed_origin.empty()) {
       response.headers["Access-Control-Allow-Origin"] = allowed_origin;
@@ -3446,6 +3458,115 @@ HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
         ? run_streaming_model(model, request, {}, busy_timeout_ms, request_lease)
         : run_model(model, request, busy_timeout_ms, request_lease);
     return json_response(task_result_json(timed_result.result, timed_result.wall_ms));
+}
+
+HttpResponse ServerState::handle_generic_batch(const std::string & body_text) {
+    const auto body = engine::io::json::parse(body_text);
+    auto & model = require_model(body);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
+    auto request_lease = bind_request(model, busy_timeout_ms);
+    if (model_run_mode(model) != engine::runtime::RunMode::Offline) {
+        return error_response(
+            400,
+            "task batching requires a model configured with mode=offline",
+            "invalid_request_error");
+    }
+    const auto * request_values = body.find("requests");
+    if (request_values == nullptr || !request_values->is_array() || request_values->as_array().empty()) {
+        return error_response(
+            400,
+            "task batch request requires a non-empty 'requests' array",
+            "invalid_request_error");
+    }
+
+    std::vector<engine::runtime::TaskRequest> requests;
+    requests.reserve(request_values->as_array().size());
+    for (const auto & request_json : request_values->as_array()) {
+        if (!request_json.is_object()) {
+            return error_response(
+                400,
+                "task batch entries must be JSON objects",
+                "invalid_request_error");
+        }
+        requests.push_back(apply_default_request_options(
+            model,
+            drop_unsupported_language_option(
+                minitts::cli::build_request_from_json(request_json, request_base_),
+                request_json,
+                model.accepts_language)));
+    }
+
+    {
+        std::optional<ModelExecutionGuard::Lock> lock;
+        if (!request_lease) { lock.emplace(acquire_model_run(model, busy_timeout_ms)); }
+        const size_t slot = request_lease ? request_lease->slot() : lock->slot();
+        ensure_model_loaded_locked(model);
+        if (model.leased_interface<engine::runtime::IBatchedOfflineVoiceTaskSession>(slot) == nullptr) {
+            return error_response(
+                400,
+                "configured model does not provide native offline batching: " + model.config.id,
+                "invalid_request_error");
+        }
+    }
+
+    LoadedModel * model_ptr = &model;
+    return sse_response([
+        this,
+        model_ptr,
+        requests = std::move(requests),
+        busy_timeout_ms, request_lease](HttpStreamWriter & writer) {
+        std::optional<ModelExecutionGuard::Lock> lock;
+        if (!request_lease) { lock.emplace(acquire_model_run(*model_ptr, busy_timeout_ms)); }
+        const size_t slot = request_lease ? request_lease->slot() : lock->slot();
+        ensure_model_loaded_locked(*model_ptr);
+        auto * batched = model_ptr->leased_interface<engine::runtime::IBatchedOfflineVoiceTaskSession>(slot);
+        if (batched == nullptr) {
+            throw std::runtime_error(
+                "configured model does not provide native offline batching: " + model_ptr->config.id);
+        }
+
+        double total_audio_duration_ms = 0.0;
+        bool all_requests_have_audio = true;
+        for (const auto & request : requests) {
+            if (!request.audio_input.has_value()) {
+                all_requests_have_audio = false;
+                break;
+            }
+            total_audio_duration_ms += audio_duration_ms(*request.audio_input);
+        }
+
+        const auto started = Clock::now();
+        model_ptr->leased_session(slot).prepare(engine::runtime::build_preparation_request(requests.front()));
+        std::vector<bool> completed(requests.size(), false);
+        size_t completed_count = 0;
+        batched->run_batch(requests, [&](size_t index, engine::runtime::TaskResult result) {
+            if (index >= requests.size() || completed[index]) {
+                throw std::runtime_error("batched session returned an invalid result index");
+            }
+            write_sse(
+                writer,
+                "{\"type\":\"task.batch.result\",\"index\":" + std::to_string(index) +
+                    ",\"result\":" + task_result_json_with_timing(result, "null") + "}");
+            completed[index] = true;
+            ++completed_count;
+        });
+        const double wall_ms = elapsed_ms(started);
+        last_activity_ms_.store(steady_now_ms(), std::memory_order_relaxed);
+        if (completed_count != requests.size()) {
+            throw std::runtime_error("batched session returned an unexpected result count");
+        }
+
+        std::ostringstream done;
+        done << "{\"type\":\"task.batch.done\",\"result_count\":" << completed_count
+             << ",\"timing\":{\"wall_ms\":" << wall_ms;
+        if (all_requests_have_audio) {
+            done << ",\"audio_duration_ms\":" << total_audio_duration_ms
+                 << ",\"rtf\":" << audio_rtf(wall_ms, total_audio_duration_ms);
+        }
+        done << "}}";
+        write_sse(writer, done.str());
+        write_sse_done(writer);
+    });
 }
 
 HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {

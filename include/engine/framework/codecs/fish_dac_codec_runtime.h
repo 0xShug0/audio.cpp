@@ -88,6 +88,7 @@ public:
     runtime::AudioBuffer decode_codes(const FishDacCodes & codes);
     runtime::AudioBuffer decode_latents(const FishDacLatents & latents);
     runtime::AudioBuffer decode_latents(const std::vector<float> & values, int64_t frames);
+    void release_decode_graphs();
     void release_encode_graph();
     void release_runtime_graphs();
 

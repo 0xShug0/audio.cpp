@@ -3,7 +3,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/flow_sampler_runtime.h"
+#include "engine/framework/sampling/flow_sampler_runtime.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/optimizations/fast_projection_modules.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -67,7 +67,7 @@ struct IrodoriDiffusionBlockWeights {
   modules::LinearWeights mlp_w3;
 };
 
-struct IrodoriRfDitWeights {
+struct IrodoriRFDiTWeights {
   std::shared_ptr<core::BackendWeightStore> store;
   core::TensorValue timestep_freqs;
   modules::LinearWeights cond_fc0;
@@ -363,7 +363,7 @@ core::TensorValue head_rms_norm(core::ModuleBuildContext &ctx,
 
 core::TensorValue build_timestep_embedding(core::ModuleBuildContext &ctx,
                                            const core::TensorValue &t,
-                                           const IrodoriRfDitWeights &weights,
+                                           const IrodoriRFDiTWeights &weights,
                                            const IrodoriModelConfig &config) {
   const int64_t batch = t.shape.dims[0];
   const int64_t half = config.timestep_embed_dim / 2;
@@ -386,7 +386,7 @@ core::TensorValue build_timestep_embedding(core::ModuleBuildContext &ctx,
 
 core::TensorValue build_condition_embedding(core::ModuleBuildContext &ctx,
                                             const core::TensorValue &t,
-                                            const IrodoriRfDitWeights &weights,
+                                            const IrodoriRFDiTWeights &weights,
                                             const IrodoriModelConfig &config,
                                             bool collapse_batch) {
   const int64_t batch = t.shape.dims[0];
@@ -793,14 +793,14 @@ core::TensorValue build_block(
                            hidden.shape, GGML_TYPE_F32);
 }
 
-IrodoriRfDitWeights
+IrodoriRFDiTWeights
 load_irodori_rf_dit_weights(const IrodoriTTSAssets &assets, ggml_backend_t backend,
                             core::BackendType backend_type,
                             size_t weight_context_bytes,
                             assets::TensorStorageType weight_storage_type) {
   const auto &config = assets.config;
   const auto &source = *assets.model_weights;
-  IrodoriRfDitWeights weights;
+  IrodoriRFDiTWeights weights;
   weights.store = std::make_shared<core::BackendWeightStore>(
       backend, backend_type, "irodori_tts.rf_dit.weights",
       weight_context_bytes == 0 ? kRfDitWeightContextBytes
@@ -844,7 +844,7 @@ load_irodori_rf_dit_weights(const IrodoriTTSAssets &assets, ggml_backend_t backe
 std::vector<IrodoriLayerContextKV> build_irodori_context_kv_cache(
     core::ModuleBuildContext &ctx, const core::TensorValue &text_state,
     const core::TensorValue &speaker_state,
-    const core::TensorValue &caption_state, const IrodoriRfDitWeights &weights,
+    const core::TensorValue &caption_state, const IrodoriRFDiTWeights &weights,
     const IrodoriModelConfig &config) {
   std::vector<IrodoriLayerContextKV> out;
   out.reserve(weights.blocks.size());
@@ -858,7 +858,7 @@ std::vector<IrodoriLayerContextKV> build_irodori_context_kv_cache(
 
 std::vector<IrodoriLayerAdaLNModulation> build_irodori_adaln_modulation_cache(
     core::ModuleBuildContext &ctx, const core::TensorValue &t,
-    const IrodoriRfDitWeights &weights, const IrodoriModelConfig &config) {
+    const IrodoriRFDiTWeights &weights, const IrodoriModelConfig &config) {
   auto cond_embed = build_condition_embedding(ctx, t, weights, config, false);
   std::vector<IrodoriLayerAdaLNModulation> out;
   out.reserve(weights.blocks.size());
@@ -879,7 +879,7 @@ core::TensorValue build_irodori_rf_dit(
     const core::TensorValue &speaker_state,
     const core::TensorValue &caption_state,
     const core::TensorValue &attention_mask, const core::TensorValue &positions,
-    const IrodoriRfDitWeights &weights, const IrodoriModelConfig &config,
+    const IrodoriRFDiTWeights &weights, const IrodoriModelConfig &config,
     const std::vector<IrodoriLayerContextKV> *context_kv_cache,
     const std::vector<IrodoriLayerAdaLNModulation> *modulation_cache) {
   if (context_kv_cache != nullptr &&
@@ -2216,7 +2216,7 @@ private:
   };
 
   std::shared_ptr<const IrodoriTTSAssets> assets_;
-  IrodoriRfDitWeights weights_;
+  IrodoriRFDiTWeights weights_;
   ggml_backend_t backend_ = nullptr;
   core::BackendType backend_type_ = core::BackendType::Cpu;
   int threads_ = 1;

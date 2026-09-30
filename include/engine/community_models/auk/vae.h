@@ -8,12 +8,12 @@
 
 namespace engine::models::auk {
 
-class VaeEncoderRuntime {
+class VAEEncoderRuntime {
 public:
-    VaeEncoderRuntime(core::ExecutionContext & execution, const assets::TensorSource & source, int64_t samples);
-    ~VaeEncoderRuntime();
-    VaeEncoderRuntime(const VaeEncoderRuntime &) = delete;
-    VaeEncoderRuntime & operator=(const VaeEncoderRuntime &) = delete;
+    VAEEncoderRuntime(core::ExecutionContext & execution, const assets::TensorSource & source, int64_t samples);
+    ~VAEEncoderRuntime();
+    VAEEncoderRuntime(const VAEEncoderRuntime &) = delete;
+    VAEEncoderRuntime & operator=(const VAEEncoderRuntime &) = delete;
 
     void prepare(int64_t samples);
     int64_t frames() const;
@@ -27,12 +27,12 @@ private:
     std::unique_ptr<State> state_;
 };
 
-class VaeDecoderRuntime {
+class VAEDecoderRuntime {
 public:
-    VaeDecoderRuntime(core::ExecutionContext & execution, const assets::TensorSource & source, int64_t frames);
-    ~VaeDecoderRuntime();
-    VaeDecoderRuntime(const VaeDecoderRuntime &) = delete;
-    VaeDecoderRuntime & operator=(const VaeDecoderRuntime &) = delete;
+    VAEDecoderRuntime(core::ExecutionContext & execution, const assets::TensorSource & source, int64_t frames);
+    ~VAEDecoderRuntime();
+    VAEDecoderRuntime(const VAEDecoderRuntime &) = delete;
+    VAEDecoderRuntime & operator=(const VAEDecoderRuntime &) = delete;
 
     // Reuses the prepared shape; a different shape replaces only the graph workspace.
     void prepare(int64_t frames);

@@ -43,10 +43,10 @@ struct GgmlGallocrDeleter {
     }
 };
 
-modules::QwenDecoderStackConfig make_depth_stack_config(
+modules::DecoderStackConfig make_depth_stack_config(
     const MiniMaxMusic3DepthConfig & config,
     core::BackendType backend_type) {
-    modules::QwenDecoderStackConfig out;
+    modules::DecoderStackConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.attention_heads;
     out.num_key_value_heads = config.attention_heads;
@@ -54,24 +54,24 @@ modules::QwenDecoderStackConfig make_depth_stack_config(
     out.intermediate_size = config.intermediate_size;
     out.layers = config.layers;
     out.rms_norm_eps = config.rms_norm_eps;
-    out.position_encoding = modules::QwenDecoderPositionEncoding::None;
+    out.position_encoding = modules::DecoderPositionEncoding::None;
     out.attention_precision = GGML_PREC_F32;
     out.projection_precision = GGML_PREC_DEFAULT;
     out.use_qk_norm = false;
     out.runtime.attention.prefill_mode = core::uses_ggml_cuda_or_hip_backend(backend_type)
-        ? modules::QwenDecoderAttentionMode::FlashGroupedViewKV
-        : modules::QwenDecoderAttentionMode::ManualRepeat;
+        ? modules::DecoderAttentionMode::FlashGroupedViewKV
+        : modules::DecoderAttentionMode::ManualRepeat;
     return out;
 }
 
-modules::QwenDecoderLayerWeights load_depth_layer(
+modules::DecoderLayerWeights load_depth_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const MiniMaxMusic3DepthConfig & config,
     assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "layers." + std::to_string(layer);
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(store, source, prefix + ".input_layernorm", config.hidden_size);
     out.self_attention.q_weight = store.load_tensor(
         source,
@@ -340,7 +340,7 @@ struct MiniMaxMusic3DepthDecoderRuntime::Impl {
             sequence.shape,
             GGML_TYPE_F32);
 
-        const auto stack = modules::QwenDecoderStackModule(make_depth_stack_config(config, execution.backend_type()))
+        const auto stack = modules::DecoderStackModule(make_depth_stack_config(config, execution.backend_type()))
                                .build(ctx, sequence, out.positions, weights.stack, std::nullopt, std::nullopt);
         auto normalized = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false}).build(
             ctx,

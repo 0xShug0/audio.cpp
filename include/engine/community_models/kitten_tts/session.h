@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/community_models/kitten_tts/assets.h"
-#include "engine/framework/audio/espeak_phonemizer.h"
+#include "engine/framework/text/espeak_phonemizer.h"
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 
@@ -9,7 +9,7 @@
 #include <memory>
 
 namespace engine::models::kitten_tts {
-class KittenDecoderRuntime;
+class KittenStyleTTS2DecoderRuntime;
 class KittenPredictorRuntime;
 } // namespace engine::models::kitten_tts
 
@@ -62,7 +62,7 @@ class KittenTTSSession final : public runtime::RuntimeSessionBase, public runtim
     std::string cached_request_key_;
     std::unique_ptr<KittenSynthesisInput> cached_input_;
     int64_t prepared_decoder_capacity_ = 0;
-    std::unique_ptr<KittenDecoderRuntime> prepared_decoder_;
+    std::unique_ptr<KittenStyleTTS2DecoderRuntime> prepared_decoder_;
     DecoderCapacityContract prepared_decoder_context_ = {};
     int64_t prepared_session_capacity_ = 0;
     std::unique_ptr<KittenPredictorRuntime> prepared_predictor_;

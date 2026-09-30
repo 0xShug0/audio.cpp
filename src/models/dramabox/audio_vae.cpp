@@ -41,14 +41,14 @@ struct GgmlContextDeleter {
     }
 };
 
-DramaBoxVaeResnetBlockWeights load_vae_resnet_block(
+DramaBoxVAEResnetBlockWeights load_vae_resnet_block(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
     assets::TensorStorageType storage_type,
     int64_t in_channels,
     int64_t out_channels) {
-    DramaBoxVaeResnetBlockWeights weights;
+    DramaBoxVAEResnetBlockWeights weights;
     weights.config = {in_channels, out_channels, 3, 1, kPixelNormEps};
     weights.block.conv1 = modules::binding::conv2d_from_source(
         store,
@@ -193,7 +193,7 @@ std::vector<float> reference_log_mel(
     return std::move(features.values);
 }
 
-DramaBoxAudioVaeDecoderWeights load_dramabox_audio_vae_decoder_weights(
+DramaBoxAudioVAEDecoderWeights load_dramabox_audio_vae_decoder_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -201,7 +201,7 @@ DramaBoxAudioVaeDecoderWeights load_dramabox_audio_vae_decoder_weights(
     assets::TensorStorageType weight_storage_type) {
     const auto & config = assets.config.audio_vae;
     const auto & source = *assets.audio_weights;
-    DramaBoxAudioVaeDecoderWeights weights;
+    DramaBoxAudioVAEDecoderWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -245,7 +245,7 @@ DramaBoxAudioVaeDecoderWeights load_dramabox_audio_vae_decoder_weights(
     return weights;
 }
 
-DramaBoxAudioVaeEncoderWeights load_dramabox_audio_vae_encoder_weights(
+DramaBoxAudioVAEEncoderWeights load_dramabox_audio_vae_encoder_weights(
     const DramaBoxAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -253,7 +253,7 @@ DramaBoxAudioVaeEncoderWeights load_dramabox_audio_vae_encoder_weights(
     assets::TensorStorageType weight_storage_type) {
     const auto & config = assets.config.audio_vae;
     const auto & source = *assets.audio_weights;
-    DramaBoxAudioVaeEncoderWeights weights;
+    DramaBoxAudioVAEEncoderWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -293,12 +293,12 @@ DramaBoxAudioVaeEncoderWeights load_dramabox_audio_vae_encoder_weights(
     return weights;
 }
 
-class DramaBoxAudioVaeDecoderRuntime::Graph {
+class DramaBoxAudioVAEDecoderRuntime::Graph {
 public:
     Graph(
         core::ExecutionContext & execution,
         std::shared_ptr<const DramaBoxAssets> assets,
-        const DramaBoxAudioVaeDecoderWeights & weights,
+        const DramaBoxAudioVAEDecoderWeights & weights,
         int64_t batch,
         int64_t latent_frames)
         : backend_(execution.backend()),
@@ -445,7 +445,7 @@ private:
     int64_t batch_ = 0;
     int64_t latent_frames_ = 0;
     int64_t output_frames_ = 0;
-    const DramaBoxAudioVaeDecoderWeights & weights_;
+    const DramaBoxAudioVAEDecoderWeights & weights_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue input_;
     ggml_tensor * output_ = nullptr;
@@ -453,7 +453,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-DramaBoxAudioVaeDecoderRuntime::DramaBoxAudioVaeDecoderRuntime(
+DramaBoxAudioVAEDecoderRuntime::DramaBoxAudioVAEDecoderRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const DramaBoxAssets> assets,
     assets::TensorStorageType weight_storage_type)
@@ -468,11 +468,11 @@ DramaBoxAudioVaeDecoderRuntime::DramaBoxAudioVaeDecoderRuntime(
     }
 }
 
-DramaBoxAudioVaeDecoderRuntime::~DramaBoxAudioVaeDecoderRuntime() = default;
+DramaBoxAudioVAEDecoderRuntime::~DramaBoxAudioVAEDecoderRuntime() = default;
 
-void DramaBoxAudioVaeDecoderRuntime::prepare(int64_t batch, int64_t latent_frames) const {
+void DramaBoxAudioVAEDecoderRuntime::prepare(int64_t batch, int64_t latent_frames) const {
     if (!weights_) {
-        weights_ = std::make_unique<DramaBoxAudioVaeDecoderWeights>(load_dramabox_audio_vae_decoder_weights(
+        weights_ = std::make_unique<DramaBoxAudioVAEDecoderWeights>(load_dramabox_audio_vae_decoder_weights(
             *assets_,
             execution_->backend(),
             execution_->backend_type(),
@@ -485,7 +485,7 @@ void DramaBoxAudioVaeDecoderRuntime::prepare(int64_t batch, int64_t latent_frame
     }
 }
 
-DramaBoxDecodedMel DramaBoxAudioVaeDecoderRuntime::decode(
+DramaBoxDecodedMel DramaBoxAudioVAEDecoderRuntime::decode(
     const std::vector<float> & patch_latents,
     int64_t batch,
     int64_t latent_frames) const {
@@ -493,7 +493,7 @@ DramaBoxDecodedMel DramaBoxAudioVaeDecoderRuntime::decode(
     return graph_->decode(patch_latents, batch, latent_frames, true);
 }
 
-DramaBoxDecodedMel DramaBoxAudioVaeDecoderRuntime::decode_to_device(
+DramaBoxDecodedMel DramaBoxAudioVAEDecoderRuntime::decode_to_device(
     const std::vector<float> & patch_latents,
     int64_t batch,
     int64_t latent_frames) const {
@@ -501,17 +501,17 @@ DramaBoxDecodedMel DramaBoxAudioVaeDecoderRuntime::decode_to_device(
     return graph_->decode(patch_latents, batch, latent_frames, false);
 }
 
-void DramaBoxAudioVaeDecoderRuntime::release_runtime_state() const {
+void DramaBoxAudioVAEDecoderRuntime::release_runtime_state() const {
     graph_.reset();
     weights_.reset();
 }
 
-class DramaBoxAudioVaeEncoderRuntime::Graph {
+class DramaBoxAudioVAEEncoderRuntime::Graph {
 public:
     Graph(
         core::ExecutionContext & execution,
         std::shared_ptr<const DramaBoxAssets> assets,
-        const DramaBoxAudioVaeEncoderWeights & weights,
+        const DramaBoxAudioVAEEncoderWeights & weights,
         int64_t batch,
         int64_t mel_frames)
         : backend_(execution.backend()),
@@ -637,7 +637,7 @@ private:
     int64_t batch_ = 0;
     int64_t mel_frames_ = 0;
     int64_t latent_frames_ = 0;
-    const DramaBoxAudioVaeEncoderWeights & weights_;
+    const DramaBoxAudioVAEEncoderWeights & weights_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     core::TensorValue input_;
     ggml_tensor * output_ = nullptr;
@@ -645,7 +645,7 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-DramaBoxAudioVaeEncoderRuntime::DramaBoxAudioVaeEncoderRuntime(
+DramaBoxAudioVAEEncoderRuntime::DramaBoxAudioVAEEncoderRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const DramaBoxAssets> assets,
     assets::TensorStorageType weight_storage_type)
@@ -660,11 +660,11 @@ DramaBoxAudioVaeEncoderRuntime::DramaBoxAudioVaeEncoderRuntime(
     }
 }
 
-DramaBoxAudioVaeEncoderRuntime::~DramaBoxAudioVaeEncoderRuntime() = default;
+DramaBoxAudioVAEEncoderRuntime::~DramaBoxAudioVAEEncoderRuntime() = default;
 
-void DramaBoxAudioVaeEncoderRuntime::prepare(int64_t batch, int64_t mel_frames) const {
+void DramaBoxAudioVAEEncoderRuntime::prepare(int64_t batch, int64_t mel_frames) const {
     if (!weights_) {
-        weights_ = std::make_unique<DramaBoxAudioVaeEncoderWeights>(load_dramabox_audio_vae_encoder_weights(
+        weights_ = std::make_unique<DramaBoxAudioVAEEncoderWeights>(load_dramabox_audio_vae_encoder_weights(
             *assets_,
             execution_->backend(),
             execution_->backend_type(),
@@ -677,7 +677,7 @@ void DramaBoxAudioVaeEncoderRuntime::prepare(int64_t batch, int64_t mel_frames) 
     }
 }
 
-DramaBoxEncodedReferenceLatents DramaBoxAudioVaeEncoderRuntime::encode(
+DramaBoxEncodedReferenceLatents DramaBoxAudioVAEEncoderRuntime::encode(
     const std::vector<float> & mel,
     int64_t batch,
     int64_t mel_frames) const {
@@ -685,7 +685,7 @@ DramaBoxEncodedReferenceLatents DramaBoxAudioVaeEncoderRuntime::encode(
     return graph_->encode(mel, batch, mel_frames);
 }
 
-void DramaBoxAudioVaeEncoderRuntime::release_runtime_state() const {
+void DramaBoxAudioVAEEncoderRuntime::release_runtime_state() const {
     graph_.reset();
     weights_.reset();
 }

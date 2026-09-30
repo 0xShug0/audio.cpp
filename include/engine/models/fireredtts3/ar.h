@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/models/fireredtts3/assets.h"
 
 #include <cstddef>
@@ -11,9 +11,9 @@
 
 namespace engine::models::fireredtts3 {
 
-class FireRedArRuntime {
+class FireRedQwen3ARRuntime {
 public:
-    FireRedArRuntime(
+    FireRedQwen3ARRuntime(
         std::shared_ptr<const FireRedTTS3Assets> assets,
         engine::core::ExecutionContext & execution,
         size_t graph_arena_bytes,
@@ -21,10 +21,10 @@ public:
         size_t weight_context_bytes,
         engine::assets::TensorStorageType storage_type,
         bool instruct);
-    ~FireRedArRuntime();
+    ~FireRedQwen3ARRuntime();
 
-    FireRedArRuntime(const FireRedArRuntime &) = delete;
-    FireRedArRuntime & operator=(const FireRedArRuntime &) = delete;
+    FireRedQwen3ARRuntime(const FireRedQwen3ARRuntime &) = delete;
+    FireRedQwen3ARRuntime & operator=(const FireRedQwen3ARRuntime &) = delete;
 
     std::vector<float> token_embedding(const std::vector<int32_t> & token_ids);
     std::vector<float> speaker_llm(const std::vector<float> & speaker);
@@ -34,9 +34,9 @@ public:
     float stop(const std::vector<float> & hidden);
     std::vector<float> text_logits(const std::vector<float> & hidden);
 
-    engine::modules::QwenCausalPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps);
+    engine::modules::CausalDecoderPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps);
     void start_decode_embeddings(const engine::runtime::TransformerKVState & state, int64_t required_cache_steps);
-    engine::modules::QwenCausalDecodeStepResult decode_embedding(const std::vector<float> & embedding);
+    engine::modules::CausalDecoderStepResult decode_embedding(const std::vector<float> & embedding);
 
     void release_graphs();
     void release_backbone_graphs();

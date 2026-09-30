@@ -57,7 +57,7 @@ struct TextLayerWeights {
     core::TensorValue down_proj;
 };
 
-struct MioTTSCausalLMWeights {
+struct MioTTSQwen3Weights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
     std::vector<TextLayerWeights> layers;
@@ -164,7 +164,7 @@ core::TensorValue attention_from_heads(
 
 core::TensorValue prompt_embeddings(
     core::ModuleBuildContext & ctx,
-    const MioTTSCausalLMWeights & weights,
+    const MioTTSQwen3Weights & weights,
     const MioTTSConfig & config,
     ggml_tensor * token_ids,
     int64_t prompt_steps) {
@@ -189,7 +189,7 @@ std::vector<int32_t> build_candidate_token_ids(const MioTTSConfig & config) {
 core::TensorValue candidate_lm_head(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & hidden,
-    const MioTTSCausalLMWeights & weights,
+    const MioTTSQwen3Weights & weights,
     const MioTTSConfig & config,
     ggml_tensor * candidate_ids) {
     auto ids = core::wrap_tensor(
@@ -335,7 +335,7 @@ DecoderLayerOutputs decoder_layer_with_static_cache(
     return {modules::AddModule{}.build(ctx, x, ff), k, v};
 }
 
-MioTTSCausalLMWeights load_weights(
+MioTTSQwen3Weights load_weights(
     const MioTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
@@ -343,7 +343,7 @@ MioTTSCausalLMWeights load_weights(
     assets::TensorStorageType storage_type) {
     const auto & config = assets.config;
     const auto & source = *assets.model_weights;
-    MioTTSCausalLMWeights weights;
+    MioTTSQwen3Weights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
@@ -543,9 +543,9 @@ int32_t codec_token_id_to_codec_index(const MioTTSConfig & config, int32_t token
     return static_cast<int32_t>(index);
 }
 
-class MioTTSCausalLMWeightsRuntime {
+class MioTTSQwen3WeightsRuntime {
 public:
-    MioTTSCausalLMWeightsRuntime(
+    MioTTSQwen3WeightsRuntime(
         std::shared_ptr<const MioTTSAssets> assets,
         core::ExecutionContext & execution,
         size_t weight_context_bytes,
@@ -554,7 +554,7 @@ public:
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
-          weights_(std::make_shared<MioTTSCausalLMWeights>(load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
+          weights_(std::make_shared<MioTTSQwen3Weights>(load_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
         if (assets_ == nullptr) {
             throw std::runtime_error("MioTTS lm weights runtime requires assets");
         }
@@ -567,7 +567,7 @@ public:
         return *assets_;
     }
 
-    const MioTTSCausalLMWeights & weights() const noexcept {
+    const MioTTSQwen3Weights & weights() const noexcept {
         return *weights_;
     }
 
@@ -588,13 +588,13 @@ private:
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
-    std::shared_ptr<const MioTTSCausalLMWeights> weights_;
+    std::shared_ptr<const MioTTSQwen3Weights> weights_;
 };
 
 class PrefillGraph {
 public:
     PrefillGraph(
-        std::shared_ptr<MioTTSCausalLMWeightsRuntime> runtime,
+        std::shared_ptr<MioTTSQwen3WeightsRuntime> runtime,
         int64_t prompt_steps,
         size_t graph_arena_bytes)
         : runtime_(std::move(runtime)),
@@ -658,7 +658,7 @@ public:
         }
     }
 
-    bool matches(const MioTTSCausalLMWeightsRuntime & runtime, int64_t prompt_steps) const {
+    bool matches(const MioTTSQwen3WeightsRuntime & runtime, int64_t prompt_steps) const {
         return runtime_.get() == &runtime && prompt_steps_ == prompt_steps;
     }
 
@@ -707,7 +707,7 @@ public:
     }
 
 private:
-    std::shared_ptr<MioTTSCausalLMWeightsRuntime> runtime_;
+    std::shared_ptr<MioTTSQwen3WeightsRuntime> runtime_;
     int64_t prompt_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
@@ -722,7 +722,7 @@ private:
 
 class DecodeGraph {
 public:
-    DecodeGraph(std::shared_ptr<MioTTSCausalLMWeightsRuntime> runtime, int64_t cache_steps, size_t graph_arena_bytes)
+    DecodeGraph(std::shared_ptr<MioTTSQwen3WeightsRuntime> runtime, int64_t cache_steps, size_t graph_arena_bytes)
         : runtime_(std::move(runtime)),
           cache_steps_(cache_steps) {
         if (cache_steps_ <= 0) {
@@ -806,7 +806,7 @@ public:
         }
     }
 
-    bool can_run(const MioTTSCausalLMWeightsRuntime & runtime, int64_t required_steps) const {
+    bool can_run(const MioTTSQwen3WeightsRuntime & runtime, int64_t required_steps) const {
         return runtime_.get() == &runtime && cache_steps_ >= required_steps;
     }
 
@@ -879,7 +879,7 @@ public:
     }
 
 private:
-    std::shared_ptr<MioTTSCausalLMWeightsRuntime> runtime_;
+    std::shared_ptr<MioTTSQwen3WeightsRuntime> runtime_;
     int64_t cache_steps_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_id_ = nullptr;
@@ -900,7 +900,7 @@ private:
 
 }  // namespace
 
-struct MioTTSCausalLMRuntime::Impl {
+struct MioTTSQwen3Runtime::Impl {
     Impl(
         std::shared_ptr<const MioTTSAssets> assets,
         core::ExecutionContext & execution,
@@ -908,7 +908,7 @@ struct MioTTSCausalLMRuntime::Impl {
         size_t decode_graph_arena_bytes,
         size_t weight_context_bytes,
         assets::TensorStorageType storage_type)
-        : weights(std::make_shared<MioTTSCausalLMWeightsRuntime>(
+        : weights(std::make_shared<MioTTSQwen3WeightsRuntime>(
               std::move(assets),
               execution,
               weight_context_bytes,
@@ -993,14 +993,14 @@ struct MioTTSCausalLMRuntime::Impl {
         return out;
     }
 
-    std::shared_ptr<MioTTSCausalLMWeightsRuntime> weights;
+    std::shared_ptr<MioTTSQwen3WeightsRuntime> weights;
     size_t prefill_graph_arena_bytes = 0;
     size_t decode_graph_arena_bytes = 0;
     std::unique_ptr<PrefillGraph> prefill_graph;
     std::unique_ptr<DecodeGraph> decode_graph;
 };
 
-MioTTSCausalLMRuntime::MioTTSCausalLMRuntime(
+MioTTSQwen3Runtime::MioTTSQwen3Runtime(
     std::shared_ptr<const MioTTSAssets> assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -1015,9 +1015,9 @@ MioTTSCausalLMRuntime::MioTTSCausalLMRuntime(
           weight_context_bytes,
           weight_storage_type)) {}
 
-MioTTSCausalLMRuntime::~MioTTSCausalLMRuntime() = default;
+MioTTSQwen3Runtime::~MioTTSQwen3Runtime() = default;
 
-MioTTSGeneratedTokens MioTTSCausalLMRuntime::generate(
+MioTTSGeneratedTokens MioTTSQwen3Runtime::generate(
     const MioTTSPrompt & prompt,
     const MioTTSGenerationOptions & options) {
     return impl_->generate(prompt, options);

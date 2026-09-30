@@ -46,42 +46,42 @@ struct VaeBranchWeights {
     core::TensorValue connector_fc2_bias;    // [connector_hidden]
 };
 
-struct VibeASRVaeEncoderWeights {
+struct VibeASRVAEEncoderWeights {
     VaeBranchWeights acoustic;
     VaeBranchWeights semantic;
 };
 
 // Encoder output, row-major [frames][dim].
-struct VaeEncoderFeatures {
+struct VAEEncoderFeatures {
     int64_t frames = 0;
     int64_t dim = 0;
     std::vector<float> values;
 };
 
-class VibeASRVaeEncoderRuntime {
+class VibeASRVAEEncoderRuntime {
 public:
-    VibeASRVaeEncoderRuntime(
-        std::shared_ptr<const VibeASRVaeAssets> assets,
+    VibeASRVAEEncoderRuntime(
+        std::shared_ptr<const VibeASRVAEAssets> assets,
         engine::core::ExecutionContext & execution_context,
         size_t graph_arena_bytes = 64ull * 1024ull * 1024ull);
 
     // Both branches consume the same waveform, sampled at 24 kHz and scaled to
     // [-1, 1], and produce connector_hidden-wide features.
-    VaeEncoderFeatures encode_acoustic(const std::vector<float> & samples);
-    VaeEncoderFeatures encode_semantic(const std::vector<float> & samples);
+    VAEEncoderFeatures encode_acoustic(const std::vector<float> & samples);
+    VAEEncoderFeatures encode_semantic(const std::vector<float> & samples);
 
-    const VibeASRVaeAssets & assets() const noexcept { return *assets_; }
+    const VibeASRVAEAssets & assets() const noexcept { return *assets_; }
 
 private:
-    VaeEncoderFeatures encode(
+    VAEEncoderFeatures encode(
         const VaeBranchConfig & config,
         const VaeBranchWeights & weights,
         const std::vector<float> & samples);
 
-    std::shared_ptr<const VibeASRVaeAssets> assets_;
+    std::shared_ptr<const VibeASRVAEAssets> assets_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     engine::core::BackendWeightStore weight_store_;
-    VibeASRVaeEncoderWeights weights_;
+    VibeASRVAEEncoderWeights weights_;
     size_t graph_arena_bytes_;
 };
 

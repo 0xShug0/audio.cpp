@@ -16,6 +16,7 @@ Practical expectations:
 
 | Family | Task | Supported language(s) | Contributor | What They Added |
 |---|---|---|---|---|
+| **reuse** | Speech restoration | lang agnostic | [@0xShug0](https://github.com/0xShug0) | [RE-USE](reuse.md) sample-rate-independent speech restoration with bidirectional Mamba |
 | **audio8_asr** | ASR | en, zh, yue, ja, ko, fr, de | [@0xShug0](https://github.com/0xShug0) | [Audio8-ASR-0.1B](audio8_asr.md) compact multilingual autoregressive ASR reusing the Qwen3-ASR encoder with an MLP-tower adapter and an 8-layer Qwen2-style decoder (CC-BY-NC, local conversion only) |
 | **auk** | TTS, audio editing | auto | [@0xShug0](https://github.com/0xShug0) | [AuK Base and AuK-Flash](auk.md) instruction-guided speech generation and editing with separate generator, Qwen conditioner, and VAE components |
 | **chatterbox_turbo** | TTS, voice cloning (testing) | en | [@pannagaps](https://github.com/pannagaps) | [Chatterbox Turbo](chatterbox_turbo.md) Resemble AI's distilled 350M GPT2 T3 backbone + 2-step meanflow S3Gen decoder for fast English TTS; built-in default voice only for now |

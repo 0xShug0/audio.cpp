@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/framework/modules/speech_encoders/hubert_encoder.h"
+#include "engine/framework/modules/speech_encoders/wav2vec2_encoder.h"
 
 #include <cstdint>
 #include <vector>
@@ -51,7 +51,7 @@ WanS2VAudioBuckets
 wan_s2v_prepare_audio_encoder_output(const WanS2VAudioFeature &hidden_states,
                                      const WanS2VAudioConditionerConfig &config);
 
-WanS2VAudioFeature wan_s2v_audio_feature_from_hubert_layers(
-    const modules::HubertEncoderLayerOutput &layer_output);
+WanS2VAudioFeature wan_s2v_audio_feature_from_xlsr_layers(
+    const modules::Wav2Vec2EncoderLayerOutput &layer_output);
 
 } // namespace engine::community_models::liveavatar

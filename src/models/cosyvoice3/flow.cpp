@@ -5,7 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/attention/feed_forward.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/attention/projected_grouped_self_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -192,7 +192,7 @@ struct CosyDiTBlockWeights {
     modules::FeedForwardWeights ff;
 };
 
-struct CosyFlowWeights {
+struct CosyDiTFlowWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
     modules::LinearWeights speaker_projection;
@@ -249,12 +249,12 @@ CosyDiTBlockWeights load_block(
     return out;
 }
 
-std::shared_ptr<CosyFlowWeights> load_flow_weights(
+std::shared_ptr<CosyDiTFlowWeights> load_flow_weights(
     const CosyVoice3Assets & assets,
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     engine::assets::TensorStorageType storage_type) {
-    auto weights = std::make_shared<CosyFlowWeights>();
+    auto weights = std::make_shared<CosyDiTFlowWeights>();
     weights->store = std::make_shared<core::BackendWeightStore>(
         execution.backend(),
         execution.backend_type(),
@@ -333,7 +333,7 @@ modules::ProjectedGroupedSelfAttentionConfig attention_config(const CosyVoice3Co
 core::TensorValue causal_conv_pos_embed(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const CosyFlowWeights & weights) {
+    const CosyDiTFlowWeights & weights) {
     auto x = modules::TransposeModule({{0, 2, 1, 3}, input.shape.rank}).build(ctx, input);
     x = core::wrap_tensor(
         ggml_pad_ext(ctx.ggml, x.tensor, kConvPosKernel - 1, 0, 0, 0, 0, 0, 0, 0),
@@ -390,7 +390,7 @@ class ConditionGraph {
 public:
     ConditionGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const CosyFlowWeights> weights,
+        std::shared_ptr<const CosyDiTFlowWeights> weights,
         CosyVoice3Config config,
         size_t graph_arena_bytes)
         : execution_(execution),
@@ -484,7 +484,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const CosyFlowWeights> weights_;
+    std::shared_ptr<const CosyDiTFlowWeights> weights_;
     CosyVoice3Config config_;
     size_t graph_arena_bytes_ = 0;
     GraphMemory mem_;
@@ -497,7 +497,7 @@ class DiTGraph {
 public:
     DiTGraph(
         core::ExecutionContext & execution,
-        std::shared_ptr<const CosyFlowWeights> weights,
+        std::shared_ptr<const CosyDiTFlowWeights> weights,
         CosyVoice3Config config,
         size_t graph_arena_bytes)
         : execution_(execution),
@@ -639,7 +639,7 @@ private:
     }
 
     core::ExecutionContext & execution_;
-    std::shared_ptr<const CosyFlowWeights> weights_;
+    std::shared_ptr<const CosyDiTFlowWeights> weights_;
     CosyVoice3Config config_;
     size_t graph_arena_bytes_ = 0;
     GraphMemory mem_;
@@ -655,7 +655,7 @@ private:
 
 std::vector<float> normalize_and_project_speaker(
     const CosyVoice3Config & config,
-    const CosyFlowWeights & weights,
+    const CosyDiTFlowWeights & weights,
     core::ExecutionContext & execution,
     const std::vector<float> & speaker_embedding,
     size_t graph_arena_bytes) {
@@ -704,7 +704,7 @@ std::vector<float> normalize_and_project_speaker(
 
 std::vector<float> read_noise_prefix(
     const CosyVoice3Config & config,
-    const CosyFlowWeights & weights,
+    const CosyDiTFlowWeights & weights,
     int64_t frames) {
     if (frames > 50 * 300) {
         throw std::runtime_error("CosyVoice3 requested mel frames exceed fixed flow noise capacity");
@@ -721,7 +721,7 @@ std::vector<float> read_noise_prefix(
 
 }  // namespace
 
-class CosyVoice3FlowRuntime::Impl {
+class CosyVoice3DiTFlowRuntime::Impl {
 public:
     Impl(
         std::shared_ptr<const CosyVoice3Assets> assets,
@@ -829,13 +829,13 @@ public:
 private:
     std::shared_ptr<const CosyVoice3Assets> assets_;
     core::ExecutionContext & execution_;
-    std::shared_ptr<CosyFlowWeights> weights_;
+    std::shared_ptr<CosyDiTFlowWeights> weights_;
     ConditionGraph condition_;
     DiTGraph dit_;
     size_t graph_arena_bytes_ = 0;
 };
 
-CosyVoice3FlowRuntime::CosyVoice3FlowRuntime(
+CosyVoice3DiTFlowRuntime::CosyVoice3DiTFlowRuntime(
     std::shared_ptr<const CosyVoice3Assets> assets,
     engine::core::ExecutionContext & execution,
     size_t graph_arena_bytes,
@@ -848,13 +848,13 @@ CosyVoice3FlowRuntime::CosyVoice3FlowRuntime(
           weight_context_bytes,
           storage_type)) {}
 
-CosyVoice3FlowRuntime::~CosyVoice3FlowRuntime() = default;
+CosyVoice3DiTFlowRuntime::~CosyVoice3DiTFlowRuntime() = default;
 
-CosyVoice3FlowOutput CosyVoice3FlowRuntime::generate(const CosyVoice3FlowRequest & request) {
+CosyVoice3FlowOutput CosyVoice3DiTFlowRuntime::generate(const CosyVoice3FlowRequest & request) {
     return impl_->generate(request);
 }
 
-void CosyVoice3FlowRuntime::release_graphs() {
+void CosyVoice3DiTFlowRuntime::release_graphs() {
     impl_->release_graphs();
 }
 

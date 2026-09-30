@@ -283,20 +283,20 @@ DramaBoxSession::DramaBoxSession(
         engine::assets::TensorStorageType::Native,
         3,
         perf_mode_);
-    dit_ = std::make_unique<DramaBoxDitRuntime>(
+    dit_ = std::make_unique<DramaBoxDiTRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native,
         perf_mode_);
-    audio_encoder_ = std::make_unique<DramaBoxAudioVaeEncoderRuntime>(
+    audio_encoder_ = std::make_unique<DramaBoxAudioVAEEncoderRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);
-    audio_decoder_ = std::make_unique<DramaBoxAudioVaeDecoderRuntime>(
+    audio_decoder_ = std::make_unique<DramaBoxAudioVAEDecoderRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);
-    vocoder_ = std::make_unique<DramaBoxVocoderRuntime>(
+    vocoder_ = std::make_unique<DramaBoxBigVganRuntime>(
         execution_context(),
         assets_,
         engine::assets::TensorStorageType::Native);
@@ -611,7 +611,7 @@ runtime::AudioBuffer DramaBoxSession::generate_audio(const DramaBoxRequest & par
         parsed.guidance_rescale < 0.0F ? auto_rescale_for_cfg(parsed.cfg_scale) : parsed.guidance_rescale;
     std::vector<float> sigma_values(1, 0.0F);
     std::vector<float> sigma_features;
-    DramaBoxDitInputs dit_inputs;
+    DramaBoxDiTInputs dit_inputs;
     dit_inputs.batch = branch_count;
     dit_inputs.tokens = state.tokens;
     dit_inputs.stg_enabled = stg_enabled;

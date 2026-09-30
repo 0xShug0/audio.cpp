@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/modules/transformers/qwen_causal_decode_runtime.h"
+#include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/hf_sampler.h"
 
@@ -19,7 +19,7 @@ namespace {
 
 namespace binding = engine::modules::binding;
 
-struct MiraQwenWeights {
+struct MiraQwen2Weights {
     std::shared_ptr<core::BackendWeightStore> store;
     // This context owns only the sparse head's tensor metadata. The tied
     // embedding storage outlives it, and both outlive the decoder runtime.
@@ -27,18 +27,18 @@ struct MiraQwenWeights {
     core::TensorValue token_embedding;
     core::TensorValue lm_head;
     int64_t lm_head_row_offset = 0;
-    modules::QwenDecoderStackWeights stack;
+    modules::DecoderStackWeights stack;
     modules::NormWeights final_norm;
 };
 
-modules::QwenDecoderLayerWeights load_layer(
+modules::DecoderLayerWeights load_layer(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const MiraTTSConfig & config,
     assets::TensorStorageType storage_type,
     int64_t layer) {
     const std::string prefix = "model.layers." + std::to_string(layer);
-    modules::QwenDecoderLayerWeights out;
+    modules::DecoderLayerWeights out;
     out.input_norm = binding::norm_weight_from_source(
         store, source, prefix + ".input_layernorm", config.hidden_size);
 
@@ -100,10 +100,10 @@ modules::QwenDecoderLayerWeights load_layer(
     return out;
 }
 
-modules::QwenCausalDecoderConfig decoder_config(
+modules::CausalDecoderConfig qwen2_decoder_config(
     const MiraTTSConfig & config,
     core::BackendType backend_type) {
-    modules::QwenCausalDecoderConfig out;
+    modules::CausalDecoderConfig out;
     out.stack.hidden_size = config.hidden_size;
     out.stack.num_attention_heads = config.attention_heads;
     out.stack.num_key_value_heads = config.kv_heads;
@@ -114,29 +114,29 @@ modules::QwenCausalDecoderConfig decoder_config(
     out.stack.rope_theta = config.rope_theta;
     out.stack.rope_type = GGML_ROPE_TYPE_NEOX;
     out.stack.use_qk_norm = false;
-    out.stack.qkv_layout = modules::QwenDecoderQKVLayout::PackedQKV;
-    out.stack.runtime.mlp.mode = modules::QwenDecoderMLPMode::PackedGateUp;
+    out.stack.qkv_layout = modules::DecoderQKVLayout::PackedQKV;
+    out.stack.runtime.mlp.mode = modules::DecoderMLPMode::PackedGateUp;
     out.stack.runtime.attention.prefill_mode =
-        modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+        modules::DecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.attention.static_mode =
-        modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+        modules::DecoderAttentionMode::FlashGroupedViewKV;
     out.stack.runtime.static_cache.update_mode =
-        modules::QwenDecoderStaticCacheUpdateMode::DirectSetRows;
+        modules::DecoderStaticCacheUpdateMode::DirectSetRows;
     if (backend_type == core::BackendType::Vulkan) {
         // Mira's projections are sensitive to Vulkan's default reduced
         // precision. Prompt evaluation still needs materialized grouped K/V:
         // the strided-view prefill path diverges. Single-token decoding can
         // use the cached views without copying the grouped heads each step.
         out.stack.projection_precision = GGML_PREC_F32;
-        out.stack.runtime.attention.prefill_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
-        out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGrouped;
+        out.stack.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGrouped;
+        out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGrouped;
         const char * view_decode = std::getenv("AUDIOCPP_MIRA_TTS_VULKAN_VIEW_DECODE");
         if (view_decode == nullptr || view_decode[0] != '0') {
-            out.stack.runtime.attention.static_mode = modules::QwenDecoderAttentionMode::FlashGroupedViewKV;
+            out.stack.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
         }
     }
     out.logits_size = config.vocab_size;
-    out.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.use_lm_head_bias = false;
     if (backend_type == core::BackendType::Metal) {
         out.lm_head_input_type = GGML_TYPE_F16;
@@ -160,13 +160,13 @@ std::vector<int32_t> generation_token_ids(const MiraTTSConfig & config) {
     return out;
 }
 
-std::shared_ptr<MiraQwenWeights> load_weights(
+std::shared_ptr<MiraQwen2Weights> load_weights(
     const MiraTTSAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     size_t context_bytes,
     assets::TensorStorageType storage_type) {
-    auto out = std::make_shared<MiraQwenWeights>();
+    auto out = std::make_shared<MiraQwen2Weights>();
     out->store = std::make_shared<core::BackendWeightStore>(
         backend, backend_type, "mira_tts.lm.weights", context_bytes);
     const auto & config = assets.config;
@@ -220,17 +220,17 @@ std::shared_ptr<MiraQwenWeights> load_weights(
     return out;
 }
 
-modules::QwenCausalDecodeRuntimeConfig runtime_config(
+modules::CausalDecoderRuntimeConfig qwen2_runtime_config(
     const MiraTTSConfig & config,
-    const MiraQwenWeights & weights,
+    const MiraQwen2Weights & weights,
     core::BackendType backend_type,
     size_t prefill_bytes,
     size_t decode_bytes) {
-    modules::QwenCausalDecodeRuntimeConfig out;
+    modules::CausalDecoderRuntimeConfig out;
     out.trace_name = "mira_tts.lm";
-    out.decoder = decoder_config(config, backend_type);
+    out.decoder = qwen2_decoder_config(config, backend_type);
     out.decoder.logits_size = weights.lm_head.shape.dims[0];
-    out.decoder.logits_mode = modules::QwenCausalDecoderLogitsMode::LastStep;
+    out.decoder.logits_mode = modules::CausalDecoderLogitsMode::LastStep;
     out.decoder.use_lm_head_bias = false;
     out.logits_readback_token_ids = generation_token_ids(config);
     // Readback indices address our local head. Prompt/decode token IDs still
@@ -243,9 +243,9 @@ modules::QwenCausalDecodeRuntimeConfig runtime_config(
     return out;
 }
 
-modules::QwenCausalDecodeRuntimeWeights runtime_weights(
-    const MiraQwenWeights & weights) {
-    modules::QwenCausalDecodeRuntimeWeights out;
+modules::CausalDecoderRuntimeWeights qwen2_runtime_weights(
+    const MiraQwen2Weights & weights) {
+    modules::CausalDecoderRuntimeWeights out;
     out.token_embedding = weights.token_embedding;
     out.stack = weights.stack;
     out.final_norm = weights.final_norm;
@@ -255,7 +255,7 @@ modules::QwenCausalDecodeRuntimeWeights runtime_weights(
 
 }  // namespace
 
-struct MiraGenerator::Impl {
+struct MiraQwen2Generator::Impl {
     Impl(
         const MiraTTSAssets & assets,
         core::ExecutionContext & execution,
@@ -270,10 +270,10 @@ struct MiraGenerator::Impl {
               execution.backend_type(),
               weight_bytes,
               storage_type)),
-          runtime(std::make_unique<modules::QwenCausalDecodeRuntime>(
+          qwen2_runtime(std::make_unique<modules::CausalDecoderRuntime>(
               execution,
-              runtime_config(config, *weights, execution.backend_type(), prefill_bytes, decode_bytes),
-              runtime_weights(*weights))) {}
+              qwen2_runtime_config(config, *weights, execution.backend_type(), prefill_bytes, decode_bytes),
+              qwen2_runtime_weights(*weights))) {}
 
     std::vector<int32_t> generate(
         const std::vector<int32_t> & prompt,
@@ -287,8 +287,8 @@ struct MiraGenerator::Impl {
         if (max_tokens <= 0) {
             throw std::runtime_error("MiraTTS LM prompt exceeds its context window");
         }
-        auto prefill = runtime->prefill_tokens(prompt);
-        runtime->start_decode_tokens(
+        auto prefill = qwen2_runtime->prefill_tokens(prompt);
+        qwen2_runtime->start_decode_tokens(
             prefill.state, static_cast<int64_t>(prompt.size()) + max_tokens);
 
         sampling::HfSamplingOptions sampling_options;
@@ -330,7 +330,7 @@ struct MiraGenerator::Impl {
             if (token >= config.speech_token_start && token <= config.speech_token_end) {
                 codes.push_back(token - config.speech_token_start);
             }
-            logits = runtime->decode_token(token).logits;
+            logits = qwen2_runtime->decode_token(token).logits;
         }
         if (codes.empty()) {
             throw std::runtime_error("MiraTTS LM produced no speech tokens");
@@ -339,11 +339,11 @@ struct MiraGenerator::Impl {
     }
 
     MiraTTSConfig config;
-    std::shared_ptr<MiraQwenWeights> weights;
-    std::unique_ptr<modules::QwenCausalDecodeRuntime> runtime;
+    std::shared_ptr<MiraQwen2Weights> weights;
+    std::unique_ptr<modules::CausalDecoderRuntime> qwen2_runtime;
 };
 
-MiraGenerator::MiraGenerator(
+MiraQwen2Generator::MiraQwen2Generator(
     const MiraTTSAssets & assets,
     core::ExecutionContext & execution,
     size_t prefill_graph_arena_bytes,
@@ -358,16 +358,16 @@ MiraGenerator::MiraGenerator(
           weight_context_bytes,
           weight_storage_type)) {}
 
-MiraGenerator::~MiraGenerator() = default;
+MiraQwen2Generator::~MiraQwen2Generator() = default;
 
-std::vector<int32_t> MiraGenerator::generate(
+std::vector<int32_t> MiraQwen2Generator::generate(
     const std::vector<int32_t> & prompt_ids,
     const MiraGenerationOptions & options) {
     return impl_->generate(prompt_ids, options);
 }
 
-void MiraGenerator::release_runtime_graphs() {
-    impl_->runtime->release_runtime_graphs();
+void MiraQwen2Generator::release_runtime_graphs() {
+    impl_->qwen2_runtime->release_runtime_graphs();
 }
 
 }  // namespace engine::community_models::mira_tts

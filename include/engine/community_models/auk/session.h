@@ -33,11 +33,11 @@ private:
     std::shared_ptr<const AukAssets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
     bool mem_saver_ = false;
-    std::unique_ptr<ConditioningRuntime> conditioning_;
+    std::unique_ptr<AuKQwen25OmniConditioningRuntime> conditioning_;
     std::unique_ptr<FlowRuntime> flow_;
-    std::unique_ptr<VaeDecoderRuntime> decoder_;
-    std::unique_ptr<AudioConditioningRuntime> audio_conditioning_;
-    std::unique_ptr<VaeEncoderRuntime> reference_encoder_;
+    std::unique_ptr<VAEDecoderRuntime> decoder_;
+    std::unique_ptr<AuKQwen25OmniAudioEncoderRuntime> audio_conditioning_;
+    std::unique_ptr<VAEEncoderRuntime> reference_encoder_;
 };
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_auk_loader();
