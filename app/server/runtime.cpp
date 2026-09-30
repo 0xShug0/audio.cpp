@@ -1401,8 +1401,8 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
             load_voice_presets(*existing);
             refresh_model_option_flags(*existing);
         }
-        // Status takes models_mutex_ before metadata_mutex. Loading may need
-        // models_mutex_ for eviction, so release metadata before entering it.
+        // Loading may need models_mutex_ for eviction. Do not hold metadata
+        // while entering unrelated model admission/loading paths.
         // The exclusive model lease still protects the configuration and pool.
         metadata_lock.unlock();
         ensure_model_loaded_locked(*existing);
@@ -1935,7 +1935,7 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
         // That is acceptable: the 503 tells the client to retry later.
     }
     ensure_model_fits_memory(model.config);
-    auto registry = engine::runtime::make_default_registry();
+    auto registry = registry_factory_ ? registry_factory_() : engine::runtime::make_default_registry();
 
     engine::runtime::ModelLoadRequest load_request;
     load_request.model_path = model.config.path;
@@ -2008,6 +2008,7 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
     model.model = std::move(loaded_model);
     model.parallel_capacity.store(sessions->capacity());
     model.sessions = std::move(sessions);
+    model.parallel_resident.store(true);
     model.loaded.store(true);
 }
 
@@ -2240,14 +2241,23 @@ ModelExecutionGuard::Lock ServerState::acquire_model_run(
     return exclusive ? model.busy.acquire(timeout_ms, model_id) : model.busy.acquire_run(timeout_ms, model_id);
 }
 
+ServerState::RequestLease ServerState::bind_request(
+    LoadedModel & model, std::optional<int> timeout) {
+    if (!model.busy.parallel()) { return {}; }
+    return std::make_shared<ModelExecutionGuard::Lock>(acquire_model_run(model, timeout));
+}
+
 ServerState::TimedTaskResult ServerState::run_model(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
-    std::optional<int> busy_timeout_ms) {
-    ModelExecutionGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+    std::optional<int> busy_timeout_ms,
+    RequestLease request_lease) {
+    std::optional<ModelExecutionGuard::Lock> lock;
+    if (!request_lease) { lock.emplace(acquire_model_run(model, busy_timeout_ms)); }
+    const size_t slot = request_lease ? request_lease->slot() : lock->slot();
     ensure_model_loaded_locked(model);
-    auto & session = model.leased_session(lock.slot());
-    auto * offline = model.leased_interface<engine::runtime::IOfflineVoiceTaskSession>(lock.slot());
+    auto & session = model.leased_session(slot);
+    auto * offline = model.leased_interface<engine::runtime::IOfflineVoiceTaskSession>(slot);
     if (offline == nullptr) {
         throw std::runtime_error("configured model does not provide offline execution: " + model.config.id);
     }
@@ -2270,11 +2280,14 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_impl(
     const engine::runtime::TaskRequest & request,
     const minitts::app::AudioChunkStream * audio,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-    std::optional<int> busy_timeout_ms) {
-    ModelExecutionGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+    std::optional<int> busy_timeout_ms,
+    RequestLease request_lease) {
+    std::optional<ModelExecutionGuard::Lock> lock;
+    if (!request_lease) { lock.emplace(acquire_model_run(model, busy_timeout_ms)); }
+    const size_t slot = request_lease ? request_lease->slot() : lock->slot();
     ensure_model_loaded_locked(model);
-    auto & session = model.leased_session(lock.slot());
-    auto * streaming = model.leased_interface<engine::runtime::IStreamingVoiceTaskSession>(lock.slot());
+    auto & session = model.leased_session(slot);
+    auto * streaming = model.leased_interface<engine::runtime::IStreamingVoiceTaskSession>(slot);
     if (streaming == nullptr) {
         throw std::runtime_error("configured model does not provide streaming execution: " + model.config.id);
     }
@@ -2311,8 +2324,9 @@ ServerState::TimedTaskResult ServerState::run_streaming_model(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-    std::optional<int> busy_timeout_ms) {
-    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms);
+    std::optional<int> busy_timeout_ms,
+    RequestLease request_lease) {
+    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms, std::move(request_lease));
 }
 
 ServerState::TimedTaskResult ServerState::run_streaming_model_from(
@@ -2320,21 +2334,23 @@ ServerState::TimedTaskResult ServerState::run_streaming_model_from(
     const engine::runtime::TaskRequest & request,
     const minitts::app::AudioChunkStream & audio,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-    std::optional<int> busy_timeout_ms) {
-    return run_streaming_model_impl(model, request, &audio, event_sink, busy_timeout_ms);
+    std::optional<int> busy_timeout_ms,
+    RequestLease request_lease) {
+    return run_streaming_model_impl(model, request, &audio, event_sink, busy_timeout_ms, std::move(request_lease));
 }
 
 HttpResponse ServerState::handle_speech(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
+    auto request_lease = bind_request(model, busy_timeout_ms);
     const auto request = build_speech_request(model, body);
     if (body.find("stream_format") != nullptr || bool_field(body, "stream", false)) {
-        return handle_speech_stream(model, request, body);
+        return handle_speech_stream(model, request, body, request_lease);
     }
-    const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
-        ? run_streaming_model(model, request, {}, busy_timeout_ms)
-        : run_model(model, request, busy_timeout_ms);
+        ? run_streaming_model(model, request, {}, busy_timeout_ms, request_lease)
+        : run_model(model, request, busy_timeout_ms, request_lease);
     const auto & audio = select_audio_output(timed_result.result);
     const auto wav = encode_pcm16_wav(audio);
     const auto response_format = engine::io::json::optional_string(body, "response_format", "wav");
@@ -2354,7 +2370,8 @@ HttpResponse ServerState::handle_speech(const std::string & body_text) {
 HttpResponse ServerState::handle_speech_stream(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
-    const Value & body) {
+    const Value & body,
+    RequestLease request_lease) {
     if (model_run_mode(model) != engine::runtime::RunMode::Streaming) {
         throw std::runtime_error("speech streaming requires a model configured with mode=streaming");
     }
@@ -2369,7 +2386,7 @@ HttpResponse ServerState::handle_speech_stream(
 
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     LoadedModel * model_ptr = &model;
-    auto stream_body = [this, model_ptr, request, busy_timeout_ms](HttpStreamWriter & writer) {
+    auto stream_body = [this, model_ptr, request, busy_timeout_ms, request_lease](HttpStreamWriter & writer) {
         bool wrote_audio = false;
         const auto timed_result = run_streaming_model(
             *model_ptr,
@@ -2392,7 +2409,7 @@ HttpResponse ServerState::handle_speech_stream(
                     wrote_audio = true;
                 }
             },
-            busy_timeout_ms);
+            busy_timeout_ms, request_lease);
         if (!wrote_audio) {
             throw std::runtime_error("streaming speech model produced no audio delta events");
         }
@@ -2406,7 +2423,7 @@ HttpResponse ServerState::handle_speech_stream(
     if (stream_format == "sse") {
         return sse_response(std::move(stream_body));
     }
-    return chunked_audio_response([this, model_ptr, request, busy_timeout_ms](HttpStreamWriter & writer) {
+    return chunked_audio_response([this, model_ptr, request, busy_timeout_ms, request_lease](HttpStreamWriter & writer) {
         bool wrote_audio = false;
         (void)run_streaming_model(
             *model_ptr,
@@ -2423,7 +2440,7 @@ HttpResponse ServerState::handle_speech_stream(
                     wrote_audio = true;
                 }
             },
-            busy_timeout_ms);
+            busy_timeout_ms, request_lease);
         if (!wrote_audio) {
             throw std::runtime_error("streaming speech model produced no audio delta events");
         }
@@ -2445,6 +2462,7 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
     minitts::app::PcmSampleFormat sample_format = minitts::app::PcmSampleFormat::S16LE;
     std::string stream_format = "sse";
     engine::runtime::TaskRequest task_request;
+    RequestLease request_lease;
     try {
         const std::string model_id = query_param(request.query, "model");
         if (model_id.empty()) {
@@ -2468,11 +2486,7 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
         }
         const auto body = engine::io::json::Value::make_object(std::move(fields));
         auto & model = require_model(body);
-        if (model.task.mode != engine::runtime::RunMode::Streaming) {
-            throw std::runtime_error(
-                "live speech requires a model configured with mode=streaming: " +
-                model.config.id);
-        }
+
         model_ptr = &model;
 
         const auto parse_bounded_int = [&](const char * key, int fallback, int minimum, int maximum) {
@@ -2504,6 +2518,12 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
         if (!query_param(request.query, "busy_timeout_ms").empty()) {
             busy_timeout_ms = parse_bounded_int(
                 "busy_timeout_ms", 0, 0, std::numeric_limits<int>::max());
+        }
+        request_lease = bind_request(model, busy_timeout_ms);
+        if (model.task.mode != engine::runtime::RunMode::Streaming) {
+            throw std::runtime_error(
+                "live speech requires a model configured with mode=streaming: " +
+                model.config.id);
         }
         const std::string sample_format_name = query_param(request.query, "sample_format");
         sample_format = minitts::app::parse_pcm_sample_format(
@@ -2548,13 +2568,15 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
         add_query_option("text_temperature", "text_temperature");
         add_query_option("text_top_k", "text_top_k");
         add_query_option("do_sample", "do_sample");
+    } catch (const ServerBusyError &) {
+        throw;
     } catch (const std::runtime_error & ex) {
         return error_response(400, ex.what(), "invalid_request_error");
     }
 
     std::istream * pcm_input = request.body_stream;
     if (stream_format == "audio") {
-        return chunked_audio_response([this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms](
+        return chunked_audio_response([this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms, request_lease](
                                           HttpStreamWriter & writer) {
             const minitts::app::AudioStreamFormat format{sample_rate, channels};
             const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
@@ -2575,14 +2597,14 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
                         wrote_audio = true;
                     }
                 },
-                busy_timeout_ms);
+                busy_timeout_ms, request_lease);
             if (!wrote_audio) {
                 throw std::runtime_error("live speech model produced no audio delta events");
             }
         });
     }
     return sse_response(
-        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms](
+        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms, request_lease](
             HttpStreamWriter & writer) {
             const minitts::app::AudioStreamFormat format{sample_rate, channels};
             const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
@@ -2633,7 +2655,7 @@ HttpResponse ServerState::handle_speech_live(const HttpRequest & request) {
                         wrote_audio = true;
                     }
                 },
-                busy_timeout_ms);
+                busy_timeout_ms, request_lease);
             if (!wrote_audio) {
                 throw std::runtime_error("live speech model produced no audio delta events");
             }
@@ -2680,17 +2702,18 @@ HttpResponse ServerState::handle_transcription(const HttpRequest & request, bool
 HttpResponse ServerState::handle_transcription_json(const std::string & body_text, bool detail) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
+    auto request_lease = bind_request(model, busy_timeout_ms);
     const auto request = apply_default_request_options(
         model,
         build_openai_transcription_request(body, request_base_, model.accepts_language));
-    const auto busy_timeout_ms = parse_busy_timeout_override(body);
     if (bool_field(body, "stream", false)) {
         if (detail) {
             return error_response(400, kDetailStreamUnsupported, "invalid_request_error");
         }
-        return run_transcription_stream(model, request, busy_timeout_ms);
+        return run_transcription_stream(model, request, busy_timeout_ms, request_lease);
     }
-    return run_transcription(model, request, busy_timeout_ms, detail);
+    return run_transcription(model, request, busy_timeout_ms, detail, request_lease);
 }
 
 // Accepts the same multipart/form-data shape OpenAI's Whisper API (and clients built against it,
@@ -2776,6 +2799,7 @@ HttpResponse ServerState::handle_transcription_multipart(
     const auto body = engine::io::json::Value::make_object(std::move(fields));
 
     auto & model = require_model(body);
+    auto request_lease = bind_request(model, busy_timeout_ms);
     const auto request = apply_default_request_options(
         model,
         build_openai_transcription_request(
@@ -2784,9 +2808,9 @@ HttpResponse ServerState::handle_transcription_multipart(
         if (detail) {
             return error_response(400, kDetailStreamUnsupported, "invalid_request_error");
         }
-        return run_transcription_stream(model, request, busy_timeout_ms);
+        return run_transcription_stream(model, request, busy_timeout_ms, request_lease);
     }
-    return run_transcription(model, request, busy_timeout_ms, detail);
+    return run_transcription(model, request, busy_timeout_ms, detail, request_lease);
 }
 
 HttpResponse ServerState::handle_batch_transcriptions(const HttpRequest & request) {
@@ -2861,6 +2885,7 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
     model_fields.emplace("model", engine::io::json::Value::make_string(model_id));
     const auto model_body = engine::io::json::Value::make_object(std::move(model_fields));
     auto & model = require_model(model_body);
+    auto request_lease = bind_request(model, busy_timeout_ms);
     if (model_run_mode(model) != engine::runtime::RunMode::Offline) {
         return error_response(
             400,
@@ -2894,9 +2919,11 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
     }
 
     {
-        ModelExecutionGuard::Lock lock = acquire_model_run(model, busy_timeout_ms);
+        std::optional<ModelExecutionGuard::Lock> lock;
+        if (!request_lease) { lock.emplace(acquire_model_run(model, busy_timeout_ms)); }
+        const size_t slot = request_lease ? request_lease->slot() : lock->slot();
         ensure_model_loaded_locked(model);
-        if (model.leased_interface<engine::runtime::IBatchedOfflineVoiceTaskSession>(lock.slot()) == nullptr) {
+        if (model.leased_interface<engine::runtime::IBatchedOfflineVoiceTaskSession>(slot) == nullptr) {
             return error_response(
                 400,
                 "configured model does not provide native offline batching: " + model.config.id,
@@ -2915,10 +2942,12 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
         model_ptr,
         requests = std::move(requests),
         filenames = std::move(filenames),
-        busy_timeout_ms](HttpStreamWriter & writer) {
-        ModelExecutionGuard::Lock lock = acquire_model_run(*model_ptr, busy_timeout_ms);
+        busy_timeout_ms, request_lease](HttpStreamWriter & writer) {
+        std::optional<ModelExecutionGuard::Lock> lock;
+        if (!request_lease) { lock.emplace(acquire_model_run(*model_ptr, busy_timeout_ms)); }
+        const size_t slot = request_lease ? request_lease->slot() : lock->slot();
         ensure_model_loaded_locked(*model_ptr);
-        auto * batched = model_ptr->leased_interface<engine::runtime::IBatchedOfflineVoiceTaskSession>(lock.slot());
+        auto * batched = model_ptr->leased_interface<engine::runtime::IBatchedOfflineVoiceTaskSession>(slot);
         if (batched == nullptr) {
             throw std::runtime_error(
                 "configured model does not provide native offline batching: " + model_ptr->config.id);
@@ -2929,7 +2958,7 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
             total_audio_duration_ms += audio_duration_ms(*request.audio_input);
         }
         const auto started = Clock::now();
-        model_ptr->leased_session(lock.slot()).prepare(engine::runtime::build_preparation_request(requests.front()));
+        model_ptr->leased_session(slot).prepare(engine::runtime::build_preparation_request(requests.front()));
         std::vector<bool> completed(requests.size(), false);
         size_t completed_count = 0;
         batched->run_batch(requests, [&](size_t index, engine::runtime::TaskResult result) {
@@ -2976,10 +3005,11 @@ HttpResponse ServerState::run_transcription(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
     std::optional<int> busy_timeout_ms,
-    bool detail) {
+    bool detail,
+    RequestLease request_lease) {
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
-        ? run_streaming_model(model, request, {}, busy_timeout_ms)
-        : run_model(model, request, busy_timeout_ms);
+        ? run_streaming_model(model, request, {}, busy_timeout_ms, request_lease)
+        : run_model(model, request, busy_timeout_ms, request_lease);
     const auto & result = timed_result.result;
     if (!result.text_output.has_value()) {
         std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
@@ -3021,7 +3051,8 @@ HttpResponse ServerState::run_transcription(
 HttpResponse ServerState::run_transcription_stream(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
-    std::optional<int> busy_timeout_ms) {
+    std::optional<int> busy_timeout_ms,
+    RequestLease request_lease) {
     if (model_run_mode(model) != engine::runtime::RunMode::Streaming) {
         throw std::runtime_error("transcription stream=true requires a model configured with mode=streaming");
     }
@@ -3031,7 +3062,7 @@ HttpResponse ServerState::run_transcription_stream(
         std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
         diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
     }
-    return sse_response([this, model_ptr, request, busy_timeout_ms, diarization](HttpStreamWriter & writer) {
+    return sse_response([this, model_ptr, request, busy_timeout_ms, diarization, request_lease](HttpStreamWriter & writer) {
         const auto timed_result = run_streaming_model(
             *model_ptr,
             request,
@@ -3052,7 +3083,7 @@ HttpResponse ServerState::run_transcription_stream(
                         json_quote(event.partial_text->text) +
                         "}");
             },
-            busy_timeout_ms);
+            busy_timeout_ms, request_lease);
         if (diarization) {
             write_sse(writer, diarization_event_json(
                 timed_result.result.speaker_turns, request.audio_input->sample_rate, true, timed_result.ttft_ms));
@@ -3160,6 +3191,7 @@ HttpResponse ServerState::handle_alignment_multipart(const std::string & body_te
         model_ptr = models_.at(it->second).get();
     }
     auto & model = *model_ptr;
+    auto request_lease = bind_request(model, busy_timeout_ms);
     if (model.task.task != engine::runtime::VoiceTaskKind::Alignment) {
         return error_response(
             400,
@@ -3177,17 +3209,18 @@ HttpResponse ServerState::handle_alignment_multipart(const std::string & body_te
     task_request.audio_input = minitts::cli::read_audio_buffer(std::string_view(file_part->data));
     task_request.text_input = engine::runtime::Transcript{std::move(text), std::move(language)};
     task_request = apply_default_request_options(model, std::move(task_request));
-    return run_alignment(model, task_request, busy_timeout_ms);
+    return run_alignment(model, task_request, busy_timeout_ms, request_lease);
 }
 
 HttpResponse ServerState::run_alignment(
     LoadedModel & model,
     const engine::runtime::TaskRequest & request,
-    std::optional<int> busy_timeout_ms) {
+    std::optional<int> busy_timeout_ms,
+    RequestLease request_lease) {
     if (model_run_mode(model) != engine::runtime::RunMode::Offline) {
         throw std::runtime_error("audio alignment requires a model configured with mode=offline");
     }
-    const auto timed_result = run_model(model, request, busy_timeout_ms);
+    const auto timed_result = run_model(model, request, busy_timeout_ms, request_lease);
     if (timed_result.result.word_timestamps.empty()) {
         throw std::runtime_error("alignment model produced no word timestamps");
     }
@@ -3226,6 +3259,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
     std::optional<int> busy_timeout_ms;
     minitts::app::PcmSampleFormat sample_format = minitts::app::PcmSampleFormat::S16LE;
     engine::runtime::TaskRequest task_request;
+    RequestLease request_lease;
     try {
         const std::string model_id = query_param(request.query, "model");
         if (model_id.empty()) {
@@ -3237,16 +3271,8 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         fields.emplace("model", engine::io::json::Value::make_string(model_id));
         const auto body = engine::io::json::Value::make_object(std::move(fields));
         auto & model = require_model(body);
-        if (model.task.mode != engine::runtime::RunMode::Streaming) {
-            throw std::runtime_error(
-                "live transcription requires a model configured with mode=streaming: " +
-                model.config.id);
-        }
+
         model_ptr = &model;
-        {
-            std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
-            diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
-        }
 
         // These two are not merely descriptive: the streaming policy multiplies them
         // into a per-chunk sample count, which sizes a buffer allocated after the model
@@ -3290,6 +3316,16 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
             busy_timeout_ms = parse_bounded_int(
                 "busy_timeout_ms", 0, 0, std::numeric_limits<int>::max());
         }
+        request_lease = bind_request(model, busy_timeout_ms);
+        if (model.task.mode != engine::runtime::RunMode::Streaming) {
+            throw std::runtime_error(
+                "live transcription requires a model configured with mode=streaming: " +
+                model.config.id);
+        }
+        {
+            std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+            diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
+        }
         const std::string sample_format_name = query_param(request.query, "sample_format");
         sample_format = minitts::app::parse_pcm_sample_format(
             sample_format_name.empty() ? "s16le" : sample_format_name);
@@ -3312,6 +3348,8 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
             task_request.text_input = engine::runtime::Transcript{prompt, language};
         }
         task_request = apply_default_request_options(model, std::move(task_request));
+    } catch (const ServerBusyError &) {
+        throw;
     } catch (const std::runtime_error & ex) {
         // Deliberately runtime_error and not exception: every rejection above is
         // thrown as one, while a genuine server fault inside this block is not.
@@ -3323,7 +3361,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
 
     std::istream * pcm_input = request.body_stream;
     return sse_response(
-        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms, diarization](
+        [this, model_ptr, task_request, pcm_input, sample_rate, channels, sample_format, busy_timeout_ms, diarization, request_lease](
             HttpStreamWriter & writer) {
             const minitts::app::AudioStreamFormat format{sample_rate, channels};
             const auto audio = minitts::app::make_pcm_chunk_stream(*pcm_input, format, sample_format);
@@ -3347,7 +3385,7 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
                             json_quote(event.partial_text->text) +
                             "}");
                 },
-                busy_timeout_ms);
+                busy_timeout_ms, request_lease);
             if (diarization) {
                 write_sse(writer, diarization_event_json(
                     timed_result.result.speaker_turns, sample_rate, true, timed_result.ttft_ms));
@@ -3394,6 +3432,8 @@ engine::runtime::TaskRequest drop_unsupported_language_option(
 HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
+    auto request_lease = bind_request(model, busy_timeout_ms);
     const auto * request_json = body.find("request");
     const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
@@ -3402,16 +3442,17 @@ HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
             minitts::cli::build_request_from_json(effective_json, request_base_),
             effective_json,
             model.accepts_language));
-    const auto busy_timeout_ms = parse_busy_timeout_override(body);
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming
-        ? run_streaming_model(model, request, {}, busy_timeout_ms)
-        : run_model(model, request, busy_timeout_ms);
+        ? run_streaming_model(model, request, {}, busy_timeout_ms, request_lease)
+        : run_model(model, request, busy_timeout_ms, request_lease);
     return json_response(task_result_json(timed_result.result, timed_result.wall_ms));
 }
 
 HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
+    const auto busy_timeout_ms = parse_busy_timeout_override(body);
+    auto request_lease = bind_request(model, busy_timeout_ms);
     const auto * request_json = body.find("request");
     const auto & effective_json = request_json != nullptr ? *request_json : body;
     const auto request = apply_default_request_options(
@@ -3427,7 +3468,7 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
         [&](const engine::runtime::StreamEvent & event) {
             events.push_back(event);
         },
-        parse_busy_timeout_override(body));
+        busy_timeout_ms, request_lease);
     std::ostringstream out;
     std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
@@ -3452,21 +3493,25 @@ HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
 // potentially Open WebUI) that call GET /v1/audio/voices?model=<id> to populate a voice picker
 // instead of guessing generic names like "alloy"/"nova".
 HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
-    std::lock_guard<std::mutex> state_lock(models_mutex_);
     const std::string model_id = query_param(request.query, "model");
     std::vector<std::string> voices;
 
-    size_t model_idx = SIZE_MAX;
-    if (!model_id.empty()) {
-        const auto it = model_index_.find(model_id);
-        if (it != model_index_.end()) {
-            model_idx = it->second;
+    LoadedModel * selected = nullptr;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        size_t model_idx = SIZE_MAX;
+        if (!model_id.empty()) {
+            const auto it = model_index_.find(model_id);
+            if (it != model_index_.end()) {
+                model_idx = it->second;
+            }
+        } else if (models_.size() == 1) {
+            model_idx = 0;
         }
-    } else if (models_.size() == 1) {
-        model_idx = 0;
+        if (model_idx != SIZE_MAX) { selected = models_.at(model_idx).get(); }
     }
-    if (model_idx != SIZE_MAX) {
-        const auto & model = *models_.at(model_idx);
+    if (selected != nullptr) {
+        const auto & model = *selected;
         std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
         for (const auto & [name, preset] : model.voice_presets) {
             (void) preset;
@@ -3508,14 +3553,18 @@ HttpResponse ServerState::handle_voices(const HttpRequest & request) const {
 }
 
 std::string ServerState::models_json(bool include_session_options) const {
-    std::lock_guard<std::mutex> state_lock(models_mutex_);
+    std::vector<LoadedModel *> registered;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        for (const auto & model : models_) { registered.push_back(model.get()); }
+    }
     std::ostringstream out;
     out << "{\"object\":\"list\",\"data\":[";
-    for (size_t i = 0; i < models_.size(); ++i) {
+    for (size_t i = 0; i < registered.size(); ++i) {
         if (i != 0) {
             out << ",";
         }
-        const auto & model = *models_[i];
+        const auto & model = *registered[i];
         std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
         const auto slot_state = model.busy.state();
         const auto parallel_capacity = model.parallel_capacity.load();
@@ -3551,6 +3600,13 @@ std::string ServerState::get_allowed_origin(const HttpRequest & request) const {
 }
 
 void ServerState::LoadedModel::unload() {
+    if (busy.parallel()) {
+        // Logical residency ends before potentially slow pool/weight teardown.
+        // The exclusive admission lease still prevents access to these objects.
+        parallel_resident.store(false);
+        loaded.store(false);
+        parallel_capacity.store(0);
+    }
     if (!busy.parallel()) {
         offline = nullptr;
         streaming = nullptr;
@@ -3669,6 +3725,46 @@ void ServerState::ensure_model_fits_memory(const ServerModelConfig & model) {
     }
 }
 
+void ServerState::unload_registered_models(
+    const std::vector<std::pair<std::string, LoadedModel *>> & registered,
+    std::vector<std::string> & unloaded) {
+    struct Drain {
+        std::string id;
+        LoadedModel * model;
+        std::optional<ModelSlots::Pending> pending;
+    };
+    std::vector<Drain> parallel;
+    parallel.reserve(registered.size());
+    for (const auto & [id, model] : registered) {
+        if (model->busy.parallel()) {
+            parallel.push_back({id, model, model->busy.queue_management(0, id)});
+        }
+    }
+    // Every parallel model already has its own ordered barrier. Release ready
+    // idle pools before waiting on a first load or another busy model.
+    for (auto & drain : parallel) {
+        auto lease = drain.pending->try_acquire();
+        if (!lease) { continue; }
+        drain.model->unload();
+        unloaded.push_back(drain.id);
+        drain.pending.reset();
+    }
+    // Preserve the original serial path, including unpublished-load skipping.
+    for (const auto & [id, model] : registered) {
+        if (model->busy.parallel() || !model->resident()) { continue; }
+        auto lease = model->busy.acquire(0, id);
+        model->unload();
+        unloaded.push_back(id);
+    }
+    for (auto & drain : parallel) {
+        if (!drain.pending) { continue; }
+        auto lease = drain.pending->acquire();
+        drain.model->unload();
+        unloaded.push_back(drain.id);
+        drain.pending.reset();
+    }
+}
+
 HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     const auto * ids = body.find("model_ids");
@@ -3678,6 +3774,7 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
 
     std::vector<std::string> unloaded;
     std::vector<std::string> not_found;
+    std::vector<std::pair<std::string, LoadedModel *>> registered;
 
     for (const auto & id_val : ids->as_array()) {
         if (!id_val.is_string()) {
@@ -3696,16 +3793,9 @@ HttpResponse ServerState::handle_unload_models(const std::string & body_text) {
             not_found.push_back(id);
             continue;
         }
-        // Main skips a legacy first load that has not published its session.
-        if (!model->busy.parallel() && !model->resident()) { continue; }
-        // An opted-in parallel model still drains its first load. Registered
-        // objects are not removed, so the pointer is stable after lookup.
-        [[maybe_unused]] ModelExecutionGuard::Lock lock = model->busy.acquire(0, id);
-        if (!model->busy.parallel() || model->loaded.load()) {
-            model->unload();
-            unloaded.push_back(id);
-        }
+        registered.emplace_back(id, model);
     }
+    unload_registered_models(registered, unloaded);
 
     std::ostringstream out;
     out << "{\"unloaded\":[";
@@ -3734,16 +3824,7 @@ HttpResponse ServerState::handle_unload_all_models() {
             registered.emplace_back(model->registered_id, model.get());
         }
     }
-    // Never hold the model-list mutex while waiting for inference: a lazy
-    // first load can need it for eviction before it publishes loaded=true.
-    for (const auto & [id, model] : registered) {
-        if (!model->busy.parallel() && !model->resident()) { continue; }
-        [[maybe_unused]] ModelExecutionGuard::Lock lock = model->busy.acquire(0, id);
-        if (!model->busy.parallel() || model->loaded.load()) {
-            model->unload();
-            unloaded.push_back(id);
-        }
-    }
+    unload_registered_models(registered, unloaded);
 
     std::ostringstream out;
     out << "{\"unloaded\":[";

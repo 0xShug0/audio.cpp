@@ -19,6 +19,7 @@ on:
       - "include/engine/framework/runtime/session_pool.h"
       - "include/engine/framework/runtime/session.h"
       - "tests/unittests/test_server_model_slots.cpp"
+      - "tests/unittests/test_server_parallel_lifecycle.cpp"
       - "tests/unittests/test_model_execution_guard.cpp"
       - "tests/unittests/test_session_pool.cpp"
       - "tests/unittests/test_server_busy_guard.cpp"
@@ -73,24 +74,69 @@ jobs:
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
-          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(nproc)"
+          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(nproc)"
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
-          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(sysctl -n hw.logicalcpu)"
+          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(sysctl -n hw.logicalcpu)"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake --build build --config Release --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel
+          cmake --build build --config Release --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel
 
       - name: Run server lifecycle tests (Linux/macOS)
         if: runner.os != 'Windows'
-        run: ctest --test-dir build --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|model_execution_guard_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+        run: ctest --test-dir build --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|model_execution_guard_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
 
       - name: Run server lifecycle tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|model_execution_guard_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|model_execution_guard_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+
+  cpu-sanitizers:
+    name: CPU framework ${{ matrix.sanitizer }} sanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure instrumented CPU framework
+        run: |
+          cmake -S . -B build-sanitizer \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${{ matrix.sanitizer }}" \
+            -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXTENDED_TESTS=ON \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF \
+            -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF -DENGINE_ENABLE_LLAMAFILE=OFF \
+            -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=builtin_audio_utils
+      - name: Build ownership and lifecycle regressions
+        run: |
+          cmake --build build-sanitizer --parallel 4 --target \
+            server_single_slot_compat_test model_execution_guard_test server_parallel_lifecycle_test server_model_slots_test \
+            session_pool_test shared_weight_cache_test gguf_tensor_source_test \
+            server_config_test server_busy_guard_test
+      - name: Run sanitizer regressions
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          ctest --test-dir build-sanitizer --output-on-failure --timeout 60 \
+            --output-junit sanitizer-results.xml \
+            -R '^(server_single_slot_compat_test|model_execution_guard_test|server_parallel_lifecycle_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test|server_config_test|server_busy_guard_test)$'
+      - name: Preserve sanitizer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-framework-${{ matrix.sanitizer }}-sanitizer
+          path: |
+            build-sanitizer/sanitizer-results.xml
+            build-sanitizer/Testing/Temporary/LastTest.log

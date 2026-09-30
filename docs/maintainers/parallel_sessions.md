@@ -58,24 +58,38 @@ has actually isolated all mutable state; that requires adapter review and tests.
 
 `app/server/model_execution_guard.h` selects the legacy or parallel guard at
 registration. On the parallel path, `app/server/model_slots.h` leases one session
-per request. A lease spans
-preparation and execution, including the entire stream or native batch. RAII
+per request. Parallel handlers bind a lease before reading model-dependent
+configuration or preparing inputs, and retain it through result serialization,
+the entire stream or native batch. Deferred response callbacks own the same
+lease used for validation; dropping a callback releases it. RAII
 releases it on completion or exception. Native batching within one session and
 multiple concurrent sessions are independent capabilities.
 
-Requests queue when all slots are busy or management blocks admission. The existing busy-timeout policy applies
-to the queue. Unload, eviction and reconfiguration require an exclusive lease;
-waiting management operations block new requests so management cannot starve.
+Requests and management enter one FIFO admission queue per opt-in model. Order
+is defined when a caller joins that queue, not by network arrival timestamps.
+Consecutive requests can fill available slots. A management operation is a barrier
+for later arrivals: earlier queued requests drain first, then the manager runs
+exclusively. Per-waiter notifications assign ownership before waking the caller;
+a later caller cannot take an older caller's reservation. The existing busy-timeout
+and timeout-zero policy applies; expired/cancelled callers release their queue entry.
 Leases must drain before destroying the pool. This does not cancel an in-flight
 GPU operation or provide continuous token batching.
 
 Parallel first-load requests serialize pool construction through a per-model
 initialization mutex. The complete pool is published only after every clone has
 been created successfully. Failed loads can be retried. Eviction checks atomic
-loaded state rather than accessing session pointers without a lease.
+logical residency rather than accessing session pointers without a lease.
+Residency and public loaded state clear before pool/weight destruction begins,
+so a retiring model cannot cause a resident-limit rejection or needless eviction.
+This does not mean its physical memory is already free: the optional memory
+guard still checks actual available memory, and unload completes after teardown.
 Parallel unload leases the model even before its first pool has been published, so an
 in-progress lazy load cannot be skipped. Model-list lookup/snapshot locks are
-released before waiting for that lease.
+released before waiting for that lease. Bulk unload first reserves barriers for
+all selected parallel models, unloads ready idle pools, then waits for blocked
+models. An unpublished initial load therefore cannot delay releasing unrelated
+idle pools. Full status/voice lookups also release the registry lock before
+waiting for model metadata or inspecting filesystem entries.
 
 The legacy path retains main's bulk-unload behavior: an unpublished first load
 is skipped, and a session being destroyed no longer counts as resident.
@@ -83,13 +97,13 @@ Residency is mirrored with an atomic flag instead of reading a session pointer
 concurrently. Bulk snapshots use immutable registered IDs without acquiring
 metadata locks under the global registry mutex.
 
-Preserving this default is not a resolution of the reported parallel scheduler
-ordering, fairness, retirement and bulk-operation issues. Validate those under
-F1/F2/F5 before claiming the opt-in path has passed the complete framework gate.
+The FIFO, bulk-release and residency behavior has dedicated controlled
+real-handler regressions under F1/F2/F5. Passing them alone does not establish
+the complete framework gate or admit another model/backend/mode.
 
-Do not hold the model metadata lock while loading: status reads acquire the
-global model-list lock before metadata, while loading can acquire the model-list
-lock for eviction. The exclusive model lease protects configuration during
+Never wait for model metadata or admission while holding the global registry
+lock. Do not hold metadata while loading or entering eviction of another model.
+The exclusive model lease protects configuration during
 reconfiguration after the metadata lock is released.
 
 `GET /v1/models` exposes configured `slots`, current `active_slots`,

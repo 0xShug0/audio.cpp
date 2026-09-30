@@ -164,3 +164,36 @@ validation gate. Metal/macOS, Linux and new sanitizer runs have not been perform
 locally. The reported opt-in ordering, fairness, management-priority, first-load
 bulk-delay and retirement-accounting issues remain for separate work. No claim
 is made that these smoke tests resolve or validate those issues.
+
+## Local follow-up: FIFO admission and retirement, 2026-09-30
+
+The five findings in [the maintainer's report](https://github.com/0xShug0/audio.cpp/pull/715#issuecomment-5914223647)
+now have local common-framework fixes: ordered request/management admission and
+per-waiter wakeups; binding preparation/deferred callbacks to the same request
+lease; ready-model bulk release before blocked drains; logical retirement before
+teardown; registry snapshots that do not span metadata waits. Legacy omitted/one
+slot execution still uses the unchanged BusyGuard/direct session. No arithmetic,
+CUDA/Vulkan kernel or model admission changes were made.
+
+Targeted Windows checks pass: CPU 11/11 CTests, CUDA 5/5, Vulkan 5/5 and MSVC ASan
+4/4. Controlled actual-handler tests force each finding at 2/4 slots and cover
+stream/batch callback ownership, disconnect and preparation-failure reuse. Real
+Piper/Canary probes pass 32 CUDA/Vulkan and 6 CPU case groups with same-backend
+pre-fix output parity, queued unload and queued Piper-to-Canary replacement.
+Every configured parallel slot is observed in execution logs. The baseline is
+the saved pre-fix restored-legacy framework with existing model adapters, not
+pristine upstream; backend integration remains separate from this empty-admission
+foundation. Evidence is local under `outputs/slot-maintainer-fixes-20260930/` in
+the enclosing workspace, including a review patch, manifests, commands, raw logs
+and results. Publication excludes the unrelated local HTTP shutdown experiments. The exact
+publication checkout builds the server and passes nine focused CPU CTests;
+supplemental local ownership/HTTP-worker tests explain the larger local count.
+Linux ASan/TSan CI is configured for the published framework tests; results are
+pending until those jobs run.
+
+A too-long Piper overlap fixture hit its fixed graph arena in both pre-fix
+one-slot and candidate builds. Diagnostic failures are retained; final overlap
+tests use a supported shorter prompt without changing model code/settings.
+Metal/Linux runtime, TSan and the complete model/framework admission matrix
+remain unvalidated here. This targeted fix record does not mark the full gate
+complete or replace the maintainer's platform-specific retest.

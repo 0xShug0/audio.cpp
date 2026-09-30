@@ -22,7 +22,7 @@ bool await_state(Predicate ready) {
 }
 
 // A queued unload must not hide an already overdue inference. Include spare
-// slots: management priority makes those unavailable until active work drains.
+// slots: an older management barrier blocks later work until active work drains.
 void test_overdue_with_waiting_management(int count, int occupied, int managers = 1) {
     ModelSlots slots;
     slots.configure(count);
@@ -83,8 +83,108 @@ void test_management_priority(bool disable_timeout) {
     require(completed && slots.state().waiting_requests == 0, "management release failed to drain request queue");
 }
 
+// Admission order is observable under a held slot, independent of wake timing.
+// Older inference must drain before management; later work cannot barge ahead.
+void test_fifo(int count) {
+    ModelSlots slots; slots.configure(count);
+    std::vector<ModelSlots::Lock> held;
+    for (int i = 0; i < count; ++i) { held.push_back(slots.acquire_run(0, "held")); }
+    std::mutex order_mutex; std::vector<int> order;
+    std::vector<std::thread> work;
+    auto submit = [&](int id, bool management) {
+        work.emplace_back([&, id, management] {
+            auto lease = management ? slots.acquire(0, "manager") : slots.acquire_run(0, "request");
+            std::lock_guard<std::mutex> lock(order_mutex); order.push_back(id);
+        });
+    };
+    submit(1, false);
+    bool observed = await_state([&] { return slots.state().waiting_requests == 1; });
+    submit(2, true);
+    observed = observed && await_state([&] { return slots.state().waiting_management == 1; });
+    for (int i = 0; i < 16; ++i) { submit(3 + i, false); }
+    observed = observed && await_state([&] { return slots.state().waiting_requests == 17; });
+    if (!observed) { const auto s = slots.state(); std::cerr << "FIFO setup slots=" << count << " active=" << s.active << " requests=" << s.waiting_requests << " management=" << s.waiting_management << "\n"; }
+    held.clear();
+    for (auto & future : work) { future.join(); }
+    require(observed, "failed to establish staggered FIFO arrivals");
+    require(order.size() == 18 && order[0] == 1 && order[1] == 2,
+            "management or a later request overtook the oldest request");
+    const auto state = slots.state();
+    require(state.active == 0 && state.waiting_requests == 0 && state.waiting_management == 0,
+            "FIFO admission leaked ownership/accounting");
+}
+
+void test_management_reservations() {
+    ModelSlots slots; slots.configure(2);
+    std::optional<ModelSlots::Lock> held(slots.acquire_run(0, "held"));
+    {
+        auto barrier = slots.queue_management(0, "bulk");
+        require(!barrier.try_acquire(), "bulk barrier ignored running inference");
+        auto later = std::async(std::launch::async, [&] { return slots.acquire_run(0, "later"); });
+        const bool queued = await_state([&] { return slots.state().waiting_requests == 1; });
+        // Destroying a pending reservation cancels it and wakes usable slots.
+        barrier = slots.queue_management(0, "replacement");
+        const bool completed = later.wait_for(500ms) == std::future_status::ready;
+        held.reset();
+        { auto lease = later.get(); }
+        require(queued && completed, "cancelled management stranded a runnable request");
+    }
+    require(slots.try_acquire().has_value(), "reserved management leaked an exclusive lease");
+    {
+        auto ready = slots.queue_management(0, "ready");
+        auto lease = ready.try_acquire();
+        require(lease.has_value() && !slots.try_acquire(), "ready bulk reservation did not own management");
+    }
+    require(slots.try_acquire().has_value(), "consumed management reservation did not release");
+    {
+        auto held_exclusive = slots.acquire(0, "holder");
+        auto expired = slots.queue_management(10, "expiring");
+        auto next = slots.queue_management(0, "next");
+        std::this_thread::sleep_for(20ms);
+        // Expiry is also enforced by dispatch, before assigning another lease.
+    }
+    const auto state = slots.state();
+    require(state.active == 0 && state.waiting_requests == 0 && state.waiting_management == 0,
+            "expired/cancelled bulk barriers leaked queue entries");
+}
+
+// No manager is needed to enforce fairness. Only one slot becomes free: its
+// oldest waiter must get it before any of the sixteen staggered later callers.
+void test_oldest_request(int count) {
+    ModelSlots slots; slots.configure(count);
+    std::vector<std::optional<ModelSlots::Lock>> held;
+    for (int i = 0; i < count; ++i) { held.emplace_back(slots.acquire_run(0, "held")); }
+    std::packaged_task<ModelSlots::Lock()> oldest([&] { return slots.acquire_run(2000, "oldest"); });
+    auto result = oldest.get_future();
+    std::thread first(std::move(oldest));
+    bool established = await_state([&] { return slots.state().waiting_requests == 1; });
+    std::atomic<int> admitted{0};
+    std::vector<std::thread> later;
+    for (int i = 0; i < 16; ++i) {
+        later.emplace_back([&] { auto lease = slots.acquire_run(0, "later"); ++admitted; });
+        established = established && await_state([&] { return slots.state().waiting_requests == i + 2; });
+    }
+    const auto released = held[0]->slot(); held[0].reset();
+    const bool ready = result.wait_for(500ms) == std::future_status::ready;
+    first.join();
+    std::optional<ModelSlots::Lock> oldest_lease;
+    try { oldest_lease.emplace(result.get()); } catch (const ServerBusyError &) {}
+    const bool ordered = oldest_lease && oldest_lease->slot() == released && admitted == 0;
+    held.clear(); oldest_lease.reset();
+    for (auto & thread : later) { thread.join(); }
+    require(established && ready && ordered, "later requests delayed the oldest waiter");
+    require(admitted == 16 && slots.state().waiting_requests == 0, "fairness test stranded queued work");
+}
+
 int main() {
     try {
+        test_fifo(1);
+        test_fifo(2);
+        test_fifo(4);
+        test_oldest_request(1);
+        test_oldest_request(2);
+        test_oldest_request(4);
+        test_management_reservations();
         test_overdue_with_waiting_management(1, 1);
         test_overdue_with_waiting_management(2, 2);
         test_overdue_with_waiting_management(4, 4);

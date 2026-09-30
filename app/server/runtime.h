@@ -12,6 +12,7 @@
 
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/model.h"
+#include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/framework/runtime/session_pool.h"
 
@@ -69,6 +70,7 @@ private:
         // Mirrors main's session-pointer residency without an unsynchronized
         // pointer read during loading/destruction.
         std::atomic<bool> legacy_session_present{false};
+        std::atomic<bool> parallel_resident{false};
         std::unique_ptr<engine::runtime::VoiceTaskSessionPool> sessions;
         // Zero means unknown (not loaded); status reads this without touching
         // session pointers that may be concurrently unloaded.
@@ -101,7 +103,7 @@ private:
         // Release the loaded model and session from memory (frees VRAM on GPU backends).
         // The next request will trigger a reload via ensure_model_loaded_locked().
         bool resident() const noexcept {
-            return busy.parallel() ? loaded.load() : legacy_session_present.load();
+            return busy.parallel() ? parallel_resident.load() : legacy_session_present.load();
         }
         engine::runtime::IVoiceTaskSession & leased_session(size_t slot) {
             return busy.parallel() ? sessions->at(slot) : *session;
@@ -111,6 +113,17 @@ private:
         }
         void unload();
     };
+
+    // Only parallel requests bind a lease before reading configuration/preparing
+    // inputs. The shared lease may move with a stream callback; legacy requests
+    // retain the original guard acquisition inside execution.
+    using RequestLease = std::shared_ptr<ModelExecutionGuard::Lock>;
+    RequestLease bind_request(LoadedModel & model, std::optional<int> timeout);
+    void unload_registered_models(const std::vector<std::pair<std::string, LoadedModel *>> & registered,
+                                  std::vector<std::string> & unloaded);
+    // Controlled runtime tests supply loaders and barriers without product flags.
+    friend class ServerRuntimeTestAccess;
+    std::function<engine::runtime::ModelRegistry()> registry_factory_;
 
     // Acquire the model's run guard. `request_timeout_ms` is the caller-supplied
     // override, clamped by this model's configured ceiling. Throws ServerBusyError
@@ -173,19 +186,22 @@ private:
     TimedTaskResult run_model(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        RequestLease request_lease = {});
     TimedTaskResult run_streaming_model(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const std::function<void(const engine::runtime::StreamEvent &)> & event_sink = {},
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        RequestLease request_lease = {});
     // Shared body of the two entry points above/below; `audio` selects the source.
     TimedTaskResult run_streaming_model_impl(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const minitts::app::AudioChunkStream * audio,
         const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-        std::optional<int> busy_timeout_ms);
+        std::optional<int> busy_timeout_ms,
+        RequestLease request_lease = {});
     // Same as run_streaming_model, but pulls audio from `audio` instead of
     // `request.audio_input`, so the samples are never fully materialized.
     TimedTaskResult run_streaming_model_from(
@@ -193,12 +209,14 @@ private:
         const engine::runtime::TaskRequest & request,
         const minitts::app::AudioChunkStream & audio,
         const std::function<void(const engine::runtime::StreamEvent &)> & event_sink = {},
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        RequestLease request_lease = {});
     HttpResponse handle_speech(const std::string & body_text);
     HttpResponse handle_speech_stream(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
-        const engine::io::json::Value & body);
+        const engine::io::json::Value & body,
+        RequestLease request_lease = {});
     HttpResponse handle_speech_live(const HttpRequest & request);
     // detail selects the /v1/audio/transcriptions/details response, which adds the
     // segment, speaker-turn and word arrays the plain route drops.
@@ -213,17 +231,20 @@ private:
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         std::optional<int> busy_timeout_ms = std::nullopt,
-        bool detail = false);
+        bool detail = false,
+        RequestLease request_lease = {});
     HttpResponse run_transcription_stream(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        RequestLease request_lease = {});
     HttpResponse handle_alignment(const HttpRequest & request);
     HttpResponse handle_alignment_multipart(const std::string & body_text, const std::string & boundary);
     HttpResponse run_alignment(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        RequestLease request_lease = {});
     HttpResponse handle_transcription_live(const HttpRequest & request);
     HttpResponse handle_generic_run(const std::string & body_text);
     HttpResponse handle_generic_stream(const std::string & body_text);

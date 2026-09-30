@@ -698,3 +698,13 @@ Response:
   "unloaded": ["pocket-tts", "qwen3-asr"]
 }
 ```
+
+For opt-in models (`slots >= 2`), requests and management share FIFO admission.
+Earlier queued requests drain before a later unload/reconfiguration, and later
+arrivals cannot overtake a reserved waiter. A request binds model configuration
+before preparation and retains its lease through any deferred stream/native
+batch response. Bulk unload releases ready idle pools before waiting on busy
+ones. Logical residency ends when teardown starts; unload completes when
+resources have been destroyed, and physical-memory guards still apply.
+Registry lookup/snapshot locks never span model admission or metadata waits.
+See the [parallel-session contract](../../docs/maintainers/parallel_sessions.md).

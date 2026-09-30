@@ -2895,6 +2895,21 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME server_model_slots_test COMMAND server_model_slots_test)
         set_tests_properties(server_model_slots_test PROPERTIES TIMEOUT 60)
 
+        # Exercise real handlers with controlled, tiny model loaders. No native
+        # installer or backend-specific model admission is needed by this test.
+        get_target_property(server_lifecycle_sources audiocpp_server SOURCES)
+        list(FILTER server_lifecycle_sources EXCLUDE REGEX "app/server/(main|model_installer)\\.cpp$")
+        add_executable(server_parallel_lifecycle_test
+            tests/unittests/test_server_parallel_lifecycle.cpp ${server_lifecycle_sources})
+        target_include_directories(server_parallel_lifecycle_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_link_libraries(server_parallel_lifecycle_test PRIVATE engine_runtime ggml Threads::Threads)
+        if(WIN32)
+            target_link_libraries(server_parallel_lifecycle_test PRIVATE ws2_32)
+        endif()
+        add_test(NAME server_parallel_lifecycle_test COMMAND server_parallel_lifecycle_test)
+        set_tests_properties(server_parallel_lifecycle_test PROPERTIES TIMEOUT 90)
+
         add_executable(session_pool_test tests/unittests/test_session_pool.cpp)
         target_include_directories(session_pool_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         target_link_libraries(session_pool_test PRIVATE ggml-base Threads::Threads)

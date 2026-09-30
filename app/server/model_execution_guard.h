@@ -71,6 +71,10 @@ public:
         if (parallel_) { return Lock(slots_.acquire(timeout_ms, label)); }
         return acquire_legacy(timeout_ms, label, false);
     }
+    ModelSlots::Pending queue_management(int timeout_ms, std::string_view label) {
+        if (!parallel_) { throw std::logic_error("deferred management requires parallel execution"); }
+        return slots_.queue_management(timeout_ms, label);
+    }
     std::optional<Lock> try_acquire() {
         if (parallel_) {
             auto lock = slots_.try_acquire();
