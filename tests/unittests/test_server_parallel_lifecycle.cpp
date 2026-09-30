@@ -19,6 +19,33 @@ namespace {
 void require(bool value, const std::string & message) {
     if (!value) { throw std::runtime_error(message); }
 }
+void concurrent_json_parsing() {
+    std::promise<void> start;
+    auto ready = start.get_future().share();
+    std::vector<std::future<void>> workers;
+    for (int worker = 0; worker < 8; ++worker) {
+        workers.push_back(std::async(std::launch::async, [ready, worker] {
+            ready.wait();
+            for (int wave = 0; wave < 200; ++wave) {
+                const std::string label = std::to_string(worker) + ":" + std::to_string(wave);
+                const auto value = parse("{\"text\":\"" + label + "\",\"requests\":[null,true,1.5,{\"text\":\"hello\"}]}");
+                require(value.require("text").as_string() == label &&
+                        value.require("requests").as_array().size() == 4,
+                        "concurrent JSON parse mixed request contents");
+                require(parse(engine::io::json::stringify(value)).require("text").as_string() == label,
+                        "concurrent JSON round-trip changed request contents");
+                bool rejected = false;
+                try { (void)parse("{\"text\":"); }
+                catch (const std::runtime_error & error) {
+                    rejected = std::string(error.what()).find("failed to parse json at byte ") == 0;
+                }
+                require(rejected, "concurrent invalid JSON lost its own error position");
+            }
+        }));
+    }
+    start.set_value();
+    for (auto & worker : workers) { worker.get(); }
+}
 template<class F> bool observe(F f) {
     const auto deadline = std::chrono::steady_clock::now() + 2s;
     while (!f()) {
@@ -439,6 +466,7 @@ void rejected_preparation_releases_lease(int count) {
 
 int main() {
     try {
+        concurrent_json_parsing();
         generic_batch_legacy_and_invalid_input();
         for (int count : {2, 4}) {
             older_work_before_management(count, false);

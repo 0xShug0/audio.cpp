@@ -219,3 +219,17 @@ sanitizer and cross-platform results require a fresh CI run; the
 earlier GPU/checkpoint results above apply to their recorded revisions, not
 automatically to this newer upstream integration. Local logs and JUnit evidence
 are retained in `outputs/slot-tsan-ci-20260930/` in the enclosing workspace.
+
+After the compile fix, Linux TSan reached the tests and reported a real race in
+cJSON's global error-position writes. The engine JSON wrapper now serializes
+only the cJSON parse call; per-tree conversion/deletion remain independent.
+An eight-thread valid/invalid/round-trip regression is included in the lifecycle
+test. The audit found no other direct cJSON parse/error-hook users in production.
+
+The GCC 13 run also reported timed-mutex unlock warnings in the legacy tests.
+This matches the missing `pthread_mutex_clocklock` interceptor documented in
+[GCC's r14-905 fix](https://gcc.gnu.org/pipermail/libstdc++-cvs/2023q2/039725.html).
+The TSan job selects GCC 14, whose libstdc++ uses an intercepted timed-lock path
+under TSan. Production BusyGuard is unchanged; no tests, reports or race checks
+are suppressed. Windows CPU 9/9 and MSVC ASan 3/3 pass after the parser fix;
+the new remote sanitizer run remains required.

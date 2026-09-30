@@ -4,6 +4,7 @@
 
 #include <cctype>
 #include <cmath>
+#include <mutex>
 #include <string_view>
 #include <stdexcept>
 
@@ -358,7 +359,14 @@ const Value * Value::find(const std::string & key) const noexcept {
 
 Value parse(std::string_view text) {
     const char * parse_end = nullptr;
-    cJSON * root = cJSON_ParseWithLengthOpts(text.data(), text.size(), &parse_end, 0);
+    cJSON * root = nullptr;
+    {
+        // cJSON writes its global error position even when return_parse_end is
+        // supplied. Serialize that call; conversion and deletion are per-tree.
+        static std::mutex parse_mutex;
+        std::lock_guard<std::mutex> lock(parse_mutex);
+        root = cJSON_ParseWithLengthOpts(text.data(), text.size(), &parse_end, 0);
+    }
     if (root == nullptr) {
         const ptrdiff_t error_offset = parse_end == nullptr ? -1 : parse_end - text.data();
         throw std::runtime_error("failed to parse json at byte " + std::to_string(error_offset));
