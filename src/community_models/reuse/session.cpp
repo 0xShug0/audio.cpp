@@ -18,6 +18,12 @@ ReuseSession::ReuseSession(runtime::TaskSpec task, runtime::SessionOptions optio
     std::shared_ptr<const ReuseAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract)
     : RuntimeSessionBase(options), task_(task), contract_(std::move(contract)) {
     runtime::validate_spec_backed_session_options(options, *contract_, "reuse", "RE-USE");
+    if (execution_context().backend_type() == core::BackendType::Hip) {
+        throw std::runtime_error("RE-USE is disabled on HIP: this backend has not been validated");
+    }
+    if (execution_context().backend_type() == core::BackendType::Metal) {
+        throw std::runtime_error("RE-USE is disabled on Metal due to GGML kernel support bugs");
+    }
     if (task.task != runtime::VoiceTaskKind::SpeechToSpeech || task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("RE-USE supports only offline s2s");
     }
