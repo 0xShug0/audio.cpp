@@ -268,7 +268,7 @@ jobs:
         run: |
           cmake -S . -B build/colab-cuda -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CUDA_ARCHITECTURES=75 \
+            "-DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;90" \
             -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc' \
             -DENGINE_ENABLE_CUDA=ON \
             -DENGINE_ENABLE_VULKAN=OFF \
