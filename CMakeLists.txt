@@ -1553,6 +1553,19 @@ audiocpp_add_model(gigaam_asr
         engine::models::gigaam_asr::make_gigaam_asr_loader
 )
 
+audiocpp_add_model(crisperwhisper
+    SOURCES
+        src/models/crisperwhisper/assets.cpp
+        src/models/crisperwhisper/alignment.cpp
+        src/models/crisperwhisper/transcript_alignment.cpp
+        src/models/crisperwhisper/whisper_runtime.cpp
+        src/models/crisperwhisper/session.cpp
+    INCLUDES
+        engine/models/crisperwhisper/model.h
+    LOADERS
+        engine::models::crisperwhisper::make_crisperwhisper_loader
+)
+
 audiocpp_add_model(cohere_asr
     SOURCES
         src/models/cohere_asr/assets.cpp

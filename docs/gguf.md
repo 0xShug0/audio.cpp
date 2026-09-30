@@ -69,6 +69,7 @@ Status labels:
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |
 | `citrinet_asr` | Done | Pass | --- | --- | Pass |
 | `cohere_asr` | Done | Pass | Pass | --- | Pass (drift) |
+| `crisperwhisper` | Done | Pass | Pass | --- | Pass (drift) |
 | `fish_audio` | Done | Pass | --- | Pass | Pass |
 | `fun_asr_nano` | Done | Pass | --- | Pass | Pass |
 | `gigaam_asr` | Done | --- | Pass | Pass | --- |
