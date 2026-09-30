@@ -190,7 +190,7 @@
   "lfm2_audio": [
     {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "default": "auto", "choices": ["auto", "vad", "fixed", "none"], "info_en": "auto keeps audio up to audio_chunk_seconds whole and splits longer audio at pauses; none transcribes it in one pass, which the model handles up to about a minute."},
     {"name": "audio_chunk_seconds", "type": "number", "label": "audio_chunk_seconds", "default": 30, "minimum": 1, "step": 1},
-    {"name": "max_tokens", "type": "number", "label": "max_tokens", "default": 512, "minimum": 1, "step": 1, "precision": 0, "info_en": "Transcript tokens allowed per chunk; a chunk that needs more fails the request."}
+    {"name": "max_tokens", "type": "number", "label": "max_tokens", "default": 512, "minimum": 1, "step": 1, "precision": 0, "info_en": "Transcript tokens allowed per chunk; a transcript that reaches it is cut off there."}
   ],
 
   "confucius4_r2t2": [

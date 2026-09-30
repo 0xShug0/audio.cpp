@@ -105,7 +105,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions -F model=lfm2-audio-asr -F fi
 | Option | Default | Meaning |
 |---|---|---|
 | `language` | The checkpoint's | `en` or `ja`; must match the checkpoint. |
-| `max_tokens` | `512` | Transcript tokens allowed per chunk. A chunk that needs more fails the request rather than returning a cut-off transcript. |
+| `max_tokens` | `512` | Transcript tokens allowed per chunk. A transcript that reaches it is cut off there, as liquid-audio's is, and a warning goes to stderr; the other chunks go on. |
 | `audio_chunk_mode` | `auto` | `auto`, `vad`, `fixed` or `none`; see [Long audio](#long-audio). |
 | `audio_chunk_seconds` | `30` | Longest chunk in seconds, at least 1. |
 
@@ -144,8 +144,10 @@ consecutive LibriSpeech test-clean utterances joined with 0.3 s gaps:
 | 120 s | 83% | 1.9% | 2.6% |
 | 180 s | 296% | 1.4% | 2.4% |
 
-`none` follows liquid-audio up to 90 s (2.6%, 2.0% and 9.4%). Beyond that it
-fails with a `max_tokens` error instead of returning the repetitions.
+`none` follows liquid-audio up to 90 s (2.6%, 2.0% and 9.4%). At 120 s it
+finishes all 8 files at 29%, 6 of them word for word as liquid-audio. At 180 s,
+7 of the 8 reach `max_tokens` and come back cut off there, repetitions included,
+with a warning.
 
 ## Validation
 

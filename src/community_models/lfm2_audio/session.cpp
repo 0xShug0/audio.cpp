@@ -12,8 +12,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -39,6 +41,18 @@ const engine::model_spec::ModelContract & require_contract(
     }
 
     return *contract;
+}
+
+// Warnings go to stderr, as other families print theirs.
+void warn(const std::string & message) {
+    std::cerr << "[warning][" << kFamily << "] " << message << "\n";
+}
+
+// A position in the 16 kHz input, in seconds to a tenth.
+std::string seconds_at(int64_t sample) {
+    char out[32];
+    std::snprintf(out, sizeof(out), "%.1f", static_cast<double>(sample) / kSampleRate);
+    return out;
 }
 
 runtime::SessionOptions validate_session_setup(
@@ -261,8 +275,13 @@ runtime::IOfflineVoiceTaskSession & Lfm2AudioSession::vad_session() {
     return *vad_session_;
 }
 
-std::string Lfm2AudioSession::transcribe(const std::vector<float> & samples, const RequestOptions & options) {
-    const auto features = features_.extract(samples);
+// A transcript that reaches max_tokens is cut off there and kept, with a
+// warning, as liquid-audio's generate_sequential keeps what it generated when
+// max_new_tokens runs out; the other chunks go on.
+std::string Lfm2AudioSession::transcribe(
+    const std::vector<float> & samples, const runtime::TimeSpan & span, const RequestOptions & options) {
+    const std::vector<float> chunk(samples.begin() + span.start_sample, samples.begin() + span.end_sample);
+    const auto features = features_.extract(chunk);
     debug_dump("mel.f32", features.values.data(), features.values.size() * sizeof(float));
 
     const auto audio = encoder_.encode(features);
@@ -273,7 +292,9 @@ std::string Lfm2AudioSession::transcribe(const std::vector<float> & samples, con
 
     const auto result = backbone_.generate(prompt, audio, {options.max_tokens, prompt_.stop_token_ids});
     if (!result.stopped) {
-        throw std::runtime_error("LFM2-Audio reached max_tokens before the end of the transcript; increase max_tokens");
+        reached_max_tokens_ = true;
+        warn("the transcript of " + seconds_at(span.start_sample) + "-" + seconds_at(span.end_sample) + " s reached max_tokens=" +
+             std::to_string(options.max_tokens) + " and is cut off there; raise max_tokens for the rest");
     }
 
     debug_dump("prefill_logits.f32", result.prefill_logits.data(), result.prefill_logits.size() * sizeof(float));
@@ -284,8 +305,13 @@ std::string Lfm2AudioSession::transcribe(const std::vector<float> & samples, con
     return tokenizer_.decode(result.tokens);
 }
 
+bool Lfm2AudioSession::reached_max_tokens() const {
+    return reached_max_tokens_;
+}
+
 runtime::TaskResult Lfm2AudioSession::run(const runtime::TaskRequest & request) {
     require_prepared("LFM2-Audio run()");
+    reached_max_tokens_ = false;
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("LFM2-Audio run() requires audio_input");
     }
@@ -296,8 +322,7 @@ runtime::TaskResult Lfm2AudioSession::run(const runtime::TaskRequest & request) 
 
     std::string text;
     for (const auto & span : plan_chunks(request, samples)) {
-        const std::vector<float> chunk(samples.begin() + span.start_sample, samples.begin() + span.end_sample);
-        append_chunk_text(text, transcribe(chunk, options));
+        append_chunk_text(text, transcribe(samples, span, options));
     }
 
     runtime::TaskResult result;

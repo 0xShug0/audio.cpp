@@ -39,6 +39,9 @@ public:
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
+    // Whether the last run() cut a chunk's transcript off at max_tokens.
+    [[nodiscard]] bool reached_max_tokens() const;
+
 private:
     struct RequestOptions {
         int64_t max_tokens = 512;
@@ -47,7 +50,7 @@ private:
     RequestOptions parse_request_options(const runtime::TaskRequest & request) const;
     std::vector<runtime::TimeSpan> plan_chunks(const runtime::TaskRequest & request, const std::vector<float> & samples);
     runtime::IOfflineVoiceTaskSession & vad_session();
-    std::string transcribe(const std::vector<float> & samples, const RequestOptions & options);
+    std::string transcribe(const std::vector<float> & samples, const runtime::TimeSpan & span, const RequestOptions & options);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const Lfm2AudioAssets> assets_;
@@ -62,6 +65,7 @@ private:
     std::filesystem::path vad_model_path_;
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
     std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
+    bool reached_max_tokens_ = false;
 };
 
 }  // namespace engine::community_models::lfm2_audio

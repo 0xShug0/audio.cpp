@@ -28,7 +28,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum number of generated transcript tokens per audio chunk; a chunk that needs more fails the request.",
+        "description": "Maximum number of generated transcript tokens per audio chunk; a transcript that reaches it is cut off there, with a warning on stderr.",
         "required": false,
         "min": 1,
         "default": 512

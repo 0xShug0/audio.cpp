@@ -16,6 +16,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -195,9 +196,6 @@ void test_request_options(const Package & package) {
     };
 
     rejects({{"language", "ja"}}, "transcribes en");
-
-    // "hi" and <|im_end|> take three tokens; a cut-off transcript is an error.
-    rejects({{"max_tokens", "2"}}, "max_tokens");
     rejects({{"max_tokens", "0"}}, "max_tokens");
     rejects({{"max_tokens", "5x"}}, "max_tokens");
 
@@ -212,6 +210,66 @@ void test_request_options(const Package & package) {
     rejects({{"audio_chunk_seconds", "0.5"}}, "audio_chunk_seconds");
 
     rejects({{"temperature", "0.7"}}, "temperature");
+}
+
+// What the session writes to std::cerr while it lives.
+class CapturedStderr {
+public:
+    CapturedStderr() : previous_(std::cerr.rdbuf(text_.rdbuf())) {}
+    ~CapturedStderr() { std::cerr.rdbuf(previous_); }
+    CapturedStderr(const CapturedStderr &) = delete;
+    CapturedStderr & operator=(const CapturedStderr &) = delete;
+
+    [[nodiscard]] std::string text() const { return text_.str(); }
+
+private:
+    std::ostringstream text_;
+    std::streambuf * previous_;
+};
+
+size_t occurrences(const std::string & text, const std::string & needle) {
+    size_t found = 0;
+    for (auto at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) {
+        ++found;
+    }
+
+    return found;
+}
+
+// "hi" and <|im_end|> take three tokens. A transcript that reaches max_tokens
+// is cut off there and kept, as liquid-audio keeps what it generated, with a
+// warning; in chunked audio each chunk is cut on its own and the rest go on.
+void test_max_tokens(const Package & package) {
+    auto session = open_session(package.root);
+    const auto & asr = dynamic_cast<const lfm2::Lfm2AudioSession &>(*session);
+    const auto run = [&](const runtime::TaskRequest & task_request, std::string & warnings) {
+        const CapturedStderr captured;
+        auto text = transcribe(*session, task_request);
+        warnings = captured.text();
+        return text;
+    };
+
+    std::string warnings;
+    require_eq(run(request(tone(1.0), {{"max_tokens", "3"}}), warnings), std::string("hi"), "max_tokens=3");
+    require(warnings.empty() && !asr.reached_max_tokens(), "a whole transcript does not warn");
+
+    require_eq(run(request(tone(1.0), {{"max_tokens", "2"}}), warnings), std::string("hi"), "max_tokens=2");
+    require(asr.reached_max_tokens(), "max_tokens=2 cuts the transcript");
+    require(occurrences(warnings, "[warning][lfm2_audio]") == 1, "one warning: " + warnings);
+    require(warnings.find("0.0-1.0 s reached max_tokens=2") != std::string::npos && warnings.find("raise max_tokens") != std::string::npos,
+        "the warning says where and what to raise: " + warnings);
+
+    require_eq(run(request(tone(1.0), {{"max_tokens", "1"}}), warnings), std::string("h"), "max_tokens=1");
+    const std::unordered_map<std::string, std::string> cut_chunks = {
+        {"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}, {"max_tokens", "1"}};
+    require_eq(run(request(tone(3.0), cut_chunks), warnings), std::string("h h h"), "three chunks cut at max_tokens=1");
+    require(occurrences(warnings, "[warning][lfm2_audio]") == 3 && warnings.find("2.0-3.0 s") != std::string::npos,
+        "a warning per cut chunk: " + warnings);
+    require_throws_with([&] { (void)session->run(request(tone(1.0), {{"max_tokens", "0"}})); }, "max_tokens", "max_tokens=0");
+    require(!asr.reached_max_tokens(), "a failed request cuts nothing");
+
+    require_eq(run(request(tone(1.0)), warnings), std::string("hi"), "the next request");
+    require(warnings.empty() && !asr.reached_max_tokens(), "the next request starts uncut");
 }
 
 void test_chunking(const Package & package) {
@@ -390,6 +448,7 @@ int main() {
         test_transcribes(package);
         test_audio_inputs(package);
         test_request_options(package);
+        test_max_tokens(package);
         test_chunking(package);
         test_vad_chunking(package);
         test_selects_backbone();
