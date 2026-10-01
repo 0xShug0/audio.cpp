@@ -3450,6 +3450,38 @@
       ]
     },
     {
+      "id": "index_echo_s2tt_2b_zh_en",
+      "coverage": "Index-Echo-S2TT 2B Qwen3-Omni audio encoder and Qwen3.5 translation decoder",
+      "family": "index_echo",
+      "model": "models/Index-Echo-S2TT-GGUF/index-echo-s2tt-2b-orig.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "zh_to_en",
+          "audio": "reference/FireRedAudio/assets/examples/asr_zh_fleurs.wav",
+          "options": {"target_language": "en"}
+        }
+      ]
+    },
+    {
+      "id": "index_echo_s2tt_9b_q8_zh_en",
+      "coverage": "Index-Echo-S2TT 9B Qwen3-Omni audio encoder and Qwen3.5 translation decoder",
+      "family": "index_echo",
+      "model": "models/Index-Echo-S2TT-GGUF/index-echo-s2tt-9b-q8_0.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "zh_to_en",
+          "audio": "reference/FireRedAudio/assets/examples/asr_zh_fleurs.wav",
+          "options": {"target_language": "en"}
+        }
+      ]
+    },
+    {
       "id": "firered_audio_asr_zh_official",
       "coverage": "FireRedAudio official Chinese ASR path through audio encoder and Qwen understanding decode",
       "family": "firered_audio",

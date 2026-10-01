@@ -528,6 +528,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/decoder.cpp
     src/framework/modules/transformers/causal_decoder.cpp
     src/framework/modules/transformers/causal_decoder_runtime.cpp
+    src/framework/modules/transformers/qwen35_decoder_runtime.cpp
     src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/transformers/transformer_blocks.cpp
@@ -2159,7 +2160,6 @@ audiocpp_add_model(firered_audio
         src/models/firered_audio/flow.cpp
         src/models/firered_audio/patch_encoder.cpp
         src/models/firered_audio/pipeline.cpp
-        src/models/firered_audio/qwen35_runtime.cpp
         src/models/firered_audio/redae.cpp
         src/models/firered_audio/session.cpp
         src/models/firered_audio/tokenizer.cpp
@@ -2170,13 +2170,31 @@ audiocpp_add_model(firered_audio
         engine/models/firered_audio/flow.h
         engine/models/firered_audio/patch_encoder.h
         engine/models/firered_audio/pipeline.h
-        engine/models/firered_audio/qwen35_runtime.h
         engine/models/firered_audio/redae.h
         engine/models/firered_audio/session.h
         engine/models/firered_audio/tokenizer.h
         engine/models/firered_audio/understanding.h
     LOADERS
         engine::models::firered_audio::make_firered_audio_loader
+)
+
+audiocpp_add_model(index_echo
+    SOURCES
+        src/models/index_echo/assets.cpp
+        src/models/index_echo/connector.cpp
+        src/models/index_echo/mapper.cpp
+        src/models/index_echo/session.cpp
+        src/models/index_echo/text_translation.cpp
+    INCLUDES
+        engine/models/index_echo/assets.h
+        engine/models/index_echo/connector.h
+        engine/models/index_echo/mapper.h
+        engine/models/index_echo/session.h
+        engine/models/index_echo/text_translation.h
+    LOADERS
+        engine::models::index_echo::make_index_echo_loader
+    DEPENDS
+        qwen3_asr
 )
 
 audiocpp_add_model(cosyvoice3

@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/modules/transformers/qwen35_decoder_runtime.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -9,24 +10,7 @@
 
 namespace engine::models::firered_audio {
 
-struct FireRedAudioBackboneConfig {
-    int64_t vocab_size = 248096;
-    int64_t hidden_size = 4096;
-    int64_t intermediate_size = 12288;
-    int64_t layers = 32;
-    int64_t heads = 16;
-    int64_t kv_heads = 4;
-    int64_t head_dim = 256;
-    int64_t full_attention_interval = 4;
-    int64_t linear_conv_kernel_dim = 4;
-    int64_t linear_key_head_dim = 128;
-    int64_t linear_num_key_heads = 16;
-    int64_t linear_num_value_heads = 32;
-    int64_t linear_value_head_dim = 128;
-    float rms_norm_eps = 1.0e-6F;
-    float rope_theta = 10000000.0F;
-    float partial_rotary_factor = 0.25F;
-};
+using FireRedAudioBackboneConfig = engine::modules::Qwen35DecoderConfig;
 
 struct FireRedAudioPatchEncoderConfig {
     int64_t vae_dim = 64;
