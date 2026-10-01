@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/whisper_encoder.h"
+#include "engine/community_models/latentsync/whisper_encoder.h"
 
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"

@@ -1,15 +1,16 @@
-#include "engine/models/latentsync/pipeline.h"
-#include "engine/models/latentsync/face_runtime.h"
-#include "engine/models/latentsync/face_restore.h"
-#include "engine/models/latentsync/whisper_runtime.h"
-#include "engine/models/latentsync/sd_vae_runtime.h"
-#include "engine/models/latentsync/unet_runtime.h"
+#include "engine/community_models/latentsync/pipeline.h"
+#include "engine/community_models/latentsync/face_runtime.h"
+#include "engine/community_models/latentsync/face_restore.h"
+#include "engine/community_models/latentsync/whisper_runtime.h"
+#include "engine/community_models/latentsync/sd_vae_runtime.h"
+#include "engine/community_models/latentsync/unet_runtime.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/framework/debug/trace.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <stdexcept>
 
 namespace engine::models::latentsync {
@@ -22,19 +23,20 @@ struct LatentSyncPipeline::Impl {
     LatentSyncUnetRuntime unet;
     sampling::TorchCudaSamplingPolicy random_policy;
     Impl(core::ExecutionContext & execution_in, const LatentSyncPipelineSources & source,
-        assets::TensorStorageType type, bool vae_cudnn_f16)
+        assets::TensorStorageType type, bool vae_cudnn_f16, bool unet_cudnn_f16)
         : execution(execution_in),
           face(execution, *source.detector, source.detector_config, *source.landmarks, source.landmark_config, type),
           whisper(execution, *source.whisper, {80, 1500, 384, 6, 4}, type),
           vae(execution, *source.vae, vae_cudnn_f16 ? assets::TensorStorageType::F16 : type,
-              512, vae_cudnn_f16, vae_cudnn_f16), unet(execution, *source.unet, {}, type),
+              512, vae_cudnn_f16, vae_cudnn_f16, true),
+          unet(execution, *source.unet, LatentSyncUnetConfig(unet_cudnn_f16), type),
           random_policy(sampling::resolve_torch_cuda_sampling_policy(execution.backend_type(), execution.config().device,
               "latentsync.sampling", "LatentSync", sampling::TorchCudaSamplingPolicyFailureMode::FallbackToDefault)) {}
 };
 
 LatentSyncPipeline::LatentSyncPipeline(core::ExecutionContext & execution, const LatentSyncPipelineSources & sources,
-    assets::TensorStorageType weight_type, bool vae_cudnn_f16)
-    : impl_(std::make_unique<Impl>(execution, sources, weight_type, vae_cudnn_f16)) {}
+    assets::TensorStorageType weight_type, bool vae_cudnn_f16, bool unet_cudnn_f16)
+    : impl_(std::make_unique<Impl>(execution, sources, weight_type, vae_cudnn_f16, unet_cudnn_f16)) {}
 LatentSyncPipeline::~LatentSyncPipeline() = default;
 
 void LatentSyncPipeline::run(const std::vector<std::vector<uint8_t>> & frames, int height, int width,
@@ -107,21 +109,32 @@ void LatentSyncPipeline::run(const std::vector<std::vector<uint8_t>> & frames, i
             clip.reference_image.insert(clip.reference_image.end(), encoded.begin(), encoded.end());
         }
         const auto latents = impl_->unet.denoise(clip, options.steps, options.guidance_scale, {}, options.cache_interval);
+        std::vector<std::vector<float>> decoded_faces(count);
         for (size_t i = 0; i < count; ++i) {
             const std::vector<float> latent(latents.begin() + i * latent_frame, latents.begin() + (i + 1) * latent_frame);
-            auto decoded = impl_->vae.decode(latent);
-            const size_t index = frame_index(first + i);
-            const auto restoration_start = std::chrono::steady_clock::now();
-            for (size_t p = 0; p < decoded.size(); ++p) decoded[p] = decoded[p] * (1 - mask[p]) + aligned[index].pixels[p] * mask[p];
-            for (size_t p = 0; p < frame_pixels; ++p) for (size_t c = 0; c < 3; ++c) original[c * frame_pixels + p] = frames[index][p * 3 + c];
-            const auto restored = latentsync_restore_face(original, height, width, decoded, aligned[index].transform,
-                impl_->execution.config().threads);
-            std::vector<uint8_t> output(frame_pixels * 3);
-            for (size_t p = 0; p < frame_pixels; ++p) for (size_t c = 0; c < 3; ++c) output[p * 3 + c] = static_cast<uint8_t>(restored[c * frame_pixels + p]);
-            emit(first + i, output);
-            restoration_ms += std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - restoration_start).count();
+            decoded_faces[i] = impl_->vae.decode(latent);
         }
+        const auto restoration_start = std::chrono::steady_clock::now();
+        std::vector<std::vector<uint8_t>> restored_frames(count);
+        const int restoration_workers = std::min<int>(impl_->execution.config().threads, count);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(restoration_workers) if(restoration_workers > 1) schedule(static)
+#endif
+        for (int64_t i = 0; i < static_cast<int64_t>(count); ++i) {
+            const size_t index = frame_index(first + i);
+            auto & decoded = decoded_faces[i];
+            for (size_t p = 0; p < decoded.size(); ++p) decoded[p] = decoded[p] * (1 - mask[p]) + aligned[index].pixels[p] * mask[p];
+            std::vector<float> source(frame_pixels * 3);
+            for (size_t p = 0; p < frame_pixels; ++p) for (size_t c = 0; c < 3; ++c) source[c * frame_pixels + p] = frames[index][p * 3 + c];
+            const auto restored = latentsync_restore_face(source, height, width, decoded,
+                aligned[index].transform, restoration_workers > 1 ? 1 : impl_->execution.config().threads);
+            auto & output = restored_frames[i];
+            output.resize(frame_pixels * 3);
+            for (size_t p = 0; p < frame_pixels; ++p) for (size_t c = 0; c < 3; ++c) output[p * 3 + c] = static_cast<uint8_t>(restored[c * frame_pixels + p]);
+        }
+        for (size_t i = 0; i < count; ++i) emit(first + i, restored_frames[i]);
+        restoration_ms += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - restoration_start).count();
     }
     debug::timing_log_scalar("latentsync.face_restoration.wall_ms", restoration_ms);
     debug::timing_log_scalar("latentsync.pipeline_ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());

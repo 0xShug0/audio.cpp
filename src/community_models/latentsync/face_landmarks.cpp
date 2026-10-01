@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/face_landmarks.h"
+#include "engine/community_models/latentsync/face_landmarks.h"
 
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/activation_modules.h"

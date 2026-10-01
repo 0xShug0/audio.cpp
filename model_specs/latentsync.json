@@ -110,6 +110,13 @@
         "type": "bool",
         "default": false,
         "description": "Use cuDNN FP16 VAE execution on CUDA. Requires a build with GGML_CUDA_CUDNN_CONV2D=ON; VAE weights are converted to FP16."
+      },
+      {
+        "name": "unet_cudnn_f16",
+        "required": false,
+        "type": "bool",
+        "default": false,
+        "description": "Use cuDNN FP16 convolutions and residual activations in the U-Net on CUDA. Requires a build with GGML_CUDA_CUDNN_CONV2D=ON and FP16 U-Net weights."
       }
     ],
     "load": []
@@ -121,7 +128,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/latentsync.md"
+      "docs/community_models/latentsync.md"
     ]
   },
   "sources": [

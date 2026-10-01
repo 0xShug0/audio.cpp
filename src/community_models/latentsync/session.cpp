@@ -1,6 +1,6 @@
-#include "engine/models/latentsync/session.h"
-#include "engine/models/latentsync/pipeline.h"
-#include "engine/models/latentsync/video.h"
+#include "engine/community_models/latentsync/session.h"
+#include "engine/community_models/latentsync/pipeline.h"
+#include "engine/community_models/latentsync/video.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/model_spec/package.h"
@@ -47,7 +47,12 @@ public:
         if (const auto value = runtime::find_option(RuntimeSessionBase::options().options, {"latentsync.vae_cudnn_f16"})) {
             vae_cudnn_f16 = runtime::parse_bool_option(*value, "latentsync.vae_cudnn_f16");
         }
-        pipeline_ = std::make_unique<LatentSyncPipeline>(execution_context(), assets_->sources, type, vae_cudnn_f16);
+        bool unet_cudnn_f16 = false;
+        if (const auto value = runtime::find_option(RuntimeSessionBase::options().options, {"latentsync.unet_cudnn_f16"})) {
+            unet_cudnn_f16 = runtime::parse_bool_option(*value, "latentsync.unet_cudnn_f16");
+        }
+        pipeline_ = std::make_unique<LatentSyncPipeline>(execution_context(), assets_->sources, type,
+            vae_cudnn_f16, unet_cudnn_f16);
     }
     std::string family() const override { return "latentsync"; }
     runtime::VoiceTaskKind task_kind() const override { return task_.task; }

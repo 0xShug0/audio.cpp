@@ -1,12 +1,14 @@
 #pragma once
 
-#include "engine/models/latentsync/unet_attention.h"
+#include "engine/community_models/latentsync/unet_attention.h"
 
 #include <vector>
 
 namespace engine::models::latentsync {
 
 struct LatentSyncUnetConfig {
+    LatentSyncUnetConfig() = default;
+    explicit LatentSyncUnetConfig(bool cuda_f16) : cuda_f16_activations(cuda_f16) {}
     std::array<int64_t, 4> channels{320, 640, 1280, 1280};
     int64_t input_channels = 13;
     int64_t output_channels = 4;
@@ -14,6 +16,7 @@ struct LatentSyncUnetConfig {
     int64_t layers_per_block = 2;
     int64_t heads = 8;
     int64_t max_frames = 24;
+    bool cuda_f16_activations = false;
 };
 
 struct LatentSyncUnetResnetWeights {

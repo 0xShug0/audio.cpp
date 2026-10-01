@@ -1,18 +1,18 @@
-#include "engine/models/latentsync/whisper_encoder.h"
-#include "engine/models/latentsync/whisper_runtime.h"
-#include "engine/models/latentsync/pipeline.h"
-#include "engine/models/latentsync/video.h"
-#include "engine/models/latentsync/sd_vae.h"
-#include "engine/models/latentsync/sd_vae_runtime.h"
-#include "engine/models/latentsync/unet_attention.h"
-#include "engine/models/latentsync/unet.h"
-#include "engine/models/latentsync/unet_runtime.h"
-#include "engine/models/latentsync/sampling.h"
-#include "engine/models/latentsync/face_landmarks.h"
-#include "engine/models/latentsync/scrfd.h"
-#include "engine/models/latentsync/face_runtime.h"
-#include "engine/models/latentsync/face_alignment.h"
-#include "engine/models/latentsync/face_restore.h"
+#include "engine/community_models/latentsync/whisper_encoder.h"
+#include "engine/community_models/latentsync/whisper_runtime.h"
+#include "engine/community_models/latentsync/pipeline.h"
+#include "engine/community_models/latentsync/video.h"
+#include "engine/community_models/latentsync/sd_vae.h"
+#include "engine/community_models/latentsync/sd_vae_runtime.h"
+#include "engine/community_models/latentsync/unet_attention.h"
+#include "engine/community_models/latentsync/unet.h"
+#include "engine/community_models/latentsync/unet_runtime.h"
+#include "engine/community_models/latentsync/sampling.h"
+#include "engine/community_models/latentsync/face_landmarks.h"
+#include "engine/community_models/latentsync/scrfd.h"
+#include "engine/community_models/latentsync/face_runtime.h"
+#include "engine/community_models/latentsync/face_alignment.h"
+#include "engine/community_models/latentsync/face_restore.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/assets/resource_bundle.h"
@@ -72,7 +72,31 @@ int main(int argc, char ** argv) {
             const auto matrices = reference->require_f32("matrices");
             models::latentsync::LatentSyncAffine matrix;
             std::copy_n(matrices.begin(), 6, matrix.begin());
+            const auto resize_start = std::chrono::steady_clock::now();
             const auto resized = models::latentsync::latentsync_resize_bicubic(face, 3, 512, 512, 560, 420);
+            const auto resize_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - resize_start).count();
+            const float det = matrix[0] * matrix[4] - matrix[1] * matrix[3];
+            models::latentsync::LatentSyncAffine inverse{
+                matrix[4] / det, -matrix[1] / det, 0,
+                -matrix[3] / det, matrix[0] / det, 0};
+            inverse[2] = -inverse[0] * matrix[2] - inverse[1] * matrix[5];
+            inverse[5] = -inverse[3] * matrix[2] - inverse[4] * matrix[5];
+            const auto face_warp_start = std::chrono::steady_clock::now();
+            const auto warped_face = models::latentsync::latentsync_warp_affine(
+                resized, 3, 560, 420, inverse, image.shape.dims[2], image.shape.dims[3], 127, 8);
+            const auto face_warp_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - face_warp_start).count();
+            const auto mask_warp_start = std::chrono::steady_clock::now();
+            const auto warped_mask = models::latentsync::latentsync_warp_affine(
+                std::vector<float>(560 * 420, 1), 1, 560, 420, inverse,
+                image.shape.dims[2], image.shape.dims[3], 0, 8);
+            const auto mask_warp_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - mask_warp_start).count();
+            std::cout << "restoration resize_ms=" << resize_ms
+                      << " face_warp_ms=" << face_warp_ms
+                      << " mask_warp_ms=" << mask_warp_ms
+                      << " warped_values=" << (warped_face.size() + warped_mask.size()) << '\n';
             std::vector<float> restored;
             for (const int threads : {1, 8}) {
                 const auto restore_start = std::chrono::steady_clock::now();
@@ -82,6 +106,22 @@ int main(int argc, char ** argv) {
                 if (threads == 1) restored = output;
                 else if (restored != output) throw std::runtime_error("Parallel restoration changed pixels");
             }
+            std::vector<std::vector<float>> batch(8);
+            const auto batch_start = std::chrono::steady_clock::now();
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(8) schedule(static)
+#endif
+            for (int i = 0; i < static_cast<int>(batch.size()); ++i) {
+                batch[i] = models::latentsync::latentsync_restore_face(
+                    image.values, image.shape.dims[2], image.shape.dims[3], face, matrix, 1);
+            }
+            const auto batch_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - batch_start).count();
+            for (const auto & output : batch) {
+                if (output != restored) throw std::runtime_error("Batched restoration changed pixels");
+            }
+            std::cout << "restoration frame_batch=8 wall_ms=" << batch_ms
+                      << " per_frame_ms=" << batch_ms / batch.size() << '\n';
             bool passed = true;
             for (int stage = 0; stage < 2; ++stage) {
                 const auto expected = reference->require_f32(stage ? "restored" : "restore_resized");
@@ -110,8 +150,11 @@ int main(int argc, char ** argv) {
             const auto expected_warp = reference->require_f32("warped");
             models::latentsync::LatentSyncAffine first_matrix;
             std::copy_n(matrices.begin(), 6, first_matrix.begin());
+            const auto warp_start = std::chrono::steady_clock::now();
             const auto warped = models::latentsync::latentsync_warp_affine(image.values, 3,
-                image.shape.dims[2], image.shape.dims[3], first_matrix, 560, 420, 127);
+                image.shape.dims[2], image.shape.dims[3], first_matrix, 560, 420, 127, 8);
+            const auto warp_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - warp_start).count();
             double warp_squared = 0, warp_maximum = 0;
             for (size_t i = 0; i < warped.size(); ++i) {
                 const double error = double(warped[i]) - expected_warp[i];
@@ -120,7 +163,11 @@ int main(int argc, char ** argv) {
             }
             const double warp_rmse = std::sqrt(warp_squared / warped.size());
             std::cout << "warp_rmse=" << warp_rmse << " warp_max_abs=" << warp_maximum << '\n';
-            const auto resized = models::latentsync::latentsync_resize_lanczos4(expected_warp, 3, 560, 420, 512, 512);
+            const auto resize_start = std::chrono::steady_clock::now();
+            const auto resized = models::latentsync::latentsync_resize_lanczos4(
+                expected_warp, 3, 560, 420, 512, 512, 8);
+            const auto resize_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - resize_start).count();
             const auto expected_resize = reference->require_f32("resized");
             double resize_squared = 0, resize_maximum = 0;
             for (size_t i = 0; i < resized.size(); ++i) {
@@ -144,7 +191,8 @@ int main(int argc, char ** argv) {
                     for (size_t i = 0; i < 6; ++i) maximum = std::max(maximum, std::abs(double(matrix[i]) - matrices[frame * 6 + i]));
                 }
             }
-            std::cout << "alignment_max_abs=" << maximum << '\n';
+            std::cout << "alignment_max_abs=" << maximum
+                      << " warp_ms=" << warp_ms << " resize_ms=" << resize_ms << '\n';
             debug::timing_log_scalar("session.wall_ms",
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
             return maximum < 0.001 && warp_rmse < 0.01 && warp_maximum < 0.1 && resize_rmse < 0.01 && resize_maximum < 0.1 ? 0 : 1;
@@ -423,7 +471,11 @@ int main(int argc, char ** argv) {
             debug::timing_log_scalar("session.wall_ms",
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
         } else if (component == "unet-runtime") {
-            models::latentsync::LatentSyncUnetRuntime runtime(execution, *source, {}, assets::TensorStorageType::F32);
+            const auto weight_type = config.find("weight_type");
+            const auto type = weight_type ? assets::parse_tensor_storage_type(weight_type->as_string()) : assets::TensorStorageType::F32;
+            models::latentsync::LatentSyncUnetConfig unet_config;
+            if (const auto fast = config.find("cuda_f16_activations")) unet_config.cuda_f16_activations = fast->as_bool();
+            models::latentsync::LatentSyncUnetRuntime runtime(execution, *source, unet_config, type);
             const auto audio_data = reference->require_f32_tensor("audio");
             const auto time_data = reference->require_f32_tensor("timestep_features");
             const auto frames = config.require("frames").as_i64();
@@ -432,6 +484,30 @@ int main(int argc, char ** argv) {
             const auto tokens = audio_data.shape.dims[1];
             const auto start = std::chrono::steady_clock::now();
             actual = runtime.predict(input_data.values, audio_data.values, time_data.values, batch, frames, height, width, tokens);
+            if (const auto runs = config.find("benchmark_runs")) {
+                const int64_t count = runs->as_i64();
+                if (count <= 0) throw std::runtime_error("benchmark_runs must be positive");
+                const auto bench_start = std::chrono::steady_clock::now();
+                for (int64_t i = 0; i < count; ++i) {
+                    actual = runtime.predict(input_data.values, audio_data.values, time_data.values,
+                        batch, frames, height, width, tokens);
+                }
+                const double wall_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - bench_start).count();
+                debug::timing_log_scalar("session.wall_ms", wall_ms);
+                std::cout << "unet_benchmark_runs=" << count << " wall_ms=" << wall_ms << '\n';
+                double dot = 0.0, xx = 0.0, yy = 0.0, squared_error = 0.0;
+                for (size_t i = 0; i < actual.size(); ++i) {
+                    const double x = actual[i], y = expected[i];
+                    dot += x * y;
+                    xx += x * x;
+                    yy += y * y;
+                    squared_error += (x - y) * (x - y);
+                }
+                std::cout << "cosine=" << dot / std::sqrt(xx * yy)
+                          << " relative_rmse=" << std::sqrt(squared_error / yy) << '\n';
+                return 0;
+            }
             const auto repeated = runtime.predict(input_data.values, audio_data.values, time_data.values, batch, frames, height, width, tokens);
             if (actual != repeated) throw std::runtime_error("Repeated U-Net graph changed output");
             auto changed_input = input_data.values;

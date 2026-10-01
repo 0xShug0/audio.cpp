@@ -41,7 +41,8 @@ LatentSyncTemporalTransformerWeights load_temporal_transformer_weights(
 
 class LatentSyncUnetAttention {
 public:
-    explicit LatentSyncUnetAttention(int64_t heads = 8) : heads_(heads) {}
+    explicit LatentSyncUnetAttention(int64_t heads = 8, bool cuda_f16 = false)
+        : heads_(heads), cuda_f16_(cuda_f16) {}
 
     // Images use [batch * frames, channels, height, width]; audio uses [batch * frames, tokens, channels].
     core::TensorValue build_spatial(core::ModuleBuildContext & ctx,
@@ -59,6 +60,7 @@ private:
         const core::TensorValue & input, const modules::LinearWeights & geglu,
         const modules::LinearWeights & output) const;
     int64_t heads_;
+    bool cuda_f16_;
 };
 
 }  // namespace engine::models::latentsync

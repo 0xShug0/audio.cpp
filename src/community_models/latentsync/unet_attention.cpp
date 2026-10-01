@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/unet_attention.h"
+#include "engine/community_models/latentsync/unet_attention.h"
 
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
@@ -79,22 +79,23 @@ core::TensorValue LatentSyncUnetAttention::build_attention(core::ModuleBuildCont
     }
     const int64_t dim = channels / heads_;
     const auto project = [&](const core::TensorValue & x, const LinearWeights & projection) {
-        auto value = LinearModule({x.shape.dims[2], channels, false}).build(ctx, x, projection);
+        auto value = LinearModule({x.shape.dims[2], channels, false,
+            GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, x, projection);
         value = core::reshape_tensor(ctx, value,
             core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1], heads_, dim}));
         return TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, value);
     };
-    // The 40/80-wide heads cover the large spatial grids. The 160-wide heads are
-    // used at lower resolutions and are not supported by the CUDA flash kernel.
     const auto lowering = dim == 40 || dim == 80
-        ? ScaledDotProductAttentionLowering::FlashPreserveViews : ScaledDotProductAttentionLowering::Explicit;
-    const auto q = project(query, weights.query);
+        ? ScaledDotProductAttentionLowering::FlashPreserveViews
+        : ScaledDotProductAttentionLowering::Explicit;
+    auto q = project(query, weights.query);
     const auto k = project(conditioning, weights.key);
     const auto v = project(conditioning, weights.value);
+    if (cuda_f16_ && lowering == ScaledDotProductAttentionLowering::FlashPreserveViews) {
+        q = core::wrap_tensor(ggml_cast(ctx.ggml, q.tensor, GGML_TYPE_F32), q.shape, GGML_TYPE_F32);
+    }
     const ScaledDotProductAttentionModule attention({dim, lowering, GGML_PREC_F32});
     core::TensorValue x;
-    // CUDA's tiled flash launch packs batch * heads into grid.z (maximum 65535).
-    // Temporal attention treats spatial positions as independent batches.
     if (ctx.backend_type == core::BackendType::Cuda &&
         lowering == ScaledDotProductAttentionLowering::FlashPreserveViews && query.shape.dims[0] * heads_ > 65535) {
         const int64_t chunk = std::max<int64_t>(1, 32768 / heads_);
@@ -107,8 +108,12 @@ core::TensorValue LatentSyncUnetAttention::build_attention(core::ModuleBuildCont
     } else {
         x = attention.build(ctx, q, k, v);
     }
+    if (cuda_f16_ && x.type != GGML_TYPE_F16) {
+        x = core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F16), x.shape, GGML_TYPE_F16);
+    }
     x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x), query.shape);
-    return LinearModule({channels, channels, true}).build(ctx, x, weights.output);
+    return LinearModule({channels, channels, true,
+        GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, x, weights.output);
 }
 
 core::TensorValue LatentSyncUnetAttention::build_feed_forward(core::ModuleBuildContext & ctx,
@@ -116,10 +121,17 @@ core::TensorValue LatentSyncUnetAttention::build_feed_forward(core::ModuleBuildC
     const modules::LinearWeights & output) const {
     using namespace modules;
     const int64_t channels = input.shape.dims[2], inner = channels * 4;
-    const auto packed = LinearModule({channels, inner * 2, true}).build(ctx, input, geglu);
+    const auto packed = LinearModule({channels, inner * 2, true,
+        GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, input, geglu);
+    if (cuda_f16_) {
+        return LinearModule({inner, channels, true,
+            GGML_PREC_DEFAULT, false, false, true}).build(ctx, GegluModule().build(ctx, packed), output);
+    }
     const auto hidden = SliceModule({2, 0, inner}).build(ctx, packed);
-    const auto gate = GeluModule().build(ctx, SliceModule({2, inner, inner}).build(ctx, packed));
-    return LinearModule({inner, channels, true}).build(ctx, MulModule().build(ctx, hidden, gate), output);
+    const auto gate = GeluModule({GeluApproximation::ExactErf}).build(ctx,
+        SliceModule({2, inner, inner}).build(ctx, packed));
+    return LinearModule({inner, channels, true,
+        GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, MulModule().build(ctx, hidden, gate), output);
 }
 
 core::TensorValue LatentSyncUnetAttention::build_spatial(core::ModuleBuildContext & ctx,
@@ -128,25 +140,29 @@ core::TensorValue LatentSyncUnetAttention::build_spatial(core::ModuleBuildContex
     using namespace modules;
     const int64_t batch = image.shape.dims[0], channels = image.shape.dims[1];
     const int64_t steps = image.shape.dims[2] * image.shape.dims[3];
-    auto x = GroupNormModule({channels, 32, 1e-6F}).build(ctx, image, weights.input_norm);
+    auto x = GroupNormModule({channels, 32, 1e-6F, true, true, cuda_f16_}).build(ctx, image, weights.input_norm);
     x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch, channels, steps}));
     x = TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
     // A 1x1 convolution is a per-token linear projection. Stay in the transformer's
     // token layout instead of materializing im2col and transposing its result.
     const auto projection_shape = core::TensorShape::from_dims({channels, channels});
-    x = LinearModule({channels, channels, true}).build(ctx, x,
+    x = LinearModule({channels, channels, true, GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, x,
         {core::reshape_tensor(ctx, weights.input.weight, projection_shape), weights.input.bias});
-    auto normalized = LayerNormModule({channels}).build(ctx, x, weights.norms[0]);
-    x = AddModule().build(ctx, x, build_attention(ctx, normalized, normalized, weights.self_attention));
-    normalized = LayerNormModule({channels}).build(ctx, x, weights.norms[1]);
-    x = AddModule().build(ctx, x, build_attention(ctx, normalized, audio, weights.audio_attention));
-    normalized = LayerNormModule({channels}).build(ctx, x, weights.norms[2]);
-    x = AddModule().build(ctx, x, build_feed_forward(ctx, normalized, weights.geglu, weights.feed_forward_out));
-    x = LinearModule({channels, channels, true}).build(ctx, x,
+    const NormConfig norm_config{channels, 1e-5F, true, true, false, cuda_f16_};
+    auto normalized = LayerNormModule(norm_config).build(ctx, x, weights.norms[0]);
+    x = AddModule(cuda_f16_).build(ctx, x, build_attention(ctx, normalized, normalized, weights.self_attention));
+    normalized = LayerNormModule(norm_config).build(ctx, x, weights.norms[1]);
+    x = AddModule(cuda_f16_).build(ctx, x, build_attention(ctx, normalized, audio, weights.audio_attention));
+    normalized = LayerNormModule(norm_config).build(ctx, x, weights.norms[2]);
+    x = AddModule(cuda_f16_).build(ctx, x, build_feed_forward(ctx, normalized, weights.geglu, weights.feed_forward_out));
+    x = LinearModule({channels, channels, true, GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, x,
         {core::reshape_tensor(ctx, weights.output.weight, projection_shape), weights.output.bias});
     x = TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
     x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x), image.shape);
-    return AddModule().build(ctx, image, x);
+    if (image.type == GGML_TYPE_F16 && x.type != GGML_TYPE_F16) {
+        x = core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F16), x.shape, GGML_TYPE_F16);
+    }
+    return AddModule(image.type == GGML_TYPE_F16).build(ctx, image, x);
 }
 
 core::TensorValue LatentSyncUnetAttention::build_temporal(core::ModuleBuildContext & ctx,
@@ -159,30 +175,57 @@ core::TensorValue LatentSyncUnetAttention::build_temporal(core::ModuleBuildConte
         throw std::runtime_error("Invalid LatentSync temporal attention frame count");
     }
     const int64_t batch = batch_frames / frames;
-    auto x = GroupNormModule({channels, 32, 1e-6F}).build(ctx, image, weights.input_norm);
+    auto x = GroupNormModule({channels, 32, 1e-6F, true, true, cuda_f16_}).build(ctx, image, weights.input_norm);
     x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch_frames, channels, steps}));
     x = TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
-    x = LinearModule({channels, channels, true}).build(ctx, x, weights.input);
-    for (size_t i = 0; i < weights.attention.size(); ++i) {
-        auto normalized = LayerNormModule({channels}).build(ctx, x, weights.norms[i]);
-        normalized = core::reshape_tensor(ctx, normalized, core::TensorShape::from_dims({batch, frames, steps, channels}));
-        normalized = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, normalized);
-        normalized = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, normalized),
+    x = LinearModule({channels, channels, true, GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, x, weights.input);
+    const NormConfig norm_config{channels, 1e-5F, true, true, false, cuda_f16_};
+    if (cuda_f16_) {
+        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch, frames, steps, channels}));
+        x = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
+        x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x),
             core::TensorShape::from_dims({batch * steps, frames, channels}));
-        const auto position = SliceModule({1, 0, frames}).build(ctx, weights.position[i]);
-        normalized = AddModule().build(ctx, normalized, RepeatModule({normalized.shape}).build(ctx, position));
-        auto attended = build_attention(ctx, normalized, normalized, weights.attention[i]);
-        attended = core::reshape_tensor(ctx, attended, core::TensorShape::from_dims({batch, steps, frames, channels}));
-        attended = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, attended);
-        attended = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, attended), x.shape);
-        x = AddModule().build(ctx, x, attended);
     }
-    const auto normalized = LayerNormModule({channels}).build(ctx, x, weights.feed_forward_norm);
-    x = AddModule().build(ctx, x, build_feed_forward(ctx, normalized, weights.geglu, weights.feed_forward_out));
-    x = LinearModule({channels, channels, true}).build(ctx, x, weights.output);
+    for (size_t i = 0; i < weights.attention.size(); ++i) {
+        auto normalized = LayerNormModule(norm_config).build(ctx, x, weights.norms[i]);
+        if (!cuda_f16_) {
+            normalized = core::reshape_tensor(ctx, normalized, core::TensorShape::from_dims({batch, frames, steps, channels}));
+            normalized = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, normalized);
+            normalized = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, normalized),
+                core::TensorShape::from_dims({batch * steps, frames, channels}));
+        }
+        auto position = SliceModule({1, 0, frames}).build(ctx, weights.position[i]);
+        if (cuda_f16_) {
+            position = core::wrap_tensor(ggml_cast(ctx.ggml, position.tensor, GGML_TYPE_F16),
+                position.shape, GGML_TYPE_F16);
+        }
+        normalized = cuda_f16_
+            ? AddModule(true, true).build(ctx, normalized, position)
+            : AddModule().build(ctx, normalized, RepeatModule({normalized.shape}).build(ctx, position));
+        auto attended = build_attention(ctx, normalized, normalized, weights.attention[i]);
+        if (!cuda_f16_) {
+            attended = core::reshape_tensor(ctx, attended, core::TensorShape::from_dims({batch, steps, frames, channels}));
+            attended = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, attended);
+            attended = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, attended), x.shape);
+        }
+        x = AddModule(cuda_f16_).build(ctx, x, attended);
+    }
+    const auto normalized = LayerNormModule(norm_config).build(ctx, x, weights.feed_forward_norm);
+    x = AddModule(cuda_f16_).build(ctx, x,
+        build_feed_forward(ctx, normalized, weights.geglu, weights.feed_forward_out));
+    x = LinearModule({channels, channels, true, GGML_PREC_DEFAULT, false, false, cuda_f16_}).build(ctx, x, weights.output);
+    if (cuda_f16_) {
+        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch, steps, frames, channels}));
+        x = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
+        x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x),
+            core::TensorShape::from_dims({batch_frames, steps, channels}));
+    }
     x = TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
     x = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x), image.shape);
-    return AddModule().build(ctx, image, x);
+    if (image.type == GGML_TYPE_F16 && x.type != GGML_TYPE_F16) {
+        x = core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F16), x.shape, GGML_TYPE_F16);
+    }
+    return AddModule(image.type == GGML_TYPE_F16).build(ctx, image, x);
 }
 
 }  // namespace engine::models::latentsync

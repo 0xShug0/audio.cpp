@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/sd_vae.h"
+#include "engine/community_models/latentsync/sd_vae.h"
 
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
@@ -129,7 +129,9 @@ core::TensorValue LatentSyncSdVae::build_encoder(core::ModuleBuildContext & ctx,
     for (const auto & stage : weights.stages) {
         for (const auto & block : stage.resnets) x = build_resnet(ctx, x, block);
         if (stage.resample) {
-            x = Pad2dModule({0, 1, 0, 1}).build(ctx, x);
+            const auto pad_input = config_.cuda_f16_activations
+                ? core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32) : x;
+            x = Pad2dModule({0, 1, 0, 1}).build(ctx, pad_input);
             x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 2, 2}, config_.cuda_cudnn, config_.cuda_f16_activations).build(ctx, x, *stage.resample);
         }
     }

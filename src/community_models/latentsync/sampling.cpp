@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/sampling.h"
+#include "engine/community_models/latentsync/sampling.h"
 
 #include <algorithm>
 #include <cmath>

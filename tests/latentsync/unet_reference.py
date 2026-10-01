@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import time
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -22,6 +23,8 @@ def main():
     parser.add_argument("--steps", type=int, default=0)
     parser.add_argument("--guidance", type=float, default=1.5)
     parser.add_argument("--cache-interval", type=int, default=1)
+    parser.add_argument("--dtype", choices=("f32", "f16"), default="f32")
+    parser.add_argument("--benchmark-runs", type=int, default=0)
     args = parser.parse_args()
     sys.path.insert(0, str(args.reference_dir.resolve()))
     from latentsync.models.unet import UNet3DConditionModel
@@ -30,10 +33,13 @@ def main():
     model = UNet3DConditionModel(**config["unet"])
     with safe_open(args.native_dir / "unet.safetensors", framework="pt", device="cpu") as source:
         model.load_state_dict({key.removeprefix("unet."): source.get_tensor(key) for key in source.keys()}, strict=True)
-    model = model.float().cuda().eval()
+    model = (model.half() if args.dtype == "f16" else model.float()).cuda().eval()
     torch.manual_seed(42)
     image = torch.randn(args.batch, 13, args.frames, args.latent_size, args.latent_size, device="cuda")
     audio = torch.randn(args.batch, args.frames, 50, 384, device="cuda")
+    if args.dtype == "f16":
+        image = image.half()
+        audio = audio.half()
     timesteps = torch.full((args.batch,), 501, dtype=torch.long, device="cuda")
     extra = {}
     with torch.inference_mode():
@@ -72,10 +78,18 @@ def main():
                 extra[name] = value.permute(0, 2, 1, 3, 4).flatten(0, 1).contiguous().cpu()
         else:
             output = model(image, timesteps, encoder_hidden_states=audio).sample
+            if args.benchmark_runs:
+                torch.cuda.synchronize()
+                start = time.perf_counter()
+                for _ in range(args.benchmark_runs):
+                    output = model(image, timesteps, encoder_hidden_states=audio).sample
+                torch.cuda.synchronize()
+                print(f"session.wall_ms {(time.perf_counter() - start) * 1000:.3f}", flush=True)
         time_features = model.time_proj(timesteps)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "config.json").write_text(json.dumps({"frames": args.frames, "steps": args.steps, "guidance": args.guidance,
-                                                       "cache_interval": args.cache_interval}))
+                                                       "cache_interval": args.cache_interval, "weight_type": args.dtype,
+                                                       "benchmark_runs": args.benchmark_runs}))
     link = args.output / "weights.safetensors"
     if not link.exists():
         link.symlink_to((args.native_dir / "unet.safetensors").resolve())

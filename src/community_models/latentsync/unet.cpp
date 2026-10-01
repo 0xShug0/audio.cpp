@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/unet.h"
+#include "engine/community_models/latentsync/unet.h"
 
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -92,7 +92,7 @@ core::TensorValue LatentSyncUnet::build_video_norm(core::ModuleBuildContext & ct
     // Unlike attention normalization, ResnetBlock3D normalizes over frames and spatial dimensions together.
     auto x = core::reshape_tensor(ctx, input, core::TensorShape::from_dims({batch, frames, channels, spatial}));
     x = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
-    x = GroupNormModule({channels, 32, 1e-5F}).build(ctx, x, weights);
+    x = GroupNormModule({channels, 32, 1e-5F, true, true, config_.cuda_f16_activations}).build(ctx, x, weights);
     x = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
     return core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, x), input.shape);
 }
@@ -102,19 +102,27 @@ core::TensorValue LatentSyncUnet::build_resnet(core::ModuleBuildContext & ctx,
     const LatentSyncUnetResnetWeights & weights) const {
     using namespace modules;
     const int64_t in_channels = input.shape.dims[1], channels = weights.conv1.weight.shape.dims[0];
-    auto x = SiluModule().build(ctx, build_video_norm(ctx, input, frames, weights.norm1));
-    x = Conv2dModule({in_channels, channels, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.conv1);
+    auto x = SiluModule(config_.cuda_f16_activations).build(ctx, build_video_norm(ctx, input, frames, weights.norm1));
+    x = Conv2dModule({in_channels, channels, 3, 3, 1, 1, 1, 1}, config_.cuda_f16_activations,
+        config_.cuda_f16_activations).build(ctx, x, weights.conv1);
     auto time = LinearModule({config_.channels.front() * 4, channels, true})
         .build(ctx, SiluModule().build(ctx, timestep), weights.timestep);
     time = core::reshape_tensor(ctx, time, core::TensorShape::from_dims({timestep.shape.dims[0], 1, channels}));
     time = RepeatModule({core::TensorShape::from_dims({timestep.shape.dims[0], frames, channels})}).build(ctx, time);
     time = core::reshape_tensor(ctx, time, core::TensorShape::from_dims({input.shape.dims[0], channels, 1, 1}));
-    x = AddModule().build(ctx, x, RepeatModule({x.shape}).build(ctx, time));
-    x = SiluModule().build(ctx, build_video_norm(ctx, x, frames, weights.norm2));
-    x = Conv2dModule({channels, channels, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.conv2);
+    if (config_.cuda_f16_activations) {
+        time = core::wrap_tensor(ggml_cast(ctx.ggml, time.tensor, GGML_TYPE_F16), time.shape, GGML_TYPE_F16);
+    }
+    x = config_.cuda_f16_activations
+        ? AddModule(true, true).build(ctx, x, time)
+        : AddModule().build(ctx, x, RepeatModule({x.shape}).build(ctx, time));
+    x = SiluModule(config_.cuda_f16_activations).build(ctx, build_video_norm(ctx, x, frames, weights.norm2));
+    x = Conv2dModule({channels, channels, 3, 3, 1, 1, 1, 1}, config_.cuda_f16_activations,
+        config_.cuda_f16_activations).build(ctx, x, weights.conv2);
     const auto residual = weights.shortcut
-        ? Conv2dModule({in_channels, channels, 1, 1}).build(ctx, input, *weights.shortcut) : input;
-    return AddModule().build(ctx, residual, x);
+        ? Conv2dModule({in_channels, channels, 1, 1}, config_.cuda_f16_activations,
+            config_.cuda_f16_activations).build(ctx, input, *weights.shortcut) : input;
+    return AddModule(config_.cuda_f16_activations).build(ctx, residual, x);
 }
 
 core::TensorValue LatentSyncUnet::build(core::ModuleBuildContext & ctx,
@@ -134,24 +142,29 @@ core::TensorValue LatentSyncUnet::build(core::ModuleBuildContext & ctx,
     auto time = LinearModule({config_.channels.front(), time_channels, true}).build(ctx, timestep_features, weights.time_in);
     time = SiluModule().build(ctx, time);
     time = LinearModule({time_channels, time_channels, true}).build(ctx, time, weights.time_out);
-    auto x = Conv2dModule({config_.input_channels, config_.channels.front(), 3, 3, 1, 1, 1, 1}).build(ctx, input, weights.input);
-    const LatentSyncUnetAttention attention(config_.heads);
+    auto x = Conv2dModule({config_.input_channels, config_.channels.front(), 3, 3, 1, 1, 1, 1},
+        config_.cuda_f16_activations, config_.cuda_f16_activations).build(ctx, input, weights.input);
+    const LatentSyncUnetAttention attention(config_.heads, config_.cuda_f16_activations);
+    const auto transformer_audio = config_.cuda_f16_activations
+        ? core::wrap_tensor(ggml_cast(ctx.ggml, audio.tensor, GGML_TYPE_F16), audio.shape, GGML_TYPE_F16)
+        : audio;
     std::vector<core::TensorValue> skips{x};
     if (!cached_feature) {
         for (const auto & stage : weights.down) {
             for (size_t i = 0; i < stage.resnets.size(); ++i) {
                 x = build_resnet(ctx, x, time, frames, stage.resnets[i]);
-                if (!stage.spatial.empty()) x = attention.build_spatial(ctx, x, audio, stage.spatial[i]);
+                if (!stage.spatial.empty()) x = attention.build_spatial(ctx, x, transformer_audio, stage.spatial[i]);
                 x = attention.build_temporal(ctx, x, frames, stage.temporal[i]);
                 skips.push_back(x);
             }
             if (stage.resample) {
-                x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 2, 2, 1, 1}).build(ctx, x, *stage.resample);
+                x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 2, 2, 1, 1},
+                    config_.cuda_f16_activations, config_.cuda_f16_activations).build(ctx, x, *stage.resample);
                 skips.push_back(x);
             }
         }
         x = build_resnet(ctx, x, time, frames, weights.mid_resnets[0]);
-        x = attention.build_spatial(ctx, x, audio, weights.mid_attention);
+        x = attention.build_spatial(ctx, x, transformer_audio, weights.mid_attention);
         x = build_resnet(ctx, x, time, frames, weights.mid_resnets[1]);
     } else {
         // DeepCache branch 0: the penultimate motion block depends only on the
@@ -164,19 +177,25 @@ core::TensorValue LatentSyncUnet::build(core::ModuleBuildContext & ctx,
             x = ConcatModule({1}).build(ctx, x, skips.back());
             skips.pop_back();
             x = build_resnet(ctx, x, time, frames, stage.resnets[i]);
-            if (!stage.spatial.empty()) x = attention.build_spatial(ctx, x, audio, stage.spatial[i]);
+            if (!stage.spatial.empty()) x = attention.build_spatial(ctx, x, transformer_audio, stage.spatial[i]);
             x = attention.build_temporal(ctx, x, frames, stage.temporal[i]);
             if (cache_output && &stage == &weights.up.back() && i + 2 == stage.resnets.size()) {
                 *cache_output = x;
             }
         }
         if (stage.resample) {
-            x = NearestUpsample2dModule({x.shape.dims[2] * 2, x.shape.dims[3] * 2}).build(ctx, x);
-            x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 1, 1, 1, 1}).build(ctx, x, *stage.resample);
+            const auto upsample_input = config_.cuda_f16_activations
+                ? core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32) : x;
+            x = NearestUpsample2dModule({x.shape.dims[2] * 2, x.shape.dims[3] * 2}).build(ctx, upsample_input);
+            x = Conv2dModule({x.shape.dims[1], x.shape.dims[1], 3, 3, 1, 1, 1, 1},
+                config_.cuda_f16_activations, config_.cuda_f16_activations).build(ctx, x, *stage.resample);
         }
     }
-    x = SiluModule().build(ctx, build_video_norm(ctx, x, frames, weights.output_norm));
-    return Conv2dModule({config_.channels.front(), config_.output_channels, 3, 3, 1, 1, 1, 1}).build(ctx, x, weights.output);
+    x = SiluModule(config_.cuda_f16_activations).build(ctx, build_video_norm(ctx, x, frames, weights.output_norm));
+    x = Conv2dModule({config_.channels.front(), config_.output_channels, 3, 3, 1, 1, 1, 1},
+        config_.cuda_f16_activations, config_.cuda_f16_activations).build(ctx, x, weights.output);
+    return config_.cuda_f16_activations
+        ? core::wrap_tensor(ggml_cast(ctx.ggml, x.tensor, GGML_TYPE_F32), x.shape, GGML_TYPE_F32) : x;
 }
 
 }  // namespace engine::models::latentsync

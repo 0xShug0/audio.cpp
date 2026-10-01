@@ -1230,24 +1230,24 @@ audiocpp_add_model(minimax_h3
 
 audiocpp_add_model(latentsync
     SOURCES
-        src/models/latentsync/whisper_encoder.cpp
-        src/models/latentsync/whisper_runtime.cpp
-        src/models/latentsync/unet_attention.cpp
-        src/models/latentsync/unet.cpp
-        src/models/latentsync/unet_runtime.cpp
-        src/models/latentsync/sampling.cpp
-        src/models/latentsync/pipeline.cpp
-        src/models/latentsync/face_landmarks.cpp
-        src/models/latentsync/scrfd.cpp
-        src/models/latentsync/face_runtime.cpp
-        src/models/latentsync/face_alignment.cpp
-        src/models/latentsync/face_restore.cpp
-        src/models/latentsync/sd_vae.cpp
-        src/models/latentsync/sd_vae_runtime.cpp
-        src/models/latentsync/video.cpp
-        src/models/latentsync/session.cpp
+        src/community_models/latentsync/whisper_encoder.cpp
+        src/community_models/latentsync/whisper_runtime.cpp
+        src/community_models/latentsync/unet_attention.cpp
+        src/community_models/latentsync/unet.cpp
+        src/community_models/latentsync/unet_runtime.cpp
+        src/community_models/latentsync/sampling.cpp
+        src/community_models/latentsync/pipeline.cpp
+        src/community_models/latentsync/face_landmarks.cpp
+        src/community_models/latentsync/scrfd.cpp
+        src/community_models/latentsync/face_runtime.cpp
+        src/community_models/latentsync/face_alignment.cpp
+        src/community_models/latentsync/face_restore.cpp
+        src/community_models/latentsync/sd_vae.cpp
+        src/community_models/latentsync/sd_vae_runtime.cpp
+        src/community_models/latentsync/video.cpp
+        src/community_models/latentsync/session.cpp
     INCLUDES
-        engine/models/latentsync/session.h
+        engine/community_models/latentsync/session.h
     LOADERS
         engine::models::latentsync::make_latentsync_loader
 )
@@ -4177,6 +4177,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         if (latentsync IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(latentsync_component_parity tests/latentsync/component_parity.cpp)
             target_link_libraries(latentsync_component_parity PRIVATE engine_runtime ggml)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(latentsync_component_parity PRIVATE OpenMP::OpenMP_CXX)
+            endif()
         endif()
         if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS AND inflect_v2 IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(espeak_frontend_probe tests/unittests/espeak_frontend_probe.cpp)

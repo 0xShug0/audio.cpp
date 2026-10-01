@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/sd_vae_runtime.h"
+#include "engine/community_models/latentsync/sd_vae_runtime.h"
 #include "engine/framework/debug/trace.h"
 
 #include <ggml-alloc.h>
@@ -14,7 +14,10 @@ constexpr float kLatentScale = 0.18215F;
 class LatentSyncSdVaeGraph {
 public:
     LatentSyncSdVaeGraph(core::ExecutionContext & execution, const SdVaeTowerWeights & weights,
-        int64_t resolution, bool encoder, bool cuda_cudnn, bool cuda_f16_activations) : backend_(execution.backend()) {
+        int64_t resolution, bool encoder, bool cuda_cudnn, bool cuda_f16_activations,
+        ggml_gallocr_t shared_allocator = nullptr, ggml_cgraph ** active_graph = nullptr)
+        : backend_(execution.backend()), allocator_(shared_allocator), active_graph_(active_graph),
+          owns_allocator_(shared_allocator == nullptr) {
         constexpr size_t nodes = 4096;
         context_.reset(ggml_init({nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(nodes, false), nullptr, true}));
         if (!context_) throw std::runtime_error("LatentSync VAE graph context allocation failed");
@@ -30,13 +33,23 @@ public:
         ggml_set_output(output_.tensor);
         graph_ = ggml_new_graph_custom(context_.get(), nodes, false);
         ggml_build_forward_expand(graph_, output_.tensor);
-        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
-        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) throw std::runtime_error("LatentSync VAE graph allocation failed");
+        if (owns_allocator_) allocator_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
+        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_, graph_)) throw std::runtime_error("LatentSync VAE graph allocation failed");
+        if (active_graph_) *active_graph_ = graph_;
         debug::timing_log_scalar(encoder ? "latentsync.vae_encoder.graph_buffer_mb" : "latentsync.vae_decoder.graph_buffer_mb",
-            ggml_gallocr_get_buffer_size(allocator_.get(), 0) / 1048576.0);
+            ggml_gallocr_get_buffer_size(allocator_, 0) / 1048576.0);
     }
-    ~LatentSyncSdVaeGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
+    ~LatentSyncSdVaeGraph() {
+        core::release_backend_graph_resources(backend_, graph_, true);
+        if (owns_allocator_) ggml_gallocr_free(allocator_);
+    }
     std::vector<float> run(const std::vector<float> & input) {
+        if (!owns_allocator_ && *active_graph_ != graph_) {
+            if (!ggml_gallocr_alloc_graph(allocator_, graph_)) {
+                throw std::runtime_error("LatentSync VAE graph allocation failed");
+            }
+            *active_graph_ = graph_;
+        }
         core::write_tensor_f32(input_, input);
         if (core::compute_backend_graph(backend_, graph_) != GGML_STATUS_SUCCESS) throw std::runtime_error("LatentSync VAE execution failed");
         return core::read_tensor_f32(output_.tensor);
@@ -44,7 +57,9 @@ public:
 private:
     ggml_backend_t backend_;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context_{nullptr, ggml_free};
-    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
+    ggml_gallocr_t allocator_ = nullptr;
+    ggml_cgraph ** active_graph_ = nullptr;
+    bool owns_allocator_ = false;
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_, output_;
 };
@@ -55,14 +70,22 @@ struct LatentSyncSdVaeRuntime::Impl {
     int64_t resolution;
     bool cuda_cudnn;
     bool cuda_f16_activations;
+    bool share_graph_workspace;
     core::BackendWeightStore store;
     SdVaeTowerWeights encoder_weights, decoder_weights;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator;
+    ggml_cgraph * active_graph = nullptr;
     std::unique_ptr<LatentSyncSdVaeGraph> encoder, decoder;
     Impl(core::ExecutionContext & execution_in, const assets::TensorSource & source,
-        assets::TensorStorageType type, int64_t resolution_in, bool cuda_cudnn_in, bool cuda_f16_activations_in)
+        assets::TensorStorageType type, int64_t resolution_in, bool cuda_cudnn_in,
+        bool cuda_f16_activations_in, bool share_graph_workspace_in)
         : execution(execution_in), resolution(resolution_in), cuda_cudnn(cuda_cudnn_in),
-          cuda_f16_activations(cuda_f16_activations_in),
-          store(execution.backend(), execution.backend_type(), "latentsync.vae.weights", 4 * 1024 * 1024) {
+          cuda_f16_activations(cuda_f16_activations_in), share_graph_workspace(share_graph_workspace_in),
+          store(execution.backend(), execution.backend_type(), "latentsync.vae.weights", 4 * 1024 * 1024),
+          allocator(share_graph_workspace
+                  ? ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()))
+                  : nullptr,
+              &ggml_gallocr_free) {
         if (cuda_f16_activations && !cuda_cudnn) {
             throw std::runtime_error("LatentSync VAE FP16 activations require cuDNN lowering");
         }
@@ -77,17 +100,29 @@ struct LatentSyncSdVaeRuntime::Impl {
         decoder_weights = load_sd_vae_weights(store, source, {}, false, type);
         store.upload();
     }
+
+    void ensure_shared_graphs() {
+        if (encoder) return;
+        // Allocate the larger decoder plan first so the shared backend buffer never has to grow.
+        decoder = std::make_unique<LatentSyncSdVaeGraph>(execution, decoder_weights, resolution,
+            false, cuda_cudnn, cuda_f16_activations, allocator.get(), &active_graph);
+        encoder = std::make_unique<LatentSyncSdVaeGraph>(execution, encoder_weights, resolution,
+            true, cuda_cudnn, cuda_f16_activations, allocator.get(), &active_graph);
+    }
 };
 
 LatentSyncSdVaeRuntime::LatentSyncSdVaeRuntime(core::ExecutionContext & execution,
     const assets::TensorSource & source, assets::TensorStorageType weight_type, int64_t resolution,
-    bool cuda_cudnn, bool cuda_f16_activations)
-    : impl_(std::make_unique<Impl>(execution, source, weight_type, resolution, cuda_cudnn, cuda_f16_activations)) {}
+    bool cuda_cudnn, bool cuda_f16_activations, bool share_graph_workspace)
+    : impl_(std::make_unique<Impl>(execution, source, weight_type, resolution, cuda_cudnn,
+          cuda_f16_activations, share_graph_workspace)) {}
 LatentSyncSdVaeRuntime::~LatentSyncSdVaeRuntime() = default;
 
 std::vector<float> LatentSyncSdVaeRuntime::encode_moments(const std::vector<float> & image) {
     const auto start = std::chrono::steady_clock::now();
-    if (!impl_->encoder) impl_->encoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution, impl_->encoder_weights, impl_->resolution, true, impl_->cuda_cudnn, impl_->cuda_f16_activations);
+    if (impl_->share_graph_workspace) impl_->ensure_shared_graphs();
+    else if (!impl_->encoder) impl_->encoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution,
+        impl_->encoder_weights, impl_->resolution, true, impl_->cuda_cudnn, impl_->cuda_f16_activations);
     auto output = impl_->encoder->run(image);
     debug::timing_log_scalar("latentsync.vae_encoder.wall_ms",
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
@@ -108,7 +143,9 @@ std::vector<float> LatentSyncSdVaeRuntime::encode(const std::vector<float> & ima
 
 std::vector<float> LatentSyncSdVaeRuntime::decode(const std::vector<float> & scaled_latent) {
     const auto start = std::chrono::steady_clock::now();
-    if (!impl_->decoder) impl_->decoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution, impl_->decoder_weights, impl_->resolution, false, impl_->cuda_cudnn, impl_->cuda_f16_activations);
+    if (impl_->share_graph_workspace) impl_->ensure_shared_graphs();
+    else if (!impl_->decoder) impl_->decoder = std::make_unique<LatentSyncSdVaeGraph>(impl_->execution,
+        impl_->decoder_weights, impl_->resolution, false, impl_->cuda_cudnn, impl_->cuda_f16_activations);
     auto latent = scaled_latent;
     for (auto & value : latent) value /= kLatentScale;
     auto output = impl_->decoder->run(latent);

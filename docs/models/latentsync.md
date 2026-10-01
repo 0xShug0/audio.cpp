@@ -52,10 +52,14 @@ Use with **`--session-option latentsync.name=value`**.
 |---|---|---|
 | `weight_type` | `native` | Weight storage type. |
 | `vae_cudnn_f16` | `false` | Opt-in FP16 VAE on CUDA; requires a cuDNN-enabled build. VAE weights use FP16 in this mode. |
+| `unet_cudnn_f16` | `false` | Opt-in FP16 U-Net residual path on CUDA; requires a cuDNN-enabled build and FP16 U-Net weights. |
 
 Build with `-DGGML_CUDA_CUDNN_CONV2D=ON` and a discoverable cuDNN installation
 to use `--session-option latentsync.vae_cudnn_f16=true`. This changes VAE
 rounding; leave it off when exact output from the existing path is required.
+The same build enables `--session-option latentsync.unet_cudnn_f16=true` with
+FP16 U-Net weights. It also changes rounding; leave it off for exact output
+from the existing U-Net path.
 
 For faster CUDA inference, use `--session-option latentsync.weight_type=f16`
 and `--request-option cache_interval=3`. DeepCache refreshes the full denoiser

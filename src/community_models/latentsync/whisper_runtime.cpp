@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/whisper_runtime.h"
+#include "engine/community_models/latentsync/whisper_runtime.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/audio/mel_spectrogram_frontend.h"
 

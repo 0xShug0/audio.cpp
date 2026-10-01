@@ -1,7 +1,8 @@
-#include "engine/models/latentsync/face_restore.h"
+#include "engine/community_models/latentsync/face_restore.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <deque>
 #include <limits>
 #include <numeric>
@@ -52,21 +53,39 @@ std::vector<float> gaussian_mask(const std::vector<float> & image, int height, i
     auto input = image;
     std::vector<float> output(image.size());
     for (int axis = 0; axis < 2; ++axis) {
-        const int lines = axis ? width : height, length = axis ? height : width;
+        const int length = axis ? height : width;
         if (radius >= length) throw std::runtime_error("LatentSync restoration blur exceeds frame dimensions");
+        if (axis == 0) {
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(threads) if(threads > 1) schedule(static)
 #endif
-        for (int line = 0; line < lines; ++line) {
-            for (int position = 0; position < length; ++position) {
-                float value = 0;
-                for (int i = -radius; i <= radius; ++i) {
-                    int source = position + i;
-                    if (source < 0) source = -source;
-                    if (source >= length) source = 2 * length - 2 - source;
-                    value += input[axis ? source * width + line : line * width + source] * kernel[i + radius];
+            for (int y = 0; y < height; ++y) {
+                for (int x = 0; x < width; ++x) {
+                    float value = 0;
+                    for (int i = -radius; i <= radius; ++i) {
+                        int source = x + i;
+                        if (source < 0) source = -source;
+                        if (source >= width) source = 2 * width - 2 - source;
+                        value += input[y * width + source] * kernel[i + radius];
+                    }
+                    output[y * width + x] = value;
                 }
-                output[axis ? position * width + line : line * width + position] = value;
+            }
+        } else {
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(threads) if(threads > 1) schedule(static)
+#endif
+            for (int y = 0; y < height; ++y) {
+                auto * destination = output.data() + static_cast<size_t>(y) * width;
+                std::fill_n(destination, width, 0.0F);
+                for (int i = -radius; i <= radius; ++i) {
+                    int source = y + i;
+                    if (source < 0) source = -source;
+                    if (source >= height) source = 2 * height - 2 - source;
+                    const auto * row = input.data() + static_cast<size_t>(source) * width;
+                    const float weight = kernel[i + radius];
+                    for (int x = 0; x < width; ++x) destination[x] += row[x] * weight;
+                }
             }
         }
         input.swap(output);
@@ -130,15 +149,18 @@ std::vector<float> latentsync_restore_face(const std::vector<float> & original,
     LatentSyncAffine inverse{transform[4] / det, -transform[1] / det, 0, -transform[3] / det, transform[0] / det, 0};
     inverse[2] = -inverse[0] * transform[2] - inverse[1] * transform[5];
     inverse[5] = -inverse[3] * transform[2] - inverse[4] * transform[5];
-    auto warped = latentsync_warp_affine(resized, 3, 560, 420, inverse, height, width, 127);
-    auto mask = latentsync_warp_affine(std::vector<float>(560 * 420, 1), 1, 560, 420, inverse, height, width, 0);
+    auto warped = latentsync_warp_affine(resized, 3, 560, 420, inverse, height, width, 127, threads);
+    auto mask = latentsync_warp_affine(std::vector<float>(560 * 420, 1), 1, 560, 420, inverse, height, width, 0, threads);
     mask = erode_square(mask, height, width, 2, threads);
     const double area = std::accumulate(mask.begin(), mask.end(), 0.0);
     const int edge = int(std::sqrt(area)) / 20;
     const auto center = erode_square(mask, height, width, edge * 2, threads);
     const auto soft = gaussian_mask(center, height, width, edge, threads);
     const size_t pixels = static_cast<size_t>(height) * width;
-    for (size_t i = 0; i < warped.size(); ++i) {
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(threads) if(threads > 1) schedule(static)
+#endif
+    for (int64_t i = 0; i < static_cast<int64_t>(warped.size()); ++i) {
         const size_t pixel = i % pixels;
         const float value = std::clamp(warped[i] / 2 + 0.5F, 0.0F, 1.0F) * 255;
         warped[i] = std::floor(std::clamp(soft[pixel] * mask[pixel] * value + (1 - soft[pixel]) * original[i], 0.0F, 255.0F));

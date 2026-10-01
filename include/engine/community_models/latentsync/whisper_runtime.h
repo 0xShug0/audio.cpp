@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/models/latentsync/whisper_encoder.h"
+#include "engine/community_models/latentsync/whisper_encoder.h"
 #include "engine/framework/core/execution_context.h"
 #include <memory>
 

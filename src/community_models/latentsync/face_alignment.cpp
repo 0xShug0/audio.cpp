@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/face_alignment.h"
+#include "engine/community_models/latentsync/face_alignment.h"
 
 #include <cmath>
 #include <algorithm>
@@ -87,7 +87,7 @@ void LatentSyncFaceAlignment::reset() { previous_bias_.reset(); }
 
 std::vector<float> latentsync_warp_affine(const std::vector<float> & image,
     int channels, int height, int width, const LatentSyncAffine & matrix,
-    int output_height, int output_width, float fill) {
+    int output_height, int output_width, float fill, [[maybe_unused]] int threads) {
     if (channels <= 0 || height <= 0 || width <= 0 || output_height <= 0 || output_width <= 0 ||
         image.size() != static_cast<size_t>(channels) * height * width) {
         throw std::runtime_error("Invalid LatentSync affine image dimensions");
@@ -99,6 +99,9 @@ std::vector<float> latentsync_warp_affine(const std::vector<float> & image,
     const double c = -matrix[3] / determinant;
     const double d = matrix[0] / determinant;
     std::vector<float> output(static_cast<size_t>(channels) * output_height * output_width);
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(threads) if(threads > 1) schedule(static)
+#endif
     for (int y = 0; y < output_height; ++y) {
         for (int x = 0; x < output_width; ++x) {
             const double dx = x - matrix[2], dy = y - matrix[5];
@@ -123,7 +126,8 @@ std::vector<float> latentsync_warp_affine(const std::vector<float> & image,
 }
 
 std::vector<float> latentsync_resize_lanczos4(const std::vector<float> & image,
-    int channels, int height, int width, int output_height, int output_width) {
+    int channels, int height, int width, int output_height, int output_width,
+    [[maybe_unused]] int threads) {
     if (channels <= 0 || height <= 0 || width <= 0 || output_height <= 0 || output_width <= 0 ||
         image.size() != static_cast<size_t>(channels) * height * width) {
         throw std::runtime_error("Invalid LatentSync resize dimensions");
@@ -151,6 +155,9 @@ std::vector<float> latentsync_resize_lanczos4(const std::vector<float> & image,
         }
     }
     std::vector<float> horizontal(static_cast<size_t>(channels) * height * output_width);
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) num_threads(threads) if(threads > 1) schedule(static)
+#endif
     for (int c = 0; c < channels; ++c) {
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < output_width; ++x) {
@@ -164,6 +171,9 @@ std::vector<float> latentsync_resize_lanczos4(const std::vector<float> & image,
         }
     }
     std::vector<float> output(static_cast<size_t>(channels) * output_height * output_width);
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) num_threads(threads) if(threads > 1) schedule(static)
+#endif
     for (int c = 0; c < channels; ++c) {
         for (int y = 0; y < output_height; ++y) {
             const auto & taps = axes[1][y];

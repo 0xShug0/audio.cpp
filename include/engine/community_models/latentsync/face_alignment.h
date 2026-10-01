@@ -14,10 +14,10 @@ LatentSyncFacePoints latentsync_alignment_points(const std::vector<float> & land
 // Planar image layout; the matrix maps source pixels to destination pixels.
 std::vector<float> latentsync_warp_affine(const std::vector<float> & image,
     int channels, int height, int width, const LatentSyncAffine & matrix,
-    int output_height, int output_width, float fill);
+    int output_height, int output_width, float fill, int threads);
 
 std::vector<float> latentsync_resize_lanczos4(const std::vector<float> & image,
-    int channels, int height, int width, int output_height, int output_width);
+    int channels, int height, int width, int output_height, int output_width, int threads);
 
 class LatentSyncFaceAlignment {
 public:

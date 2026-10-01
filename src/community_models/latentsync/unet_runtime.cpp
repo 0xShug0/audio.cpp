@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/unet_runtime.h"
+#include "engine/community_models/latentsync/unet_runtime.h"
 
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/sampling/diffusion_math.h"
@@ -17,7 +17,8 @@ class LatentSyncUnetGraph {
 public:
     LatentSyncUnetGraph(core::ExecutionContext & execution, const LatentSyncUnetConfig & config,
         const LatentSyncUnetWeights & weights, int64_t batch, int64_t frames,
-        int64_t height, int64_t width, int64_t audio_tokens, bool cache, bool replay = false) : backend_(execution.backend()) {
+        int64_t height, int64_t width, int64_t audio_tokens, bool cache,
+        ggml_gallocr_t allocator, bool replay = false) : backend_(execution.backend()), allocator_(allocator) {
         constexpr size_t nodes = 16384;
         context_.reset(ggml_init({nodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(nodes, false), nullptr, true}));
         if (!context_) throw std::runtime_error("LatentSync U-Net graph context allocation failed");
@@ -32,11 +33,15 @@ public:
         ggml_set_input(audio_.tensor);
         ggml_set_input(timestep_.tensor);
         if (replay) {
-            cached_feature_ = core::make_tensor(ctx, GGML_TYPE_F32,
+            cache_context_.reset(ggml_init({4 * ggml_tensor_overhead(), nullptr, true}));
+            if (!cache_context_) throw std::runtime_error("LatentSync U-Net cache context allocation failed");
+            core::ModuleBuildContext cache_ctx{cache_context_.get(), "latentsync.unet.cache", execution.backend_type()};
+            cached_feature_ = core::make_tensor(cache_ctx,
+                config.cuda_f16_activations ? GGML_TYPE_F16 : GGML_TYPE_F32,
                 core::TensorShape::from_dims({batch * frames, config.channels.front(), height, width}));
             ggml_set_input(cached_feature_.tensor);
-            // Retained across replay steps: allocator in-place reuse must not overwrite it.
-            ggml_set_output(cached_feature_.tensor);
+            cache_buffer_.reset(ggml_backend_alloc_ctx_tensors(cache_context_.get(), backend_));
+            if (!cache_buffer_) throw std::runtime_error("LatentSync U-Net cache buffer allocation failed");
         }
         output_ = LatentSyncUnet(config).build(ctx, input_, audio_, timestep_, frames, weights,
             replay ? &cached_feature_ : nullptr, cache && !replay ? &cached_feature_ : nullptr);
@@ -44,12 +49,11 @@ public:
         ggml_set_output(output_.tensor);
         graph_ = ggml_new_graph_custom(context_.get(), nodes, false);
         ggml_build_forward_expand(graph_, output_.tensor);
-        allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
-        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) {
+        if (!allocator_ || !ggml_gallocr_alloc_graph(allocator_, graph_)) {
             throw std::runtime_error("LatentSync U-Net graph allocation failed");
         }
         debug::timing_log_scalar("latentsync.unet.graph_buffer_mb",
-            ggml_gallocr_get_buffer_size(allocator_.get(), 0) / 1048576.0);
+            ggml_gallocr_get_buffer_size(allocator_, 0) / 1048576.0);
     }
 
     ~LatentSyncUnetGraph() { core::release_backend_graph_resources(backend_, graph_, true); }
@@ -60,6 +64,9 @@ public:
 
     std::vector<float> predict(const std::vector<float> & input, const std::vector<float> & audio,
         const std::vector<float> & timestep_features) {
+        if (!ggml_gallocr_alloc_graph(allocator_, graph_)) {
+            throw std::runtime_error("LatentSync U-Net graph allocation failed");
+        }
         core::write_tensor_f32(input_, input);
         core::write_tensor_f32(audio_, audio);
         core::write_tensor_f32(timestep_, timestep_features);
@@ -72,7 +79,9 @@ public:
 private:
     ggml_backend_t backend_;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context_{nullptr, ggml_free};
-    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator_{nullptr, ggml_gallocr_free};
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> cache_context_{nullptr, ggml_free};
+    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> cache_buffer_{nullptr, ggml_backend_buffer_free};
+    ggml_gallocr_t allocator_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     core::TensorValue input_, audio_, timestep_, output_, cached_feature_;
 };
@@ -84,6 +93,7 @@ struct LatentSyncUnetRuntime::Impl {
     LatentSyncUnetConfig config;
     core::BackendWeightStore store;
     LatentSyncUnetWeights weights;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> allocator;
     std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t> shape;
     std::unique_ptr<LatentSyncUnetGraph> graph;
     std::unique_ptr<LatentSyncUnetGraph> replay_graph;
@@ -92,7 +102,20 @@ struct LatentSyncUnetRuntime::Impl {
         LatentSyncUnetConfig config_in, assets::TensorStorageType type)
         : execution(execution_in), config(config_in),
           store(execution.backend(), execution.backend_type(), "latentsync.unet.weights", 4 * 1024 * 1024),
-          weights(load_unet_weights(store, source, config, type)) {
+          weights(load_unet_weights(store, source, config, type)),
+          allocator(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())),
+              &ggml_gallocr_free) {
+        if (config.cuda_f16_activations && execution.backend_type() != core::BackendType::Cuda) {
+            throw std::runtime_error("LatentSync U-Net FP16 cuDNN execution requires CUDA");
+        }
+        if (config.cuda_f16_activations && type != assets::TensorStorageType::F16) {
+            throw std::runtime_error("LatentSync U-Net FP16 execution requires FP16 weights");
+        }
+#ifndef GGML_CUDA_CUDNN_CONV2D
+        if (config.cuda_f16_activations) {
+            throw std::runtime_error("LatentSync U-Net FP16 cuDNN execution is not enabled in this build");
+        }
+#endif
         store.upload();
     }
 };
@@ -116,10 +139,12 @@ std::vector<float> LatentSyncUnetRuntime::predict(const std::vector<float> & inp
         impl_->graph.reset();
         impl_->replay_graph.reset();
         impl_->graph = std::make_unique<LatentSyncUnetGraph>(impl_->execution, impl_->config,
-            impl_->weights, batch, frames, height, width, audio_tokens, cache);
+            impl_->weights, batch, frames, height, width, audio_tokens, cache,
+            impl_->allocator.get());
         if (cache) {
             impl_->replay_graph = std::make_unique<LatentSyncUnetGraph>(impl_->execution, impl_->config,
-                impl_->weights, batch, frames, height, width, audio_tokens, true, true);
+                impl_->weights, batch, frames, height, width, audio_tokens, true,
+                impl_->allocator.get(), true);
         }
         impl_->shape = shape;
     }

@@ -1,5 +1,5 @@
-#include "engine/models/latentsync/face_runtime.h"
-#include "engine/models/latentsync/face_landmarks.h"
+#include "engine/community_models/latentsync/face_runtime.h"
+#include "engine/community_models/latentsync/face_landmarks.h"
 #include "engine/framework/debug/trace.h"
 
 #include <ggml-alloc.h>
@@ -168,9 +168,12 @@ LatentSyncAlignedFace LatentSyncFaceRuntime::align_frame(const std::vector<float
         output.landmarks[i] = float(((output.landmarks[i] + 1) * 96 - 96) / scale + (i % 2 ? center_y : center_x));
     }
     output.transform = impl_->alignment.transform(latentsync_alignment_points(output.landmarks));
-    auto warped = latentsync_warp_affine(rgb, 3, height, width, output.transform, impl_->alignment.crop_height(), impl_->alignment.crop_width(), 127);
+    const int threads = impl_->execution.config().threads;
+    auto warped = latentsync_warp_affine(rgb, 3, height, width, output.transform,
+        impl_->alignment.crop_height(), impl_->alignment.crop_width(), 127, threads);
     for (auto & value : warped) value = std::floor(std::clamp(value, 0.0F, 255.0F));
-    output.pixels = latentsync_resize_lanczos4(warped, 3, impl_->alignment.crop_height(), impl_->alignment.crop_width(), 512, 512);
+    output.pixels = latentsync_resize_lanczos4(warped, 3, impl_->alignment.crop_height(),
+        impl_->alignment.crop_width(), 512, 512, threads);
     for (auto & value : output.pixels) value = std::nearbyint(std::clamp(value, 0.0F, 255.0F)) / 127.5F - 1;
     return output;
 }

@@ -1,4 +1,4 @@
-#include "engine/models/latentsync/video.h"
+#include "engine/community_models/latentsync/video.h"
 
 #include <array>
 #include <cmath>

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/models/latentsync/unet.h"
-#include "engine/models/latentsync/sampling.h"
+#include "engine/community_models/latentsync/unet.h"
+#include "engine/community_models/latentsync/sampling.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <memory>

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/models/latentsync/scrfd.h"
-#include "engine/models/latentsync/face_alignment.h"
+#include "engine/community_models/latentsync/scrfd.h"
+#include "engine/community_models/latentsync/face_alignment.h"
 #include "engine/framework/core/execution_context.h"
 
 #include <memory>
