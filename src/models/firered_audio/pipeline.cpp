@@ -6,7 +6,7 @@
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/firered_audio/flow.h"
 #include "engine/models/firered_audio/patch_encoder.h"
-#include "engine/models/firered_audio/qwen35_runtime.h"
+#include "engine/framework/modules/transformers/qwen35_decoder_runtime.h"
 #include "engine/models/firered_audio/redae.h"
 #include "engine/models/firered_audio/tokenizer.h"
 
@@ -158,7 +158,8 @@ public:
         if (assets_ == nullptr) {
             throw std::runtime_error("FireRedAudio generation runtime requires assets");
         }
-        qwen_ = std::make_unique<FireRedAudioQwen35Runtime>(assets_, execution_, graph_arena_bytes, weight_context_bytes, storage_type);
+        qwen_ = std::make_unique<modules::Qwen35DecoderRuntime>(
+            assets_->model_weights, assets_->backbone, execution_, graph_arena_bytes, weight_context_bytes, storage_type);
         patch_encoder_ = std::make_unique<FireRedAudioPatchEncoderRuntime>(assets_, execution_, graph_arena_bytes, weight_context_bytes, storage_type);
         redae_ = std::make_unique<FireRedAudioRedAeRuntime>(assets_, execution_, graph_arena_bytes, weight_context_bytes, storage_type);
         flow_ = std::make_unique<FireRedAudioFlowRuntime>(assets_, execution_, graph_arena_bytes, weight_context_bytes, storage_type);
@@ -462,7 +463,7 @@ private:
     bool mem_saver_ = false;
     sampling::TorchCudaSamplingPolicy sampling_policy_;
     runtime::CacheSlots<ReferenceAudioCacheKey, ReferenceAudioCacheEntry, ReferenceAudioCacheKeyEqual> reference_cache_;
-    std::unique_ptr<FireRedAudioQwen35Runtime> qwen_;
+    std::unique_ptr<modules::Qwen35DecoderRuntime> qwen_;
     std::unique_ptr<FireRedAudioPatchEncoderRuntime> patch_encoder_;
     std::unique_ptr<FireRedAudioRedAeRuntime> redae_;
     std::unique_ptr<FireRedAudioFlowRuntime> flow_;
