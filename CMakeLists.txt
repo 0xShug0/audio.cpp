@@ -682,6 +682,16 @@ audiocpp_add_model(pulsevad
         engine::models::pulsevad::make_pulsevad_loader
 )
 
+audiocpp_add_model(smart_turn
+    SOURCES
+        src/models/smart_turn/runtime.cpp
+        src/models/smart_turn/session.cpp
+    INCLUDES
+        engine/models/smart_turn/session.h
+    LOADERS
+        engine::models::smart_turn::make_smart_turn_loader
+)
+
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp

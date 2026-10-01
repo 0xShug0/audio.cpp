@@ -135,6 +135,7 @@ Model weights keep the license of their original release, which is separate from
 | **qwen3_forced_aligner** | Align | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | GGUF 16/Q8 |
 | **samsone** | Audio understanding | en | SAMSONE 99M<br>SAMSONE 134M<br>SAMSONE 356M | GGUF BF16/Q8 |
 | **silero_vad** | VAD | lang agnostic | Silero VAD | Bundled, Stream |
+| **smart_turn** | Turn detection | auto | Smart Turn v3.2 | GGUF F32 |
 | **sortformer_diar** | Diar | en | Sortformer-4spk-v1 | - |
 | **vibevoice_asr** | ASR | auto | VibeVoice ASR | GGUF 16/Q8 |
 | **vibevoice_asr_streaming** | ASR | en, zh, es, pt, de, ja, ko, fr, ru, it | VibeVoice ASR Streaming 7B/1.5B with persistent decoder state and speaker turns | GGUF BF16/Q8/Q4, Stream |

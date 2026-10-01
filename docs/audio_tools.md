@@ -3,6 +3,7 @@
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
 | Built-in audio utilities | `builtin_audio_utils` | `s2s` denoise/enhance/super-resolution | [Built-in audio utilities](#built-in-audio-utilities) |
+| Smart Turn v3.2 | `smart_turn` | `turn` completion detection | [Smart Turn](models/smart_turn.md) |
 | Apollo | `apollo` | `s2s` music restoration | [Apollo](models/apollo.md) |
 | SAM Audio | `sam_audio` | `s2s` prompt-conditioned separation | [SAM Audio](models/sam_audio.md) |
 | RE-USE | `reuse` | `s2s` speech restoration | [RE-USE](community_models/reuse.md) |

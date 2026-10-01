@@ -121,6 +121,7 @@ Status labels:
 | `sopro_tts` | Done | Pass | --- | Pass | Pass |
 | `soprano_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
+| `smart_turn` | Done | F32 | --- | --- | --- |
 | `sortformer_diar` | Done | Pass | --- | Pass | Pass |
 | `sortformer_diar_v2` | Done | Pass | Pass | Pass (mixed; output-turn criteria) | No (speaker drift) |
 | `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |
