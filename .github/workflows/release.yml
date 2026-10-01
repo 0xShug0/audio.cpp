@@ -644,6 +644,8 @@ jobs:
                 (cd "$d" && zip -qqr "../${name}.zip" .)
                 ;;
               *)
+                # upload-artifact drops file modes; restore the executable bit
+                chmod +x "$d"audiocpp_*
                 (cd "$d" && tar -czf "../${name}.tar.gz" .)
                 ;;
             esac
