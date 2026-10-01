@@ -117,6 +117,7 @@ Status labels:
 | `rvc` | Done | --- | --- | Pass | --- |
 | `sam_audio` | Done | --- | Pass | --- | --- |
 | `samsone` | Done | --- | --- | Pass | Pass (drift) |
+| `sidon` | Done | --- | Pass | --- | --- |
 | `seed_vc` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `sopro_tts` | Done | Pass | --- | Pass | Pass |
 | `soprano_tts` | Done | Pass | --- | Pass | Pass (drift) |

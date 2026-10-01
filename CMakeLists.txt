@@ -662,6 +662,17 @@ audiocpp_add_model(apollo
         engine::models::apollo::make_apollo_loader
 )
 
+audiocpp_add_model(sidon
+    SOURCES
+        src/models/sidon/runtime.cpp
+        src/models/sidon/frontend.cpp
+        src/models/sidon/session.cpp
+    INCLUDES
+        engine/models/sidon/session.h
+    LOADERS
+        engine::models::sidon::make_sidon_loader
+)
+
 audiocpp_add_model(tone_color_vc
     SOURCES
         src/models/tone_color_vc/runtime.cpp
