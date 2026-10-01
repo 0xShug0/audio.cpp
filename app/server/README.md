@@ -601,6 +601,23 @@ curl 'http://127.0.0.1:8080/v1/audio/voices?model=pocket-tts'
 
 ### `POST /v1/tasks/run`
 
+For audio input, `request.audio` is a server-local WAV path. Alternatively,
+`request.audio_base64` accepts a Base64-encoded WAV or a
+`data:audio/wav;base64,...` URI:
+
+```json
+{
+  "model": "mel_band_roformer",
+  "request": {"audio_base64": "<Base64-encoded WAV>"}
+}
+```
+
+Provide only one of `audio` and `audio_base64`. Invalid inline audio returns
+HTTP 400. The existing `max_request_body_bytes` limit applies to the entire
+JSON body, including Base64 expansion. The WAV must meet the model's input
+sample-rate and channel requirements. Inline audio is supported on this endpoint;
+batch and stream endpoints retain their existing input formats.
+
 Generic framework request route. The `request` object uses the same JSON fields as the `audiocpp_cli` request sequence format.
 
 ```bash
