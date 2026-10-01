@@ -3266,6 +3266,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_compile_definitions(package_manager_modelscope_test PRIVATE
                 AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
             add_test(NAME package_manager_modelscope_test COMMAND package_manager_modelscope_test)
+
+            add_executable(package_manager_http_test tests/unittests/test_package_manager_http.cpp)
+            target_link_libraries(package_manager_http_test PRIVATE
+                Threads::Threads audiocpp_package_manager audiocpp_cpp_httplib)
+            add_test(NAME package_manager_http_test COMMAND package_manager_http_test)
         endif()
     endif()
 

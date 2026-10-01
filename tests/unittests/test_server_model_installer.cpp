@@ -1,4 +1,5 @@
 #include "model_installer.h"
+#include "engine/framework/io/json.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -161,10 +162,47 @@ void test_native_package_lifecycle() {
     std::filesystem::remove_all(root, error);
 }
 
+void test_large_inventory() {
+    const auto root = make_root();
+    std::string spec = R"({"family":"demo","packages":[)";
+    for (int i = 0; i < 500; ++i) {
+        if (i) spec += ',';
+        spec += "{\"id\":\"demo_" + std::to_string(i) + R"(","display_name":"Demo",
+            "format":"gguf","precision":"f32","target_directory":"Demo","files":[],
+            "download":{"kind":"huggingface_snapshot","repo":"org/repo"}})";
+    }
+    spec += "]}";
+    write(root / "model_specs" / "demo.json", spec);
+    try {
+        minitts::server::ModelInstaller installer(root, root / "models");
+        bool complete = false;
+        for (int i = 0; i < 200; ++i) {
+            const auto text = installer.package_sizes();
+            const auto response = engine::io::json::parse(text);
+            require(response.require("data").as_array().size() == 500,
+                "inventory larger than 64 KiB must retain every package");
+            require(text.size() > 65536, "fixture must exceed the old log-tail limit");
+            if (response.require("state").as_string() == "complete") {
+                complete = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        require(complete, "large inventory completes");
+    } catch (...) {
+        std::filesystem::remove_all(root);
+        throw;
+    }
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 int main() {
-    try { test_native_package_lifecycle(); }
+    try {
+        test_native_package_lifecycle();
+        test_large_inventory();
+    }
     catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;
