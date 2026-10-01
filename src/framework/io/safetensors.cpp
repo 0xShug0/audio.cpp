@@ -92,10 +92,18 @@ void expect_char(const std::string & text, size_t & pos, char expected) {
     ++pos;
 }
 
-void skip_json_value(const std::string & text, size_t & pos) {
+// Same nesting limit as serde_json, which the reference safetensors loader
+// uses to parse the header. Without a limit, a deeply nested value recurses
+// until the native stack is exhausted.
+constexpr size_t kMaxSkippedJsonDepth = 128;
+
+void skip_json_value(const std::string & text, size_t & pos, size_t depth = 0) {
     skip_ws(text, pos);
     if (pos >= text.size()) {
         throw std::runtime_error("unexpected end of json while skipping value");
+    }
+    if (depth >= kMaxSkippedJsonDepth) {
+        throw std::runtime_error("json value nested too deeply while skipping value");
     }
     const char ch = text[pos];
     if (ch == '"') {
@@ -112,7 +120,7 @@ void skip_json_value(const std::string & text, size_t & pos) {
             }
             (void)parse_string(text, pos);
             expect_char(text, pos, ':');
-            skip_json_value(text, pos);
+            skip_json_value(text, pos, depth + 1);
             skip_ws(text, pos);
             if (pos < text.size() && text[pos] == ',') {
                 ++pos;
@@ -133,7 +141,7 @@ void skip_json_value(const std::string & text, size_t & pos) {
                 ++pos;
                 return;
             }
-            skip_json_value(text, pos);
+            skip_json_value(text, pos, depth + 1);
             skip_ws(text, pos);
             if (pos < text.size() && text[pos] == ',') {
                 ++pos;

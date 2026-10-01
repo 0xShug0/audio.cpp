@@ -84,6 +84,7 @@ Status labels:
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
 | `kitten_tts` | Done | --- | Pass (drift) | --- | --- |
+| `kugelaudio` | Done | --- | --- | Pass (ASR match, drift) | --- |
 | `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
 | `maya1` | Done | --- | Pass | --- | --- |
@@ -117,10 +118,12 @@ Status labels:
 | `rvc` | Done | --- | --- | Pass | --- |
 | `sam_audio` | Done | --- | Pass | --- | --- |
 | `samsone` | Done | --- | --- | Pass | Pass (drift) |
+| `sidon` | Done | --- | Pass | --- | --- |
 | `seed_vc` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `sopro_tts` | Done | Pass | --- | Pass | Pass |
 | `soprano_tts` | Done | Pass | --- | Pass | Pass (drift) |
 | `silero_vad` | Skip (tiny model) | --- | --- | --- | --- |
+| `smart_turn` | Done | F32 | --- | --- | --- |
 | `sortformer_diar` | Done | Pass | --- | Pass | Pass |
 | `sortformer_diar_v2` | Done | Pass | Pass | Pass (mixed; output-turn criteria) | No (speaker drift) |
 | `stable_audio` | Done | Pass | --- | Pass (drift) | Pass (drift) |

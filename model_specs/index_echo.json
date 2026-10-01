@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "family": "index_echo",
+  "display_name": "Index-Echo-S2TT",
+  "description": "Index-Echo speech-to-text translation with bilingual timestamped subtitles.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "es",
+    "ja"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {},
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "target_language",
+        "type": "enum",
+        "values": ["en", "es", "ja"],
+        "description": "Translation language for Chinese input audio.",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "max_text_tokens",
+        "type": "int",
+        "description": "Maximum translated text tokens per window.",
+        "required": false,
+        "min": 1,
+        "default": 2000
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; zero selects greedy decoding.",
+        "required": false,
+        "min": 0,
+        "max": 2,
+        "default": 0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed when temperature is positive.",
+        "required": false,
+        "min": 0,
+        "max": 2147483647,
+        "default": 0
+      },
+      {
+        "name": "glossary",
+        "type": "string",
+        "description": "Translation glossary entries.",
+        "required": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "values": ["auto", "quiet_energy", "fixed", "none"],
+        "description": "Long-form audio windowing mode.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum audio-window duration.",
+        "required": false,
+        "min": 1,
+        "max": 60,
+        "default": 60
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Weight storage type for runtime matmul operations.",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "index_echo_s2tt_2b_orig",
+      "display_name": "Index-Echo-S2TT 2B Original",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Index-Echo-S2TT-GGUF",
+      "files": ["index-echo-s2tt-2b-orig.gguf"],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/Index-Echo-S2TT-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "index_echo_s2tt_2b_q8_0",
+      "display_name": "Index-Echo-S2TT 2B Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Index-Echo-S2TT-GGUF",
+      "files": ["index-echo-s2tt-2b-q8_0.gguf"],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/Index-Echo-S2TT-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "index_echo_s2tt_2b_q4_k",
+      "display_name": "Index-Echo-S2TT 2B Q4_K (experimental)",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "Index-Echo-S2TT-GGUF",
+      "files": ["index-echo-s2tt-2b-q4_k.gguf"],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/Index-Echo-S2TT-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "index_echo_s2tt_9b_orig",
+      "display_name": "Index-Echo-S2TT 9B Original",
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "Index-Echo-S2TT-GGUF",
+      "files": ["index-echo-s2tt-9b-orig.gguf"],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/Index-Echo-S2TT-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "index_echo_s2tt_9b_q8_0",
+      "display_name": "Index-Echo-S2TT 9B Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Index-Echo-S2TT-GGUF",
+      "files": ["index-echo-s2tt-9b-q8_0.gguf"],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/Index-Echo-S2TT-GGUF",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "ui": {
+    "recommended_package": "index_echo_s2tt_2b_orig",
+    "tags": ["ASR", "GGUF"],
+    "docs": ["docs/models/index_echo.md"]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "llm_config": "model:llm/config.json",
+        "tokenizer": "model:llm/tokenizer.json",
+        "tokenizer_config": "model:llm/tokenizer_config.json",
+        "audio_config": "model:audio_config.json"
+      },
+      "optional_files": {
+        "mapper_config": "model:bridge/mapper_config.json"
+      },
+      "tensors": {
+        "stlm_weights": {"source": "weights:", "prefix": "stlm"},
+        "audio_weights": {"source": "weights:", "prefix": "audio"},
+        "connector_weights": {"source": "weights:", "prefix": "connector"}
+      },
+      "optional_tensors": {
+        "mapper_weights": {"source": "weights:", "prefix": "mapper"}
+      }
+    }
+  ]
+}

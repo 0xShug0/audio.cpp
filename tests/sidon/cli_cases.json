@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "id": "sidon_offline_restore",
+      "coverage": "Speech restoration, warmed graph reuse, and input-shape changes in one session",
+      "family": "sidon",
+      "model": "Sidon-GGUF/sidon-v0.1-f32.gguf",
+      "task": "s2s",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "cold", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "warmup", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "warm01", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "warm02", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "warm03", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "different_shape", "audio": "assets/resources/a.wav"},
+        {"id": "original_shape", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    }
+  ]
+}

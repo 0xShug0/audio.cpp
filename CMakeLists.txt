@@ -528,6 +528,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/decoder.cpp
     src/framework/modules/transformers/causal_decoder.cpp
     src/framework/modules/transformers/causal_decoder_runtime.cpp
+    src/framework/modules/transformers/qwen35_decoder_runtime.cpp
     src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/transformers/transformer_blocks.cpp
@@ -662,6 +663,17 @@ audiocpp_add_model(apollo
         engine::models::apollo::make_apollo_loader
 )
 
+audiocpp_add_model(sidon
+    SOURCES
+        src/models/sidon/runtime.cpp
+        src/models/sidon/frontend.cpp
+        src/models/sidon/session.cpp
+    INCLUDES
+        engine/models/sidon/session.h
+    LOADERS
+        engine::models::sidon::make_sidon_loader
+)
+
 audiocpp_add_model(tone_color_vc
     SOURCES
         src/models/tone_color_vc/runtime.cpp
@@ -680,6 +692,16 @@ audiocpp_add_model(pulsevad
         engine/models/pulsevad/session.h
     LOADERS
         engine::models::pulsevad::make_pulsevad_loader
+)
+
+audiocpp_add_model(smart_turn
+    SOURCES
+        src/models/smart_turn/runtime.cpp
+        src/models/smart_turn/session.cpp
+    INCLUDES
+        engine/models/smart_turn/session.h
+    LOADERS
+        engine::models::smart_turn::make_smart_turn_loader
 )
 
 audiocpp_add_model(roformer
@@ -808,6 +830,21 @@ audiocpp_add_model(outetts
     DEPENDS
         qwen3_asr
         qwen3_forced_aligner
+)
+
+audiocpp_add_model(kugelaudio
+    SOURCES
+        src/models/kugelaudio/ar.cpp
+        src/models/kugelaudio/assets.cpp
+        src/models/kugelaudio/codec.cpp
+        src/models/kugelaudio/diffusion.cpp
+        src/models/kugelaudio/generator.cpp
+        src/models/kugelaudio/scheduler.cpp
+        src/models/kugelaudio/session.cpp
+    INCLUDES
+        engine/models/kugelaudio/session.h
+    LOADERS
+        engine::models::kugelaudio::make_kugelaudio_loader
 )
 
 audiocpp_add_model(maya1
@@ -2138,7 +2175,6 @@ audiocpp_add_model(firered_audio
         src/models/firered_audio/flow.cpp
         src/models/firered_audio/patch_encoder.cpp
         src/models/firered_audio/pipeline.cpp
-        src/models/firered_audio/qwen35_runtime.cpp
         src/models/firered_audio/redae.cpp
         src/models/firered_audio/session.cpp
         src/models/firered_audio/tokenizer.cpp
@@ -2149,13 +2185,31 @@ audiocpp_add_model(firered_audio
         engine/models/firered_audio/flow.h
         engine/models/firered_audio/patch_encoder.h
         engine/models/firered_audio/pipeline.h
-        engine/models/firered_audio/qwen35_runtime.h
         engine/models/firered_audio/redae.h
         engine/models/firered_audio/session.h
         engine/models/firered_audio/tokenizer.h
         engine/models/firered_audio/understanding.h
     LOADERS
         engine::models::firered_audio::make_firered_audio_loader
+)
+
+audiocpp_add_model(index_echo
+    SOURCES
+        src/models/index_echo/assets.cpp
+        src/models/index_echo/connector.cpp
+        src/models/index_echo/mapper.cpp
+        src/models/index_echo/session.cpp
+        src/models/index_echo/text_translation.cpp
+    INCLUDES
+        engine/models/index_echo/assets.h
+        engine/models/index_echo/connector.h
+        engine/models/index_echo/mapper.h
+        engine/models/index_echo/session.h
+        engine/models/index_echo/text_translation.h
+    LOADERS
+        engine::models::index_echo::make_index_echo_loader
+    DEPENDS
+        qwen3_asr
 )
 
 audiocpp_add_model(cosyvoice3
@@ -2937,7 +2991,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_executable(session_pool_test tests/unittests/test_session_pool.cpp)
         target_include_directories(session_pool_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-        target_link_libraries(session_pool_test PRIVATE ggml-base Threads::Threads)
+        # TaskResult owns JSON values for custom-schema outputs.
+        target_link_libraries(session_pool_test PRIVATE engine_runtime ggml-base Threads::Threads)
         add_test(NAME session_pool_test COMMAND session_pool_test)
         set_tests_properties(session_pool_test PROPERTIES TIMEOUT 60)
 
@@ -3014,6 +3069,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(safetensors_offsets_test tests/unittests/test_safetensors_offsets.cpp)
         add_test(NAME safetensors_offsets_test COMMAND safetensors_offsets_test)
+
+        add_engine_unittest(safetensors_metadata_depth_test tests/unittests/test_safetensors_metadata_depth.cpp)
+        add_test(NAME safetensors_metadata_depth_test COMMAND safetensors_metadata_depth_test)
 
         add_engine_unittest(asr_graph_capacity_test tests/unittests/test_asr_graph_capacity.cpp)
         add_test(NAME asr_graph_capacity_test COMMAND asr_graph_capacity_test)
@@ -3278,6 +3336,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_compile_definitions(package_manager_modelscope_test PRIVATE
                 AUDIOCPP_NATIVE_MANAGER_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/native_model_manager_server.py")
             add_test(NAME package_manager_modelscope_test COMMAND package_manager_modelscope_test)
+
+            add_executable(package_manager_http_test tests/unittests/test_package_manager_http.cpp)
+            target_link_libraries(package_manager_http_test PRIVATE
+                Threads::Threads audiocpp_package_manager audiocpp_cpp_httplib)
+            add_test(NAME package_manager_http_test COMMAND package_manager_http_test)
         endif()
     endif()
 

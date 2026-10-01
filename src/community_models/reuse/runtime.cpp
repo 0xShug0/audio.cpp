@@ -1,5 +1,5 @@
 #include "engine/community_models/reuse/runtime.h"
-#include "frontend.h"
+#include "engine/community_models/reuse/frontend.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"

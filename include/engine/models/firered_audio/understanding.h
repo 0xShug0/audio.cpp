@@ -5,7 +5,7 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/models/firered_audio/assets.h"
 #include "engine/models/firered_audio/audio_encoder.h"
-#include "engine/models/firered_audio/qwen35_runtime.h"
+#include "engine/framework/modules/transformers/qwen35_decoder_runtime.h"
 #include "engine/models/firered_audio/tokenizer.h"
 
 #include <cstddef>

@@ -766,6 +766,11 @@ std::string task_result_json_with_timing(
             out << json_quote(result.text_output->language);
         }
     }
+    if (result.custom_schema_output.has_value()) {
+        field("custom_schema_output");
+        out << "{\"schema\":" << json_quote(result.custom_schema_output->schema)
+            << ",\"data\":" << engine::io::json::stringify(result.custom_schema_output->data) << "}";
+    }
     if (result.audio_output.has_value()) {
         const auto wav = encode_pcm16_wav(*result.audio_output);
         field("audio");
@@ -3448,10 +3453,34 @@ HttpResponse ServerState::handle_generic_run(const std::string & body_text) {
     auto request_lease = bind_request(model, busy_timeout_ms);
     const auto * request_json = body.find("request");
     const auto & effective_json = request_json != nullptr ? *request_json : body;
+    std::optional<engine::runtime::AudioBuffer> inline_audio;
+    if (const auto * encoded = effective_json.find("audio_base64")) {
+        if (effective_json.find("audio") != nullptr) {
+            return error_response(400, "provide only one of audio or audio_base64", "invalid_request_error");
+        }
+        if (!encoded->is_string() || encoded->as_string().empty()) {
+            return error_response(400, "audio_base64 must be a non-empty string", "invalid_request_error");
+        }
+        // The HTTP body limit bounds the encoded payload before this allocation.
+        try {
+            const auto bytes = base64_decode(encoded->as_string());
+            if (bytes.empty()) {
+                return error_response(400, "audio_base64 contains no audio", "invalid_request_error");
+            }
+            inline_audio = minitts::cli::read_audio_buffer(
+                std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+        } catch (const std::runtime_error &) {
+            return error_response(400, "audio_base64 must contain a valid Base64-encoded WAV", "invalid_request_error");
+        }
+    }
+    auto parsed_request = minitts::cli::build_request_from_json(effective_json, request_base_);
+    if (inline_audio) {
+        parsed_request.audio_input = std::move(*inline_audio);
+    }
     const auto request = apply_default_request_options(
         model,
         drop_unsupported_language_option(
-            minitts::cli::build_request_from_json(effective_json, request_base_),
+            std::move(parsed_request),
             effective_json,
             model.accepts_language));
     const auto timed_result = model_run_mode(model) == engine::runtime::RunMode::Streaming

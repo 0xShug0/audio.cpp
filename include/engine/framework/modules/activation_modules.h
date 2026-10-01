@@ -2,6 +2,8 @@
 
 #include "engine/framework/core/module.h"
 
+#include <optional>
+
 namespace engine::modules {
 
 enum class GeluApproximation {
@@ -136,6 +138,7 @@ struct Snake1dConfig {
 
 struct Snake1dWeights {
     core::TensorValue alpha;
+    std::optional<core::TensorValue> inverse_alpha;
 };
 
 class Snake1dModule {

@@ -1,8 +1,10 @@
 #include "engine/framework/modules/speech_encoders/wav2vec2_bert_encoder.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -137,6 +139,8 @@ core::TensorValue wav2vec2bert_attention(
     const core::TensorValue & attention_mask,
     const core::TensorValue & distance_ids,
     const Wav2Vec2BertAttentionWeights & weights,
+    const core::TensorValue & relative_scale,
+    bool flash,
     const Wav2Vec2BertEncoderConfig & config) {
     const int64_t head_dim = config.hidden_size / config.num_attention_heads;
     auto q = modules::LinearModule({config.hidden_size, config.hidden_size, true, GGML_PREC_F32}).build(ctx, input, weights.q);
@@ -146,6 +150,34 @@ core::TensorValue wav2vec2bert_attention(
     k = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, reshape_heads(ctx, k, config));
     v = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, reshape_heads(ctx, v, config));
 
+    if (config.project_relative_keys_first) {
+        const int64_t frames = input.shape.dims[1];
+        auto relative = modules::LinearModule({head_dim, config.relative_positions, false, GGML_PREC_F32})
+            .build(ctx, q, {weights.distance_embedding, std::nullopt});
+        relative = modules::LayerScaleModule().build(ctx, relative, {relative_scale});
+        relative = modules::TransposeModule({{0, 2, 3, 1}, 4}).build(ctx, relative);
+        relative = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, relative),
+            core::TensorShape::from_dims({frames * config.relative_positions, config.num_attention_heads}));
+        auto bias = modules::EmbeddingModule({frames * config.relative_positions, config.num_attention_heads})
+            .build(ctx, distance_ids, relative);
+        bias = modules::TransposeModule({{2, 0, 1, 3}, 3}).build(ctx, bias);
+        bias = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, bias),
+            core::TensorShape::from_dims({1, config.num_attention_heads, frames, frames}));
+        if (config.mask_padded_frames) {
+            bias = modules::AddModule().build(ctx, bias, attention_mask);
+        }
+        if (flash) {
+            bias = core::wrap_tensor(ggml_cast(ctx.ggml, bias.tensor, GGML_TYPE_F16), bias.shape, GGML_TYPE_F16);
+        }
+        auto out = modules::ScaledDotProductAttentionModule({head_dim, flash
+            ? modules::ScaledDotProductAttentionLowering::Flash
+            : modules::ScaledDotProductAttentionLowering::Explicit}).build(ctx, q, k, v, bias);
+        out = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, out),
+            core::TensorShape::from_dims({1, frames, config.hidden_size}));
+        return modules::LinearModule({config.hidden_size, config.hidden_size, true, GGML_PREC_F32})
+            .build(ctx, out, weights.out);
+    }
+
     auto scores = modules::MatMulModule{}.build(
         ctx,
         q,
@@ -154,7 +186,9 @@ core::TensorValue wav2vec2bert_attention(
     auto relative = build_relative_key_bias(ctx, q, distance_ids, weights.distance_embedding, config);
     relative = scale_tensor(ctx, relative, 1.0F / std::sqrt(static_cast<float>(head_dim)));
     scores = modules::AddModule{}.build(ctx, scores, relative);
-    scores = modules::AddModule{}.build(ctx, scores, attention_mask);
+    if (config.mask_padded_frames) {
+        scores = modules::AddModule{}.build(ctx, scores, attention_mask);
+    }
     auto probs = core::wrap_tensor(ggml_soft_max(ctx.ggml, scores.tensor), scores.shape, GGML_TYPE_F32);
     auto out = modules::MatMulModule{}.build(ctx, probs, v);
     out = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, out);
@@ -178,10 +212,35 @@ core::TensorValue wav2vec2bert_conv(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const core::TensorValue & keep_mask,
+    const core::TensorValue & left_conv_pad,
     const Wav2Vec2BertConvWeights & weights,
     const Wav2Vec2BertEncoderConfig & config) {
     auto hidden = modules::LayerNormModule({input.shape.last_dim(), config.layer_norm_eps, true, true}).build(ctx, input, weights.layer_norm);
-    hidden = apply_keep_mask(ctx, hidden, keep_mask);
+    if (config.mask_padded_frames) {
+        hidden = apply_keep_mask(ctx, hidden, keep_mask);
+    }
+    if (config.pointwise_conv_as_linear) {
+        const auto pointwise_in = core::reshape_tensor(ctx, weights.pointwise_in.weight,
+            core::TensorShape::from_dims({2 * config.hidden_size, config.hidden_size}));
+        hidden = modules::LinearModule({config.hidden_size, 2 * config.hidden_size, false, GGML_PREC_F32})
+            .build(ctx, hidden, {pointwise_in, std::nullopt});
+        auto gate = modules::SigmoidModule().build(ctx,
+            modules::SliceModule({2, config.hidden_size, config.hidden_size}).build(ctx, hidden));
+        hidden = modules::MulModule().build(ctx,
+            modules::SliceModule({2, 0, config.hidden_size}).build(ctx, hidden), gate);
+        hidden = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
+        hidden = modules::ConcatModule({2}).build(ctx, left_conv_pad, hidden);
+        hidden = modules::DepthwiseConv1dModule({config.hidden_size, config.conv_kernel, 1, 0, 1, false})
+            .build(ctx, hidden, weights.depthwise);
+        hidden = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
+        hidden = modules::SiluModule().build(ctx,
+            modules::LayerNormModule({config.hidden_size, config.layer_norm_eps, true, true})
+                .build(ctx, hidden, weights.depthwise_layer_norm));
+        const auto pointwise_out = core::reshape_tensor(ctx, weights.pointwise_out.weight,
+            core::TensorShape::from_dims({config.hidden_size, config.hidden_size}));
+        return modules::LinearModule({config.hidden_size, config.hidden_size, false, GGML_PREC_F32})
+            .build(ctx, hidden, {pointwise_out, std::nullopt});
+    }
     hidden = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, hidden);
     hidden = modules::Conv1dModule({config.hidden_size, 2 * config.hidden_size, 1, 1, 0, 1, false}).build(ctx, hidden, weights.pointwise_in);
     auto gate = modules::SliceModule({1, 0, config.hidden_size}).build(ctx, hidden);
@@ -208,22 +267,31 @@ core::TensorValue wav2vec2bert_layer(
     const core::TensorValue & keep_mask,
     const core::TensorValue & attention_mask,
     const core::TensorValue & distance_ids,
+    const core::TensorValue & half_scale,
+    const core::TensorValue & relative_scale,
+    const core::TensorValue & left_conv_pad,
     const Wav2Vec2BertLayerWeights & weights,
+    bool flash,
     const Wav2Vec2BertEncoderConfig & config) {
     auto hidden = modules::LayerNormModule({input.shape.last_dim(), config.layer_norm_eps, true, true}).build(ctx, input, weights.ffn1_norm);
     hidden = wav2vec2bert_feed_forward(ctx, hidden, weights.ffn1_in, weights.ffn1_out, config);
-    hidden = add_scaled_residual(ctx, input, hidden, 0.5F);
+    hidden = config.project_relative_keys_first
+        ? modules::AddModule().build(ctx, input, modules::LayerScaleModule().build(ctx, hidden, {half_scale}))
+        : add_scaled_residual(ctx, input, hidden, 0.5F);
 
     auto attn = modules::LayerNormModule({hidden.shape.last_dim(), config.layer_norm_eps, true, true}).build(ctx, hidden, weights.self_attn_norm);
-    attn = wav2vec2bert_attention(ctx, attn, attention_mask, distance_ids, weights.self_attn, config);
+    attn = wav2vec2bert_attention(ctx, attn, attention_mask, distance_ids,
+        weights.self_attn, relative_scale, flash, config);
     hidden = modules::AddModule{}.build(ctx, hidden, attn);
 
-    auto conv = wav2vec2bert_conv(ctx, hidden, keep_mask, weights.conv, config);
+    auto conv = wav2vec2bert_conv(ctx, hidden, keep_mask, left_conv_pad, weights.conv, config);
     hidden = modules::AddModule{}.build(ctx, hidden, conv);
 
     auto ffn2 = modules::LayerNormModule({hidden.shape.last_dim(), config.layer_norm_eps, true, true}).build(ctx, hidden, weights.ffn2_norm);
     ffn2 = wav2vec2bert_feed_forward(ctx, ffn2, weights.ffn2_in, weights.ffn2_out, config);
-    hidden = add_scaled_residual(ctx, hidden, ffn2, 0.5F);
+    hidden = config.project_relative_keys_first
+        ? modules::AddModule().build(ctx, hidden, modules::LayerScaleModule().build(ctx, ffn2, {half_scale}))
+        : add_scaled_residual(ctx, hidden, ffn2, 0.5F);
     return modules::LayerNormModule({hidden.shape.last_dim(), config.layer_norm_eps, true, true}).build(ctx, hidden, weights.final_norm);
 }
 
@@ -356,7 +424,9 @@ std::vector<int32_t> make_distance_ids(int64_t frames, const Wav2Vec2BertEncoder
     for (int64_t row = 0; row < frames; ++row) {
         for (int64_t col = 0; col < frames; ++col) {
             const int64_t distance = std::max<int64_t>(-config.relative_left, std::min<int64_t>(config.relative_right, col - row));
-            ids[static_cast<size_t>(row * frames + col)] = static_cast<int32_t>(distance + config.relative_left);
+            ids[static_cast<size_t>(row * frames + col)] = static_cast<int32_t>(
+                distance + config.relative_left +
+                (config.project_relative_keys_first ? row * config.relative_positions : 0));
         }
     }
     return ids;
@@ -429,33 +499,52 @@ public:
         const auto & config = weights_->config;
 
         features_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames_, config.feature_dim})).tensor;
-        keep_mask_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({frames_})).tensor;
-        attention_mask_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, config.num_attention_heads, frames_, frames_})).tensor;
+        if (config.mask_padded_frames) {
+            keep_mask_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({frames_})).tensor;
+            attention_mask_ = core::make_tensor(input_ctx, GGML_TYPE_F32,
+                core::TensorShape::from_dims({1, config.num_attention_heads, frames_, frames_})).tensor;
+        }
         distance_ids_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({frames_, frames_})).tensor;
         ggml_set_input(features_);
-        ggml_set_input(keep_mask_);
-        ggml_set_input(attention_mask_);
+        if (config.mask_padded_frames) {
+            ggml_set_input(keep_mask_);
+            ggml_set_input(attention_mask_);
+        }
         ggml_set_input(distance_ids_);
 
         auto x = core::wrap_tensor(features_, core::TensorShape::from_dims({1, frames_, config.feature_dim}), GGML_TYPE_F32);
-        auto keep = core::wrap_tensor(keep_mask_, core::TensorShape::from_dims({frames_}), GGML_TYPE_F32);
-        auto attn_mask = core::wrap_tensor(attention_mask_, core::TensorShape::from_dims({1, config.num_attention_heads, frames_, frames_}), GGML_TYPE_F32);
+        auto keep = config.mask_padded_frames
+            ? core::wrap_tensor(keep_mask_, core::TensorShape::from_dims({frames_}), GGML_TYPE_F32)
+            : core::TensorValue{};
+        auto attn_mask = config.mask_padded_frames
+            ? core::wrap_tensor(attention_mask_,
+                core::TensorShape::from_dims({1, config.num_attention_heads, frames_, frames_}), GGML_TYPE_F32)
+            : core::TensorValue{};
         auto distances = core::wrap_tensor(distance_ids_, core::TensorShape::from_dims({frames_, frames_}), GGML_TYPE_I32);
 
         x = modules::LayerNormModule({x.shape.last_dim(), config.layer_norm_eps, true, true}).build(ctx, x, weights_->feature_norm);
         x = modules::LinearModule({config.feature_dim, config.hidden_size, true, GGML_PREC_F32}).build(ctx, x, weights_->feature_projection);
-        x = apply_keep_mask(ctx, x, keep);
-        for (int64_t layer = 0; layer < config.output_hidden_layer; ++layer) {
-            x = wav2vec2bert_layer(ctx, x, keep, attn_mask, distances, weights_->layers[static_cast<size_t>(layer)], config);
+        if (config.mask_padded_frames) {
+            x = apply_keep_mask(ctx, x, keep);
         }
-        const auto mean = broadcast_vector(ctx, weights_->semantic_mean, x);
-        const auto std = broadcast_vector(ctx, weights_->semantic_std, x);
-        x = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, mean.tensor), x.shape, GGML_TYPE_F32);
-        x = core::wrap_tensor(ggml_div(ctx.ggml, x.tensor, std.tensor), x.shape, GGML_TYPE_F32);
+        const bool flash = config.project_relative_keys_first &&
+            core::resolve_flash_attention(execution_.backend(), config.hidden_size / config.num_attention_heads,
+                core::AttentionPreference::Auto);
+        for (int64_t layer = 0; layer < config.output_hidden_layer; ++layer) {
+            x = wav2vec2bert_layer(ctx, x, keep, attn_mask, distances,
+                weights_->half_scale, weights_->relative_scale, weights_->left_conv_pad,
+                weights_->layers[static_cast<size_t>(layer)], flash, config);
+        }
+        if (config.apply_semantic_normalization) {
+            const auto mean = broadcast_vector(ctx, weights_->semantic_mean, x);
+            const auto std = broadcast_vector(ctx, weights_->semantic_std, x);
+            x = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, mean.tensor), x.shape, GGML_TYPE_F32);
+            x = core::wrap_tensor(ggml_div(ctx.ggml, x.tensor, std.tensor), x.shape, GGML_TYPE_F32);
+        }
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
 
-        const int64_t graph_nodes = std::max<int64_t>(
+        const int64_t graph_nodes = config.project_relative_keys_first ? 8192 : std::max<int64_t>(
             65536,
             config.output_hidden_layer * (frames_ * config.num_attention_heads * 8 + frames_ * 16 + 1024) + 8192);
         graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(graph_nodes), false);
@@ -496,24 +585,29 @@ public:
         if (static_cast<int64_t>(features.values.size()) != features.frames * config.feature_dim) {
             throw std::runtime_error("Wav2Vec2-BERT feature value count mismatch");
         }
-        if (static_cast<int64_t>(features.attention_mask.size()) != features.frames) {
+        if (config.mask_padded_frames && static_cast<int64_t>(features.attention_mask.size()) != features.frames) {
             throw std::runtime_error("Wav2Vec2-BERT feature attention mask count mismatch");
         }
 
         auto timing_start = Clock::now();
         std::vector<float> padded_features(static_cast<size_t>(frames_ * config.feature_dim), 0.0F);
         std::copy(features.values.begin(), features.values.end(), padded_features.begin());
-        std::vector<int32_t> padded_mask(static_cast<size_t>(frames_), 0);
-        std::copy(features.attention_mask.begin(), features.attention_mask.end(), padded_mask.begin());
-        const auto keep = make_keep_mask_f32(padded_mask);
-        const auto attention = make_attention_mask(padded_mask, frames_, config);
+        std::vector<float> keep, attention;
+        if (config.mask_padded_frames) {
+            std::vector<int32_t> padded_mask(static_cast<size_t>(frames_), 0);
+            std::copy(features.attention_mask.begin(), features.attention_mask.end(), padded_mask.begin());
+            keep = make_keep_mask_f32(padded_mask);
+            attention = make_attention_mask(padded_mask, frames_, config);
+        }
         debug::timing_log_scalar(
             "framework.wav2vec2bert.host_input_prepare_ms",
             engine::debug::elapsed_ms(timing_start, Clock::now()));
         timing_start = Clock::now();
         ggml_backend_tensor_set(features_, padded_features.data(), 0, padded_features.size() * sizeof(float));
-        ggml_backend_tensor_set(keep_mask_, keep.data(), 0, keep.size() * sizeof(float));
-        ggml_backend_tensor_set(attention_mask_, attention.data(), 0, attention.size() * sizeof(float));
+        if (config.mask_padded_frames) {
+            ggml_backend_tensor_set(keep_mask_, keep.data(), 0, keep.size() * sizeof(float));
+            ggml_backend_tensor_set(attention_mask_, attention.data(), 0, attention.size() * sizeof(float));
+        }
         debug::timing_log_scalar(
             "framework.wav2vec2bert.input_upload_ms",
             engine::debug::elapsed_ms(timing_start, Clock::now()));
@@ -579,8 +673,8 @@ std::shared_ptr<const Wav2Vec2BertEncoderWeights> load_wav2vec2bert_weights(
     Wav2Vec2BertEncoderConfig config,
     const Wav2Vec2BertEncoderWeightBinding & weight_binding,
     size_t weight_context_bytes) {
-    if (model_source == nullptr || stats_source == nullptr) {
-        throw std::runtime_error("Wav2Vec2-BERT requires model and stats tensor sources");
+    if (model_source == nullptr || (config.apply_semantic_normalization && stats_source == nullptr)) {
+        throw std::runtime_error("Wav2Vec2-BERT requires a model source and stats when normalization is enabled");
     }
     validate_config(config);
     auto weights = std::make_shared<Wav2Vec2BertEncoderWeights>();
@@ -613,18 +707,36 @@ std::shared_ptr<const Wav2Vec2BertEncoderWeights> load_wav2vec2bert_weights(
             config_ref,
             weight_binding));
     }
-    weights->semantic_mean = weights->store->make_from_f32(
-        engine::core::TensorShape::from_dims({config_ref.hidden_size}),
-        weight_binding.stats_storage_type,
-        stats_source->require_f32(weight_binding.stats_mean, {config_ref.hidden_size}));
-    weights->semantic_std = weights->store->make_from_f32(
-        engine::core::TensorShape::from_dims({config_ref.hidden_size}),
-        weight_binding.stats_storage_type,
-        wav2vec2bert_std(*stats_source, config_ref, weight_binding));
+    if (config_ref.apply_semantic_normalization) {
+        weights->semantic_mean = weights->store->make_from_f32(
+            engine::core::TensorShape::from_dims({config_ref.hidden_size}),
+            weight_binding.stats_storage_type,
+            stats_source->require_f32(weight_binding.stats_mean, {config_ref.hidden_size}));
+        weights->semantic_std = weights->store->make_from_f32(
+            engine::core::TensorShape::from_dims({config_ref.hidden_size}),
+            weight_binding.stats_storage_type,
+            wav2vec2bert_std(*stats_source, config_ref, weight_binding));
+    }
+    if (config_ref.project_relative_keys_first) {
+        weights->half_scale = weights->store->make_f32(
+            engine::core::TensorShape::from_dims({config_ref.hidden_size}),
+            std::vector<float>(static_cast<size_t>(config_ref.hidden_size), 0.5f));
+        weights->relative_scale = weights->store->make_f32(
+            engine::core::TensorShape::from_dims({config_ref.relative_positions}),
+            std::vector<float>(static_cast<size_t>(config_ref.relative_positions),
+                1.0f / std::sqrt(static_cast<float>(config_ref.hidden_size / config_ref.num_attention_heads))));
+    }
+    if (config_ref.pointwise_conv_as_linear) {
+        weights->left_conv_pad = weights->store->make_f32(
+            engine::core::TensorShape::from_dims({1, config_ref.hidden_size, config_ref.conv_kernel - 1}),
+            std::vector<float>(static_cast<size_t>(config_ref.hidden_size * (config_ref.conv_kernel - 1)), 0.0f));
+    }
 
     weights->store->upload();
     model_source->release_storage();
-    stats_source->release_storage();
+    if (stats_source) {
+        stats_source->release_storage();
+    }
     return weights;
 }
 

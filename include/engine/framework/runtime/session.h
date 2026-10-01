@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/io/json.h"
 #include "engine/framework/runtime/parallel_session.h"
 
 #include <cstddef>
@@ -36,6 +37,7 @@ enum class VoiceTaskKind {
     SpeakerRecognition,
     Svc,
     Midi,
+    TurnDetection,
 };
 
 enum class RunMode {
@@ -200,6 +202,11 @@ struct VoiceActivityEvent {
     std::optional<SpeechSegment> segment = std::nullopt;
 };
 
+struct CustomSchemaOutput {
+    std::string schema;
+    io::json::Value data;
+};
+
 struct TaskResult {
     std::optional<AudioBuffer> audio_output = std::nullopt;
     std::vector<NamedAudioBuffer> named_audio_outputs;
@@ -207,6 +214,7 @@ struct TaskResult {
     std::vector<SpeechSegment> speech_segments;
     std::vector<SpeakerTurn> speaker_turns;
     std::vector<WordTimestamp> word_timestamps;
+    std::optional<CustomSchemaOutput> custom_schema_output = std::nullopt;
     std::optional<VoiceArtifact> artifact_output = std::nullopt;
     std::vector<VoiceArtifact> output_artifacts;
 };
