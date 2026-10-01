@@ -84,6 +84,7 @@ Status labels:
 | `irodori_tts` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `kroko_asr` | Done | Pass | --- | --- | Pass |
 | `kitten_tts` | Done | --- | Pass (drift) | --- | --- |
+| `kugelaudio` | Done | --- | --- | Pass (ASR match, drift) | --- |
 | `magpie_tts` | Done | --- | Pass | --- | Pass |
 | `marblenet_vad` | Bundled (tiny model) | Pass | --- | --- | --- |
 | `maya1` | Done | --- | Pass | --- | --- |
