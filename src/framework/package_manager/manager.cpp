@@ -5,6 +5,7 @@
 #include "httplib.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cctype>
 #include <ctime>
@@ -390,10 +391,19 @@ HttpResult http_request(
     std::ofstream * output,
     const std::shared_ptr<std::atomic_bool> & cancelled,
     const std::function<void(uint64_t)> & progress,
-    RequestAuth auth) {
+    RequestAuth auth,
+    bool follow_redirects = true) {
     const auto parsed = parse_http_url(url);
-    httplib::Client client(http_origin(parsed));
+    // Inventory workers issue many requests to the same origin. Keep their
+    // connections local to each thread rather than resolving every file anew.
+    thread_local std::map<std::string, std::unique_ptr<httplib::Client>> clients;
+    const auto origin = http_origin(parsed);
+    auto & cached = clients[origin];
+    if (!cached) cached = std::make_unique<httplib::Client>(origin);
+    auto & client = *cached;
     configure_client(client, head ? 60 : 300);
+    client.set_keep_alive(true);
+    client.set_follow_location(follow_redirects);
 
     const auto headers = request_headers(auth);
 
@@ -530,7 +540,28 @@ RemoteFileInfo remote_info(const Package & package, const std::string & remote, 
         }
         return modelscope_remote_info(package, remote, *ms_cache);
     }
-    const auto response = http_request(hf_url(package, remote), true, nullptr, {}, {}, RequestAuth::huggingface);
+    const auto url = hf_url(package, remote);
+    auto response = http_request(url, true, nullptr, {}, {}, RequestAuth::huggingface, false);
+    if (response.status >= 300 && response.status < 400) {
+        // HF provides LFS metadata before redirecting to the storage CDN.
+        // Avoid opening a second connection just to ask for the same size.
+        const auto size = response.headers.find("x-linked-size");
+        const auto etag = response.headers.find("x-linked-etag");
+        const auto revision = response.headers.find("x-repo-commit");
+        if (size != response.headers.end() && etag != response.headers.end() &&
+            revision != response.headers.end()) {
+            uint64_t bytes = 0;
+            const auto end = size->second.data() + size->second.size();
+            const auto parsed_size = std::from_chars(size->second.data(), end, bytes);
+            if (parsed_size.ec == std::errc{} && parsed_size.ptr == end) {
+                // Preserve the CDN ETag stored in existing Xet manifests.
+                const auto xet = response.headers.find("x-xet-hash");
+                return {bytes, revision->second, trim_quotes(
+                    xet != response.headers.end() ? xet->second : etag->second)};
+            }
+        }
+        response = http_request(url, true, nullptr, {}, {}, RequestAuth::huggingface);
+    }
     if (response.status == 401 || response.status == 403) {
         if (package.gated) return {};
     }

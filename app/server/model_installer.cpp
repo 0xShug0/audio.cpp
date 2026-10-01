@@ -1,4 +1,5 @@
 #include "model_installer.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/package_manager/manager.h"
 
 #include <algorithm>
@@ -645,7 +646,7 @@ std::string ModelInstaller::package_sizes() {
         const auto & source = state_->size_state == "complete"
             ? state_->size_output_path
             : state_->installed_output_path;
-        data = read_log_tail_text(source);
+        data = engine::io::read_text_file(source);
         while (!data.empty() && std::isspace(static_cast<unsigned char>(data.back()))) {
             data.pop_back();
         }
