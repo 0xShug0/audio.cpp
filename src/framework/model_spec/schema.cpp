@@ -167,6 +167,7 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
         {"svc", {"speaker_reference", "singing"}},
         {"align", {"word_timestamps"}},
         {"vad", {"speech_segments", "chunk_planning"}},
+        {"turn", {"turn_decision"}},
         {"diar", {"speaker_turns"}},
         {"sep", {"stems"}},
         {"midi", {"note_events", "midi_artifact"}},

@@ -763,6 +763,11 @@ std::string task_result_json_with_timing(
             out << json_quote(result.text_output->language);
         }
     }
+    if (result.custom_schema_output.has_value()) {
+        field("custom_schema_output");
+        out << "{\"schema\":" << json_quote(result.custom_schema_output->schema)
+            << ",\"data\":" << engine::io::json::stringify(result.custom_schema_output->data) << "}";
+    }
     if (result.audio_output.has_value()) {
         const auto wav = encode_pcm16_wav(*result.audio_output);
         field("audio");

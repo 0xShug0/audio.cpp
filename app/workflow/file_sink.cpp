@@ -234,6 +234,10 @@ std::string batch_manifest_to_json(const AppBatchResult & batch) {
         }
         const auto & item = batch.results[i];
         out << "{\"id\":" << quote_json(item.id);
+        if (item.result.custom_schema_output.has_value()) {
+            out << ",\"custom_schema_output\":{\"schema\":" << quote_json(item.result.custom_schema_output->schema)
+                << ",\"data\":" << engine::io::json::stringify(item.result.custom_schema_output->data) << "}";
+        }
         if (item.result.audio_output.has_value()) {
             out << ",\"sample_rate\":" << item.result.audio_output->sample_rate
                 << ",\"channels\":" << item.result.audio_output->channels
@@ -415,6 +419,11 @@ void emit_task_result(
 
     if (result.text_output.has_value()) {
         std::cout << "text_output=" << result.text_output->text << "\n";
+    }
+    if (result.custom_schema_output.has_value()) {
+        std::cout << "custom_schema_output={\"schema\":" << quote_json(result.custom_schema_output->schema)
+                  << ",\"data\":" << engine::io::json::stringify(result.custom_schema_output->data)
+                  << "}\n";
     }
     if (result.artifact_output.has_value()) {
         const auto & artifact = *result.artifact_output;

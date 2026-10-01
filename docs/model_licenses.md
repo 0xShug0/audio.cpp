@@ -110,6 +110,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `sense_asr` | [FunAudioLLM/SenseVoiceSmall](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) | [FunASR Model Open Source License v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) | Yes | Credit the source and authors, and keep the model names. | 2026-09-21 |
 | `sheetsage2` | [m-a-p/SheetSage2](https://huggingface.co/m-a-p/SheetSage2) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `silero_vad` | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) | MIT | Yes | Bundled in `assets/framework/models`. | 2026-09-21 |
+| `smart_turn` | [pipecat-ai/smart-turn](https://github.com/pipecat-ai/smart-turn) | BSD-2-Clause | Yes | Smart Turn v3.2. | 2026-09-30 |
 | `soprano_tts` | [ekwek/Soprano-1.1-80M](https://huggingface.co/ekwek/Soprano-1.1-80M) | Apache-2.0 | Yes | | 2026-09-21 |
 | `sopro_tts` | [samuel-vitorino/sopro-v2-turbo](https://huggingface.co/samuel-vitorino/sopro-v2-turbo) | Apache-2.0 | Yes | | 2026-09-21 |
 | `sortformer_diar` | [nvidia/diar_sortformer_4spk-v1](https://huggingface.co/nvidia/diar_sortformer_4spk-v1) | CC-BY-NC-4.0 | No | | 2026-09-21 |
