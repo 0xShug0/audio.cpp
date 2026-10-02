@@ -184,9 +184,13 @@ length, with the model loaded; the CPU runs used 16 threads):
 | CPU, Linux x86-64 | 0.11 | 0.14 | 0.077 |
 | CPU, Apple M3 Ultra | 0.10 | 0.17 | 0.059 |
 
-Memory is dominated by the weights, about the package size. With the Q4_0
-package on an Apple M3 Max, the server's memory footprint was 1.06 GB on Metal
-and stayed within 7 MB of that over 12 requests alternating 3.5 s and 70 s of
+Memory is dominated by the weights, about the package size. Between chunks and
+requests the encoder also keeps its graph and compute buffer, at most what a
+30 s chunk needs: about 194 MiB, which took about 190 to 250 MiB of device
+memory on CUDA, depending on the requests before. The buffer of a longer chunk
+is freed after it. With the Q4_0 package on an Apple M3 Ultra, the server's
+memory footprint on Metal, kept buffer included, was 1168 MB after a first 3.5 s
+request and 1267 to 1310 MB over the next 59, alternating 70 s and 3.5 s of
 audio. The Q4_0 files store the token embedding as Q6_K, which CUDA cannot
 gather rows from, so on CUDA the backbone also keeps a 256 MiB F16 copy of it.
 

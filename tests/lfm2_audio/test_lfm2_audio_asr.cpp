@@ -241,6 +241,13 @@ void check_stage_numbers(
         checks.expect_close(worst, 0.0, 1e-2, "adapter row norms, worst relative error");
     }
 
+    // The runtime keeps its graph between chunks: the same chunk again, and
+    // again after a chunk of another length, gives the same adapter output.
+    checks.expect(encoder.encode(features).values == audio.values, "adapter output from the kept graph");
+    const std::vector<float> head(samples.begin(), samples.begin() + static_cast<std::ptrdiff_t>(samples.size() / 2));
+    (void)encoder.encode(lfm2::Lfm2AudioFeatureExtractor(components.encoder.n_mels, backend.threads).extract(head));
+    checks.expect(encoder.encode(features).values == audio.values, "adapter output after a chunk of another length");
+
     lfm2::Lfm2BackboneRuntime backbone(components.model, components.backbone, execution);
     const auto request = prompt.with_audio(audio.tokens);
     checks.expect(request.input_ids.size() == kPromptLength, "prompt length", std::to_string(request.input_ids.size()));

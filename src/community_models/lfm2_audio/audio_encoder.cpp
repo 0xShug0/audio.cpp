@@ -45,6 +45,8 @@ constexpr float kPreemphasis = 0.97f;
 constexpr size_t kWeightContextBytes = 16ull * 1024ull * 1024ull;
 constexpr size_t kGraphArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 32768;
+// 30 s of features: 100 frames per second plus the zeroed last frame.
+constexpr int64_t kMaxRetainedFrames = 3001;
 constexpr double kPi = 3.14159265358979323846;
 
 // torch.hann_window(win_length, periodic=False), as FilterbankFeatures builds it.
@@ -274,37 +276,34 @@ struct GgmlGallocrDeleter {
     void operator()(ggml_gallocr_t alloc) const noexcept { ggml_gallocr_free(alloc); }
 };
 
-}  // namespace
-
-struct Lfm2FastConformerEncoderRuntime::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in,
-         const Lfm2FastConformerEncoderConfig & config_in,
-         core::ExecutionContext & execution_in)
-        : source(std::move(source_in)),
-          config(config_in),
-          execution(execution_in),
-          weights(load_encoder_weights(*source, config_in, execution_in)) {}
-
-    Lfm2AudioEmbeddings encode(const Lfm2AudioFeatures & features) {
-        const auto start = std::chrono::steady_clock::now();
-        const int64_t frames = features.frames;
-        std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_owner(ggml_init({kGraphArenaBytes, nullptr, true}));
-        if (ctx_owner == nullptr) {
+// The encoder graph for one input length. Its tensors live in the runtime's
+// compute buffer, so the next graph allocated there replaces this one.
+class EncoderGraph {
+public:
+    EncoderGraph(const EncoderWeights & weights, const Lfm2FastConformerEncoderConfig & config, core::ExecutionContext & execution,
+                 ggml_gallocr_t allocator, int64_t frames)
+        : config_(config), execution_(execution), frames_(frames) {
+        ctx_.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
+        if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize the LFM2-Audio encoder graph context");
         }
 
-        auto * gctx = ctx_owner.get();
-        core::ModuleBuildContext ctx{gctx, "lfm2_audio.encoder", execution.backend_type()};
+        auto * g = ctx_.get();
+        core::ModuleBuildContext ctx{g, "lfm2_audio.encoder", execution.backend_type()};
 
         auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames, config.n_mels}));
         ggml_set_input(input.tensor);
+        input_ = input.tensor;
 
         auto x = modules::DepthwiseConvSubsamplingModule({config.n_mels, config.hidden_size, config.subsampling_channels})
                      .build(ctx, input, weights.subsampling);
 
-        const int64_t steps = x.shape.dims[1];
-        auto pos = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 2 * steps - 1, config.hidden_size}));
+        steps_ = x.shape.dims[1];
+        auto pos = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 2 * steps_ - 1, config.hidden_size}));
+        // The position table depends on the length only, so it is set once.
+        // As an output, the allocator does not reuse its memory during compute.
         ggml_set_input(pos.tensor);
+        ggml_set_output(pos.tensor);
 
         modules::ConformerBlockConfig block_config{
             config.hidden_size, config.num_heads, config.intermediate_size, config.conv_kernel_size, config.layer_norm_eps};
@@ -320,53 +319,131 @@ struct Lfm2FastConformerEncoderRuntime::Impl {
 
         x = core::ensure_backend_addressable_layout(ctx, x);
         ggml_set_output(x.tensor);
+        output_ = x.tensor;
 
-        auto * graph = ggml_new_graph_custom(gctx, kGraphNodes, false);
-        ggml_build_forward_expand(graph, x.tensor);
-        core::validate_backend_graph_supported(execution.backend(), graph, "LFM2-Audio encoder graph");
+        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        ggml_build_forward_expand(graph_, output_);
+        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio encoder graph");
 
-        std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator(
-            ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
-        if (allocator == nullptr || !ggml_gallocr_alloc_graph(allocator.get(), graph)) {
+        // The buffer is only reallocated when this graph needs more than it has.
+        if (!ggml_gallocr_alloc_graph(allocator, graph_)) {
             throw runtime::CapacityError(
                 "LFM2-Audio encoder graph does not fit in device memory for " + std::to_string(frames) + " feature frames");
         }
 
+        debug::timing_log_scalar("lfm2_audio.encoder.buffer_mb", ggml_gallocr_get_buffer_size(allocator, 0) / 1048576.0);
+        const auto positions = relative_position_embeddings(steps_, config.hidden_size);
+        ggml_backend_tensor_set(pos.tensor, positions.data(), 0, positions.size() * sizeof(float));
+    }
+
+    ~EncoderGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
+
+    EncoderGraph(const EncoderGraph &) = delete;
+    EncoderGraph & operator=(const EncoderGraph &) = delete;
+
+    [[nodiscard]] int64_t frames() const { return frames_; }
+
+    Lfm2AudioEmbeddings run(const Lfm2AudioFeatures & features) {
         // The graph input is time-major, the features are feature-major.
-        std::vector<float> time_major(static_cast<size_t>(frames * config.n_mels));
-        for (int64_t t = 0; t < frames; ++t) {
-            for (int64_t m = 0; m < config.n_mels; ++m) {
-                time_major[static_cast<size_t>(t * config.n_mels + m)] = features.values[static_cast<size_t>(m * frames + t)];
+        std::vector<float> time_major(static_cast<size_t>(frames_ * config_.n_mels));
+        for (int64_t t = 0; t < frames_; ++t) {
+            for (int64_t m = 0; m < config_.n_mels; ++m) {
+                time_major[static_cast<size_t>(t * config_.n_mels + m)] = features.values[static_cast<size_t>(m * frames_ + t)];
             }
         }
 
-        ggml_backend_tensor_set(input.tensor, time_major.data(), 0, time_major.size() * sizeof(float));
-        const auto positions = relative_position_embeddings(steps, config.hidden_size);
-        ggml_backend_tensor_set(pos.tensor, positions.data(), 0, positions.size() * sizeof(float));
+        ggml_backend_tensor_set(input_, time_major.data(), 0, time_major.size() * sizeof(float));
 
-        core::set_backend_threads(execution.backend(), std::max(1, execution.config().threads));
-        const ggml_status status = core::compute_backend_graph(execution.backend(), graph);
-        ggml_backend_synchronize(execution.backend());
+        core::set_backend_threads(execution_.backend(), std::max(1, execution_.config().threads));
+        const ggml_status status = core::compute_backend_graph(execution_.backend(), graph_);
+        ggml_backend_synchronize(execution_.backend());
         if (status != GGML_STATUS_SUCCESS) {
-            core::release_backend_graph_resources(execution.backend(), graph, true);
             throw std::runtime_error("LFM2-Audio encoder graph compute failed");
         }
 
         Lfm2AudioEmbeddings out;
-        out.tokens = steps;
-        out.hidden_size = config.output_size;
-        out.values.resize(static_cast<size_t>(steps * config.output_size));
-        ggml_backend_tensor_get(x.tensor, out.values.data(), 0, out.values.size() * sizeof(float));
+        out.tokens = steps_;
+        out.hidden_size = config_.output_size;
+        out.values.resize(static_cast<size_t>(steps_ * config_.output_size));
+        ggml_backend_tensor_get(output_, out.values.data(), 0, out.values.size() * sizeof(float));
+        return out;
+    }
 
-        core::release_backend_graph_resources(execution.backend(), graph, true);
+private:
+    const Lfm2FastConformerEncoderConfig & config_;
+    core::ExecutionContext & execution_;
+    int64_t frames_ = 0;
+    int64_t steps_ = 0;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    ggml_tensor * input_ = nullptr;
+    ggml_tensor * output_ = nullptr;
+    ggml_cgraph * graph_ = nullptr;
+};
+
+}  // namespace
+
+struct Lfm2FastConformerEncoderRuntime::Impl {
+    Impl(std::shared_ptr<const assets::TensorSource> source_in,
+         const Lfm2FastConformerEncoderConfig & config_in,
+         core::ExecutionContext & execution_in)
+        : source(std::move(source_in)),
+          config(config_in),
+          execution(execution_in),
+          weights(load_encoder_weights(*source, config_in, execution_in)) {}
+
+    // Chunks of the same length reuse the graph. A new length builds a new
+    // graph in the same compute buffer, which grows to the longest chunk kept.
+    Lfm2AudioEmbeddings encode(const Lfm2AudioFeatures & features) {
+        const auto start = std::chrono::steady_clock::now();
+        Lfm2AudioEmbeddings out;
+        try {
+            if (graph == nullptr || graph->frames() != features.frames) {
+                graph.reset();
+                if (allocator == nullptr) {
+                    allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
+                    if (allocator == nullptr) {
+                        throw std::runtime_error("failed to create the LFM2-Audio encoder graph allocator");
+                    }
+                }
+
+                graph = std::make_unique<EncoderGraph>(weights, config, execution, allocator.get(), features.frames);
+            }
+
+            out = graph->run(features);
+        } catch (...) {
+            // A failed allocation frees the old buffer but keeps the failed
+            // graph's plan, and a next graph that fits that plan would be
+            // placed in no buffer. So after any failure the next chunk starts
+            // afresh, as after a long chunk.
+            reset();
+            throw;
+        }
+
+        // The buffer grows with the chunk. Only one the size of a default 30 s
+        // chunk is kept for the next, so a single long input
+        // (audio_chunk_mode=none, or a larger audio_chunk_seconds) does not
+        // leave its buffer behind.
+        if (features.frames > kMaxRetainedFrames) {
+            reset();
+        }
+
         debug::timing_log_scalar("lfm2_audio.encoder.ms", engine::debug::elapsed_ms(start));
         return out;
+    }
+
+    // Frees the graph and its compute buffer, as a new runtime has neither.
+    void reset() {
+        graph.reset();
+        allocator.reset();
     }
 
     std::shared_ptr<const assets::TensorSource> source;
     Lfm2FastConformerEncoderConfig config;
     core::ExecutionContext & execution;
     EncoderWeights weights;
+    // Declared after the allocator, so the graph goes first.
+    std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator;
+    std::unique_ptr<EncoderGraph> graph;
 };
 
 Lfm2AudioFeatureExtractor::Lfm2AudioFeatureExtractor(int64_t n_mels, int threads)
