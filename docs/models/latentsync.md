@@ -53,6 +53,7 @@ Use with **`--session-option latentsync.name=value`**.
 | `weight_type` | `native` | Weight storage type. |
 | `vae_cudnn_f16` | `false` | Opt-in FP16 VAE on CUDA; requires a cuDNN-enabled build. VAE weights use FP16 in this mode. |
 | `unet_cudnn_f16` | `false` | Opt-in FP16 U-Net residual path on CUDA; requires a cuDNN-enabled build and FP16 U-Net weights. |
+| `mem_saver` | `false` | Release components between pipeline stages and run CFG branches sequentially to reduce peak VRAM. Reloading the VAE for decoding adds some latency. |
 
 Build with `-DGGML_CUDA_CUDNN_CONV2D=ON` and a discoverable cuDNN installation
 to use `--session-option latentsync.vae_cudnn_f16=true`. This changes VAE
@@ -66,6 +67,12 @@ and `--request-option cache_interval=3`. DeepCache refreshes the full denoiser
 every third step and reuses a deep feature on intervening steps. Each new video
 chunk starts with a fresh feature. The cached path retains an additional shallow
 graph and feature buffer; it trades memory and some output detail for speed.
+
+For lower peak VRAM, add `--session-option latentsync.mem_saver=true`. This
+keeps the configured frame chunk size and denoising schedule, but stages model
+components and evaluates the two CFG branches sequentially. Expect a small
+numerical drift from the default batched-CFG path and some added latency from
+moving DeepCache state through host memory and reloading the VAE for decoding.
 
 ## Export MP4
 

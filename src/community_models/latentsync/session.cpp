@@ -51,8 +51,12 @@ public:
         if (const auto value = runtime::find_option(RuntimeSessionBase::options().options, {"latentsync.unet_cudnn_f16"})) {
             unet_cudnn_f16 = runtime::parse_bool_option(*value, "latentsync.unet_cudnn_f16");
         }
+        bool mem_saver = false;
+        if (const auto value = runtime::find_option(RuntimeSessionBase::options().options, {"latentsync.mem_saver"})) {
+            mem_saver = runtime::parse_bool_option(*value, "latentsync.mem_saver");
+        }
         pipeline_ = std::make_unique<LatentSyncPipeline>(execution_context(), assets_->sources, type,
-            vae_cudnn_f16, unet_cudnn_f16);
+            vae_cudnn_f16, unet_cudnn_f16, mem_saver);
     }
     std::string family() const override { return "latentsync"; }
     runtime::VoiceTaskKind task_kind() const override { return task_.task; }

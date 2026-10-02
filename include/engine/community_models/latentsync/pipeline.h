@@ -26,7 +26,8 @@ struct LatentSyncGenerationOptions {
 class LatentSyncPipeline {
 public:
     LatentSyncPipeline(core::ExecutionContext & execution, const LatentSyncPipelineSources & sources,
-        assets::TensorStorageType weight_type, bool vae_cudnn_f16 = false, bool unet_cudnn_f16 = false);
+        assets::TensorStorageType weight_type, bool vae_cudnn_f16 = false,
+        bool unet_cudnn_f16 = false, bool mem_saver = false);
     ~LatentSyncPipeline();
     // Frames and callback pixels are RGB interleaved bytes; mask is RGB planar 512x512 in [0,1].
     void run(const std::vector<std::vector<uint8_t>> & frames, int height, int width,

@@ -117,6 +117,13 @@
         "type": "bool",
         "default": false,
         "description": "Use cuDNN FP16 convolutions and residual activations in the U-Net on CUDA. Requires a build with GGML_CUDA_CUDNN_CONV2D=ON and FP16 U-Net weights."
+      },
+      {
+        "name": "mem_saver",
+        "required": false,
+        "type": "bool",
+        "default": false,
+        "description": "Release components between pipeline stages and run CFG branches sequentially to reduce peak VRAM. Reloading the VAE for decoding adds some latency."
       }
     ],
     "load": []

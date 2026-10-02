@@ -25,7 +25,8 @@ public:
 
     std::vector<float> predict(const std::vector<float> & input, const std::vector<float> & audio,
         const std::vector<float> & timestep_features, int64_t batch, int64_t frames,
-        int64_t height, int64_t width, int64_t audio_tokens, int64_t cache_step = -1);
+        int64_t height, int64_t width, int64_t audio_tokens, int64_t cache_step = -1,
+        int64_t cache_slot = 0);
 
     std::vector<float> denoise(const LatentSyncLatentClip & clip, int64_t steps,
         float guidance_scale, LatentSyncDdimConfig schedule_config = {}, int64_t cache_interval = 1);

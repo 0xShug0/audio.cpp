@@ -8,7 +8,8 @@ namespace engine::models::latentsync {
 
 struct LatentSyncUnetConfig {
     LatentSyncUnetConfig() = default;
-    explicit LatentSyncUnetConfig(bool cuda_f16) : cuda_f16_activations(cuda_f16) {}
+    explicit LatentSyncUnetConfig(bool cuda_f16, bool sequential_cfg = false)
+        : cuda_f16_activations(cuda_f16), sequential_cfg(sequential_cfg) {}
     std::array<int64_t, 4> channels{320, 640, 1280, 1280};
     int64_t input_channels = 13;
     int64_t output_channels = 4;
@@ -17,6 +18,7 @@ struct LatentSyncUnetConfig {
     int64_t heads = 8;
     int64_t max_frames = 24;
     bool cuda_f16_activations = false;
+    bool sequential_cfg = false;
 };
 
 struct LatentSyncUnetResnetWeights {

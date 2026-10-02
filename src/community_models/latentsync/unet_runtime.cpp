@@ -6,6 +6,8 @@
 #include <ggml-alloc.h>
 #include <chrono>
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
@@ -62,6 +64,14 @@ public:
         ggml_backend_tensor_copy(cached_feature_.tensor, replay.cached_feature_.tensor);
     }
 
+    std::vector<std::byte> read_cache() const {
+        return core::read_tensor_bytes(cached_feature_.tensor);
+    }
+
+    void write_cache(const std::vector<std::byte> & bytes) {
+        core::write_tensor_bytes(cached_feature_, bytes);
+    }
+
     std::vector<float> predict(const std::vector<float> & input, const std::vector<float> & audio,
         const std::vector<float> & timestep_features) {
         if (!ggml_gallocr_alloc_graph(allocator_, graph_)) {
@@ -97,6 +107,7 @@ struct LatentSyncUnetRuntime::Impl {
     std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t> shape;
     std::unique_ptr<LatentSyncUnetGraph> graph;
     std::unique_ptr<LatentSyncUnetGraph> replay_graph;
+    std::array<std::vector<std::byte>, 2> cfg_cache;
 
     Impl(core::ExecutionContext & execution_in, const assets::TensorSource & source,
         LatentSyncUnetConfig config_in, assets::TensorStorageType type)
@@ -128,7 +139,8 @@ LatentSyncUnetRuntime::~LatentSyncUnetRuntime() = default;
 
 std::vector<float> LatentSyncUnetRuntime::predict(const std::vector<float> & input,
     const std::vector<float> & audio, const std::vector<float> & timestep_features,
-    int64_t batch, int64_t frames, int64_t height, int64_t width, int64_t audio_tokens, int64_t cache_step) {
+    int64_t batch, int64_t frames, int64_t height, int64_t width, int64_t audio_tokens,
+    int64_t cache_step, int64_t cache_slot) {
     const auto start = std::chrono::steady_clock::now();
     if (batch <= 0 || frames <= 0 || height <= 0 || width <= 0 || audio_tokens <= 0) {
         throw std::runtime_error("LatentSync U-Net dimensions must be positive");
@@ -148,9 +160,18 @@ std::vector<float> LatentSyncUnetRuntime::predict(const std::vector<float> & inp
         }
         impl_->shape = shape;
     }
+    if (cache_step > 0 && impl_->config.sequential_cfg) {
+        impl_->replay_graph->write_cache(impl_->cfg_cache[static_cast<size_t>(cache_slot)]);
+    }
     auto & graph = cache_step > 0 ? impl_->replay_graph : impl_->graph;
     auto output = graph->predict(input, audio, timestep_features);
-    if (cache_step == 0) impl_->graph->copy_cache_to(*impl_->replay_graph);
+    if (cache_step == 0) {
+        if (impl_->config.sequential_cfg) {
+            impl_->cfg_cache[static_cast<size_t>(cache_slot)] = impl_->graph->read_cache();
+        } else {
+            impl_->graph->copy_cache_to(*impl_->replay_graph);
+        }
+    }
     debug::timing_log_scalar("latentsync.unet.wall_ms",
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
     return output;
@@ -172,10 +193,12 @@ std::vector<float> LatentSyncUnetRuntime::denoise(const LatentSyncLatentClip & c
         throw std::runtime_error("LatentSync latent clip tensor size mismatch");
     }
     const bool cfg = guidance_scale > 1.0F;
-    const int64_t lanes = cfg ? 2 : 1;
+    const bool sequential_cfg = cfg && impl_->config.sequential_cfg;
+    const int64_t lanes = cfg && !sequential_cfg ? 2 : 1;
     const size_t input_frame = pixels * 13;
     std::vector<float> input(input_frame * static_cast<size_t>(clip.frames * lanes));
     std::vector<float> audio(clip.audio.size() * static_cast<size_t>(lanes), 0.0F);
+    const std::vector<float> unconditioned_audio(sequential_cfg ? clip.audio.size() : 0, 0.0F);
     std::copy(clip.audio.begin(), clip.audio.end(), audio.end() - clip.audio.size());
     for (int64_t lane = 0; lane < lanes; ++lane) {
         for (int64_t frame = 0; frame < clip.frames; ++frame) {
@@ -195,9 +218,19 @@ std::vector<float> LatentSyncUnetRuntime::denoise(const LatentSyncLatentClip & c
             }
         }
         const auto time = latentsync_timestep_features(schedule.timesteps()[i], impl_->config.channels.front(), lanes);
-        auto noise = predict(input, audio, time, lanes, clip.frames, clip.height, clip.width, clip.audio_tokens,
-            cache_interval == 1 ? -1 : static_cast<int64_t>(i) % cache_interval);
-        if (cfg) {
+        const int64_t cache_step = cache_interval == 1 ? -1 : static_cast<int64_t>(i) % cache_interval;
+        std::vector<float> noise;
+        if (sequential_cfg) {
+            const auto unconditioned = predict(input, unconditioned_audio, time, 1,
+                clip.frames, clip.height, clip.width, clip.audio_tokens, cache_step, 0);
+            const auto conditioned = predict(input, audio, time, 1,
+                clip.frames, clip.height, clip.width, clip.audio_tokens, cache_step, 1);
+            noise = sampling::cfg_guidance(conditioned, unconditioned, guidance_scale);
+        } else {
+            noise = predict(input, audio, time, lanes, clip.frames, clip.height, clip.width,
+                clip.audio_tokens, cache_step);
+        }
+        if (cfg && !sequential_cfg) {
             const std::vector<float> unconditioned(noise.begin(), noise.begin() + latent_size);
             const std::vector<float> conditioned(noise.begin() + latent_size, noise.end());
             noise = sampling::cfg_guidance(conditioned, unconditioned, guidance_scale);
