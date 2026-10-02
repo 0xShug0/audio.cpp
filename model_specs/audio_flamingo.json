@@ -101,35 +101,72 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "audio-cpp/audio.cpp-gguf",
+      "repo": "audio-cpp/Audio-Flamingo-GGUF",
       "revision": "main",
       "gated": false
     }
   },
   "packages": [
     {
+      "id": "audio_flamingo_next_q4_k",
+      "display_name": "Audio Flamingo Next GGUF Q4_K",
+      "default": true,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "Audio-Flamingo-GGUF",
+      "files": [
+        "audio-flamingo-next-q4_k.gguf"
+      ]
+    },
+    {
+      "id": "audio_flamingo_next_q8_0",
+      "display_name": "Audio Flamingo Next GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Audio-Flamingo-GGUF",
+      "files": [
+        "audio-flamingo-next-q8_0.gguf"
+      ]
+    },
+    {
       "id": "audio_flamingo_next_bf16",
       "display_name": "Audio Flamingo Next GGUF BF16",
-      "default": true,
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Audio-Flamingo-GGUF",
       "files": [
-        "Audio-Flamingo-GGUF/audio-flamingo-next-bf16.gguf"
-      ],
-      "strip_prefix": "Audio-Flamingo-GGUF"
+        "audio-flamingo-next-bf16.gguf"
+      ]
+    },
+    {
+      "id": "audio_flamingo_3_q4_k",
+      "display_name": "Audio Flamingo 3 GGUF Q4_K",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "Audio-Flamingo-GGUF",
+      "files": [
+        "audio-flamingo-3-q4_k.gguf"
+      ]
+    },
+    {
+      "id": "audio_flamingo_3_q8_0",
+      "display_name": "Audio Flamingo 3 GGUF Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Audio-Flamingo-GGUF",
+      "files": [
+        "audio-flamingo-3-q8_0.gguf"
+      ]
     },
     {
       "id": "audio_flamingo_3_bf16",
       "display_name": "Audio Flamingo 3 GGUF BF16",
-      "default": false,
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Audio-Flamingo-GGUF",
       "files": [
-        "Audio-Flamingo-GGUF/audio-flamingo-3-bf16.gguf"
-      ],
-      "strip_prefix": "Audio-Flamingo-GGUF"
+        "audio-flamingo-3-bf16.gguf"
+      ]
     }
   ],
   "dependencies": [],
@@ -140,7 +177,7 @@
     "docs": [
       "docs/models/audio_flamingo.md"
     ],
-    "recommended_package": "audio_flamingo_next_bf16"
+    "recommended_package": "audio_flamingo_next_q4_k"
   },
   "sources": [
     {

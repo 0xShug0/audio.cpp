@@ -35,7 +35,6 @@ struct AudioFlamingoAudioEncoderConfig {
     int64_t intermediate_size = 5120;
     int64_t hidden_size = 1280;
     int64_t max_source_positions = 1500;
-    std::string activation_function = "gelu";
 };
 
 struct AudioFlamingoTextDecoderConfig {
@@ -50,7 +49,6 @@ struct AudioFlamingoTextDecoderConfig {
     int64_t audio_token_id = 0;
     int64_t audio_bos_token_id = 0;
     int64_t audio_eos_token_id = 0;
-    int64_t pad_token_id = 0;
     std::vector<int64_t> eos_token_ids;
     float rms_norm_eps = 1.0e-6F;
     float rope_theta = 1000000.0F;
@@ -64,11 +62,9 @@ struct AudioFlamingoRoTEConfig {
 };
 
 struct AudioFlamingoConfig {
-    std::string model_type;
     AudioFlamingoVariant variant = AudioFlamingoVariant::V3;
     int64_t max_new_tokens = 512;
     bool projector_bias = true;
-    std::string projector_hidden_act = "gelu";
     AudioFlamingoFrontendConfig frontend;
     AudioFlamingoAudioEncoderConfig audio_encoder;
     AudioFlamingoTextDecoderConfig text_decoder;

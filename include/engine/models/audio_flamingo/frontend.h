@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/audio/mel_spectrogram_frontend.h"
+#include "engine/framework/runtime/session.h"
 #include "engine/models/audio_flamingo/assets.h"
 #include "engine/models/audio_flamingo/types.h"
 

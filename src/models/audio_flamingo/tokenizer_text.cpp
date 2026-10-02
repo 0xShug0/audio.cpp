@@ -1,7 +1,5 @@
 #include "engine/models/audio_flamingo/tokenizer_text.h"
 
-#include "engine/framework/io/json.h"
-
 #include "engine/framework/tokenizers/llama_bpe.h"
 
 #include <algorithm>
@@ -39,10 +37,6 @@ struct AudioFlamingoTextTokenizer::Impl {
 
 AudioFlamingoTextTokenizer::AudioFlamingoTextTokenizer(std::shared_ptr<const AudioFlamingoAssets> assets)
     : impl_(std::make_shared<Impl>(std::move(assets))) {}
-
-std::vector<int32_t> AudioFlamingoTextTokenizer::encode(const std::string & text) const {
-    return impl_->tokenizer.encode(text, true);
-}
 
 std::string AudioFlamingoTextTokenizer::decode(const std::vector<int32_t> & token_ids, bool skip_special_tokens) const {
     return impl_->tokenizer.decode(token_ids, skip_special_tokens);
@@ -82,8 +76,7 @@ AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string &
     expanded += "<|im_end|>\n<|im_start|>assistant\n";
 
     AudioFlamingoPrompt out;
-    out.input_ids = encode(expanded);
-    out.attention_mask.assign(out.input_ids.size(), 1);
+    out.input_ids = impl_->tokenizer.encode(expanded, true);
     for (size_t i = 0; i < out.input_ids.size(); ++i) {
         if (out.input_ids[i] == impl_->audio_id) {
             out.audio_token_positions.push_back(static_cast<int32_t>(i));
@@ -93,10 +86,6 @@ AudioFlamingoPrompt AudioFlamingoTextTokenizer::build_prompt(const std::string &
         throw std::runtime_error("Audio Flamingo prompt audio token count does not match feature count");
     }
     return out;
-}
-
-int32_t AudioFlamingoTextTokenizer::audio_token_id() const noexcept {
-    return impl_->audio_id;
 }
 
 }  // namespace engine::models::audio_flamingo

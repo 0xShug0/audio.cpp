@@ -1,9 +1,6 @@
 #pragma once
 
-#include "engine/framework/runtime/session.h"
-
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace engine::models::audio_flamingo {
@@ -30,7 +27,6 @@ struct AudioFlamingoAudioFeatures {
 
 struct AudioFlamingoPrompt {
     std::vector<int32_t> input_ids;
-    std::vector<int32_t> attention_mask;
     std::vector<int32_t> audio_token_positions;
 };
 

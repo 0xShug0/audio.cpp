@@ -20,8 +20,7 @@ AudioFlamingoAudioEncoderConfig parse_audio_config(const engine::io::json::Value
     config.intermediate_size = value.require("intermediate_size").as_i64();
     config.hidden_size = value.require("hidden_size").as_i64();
     config.max_source_positions = value.require("max_source_positions").as_i64();
-    config.activation_function = json::optional_string(value, "activation_function", config.activation_function);
-    if (config.activation_function != "gelu") {
+    if (json::optional_string(value, "activation_function", "gelu") != "gelu") {
         throw std::runtime_error("Audio Flamingo audio encoder currently expects gelu activation");
     }
     return config;
@@ -30,7 +29,6 @@ AudioFlamingoAudioEncoderConfig parse_audio_config(const engine::io::json::Value
 AudioFlamingoTextDecoderConfig parse_text_config(
     const engine::io::json::Value & root,
     const engine::io::json::Value & text_config,
-    const engine::io::json::Value & tokenizer_config,
     const engine::io::json::Value & generation_config) {
     AudioFlamingoTextDecoderConfig config;
     config.vocab_size = text_config.require("vocab_size").as_i64();
@@ -50,14 +48,7 @@ AudioFlamingoTextDecoderConfig parse_text_config(
     } else {
         config.rope_theta = json::optional_f32(text_config, "rope_theta", config.rope_theta);
     }
-    config.pad_token_id = json::optional_i64(generation_config, "pad_token_id", config.pad_token_id);
     config.eos_token_ids = json::require_i64_array_or_scalar(generation_config, "eos_token_id");
-    if (config.pad_token_id == 0) {
-        const auto * pad_token = tokenizer_config.find("pad_token_id");
-        if (pad_token != nullptr && pad_token->is_number()) {
-            config.pad_token_id = pad_token->as_i64();
-        }
-    }
     return config;
 }
 
@@ -92,27 +83,25 @@ AudioFlamingoRoTEConfig parse_rote_config(const engine::io::json::Value & root) 
 
 AudioFlamingoConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
-    const auto tokenizer_config = resources.parse_json("tokenizer_config");
     const auto processor_config = resources.parse_json("processor_config");
     const auto generation_config = resources.parse_json("generation_config");
 
     AudioFlamingoConfig config;
-    config.model_type = root.require("model_type").as_string();
-    if (config.model_type == "audioflamingo3") {
+    const auto model_type = root.require("model_type").as_string();
+    if (model_type == "audioflamingo3") {
         config.variant = AudioFlamingoVariant::V3;
-    } else if (config.model_type == "musicflamingo") {
+    } else if (model_type == "musicflamingo") {
         config.variant = AudioFlamingoVariant::Next;
     } else {
-        throw std::runtime_error("unsupported Audio Flamingo model_type: " + config.model_type);
+        throw std::runtime_error("unsupported Audio Flamingo model_type: " + model_type);
     }
     config.projector_bias = json::optional_bool(root, "projector_bias", config.projector_bias);
-    config.projector_hidden_act = json::optional_string(root, "projector_hidden_act", config.projector_hidden_act);
-    if (config.projector_hidden_act != "gelu") {
+    if (json::optional_string(root, "projector_hidden_act", "gelu") != "gelu") {
         throw std::runtime_error("Audio Flamingo projector currently expects gelu activation");
     }
     config.audio_encoder = parse_audio_config(root.require("audio_config"));
     config.frontend = parse_frontend_config(processor_config, config.audio_encoder, config.variant);
-    config.text_decoder = parse_text_config(root, root.require("text_config"), tokenizer_config, generation_config);
+    config.text_decoder = parse_text_config(root, root.require("text_config"), generation_config);
     if (config.variant == AudioFlamingoVariant::Next) {
         config.rote = parse_rote_config(root);
     }
