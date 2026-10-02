@@ -3024,6 +3024,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(safetensors_metadata_depth_test tests/unittests/test_safetensors_metadata_depth.cpp)
         add_test(NAME safetensors_metadata_depth_test COMMAND safetensors_metadata_depth_test)
 
+        add_engine_unittest(torch_bin_storage_offset_test tests/unittests/test_torch_bin_storage_offset.cpp)
+        add_test(NAME torch_bin_storage_offset_test COMMAND torch_bin_storage_offset_test)
+
         add_engine_unittest(asr_graph_capacity_test tests/unittests/test_asr_graph_capacity.cpp)
         add_test(NAME asr_graph_capacity_test COMMAND asr_graph_capacity_test)
 
