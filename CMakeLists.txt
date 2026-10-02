@@ -1553,6 +1553,19 @@ audiocpp_add_model(gigaam_asr
         engine::models::gigaam_asr::make_gigaam_asr_loader
 )
 
+audiocpp_add_model(crisperwhisper
+    SOURCES
+        src/models/crisperwhisper/assets.cpp
+        src/models/crisperwhisper/alignment.cpp
+        src/models/crisperwhisper/transcript_alignment.cpp
+        src/models/crisperwhisper/whisper_runtime.cpp
+        src/models/crisperwhisper/session.cpp
+    INCLUDES
+        engine/models/crisperwhisper/model.h
+    LOADERS
+        engine::models::crisperwhisper::make_crisperwhisper_loader
+)
+
 audiocpp_add_model(cohere_asr
     SOURCES
         src/models/cohere_asr/assets.cpp
@@ -3085,6 +3098,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(text_normalization_test tests/unittests/test_text_normalization.cpp)
         add_test(NAME text_normalization_test COMMAND text_normalization_test)
+
+        if (crisperwhisper IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(crisperwhisper_transcript_alignment_test
+                tests/unittests/test_crisperwhisper_transcript_alignment.cpp)
+            add_test(NAME crisperwhisper_transcript_alignment_test
+                COMMAND crisperwhisper_transcript_alignment_test)
+        endif()
 
         add_engine_unittest(subtitle_formatter_test tests/unittests/test_subtitle_formatter.cpp)
         add_test(NAME subtitle_formatter_test COMMAND subtitle_formatter_test)
