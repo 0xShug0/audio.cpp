@@ -272,6 +272,69 @@ void test_max_tokens(const Package & package) {
     require(warnings.empty() && !asr.reached_max_tokens(), "the next request starts uncut");
 }
 
+// Byte-level tokens need not end on a character boundary, so max_tokens can
+// cut a transcript inside a character. The transcript then ends at the last
+// whole character, with the same warning, and each chunk is trimmed before the
+// chunks are joined.
+void test_max_tokens_inside_a_character() {
+    // é, 日 and 😀 take two, three and four tokens after the one-token "a".
+    for (const std::string character : {"\xC3\xA9", "\xE6\x97\xA5", "\xF0\x9F\x98\x80"}) {
+        const auto bytes = std::to_string(character.size()) + "-byte";
+        const Package package("audiocpp_lfm2_audio_session_cut_" + std::to_string(character.size()) + "_test");
+        write_package(package.root, "a" + character);
+        auto session = open_session(package.root);
+        const auto & asr = dynamic_cast<const lfm2::Lfm2AudioSession &>(*session);
+        const auto run = [&](std::unordered_map<std::string, std::string> options, double seconds, std::string & warnings) {
+            const CapturedStderr captured;
+            auto text = transcribe(*session, request(tone(seconds), std::move(options)));
+            warnings = captured.text();
+            return text;
+        };
+
+        std::string warnings;
+        for (size_t kept = 1; kept < character.size(); ++kept) {
+            const auto max_tokens = std::to_string(1 + kept);
+            const auto label = bytes + " character cut after byte " + std::to_string(kept);
+            require_eq(run({{"max_tokens", max_tokens}}, 1.0, warnings), std::string("a"), label);
+            require(asr.reached_max_tokens() && occurrences(warnings, "reached max_tokens=" + max_tokens) == 1,
+                label + " still warns: " + warnings);
+        }
+
+        // A cut right after the character, or none, leaves the text as it is.
+        const auto whole = std::to_string(1 + character.size());
+        require_eq(run({{"max_tokens", whole}}, 1.0, warnings), "a" + character, bytes + " character cut after it");
+        require(asr.reached_max_tokens(), bytes + " character cut after it is still cut");
+        require_eq(run({}, 1.0, warnings), "a" + character, bytes + " character uncut");
+        require(warnings.empty() && !asr.reached_max_tokens(), bytes + " character uncut does not warn");
+
+        // The synthetic model writes the same tokens for every chunk. A chunk
+        // cut inside the character joins the next as "a" would, with a space
+        // before the next ASCII word, rather than leaving the bytes mid-text.
+        const std::unordered_map<std::string, std::string> fixed_1s = {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}};
+        auto cut_chunks = fixed_1s;
+        cut_chunks.emplace("max_tokens", "2");
+        require_eq(run(cut_chunks, 3.0, warnings), std::string("a a a"), bytes + " character cut in three chunks");
+        require(occurrences(warnings, "[warning][lfm2_audio]") == 3, bytes + " character: a warning per cut chunk: " + warnings);
+        const auto whole_chunk = "a" + character;
+        require_eq(run(fixed_1s, 3.0, warnings), whole_chunk + whole_chunk + whole_chunk, bytes + " character in three uncut chunks");
+    }
+}
+
+// The trim does not depend on a cut: a transcript the model itself ends inside
+// a character also ends at the last whole character, without a warning.
+void test_ends_inside_a_character() {
+    const Package package("audiocpp_lfm2_audio_session_lead_byte_test");
+    write_package(package.root, "a\xC3");
+    auto session = open_session(package.root);
+    const auto & asr = dynamic_cast<const lfm2::Lfm2AudioSession &>(*session);
+    const CapturedStderr captured;
+    require_eq(transcribe(*session, request(tone(1.0))), std::string("a"), "a transcript that ends inside a character");
+    require(!asr.reached_max_tokens(), "a transcript that ends inside a character is not cut");
+    require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}})),
+        std::string("a a a"), "three chunks that end inside a character");
+    require(!asr.reached_max_tokens() && captured.text().empty(), "no chunk is cut: " + captured.text());
+}
+
 void test_chunking(const Package & package) {
     auto session = open_session(package.root);
     const auto audio = tone(3.0);
@@ -449,6 +512,8 @@ int main() {
         test_audio_inputs(package);
         test_request_options(package);
         test_max_tokens(package);
+        test_max_tokens_inside_a_character();
+        test_ends_inside_a_character();
         test_chunking(package);
         test_vad_chunking(package);
         test_selects_backbone();

@@ -105,7 +105,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions -F model=lfm2-audio-asr -F fi
 | Option | Default | Meaning |
 |---|---|---|
 | `language` | The checkpoint's | `en` or `ja`; must match the checkpoint. |
-| `max_tokens` | `512` | Transcript tokens allowed per chunk. A transcript that reaches it is cut off there, as liquid-audio's is, and a warning goes to stderr; the other chunks go on. |
+| `max_tokens` | `512` | Transcript tokens allowed per chunk. A transcript that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. Tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript at the last whole character. |
 | `audio_chunk_mode` | `auto` | `auto`, `vad`, `fixed` or `none`; see [Long audio](#long-audio). |
 | `audio_chunk_seconds` | `30` | Longest chunk in seconds, at least 1. |
 
