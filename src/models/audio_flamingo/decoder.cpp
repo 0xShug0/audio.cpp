@@ -1,4 +1,4 @@
-#include "engine/models/audio_flamingo_next/decoder.h"
+#include "engine/models/audio_flamingo/decoder.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -13,7 +13,7 @@
 #include <chrono>
 #include <stdexcept>
 
-namespace engine::models::audio_flamingo_next {
+namespace engine::models::audio_flamingo {
 namespace {
 namespace binding = modules::binding;
 constexpr int64_t kLookupSteps = 256;
@@ -28,11 +28,11 @@ struct AllocatorDeleter {
 };
 }  // namespace
 
-struct AFNextQwen2DecoderRuntime::Impl {
-    Impl(std::shared_ptr<const AFNextAssets> assets, core::ExecutionContext & execution,
+struct AudioFlamingoQwen2DecoderRuntime::Impl {
+    Impl(std::shared_ptr<const AudioFlamingoAssets> assets, core::ExecutionContext & execution,
         assets::TensorStorageType storage)
         : assets_(std::move(assets)), execution_(execution),
-          store_(execution.backend(), execution.backend_type(), "audio_flamingo_next.decoder.weights", kContextBytes) {
+          store_(execution.backend(), execution.backend_type(), "audio_flamingo.decoder.weights", kContextBytes) {
         const auto & c = assets_->config.text_decoder;
         const auto & source = *assets_->model_weights;
         bool packed_gate_up = true;
@@ -114,7 +114,7 @@ struct AFNextQwen2DecoderRuntime::Impl {
         store_.upload();
 
         modules::CausalDecoderRuntimeConfig config;
-        config.trace_name = "audio_flamingo_next.decoder";
+        config.trace_name = "audio_flamingo.decoder";
         config.prefill_graph_arena_bytes = kContextBytes;
         config.decode_graph_arena_bytes = kContextBytes;
         config.decoder.logits_size = c.vocab_size;
@@ -140,9 +140,9 @@ struct AFNextQwen2DecoderRuntime::Impl {
 
         lookup_context_.reset(ggml_init({kContextBytes, nullptr, true}));
         if (!lookup_context_) {
-            throw std::runtime_error("Audio Flamingo Next embedding context allocation failed");
+            throw std::runtime_error("Audio Flamingo embedding context allocation failed");
         }
-        core::ModuleBuildContext ctx{lookup_context_.get(), "audio_flamingo_next.embedding", execution.backend_type()};
+        core::ModuleBuildContext ctx{lookup_context_.get(), "audio_flamingo.embedding", execution.backend_type()};
         ids_ = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({kLookupSteps}));
         ggml_set_input(ids_.tensor);
         embeddings_ = modules::EmbeddingModule({c.vocab_size, c.hidden_size}).build(ctx, ids_, weights.token_embedding);
@@ -151,7 +151,7 @@ struct AFNextQwen2DecoderRuntime::Impl {
         ggml_build_forward_expand(lookup_graph_, embeddings_.tensor);
         lookup_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
         if (!ggml_gallocr_alloc_graph(lookup_allocator_.get(), lookup_graph_)) {
-            throw std::runtime_error("Audio Flamingo Next embedding graph allocation failed");
+            throw std::runtime_error("Audio Flamingo embedding graph allocation failed");
         }
         core::prepare_host_graph_plan(execution_, lookup_graph_, lookup_plan_);
     }
@@ -160,16 +160,16 @@ struct AFNextQwen2DecoderRuntime::Impl {
         core::release_backend_graph_resources(execution_.backend(), lookup_graph_);
     }
 
-    AFNextGeneratedTokens generate(const AFNextPrompt & prompt,
-        const AFNextAudioProjectorOutput & audio, const AFNextGenerationOptions & options) {
+    AudioFlamingoGeneratedTokens generate(const AudioFlamingoPrompt & prompt,
+        const AudioFlamingoAudioProjectorOutput & audio, const AudioFlamingoGenerationOptions & options) {
         const auto & c = assets_->config.text_decoder;
         const int64_t steps = static_cast<int64_t>(prompt.input_ids.size());
         if (steps == 0 || options.max_new_tokens <= 0 || steps + options.max_new_tokens > c.max_position_embeddings) {
-            throw std::runtime_error("Audio Flamingo Next prompt plus max_tokens exceeds the text context or is empty");
+            throw std::runtime_error("Audio Flamingo prompt plus max_tokens exceeds the text context or is empty");
         }
         if (audio.hidden_size != c.hidden_size || audio.tokens != static_cast<int64_t>(prompt.audio_token_positions.size()) ||
             audio.values.size() != static_cast<size_t>(audio.tokens * c.hidden_size)) {
-            throw std::runtime_error("Audio Flamingo Next audio embeddings do not match prompt placeholders");
+            throw std::runtime_error("Audio Flamingo audio embeddings do not match prompt placeholders");
         }
         const auto started = std::chrono::steady_clock::now();
         std::vector<float> input(static_cast<size_t>(steps * c.hidden_size));
@@ -187,8 +187,8 @@ struct AFNextQwen2DecoderRuntime::Impl {
                 ids[static_cast<size_t>(i)] = prompt.input_ids[static_cast<size_t>(text_positions[offset + i])];
             }
             ggml_backend_tensor_set(ids_.tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
-            if (core::compute_graph(execution_, lookup_graph_, lookup_plan_, "audio_flamingo_next.embedding") != GGML_STATUS_SUCCESS) {
-                throw std::runtime_error("Audio Flamingo Next embedding lookup failed");
+            if (core::compute_graph(execution_, lookup_graph_, lookup_plan_, "audio_flamingo.embedding") != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("Audio Flamingo embedding lookup failed");
             }
             ggml_backend_tensor_get(embeddings_.tensor, text_embeddings.data(),
                 0, static_cast<size_t>(count * c.hidden_size) * sizeof(float));
@@ -200,12 +200,12 @@ struct AFNextQwen2DecoderRuntime::Impl {
         for (size_t i = 0; i < prompt.audio_token_positions.size(); ++i) {
             const int32_t pos = prompt.audio_token_positions[i];
             if (pos < 0 || pos >= steps) {
-                throw std::runtime_error("Audio Flamingo Next audio placeholder out of range");
+                throw std::runtime_error("Audio Flamingo audio placeholder out of range");
             }
             std::copy_n(audio.values.data() + i * c.hidden_size, c.hidden_size, input.data() + pos * c.hidden_size);
         }
         auto result = qwen2_->prefill_embeddings_into_cache(input, steps, steps + options.max_new_tokens, kPrefillSteps);
-        debug::timing_log_scalar("audio_flamingo_next.decoder.prefill_ms", debug::elapsed_ms(started));
+        debug::timing_log_scalar("audio_flamingo.decoder.prefill_ms", debug::elapsed_ms(started));
         const auto decode_start = std::chrono::steady_clock::now();
         sampling::HfSamplingOptions sampling_options;
         sampling_options.do_sample = options.do_sample;
@@ -217,9 +217,9 @@ struct AFNextQwen2DecoderRuntime::Impl {
         sampling::HfSamplerScratch scratch;
         std::mt19937 rng(static_cast<uint32_t>(options.seed));
         auto history = prompt.input_ids;
-        AFNextGeneratedTokens out;
+        AudioFlamingoGeneratedTokens out;
         for (int64_t i = 0; i < options.max_new_tokens; ++i) {
-            const int32_t token = sampler.sample(result.logits, history, sampling_options, scratch, rng, nullptr, "Audio Flamingo Next");
+            const int32_t token = sampler.sample(result.logits, history, sampling_options, scratch, rng, nullptr, "Audio Flamingo");
             if (std::find(c.eos_token_ids.begin(), c.eos_token_ids.end(), token) != c.eos_token_ids.end()) {
                 break;
             }
@@ -229,12 +229,12 @@ struct AFNextQwen2DecoderRuntime::Impl {
                 result = qwen2_->decode_token(token);
             }
         }
-        debug::timing_log_scalar("audio_flamingo_next.decoder.decode_ms", debug::elapsed_ms(decode_start));
-        debug::trace_log_scalar("audio_flamingo_next.generated_tokens", out.token_ids.size());
+        debug::timing_log_scalar("audio_flamingo.decoder.decode_ms", debug::elapsed_ms(decode_start));
+        debug::trace_log_scalar("audio_flamingo.generated_tokens", out.token_ids.size());
         return out;
     }
 
-    std::shared_ptr<const AFNextAssets> assets_;
+    std::shared_ptr<const AudioFlamingoAssets> assets_;
     core::ExecutionContext & execution_;
     core::BackendWeightStore store_;
     std::unique_ptr<modules::CausalDecoderRuntime> qwen2_;
@@ -245,15 +245,15 @@ struct AFNextQwen2DecoderRuntime::Impl {
     core::HostGraphPlan lookup_plan_;
 };
 
-AFNextQwen2DecoderRuntime::AFNextQwen2DecoderRuntime(std::shared_ptr<const AFNextAssets> assets,
+AudioFlamingoQwen2DecoderRuntime::AudioFlamingoQwen2DecoderRuntime(std::shared_ptr<const AudioFlamingoAssets> assets,
     core::ExecutionContext & execution, assets::TensorStorageType storage)
     : impl_(std::make_unique<Impl>(std::move(assets), execution, storage)) {}
 
-AFNextQwen2DecoderRuntime::~AFNextQwen2DecoderRuntime() = default;
+AudioFlamingoQwen2DecoderRuntime::~AudioFlamingoQwen2DecoderRuntime() = default;
 
-AFNextGeneratedTokens AFNextQwen2DecoderRuntime::generate(const AFNextPrompt & prompt,
-    const AFNextAudioProjectorOutput & audio, const AFNextGenerationOptions & options) {
+AudioFlamingoGeneratedTokens AudioFlamingoQwen2DecoderRuntime::generate(const AudioFlamingoPrompt & prompt,
+    const AudioFlamingoAudioProjectorOutput & audio, const AudioFlamingoGenerationOptions & options) {
     return impl_->generate(prompt, audio, options);
 }
 
-}  // namespace engine::models::audio_flamingo_next
+}  // namespace engine::models::audio_flamingo

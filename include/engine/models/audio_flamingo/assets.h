@@ -12,18 +12,23 @@ namespace engine::assets {
 class TensorSource;
 }
 
-namespace engine::models::audio_flamingo_next {
+namespace engine::models::audio_flamingo {
 
-struct AFNextFrontendConfig {
+enum class AudioFlamingoVariant {
+    V3,
+    Next,
+};
+
+struct AudioFlamingoFrontendConfig {
     int sample_rate = 16000;
     int64_t feature_size = 128;
     int64_t hop_length = 160;
     int64_t n_fft = 400;
     int64_t chunk_length_sec = 30;
-    int64_t max_audio_length_sec = 1800;
+    int64_t max_audio_length_sec = 600;
 };
 
-struct AFNextAudioEncoderConfig {
+struct AudioFlamingoAudioEncoderConfig {
     int64_t num_mel_bins = 128;
     int64_t num_hidden_layers = 32;
     int64_t num_attention_heads = 20;
@@ -33,7 +38,7 @@ struct AFNextAudioEncoderConfig {
     std::string activation_function = "gelu";
 };
 
-struct AFNextTextDecoderConfig {
+struct AudioFlamingoTextDecoderConfig {
     int64_t vocab_size = 0;
     int64_t hidden_size = 0;
     int64_t intermediate_size = 0;
@@ -51,31 +56,31 @@ struct AFNextTextDecoderConfig {
     float rope_theta = 1000000.0F;
 };
 
-struct AFNextRoTEConfig {
+struct AudioFlamingoRoTEConfig {
     int64_t max_position_embeddings = 1200;
     float rope_theta = 1200.0F;
     float partial_rotary_factor = 0.2F;
     float audio_frame_step = 0.01F;
 };
 
-struct AFNextConfig {
+struct AudioFlamingoConfig {
     std::string model_type;
-    std::string variant;
+    AudioFlamingoVariant variant = AudioFlamingoVariant::V3;
     int64_t max_new_tokens = 512;
     bool projector_bias = true;
     std::string projector_hidden_act = "gelu";
-    AFNextFrontendConfig frontend;
-    AFNextAudioEncoderConfig audio_encoder;
-    AFNextTextDecoderConfig text_decoder;
-    AFNextRoTEConfig rote;
+    AudioFlamingoFrontendConfig frontend;
+    AudioFlamingoAudioEncoderConfig audio_encoder;
+    AudioFlamingoTextDecoderConfig text_decoder;
+    AudioFlamingoRoTEConfig rote;
 };
 
-struct AFNextAssets {
+struct AudioFlamingoAssets {
     assets::ResourceBundle resources;
-    AFNextConfig config;
+    AudioFlamingoConfig config;
     std::shared_ptr<const assets::TensorSource> model_weights;
 };
 
-std::shared_ptr<const AFNextAssets> load_af_next_assets(const std::filesystem::path & model_path);
+std::shared_ptr<const AudioFlamingoAssets> load_audio_flamingo_assets(const std::filesystem::path & model_path);
 
-}  // namespace engine::models::audio_flamingo_next
+}  // namespace engine::models::audio_flamingo

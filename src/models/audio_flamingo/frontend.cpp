@@ -1,4 +1,4 @@
-#include "engine/models/audio_flamingo_next/frontend.h"
+#include "engine/models/audio_flamingo/frontend.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
@@ -6,9 +6,9 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace engine::models::audio_flamingo_next {
+namespace engine::models::audio_flamingo {
 
-AFNextFrontend::AFNextFrontend(std::shared_ptr<const AFNextAssets> assets)
+AudioFlamingoFrontend::AudioFlamingoFrontend(std::shared_ptr<const AudioFlamingoAssets> assets)
     : assets_(std::move(assets)) {
     const auto & c = assets_->config.frontend;
     audio::MelSpectrogramFrontendConfig mel;
@@ -31,11 +31,11 @@ AFNextFrontend::AFNextFrontend(std::shared_ptr<const AFNextAssets> assets)
     mel_ = audio::get_cached_mel_spectrogram_frontend(mel);
 }
 
-AFNextAudioFeatures AFNextFrontend::extract(const runtime::AudioBuffer & audio) const {
+AudioFlamingoAudioFeatures AudioFlamingoFrontend::extract(const runtime::AudioBuffer & audio) const {
     const auto & c = assets_->config.frontend;
     if (audio.samples.empty() || audio.sample_rate <= 0 || audio.channels <= 0 ||
         audio.samples.size() % static_cast<size_t>(audio.channels) != 0) {
-        throw std::runtime_error("Audio Flamingo Next requires non-empty, valid audio");
+        throw std::runtime_error("Audio Flamingo requires non-empty, valid audio");
     }
     auto samples = engine::audio::mixdown_interleaved_to_mono_average(audio.samples, audio.channels);
     if (audio.sample_rate != c.sample_rate) {
@@ -44,16 +44,16 @@ AFNextAudioFeatures AFNextFrontend::extract(const runtime::AudioBuffer & audio) 
         options.require_full_input = true;
         auto converted = engine::audio::try_resample_mono_soxr(samples, audio.sample_rate, c.sample_rate, options);
         if (!converted) {
-            throw std::runtime_error("Audio Flamingo Next requires SOXR to resample non-16-kHz audio");
+            throw std::runtime_error("Audio Flamingo requires SOXR to resample non-16-kHz audio");
         }
         samples = std::move(*converted);
     }
     if (samples.size() > static_cast<size_t>(c.max_audio_length_sec * c.sample_rate)) {
-        throw std::runtime_error("Audio Flamingo Next input exceeds the processor's maximum audio duration");
+        throw std::runtime_error("Audio Flamingo input exceeds the processor's maximum audio duration");
     }
     const int64_t window_samples = c.chunk_length_sec * c.sample_rate;
     const int64_t total = static_cast<int64_t>(samples.size());
-    AFNextAudioFeatures out;
+    AudioFlamingoAudioFeatures out;
     out.batch = out.windows = (total + window_samples - 1) / window_samples;
     out.frames = window_samples / c.hop_length;
     out.mel_bins = c.feature_size;
@@ -64,15 +64,15 @@ AFNextAudioFeatures AFNextFrontend::extract(const runtime::AudioBuffer & audio) 
         std::vector<float> chunk(static_cast<size_t>(window_samples), 0.0F);
         std::copy_n(samples.data() + w * window_samples, valid, chunk.data());
         const int64_t frames = (valid + c.hop_length - 1) / c.hop_length;
-        out.post_lengths.push_back(af_next_post_length(frames));
+        out.post_lengths.push_back(audio_flamingo_post_length(frames));
         std::fill_n(out.attention_mask.data() + w * out.frames, frames, 1);
         const auto mel = mel_->extract_mono(chunk);
         if (mel.frames != out.frames) {
-            throw std::runtime_error("Audio Flamingo Next mel frame count mismatch");
+            throw std::runtime_error("Audio Flamingo mel frame count mismatch");
         }
         std::copy(mel.values.begin(), mel.values.end(), out.values.begin() + w * out.frames * out.mel_bins);
     }
     return out;
 }
 
-}  // namespace engine::models::audio_flamingo_next
+}  // namespace engine::models::audio_flamingo

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "family": "audio_flamingo_next",
-  "display_name": "Audio Flamingo Next",
-  "description": "Audio-language model for speech transcription, captioning, and questions about speech, music, and environmental sounds.",
+  "family": "audio_flamingo",
+  "display_name": "Audio Flamingo 3 / Next",
+  "description": "Audio Flamingo 3 and Audio Flamingo Next models for transcription, captioning, and questions about speech, music, and environmental sounds.",
   "category": "asr",
   "status": "supported",
   "tasks": [
@@ -25,7 +25,7 @@
       {
         "name": "instruct",
         "type": "string",
-        "default": "Transcribe the speech.",
+        "default": "Transcribe the input speech.",
         "required": false,
         "description": "Question or instruction about the input audio."
       },
@@ -113,11 +113,23 @@
       "default": true,
       "format": "gguf",
       "precision": "bf16",
-      "target_directory": "Audio-Flamingo-Next-GGUF",
+      "target_directory": "Audio-Flamingo-GGUF",
       "files": [
-        "Audio-Flamingo-Next-GGUF/audio-flamingo-next-bf16.gguf"
+        "Audio-Flamingo-GGUF/audio-flamingo-next-bf16.gguf"
       ],
-      "strip_prefix": "Audio-Flamingo-Next-GGUF"
+      "strip_prefix": "Audio-Flamingo-GGUF"
+    },
+    {
+      "id": "audio_flamingo_3_bf16",
+      "display_name": "Audio Flamingo 3 GGUF BF16",
+      "default": false,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Audio-Flamingo-GGUF",
+      "files": [
+        "Audio-Flamingo-GGUF/audio-flamingo-3-bf16.gguf"
+      ],
+      "strip_prefix": "Audio-Flamingo-GGUF"
     }
   ],
   "dependencies": [],
@@ -126,7 +138,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/audio_flamingo_next.md"
+      "docs/models/audio_flamingo.md"
     ],
     "recommended_package": "audio_flamingo_next_bf16"
   },

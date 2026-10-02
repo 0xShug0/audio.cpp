@@ -2,7 +2,7 @@
 
 | Model | Family | Mode(s) | Quick Start |
 |---|---|---|---|
-| Audio Flamingo Next | `audio_flamingo_next` | offline | [Audio Flamingo Next](models/audio_flamingo_next.md) |
+| Audio Flamingo 3 / Next | `audio_flamingo` | offline | [Audio Flamingo](models/audio_flamingo.md) |
 | Canary 180M Flash | `canary_asr` | offline | [Canary 180M Flash](models/canary_asr.md) |
 | Cohere Transcribe | `cohere_asr` | offline | [Cohere Transcribe](models/cohere_asr.md) |
 | GigaAM v3 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |

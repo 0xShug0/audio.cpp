@@ -892,19 +892,19 @@ if(MSVC)
     target_compile_options(engine_model_kitten_tts PRIVATE /utf-8)
 endif()
 
-audiocpp_add_model(audio_flamingo_next
+audiocpp_add_model(audio_flamingo
     SOURCES
-        src/models/audio_flamingo_next/assets.cpp
-        src/models/audio_flamingo_next/audio_encoder.cpp
-        src/models/audio_flamingo_next/decoder.cpp
-        src/models/audio_flamingo_next/frontend.cpp
-        src/models/audio_flamingo_next/projector.cpp
-        src/models/audio_flamingo_next/session.cpp
-        src/models/audio_flamingo_next/tokenizer_text.cpp
+        src/models/audio_flamingo/assets.cpp
+        src/models/audio_flamingo/audio_encoder.cpp
+        src/models/audio_flamingo/decoder.cpp
+        src/models/audio_flamingo/frontend.cpp
+        src/models/audio_flamingo/projector.cpp
+        src/models/audio_flamingo/session.cpp
+        src/models/audio_flamingo/tokenizer_text.cpp
     INCLUDES
-        engine/models/audio_flamingo_next/session.h
+        engine/models/audio_flamingo/session.h
     LOADERS
-        engine::models::audio_flamingo_next::make_audio_flamingo_next_loader
+        engine::models::audio_flamingo::make_audio_flamingo_loader
 )
 
 audiocpp_add_model(samsone
@@ -2701,10 +2701,6 @@ if (ENGINE_ENABLE_OPENMP)
 endif()
 
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
-    if ("audio_flamingo_next" IN_LIST AUDIOCPP_LINKED_MODELS)
-        add_executable(audio_flamingo_next_parity tests/audio_flamingo_next/parity.cpp)
-        target_link_libraries(audio_flamingo_next_parity PRIVATE engine_runtime ggml)
-    endif()
     add_executable(yue2_vae_parity_probe
         tests/yue2/yue2_vae_parity_probe.cpp
     )

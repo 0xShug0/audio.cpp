@@ -1,14 +1,20 @@
-# Audio Flamingo Next
+# Audio Flamingo 3 and Next
 
-Audio Flamingo Next Instruct answers questions about speech, music, and environmental
-sounds. It also supports transcription and audio captioning through the `asr` task.
-The input is an audio file plus an instruction; the output is text.
+The `audio_flamingo` family supports Audio Flamingo 3 and Audio Flamingo Next.
+Both checkpoints answer questions about speech, music, and environmental sounds,
+and support transcription and audio captioning through the `asr` task. The input
+is an audio file plus an instruction; the output is text.
+
+| Variant | Audio limit | Architecture difference |
+| --- | --- | --- |
+| Audio Flamingo 3 | 10 minutes | Whisper-style encoder, two-layer projector, Qwen2 decoder. |
+| Audio Flamingo Next | 30 minutes | Adds Rotary Time Embeddings and explicit audio boundary tokens. |
 
 ## Usage
 
 ```bash
 build/debug/bin/audiocpp_cli \
-  --task asr --family audio_flamingo_next \
+  --task asr --family audio_flamingo \
   --model /path/to/audio-flamingo-next-bf16.gguf \
   --backend cuda --audio input.wav \
   --request-option "instruct=Describe the sounds in this recording." \
@@ -31,7 +37,7 @@ and uses SOXR for inputs that require resampling.
 
 ## Server
 
-Configure the model with family `audio_flamingo_next`, task `asr`, and mode
+Configure the model with family `audio_flamingo`, task `asr`, and mode
 `offline`. Send audio and an instruction through the transcription endpoint:
 
 ```bash
@@ -60,7 +66,7 @@ Use these with `--request-option key=value`.
 
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
-| `instruct` | Text | `Transcribe the speech.` | Question or instruction about the audio. |
+| `instruct` | Text | `Transcribe the input speech.` | Question or instruction about the audio. |
 | `max_tokens` | Positive integer | `2048` | Maximum number of generated response tokens. |
 | `do_sample` | Boolean | `false` | Enable sampling instead of greedy decoding. |
 | `temperature` | Positive number | `1` | Sampling temperature. |
@@ -77,27 +83,36 @@ Use these with `--session-option key=value`.
 
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
-| `audio_flamingo_next.weight_type` | Framework weight storage types | `native` | Tensor storage type for the encoder, projector, and language model. |
+| `audio_flamingo.weight_type` | Framework weight storage types | `native` | Tensor storage type for the encoder, projector, and language model. |
 
 ## Long Audio
 
-The checkpoint accepts up to 30 minutes of audio. Its encoder processes 30-second
-windows, and the language model attends to the combined audio context. This is
-offline processing, not live audio streaming. Longer input increases context memory
-and prefill time. Inputs beyond the checkpoint's duration limit are rejected rather
-than silently truncated.
+Audio Flamingo 3 accepts up to 10 minutes and Audio Flamingo Next accepts up to
+30 minutes. Both encoders process 30-second windows, and the language model attends
+to the combined audio context. This is offline processing, not live audio streaming.
+Longer input increases context memory and prefill time. Inputs beyond the selected
+checkpoint's duration limit are rejected rather than silently truncated.
 
 ## Conversion
 
-Download the original [Instruct checkpoint](https://huggingface.co/nvidia/audio-flamingo-next-hf),
-including its config and tokenizer files. No model-specific conversion script is needed.
+Download either official Transformers checkpoint, including its config and tokenizer
+files. No model-specific conversion script is needed.
 
 ```bash
+# Audio Flamingo 3
+build/debug/bin/audiocpp_gguf \
+  --input weights=/path/to/audio-flamingo-3-hf/model.safetensors \
+  --root /path/to/audio-flamingo-3-hf \
+  --family audio_flamingo \
+  --model-spec model_specs/audio_flamingo.json \
+  --type orig --output audio-flamingo-3-bf16.gguf
+
+# Audio Flamingo Next
 build/debug/bin/audiocpp_gguf \
   --input weights=/path/to/audio-flamingo-next-hf/model.safetensors \
   --root /path/to/audio-flamingo-next-hf \
-  --family audio_flamingo_next \
-  --model-spec model_specs/audio_flamingo_next.json \
+  --family audio_flamingo \
+  --model-spec model_specs/audio_flamingo.json \
   --type orig --output audio-flamingo-next-bf16.gguf
 ```
 
@@ -106,6 +121,7 @@ and model spec, so inference does not require the original checkpoint directory.
 
 ## Upstream
 
+- [NVIDIA Audio Flamingo 3](https://huggingface.co/nvidia/audio-flamingo-3-hf)
 - [NVIDIA Audio Flamingo Next Instruct](https://huggingface.co/nvidia/audio-flamingo-next-hf)
-- The model card specifies the NVIDIA OneWay Noncommercial License. Review the
-  upstream terms before use or redistribution.
+- The model cards specify noncommercial terms. Review the upstream licenses before
+  use or redistribution.

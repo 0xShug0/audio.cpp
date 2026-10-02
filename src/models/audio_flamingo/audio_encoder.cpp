@@ -1,4 +1,4 @@
-#include "engine/models/audio_flamingo_next/audio_encoder.h"
+#include "engine/models/audio_flamingo/audio_encoder.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -19,7 +19,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace engine::models::audio_flamingo_next {
+namespace engine::models::audio_flamingo {
 
 namespace assets = engine::assets;
 namespace modules = engine::modules;
@@ -54,7 +54,7 @@ struct AudioLayerWeights {
     core::TensorValue fc2_bias;
 };
 
-struct AFNextAudioEncoderWeights {
+struct AudioFlamingoAudioEncoderWeights {
     std::shared_ptr<core::BackendWeightStore> store;
     modules::Conv1dWeights conv1;
     modules::Conv1dWeights conv2;
@@ -64,18 +64,18 @@ struct AFNextAudioEncoderWeights {
     core::TensorValue layer_norm_bias;
 };
 
-std::shared_ptr<const AFNextAudioEncoderWeights> load_weights(
-    const AFNextAssets & assets,
+std::shared_ptr<const AudioFlamingoAudioEncoderWeights> load_weights(
+    const AudioFlamingoAssets & assets,
     ggml_backend_t backend,
     core::BackendType backend_type,
     assets::TensorStorageType storage_type) {
     const auto & config = assets.config.audio_encoder;
     const auto & source = *assets.model_weights;
-    auto weights = std::make_shared<AFNextAudioEncoderWeights>();
+    auto weights = std::make_shared<AudioFlamingoAudioEncoderWeights>();
     auto store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "audio_flamingo_next.audio_encoder.weights",
+        "audio_flamingo.audio_encoder.weights",
         kAudioWeightContextBytes);
     weights->store = store;
     weights->conv1 = modules::binding::conv1d_from_source(*store, source, "audio_tower.conv1", storage_type, config.hidden_size, config.num_mel_bins, 3, true);
@@ -120,11 +120,11 @@ core::TensorValue reshape_heads(
     return core::reshape_tensor(ctx, contiguous, core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
 }
 
-core::TensorValue af_next_self_attention(
+core::TensorValue audio_flamingo_self_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const AudioLayerWeights & weights,
-    const AFNextAudioEncoderConfig & config,
+    const AudioFlamingoAudioEncoderConfig & config,
     const core::TensorValue & attention_mask) {
     const int64_t head_dim = config.hidden_size / config.num_attention_heads;
     const modules::LinearModule q_proj({config.hidden_size, config.hidden_size, true});
@@ -151,11 +151,11 @@ core::TensorValue audio_encoder_layer(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const AudioLayerWeights & weights,
-    const AFNextAudioEncoderConfig & config,
+    const AudioFlamingoAudioEncoderConfig & config,
     const core::TensorValue & attention_mask) {
     const modules::LayerNormModule norm({config.hidden_size, 1.0e-5F, true, true});
     auto attn_in = norm.build(ctx, input, {weights.self_attn_norm_weight, weights.self_attn_norm_bias});
-    auto attn = af_next_self_attention(ctx, attn_in, weights, config, attention_mask);
+    auto attn = audio_flamingo_self_attention(ctx, attn_in, weights, config, attention_mask);
     auto x = modules::AddModule().build(ctx, input, attn);
     auto ff_in = norm.build(ctx, x, {weights.final_norm_weight, weights.final_norm_bias});
     auto ff = modules::LinearModule({config.hidden_size, config.intermediate_size, true}).build(
@@ -172,7 +172,7 @@ core::TensorValue audio_encoder_layer(
 
 core::TensorValue avg_pool_time_2x(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
     if (input.shape.rank != 3 || input.shape.dims[1] % 2 != 0) {
-        throw std::runtime_error("Audio Flamingo Next avg_pool_time_2x expects [batch, even_time, hidden]");
+        throw std::runtime_error("Audio Flamingo avg_pool_time_2x expects [batch, even_time, hidden]");
     }
     const int64_t batch = input.shape.dims[0];
     const int64_t pooled_time = input.shape.dims[1] / 2;
@@ -188,7 +188,7 @@ std::vector<float> attention_mask_values(
     int64_t tokens,
     const std::vector<int32_t> & feature_mask) {
     if (static_cast<int64_t>(feature_mask.size()) != batch * tokens * 2) {
-        throw std::runtime_error("Audio Flamingo Next feature mask size does not match conv input");
+        throw std::runtime_error("Audio Flamingo feature mask size does not match conv input");
     }
     std::vector<float> values(static_cast<size_t>(batch * tokens * tokens), 0.0F);
     for (int64_t b = 0; b < batch; ++b) {
@@ -199,7 +199,7 @@ std::vector<float> attention_mask_values(
                 ++valid;
             }
         }
-        const int64_t valid_tokens = af_next_conv2_length(valid);
+        const int64_t valid_tokens = audio_flamingo_conv2_length(valid);
         for (int64_t row = 0; row < tokens; ++row) {
             for (int64_t col = valid_tokens; col < tokens; ++col) {
                 values[static_cast<size_t>((b * tokens + row) * tokens + col)] = -INFINITY;
@@ -209,11 +209,11 @@ std::vector<float> attention_mask_values(
     return values;
 }
 
-class AFNextAudioEncoderGraph {
+class AudioFlamingoAudioEncoderGraph {
 public:
-    AFNextAudioEncoderGraph(
-        std::shared_ptr<const AFNextAssets> assets,
-        std::shared_ptr<const AFNextAudioEncoderWeights> weights,
+    AudioFlamingoAudioEncoderGraph(
+        std::shared_ptr<const AudioFlamingoAssets> assets,
+        std::shared_ptr<const AudioFlamingoAudioEncoderWeights> weights,
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
         int64_t batch,
@@ -226,25 +226,25 @@ public:
           batch_(batch),
           frames_(frames) {
         if (assets_ == nullptr || weights_ == nullptr) {
-            throw std::runtime_error("Audio Flamingo Next audio encoder graph requires assets and weights");
+            throw std::runtime_error("Audio Flamingo audio encoder graph requires assets and weights");
         }
         if (backend_ == nullptr) {
-            throw std::runtime_error("Audio Flamingo Next audio encoder backend is not initialized");
+            throw std::runtime_error("Audio Flamingo audio encoder backend is not initialized");
         }
         const auto build_start = Clock::now();
         const auto & config = assets_->config.audio_encoder;
         if (frames_ != config.max_source_positions * 2 || batch_ <= 0) {
-            throw std::runtime_error("Audio Flamingo Next audio encoder graph expects 30-second feature windows");
+            throw std::runtime_error("Audio Flamingo audio encoder graph expects 30-second feature windows");
         }
-        const int64_t conv_tokens = af_next_conv2_length(frames_);
+        const int64_t conv_tokens = audio_flamingo_conv2_length(frames_);
         const int64_t pooled_tokens = (conv_tokens - 2) / 2 + 1;
 
         ggml_init_params params{graph_arena_bytes, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Audio Flamingo Next audio encoder graph context");
+            throw std::runtime_error("failed to initialize Audio Flamingo audio encoder graph context");
         }
-        core::ModuleBuildContext ctx{ctx_.get(), "audio_flamingo_next.audio_encoder", backend_type_};
+        core::ModuleBuildContext ctx{ctx_.get(), "audio_flamingo.audio_encoder", backend_type_};
         auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, config.num_mel_bins, frames_}));
         input_ = input.tensor;
         auto x = modules::Conv1dModule({config.num_mel_bins, config.hidden_size, 3, 1, 1, 1, true})
@@ -279,64 +279,64 @@ public:
         ggml_build_forward_expand(graph_, output_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("failed to allocate Audio Flamingo Next audio encoder graph");
+            throw std::runtime_error("failed to allocate Audio Flamingo audio encoder graph");
         }
-        debug::timing_log_scalar("audio_flamingo_next.audio_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
-        debug::trace_log_scalar("audio_flamingo_next.audio_encoder.batch", batch_);
-        debug::trace_log_scalar("audio_flamingo_next.audio_encoder.frames", frames_);
+        debug::timing_log_scalar("audio_flamingo.audio_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::trace_log_scalar("audio_flamingo.audio_encoder.batch", batch_);
+        debug::trace_log_scalar("audio_flamingo.audio_encoder.frames", frames_);
     }
 
-    ~AFNextAudioEncoderGraph() {
+    ~AudioFlamingoAudioEncoderGraph() {
         engine::core::release_backend_graph_resources(backend_, graph_);
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
         }
     }
 
-    bool matches(const AFNextAudioEncoderWeights & weights, int64_t batch, int64_t frames, ggml_backend_t backend, int threads) const {
+    bool matches(const AudioFlamingoAudioEncoderWeights & weights, int64_t batch, int64_t frames, ggml_backend_t backend, int threads) const {
         return weights_.get() == &weights && batch_ == batch && frames_ == frames && backend_ == backend && compute_threads_ == std::max(1, threads);
     }
 
-    AFNextAudioEncoderOutput run(const AFNextAudioFeatures & features) {
+    AudioFlamingoAudioEncoderOutput run(const AudioFlamingoAudioFeatures & features) {
         const auto & config = assets_->config.audio_encoder;
         if (features.batch != batch_ || features.frames != frames_ || features.mel_bins != config.num_mel_bins) {
-            throw std::runtime_error("Audio Flamingo Next audio encoder feature shape mismatch");
+            throw std::runtime_error("Audio Flamingo audio encoder feature shape mismatch");
         }
         if (static_cast<int64_t>(features.values.size()) != batch_ * config.num_mel_bins * frames_) {
-            throw std::runtime_error("Audio Flamingo Next audio encoder feature value count mismatch");
+            throw std::runtime_error("Audio Flamingo audio encoder feature value count mismatch");
         }
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(input_, features.values.data(), 0, features.values.size() * sizeof(float));
         if (cached_feature_mask_ != features.attention_mask) {
-            const auto mask = attention_mask_values(batch_, af_next_conv2_length(frames_), features.attention_mask);
+            const auto mask = attention_mask_values(batch_, audio_flamingo_conv2_length(frames_), features.attention_mask);
             std::vector<ggml_fp16_t> mask_f16(mask.size());
             ggml_fp32_to_fp16_row(mask.data(), mask_f16.data(), mask.size());
             ggml_backend_tensor_set(attention_mask_, mask_f16.data(), 0, mask_f16.size() * sizeof(ggml_fp16_t));
             cached_feature_mask_ = features.attention_mask;
         }
-        debug::timing_log_scalar("audio_flamingo_next.audio_encoder.input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar("audio_flamingo.audio_encoder.input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         core::set_backend_threads(backend_, compute_threads_);
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
-        debug::timing_log_scalar("audio_flamingo_next.audio_encoder.graph.compute_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar("audio_flamingo.audio_encoder.graph.compute_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Audio Flamingo Next audio encoder graph compute failed");
+            throw std::runtime_error("Audio Flamingo audio encoder graph compute failed");
         }
-        AFNextAudioEncoderOutput out;
+        AudioFlamingoAudioEncoderOutput out;
         out.batch = batch_;
         out.tokens = output_tokens_;
         out.hidden_size = output_dim_;
         out.values.resize(static_cast<size_t>(out.batch * out.tokens * out.hidden_size));
         timing_start = Clock::now();
         ggml_backend_tensor_get(output_, out.values.data(), 0, out.values.size() * sizeof(float));
-        debug::timing_log_scalar("audio_flamingo_next.audio_encoder.output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar("audio_flamingo.audio_encoder.output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         return out;
     }
 
 private:
-    std::shared_ptr<const AFNextAssets> assets_;
-    std::shared_ptr<const AFNextAudioEncoderWeights> weights_;
+    std::shared_ptr<const AudioFlamingoAssets> assets_;
+    std::shared_ptr<const AudioFlamingoAudioEncoderWeights> weights_;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int compute_threads_ = 1;
@@ -353,8 +353,8 @@ private:
     ggml_gallocr_t gallocr_ = nullptr;
 };
 
-AFNextAudioEncoderRuntime::AFNextAudioEncoderRuntime(
-    std::shared_ptr<const AFNextAssets> assets,
+AudioFlamingoAudioEncoderRuntime::AudioFlamingoAudioEncoderRuntime(
+    std::shared_ptr<const AudioFlamingoAssets> assets,
     core::ExecutionContext & execution,
     size_t graph_arena_bytes,
     assets::TensorStorageType weight_storage_type)
@@ -362,23 +362,23 @@ AFNextAudioEncoderRuntime::AFNextAudioEncoderRuntime(
       execution_(&execution),
       graph_arena_bytes_(graph_arena_bytes) {
     if (assets_ == nullptr) {
-        throw std::runtime_error("Audio Flamingo Next audio encoder requires assets");
+        throw std::runtime_error("Audio Flamingo audio encoder requires assets");
     }
     if (graph_arena_bytes_ == 0) {
-        throw std::runtime_error("Audio Flamingo Next audio encoder graph arena must be non-zero");
+        throw std::runtime_error("Audio Flamingo audio encoder graph arena must be non-zero");
     }
     weights_ = load_weights(*assets_, execution.backend(), execution.backend_type(), weight_storage_type);
 }
 
-AFNextAudioEncoderRuntime::~AFNextAudioEncoderRuntime() = default;
+AudioFlamingoAudioEncoderRuntime::~AudioFlamingoAudioEncoderRuntime() = default;
 
-AFNextAudioEncoderOutput AFNextAudioEncoderRuntime::encode(const AFNextAudioFeatures & features) {
+AudioFlamingoAudioEncoderOutput AudioFlamingoAudioEncoderRuntime::encode(const AudioFlamingoAudioFeatures & features) {
     if (execution_ == nullptr) {
-        throw std::runtime_error("Audio Flamingo Next audio encoder execution context is null");
+        throw std::runtime_error("Audio Flamingo audio encoder execution context is null");
     }
     const int threads = std::max(1, execution_->config().threads);
     if (graph_ == nullptr || !graph_->matches(*weights_, features.batch, features.frames, execution_->backend(), threads)) {
-        graph_ = std::make_unique<AFNextAudioEncoderGraph>(
+        graph_ = std::make_unique<AudioFlamingoAudioEncoderGraph>(
             assets_,
             weights_,
             *execution_,
@@ -386,11 +386,11 @@ AFNextAudioEncoderOutput AFNextAudioEncoderRuntime::encode(const AFNextAudioFeat
             features.batch,
             features.frames);
     } else {
-        debug::timing_log_scalar("audio_flamingo_next.audio_encoder.graph.build_ms", 0.0);
-        debug::trace_log_scalar("audio_flamingo_next.audio_encoder.batch", features.batch);
-        debug::trace_log_scalar("audio_flamingo_next.audio_encoder.frames", features.frames);
+        debug::timing_log_scalar("audio_flamingo.audio_encoder.graph.build_ms", 0.0);
+        debug::trace_log_scalar("audio_flamingo.audio_encoder.batch", features.batch);
+        debug::trace_log_scalar("audio_flamingo.audio_encoder.frames", features.frames);
     }
     return graph_->run(features);
 }
 
-}  // namespace engine::models::audio_flamingo_next
+}  // namespace engine::models::audio_flamingo
