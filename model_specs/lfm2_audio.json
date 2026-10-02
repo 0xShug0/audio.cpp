@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "family": "lfm2_audio",
+  "display_name": "LFM2.5-Audio",
+  "description": "Liquid AI's LFM2.5-Audio: a FastConformer audio encoder feeding an LFM2 hybrid short-conv/attention backbone, loaded from the llama.cpp-format GGUF components Liquid publishes. ASR only for now.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "ja"
+  ],
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Must match the checkpoint's language (en or ja) when given; each published checkpoint transcribes one language.",
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum number of generated transcript tokens per audio chunk; a transcript that reaches it is cut off there, with a warning on stderr.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode. auto transcribes input up to audio_chunk_seconds whole and splits longer input at pauses found by the bundled VAD (fixed chunks when the VAD model is absent); vad always splits at pauses and skips silence; fixed cuts every audio_chunk_seconds; none transcribes the whole input at once.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_seconds",
+        "type": "float",
+        "description": "Longest chunk in seconds, at least 1. With fixed chunks, a final piece shorter than 1 second joins the previous chunk.",
+        "required": false,
+        "min": 1,
+        "default": 30
+      }
+    ],
+    "session": [
+      {
+        "name": "model_gguf",
+        "type": "string",
+        "description": "Backbone GGUF, relative to the model directory. Defaults to the directory's only backbone GGUF.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "mmproj_gguf",
+        "type": "string",
+        "description": "Audio encoder (mmproj) GGUF, relative to the model directory. Defaults to mmproj-<backbone GGUF name>, or else the directory's only mmproj GGUF.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "vad_model_path",
+        "type": "string",
+        "description": "Path to the Silero VAD model directory used by automatic audio chunking.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cpu",
+      "metal",
+      "cuda"
+    ]
+  },
+  "packages": [
+    {
+      "id": "lfm2_audio_1_5b_q8_0",
+      "display_name": "LFM2.5-Audio-1.5B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "LFM2.5-Audio-1.5B-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-Q8_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-GGUF",
+        "revision": "7d525f883a077e20afb782f2ff618edcae0e39e4",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_f16",
+      "display_name": "LFM2.5-Audio-1.5B F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "LFM2.5-Audio-1.5B-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-F16.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-F16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-GGUF",
+        "revision": "7d525f883a077e20afb782f2ff618edcae0e39e4",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_q4_0",
+      "display_name": "LFM2.5-Audio-1.5B Q4_0 GGUF",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "LFM2.5-Audio-1.5B-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-Q4_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-GGUF",
+        "revision": "7d525f883a077e20afb782f2ff618edcae0e39e4",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_q8_0",
+      "display_name": "LFM2.5-Audio-1.5B-JP Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-Q8_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-Q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_f16",
+      "display_name": "LFM2.5-Audio-1.5B-JP F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-F16.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-F16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_f32",
+      "display_name": "LFM2.5-Audio-1.5B-JP F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-F32.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-F32.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    },
+    {
+      "id": "lfm2_audio_1_5b_jp_q4_0",
+      "display_name": "LFM2.5-Audio-1.5B-JP Q4_0 GGUF",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
+      "files": [
+        "LFM2.5-Audio-1.5B-JP-Q4_0.gguf",
+        "mmproj-LFM2.5-Audio-1.5B-JP-Q4_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "LiquidAI/LFM2.5-Audio-1.5B-JP-GGUF",
+        "revision": "64b96718b341dbd5650f9e85627cecdcbd4ac61b",
+        "gated": false
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "recommended_package": "lfm2_audio_1_5b_q8_0",
+    "docs": [
+      "docs/community_models/lfm2_audio.md"
+    ],
+    "summary": "LFM2.5-Audio transcription (English and Japanese checkpoints) from Liquid's published GGUFs."
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": "."
+      },
+      "files": {},
+      "optional_files": {},
+      "tensors": {}
+    }
+  ]
+}

@@ -211,7 +211,7 @@ function packageModelPath(entry: PackageEntry): string {
     const entryName = entry.id.includes('int8_dit') ? 'dit_int8.gguf' : 'dit.gguf';
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith(`/${entryName}`));
   } else if (entry.format === 'gguf' &&
-      ['auk', 'liveavatar', 'minimax_music3', 'yue2'].includes(entry.family)) {
+      ['auk', 'lfm2_audio', 'liveavatar', 'minimax_music3', 'yue2'].includes(entry.family)) {
     return `models/${entry.target_directory}`;
   } else if (entry.format === 'gguf') {
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'));
@@ -226,6 +226,12 @@ function packageModelPath(entry: PackageEntry): string {
 }
 
 function packageSessionOptions(entry: PackageEntry): Record<string, string> | undefined {
+  if (entry.family === 'lfm2_audio') {
+    // Every quantization installs into the same directory as Liquid's GGUF
+    // repo, so name this package's backbone; the loader pairs its mmproj.
+    const backbone = entry.files?.find((file) => !file.startsWith('mmproj-'));
+    return backbone ? { 'lfm2_audio.model_gguf': backbone } : undefined;
+  }
   if (entry.family === 'minimax_music3') {
     if (entry.id === 'minimax_music3_q8_0') {
       return {

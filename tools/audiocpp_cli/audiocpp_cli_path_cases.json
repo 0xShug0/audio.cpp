@@ -2703,6 +2703,42 @@
       ]
     },
     {
+      "id": "lfm2_audio_en_q8_offline",
+      "coverage": "LFM2.5-Audio EN Q8_0 package directory: whole-input, VAD and fixed chunking",
+      "family": "lfm2_audio",
+      "model": "models/LFM2.5-Audio-1.5B-GGUF",
+      "task": "asr",
+      "mode": "offline",
+      "session_options": {
+        "lfm2_audio.model_gguf": "LFM2.5-Audio-1.5B-Q8_0.gguf"
+      },
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "librispeech_whole",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"
+        },
+        {
+          "id": "librispeech_vad",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_other_7902-96591-0000.wav",
+          "options": {
+            "audio_chunk_mode": "vad"
+          }
+        },
+        {
+          "id": "librispeech_fixed_2s",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav",
+          "language": "en",
+          "options": {
+            "audio_chunk_mode": "fixed",
+            "audio_chunk_seconds": 2
+          }
+        }
+      ]
+    },
+    {
       "id": "fun_asr_nano_offline",
       "coverage": "Fun-ASR-Nano Q8 GGUF offline English ASR warm-session path",
       "family": "fun_asr_nano",
