@@ -3099,6 +3099,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(text_normalization_test tests/unittests/test_text_normalization.cpp)
         add_test(NAME text_normalization_test COMMAND text_normalization_test)
 
+        if (crisperwhisper IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(crisperwhisper_transcript_alignment_test
+                tests/unittests/test_crisperwhisper_transcript_alignment.cpp)
+            add_test(NAME crisperwhisper_transcript_alignment_test
+                COMMAND crisperwhisper_transcript_alignment_test)
+        endif()
+
         add_engine_unittest(subtitle_formatter_test tests/unittests/test_subtitle_formatter.cpp)
         add_test(NAME subtitle_formatter_test COMMAND subtitle_formatter_test)
 

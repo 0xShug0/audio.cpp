@@ -1,7 +1,10 @@
 #include "engine/models/crisperwhisper/model.h"
 
+#include "unicode.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <sstream>
 #include <tuple>
 
@@ -15,18 +18,17 @@ std::vector<CrisperWhisperWord> align_transcript(const std::string & text,
         words.push_back({std::move(word)});
     }
     const auto normalize = [](const std::string & word) {
-        std::string out;
-        for (unsigned char c : word) {
-            if (c >= 'A' && c <= 'Z') {
-                c += 'a' - 'A';
-            }
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-                out.push_back(static_cast<char>(c));
+        std::vector<uint32_t> out;
+        for (const uint32_t codepoint : unicode_cpts_from_utf8(word)) {
+            const uint32_t lower = unicode_tolower(codepoint);
+            const auto flags = unicode_cpt_flags_from_cpt(lower);
+            if (flags.is_letter || flags.is_number) {
+                out.push_back(lower);
             }
         }
         return out;
     };
-    std::vector<std::string> reference, observed;
+    std::vector<std::vector<uint32_t>> reference, observed;
     for (const auto & word : words) {
         reference.push_back(normalize(word.text));
     }
