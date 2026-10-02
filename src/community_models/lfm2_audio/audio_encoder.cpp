@@ -268,6 +268,34 @@ std::vector<float> relative_position_embeddings(int64_t steps, int64_t d_model) 
     return values;
 }
 
+// The table for the longest chunk so far serves every shorter one: positions
+// +(n-1) .. -(n-1) are its middle 2n-1 rows, and each value depends only on
+// the position and the channel, so they are the same numbers.
+class RelativePositionTable {
+public:
+    explicit RelativePositionTable(int64_t d_model) : d_model_(d_model) {}
+
+    // Rows +(steps-1) .. -(steps-1), 2 * steps - 1 of them.
+    [[nodiscard]] const float * rows(int64_t steps) {
+        if (steps > steps_) {
+            values_ = relative_position_embeddings(steps, d_model_);
+            steps_ = steps;
+        }
+
+        return values_.data() + (steps_ - steps) * d_model_;
+    }
+
+    void clear() {
+        values_ = {};
+        steps_ = 0;
+    }
+
+private:
+    int64_t d_model_;
+    int64_t steps_ = 0;
+    std::vector<float> values_;
+};
+
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept { ggml_free(ctx); }
 };
@@ -281,7 +309,7 @@ struct GgmlGallocrDeleter {
 class EncoderGraph {
 public:
     EncoderGraph(const EncoderWeights & weights, const Lfm2FastConformerEncoderConfig & config, core::ExecutionContext & execution,
-                 ggml_gallocr_t allocator, int64_t frames)
+                 ggml_gallocr_t allocator, RelativePositionTable & positions, int64_t frames)
         : config_(config), execution_(execution), frames_(frames) {
         ctx_.reset(ggml_init({kGraphArenaBytes, nullptr, true}));
         if (ctx_ == nullptr) {
@@ -332,8 +360,7 @@ public:
         }
 
         debug::timing_log_scalar("lfm2_audio.encoder.buffer_mb", ggml_gallocr_get_buffer_size(allocator, 0) / 1048576.0);
-        const auto positions = relative_position_embeddings(steps_, config.hidden_size);
-        ggml_backend_tensor_set(pos.tensor, positions.data(), 0, positions.size() * sizeof(float));
+        ggml_backend_tensor_set(pos.tensor, positions.rows(steps_), 0, ggml_nbytes(pos.tensor));
     }
 
     ~EncoderGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
@@ -389,7 +416,8 @@ struct Lfm2FastConformerEncoderRuntime::Impl {
         : source(std::move(source_in)),
           config(config_in),
           execution(execution_in),
-          weights(load_encoder_weights(*source, config_in, execution_in)) {}
+          weights(load_encoder_weights(*source, config_in, execution_in)),
+          positions(config_in.hidden_size) {}
 
     // Chunks of the same length reuse the graph. A new length builds a new
     // graph in the same compute buffer, which grows to the longest chunk kept.
@@ -406,7 +434,7 @@ struct Lfm2FastConformerEncoderRuntime::Impl {
                     }
                 }
 
-                graph = std::make_unique<EncoderGraph>(weights, config, execution, allocator.get(), features.frames);
+                graph = std::make_unique<EncoderGraph>(weights, config, execution, allocator.get(), positions, features.frames);
             }
 
             out = graph->run(features);
@@ -431,16 +459,19 @@ struct Lfm2FastConformerEncoderRuntime::Impl {
         return out;
     }
 
-    // Frees the graph and its compute buffer, as a new runtime has neither.
+    // Frees the graph, its compute buffer and the position table, as a new
+    // runtime has none of them.
     void reset() {
         graph.reset();
         allocator.reset();
+        positions.clear();
     }
 
     std::shared_ptr<const assets::TensorSource> source;
     Lfm2FastConformerEncoderConfig config;
     core::ExecutionContext & execution;
     EncoderWeights weights;
+    RelativePositionTable positions;
     // Declared after the allocator, so the graph goes first.
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator;
     std::unique_ptr<EncoderGraph> graph;
