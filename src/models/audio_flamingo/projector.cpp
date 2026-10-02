@@ -223,8 +223,8 @@ core::TensorValue apply_rotary_time_embedding(
     const auto cos = modules::SliceModule({3, 0, 1}).build(ctx, cos_pairs);
     const auto sin = modules::SliceModule({3, 0, 1}).build(ctx, sin_pairs);
     core::TensorValue result;
-    if (ctx.backend_type == core::BackendType::Cpu) {
-        // The fused rotary-pair op has no CPU kernel.
+    if (ctx.backend_type == core::BackendType::Cpu || ctx.backend_type == core::BackendType::Metal) {
+        // The fused rotary-pair op has no CPU or Metal kernel.
         result = modules::SplitRoPEModule({2}).build(ctx, paired, cos, sin);
     } else {
         result = modules::RopeInterleavedPairsModule{}.build(ctx, even, odd, cos, sin);
