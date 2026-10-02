@@ -4287,6 +4287,62 @@
       ]
     },
     {
+      "id": "audio_flamingo_short",
+      "coverage": "Audio Flamingo Next short transcription, warmed repetition, and changed input length",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-next-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "cold", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "warm", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "different_length", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "short_after_different_length", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "audio_flamingo_understanding",
+      "coverage": "Audio Flamingo Next audio questions, long-context summarization, and short input after long input",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-next-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "speech_question", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Is there speech or music in this recording?", "max_tokens": 128}},
+        {"id": "long_summary", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"instruct": "Summarize the recording in two sentences.", "max_tokens": 256}},
+        {"id": "long_repeat", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"instruct": "Summarize the recording in two sentences.", "max_tokens": 256}},
+        {"id": "short_after_long", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "audio_flamingo_3_short",
+      "coverage": "Audio Flamingo 3 transcription, warmed repetition, and changed input length",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-3-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "cold", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "warm", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "different_length", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "options": {"instruct": "Describe the audio.", "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "audio_flamingo_3_long_context",
+      "coverage": "Audio Flamingo 3 five-minute audio context",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-3-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "long_summary", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"instruct": "Summarize the recording in two sentences.", "max_tokens": 256}}
+      ]
+    },
+    {
       "id": "breeze_tts_clone_official_paths",
       "coverage": "BreezeTTS 2 official voice clone and voice direction paths using prompt audio, prompt transcript, T5Gemma text conditioning, Qwen acoustic generation, depth codebook decoding, and Mimi decode",
       "family": "breeze_tts",

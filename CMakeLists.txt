@@ -940,6 +940,21 @@ if(MSVC)
     target_compile_options(engine_model_kitten_tts PRIVATE /utf-8)
 endif()
 
+audiocpp_add_model(audio_flamingo
+    SOURCES
+        src/models/audio_flamingo/assets.cpp
+        src/models/audio_flamingo/audio_encoder.cpp
+        src/models/audio_flamingo/decoder.cpp
+        src/models/audio_flamingo/frontend.cpp
+        src/models/audio_flamingo/projector.cpp
+        src/models/audio_flamingo/session.cpp
+        src/models/audio_flamingo/tokenizer_text.cpp
+    INCLUDES
+        engine/models/audio_flamingo/session.h
+    LOADERS
+        engine::models::audio_flamingo::make_audio_flamingo_loader
+)
+
 audiocpp_add_model(samsone
     SOURCES
         src/models/samsone/assets.cpp

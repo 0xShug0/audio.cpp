@@ -2,6 +2,7 @@
 
 | Model | Family | Mode(s) | Quick Start |
 |---|---|---|---|
+| Audio Flamingo 3 / Next | `audio_flamingo` | offline | [Audio Flamingo](models/audio_flamingo.md) |
 | Canary 180M Flash | `canary_asr` | offline | [Canary 180M Flash](models/canary_asr.md) |
 | Cohere Transcribe | `cohere_asr` | offline | [Cohere Transcribe](models/cohere_asr.md) |
 | CrisperWhisper 2.0 Large | `crisperwhisper` | offline, streaming | [CrisperWhisper 2.0](models/crisperwhisper.md) |

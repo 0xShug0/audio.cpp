@@ -64,6 +64,7 @@ Status labels:
 |---|---|---|---|---|---|
 | `ace_step` | Done | Pass | --- | Pass (drift) | No (planner sampling can fail) |
 | `apollo` | Done | --- | Pass (drift) | --- | --- |
+| `audio_flamingo` | Done | Pass | Pass | --- | --- |
 | `bs_roformer` | Done | Pass | --- | --- | Pass |
 | `canary_asr` | Done | Pass | Pass | --- | Pass |
 | `chatterbox` | Done | Pass | --- | Pass (ASR match, drift) | Pass (ASR match, drift) |

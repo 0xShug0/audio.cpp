@@ -118,6 +118,7 @@ Model weights keep the license of their original release, which is separate from
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
+| **audio_flamingo** | ASR, Audio understanding | en | Audio Flamingo 3<br>Audio Flamingo Next | GGUF BF16 |
 | **canary_asr** | ASR, Translate | en, de, es, fr | Canary 180M Flash | GGUF F32/Q8 |
 | **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
 | **cohere_asr** | ASR | en, fr, de, es, it, pt, nl, pl, el, ar, ja, zh, vi, ko | Cohere Transcribe 03-2026 | GGUF BF16/Q8/Q4_0 |
