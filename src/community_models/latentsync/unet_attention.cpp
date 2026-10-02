@@ -85,9 +85,11 @@ core::TensorValue LatentSyncUnetAttention::build_attention(core::ModuleBuildCont
             core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1], heads_, dim}));
         return TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, value);
     };
-    const auto lowering = dim == 40 || dim == 80
-        ? ScaledDotProductAttentionLowering::FlashPreserveViews
-        : ScaledDotProductAttentionLowering::Explicit;
+    const auto lowering = cuda_f16_ && ctx.backend_type == core::BackendType::Cuda && dim == 40
+        ? ScaledDotProductAttentionLowering::CudaFlashF16Head40
+        : dim == 40 || dim == 80
+            ? ScaledDotProductAttentionLowering::FlashPreserveViews
+            : ScaledDotProductAttentionLowering::Explicit;
     auto q = project(query, weights.query);
     const auto k = project(conditioning, weights.key);
     const auto v = project(conditioning, weights.value);
