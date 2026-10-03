@@ -5,6 +5,7 @@
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
@@ -17,17 +18,18 @@ namespace engine::models::owsm_ctc {
 namespace {
 
 class OWSMCTCV4Session final : public runtime::RuntimeSessionBase,
-                            public runtime::IOfflineVoiceTaskSession {
+                            public runtime::IOfflineVoiceTaskSession,
+                            public runtime::IStreamingVoiceTaskSession {
 public:
     OWSMCTCV4Session(
         const runtime::TaskSpec & task,
         const runtime::SessionOptions & options,
         std::shared_ptr<const OWSMCTCV4Assets> assets,
         std::shared_ptr<const model_spec::ModelContract> contract)
-        : RuntimeSessionBase(options), assets_(std::move(assets)), contract_(std::move(contract)) {
+        : RuntimeSessionBase(options), assets_(std::move(assets)), contract_(std::move(contract)), mode_(task.mode) {
         runtime::validate_spec_backed_session_options(options, *contract_, "owsm_ctc", "OWSM-CTC v4");
-        if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
-            throw std::runtime_error("OWSM-CTC v4 requires an offline ASR session");
+        if (task.task != runtime::VoiceTaskKind::Asr) {
+            throw std::runtime_error("OWSM-CTC v4 requires an ASR session");
         }
         const auto type = assets::parse_tensor_storage_type(
             runtime::find_option(options.options, {"owsm_ctc.weight_type"}).value_or("native"));
@@ -37,7 +39,31 @@ public:
 
     std::string family() const override { return "owsm_ctc"; }
     runtime::VoiceTaskKind task_kind() const override { return runtime::VoiceTaskKind::Asr; }
-    runtime::RunMode run_mode() const override { return runtime::RunMode::Offline; }
+    runtime::RunMode run_mode() const override { return mode_; }
+
+    runtime::StreamingPolicy streaming_policy() const override {
+        runtime::StreamingPolicy policy;
+        policy.input = runtime::StreamingInputKind::None;
+        policy.output = runtime::StreamingOutputKind::FinalResult;
+        return policy;
+    }
+    void set_stream_event_sink(runtime::StreamEventCallback sink) override { sink_ = std::move(sink); }
+    void start_stream(const runtime::TaskRequest & request) override {
+        reset();
+        stream_result_ = transcribe(request, true);
+    }
+    void reset() override { stream_result_.reset(); }
+    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk &) override {
+        throw std::runtime_error("OWSM-CTC streaming requires complete audio, not live audio chunks");
+    }
+    runtime::TaskResult finalize() override {
+        if (!stream_result_) {
+            throw std::runtime_error("OWSM-CTC stream has not completed");
+        }
+        auto result = std::move(*stream_result_);
+        reset();
+        return result;
+    }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
         runtime::validate_spec_backed_request_options(request.options, *contract_, "OWSM-CTC v4");
@@ -45,6 +71,11 @@ public:
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        return transcribe(request, false);
+    }
+
+private:
+    runtime::TaskResult transcribe(const runtime::TaskRequest & request, bool streaming) {
         require_prepared("OWSM-CTC v4 run");
         runtime::validate_spec_backed_request_options(request.options, *contract_, "OWSM-CTC v4");
         if (!request.audio_input) {
@@ -84,6 +115,28 @@ public:
             language_token = assets_->token_id("<nolang>");
         }
         std::vector<int32_t> frames;
+        runtime::PartialTextPublisher publisher;
+        const auto decode_frames = [&]() {
+            std::vector<int32_t> tokens;
+            int32_t previous = -1;
+            for (const auto token : frames) {
+                if (token != previous && token != assets_->config.blank_id) {
+                    tokens.push_back(token);
+                }
+                previous = token;
+            }
+            return assets_->decode_visible(tokens);
+        };
+        const auto publish = [&](const std::string & text) {
+            if (streaming && sink_) {
+                auto delta = publisher.publish(text);
+                if (!delta.empty()) {
+                    runtime::StreamEvent event;
+                    event.partial_text = runtime::Transcript{std::move(delta), target.value_or(language)};
+                    sink_(event);
+                }
+            }
+        };
         if (mono.size() <= static_cast<size_t>(assets_->config.max_audio_samples) &&
             mode != audio::AudioChunkMode::Fixed) {
             frames = ctc_runtime_->frame_tokens(mono, language_token, task_token);
@@ -98,6 +151,7 @@ public:
             padded.resize(padded.size() + context_samples, 0.0F);
             const auto spans = audio::plan_audio_chunks(static_cast<int64_t>(padded.size()),
                 {buffer_samples, hop_samples});
+            const auto wanted = static_cast<size_t>(std::nearbyint(static_cast<double>(mono.size()) / 1280.0));
             for (const auto & span : spans) {
                 std::vector<float> window(static_cast<size_t>(buffer_samples));
                 audio::copy_planar_chunk(window, padded, 1, static_cast<int64_t>(padded.size()),
@@ -105,25 +159,20 @@ public:
                 auto tokens = ctc_runtime_->frame_tokens(window, language_token, task_token);
                 frames.insert(frames.end(), tokens.begin() + context_frames,
                     tokens.begin() + buffer_frames - context_frames);
+                if (frames.size() > wanted) {
+                    frames.resize(wanted);
+                }
+                if (streaming && sink_) {
+                    publish(decode_frames());
+                }
                 if (span.valid_samples < buffer_samples) {
                     break;
                 }
             }
-            const auto wanted = static_cast<size_t>(std::nearbyint(static_cast<double>(mono.size()) / 1280.0));
-            if (frames.size() > wanted) {
-                frames.resize(wanted);
-            }
-        }
-        std::vector<int32_t> tokens;
-        int32_t previous = -1;
-        for (const auto token : frames) {
-            if (token != previous && token != assets_->config.blank_id) {
-                tokens.push_back(token);
-            }
-            previous = token;
         }
         runtime::TaskResult result;
-        result.text_output = runtime::Transcript{assets_->decode_visible(tokens), target.value_or(language)};
+        result.text_output = runtime::Transcript{decode_frames(), target.value_or(language)};
+        publish(result.text_output->text);
         debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(started));
         return result;
     }
@@ -133,6 +182,9 @@ private:
     std::shared_ptr<const model_spec::ModelContract> contract_;
     std::unique_ptr<OWSMCTCV4Weights> weights_;
     std::unique_ptr<OWSMCTCV4EBranchformerRuntime> ctc_runtime_;
+    runtime::RunMode mode_;
+    runtime::StreamEventCallback sink_;
+    std::optional<runtime::TaskResult> stream_result_;
 };
 
 }  // namespace

@@ -5,6 +5,7 @@
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
@@ -17,17 +18,18 @@ namespace engine::models::owsm {
 namespace {
 
 class OWSMV4Session final : public runtime::RuntimeSessionBase,
-                            public runtime::IOfflineVoiceTaskSession {
+                            public runtime::IOfflineVoiceTaskSession,
+                            public runtime::IStreamingVoiceTaskSession {
 public:
     OWSMV4Session(
         const runtime::TaskSpec & task,
         const runtime::SessionOptions & options,
         std::shared_ptr<const OWSMV4Assets> assets,
         std::shared_ptr<const model_spec::ModelContract> contract)
-        : RuntimeSessionBase(options), assets_(std::move(assets)), contract_(std::move(contract)) {
+        : RuntimeSessionBase(options), assets_(std::move(assets)), contract_(std::move(contract)), mode_(task.mode) {
         runtime::validate_spec_backed_session_options(options, *contract_, "owsm", "OWSM v4");
-        if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
-            throw std::runtime_error("OWSM v4 requires an offline ASR session");
+        if (task.task != runtime::VoiceTaskKind::Asr) {
+            throw std::runtime_error("OWSM v4 requires an ASR session");
         }
         const auto type = assets::parse_tensor_storage_type(
             runtime::find_option(options.options, {"owsm.weight_type"}).value_or("native"));
@@ -37,7 +39,31 @@ public:
 
     std::string family() const override { return "owsm"; }
     runtime::VoiceTaskKind task_kind() const override { return runtime::VoiceTaskKind::Asr; }
-    runtime::RunMode run_mode() const override { return runtime::RunMode::Offline; }
+    runtime::RunMode run_mode() const override { return mode_; }
+
+    runtime::StreamingPolicy streaming_policy() const override {
+        runtime::StreamingPolicy policy;
+        policy.input = runtime::StreamingInputKind::None;
+        policy.output = runtime::StreamingOutputKind::FinalResult;
+        return policy;
+    }
+    void set_stream_event_sink(runtime::StreamEventCallback sink) override { sink_ = std::move(sink); }
+    void start_stream(const runtime::TaskRequest & request) override {
+        reset();
+        stream_result_ = transcribe(request, true);
+    }
+    void reset() override { stream_result_.reset(); }
+    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk &) override {
+        throw std::runtime_error("OWSM streaming requires complete audio, not live audio chunks");
+    }
+    runtime::TaskResult finalize() override {
+        if (!stream_result_) {
+            throw std::runtime_error("OWSM stream has not completed");
+        }
+        auto result = std::move(*stream_result_);
+        reset();
+        return result;
+    }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
         runtime::validate_spec_backed_request_options(request.options, *contract_, "OWSM v4");
@@ -45,6 +71,11 @@ public:
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        return transcribe(request, false);
+    }
+
+private:
+    runtime::TaskResult transcribe(const runtime::TaskRequest & request, bool streaming) {
         require_prepared("OWSM v4 run");
         runtime::validate_spec_backed_request_options(request.options, *contract_, "OWSM v4");
         if (!request.audio_input) {
@@ -111,6 +142,17 @@ public:
 
         runtime::TaskResult result;
         result.text_output = runtime::Transcript{"", target.value_or(language)};
+        runtime::PartialTextPublisher publisher;
+        const auto publish = [&](const std::string & text) {
+            if (streaming && sink_) {
+                auto delta = publisher.publish(text);
+                if (!delta.empty()) {
+                    runtime::StreamEvent event;
+                    event.partial_text = runtime::Transcript{std::move(delta), result.text_output->language};
+                    sink_(event);
+                }
+            }
+        };
         std::string previous_text;
         int64_t offset = 0;
         for (size_t index = 0; offset < static_cast<int64_t>(mono.size()); ++index) {
@@ -139,7 +181,17 @@ public:
             }
             const auto begin = mono.begin() + chunk.copy_start_sample;
             const std::vector<float> samples(begin, begin + chunk.valid_samples);
-            auto decoded = runtime_->decode(samples, prompt, timestamps || dynamic_windows, max_tokens, beam_size);
+            std::function<void(const std::vector<int32_t> &)> on_tokens;
+            // Continuation can discard trailing text, and beam search can revise it.
+            // Publish those paths only after the window has been committed.
+            if (streaming && sink_ && !dynamic_windows && beam_size == 1) {
+                on_tokens = [&](const std::vector<int32_t> & tokens) {
+                    const auto partial = assets_->decode_visible(tokens);
+                    publish(result.text_output->text +
+                        (result.text_output->text.empty() || partial.empty() ? "" : " ") + partial);
+                };
+            }
+            auto decoded = runtime_->decode(samples, prompt, timestamps || dynamic_windows, max_tokens, beam_size, on_tokens);
             if (!decoded.detected_language.empty()) {
                 language = decoded.detected_language;
                 language_token = assets_->token_id("<" + language + ">");
@@ -181,6 +233,7 @@ public:
                 result.text_output->text += ' ';
             }
             result.text_output->text += text;
+            publish(result.text_output->text);
             previous_text = text;
             if (condition_previous && dynamic_windows) {
                 std::vector<runtime::SpeechSegment> previous_segments;
@@ -237,6 +290,9 @@ private:
     std::shared_ptr<const model_spec::ModelContract> contract_;
     std::unique_ptr<OWSMV4Weights> weights_;
     std::unique_ptr<OWSMV4Runtime> runtime_;
+    runtime::RunMode mode_;
+    runtime::StreamEventCallback sink_;
+    std::optional<runtime::TaskResult> stream_result_;
 };
 
 }  // namespace

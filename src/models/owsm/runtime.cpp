@@ -245,7 +245,8 @@ OWSMV4DecodeResult OWSMV4Runtime::decode(
     const std::vector<int32_t> & prompt,
     bool predict_timestamps,
     int64_t max_tokens,
-    int64_t beam_size) {
+    int64_t beam_size,
+    const std::function<void(const std::vector<int32_t> &)> & on_tokens) {
     if (samples.empty() || samples.size() > static_cast<size_t>(assets_.config.max_audio_samples)) {
         throw std::runtime_error("OWSM v4 requires between one sample and 30 seconds of 16 kHz audio");
     }
@@ -446,6 +447,9 @@ OWSMV4DecodeResult OWSMV4Runtime::decode(
             return {std::move(generated), std::move(detected_language)};
         }
         generated.push_back(next);
+        if (on_tokens) {
+            on_tokens(generated);
+        }
     }
     debug::timing_log_scalar("owsm.decoder_ms", debug::elapsed_ms(decoder_started));
     return {std::move(generated), std::move(detected_language)};

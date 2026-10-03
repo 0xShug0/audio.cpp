@@ -15,6 +15,7 @@
 #include "engine/framework/tokenizers/sentencepiece.h"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -98,7 +99,8 @@ public:
         const std::vector<int32_t> & prompt,
         bool predict_timestamps,
         int64_t max_tokens,
-        int64_t beam_size = 1);
+        int64_t beam_size = 1,
+        const std::function<void(const std::vector<int32_t> &)> & on_tokens = {});
 
 private:
     struct Graphs;

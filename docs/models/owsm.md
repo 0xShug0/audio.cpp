@@ -30,6 +30,7 @@ and `--segments-out segments.json`.
 | --- | --- |
 | `--audio` | Input audio. Non-16 kHz input is resampled with SOXR. |
 | `--backend` | Execution backend. |
+| `--mode` | `offline` (default) or `streaming` text output from a complete audio file. |
 | `--threads` | CPU thread count. |
 | `--text-out` | Transcript output file. |
 | `--segments-out` | Utterance segment output file. Enable `return_timestamps`. |
@@ -66,7 +67,22 @@ the session's decoder graph.
 Use `language=auto` when the source language is unknown. Detection uses the
 first audio window and retains that language for the rest of the recording.
 An explicit language avoids misclassification between similar languages.
-Inference is offline, including long-form decoding.
+## Streaming
+
+Add `--mode streaming` for incremental text output from a complete audio file.
+Greedy decoding emits token deltas. Beam search and automatic long-form
+continuation emit committed window text, since unfinished hypotheses can change.
+Concatenating the deltas gives the final transcript, with the same decoding
+settings and output as offline mode. This is not live microphone streaming.
+
+For the server, configure the model with `"mode": "streaming"` and send:
+
+```bash
+curl http://localhost:8080/v1/audio/transcriptions \
+  -F model=owsm -F file=@input.wav -F language=eng -F stream=true
+```
+
+The response uses `transcript.text.delta` followed by `transcript.text.done`.
 
 ## Session Options
 

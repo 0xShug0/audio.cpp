@@ -9,7 +9,8 @@
     "asr"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "abk",

@@ -29,6 +29,7 @@ tokens, use an autoregressive beam, or condition on previous transcript text.
 | --- | --- |
 | `--audio` | Input audio; resampled to mono 16 kHz. |
 | `--backend` | Execution backend. |
+| `--mode` | `offline` (default) or `streaming` text output from a complete audio file. |
 | `--threads` | CPU thread count. |
 | `--text-out` | Transcript output path. |
 
@@ -54,6 +55,23 @@ CTC frame predictions are joined before collapsing repeated tokens and blanks.
 `fixed` also applies this overlapping-window path to short audio. `none` rejects
 input longer than 30 seconds. The result is a whole-recording transcript,
 without word or segment timestamps.
+
+## Streaming
+
+Add `--mode streaming` for incremental text output from a complete audio file.
+Each completed long-form window emits only newly committed text. CTC repeat
+and blank collapsing continues across window boundaries. Short input produces
+one text update after its window completes. The final transcript is identical
+to offline mode with the same settings. This is not live microphone streaming.
+
+For the server, configure the model with `"mode": "streaming"` and send:
+
+```bash
+curl http://localhost:8080/v1/audio/transcriptions \
+  -F model=owsm_ctc -F file=@input.wav -F language=eng -F stream=true
+```
+
+The response uses `transcript.text.delta` followed by `transcript.text.done`.
 
 ## Conversion
 
