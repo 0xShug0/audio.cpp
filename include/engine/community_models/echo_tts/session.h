@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config.h"
 #include "engine/community_models/echo_tts/config.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/model_spec/metadata.h"
@@ -86,6 +87,7 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<EchoDiTRuntime> dit_;
     std::unique_ptr<engine::codecs::FishDacCodecRuntime> codec_;
+    EchoCfgMode cfg_mode_ = EchoCfgMode::Independent;
     int64_t reference_max_samples_ = 0;
     bool mem_saver_ = false;
     std::vector<float> speaker_latent_;
