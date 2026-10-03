@@ -534,6 +534,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
     src/framework/modules/conformer_modules.cpp
+    src/framework/modules/ebranchformer_modules.cpp
     src/framework/sampling/flow_sampler_runtime.cpp
     src/framework/modules/predictor_modules.cpp
     src/framework/modules/positional_modules.cpp
@@ -1579,6 +1580,28 @@ audiocpp_add_model(crisperwhisper
         engine/models/crisperwhisper/model.h
     LOADERS
         engine::models::crisperwhisper::make_crisperwhisper_loader
+)
+
+audiocpp_add_model(owsm
+    SOURCES
+        src/models/owsm/assets.cpp
+        src/models/owsm/runtime.cpp
+        src/models/owsm/session.cpp
+    INCLUDES
+        engine/models/owsm/model.h
+    LOADERS
+        engine::models::owsm::make_owsm_loader
+)
+
+audiocpp_add_model(owsm_ctc
+    SOURCES
+        src/models/owsm_ctc/assets.cpp
+        src/models/owsm_ctc/runtime.cpp
+        src/models/owsm_ctc/session.cpp
+    INCLUDES
+        engine/models/owsm_ctc/model.h
+    LOADERS
+        engine::models::owsm_ctc::make_owsm_ctc_loader
 )
 
 audiocpp_add_model(cohere_asr

@@ -1,0 +1,421 @@
+{
+  "family": "owsm",
+  "schema_version": 1,
+  "display_name": "OWSM",
+  "description": "ESPnet Open Whisper-style multilingual speech recognition and speech translation.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "abk",
+    "afr",
+    "amh",
+    "ara",
+    "asm",
+    "ast",
+    "aze",
+    "bak",
+    "bas",
+    "bel",
+    "ben",
+    "bos",
+    "bre",
+    "bul",
+    "cat",
+    "ceb",
+    "ces",
+    "chv",
+    "ckb",
+    "cmn",
+    "cnh",
+    "cym",
+    "dan",
+    "deu",
+    "dgd",
+    "div",
+    "ell",
+    "eng",
+    "epo",
+    "est",
+    "eus",
+    "fas",
+    "fil",
+    "fin",
+    "fra",
+    "frr",
+    "ful",
+    "gle",
+    "glg",
+    "grn",
+    "guj",
+    "hat",
+    "hau",
+    "heb",
+    "hin",
+    "hrv",
+    "hsb",
+    "hun",
+    "hye",
+    "ibo",
+    "ina",
+    "ind",
+    "isl",
+    "ita",
+    "jav",
+    "jpn",
+    "kab",
+    "kam",
+    "kan",
+    "kat",
+    "kaz",
+    "kea",
+    "khm",
+    "kin",
+    "kir",
+    "kmr",
+    "kor",
+    "lao",
+    "lav",
+    "lga",
+    "lin",
+    "lit",
+    "ltz",
+    "lug",
+    "luo",
+    "mal",
+    "mar",
+    "mas",
+    "mdf",
+    "mhr",
+    "mkd",
+    "mlt",
+    "mon",
+    "mri",
+    "mrj",
+    "mya",
+    "myv",
+    "nan",
+    "nep",
+    "nld",
+    "nno",
+    "nob",
+    "npi",
+    "nso",
+    "nya",
+    "oci",
+    "ori",
+    "orm",
+    "ory",
+    "pan",
+    "pol",
+    "por",
+    "pus",
+    "quy",
+    "roh",
+    "ron",
+    "rus",
+    "sah",
+    "sat",
+    "sin",
+    "skr",
+    "slk",
+    "slv",
+    "sna",
+    "snd",
+    "som",
+    "sot",
+    "spa",
+    "srd",
+    "srp",
+    "sun",
+    "swa",
+    "swe",
+    "swh",
+    "tam",
+    "tat",
+    "tel",
+    "tgk",
+    "tgl",
+    "tha",
+    "tig",
+    "tir",
+    "tok",
+    "tpi",
+    "tsn",
+    "tuk",
+    "tur",
+    "twi",
+    "uig",
+    "ukr",
+    "umb",
+    "urd",
+    "uzb",
+    "vie",
+    "vot",
+    "wol",
+    "xho",
+    "yor",
+    "yue",
+    "zho",
+    "zul"
+  ],
+  "capabilities": {
+    "asr": [
+      "segments"
+    ]
+  },
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Input language as an OWSM ISO 639-3 code, such as eng, jpn, or zho; auto detects it from the first window.",
+        "required": false,
+        "default": "eng"
+      },
+      {
+        "name": "target_language",
+        "type": "string",
+        "description": "Optional OWSM translation target code. Omit for transcription.",
+        "required": false
+      },
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Return OWSM utterance-level timestamp segments.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "condition_on_previous_text",
+        "type": "bool",
+        "description": "Condition each long-form chunk on the previous chunk transcript.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "beam_size",
+        "type": "int",
+        "description": "Decoder beam width; one selects greedy decoding.",
+        "required": false,
+        "min": 1,
+        "max": 50002,
+        "default": 1
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens per 30-second window; zero uses the model limit.",
+        "required": false,
+        "min": 0,
+        "max": 374,
+        "default": 0
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Long-form audio chunking mode.",
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum duration of each audio window.",
+        "required": false,
+        "min": 0.2,
+        "max": 30,
+        "default": 30
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Matmul weight storage override.",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k",
+          "i8"
+        ],
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/owsm.md"
+    ],
+    "recommended_package": "owsm_v4_base_102m_f32"
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "owsm_v4_base_102m_f32",
+      "display_name": "OWSM v4 Base 102M F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-base-102m-f32.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    },
+    {
+      "id": "owsm_v4_base_102m_q8_0",
+      "display_name": "OWSM v4 Base 102M Q8_0",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-base-102m-q8_0.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    },
+    {
+      "id": "owsm_v4_small_370m_f32",
+      "display_name": "OWSM v4 Small 370M F32",
+      "default": false,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-small-370m-f32.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    },
+    {
+      "id": "owsm_v4_small_370m_q8_0",
+      "display_name": "OWSM v4 Small 370M Q8_0",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-small-370m-q8_0.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    },
+    {
+      "id": "owsm_v4_small_370m_q4_k",
+      "display_name": "OWSM v4 Small 370M Q4_K",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-small-370m-q4_k.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    },
+    {
+      "id": "owsm_v4_medium_1b_f32",
+      "display_name": "OWSM v4 Medium 1B F32",
+      "default": false,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-medium-1b-f32.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    },
+    {
+      "id": "owsm_v4_medium_1b_q8_0",
+      "display_name": "OWSM v4 Medium 1B Q8_0",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-medium-1b-q8_0.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    },
+    {
+      "id": "owsm_v4_medium_1b_q4_k",
+      "display_name": "OWSM v4 Medium 1B Q4_K",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "OWSM-GGUF",
+      "files": [
+        "OWSM-GGUF/owsm-v4-medium-1b-q4_k.gguf"
+      ],
+      "strip_prefix": "OWSM-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:bpe.model"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer": "model:bpe.model"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    }
+  ]
+}

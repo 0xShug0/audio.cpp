@@ -106,6 +106,7 @@ Status labels:
 | `neutts` | Done | Pass | --- | Pass | --- |
 | `omnivoice` | Done | Pass | --- | Pass (drift) | Pass (drift) |
 | `outetts` | Done | Pass (TTS + clone) | --- | --- | Pass (TTS + clone) |
+| `owsm` | Done | --- | Pass | --- | Pass (drift) |
 | `parakeet_tdt` | Done | Pass | Pass | Pass | Pass |
 | `piper_tts` | Done | Pass | Pass | --- | --- |
 | `personaplex` | Done | --- | --- | --- | Pass |
@@ -145,6 +146,7 @@ Additional lower-bit checks:
 | `cohere_asr` | `q4_0` | Pass (drift) |
 | `meanvc2` | `q4_k` | Pass |
 | `moss_transcribe_diarize` | `q4_k` | No (long-audio segmentation/timestamp drift) |
+| `owsm` | `q4_k` | Pass (Small and Medium; transcript and timestamp drift) |
 | `personaplex` | `q4_k` | Pass |
 | `vibevoice_asr_streaming` | `q4_k` | Pass (quick CUDA check; transcript stays usable and matches the BF16 wording class) |
 | `voxtral_realtime` | `q4_k` | Pass (quick CUDA check; transcripts match Q8 except one capitalization-only difference) |
