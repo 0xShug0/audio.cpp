@@ -11,6 +11,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/sampling/greedy_decode.h"
+#include "engine/framework/runtime/graph_optimizer.h"
 
 #include <ggml-alloc.h>
 
@@ -51,6 +52,18 @@ struct Graph {
         ggml_free(context);
     }
     void allocate() {
+        if (execution.backend_type() == core::BackendType::Cpu) {
+            // Broadcast biases and scales without materializing full activation-sized copies.
+            runtime::GraphOptimizationOptions options;
+            options.backend = runtime::GraphOptimizationBackend::Cpu;
+            options.fold_commutative_lhs_repeats = false;
+            options.fold_two_sided_broadcast_repeats = false;
+            options.fold_unary_broadcast_repeats = false;
+            options.fold_identity_materializations = false;
+            options.elide_noop_nodes = false;
+            options.elide_metadata_only_ops = false;
+            runtime::optimize_graph(*graph, options);
+        }
         core::validate_backend_graph_supported(execution.backend(), graph, "OWSM-CTC v4");
         if (!ggml_gallocr_alloc_graph(allocator, graph)) {
             throw std::runtime_error("OWSM-CTC v4 graph allocation failed");
@@ -130,16 +143,30 @@ struct OWSMCTCV4EBranchformerRuntime::Graphs {
 
         auto x = core::reshape_tensor(ctx, features,
             TensorShape::from_dims({1, 1, config.frontend_frames, 128}));
-        x = modules::Conv2dModule({1, d, 3, 3, 2, 2, 0, 0, 1, 1, true})
-            .build(ctx, x, weights.subsampling.conv0);
+        int64_t valid_frames = (config.frontend_frames - 3) / 2 + 1;
+        if (execution.backend_type() == core::BackendType::Cpu) {
+            // Paired with the zero-extended kernel; the retained 3x3 receptive fields are unchanged.
+            // Produce the next convolution's alignment rows here, avoiding padding its large input.
+            const auto next_frames = (valid_frames - 3) / 2 + 1;
+            const auto aligned_next_frames = ((next_frames + 15) / 16) * 16;
+            const auto padded_input_frames = 2 * (2 * aligned_next_frames + 1) + 2;
+            x = modules::Pad2dModule({0, 2, 0, padded_input_frames - config.frontend_frames}).build(ctx, x);
+            x = modules::Conv2dModule({1, d, 4, 4, 2, 2, 0, 0, 1, 1, true})
+                .build(ctx, x, weights.subsampling.conv0);
+            x = modules::SliceModule({3, 0, 63}).build(ctx, x);
+        } else {
+            x = modules::Conv2dModule({1, d, 3, 3, 2, 2, 0, 0, 1, 1, true})
+                .build(ctx, x, weights.subsampling.conv0);
+        }
         x = modules::ReluModule().build(ctx, x);
         for (const auto * conv : {&weights.subsampling.conv1, &weights.subsampling.conv2}) {
-            const auto output_frames = (x.shape.dims[2] - 3) / 2 + 1;
+            const auto output_frames = (valid_frames - 3) / 2 + 1;
             const bool align_cpu = execution.backend_type() == core::BackendType::Cpu;
             // Align the im2col row count for CPU GEMM; discard only added output rows.
             const auto padded_frames = align_cpu ? ((output_frames + 15) / 16) * 16 : output_frames;
-            if (padded_frames != output_frames) {
-                x = modules::Pad2dModule({0, 0, 0, 2 * (padded_frames - output_frames)})
+            const auto pad_frames = std::max<int64_t>(0, 2 * padded_frames + 1 - x.shape.dims[2]);
+            if (pad_frames > 0) {
+                x = modules::Pad2dModule({0, 0, 0, pad_frames})
                     .build(ctx, x);
             }
             x = modules::Conv2dModule({d, d, 3, 3, 2, 2, 0, 0, 1, 1, true}).build(ctx, x, *conv);
@@ -147,6 +174,7 @@ struct OWSMCTCV4EBranchformerRuntime::Graphs {
                 x = modules::SliceModule({2, 0, output_frames}).build(ctx, x);
             }
             x = modules::ReluModule().build(ctx, x);
+            valid_frames = output_frames;
         }
         x = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
         x = core::ensure_backend_addressable_layout(ctx, x);
