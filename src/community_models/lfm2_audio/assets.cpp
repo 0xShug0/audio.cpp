@@ -140,9 +140,28 @@ bool is_encoder_gguf(const std::filesystem::path & path) {
     return GgufMetadata(path).find_str("clip.projector_type") == "lfm2a";
 }
 
-// Backbone candidates are the GGUFs without a component prefix. Liquid's
-// packages also carry vocoder- and tokenizer- files for audio output.
-std::vector<std::string> list_gguf_files(const std::filesystem::path & root, bool mmproj) {
+// Liquid's packages name every component after the backbone file:
+// <model>.gguf, mmproj-<model>.gguf, vocoder-<model>.gguf and
+// tokenizer-<model>.gguf.
+enum class Component { Backbone, Mmproj, Vocoder, Detokenizer };
+
+const char * component_prefix(Component component) {
+    switch (component) {
+        case Component::Mmproj: return kMmprojPrefix;
+        case Component::Vocoder: return "vocoder-";
+        case Component::Detokenizer: return "tokenizer-";
+        case Component::Backbone: break;
+    }
+
+    return "";
+}
+
+bool has_prefix(const std::string & name, const char * prefix) {
+    return name.rfind(prefix, 0) == 0;
+}
+
+// Backbone candidates are the GGUFs without a component prefix.
+std::vector<std::string> list_gguf_files(const std::filesystem::path & root, Component component) {
     std::vector<std::string> names;
     std::error_code error;
     for (const auto & entry : std::filesystem::directory_iterator(root, error)) {
@@ -151,9 +170,10 @@ std::vector<std::string> list_gguf_files(const std::filesystem::path & root, boo
         }
 
         const auto name = entry.path().filename().string();
-        const bool is_mmproj = name.rfind(kMmprojPrefix, 0) == 0;
-        const bool is_other_component = name.rfind("vocoder-", 0) == 0 || name.rfind("tokenizer-", 0) == 0;
-        if (mmproj ? is_mmproj : (!is_mmproj && !is_other_component)) {
+        const bool prefixed = has_prefix(name, component_prefix(Component::Mmproj)) ||
+                              has_prefix(name, component_prefix(Component::Vocoder)) ||
+                              has_prefix(name, component_prefix(Component::Detokenizer));
+        if (component == Component::Backbone ? !prefixed : has_prefix(name, component_prefix(component))) {
             names.push_back(name);
         }
     }
@@ -191,7 +211,7 @@ std::string default_model_gguf(const Lfm2AudioAssets & assets) {
         return assets.default_model_gguf;
     }
 
-    const auto candidates = list_gguf_files(assets.model_root, false);
+    const auto candidates = list_gguf_files(assets.model_root, Component::Backbone);
     if (candidates.size() == 1) {
         return candidates.front();
     }
@@ -204,20 +224,23 @@ std::string default_model_gguf(const Lfm2AudioAssets & assets) {
                              "); choose one with lfm2_audio.model_gguf");
 }
 
-std::string default_mmproj_gguf(const Lfm2AudioAssets & assets, const std::filesystem::path & model_path) {
-    const auto paired = std::string(kMmprojPrefix) + model_path.filename().string();
+// "<prefix><backbone file>" when it exists, or else the only file with the
+// prefix.
+std::string default_paired_gguf(
+    const Lfm2AudioAssets & assets, const std::filesystem::path & model_path, Component component, const char * what, const char * option) {
+    const auto paired = std::string(component_prefix(component)) + model_path.filename().string();
     if (io::is_existing_file(assets.model_root / paired)) {
         return paired;
     }
 
-    const auto candidates = list_gguf_files(assets.model_root, true);
+    const auto candidates = list_gguf_files(assets.model_root, component);
     if (candidates.size() == 1) {
         return candidates.front();
     }
 
-    throw std::runtime_error("LFM2-Audio cannot pick the mmproj GGUF for " + model_path.filename().string() +
+    throw std::runtime_error(std::string("LFM2-Audio cannot pick the ") + what + " GGUF for " + model_path.filename().string() +
                              (candidates.empty() ? std::string(": none found") : " among " + join(candidates)) +
-                             "; choose one with lfm2_audio.mmproj_gguf");
+                             "; choose one with " + option);
 }
 
 int64_t require_dim(const assets::TensorSource & source, const std::string & name, size_t axis) {
@@ -285,6 +308,93 @@ Lfm2FastConformerEncoderConfig read_encoder_config(const GgufMetadata & meta, co
     return config;
 }
 
+// What the GGUFs do not record. The detokenizer upsamples 6x and runs
+// ISTFT(n_fft=1280, hop=320) to 24 kHz audio (detokenizer.py,
+// LFM2AudioDetokenizer; processor.py, LFM2AudioProcessor.decode). The
+// depthformer's norms and RoPE use MHA's defaults (model/transformer.py).
+constexpr int64_t kDetokenizerUpsample = 6;
+constexpr int64_t kDetokenizerHopLength = 320;
+constexpr int kDetokenizerSampleRate = 24000;
+constexpr float kDepthformerNormEps = 1e-5f;
+constexpr float kDepthformerRopeTheta = 1e6f;
+
+// The vocoder GGUF records only the layer count and width; the rest comes
+// from the tensor shapes.
+Lfm2DepthformerConfig read_depthformer_config(
+    const GgufMetadata & meta, const assets::TensorSource & source, const Lfm2BackboneConfig & backbone) {
+    Lfm2DepthformerConfig config;
+    config.input_size = backbone.hidden_size;
+    config.num_layers = meta.require_int("depthformer_n_layer");
+    config.hidden_size = meta.require_int("depthformer_n_embd");
+    config.rms_norm_eps = kDepthformerNormEps;
+    config.rope_theta = kDepthformerRopeTheta;
+    const int64_t d = config.hidden_size;
+    if (config.num_layers <= 0 || d <= 0) {
+        throw std::runtime_error("LFM2-Audio vocoder GGUF has an empty depthformer");
+    }
+
+    const int64_t projected = require_dim(source, "depth_linear.weight", 0);
+    if (projected % d != 0 || require_dim(source, "depth_linear.weight", 1) != backbone.hidden_size) {
+        throw std::runtime_error("LFM2-Audio depth_linear does not map the backbone hidden size to whole depthformer inputs");
+    }
+
+    config.codebooks = projected / d;
+    config.head_dim = require_dim(source, "depthformer.layers.0.operator.attention.q_layernorm.weight", 0);
+    if (config.head_dim <= 0 || d % config.head_dim != 0) {
+        throw std::runtime_error("LFM2-Audio depthformer head size does not divide its width");
+    }
+
+    config.num_heads = d / config.head_dim;
+    const int64_t kv_width = require_dim(source, "depthformer.layers.0.operator.qkv_proj.weight", 0) - d;
+    if (kv_width <= 0 || kv_width % (2 * config.head_dim) != 0) {
+        throw std::runtime_error("LFM2-Audio depthformer qkv_proj is not [q | k | v] with whole heads");
+    }
+
+    config.num_kv_heads = kv_width / (2 * config.head_dim);
+    if (config.num_heads % config.num_kv_heads != 0) {
+        throw std::runtime_error("LFM2-Audio depthformer KV heads do not divide its query heads");
+    }
+
+    config.intermediate_size = require_dim(source, "depthformer.layers.0.feed_forward.w1.weight", 0);
+    config.audio_vocab_size = require_dim(source, "depth_embeddings.0.embedding.weight", 0);
+    if (config.audio_vocab_size < 2) {
+        throw std::runtime_error("LFM2-Audio depthformer has no audio codes");
+    }
+
+    return config;
+}
+
+Lfm2DetokenizerConfig read_detokenizer_config(
+    const GgufMetadata & meta, const assets::TensorSource & detokenizer, const assets::TensorSource & vocoder, int64_t codebooks) {
+    Lfm2DetokenizerConfig config;
+    config.lfm = read_backbone_config(meta, detokenizer);
+    config.sliding_window = meta.require_int("lfm2.attention.sliding_window");
+    config.output_size = meta.require_int("lfm2.embedding_length_out");
+    config.codebooks = codebooks;
+    config.upsample = kDetokenizerUpsample;
+    config.hop_length = kDetokenizerHopLength;
+    config.sample_rate = kDetokenizerSampleRate;
+    if (config.sliding_window <= 0) {
+        throw std::runtime_error("LFM2-Audio detokenizer sliding window must be positive");
+    }
+
+    // The code embedding sits in the vocoder GGUF as emb.emb, one table of
+    // codebook_size rows per codebook.
+    const int64_t rows = require_dim(vocoder, "emb.emb.weight", 0);
+    if (require_dim(vocoder, "emb.emb.weight", 1) != config.lfm.hidden_size || rows % codebooks != 0) {
+        throw std::runtime_error("LFM2-Audio vocoder emb.emb does not match the detokenizer width and codebooks");
+    }
+
+    config.codebook_size = rows / codebooks;
+    config.n_fft = require_dim(vocoder, "istft.window", 0);
+    if (config.output_size != config.n_fft + 2 || require_dim(detokenizer, "dense_2.weight", 0) != config.output_size ||
+        require_dim(detokenizer, "dense_2.weight", 1) != config.lfm.hidden_size) {
+        throw std::runtime_error("LFM2-Audio detokenizer head must give log-magnitude and phase for n_fft / 2 + 1 bins");
+    }
+
+    return config;
+}
+
 }  // namespace
 
 std::shared_ptr<const Lfm2AudioAssets> load_lfm2_audio_assets(const std::filesystem::path & model_path) {
@@ -303,8 +413,8 @@ std::shared_ptr<const Lfm2AudioAssets> load_lfm2_audio_assets(const std::filesys
 
     // The loader is also asked about unrelated models, so require the shape of
     // an LFM2-Audio package: an LFM2 backbone and an lfm2a encoder.
-    const auto backbones = list_gguf_files(assets->model_root, false);
-    const auto encoders = list_gguf_files(assets->model_root, true);
+    const auto backbones = list_gguf_files(assets->model_root, Component::Backbone);
+    const auto encoders = list_gguf_files(assets->model_root, Component::Mmproj);
 
     const bool has_backbone = std::any_of(backbones.begin(), backbones.end(), [&](const std::string & name) {
         return is_backbone_gguf(assets->model_root / name);
@@ -356,7 +466,8 @@ std::shared_ptr<const Lfm2AudioComponents> load_lfm2_audio_components(
     out->mmproj_path = resolve_component(
         assets.model_root,
         "lfm2_audio.mmproj_gguf",
-        mmproj_gguf.empty() ? default_mmproj_gguf(assets, out->model_path) : mmproj_gguf);
+        mmproj_gguf.empty() ? default_paired_gguf(assets, out->model_path, Component::Mmproj, "mmproj", "lfm2_audio.mmproj_gguf")
+                            : mmproj_gguf);
 
     const GgufMetadata model_meta(out->model_path);
     if (model_meta.find_str("general.architecture") != "lfm2") {
@@ -394,6 +505,56 @@ std::shared_ptr<const Lfm2AudioComponents> load_lfm2_audio_components(
     }
 
     out->languages = model_meta.str_array("general.languages");
+    return out;
+}
+
+std::shared_ptr<const Lfm2AudioOutputComponents> load_lfm2_audio_output_components(
+    const Lfm2AudioAssets & assets,
+    const Lfm2AudioComponents & components,
+    const std::string & vocoder_gguf,
+    const std::string & detokenizer_gguf) {
+    auto out = std::make_shared<Lfm2AudioOutputComponents>();
+    out->vocoder_path = resolve_component(
+        assets.model_root,
+        "lfm2_audio.vocoder_gguf",
+        vocoder_gguf.empty()
+            ? default_paired_gguf(assets, components.model_path, Component::Vocoder, "vocoder", "lfm2_audio.vocoder_gguf")
+            : vocoder_gguf);
+    out->detokenizer_path = resolve_component(
+        assets.model_root,
+        "lfm2_audio.detokenizer_gguf",
+        detokenizer_gguf.empty()
+            ? default_paired_gguf(assets, components.model_path, Component::Detokenizer, "detokenizer", "lfm2_audio.detokenizer_gguf")
+            : detokenizer_gguf);
+
+    const GgufMetadata vocoder_meta(out->vocoder_path);
+    if (!vocoder_meta.has("depthformer_n_layer")) {
+        throw std::runtime_error("LFM2-Audio vocoder GGUF has no depthformer_n_layer: " + out->vocoder_path.string());
+    }
+
+    const GgufMetadata detokenizer_meta(out->detokenizer_path);
+    if (detokenizer_meta.find_str("general.architecture") != "lfm2" || !detokenizer_meta.has("lfm2.embedding_length_out")) {
+        throw std::runtime_error("LFM2-Audio detokenizer GGUF must be an lfm2 model with lfm2.embedding_length_out: " +
+                                 out->detokenizer_path.string());
+    }
+
+    out->vocoder = assets::open_tensor_source(out->vocoder_path);
+    out->detokenizer = assets::open_tensor_source(out->detokenizer_path);
+    out->depthformer = read_depthformer_config(vocoder_meta, *out->vocoder, components.backbone);
+
+    // Generated frames go back into the backbone through the mmproj's audio
+    // embedding (LFM2AudioModel.audio_embedding), one table per codebook.
+    const auto & depth = out->depthformer;
+    if (require_dim(*components.mmproj, "a.position_embd.weight", 0) != depth.codebooks * depth.audio_vocab_size ||
+        require_dim(*components.mmproj, "a.position_embd.weight", 1) != components.backbone.hidden_size) {
+        throw std::runtime_error("LFM2-Audio mmproj audio embedding does not match the depthformer's codebooks");
+    }
+
+    out->detokenizer_config = read_detokenizer_config(detokenizer_meta, *out->detokenizer, *out->vocoder, depth.codebooks);
+    if (out->detokenizer_config.codebook_size != depth.audio_vocab_size - 1) {
+        throw std::runtime_error("LFM2-Audio detokenizer codebooks do not match the depthformer's codes");
+    }
+
     return out;
 }
 
