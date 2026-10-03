@@ -64,79 +64,6 @@ struct Graph {
     }
 };
 
-TensorValue build_ebranchformer_layer(
-    core::ModuleBuildContext & ctx,
-    TensorValue input,
-    const OWSMCTCV4EBranchformerLayerWeights & weights,
-    int64_t hidden_size,
-    int64_t num_heads,
-    int64_t intermediate_size,
-    const TensorValue & half_scale,
-    const TensorValue * memory = nullptr,
-    const TensorValue * memory_mask = nullptr) {
-    const modules::LayerNormModule norm({hidden_size, kLayerNormEps});
-    const modules::LayerScaleModule scale;
-    const modules::ResidualAddModule residual;
-
-    auto transformed = norm.build(ctx, input, weights.macaron_norm);
-    transformed = modules::LinearModule({hidden_size, intermediate_size, true}).build(
-        ctx, transformed, {weights.macaron_ffn.fc1_weight, weights.macaron_ffn.fc1_bias});
-    transformed = modules::SiluModule().build(ctx, transformed);
-    transformed = modules::LinearModule({intermediate_size, hidden_size, true}).build(
-        ctx, transformed, {weights.macaron_ffn.fc2_weight, weights.macaron_ffn.fc2_bias});
-    transformed = scale.build(ctx, transformed, {half_scale});
-    auto x = residual.build(ctx, input, transformed);
-
-    auto attention_input = norm.build(ctx, x, weights.attention_norm);
-    modules::AttentionConfig attention_config{hidden_size, num_heads, true};
-    attention_config.use_packed_qkv = true;
-    auto attention = modules::SelfAttentionModule(attention_config).build(ctx, attention_input, weights.attention);
-
-    auto cgmlp = norm.build(ctx, x, weights.cgmlp_norm);
-    cgmlp = modules::LinearModule({hidden_size, intermediate_size, true})
-        .build(ctx, cgmlp, weights.cgmlp.input_projection);
-    cgmlp = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, cgmlp);
-    auto value = modules::SliceModule({2, 0, intermediate_size / 2}).build(ctx, cgmlp);
-    auto gate = modules::SliceModule({2, intermediate_size / 2, intermediate_size / 2}).build(ctx, cgmlp);
-    gate = modules::LayerNormModule({intermediate_size / 2, kLayerNormEps})
-        .build(ctx, gate, weights.cgmlp.gate_norm);
-    gate = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, gate);
-    gate = modules::DepthwiseConv1dModule({intermediate_size / 2, 31, 1, 15, 1, true})
-        .build(ctx, gate, weights.cgmlp.gate_conv);
-    gate = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, gate);
-    cgmlp = modules::MulModule().build(ctx, value, gate);
-    cgmlp = modules::LinearModule({intermediate_size / 2, hidden_size, true})
-        .build(ctx, cgmlp, weights.cgmlp.output_projection);
-
-    auto merged = modules::ConcatModule({2}).build(ctx, attention, cgmlp);
-    auto convolved = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, merged);
-    convolved = modules::DepthwiseConv1dModule({hidden_size * 2, 31, 1, 15, 1, true})
-        .build(ctx, convolved, weights.merge_conv);
-    convolved = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, convolved);
-    merged = modules::AddModule().build(ctx, merged, convolved);
-    merged = modules::LinearModule({hidden_size * 2, hidden_size, true})
-        .build(ctx, merged, weights.merge_projection);
-    x = residual.build(ctx, x, merged);
-
-    transformed = norm.build(ctx, x, weights.final_ffn_norm);
-    transformed = modules::LinearModule({hidden_size, intermediate_size, true}).build(
-        ctx, transformed, {weights.final_ffn.fc1_weight, weights.final_ffn.fc1_bias});
-    transformed = modules::SiluModule().build(ctx, transformed);
-    transformed = modules::LinearModule({intermediate_size, hidden_size, true}).build(
-        ctx, transformed, {weights.final_ffn.fc2_weight, weights.final_ffn.fc2_bias});
-    transformed = scale.build(ctx, transformed, {half_scale});
-    x = residual.build(ctx, x, transformed);
-    if (memory) {
-        transformed = norm.build(ctx, x, weights.cross_attention_norm);
-        modules::AttentionConfig cross_config{hidden_size, num_heads, true};
-        cross_config.use_packed_kv = true;
-        transformed = modules::CrossAttentionModule(cross_config)
-            .build(ctx, transformed, *memory, weights.cross_attention, *memory_mask);
-        x = residual.build(ctx, x, transformed);
-    }
-    return norm.build(ctx, x, weights.output_norm);
-}
-
 }  // namespace
 
 struct OWSMCTCV4EBranchformerRuntime::Graphs {
@@ -236,9 +163,10 @@ struct OWSMCTCV4EBranchformerRuntime::Graphs {
         for (int64_t index = 0; index < config.encoder_layers; ++index) {
             const bool cross = std::find(config.cross_attention_layers.begin(),
                 config.cross_attention_layers.end(), index) != config.cross_attention_layers.end();
-            x = build_ebranchformer_layer(ctx, x, weights.encoder[static_cast<size_t>(index)],
-                d, config.num_heads, config.intermediate_size, weights.half_scale,
-                cross ? &memory : nullptr, cross ? &memory_mask : nullptr);
+            x = modules::EBranchformerBlockModule({d, config.num_heads,
+                config.intermediate_size, kLayerNormEps})
+                .build(ctx, x, weights.encoder[static_cast<size_t>(index)], weights.half_scale,
+                    cross ? &memory : nullptr, cross ? &memory_mask : nullptr);
             if (std::find(config.interctc_layers.begin(), config.interctc_layers.end(), index + 1) !=
                 config.interctc_layers.end()) {
                 auto logits = ctc_head.build(ctx, x, weights.output);

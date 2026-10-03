@@ -65,69 +65,6 @@ struct Graph {
     }
 };
 
-TensorValue build_ebranchformer_layer(
-    core::ModuleBuildContext & ctx,
-    TensorValue input,
-    const OWSMV4EBranchformerLayerWeights & weights,
-    int64_t hidden_size,
-    int64_t num_heads,
-    int64_t intermediate_size,
-    const TensorValue & half_scale) {
-    const modules::LayerNormModule norm({hidden_size, kLayerNormEps});
-    const modules::LayerScaleModule scale;
-    const modules::ResidualAddModule residual;
-
-    auto transformed = norm.build(ctx, input, weights.macaron_norm);
-    transformed = modules::LinearModule({hidden_size, intermediate_size, true}).build(
-        ctx, transformed, {weights.macaron_ffn.fc1_weight, weights.macaron_ffn.fc1_bias});
-    transformed = modules::SiluModule().build(ctx, transformed);
-    transformed = modules::LinearModule({intermediate_size, hidden_size, true}).build(
-        ctx, transformed, {weights.macaron_ffn.fc2_weight, weights.macaron_ffn.fc2_bias});
-    transformed = scale.build(ctx, transformed, {half_scale});
-    auto x = residual.build(ctx, input, transformed);
-
-    auto attention_input = norm.build(ctx, x, weights.attention_norm);
-    modules::AttentionConfig attention_config{hidden_size, num_heads, true};
-    attention_config.use_packed_qkv = true;
-    auto attention = modules::SelfAttentionModule(attention_config).build(ctx, attention_input, weights.attention);
-
-    auto cgmlp = norm.build(ctx, x, weights.cgmlp_norm);
-    cgmlp = modules::LinearModule({hidden_size, intermediate_size, true})
-        .build(ctx, cgmlp, weights.cgmlp.input_projection);
-    cgmlp = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(ctx, cgmlp);
-    auto value = modules::SliceModule({2, 0, intermediate_size / 2}).build(ctx, cgmlp);
-    auto gate = modules::SliceModule({2, intermediate_size / 2, intermediate_size / 2}).build(ctx, cgmlp);
-    gate = modules::LayerNormModule({intermediate_size / 2, kLayerNormEps})
-        .build(ctx, gate, weights.cgmlp.gate_norm);
-    gate = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, gate);
-    gate = modules::DepthwiseConv1dModule({intermediate_size / 2, 31, 1, 15, 1, true})
-        .build(ctx, gate, weights.cgmlp.gate_conv);
-    gate = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, gate);
-    cgmlp = modules::MulModule().build(ctx, value, gate);
-    cgmlp = modules::LinearModule({intermediate_size / 2, hidden_size, true})
-        .build(ctx, cgmlp, weights.cgmlp.output_projection);
-
-    auto merged = modules::ConcatModule({2}).build(ctx, attention, cgmlp);
-    auto convolved = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, merged);
-    convolved = modules::DepthwiseConv1dModule({hidden_size * 2, 31, 1, 15, 1, true})
-        .build(ctx, convolved, weights.merge_conv);
-    convolved = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, convolved);
-    merged = modules::AddModule().build(ctx, merged, convolved);
-    merged = modules::LinearModule({hidden_size * 2, hidden_size, true})
-        .build(ctx, merged, weights.merge_projection);
-    x = residual.build(ctx, x, merged);
-
-    transformed = norm.build(ctx, x, weights.final_ffn_norm);
-    transformed = modules::LinearModule({hidden_size, intermediate_size, true}).build(
-        ctx, transformed, {weights.final_ffn.fc1_weight, weights.final_ffn.fc1_bias});
-    transformed = modules::SiluModule().build(ctx, transformed);
-    transformed = modules::LinearModule({intermediate_size, hidden_size, true}).build(
-        ctx, transformed, {weights.final_ffn.fc2_weight, weights.final_ffn.fc2_bias});
-    transformed = scale.build(ctx, transformed, {half_scale});
-    x = residual.build(ctx, x, transformed);
-    return norm.build(ctx, x, weights.output_norm);
-}
-
 }  // namespace
 
 struct OWSMV4Runtime::Graphs {
@@ -229,8 +166,9 @@ struct OWSMV4Runtime::Graphs {
         x = modules::LayerScaleModule().build(ctx, x, {weights.embedding_scale});
         x = modules::AddModule().build(ctx, x, encoder_positions);
         for (const auto & layer : weights.encoder) {
-            x = build_ebranchformer_layer(ctx, x, layer, config.hidden_size,
-                config.num_heads, config.intermediate_size, weights.half_scale);
+            x = modules::EBranchformerBlockModule({config.hidden_size,
+                config.num_heads, config.intermediate_size, kLayerNormEps})
+                .build(ctx, x, layer, weights.half_scale);
         }
         x = modules::LayerNormModule({config.hidden_size, kLayerNormEps})
             .build(ctx, x, weights.encoder_norm);

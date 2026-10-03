@@ -2,7 +2,11 @@
 
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/modules/packed_linear_weights.h"
+#include "engine/framework/modules/weight_binding.h"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace engine::models::owsm_ctc {
@@ -119,6 +123,153 @@ std::shared_ptr<const OWSMCTCV4Assets> load_owsm_ctc_assets(const std::filesyste
     out->frontend = audio::get_cached_mel_spectrogram_frontend(frontend);
     out->feature_mean = out->source->require_f32("normalize.mean", {128});
     out->feature_std = out->source->require_f32("normalize.std", {128});
+    return out;
+}
+
+std::unique_ptr<OWSMCTCV4Weights> load_owsm_ctc_weights(
+    const OWSMCTCV4Assets & assets,
+    core::ExecutionContext & execution,
+    assets::TensorStorageType type) {
+    const auto & config = assets.config;
+    auto out = std::make_unique<OWSMCTCV4Weights>();
+    out->store = std::make_unique<core::BackendWeightStore>(
+        execution.backend(), execution.backend_type(), "owsm_ctc.weights", 4 * 1024 * 1024);
+    auto & store = *out->store;
+    const auto & source = *assets.source;
+    const auto d = config.hidden_size;
+    const auto ff = config.intermediate_size;
+
+    const auto linear = [&](const std::string & name, int64_t output, int64_t input) {
+        return modules::binding::linear_from_source(store, source, name, type, output, input, true);
+    };
+    const auto norm = [&](const std::string & name, int64_t size) {
+        return modules::binding::norm_from_source(store, source, name, size);
+    };
+    const auto feed_forward = [&](const std::string & name) {
+        const auto first = linear(name + ".w_1", ff, d);
+        const auto second = linear(name + ".w_2", d, ff);
+        return modules::FeedForwardWeights{first.weight, first.bias, second.weight, second.bias};
+    };
+    const auto attention = [&](const std::string & name, bool packed_qkv, bool packed_kv, int64_t width) {
+        modules::AttentionWeights weights;
+        if (packed_qkv) {
+            const auto packed = modules::PackedLinearWeightsBuilder({width, {
+                {name + ".linear_q.weight", name + ".linear_q.bias", width},
+                {name + ".linear_k.weight", name + ".linear_k.bias", width},
+                {name + ".linear_v.weight", name + ".linear_v.bias", width}}, true}).build(store, source, type);
+            weights.qkv_weight = packed.weight;
+            weights.qkv_bias = packed.bias;
+        } else {
+            const auto query = linear(name + ".linear_q", width, width);
+            weights.q_weight = query.weight;
+            weights.q_bias = query.bias;
+            if (packed_kv) {
+                const auto packed = modules::PackedLinearWeightsBuilder({width, {
+                    {name + ".linear_k.weight", name + ".linear_k.bias", width},
+                    {name + ".linear_v.weight", name + ".linear_v.bias", width}}, true}).build(store, source, type);
+                weights.qkv_weight = packed.weight;
+                weights.qkv_bias = packed.bias;
+            }
+        }
+        const auto output = linear(name + ".linear_out", width, width);
+        weights.out_weight = output.weight;
+        weights.out_bias = output.bias;
+        return weights;
+    };
+
+    out->subsampling.conv0 = modules::binding::conv2d_from_source(
+        store, source, "encoder.embed.conv.0", assets::TensorStorageType::F32, d, 1, 3, 3, true);
+    out->subsampling.conv1 = modules::binding::conv2d_from_source(
+        store, source, "encoder.embed.conv.2", assets::TensorStorageType::F32, d, d, 3, 3, true);
+    out->subsampling.conv2 = modules::binding::conv2d_from_source(
+        store, source, "encoder.embed.conv.4", assets::TensorStorageType::F32, d, d, 3, 3, true);
+    out->subsampling.projection = linear("encoder.embed.out", d, d * 15);
+
+    out->encoder.reserve(static_cast<size_t>(config.encoder_layers));
+    for (int64_t index = 0; index < config.encoder_layers; ++index) {
+        const auto prefix = "encoder.encoders." + std::to_string(index);
+        modules::EBranchformerBlockWeights layer;
+        layer.macaron_ffn = feed_forward(prefix + ".feed_forward_macaron");
+        layer.macaron_norm = norm(prefix + ".norm_ff_macaron", d);
+        layer.attention_norm = norm(prefix + ".norm_mha", d);
+        layer.attention = attention(prefix + ".attn", true, false, d);
+        layer.cgmlp_norm = norm(prefix + ".norm_mlp", d);
+        layer.cgmlp.input_projection = linear(prefix + ".cgmlp.channel_proj1.0", ff, d);
+        layer.cgmlp.gate_norm = norm(prefix + ".cgmlp.csgu.norm", ff / 2);
+        layer.cgmlp.gate_conv = modules::binding::depthwise_conv1d_from_source(
+            store, source, prefix + ".cgmlp.csgu.conv", assets::TensorStorageType::F32, ff / 2, 31, true);
+        layer.cgmlp.output_projection = linear(prefix + ".cgmlp.channel_proj2", d, ff / 2);
+        layer.merge_conv = modules::binding::depthwise_conv1d_from_source(
+            store, source, prefix + ".depthwise_conv_fusion", assets::TensorStorageType::F32, d * 2, 31, true);
+        layer.merge_projection = linear(prefix + ".merge_proj", d, d * 2);
+        layer.final_ffn = feed_forward(prefix + ".feed_forward");
+        layer.final_ffn_norm = norm(prefix + ".norm_ff", d);
+        layer.output_norm = norm(prefix + ".norm_final", d);
+        if (std::find(config.cross_attention_layers.begin(), config.cross_attention_layers.end(), index) !=
+            config.cross_attention_layers.end()) {
+            layer.cross_attention_norm = norm(prefix + ".norm_cross_attn", d);
+            layer.cross_attention = attention(prefix + ".cross_attn", false, true, d);
+        }
+        out->encoder.push_back(std::move(layer));
+    }
+    out->encoder_norm = norm("encoder.after_norm", d);
+
+    const auto p = config.prompt_hidden_size;
+    const auto pf = config.prompt_intermediate_size;
+    out->embedding = store.load_tensor(source, "embed.weight", type, {config.vocabulary_size, p});
+    out->prefix_projection = linear("embed_proj", d, p);
+    out->prompt_projection = linear("prompt_proj", d, p);
+    if (execution.backend_type() == core::BackendType::Cpu &&
+        assets::resolve_tensor_storage_type(source, "encoder.conditioning_layer.weight", type) ==
+            assets::TensorStorageType::F32) {
+        // The CPU GEMM kernel requires a SIMD-aligned reduction width.
+        const auto width = (config.vocabulary_size + 15) / 16 * 16;
+        const auto original = source.require_f32("encoder.conditioning_layer.weight",
+            {d, config.vocabulary_size});
+        std::vector<float> padded(static_cast<size_t>(d * width), 0.0F);
+        for (int64_t row = 0; row < d; ++row) {
+            std::copy_n(original.data() + row * config.vocabulary_size,
+                config.vocabulary_size, padded.data() + row * width);
+        }
+        out->ctc_conditioning.weight = store.make_f32(
+            core::TensorShape::from_dims({d, width}), std::move(padded));
+        out->ctc_conditioning.bias = store.load_f32_tensor(source,
+            "encoder.conditioning_layer.bias", {d});
+    } else {
+        out->ctc_conditioning = linear("encoder.conditioning_layer", d, config.vocabulary_size);
+    }
+    if (execution.backend_type() == core::BackendType::Cpu) {
+        const auto rows = (config.vocabulary_size + 15) / 16 * 16;
+        auto head = source.require_tensor("ctc.ctc_lo.weight", type, {config.vocabulary_size, d});
+        const auto row_bytes = head.bytes.size() / static_cast<size_t>(config.vocabulary_size);
+        head.bytes.resize(static_cast<size_t>(rows) * row_bytes, std::byte{0});
+        out->output.weight = store.make_tensor(core::TensorShape::from_dims({rows, d}),
+            head.type, head.bytes.data(), head.bytes.size());
+        auto bias = source.require_f32("ctc.ctc_lo.bias", {config.vocabulary_size});
+        bias.resize(static_cast<size_t>(rows), 0.0F);
+        out->output.bias = store.make_f32(core::TensorShape::from_dims({rows}), std::move(bias));
+    } else {
+        out->output = linear("ctc.ctc_lo", config.vocabulary_size, d);
+    }
+    out->prompt_norm = norm("prompt_encoder.after_norm", p);
+    for (int64_t index = 0; index < config.prompt_layers; ++index) {
+        const auto prefix = "prompt_encoder.encoders." + std::to_string(index);
+        modules::TransformerEncoderBlockWeights layer;
+        layer.norm1 = norm(prefix + ".norm1", p);
+        layer.self_attention = attention(prefix + ".self_attn", true, false, p);
+        layer.norm2 = norm(prefix + ".norm2", p);
+        const auto first = linear(prefix + ".feed_forward.w_1", pf, p);
+        const auto second = linear(prefix + ".feed_forward.w_2", p, pf);
+        layer.feed_forward = {first.weight, first.bias, second.weight, second.bias};
+        out->prompt_encoder.push_back(std::move(layer));
+    }
+    out->prompt_scale = store.make_f32(core::TensorShape::from_dims({p}),
+        std::vector<float>(static_cast<size_t>(p), std::sqrt(static_cast<float>(p))));
+
+    out->half_scale = store.make_f32(core::TensorShape::from_dims({d}), std::vector<float>(static_cast<size_t>(d), 0.5F));
+    out->embedding_scale = store.make_f32(
+        core::TensorShape::from_dims({d}), std::vector<float>(static_cast<size_t>(d), std::sqrt(static_cast<float>(d))));
+    store.upload();
     return out;
 }
 

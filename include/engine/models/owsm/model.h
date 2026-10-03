@@ -6,6 +6,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/ebranchformer_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
@@ -62,31 +63,10 @@ struct OWSMV4SubsamplingWeights {
     modules::LinearWeights projection;
 };
 
-struct OWSMV4CgMLPWeights {
-    modules::LinearWeights input_projection;
-    modules::NormWeights gate_norm;
-    modules::DepthwiseConv1dWeights gate_conv;
-    modules::LinearWeights output_projection;
-};
-
-struct OWSMV4EBranchformerLayerWeights {
-    modules::FeedForwardWeights macaron_ffn;
-    modules::NormWeights macaron_norm;
-    modules::NormWeights attention_norm;
-    modules::AttentionWeights attention;
-    modules::NormWeights cgmlp_norm;
-    OWSMV4CgMLPWeights cgmlp;
-    modules::DepthwiseConv1dWeights merge_conv;
-    modules::LinearWeights merge_projection;
-    modules::FeedForwardWeights final_ffn;
-    modules::NormWeights final_ffn_norm;
-    modules::NormWeights output_norm;
-};
-
 struct OWSMV4Weights {
     std::unique_ptr<core::BackendWeightStore> store;
     OWSMV4SubsamplingWeights subsampling;
-    std::vector<OWSMV4EBranchformerLayerWeights> encoder;
+    std::vector<modules::EBranchformerBlockWeights> encoder;
     modules::NormWeights encoder_norm;
     core::TensorValue embedding;
     std::vector<modules::TransformerDecoderBlockWeights> decoder;
