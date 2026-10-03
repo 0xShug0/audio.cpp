@@ -214,7 +214,7 @@ public:
     const EchoTtsConfig & config() const noexcept { return config_; }
     bool conditioning_ready() const noexcept { return conditioning_ready_; }
 
-    void prepare_conditioning(const EchoConditioning & conditioning) {
+    void prepare_conditioning(const EchoConditioning & conditioning, int max_kv_lanes) {
         validate_conditioning(conditioning);
 
         // Any change in conditioning length invalidates every cached graph,
@@ -235,7 +235,7 @@ public:
                 conditioning.speaker_mask[static_cast<size_t>(i * config_.speaker_patch_size)];
         }
 
-        allocate_kv_cache();
+        allocate_kv_cache(max_kv_lanes);
         build_conditioning_graph();
 
         core::write_tensor_i32(text_ids_, conditioning.text_input_ids);
@@ -492,7 +492,7 @@ private:
     // The cache lives in its own context and backend buffer so that both the
     // conditioning graph (which writes it) and the denoiser graphs (which read
     // it) can reference the same tensors as leaves.
-    void allocate_kv_cache() {
+    void allocate_kv_cache(int max_kv_lanes) {
         const int64_t heads = config_.num_heads;
         const int64_t head_dim = config_.head_dim();
         const size_t tensor_count = static_cast<size_t>(config_.num_layers) * 4;
@@ -508,7 +508,7 @@ private:
         // batch and short-circuits to a passthrough. The single-lane graph
         // reads lane 0, which is a contiguous prefix because the lane axis is
         // outermost in ggml's layout.
-        kv_lanes_ = echo_kv_expand_disabled() ? 1 : kMaxCfgLanes;
+        kv_lanes_ = echo_kv_expand_disabled() ? 1 : max_kv_lanes;
         auto make = [&](int64_t tokens) {
             return core::make_tensor(
                 ctx, GGML_TYPE_F32,
@@ -850,8 +850,8 @@ EchoDiTRuntime::~EchoDiTRuntime() = default;
 
 const EchoTtsConfig & EchoDiTRuntime::config() const noexcept { return impl_->config(); }
 
-void EchoDiTRuntime::prepare_conditioning(const EchoConditioning & conditioning) {
-    impl_->prepare_conditioning(conditioning);
+void EchoDiTRuntime::prepare_conditioning(const EchoConditioning & conditioning, int max_kv_lanes) {
+    impl_->prepare_conditioning(conditioning, max_kv_lanes);
 }
 
 std::vector<float> EchoDiTRuntime::denoise_once(const std::vector<float> & x, float t, int lanes) {
