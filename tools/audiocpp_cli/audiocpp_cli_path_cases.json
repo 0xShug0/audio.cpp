@@ -38,6 +38,20 @@
       ]
     },
     {
+      "id": "tf_gridnet_separation",
+      "coverage": "TF-GridNet resampling, chunked speaker matching, whole-file inference, and repeated requests",
+      "family": "tf_gridnet",
+      "model": "models/TF-GridNet-GGUF/tf-gridnet-wsj0-2mix-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "chunked", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "whole", "audio": "assets/resources/sample_16k.wav", "options": {"audio_chunk_duration_sec": 0}},
+        {"id": "repeat_chunked", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
       "id": "owsm_v4_streaming",
       "coverage": "OWSM v4 committed long-form text deltas",
       "family": "owsm",

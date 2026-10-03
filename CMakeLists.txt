@@ -653,6 +653,17 @@ audiocpp_add_model(sam_audio
         engine::models::sam_audio::make_sam_audio_loader
 )
 
+audiocpp_add_model(tf_gridnet
+    SOURCES
+        src/models/tf_gridnet/assets.cpp
+        src/models/tf_gridnet/runtime.cpp
+        src/models/tf_gridnet/session.cpp
+    INCLUDES
+        engine/models/tf_gridnet/session.h
+    LOADERS
+        engine::models::tf_gridnet::make_tf_gridnet_loader
+)
+
 audiocpp_add_model(apollo
     SOURCES
         src/models/apollo/assets.cpp

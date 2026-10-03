@@ -1,6 +1,20 @@
 {
   "cases": [
     {
+      "id": "tf_gridnet_longform_speech",
+      "coverage": "TF-GridNet bounded-window long-form speech separation followed by short-request reuse",
+      "family": "tf_gridnet",
+      "model": "models/TF-GridNet-GGUF/tf-gridnet-wsj0-2mix-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "warmup", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "longform", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav"},
+        {"id": "repeat_short", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
       "id": "htdemucs_pd_song_source_separation",
       "coverage": "HTDemucs source separation on a public-domain three-minute mixed music recording",
       "family": "htdemucs",
