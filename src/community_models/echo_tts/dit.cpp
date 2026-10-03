@@ -281,15 +281,15 @@ public:
         if (!conditioning_ready_) {
             throw std::runtime_error("Echo-TTS denoise() called before prepare_conditioning()");
         }
-        if (lanes != 1 && lanes != 3) {
-            throw std::runtime_error("Echo-TTS denoiser supports 1 or 3 CFG lanes");
+        if (lanes != 1 && lanes != 2 && lanes != 3) {
+            throw std::runtime_error("Echo-TTS denoiser supports 1, 2, or 3 CFG lanes");
         }
         const int64_t elements = sequence_length_ * config_.latent_size;
         if (static_cast<int64_t>(x.size()) != elements) {
             throw std::runtime_error("Echo-TTS denoiser received a mis-shaped latent");
         }
 
-        auto & graph = lanes == 1 ? single_ : triple_;
+        auto & graph = lanes == 1 ? single_ : lanes == 2 ? joint_ : independent_;
         if (graph.graph == nullptr) {
             build_denoiser_graph(graph, lanes);
         }
@@ -453,15 +453,17 @@ private:
     }
 
     // Denoiser mask, laid out per lane as [self | text | speaker]. Lane 0 is
-    // fully conditional, lane 1 drops text, lane 2 drops speaker, reproducing
-    // upstream's concatenated cond/uncond masks.
+    // fully conditional,
+    // joint-cfg: lane 1 drops text and speaker
+    // independent-cfg: lane 1 drops text, lane 2 drops speaker, reproducing
+    //     upstream's concatenated cond/uncond masks.
     std::vector<float> make_denoiser_mask(int lanes) const {
         const int64_t keys = sequence_length_ + text_length_ + speaker_tokens_;
         std::vector<float> mask(
             static_cast<size_t>(static_cast<int64_t>(lanes) * sequence_length_ * keys), 0.0F);
         for (int lane = 0; lane < lanes; ++lane) {
-            const bool text_on = lane != 1;
-            const bool speaker_on = lane != 2;
+            const bool text_on = lane != 1;              // Joint: lanes 0, 1; Independent: lanes 0, 1
+            const bool speaker_on = lane != (lanes - 1); // Joint: lanes 0, 1; Independent: lanes 0, 2
             for (int64_t q = 0; q < sequence_length_; ++q) {
                 float * row = mask.data() +
                               (static_cast<int64_t>(lane) * sequence_length_ + q) * keys;
@@ -779,7 +781,8 @@ private:
 
     void release_denoiser_graphs() {
         release_denoiser_graph(single_);
-        release_denoiser_graph(triple_);
+        release_denoiser_graph(joint_);
+        release_denoiser_graph(independent_);
     }
 
     void release_kv_cache() {
@@ -831,7 +834,8 @@ private:
     core::TensorValue speaker_positions_;
 
     DenoiserGraph single_;
-    DenoiserGraph triple_;
+    DenoiserGraph joint_;
+    DenoiserGraph independent_;
 };
 
 EchoDiTRuntime::EchoDiTRuntime(
