@@ -59,9 +59,96 @@ support. This pass used a fresh CPU-only Release build in `build-kitten2-pr/`:
 
 Logs and WAVs are local to `build-kitten2-pr/`. The multilingual report is
 `build-kitten2-pr/multilingual-validation/report.json`.
-CUDA numerical and timing results below come from the earlier validation on
-`2892ed3e`; the transferred model and shared arithmetic sources are identical
-apart from line endings. CUDA was not rebuilt during this branch-integration pass.
+This initial integration pass was CPU-only. A subsequent fresh CUDA build of
+the integrated branch is recorded next.
+
+## Fresh CUDA validation on bf50ab82
+
+On 2026-10-03, the GitHub checkout's `kittentts2` branch at
+`bf50ab82f922443fbdec39a1eea8e4085df3477c` was configured and built in a new
+`build-kitten2-cuda/` directory. All native checks in this section use those newly
+built binaries. The session and server tests use the published multilingual GGUF
+with the SHA-256 above; component probes use the original S3 checkpoint.
+No runtime source changes were needed.
+
+Environment: Windows x64, MSVC 19.44.35228.0, CUDA Toolkit 13.3.73, driver
+610.88, RTX 4060 Ti 16 GiB, eight host threads. Numerical reference comparisons
+used Python 3.12.10 and PyTorch 2.13.0 on CPU. Configure and Release
+build both exited successfully (approximately 51 seconds and 598 seconds).
+
+The exact build options, with PowerShell line continuations, were:
+
+```powershell
+cmake -S . -B build-kitten2-cuda -G "Visual Studio 17 2022" -A x64 `
+  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=kitten_tts2 `
+  -DENGINE_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89 `
+  -DENGINE_ENABLE_LLAMAFILE=OFF -DENGINE_BUILD_TESTS=ON `
+  -DCMAKE_SUPPRESS_REGENERATION=ON
+cmake --build build-kitten2-cuda --config Release --parallel 8 `
+  --target audiocpp_cli audiocpp_server audiocpp_gguf `
+    audiocpp_kitten_tts2_prepare_voices kitten_tts2_session_probe `
+    kitten_tts2_components_probe model_spec_system_test
+```
+
+Binaries are in `build-kitten2-cuda/bin/Release/`. Tests followed the
+[README](README.md), using `cuda` for both native probes and `--backend cuda`
+for the multilingual server script. Tracing was enabled before the session
+probe. The complete 48-entry prepared voice index was reused from packaging.
+
+- Model-spec test passed; CLI device discovery found the RTX 4060 Ti as CUDA 0.
+- Stored tensor precision, exact seeded repeats, preset switching, three-chunk
+  speech, cloning, cached clones, changed references and invalid-input checks
+  all passed in one loaded session.
+- LM parity passed: 301 exact prompt tokens, maximum logit error 0.253082,
+  mean error 0.052854, cosine 0.99999946, and matching top speech token 2957.
+  The first preset produced 72 codes and 71,520 waveform samples.
+- All six native component comparisons passed the existing limits, with no
+  `NVIDIA_TF32_OVERRIDE` set:
+
+| Component | CUDA maximum error |
+|---|---:|
+| XVectorSincNet normalized identity | 0.000003476 |
+| BF16 speaker projection (same identity input) | 0 |
+| S3 encoder hidden states | 0.000002146 |
+| Two-step meanflow mel, zero noise | 0.003841341 |
+| HiFT pitch, same native mel | 0.000000298 |
+| HiFT waveform, same mel and zero random draws | 0.000020705 |
+
+- All 13 multilingual server cases passed: nine language presets plus English
+  Bruno, Chinese chunking, and German/Chinese reference cloning. The API exposed
+  all 48 voices. Reference codec tokens and reference/target BPE matched the
+  upstream assets; generated audio was finite, non-silent mono 24 kHz and
+  generation ended before its token limit. Chinese chunking produced 13.46 seconds
+  of audio. The temporary server was stopped after validation.
+- Fresh CLI/server executable imports include `cublas64_13.dll` and Windows/MSVC
+  dependencies, with no Torch, Python or ONNX Runtime DLLs.
+
+Session timings below exclude model/session loading. The first clone includes
+lazy reference-encoder loading and conditioning; all requests use seed 1234.
+Tracing was enabled. These are individual desktop measurements, not benchmark
+averages. Before the build, other GPU activity occupied 7,824 MiB; this pass did
+not repeat the separate VRAM measurement below or change the 7 GB estimate.
+
+| Request | Wall seconds | Audio seconds | RTF |
+|---|---:|---:|---:|
+| Bruno, first request | 1.157 | 2.98 | 0.388 |
+| Bruno, cached repeat | 0.994 | 2.98 | 0.334 |
+| Switch to Bella | 1.316 | 3.52 | 0.374 |
+| Three-chunk passage | 4.807 | 13.70 | 0.351 |
+| Clone Bruno reference, first | 1.842 | 3.10 | 0.594 |
+| Clone, cached repeat | 1.125 | 3.10 | 0.363 |
+| Change clone reference to Bella | 1.751 | 4.28 | 0.409 |
+
+Local evidence in this checkout's `build-kitten2-cuda/`: `branch-cuda-build.log`,
+`branch-cuda-environment.json`, `branch-cuda-validation.json`, `session.log`,
+`lm-parity.json`, `component-parity.log`, `multilingual-validation/report.json`,
+and `cli-dependencies.log` / `server-dependencies.log`. Generated WAVs and traces
+remain in the same ignored build directory.
+
+The sections below retain the earlier development-checkout validation on base
+`2892ed3e`, including its CPU measurements and separate VRAM sampling. Build paths
+in those sections refer to that earlier checkout. The new timings above do not
+establish a performance improvement: neither run controlled other desktop load.
 
 ## Passed checks
 

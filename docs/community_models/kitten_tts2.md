@@ -27,6 +27,10 @@ cmake --build build-kitten2 --config Release \
 
 Visual Studio binaries are in `build-kitten2/bin/Release/`; single-configuration
 builds use `build-kitten2/bin/`.
+Run examples from the audio.cpp repository root and replace model/source path
+placeholders with their actual locations. Commands use POSIX-shell `\` line
+continuations; in PowerShell, join the lines or use backticks instead. Examples
+using `audiocpp_cli` assume its binary directory is on `PATH`.
 
 For NVIDIA, configure with `-DENGINE_ENABLE_CUDA=ON` and select
 `--backend cuda` at runtime. The Kitten networks use the selected GGML backend;
@@ -41,7 +45,9 @@ The speaker's temporal max pooling uses a CUDA-supported 3x1 window. F32 speaker
 S3, and HiFT matrix operations explicitly preserve full precision: TF32 error in
 the first speaker convolution otherwise changes the identity embedding. The CUDA
 backend honors this precision request automatically; no environment override is
-needed. See the validation record for measured RTF and component errors.
+needed. See the [fresh CUDA validation](../../tests/kitten_tts2/validation.md#fresh-cuda-validation-on-bf50ab82)
+for the current port's build, server/cloning checks, measured RTF and component
+errors.
 
 The WebUI shows **7 GB estimated VRAM** for the native Q8 package. A local CUDA
 server run with a 238-character passage peaked approximately 4.7 GiB above the
@@ -65,7 +71,9 @@ Direct download:
 [kitten-tts2-native-q8-multilingual.gguf](https://huggingface.co/dignome/kitten_tts2/resolve/main/kitten-tts2-native-q8-multilingual.gguf)
 (3,282,123,776 bytes, approximately 3.28 GB). The published file's SHA-256 is
 `e97920ca5053f9fcd4de638dcd8114ed2510d4291a93257473a8843c3ff349ad`.
-Separate model components or reference recordings are not needed at runtime.
+Separate model components or the original preset recordings are not needed at
+runtime. Custom voice cloning still requires the reference clip and transcript
+you supply.
 
 ```sh
 audiocpp_cli --family kitten_tts2 \
@@ -77,10 +85,18 @@ audiocpp_cli --family kitten_tts2 \
 
 ### Original source assets
 
+These assets are for direct safetensors loading, local conversion, or developer
+validation. They are not additional downloads required by the published GGUF.
+
 Use the original [KittenML/kitten-tts-2](https://huggingface.co/KittenML/kitten-tts-2)
 layout, including the full `lm/model.safetensors`, LM configuration/tokenizer,
 `config.json`, `cpp/default/voices.json`, and `speaker/model.safetensors`.
 Preserve `LICENSE.md` and `speaker/LICENSE`.
+For multilingual preset preparation, also keep `voices/voices.json` and its
+referenced WAV/NPZ files. The upstream `cpp/default/decoder.pt` is needed only
+for the optional PyTorch component comparisons described in the
+[test guide](../../tests/kitten_tts2/README.md#validation-assets); the native
+runtime and GGUF converter do not use it.
 
 Add the official [S3 meanflow checkpoint](https://huggingface.co/ResembleAI/chatterbox-turbo/blob/main/s3gen_meanflow.safetensors)
 as `native/s3gen_meanflow.safetensors`, and the
