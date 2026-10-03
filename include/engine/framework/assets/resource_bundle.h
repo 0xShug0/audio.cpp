@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -33,9 +34,15 @@ struct TensorResource {
     return checkpoint_path.parent_path() / (checkpoint_path.stem().string() + "_config.json");
 }
 
+// Configure before publication; registered files/resources remain immutable.
+struct ResourceBundleOptions {
+    bool synchronized_cache_access = false;
+};
+
 class ResourceBundle {
 public:
     explicit ResourceBundle(std::filesystem::path model_root = {});
+    ResourceBundle(std::filesystem::path model_root, ResourceBundleOptions options);
 
     void add_file(std::string id, const std::filesystem::path & path);
     void add_tensor_source(std::string id, const std::filesystem::path & path, std::string tensor_prefix = {});
@@ -54,6 +61,7 @@ public:
     [[nodiscard]] engine::io::json::Value parse_jsonc(std::string_view id) const;
     [[nodiscard]] engine::io::yaml::FlattenedDocument parse_flattened_yaml(std::string_view id) const;
     [[nodiscard]] std::shared_ptr<const TensorSource> open_tensor_source(std::string_view id) const;
+    [[nodiscard]] std::shared_ptr<const TensorSource> open_tensor_source(std::string_view id, TensorSourceOptions options) const;
 
 private:
     std::filesystem::path model_root_;
@@ -61,6 +69,10 @@ private:
     std::unordered_map<std::string, TensorResource> tensor_resources_;
     mutable std::unordered_map<std::string, std::shared_ptr<const TensorSource>> tensor_sources_;
     mutable std::unordered_map<std::string, std::shared_ptr<const TensorSource>> tensor_sources_by_path_;
+    // Separate identities for both resource-ID and canonical-path caches.
+    mutable std::unordered_map<std::string, std::shared_ptr<const TensorSource>> synchronized_tensor_sources_;
+    mutable std::unordered_map<std::string, std::shared_ptr<const TensorSource>> synchronized_tensor_sources_by_path_;
+    std::shared_ptr<std::mutex> cache_mutex_;
 };
 
 }  // namespace engine::assets

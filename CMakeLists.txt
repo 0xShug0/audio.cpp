@@ -2740,6 +2740,7 @@ add_executable(audiocpp_server
     app/server/model_memory.cpp
     app/server/multipart.cpp
     app/server/runtime.cpp
+    app/server/parallel_runtime.cpp
     app/server/ui_assets.cpp
     app/cli/args.cpp
     app/cli/request.cpp
@@ -2937,6 +2938,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
+    add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
+    add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
+    if (ENGINE_ENABLE_VULKAN)
+        add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
+        add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
+        set_tests_properties(vulkan_shared_weight_cache_test PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+
     add_engine_unittest(auk_conditioning_test tests/auk/conditioning_test.cpp)
     add_engine_unittest(auk_vae_test tests/auk/vae_test.cpp)
     add_engine_unittest(auk_flow_test tests/auk/flow_test.cpp)
@@ -2989,6 +2998,47 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_TESTS)
+        add_executable(server_model_slots_test tests/unittests/test_server_model_slots.cpp)
+        target_include_directories(server_model_slots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(server_model_slots_test PRIVATE Threads::Threads)
+        add_test(NAME server_model_slots_test COMMAND server_model_slots_test)
+        set_tests_properties(server_model_slots_test PROPERTIES TIMEOUT 60)
+
+        get_target_property(server_selection_sources audiocpp_server SOURCES)
+        list(FILTER server_selection_sources EXCLUDE REGEX "app/server/(main|model_installer|parallel_runtime)\\.cpp$")
+        add_executable(server_runtime_selection_test
+            tests/unittests/test_server_runtime_selection.cpp ${server_selection_sources})
+        target_include_directories(server_runtime_selection_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_link_libraries(server_runtime_selection_test PRIVATE engine_runtime ggml Threads::Threads)
+        if(WIN32)
+            target_link_libraries(server_runtime_selection_test PRIVATE ws2_32)
+        endif()
+        add_test(NAME server_runtime_selection_test COMMAND server_runtime_selection_test)
+        set_tests_properties(server_runtime_selection_test PROPERTIES TIMEOUT 60)
+
+        # Exercise real handlers with controlled, tiny model loaders. No native
+        # installer or backend-specific model admission is needed by this test.
+        get_target_property(server_lifecycle_sources audiocpp_server SOURCES)
+        list(FILTER server_lifecycle_sources EXCLUDE REGEX "app/server/(main|model_installer|runtime)\\.cpp$")
+        add_executable(server_parallel_lifecycle_test
+            tests/unittests/test_server_parallel_lifecycle.cpp ${server_lifecycle_sources})
+        target_include_directories(server_parallel_lifecycle_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/server "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        target_link_libraries(server_parallel_lifecycle_test PRIVATE engine_runtime ggml Threads::Threads)
+        if(WIN32)
+            target_link_libraries(server_parallel_lifecycle_test PRIVATE ws2_32)
+        endif()
+        add_test(NAME server_parallel_lifecycle_test COMMAND server_parallel_lifecycle_test)
+        set_tests_properties(server_parallel_lifecycle_test PROPERTIES TIMEOUT 90)
+
+        add_executable(session_pool_test tests/unittests/test_session_pool.cpp)
+        target_include_directories(session_pool_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        # TaskResult owns JSON values for custom-schema outputs.
+        target_link_libraries(session_pool_test PRIVATE engine_runtime ggml-base Threads::Threads)
+        add_test(NAME session_pool_test COMMAND session_pool_test)
+        set_tests_properties(session_pool_test PROPERTIES TIMEOUT 60)
+
         if(kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
             add_engine_unittest(kokoro_g2p_probe tests/kokoro_tts/kokoro_g2p_probe.cpp)
