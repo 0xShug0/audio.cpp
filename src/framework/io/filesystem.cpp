@@ -1,10 +1,38 @@
 #include "engine/framework/io/filesystem.h"
 
+#ifdef _WIN32
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
+#endif
+
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 
 namespace engine::io {
+
+std::filesystem::path path_from_utf8(std::string_view value) {
+#ifdef _WIN32
+    if (value.empty()) {
+        return {};
+    }
+    const int size = MultiByteToWideChar(
+        CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+    if (size <= 0) {
+        // Not valid UTF-8: leave it to the platform rather than lose the bytes.
+        return std::filesystem::path(std::string(value));
+    }
+    std::wstring wide;
+    wide.resize(static_cast<size_t>(size));
+    MultiByteToWideChar(
+        CP_UTF8, 0, value.data(), static_cast<int>(value.size()), wide.data(), size);
+    return std::filesystem::path(wide);
+#else
+    return std::filesystem::path(std::string(value));
+#endif
+}
 
 bool is_existing_directory(const std::filesystem::path & path) {
     std::error_code ec;

@@ -1,4 +1,5 @@
 #include "args.h"
+#include "engine/framework/io/filesystem.h"
 
 #include <iostream>
 #include <set>
@@ -172,7 +173,7 @@ std::optional<float> parse_optional_float_arg(int argc, char ** argv, const std:
 
 std::optional<std::filesystem::path> optional_path_arg(int argc, char ** argv, const std::string & name) {
     if (const auto value = find_arg(argc, argv, name)) {
-        return std::filesystem::path(*value);
+        return engine::io::path_from_utf8(*value);
     }
     return std::nullopt;
 }

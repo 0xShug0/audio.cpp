@@ -7,6 +7,7 @@
 #include "../streaming/streaming.h"
 #include "../workflow/execution.h"
 #include "../workflow/file_sink.h"
+#include "engine/framework/io/filesystem.h"
 #include "../workflow/pipeline.h"
 #include "../workflow/workflow.h"
 
@@ -649,7 +650,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 
         const auto registry_config = find_arg(argc, argv, "--registry-config");
         auto registry = engine::runtime::make_default_registry(
-            registry_config ? std::optional<std::filesystem::path>(std::filesystem::path(*registry_config)) : std::nullopt);
+            registry_config ? std::optional<std::filesystem::path>(engine::io::path_from_utf8(*registry_config)) : std::nullopt);
         auto pipeline_registry = minitts::app::make_default_pipeline_registry();
         const bool help_requested = has_arg(argc, argv, "--help");
         // Read before the command branches below. An option that no lookup ever runs for cannot
@@ -757,7 +758,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             minitts::app::run_json_workflow(
                 registry,
                 minitts::app::WorkflowRunOptions{
-                    std::filesystem::path(*pipeline_arg),
+                    engine::io::path_from_utf8(*pipeline_arg),
                     optional_path_arg(argc, argv, "--out-dir").value_or(std::filesystem::path("workflow_outputs")),
                     backend,
                     optional_path_arg(argc, argv, "--out"),
@@ -786,7 +787,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
         }
 
         engine::runtime::ModelLoadRequest load_request;
-        load_request.model_path = std::filesystem::path(*model_arg);
+        load_request.model_path = engine::io::path_from_utf8(*model_arg);
         load_request.model_spec_override = optional_path_arg(argc, argv, "--model-spec-override");
         if (const auto family = find_arg(argc, argv, "--family")) {
             load_request.family_hint = *family;
