@@ -119,6 +119,19 @@ int64_t quantize_window(int64_t frames, int64_t max_frames) {
     return std::min<int64_t>(frames, max_frames);
 }
 
+// For KV-cache allocation mostly, determine number of kv-lanes to allocate
+// (may belong in a different source file?)
+int cfg_mode_to_kv_lanes(EchoCfgMode cfg_mode) {
+    switch (cfg_mode) {
+        case EchoCfgMode::Joint:
+            return 2;
+        case EchoCfgMode::Independent:
+            return 3;
+        default:
+            throw std::runtime_error("Echo-TTS unrecognized CFG mode.");
+    }
+}
+
 std::string trim_ascii(std::string text) {
   while (!text.empty() && (text.front() == ' ' || text.front() == '\n' ||
                            text.front() == '\r' || text.front() == '\t')) {
@@ -543,7 +556,7 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
     conditioning.speaker_mask.assign(static_cast<size_t>(speaker_frames_), 1.0F);
     conditioning.speaker_frames = speaker_frames_;
 
-    dit_->prepare_conditioning(conditioning);
+    dit_->prepare_conditioning(conditioning, cfg_mode_to_kv_lanes(cfg_mode_));
 
     // Adaptive window: OFF by default, enable with AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW=1.
     //
