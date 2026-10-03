@@ -1581,6 +1581,18 @@ audiocpp_add_model(crisperwhisper
         engine::models::crisperwhisper::make_crisperwhisper_loader
 )
 
+audiocpp_add_model(owsm
+    SOURCES
+        src/models/owsm/assets.cpp
+        src/models/owsm/weights.cpp
+        src/models/owsm/runtime.cpp
+        src/models/owsm/session.cpp
+    INCLUDES
+        engine/models/owsm/model.h
+    LOADERS
+        engine::models::owsm::make_owsm_loader
+)
+
 audiocpp_add_model(cohere_asr
     SOURCES
         src/models/cohere_asr/assets.cpp

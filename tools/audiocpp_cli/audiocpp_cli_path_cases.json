@@ -1,6 +1,36 @@
 {
   "cases": [
     {
+      "id": "owsm_v4_asr",
+      "coverage": "OWSM v4 transcription, timestamps, translation, language identification, beam search, and repeated requests",
+      "family": "owsm",
+      "model": "models/OWSM-GGUF/owsm-v4-base-102m-f32.gguf",
+      "task": "asr",
+      "outputs": ["text", "segments"],
+      "requests": [
+        {"id": "first", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng", "return_timestamps": true}},
+        {"id": "different_audio", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "options": {"language": "eng", "return_timestamps": true}},
+        {"id": "translation", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng", "target_language": "deu"}},
+        {"id": "auto_language", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "auto", "return_timestamps": true}},
+        {"id": "beam5", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng", "beam_size": 5, "return_timestamps": true}},
+        {"id": "repeat_first", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng", "return_timestamps": true}}
+      ]
+    },
+    {
+      "id": "owsm_v4_longform",
+      "coverage": "OWSM v4 long-form transcription with and without previous-text conditioning",
+      "family": "owsm",
+      "model": "models/OWSM-GGUF/owsm-v4-base-102m-f32.gguf",
+      "task": "asr",
+      "outputs": ["text", "segments"],
+      "requests": [
+        {"id": "warmup", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng"}},
+        {"id": "longform", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"language": "eng", "return_timestamps": true}},
+        {"id": "condition_previous", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"language": "eng", "return_timestamps": true, "condition_on_previous_text": true}},
+        {"id": "repeat_short", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng"}}
+      ]
+    },
+    {
       "id": "tone_color_vc_vc",
       "coverage": "Tone Color VC reference conditioning, resampling, posterior sampling, and same-session voice changes",
       "family": "tone_color_vc",
