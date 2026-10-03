@@ -56,7 +56,10 @@ public:
     Lfm2FastConformerEncoderRuntime(const Lfm2FastConformerEncoderRuntime &) = delete;
     Lfm2FastConformerEncoderRuntime & operator=(const Lfm2FastConformerEncoderRuntime &) = delete;
 
-    // One embedding per 8 feature frames, rounded up.
+    // One embedding per 8 feature frames, rounded up. The graph and its
+    // compute buffer stay for the next call, which reuses the graph when the
+    // frame count is the same. A chunk longer than 30 s frees its buffer
+    // afterwards, and so does a call that fails.
     Lfm2AudioEmbeddings encode(const Lfm2AudioFeatures & features);
 
 private:

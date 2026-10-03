@@ -3053,6 +3053,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 lfm2_audio_asr_inputs_test
                 lfm2_audio_assets_test
                 lfm2_audio_backbone_test
+                lfm2_audio_encoder_test
                 lfm2_audio_features_test
                 lfm2_audio_session_test
                 lfm2_audio_tokenizer_test)
