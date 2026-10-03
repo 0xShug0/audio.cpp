@@ -16,7 +16,7 @@ build-kitten2/bin/model_spec_system_test
 
 ```sh
 build-kitten2/bin/kitten_tts2_session_probe \
-  build-kitten2/kitten-tts2-native-q8.gguf build-kitten2/native-session \
+  models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf build-kitten2/native-session \
   8 native ../kitten-tts-2
 ```
 

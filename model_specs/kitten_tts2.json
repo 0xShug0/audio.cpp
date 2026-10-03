@@ -194,12 +194,39 @@
       }
     ]
   },
-  "packages": [],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "dignome/kitten_tts2",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "kitten_tts2_q8_0",
+      "display_name": "Kitten TTS 2 Multilingual Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "kitten-tts2",
+      "files": [
+        "kitten-tts2-native-q8-multilingual.gguf",
+        "LICENSE",
+        "NOTICE",
+        "native/LICENSE",
+        "speaker/LICENSE",
+        "SHA256SUMS"
+      ]
+    }
+  ],
   "dependencies": [],
   "ui": {
+    "recommended_package": "kitten_tts2_q8_0",
     "min_vram_gb": 7,
     "tags": [
-      "TTS"
+      "TTS",
+      "GGUF"
     ],
     "builtin_voices": [
       "Bella",

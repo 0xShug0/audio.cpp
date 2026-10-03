@@ -7,7 +7,7 @@ and chunked long-form speech. The complete inference path is native C++/GGML:
 Qwen3, S3 meanflow, HiFT, S3 tokenizer, CAMPPlus, and XVectorSincNet.
 Python, LibTorch, TorchScript, and ONNX Runtime are not runtime dependencies.
 
-The family is experimental pending publication of a compatible audio.cpp GGUF.
+The family is experimental; a compatible community GGUF is available below.
 CPU and NVIDIA CUDA are validated. Other GPU backends, streaming, automatic
 reference transcription, the upstream text normalizer, and the smaller
 `student_w4`/`student_w8` decoders are not implemented or validated by this port.
@@ -48,7 +48,34 @@ server run with a 238-character passage peaked approximately 4.7 GiB above the
 desktop baseline for preset speech and 5.9 GiB for cloning. The estimate includes
 headroom; it is guidance, not a tested minimum for every input or weight type.
 
-## Assets and preset speech
+## Download and preset speech
+
+The ready-to-run [community package](https://huggingface.co/dignome/kitten_tts2)
+contains the full native decoder, speaker encoders, and all 48 prepared voice
+entries. Install it through the WebUI model manager or from the command line:
+
+```sh
+python tools/model_manager_v2.py install kitten_tts2 --models-root models
+```
+
+The explicit package ID is `kitten_tts2_q8_0`. It installs the GGUF and readable
+license/NOTICE files under `models/kitten-tts2/`. No Hugging Face token is needed.
+
+Direct download:
+[kitten-tts2-native-q8-multilingual.gguf](https://huggingface.co/dignome/kitten_tts2/resolve/main/kitten-tts2-native-q8-multilingual.gguf)
+(3,282,123,776 bytes, approximately 3.28 GB). The published file's SHA-256 is
+`e97920ca5053f9fcd4de638dcd8114ed2510d4291a93257473a8843c3ff349ad`.
+Separate model components or reference recordings are not needed at runtime.
+
+```sh
+audiocpp_cli --family kitten_tts2 \
+  --model models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf \
+  --backend cpu --threads 8 --task tts --voice-id Bruno \
+  --request-option seed=1234 --text "Hello there. This is native Kitten speech." \
+  --out hello.wav
+```
+
+### Original source assets
 
 Use the original [KittenML/kitten-tts-2](https://huggingface.co/KittenML/kitten-tts-2)
 layout, including the full `lm/model.safetensors`, LM configuration/tokenizer,
@@ -83,7 +110,7 @@ Italian, Portuguese, Russian, or Spanish. The 38 named English voices remain
 available. These ten languages are registered in the model spec.
 
 ```sh
-audiocpp_cli --family kitten_tts2 --model kitten-tts2-native-q8.gguf \
+audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf \
   --backend cpu --task tts --voice-id German \
   --text "Guten Morgen. Dies ist ein Test der deutschen Sprachausgabe." --out german.wav
 ```
@@ -109,7 +136,7 @@ see the validation record for exactly what was exercised.
 Supply a one-to-thirty-second reference clip and its transcript:
 
 ```sh
-audiocpp_cli --family kitten_tts2 --model /path/to/kitten-tts-2 \
+audiocpp_cli --family kitten_tts2 --model models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf \
   --backend cpu --threads 8 --task clon --voice-ref reference.wav \
   --reference-text "The exact words spoken in the reference clip." \
   --text "The new words to say in this voice." --request-option seed=1234 \
@@ -159,7 +186,7 @@ Embeddings/the tied head stay F16; decoder and reference encoders use F32.
 ```sh
 python tools/community_models/prepare_kitten_tts2_gguf.py \
   --model /path/to/kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
-  --type q8_0 --output kitten-tts2-native-q8.gguf
+  --type q8_0 --output kitten-tts2-native-q8-multilingual.gguf
 ```
 
 This helper uses Python's standard library, the native converter, and the

@@ -4,9 +4,14 @@ Powered by Stellon Labs.
 
 Validated locally on 2026-10-03. The full default decoder and reference-audio
 cloning run natively through the CLI, C++ session API, and server. The port remains
-experimental pending a hosted audio.cpp package. CPU and NVIDIA CUDA builds,
+experimental. CPU and NVIDIA CUDA builds,
 preset synthesis, and reference cloning pass. Other GPU backends have not been
 validated.
+
+The validated multilingual GGUF is published at
+[dignome/kitten_tts2](https://huggingface.co/dignome/kitten_tts2), with SHA-256
+`e97920ca5053f9fcd4de638dcd8114ed2510d4291a93257473a8843c3ff349ad`.
+The `kitten_tts2_q8_0` package installs it through the normal model manager.
 
 ## Environment and assets
 
