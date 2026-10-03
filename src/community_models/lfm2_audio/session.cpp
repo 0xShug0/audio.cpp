@@ -6,6 +6,7 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/silero_vad/session.h"
 
@@ -275,9 +276,9 @@ runtime::IOfflineVoiceTaskSession & Lfm2AudioSession::vad_session() {
     return *vad_session_;
 }
 
-// A transcript that reaches max_tokens is cut off there and kept, with a
-// warning, as liquid-audio's generate_sequential keeps what it generated when
-// max_new_tokens runs out; the other chunks go on.
+// A transcript that reaches max_tokens is cut off there, at the last whole
+// character, and kept, with a warning, as liquid-audio's generate_sequential
+// keeps what it generated when max_new_tokens runs out; the other chunks go on.
 std::string Lfm2AudioSession::transcribe(
     const std::vector<float> & samples, const runtime::TimeSpan & span, const RequestOptions & options) {
     const std::vector<float> chunk(samples.begin() + span.start_sample, samples.begin() + span.end_sample);
@@ -302,7 +303,11 @@ std::string Lfm2AudioSession::transcribe(
     debug::trace_log_scalar("lfm2_audio.session.audio_tokens", audio.tokens);
     debug::trace_log_scalar("lfm2_audio.session.generated_tokens", static_cast<int64_t>(result.tokens.size()));
 
-    return tokenizer_.decode(result.tokens);
+    // Byte-level tokens need not end on a character boundary, and the next
+    // chunk cannot complete one: end the text at its last whole character.
+    auto text = tokenizer_.decode(result.tokens);
+    text.resize(runtime::transcript_publishable_end(text));
+    return text;
 }
 
 bool Lfm2AudioSession::reached_max_tokens() const {
