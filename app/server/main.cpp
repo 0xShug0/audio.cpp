@@ -2,6 +2,7 @@
 #include "http.h"
 #include "runtime.h"
 #include "parallel_runtime.h"
+#include "parallel_http.h"
 
 #include "../common/build_info.h"
 
@@ -289,7 +290,10 @@ int main(int argc, char ** argv) {
                     config.max_request_body_bytes,
                     config.frontend_options);
             } else {
-                minitts::server::serve_http(
+                const auto http_listener = parallel_jobs
+                    ? minitts::server::serve_parallel_http
+                    : minitts::server::serve_http;
+                http_listener(
                     config.host,
                     config.port,
                     state,

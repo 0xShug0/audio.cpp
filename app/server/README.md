@@ -176,6 +176,10 @@ With `--parallel-jobs`, every model uses `ParallelServerState`. Omitted slots
 means capacity one; otherwise `"slots"` must be an integer from 1 to 16. Capacity
 one also uses the new scheduler and session pool. Slot count never selects the
 runtime. The requested count must fit the model's advertised parallel capacity.
+The default HTTP listener in this mode owns its request workers, interrupts
+socket I/O on shutdown, and joins workers before destroying the runtime. Active
+GPU work must still finish. Custom frontend listeners own their shutdown/drain
+behavior through the existing frontend interface.
 The common framework retains capacity one for existing models; model adapters
 and validated admission entries belong to the separate PR #706 follow-up.
 

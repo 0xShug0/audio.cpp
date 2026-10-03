@@ -261,6 +261,9 @@ private:
     // pass the eviction/memory check and overshoot. Not taken when both are off:
     // unrelated first loads stay concurrent there.
     std::mutex model_load_mutex_;
+    // Publish a bulk operation's per-model barriers as one short transaction.
+    // Released before any waiting, unloading, or inference.
+    std::mutex bulk_admission_mutex_;
     std::filesystem::path upload_root_;
     std::mutex upload_root_mutex_;
     std::filesystem::path repository_root_;

@@ -2737,6 +2737,7 @@ add_executable(audiocpp_server
     app/server/config.cpp
     app/server/frontend.cpp
     app/server/http.cpp
+    app/server/parallel_http.cpp
     app/server/model_memory.cpp
     app/server/multipart.cpp
     app/server/runtime.cpp
@@ -3315,6 +3316,26 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # This test talks to a real loopback socket, so a framing regression could
         # block forever rather than fail. Bound it so CI reports a failure instead.
         set_tests_properties(http_live_body_test PROPERTIES TIMEOUT 120)
+        # Exercise the opt-in transport against the same framing expectations.
+        add_executable(parallel_http_live_body_test
+            tests/unittests/test_http_live_body.cpp app/server/http.cpp app/server/parallel_http.cpp)
+        target_compile_definitions(parallel_http_live_body_test PRIVATE AUDIOCPP_TEST_PARALLEL_HTTP=1)
+        target_include_directories(parallel_http_live_body_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        target_link_libraries(parallel_http_live_body_test PRIVATE engine_runtime ggml Threads::Threads)
+        add_test(NAME parallel_http_live_body_test COMMAND parallel_http_live_body_test)
+        set_tests_properties(http_live_body_test parallel_http_live_body_test PROPERTIES RESOURCE_LOCK http_live_body_port)
+        set_tests_properties(parallel_http_live_body_test PROPERTIES TIMEOUT 120)
+
+        add_executable(parallel_http_ownership_test
+            tests/unittests/test_parallel_http_ownership.cpp app/server/http.cpp app/server/parallel_http.cpp)
+        target_include_directories(parallel_http_ownership_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        target_link_libraries(parallel_http_ownership_test PRIVATE engine_runtime ggml Threads::Threads)
+        add_test(NAME parallel_http_ownership_test COMMAND parallel_http_ownership_test)
+        set_tests_properties(parallel_http_ownership_test PROPERTIES TIMEOUT 30)
+        if(WIN32)
+            target_link_libraries(parallel_http_live_body_test PRIVATE ws2_32)
+            target_link_libraries(parallel_http_ownership_test PRIVATE ws2_32)
+        endif()
 
         add_engine_unittest(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)
         add_test(NAME conv_transpose_fast_path_test COMMAND conv_transpose_fast_path_test)

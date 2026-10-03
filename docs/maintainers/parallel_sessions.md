@@ -78,8 +78,11 @@ has actually isolated all mutable state; that requires adapter review and tests.
 ## Server lifecycle
 
 `app/server/main.cpp` constructs exactly one stack-owned concrete runtime and
-uses the existing transport/frontend interfaces. A local generic listener lambda
-keeps listener destruction before state destruction. Neither runtime delegates
+uses the existing transport/frontend interfaces. The flagged default HTTP path
+uses `parallel_http.cpp`, which owns, cancels socket I/O, and joins request workers
+before returning. The original listener remains unchanged for default startup.
+Custom frontend listeners must likewise drain their workers before returning.
+Neither runtime delegates
 ownership or lifecycle operations to the other.
 
 `app/server/model_slots.h` is used only on the parallel side and leases one
@@ -115,6 +118,20 @@ all selected parallel models, unloads ready idle pools, then waits for blocked
 models. An unpublished initial load therefore cannot delay releasing unrelated
 idle pools. Full status/voice lookups also release the registry lock before
 waiting for model metadata or inspecting filesystem entries.
+
+Bulk barrier publication uses one short mutex to prevent reversed, overlapping
+bulk selections from reserving each other's models in a circular wait. It is
+released before draining; requests and single-model management do not take it.
+Duplicate selected IDs are drained once. Dynamic registration publishes one
+stable entry under an exclusive lease before loading, so concurrent registrations
+and resident-limit accounting see the same entry. Metadata validation occurs
+before replacing live state. If backend loading fails after replacement, the
+complete validated new configuration remains registered but unloaded for retry;
+this does not retain or recreate the old device weights.
+
+See [the self-audit](../reports/parallel_runtime_self_audit.md) for transition,
+ownership, lock-scope and wait-location details, including intentional cold-load
+serialization under memory/resident guards and shutdown limits.
 
 The legacy runtime preserves upstream main's execution, locking, loading,
 unloading, streaming, batching, eviction and shutdown bodies. Its bulk unload

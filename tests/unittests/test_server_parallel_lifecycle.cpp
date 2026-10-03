@@ -9,6 +9,7 @@
 #include <iostream>
 #include <map>
 #include <sstream>
+#include <tuple>
 
 using namespace std::chrono_literals;
 namespace rt = engine::runtime;
@@ -73,6 +74,9 @@ struct Gate {
 struct Control {
     Gate load, run, destroy;
     std::atomic<int> loads{0}, destructions{0}, runs{0};
+    std::atomic<int> sessions{0}, clones{0};
+    std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false};
+    std::atomic<bool> premature_model_destruction{false};
 };
 class Session final : public rt::IOfflineVoiceTaskSession,
                       public rt::IBatchedOfflineVoiceTaskSession,
@@ -80,18 +84,25 @@ class Session final : public rt::IOfflineVoiceTaskSession,
                       public rt::IParallelVoiceTaskSessionFactory {
 public:
     Session(std::shared_ptr<Control> c, rt::TaskSpec task, std::string revision)
-        : control_(std::move(c)), task_(task), revision_(std::move(revision)) {}
+        : control_(std::move(c)), task_(task), revision_(std::move(revision)) { ++control_->sessions; }
+    ~Session() override { --control_->sessions; }
     std::string family() const override { return "lifecycle_fixture"; }
     rt::VoiceTaskKind task_kind() const override { return task_.task; }
     rt::RunMode run_mode() const override { return task_.mode; }
-    void prepare(const rt::SessionPreparationRequest &) override {}
+    void prepare(const rt::SessionPreparationRequest &) override {
+        if (control_->fail_prepare) { throw std::runtime_error("controlled preparation failure"); }
+    }
     size_t parallel_session_capacity() const noexcept override { return 4; }
     std::unique_ptr<rt::IVoiceTaskSession> create_parallel_session() const override {
+        if (++control_->clones == 2 && control_->fail_clone) {
+            throw std::runtime_error("controlled partial pool failure");
+        }
         return std::make_unique<Session>(control_, task_, revision_);
     }
     rt::TaskResult run(const rt::TaskRequest & request) override {
         control_->run.wait();
         ++control_->runs;
+        if (control_->fail_run) { throw std::runtime_error("controlled inference failure"); }
         if (task_.task == rt::VoiceTaskKind::Asr && !request.audio_input) {
             throw std::runtime_error("replacement ASR requires audio input");
         }
@@ -136,10 +147,15 @@ public:
     Model(std::shared_ptr<Control> c, std::string revision) : control_(std::move(c)), revision_(std::move(revision)) {
         metadata_.family = "lifecycle_fixture";
     }
-    ~Model() override { control_->destroy.wait(); ++control_->destructions; }
+    ~Model() override {
+        control_->destroy.wait();
+        if (control_->sessions != 0) { control_->premature_model_destruction = true; }
+        ++control_->destructions;
+    }
     const rt::ModelMetadata & metadata() const noexcept override { return metadata_; }
     const rt::CapabilitySet & capabilities() const noexcept override { return capabilities_; }
     std::unique_ptr<rt::IVoiceTaskSession> create_task_session(const rt::TaskSpec & task, const rt::SessionOptions &) const override {
+        if (control_->null_session) { return nullptr; }
         return std::make_unique<Session>(control_, task, revision_);
     }
 private:
@@ -158,6 +174,7 @@ public:
         const auto c = controls.at(request.model_path.filename().string());
         ++c->loads;
         c->load.wait();
+        if (c->fail_load) { throw std::runtime_error("controlled load failure"); }
         return std::make_unique<Model>(c, request.model_path.filename().string());
     }
 };
@@ -207,6 +224,9 @@ public:
     static bool loaded(ParallelServerState & state, const std::string & id) { return model(state, id).loaded.load(); }
     static auto block_metadata(ParallelServerState & state, const std::string & id) {
         return std::unique_lock<std::shared_mutex>(model(state, id).metadata_mutex);
+    }
+    static auto block_bulk_publication(ParallelServerState & state) {
+        return std::unique_lock<std::mutex>(state.bulk_admission_mutex_);
     }
 };
 }
@@ -462,6 +482,172 @@ void rejected_preparation_releases_lease(int count) {
     require(Access::slots(*f.state, "shared").active == 0, "failed preparation leaked a bound lease");
     success(run(*f.state, "shared"));
 }
+
+template<class F> void fails(F action) {
+    bool failed = false;
+    try { failed = action().status >= 400; } catch (const std::exception &) { failed = true; }
+    require(failed, "controlled operation did not fail");
+}
+
+void invalid_reconfiguration_preserves_live_state() {
+    Fixture f(2); auto c = f.add("shared"); f.asset("replacement");
+    success(run(*f.state, "shared"));
+    fails([&] { return f.replace("shared", "replacement", "invalid_task"); });
+    require(Access::resident(*f.state, "shared") && c->destructions == 0,
+            "invalid reconfiguration destroyed live state");
+    const auto result = run(*f.state, "shared"); success(result);
+    require(result.body.find("shared") != std::string::npos && c->loads == 1,
+            "invalid reconfiguration changed the working configuration");
+}
+
+void registration_is_visible_while_loading() {
+    Fixture f(2, 1); auto fresh = f.asset("fresh"); auto other = f.add("other");
+    fresh->load.arm();
+    auto registration = std::async(std::launch::async, [&] { return f.replace("fresh", "fresh"); });
+    require(observe([&] { return fresh->load.seen(); }), "new registration did not start loading");
+    srv::HttpRequest health; health.method = "GET"; health.path = "/health";
+    const auto status = f.state->handle(health); success(status);
+    const bool published = parse(status.body).require("models").as_number() == 2;
+    auto duplicate = std::async(std::launch::async, [&] { return f.replace("fresh", "fresh"); });
+    const bool queued = published && f.queued("fresh", 1, true);
+    fresh->load.release();
+    success(registration.get());
+    bool duplicate_ok = false;
+    try { duplicate_ok = duplicate.get().status == 200; } catch (const std::exception &) {}
+    require(published && queued && duplicate_ok && fresh->loads == 1,
+            "concurrent registration created an invisible/duplicate loaded model");
+    success(run(*f.state, "other"));
+    require(!Access::resident(*f.state, "fresh") && Access::resident(*f.state, "other") && other->loads == 1,
+            "new registration escaped resident-model accounting");
+}
+
+void live_policy_does_not_hold_registry_lock() {
+    Fixture f(1); f.add("blocked"); f.add("independent");
+    auto metadata = Access::block_metadata(*f.state, "blocked");
+    std::promise<void> start; auto started = start.get_future();
+    auto policy = std::async(std::launch::async, [&] {
+        srv::HttpRequest request; request.query = "model=blocked";
+        start.set_value(); return f.state->live_ingest_limits(request);
+    });
+    started.wait();
+    const bool waited_for_metadata = policy.wait_for(20ms) == std::future_status::timeout;
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "independent"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    metadata.unlock(); policy.get(); success(independent.get());
+    require(waited_for_metadata && progressed, "live policy raced metadata or blocked the unrelated model registry");
+}
+
+void guarded_loading_does_not_block_warm_model(int count) {
+    Fixture f(count, 2); auto warm = f.add("warm"); auto cold = f.add("cold");
+    success(run(*f.state, "warm")); cold->load.arm();
+    auto loading = std::async(std::launch::async, [&] { return run(*f.state, "cold"); });
+    require(observe([&] { return cold->load.seen(); }), "guarded cold load did not start");
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "warm"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    cold->load.release(); success(loading.get()); success(independent.get());
+    require(progressed && warm->loads == 1, "guarded cold load blocked/reloaded another warm model");
+}
+
+void loading_and_inference_failures_release_ownership(int count) {
+    Fixture f(count); auto c = f.add("shared");
+    c->fail_load = true;
+    fails([&] { return run(*f.state, "shared"); });
+    require(!Access::resident(*f.state, "shared") && Access::slots(*f.state, "shared").active == 0,
+            "load failure published residency or leaked a lease");
+    c->fail_load = false; c->null_session = true;
+    fails([&] { return run(*f.state, "shared"); });
+    require(c->sessions == 0 && c->destructions == 1 && !Access::resident(*f.state, "shared"),
+            "null session did not unwind model ownership");
+    c->null_session = false;
+    if (count == 4) {
+        c->fail_clone = true;
+        fails([&] { return run(*f.state, "shared"); });
+        require(c->sessions == 0 && c->destructions == 2 && !c->premature_model_destruction,
+                "partial pool did not destroy sessions before weights");
+        require(!Access::resident(*f.state, "shared") && Access::slots(*f.state, "shared").active == 0,
+                "partial pool construction published residency or retained a slot");
+        c->fail_clone = false;
+    }
+    success(run(*f.state, "shared"));
+    for (auto * fault : {&c->fail_prepare, &c->fail_run}) {
+        *fault = true;
+        fails([&] { return run(*f.state, "shared"); });
+        require(Access::slots(*f.state, "shared").active == 0, "prepare/run failure retained ownership");
+        *fault = false; success(run(*f.state, "shared"));
+    }
+    // A failed replacement load leaves one valid, unloaded entry that can retry.
+    auto replacement = f.asset("replacement"); replacement->fail_load = true;
+    fails([&] { return f.replace("shared", "replacement"); });
+    require(!Access::resident(*f.state, "shared") && c->sessions == 0 && !c->premature_model_destruction,
+            "replacement failure left stale sessions/weights");
+    replacement->fail_load = false;
+    const auto result = run(*f.state, "shared"); success(result);
+    require(result.body.find("replacement") != std::string::npos, "replacement failed to retry consistently");
+}
+
+void abandoned_deferred_responses_release_ownership(int count) {
+    Fixture f(count); f.add("stream", "streaming"); f.add("batch");
+    for (const auto & [id, path, body] : std::vector<std::tuple<std::string, std::string, std::string>>{
+        {"stream", "/v1/audio/speech", "{\"model\":\"stream\",\"input\":\"hello\",\"stream\":true,\"response_format\":\"pcm\"}"},
+        {"batch", "/v1/tasks/batch", "{\"model\":\"batch\",\"requests\":[{\"text\":\"hello\"}]}"}}) {
+        auto response = post(*f.state, path, body); success(response);
+        require(bool(response.stream_body) && Access::slots(*f.state, id).active == 1,
+                "deferred response did not own its slot");
+        response = {}; // Dropped without invoking the callback.
+        require(Access::slots(*f.state, id).active == 0, "unstarted response leaked its lease");
+        success(post(*f.state, "/v1/models/unload", "{\"id\":" + quote(id) + "}"));
+    }
+}
+
+void overlapping_bulk_operations(int count) {
+    Fixture f(count); auto a = f.add("a"); auto b = f.add("b"); f.add("unrelated");
+    a->run.arm(); b->run.arm();
+    auto run_a = std::async(std::launch::async, [&] { return run(*f.state, "a"); });
+    auto run_b = std::async(std::launch::async, [&] { return run(*f.state, "b"); });
+    require(observe([&] { return a->run.seen() && b->run.seen(); }), "bulk active requests not established");
+    auto first = std::async(std::launch::async, [&] {
+        return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"a\",\"b\",\"a\"]}");
+    });
+    const bool first_queued = f.queued("a", 1, true) && f.queued("b", 1, true);
+    auto second = std::async(std::launch::async, [&] {
+        return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"b\",\"a\"]}");
+    });
+    const bool second_queued = f.queued("a", 2, true) && f.queued("b", 2, true);
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "unrelated"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    a->run.release(); b->run.release();
+    success(run_a.get()); success(run_b.get()); success(independent.get());
+    const auto result = first.get(); success(result); success(second.get());
+    require(first_queued && second_queued && progressed, "bulk barriers duplicated or blocked an unrelated model");
+    require(parse(result.body).require("unloaded").as_array().size() == 2, "bulk response repeated a model id");
+    for (const auto & id : {"a", "b"}) {
+        const auto s = Access::slots(*f.state, id);
+        require(s.active == 0 && s.waiting_management == 0 && s.waiting_requests == 0,
+                "overlapping bulk operations leaked a barrier");
+        success(run(*f.state, id));
+    }
+}
+void bulk_publication_excludes_only_other_bulk_calls(int count) {
+    Fixture f(count); f.add("a"); f.add("b"); f.add("unrelated");
+    auto publication = Access::block_bulk_publication(*f.state);
+    std::promise<void> one, two;
+    auto started_one = one.get_future(); auto started_two = two.get_future();
+    auto first = std::async(std::launch::async, [&] {
+        one.set_value(); return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"a\",\"b\"]}");
+    });
+    auto second = std::async(std::launch::async, [&] {
+        two.set_value(); return post(*f.state, "/v1/tasks/unload_models", "{\"model_ids\":[\"b\",\"a\"]}");
+    });
+    started_one.wait(); started_two.wait();
+    const bool excluded = first.wait_for(20ms) == std::future_status::timeout &&
+        second.wait_for(20ms) == std::future_status::timeout &&
+        Access::slots(*f.state, "a").waiting_management == 0 &&
+        Access::slots(*f.state, "b").waiting_management == 0;
+    auto independent = std::async(std::launch::async, [&] { return run(*f.state, "unrelated"); });
+    const bool progressed = independent.wait_for(500ms) == std::future_status::ready;
+    publication.unlock(); success(first.get()); success(second.get()); success(independent.get());
+    require(excluded && progressed, "bulk publication interleaved barriers or blocked normal inference");
+}
 }
 
 void dynamic_capacity_changes_use_parallel_lifecycle() {
@@ -490,9 +676,20 @@ void dynamic_capacity_changes_use_parallel_lifecycle() {
     }
 }
 
-int main() {
+int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
+        if (argc == 2) {
+            const std::string test = argv[1];
+            if (test == "audit-reconfiguration") { invalid_reconfiguration_preserves_live_state(); }
+            else if (test == "audit-registration") { registration_is_visible_while_loading(); }
+            else if (test == "audit-policy") { live_policy_does_not_hold_registry_lock(); }
+            else { throw std::runtime_error("unknown audit case"); }
+            return 0;
+        }
+        invalid_reconfiguration_preserves_live_state();
+        registration_is_visible_while_loading();
+        live_policy_does_not_hold_registry_lock();
         concurrent_json_parsing();
         dynamic_capacity_changes_use_parallel_lifecycle();
         generic_batch_single_slot_and_invalid_input();
@@ -510,6 +707,11 @@ int main() {
             deferred_batch_ownership(count, true);
             if (count > 1) { generic_batches_hold_independent_slots(count); }
             rejected_preparation_releases_lease(count);
+            loading_and_inference_failures_release_ownership(count);
+            abandoned_deferred_responses_release_ownership(count);
+            overlapping_bulk_operations(count);
+            bulk_publication_excludes_only_other_bulk_calls(count);
+            guarded_loading_does_not_block_warm_model(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"
                          " resident limits 1/2, deferred stream/disconnect\n";

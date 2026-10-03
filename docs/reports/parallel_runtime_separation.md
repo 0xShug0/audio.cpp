@@ -25,11 +25,18 @@ legacy `runtime.cpp` addition rejects explicit slots immediately after parsing
 dynamic registration. Execution, ownership, loading, unloading, streaming,
 batching, eviction and shutdown bodies retain upstream behavior.
 
-`parallel_runtime.h/.cpp` owns the enabled process's registry, sessions, leases,
-locks and workers. Both classes implement the existing interfaces. Startup
-constructs one stack-owned concrete class and invokes the existing listener code
-through a local generic lambda; listener destruction precedes state destruction.
+`parallel_runtime.h/.cpp` owns the enabled process's registry, sessions, leases
+and locks. Both classes implement the existing interfaces. Startup constructs
+one stack-owned concrete class. The flagged default HTTP path now selects
+`parallel_http.h/.cpp`, whose owned workers drain before runtime destruction;
+default startup still selects the original listener. Custom frontend listeners
+retain the existing interface and must drain their workers before returning.
 The copied externally linked language-option helper has a distinct name.
+
+The follow-up [self-audit](parallel_runtime_self_audit.md) records scoped fixes
+for failure transitions, concurrent registration, transport-policy reads, bulk
+barrier ordering and HTTP worker lifetime. The validation below describes the
+initial separation revision; the audit has its own evidence/results.
 
 JSON parsing synchronization is a startup-only process opt-in, enabled before
 configuration parsing and concurrent users. Default startup and the CLI leave it

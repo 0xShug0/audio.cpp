@@ -1385,61 +1385,71 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
     auto requested = model_config_from_json(body, request_base_, false);
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
 
+    // Validate metadata/presets before replacing any live state. A failed
+    // validation leaves the existing configuration and sessions intact.
+    auto candidate = make_model(std::move(requested));
+    const std::string id = candidate->registered_id;
+    // Acquire before publication: another request must not start this entry's
+    // first load while registration still owns it. Entry addresses never move.
+    std::optional<ModelSlots::Lock> registration_lease;
+    registration_lease.emplace(candidate->busy.acquire(0, id));
+
     LoadedModel * existing = nullptr;
     {
         std::lock_guard<std::mutex> state_lock(models_mutex_);
-        const auto found = model_index_.find(requested.id);
+        const auto found = model_index_.find(id);
         if (found != model_index_.end()) {
             existing = models_.at(found->second).get();
+        } else {
+            // Reserve first so publishing the index cannot be followed by a
+            // throwing vector allocation and leave a dangling registry index.
+            models_.reserve(models_.size() + 1);
+            model_index_.emplace(id, models_.size());
+            existing = candidate.get();
+            models_.push_back(std::move(candidate));
         }
     }
 
-    if (existing != nullptr) {
+    if (candidate != nullptr) {
+        registration_lease.reset();
         ModelSlots::Lock run_lock = acquire_model_run(*existing, std::nullopt, true);
-        std::unique_lock<std::shared_mutex> metadata_lock(existing->metadata_mutex);
         const bool changed =
-            existing->config.path != requested.path ||
-            existing->config.family != requested.family ||
-            existing->config.task != requested.task ||
-            existing->config.mode != requested.mode ||
-            existing->config.slots != requested.slots ||
-            existing->config.load_options != requested.load_options ||
-            existing->config.session_options != requested.session_options ||
-            existing->config.model_spec_override != requested.model_spec_override;
+            existing->config.path != candidate->config.path ||
+            existing->config.family != candidate->config.family ||
+            existing->config.task != candidate->config.task ||
+            existing->config.mode != candidate->config.mode ||
+            existing->config.slots != candidate->config.slots ||
+            existing->config.config_id != candidate->config.config_id ||
+            existing->config.weight_id != candidate->config.weight_id ||
+            existing->config.load_options != candidate->config.load_options ||
+            existing->config.session_options != candidate->config.session_options ||
+            existing->config.model_spec_override != candidate->config.model_spec_override;
         if (changed) {
+            // Teardown is protected by the lease, not the metadata lock. Status
+            // and transport policy readers need not wait for GPU destruction.
             existing->unload();
-            existing->voice_presets.clear();
-            existing->default_voice_preset.reset();
-            existing->config = std::move(requested);
-            existing->busy.configure(existing->config.slots);
-            existing->task = engine::runtime::TaskSpec{
-                engine::runtime::parse_voice_task_kind(existing->config.task),
-                engine::runtime::parse_run_mode(existing->config.mode),
-            };
-            load_voice_presets(*existing);
-            refresh_model_option_flags(*existing);
+            std::unique_lock<std::shared_mutex> metadata_lock(existing->metadata_mutex);
+            existing->busy.configure(candidate->config.slots);
+            std::swap(existing->config, candidate->config);
+            std::swap(existing->task, candidate->task);
+            existing->voice_presets.swap(candidate->voice_presets);
+            existing->default_voice_preset.swap(candidate->default_voice_preset);
+            existing->accepts_reference_text = candidate->accepts_reference_text;
+            existing->accepts_language = candidate->accepts_language;
+            existing->accepts_speed = candidate->accepts_speed;
+            existing->accepts_speaking_rate = candidate->accepts_speaking_rate;
         }
-        // Loading may need models_mutex_ for eviction. Do not hold metadata
-        // while entering unrelated model admission/loading paths.
-        // The exclusive model lease still protects the configuration and pool.
-        metadata_lock.unlock();
+        // On a backend/load failure the complete new configuration remains
+        // registered but unloaded, ready for retry; no partial pool is published.
         ensure_model_loaded_locked(*existing);
         return json_response(
             "{\"id\":" + json_quote(existing->config.id) +
             ",\"loaded\":true,\"reconfigured\":" + (changed ? "true" : "false") + "}");
     }
 
-    auto loaded = make_model(std::move(requested));
-    ensure_model_loaded_locked(*loaded);
-    const std::string id = loaded->config.id;
-    {
-        std::lock_guard<std::mutex> state_lock(models_mutex_);
-        if (model_index_.find(id) != model_index_.end()) {
-            throw std::runtime_error("model id was registered concurrently: " + id);
-        }
-        model_index_.emplace(id, models_.size());
-        models_.push_back(std::move(loaded));
-    }
+    // Include new entries in residency accounting before their first load. The
+    // registration lease excludes inference/management until success or unwind.
+    ensure_model_loaded_locked(*existing);
     return json_response("{\"id\":" + json_quote(id) + ",\"loaded\":true,\"reconfigured\":false}");
 }
 
@@ -1671,8 +1681,11 @@ HttpResponse ParallelServerState::handle_models_root_set(const std::string & bod
             "invalid_request_error");
     }
 
-    models_root_ = requested;
-    model_installer_ = std::make_unique<ModelInstaller>(repository_root_, models_root_);
+    // Construct before committing either member: allocation/catalog/filesystem
+    // failure must not pair a new public root with the old installer instance.
+    auto replacement = std::make_unique<ModelInstaller>(repository_root_, requested);
+    models_root_.swap(requested);
+    model_installer_.swap(replacement);
     std::cerr << "native WebUI model root changed to: " << models_root_ << "\n";
     return json_response(
         "{\"models_root\":" + json_quote(models_root_.string()) +
@@ -1991,6 +2004,9 @@ void ParallelServerState::ensure_model_loaded_locked(LoadedModel & model) {
 
     auto loaded_model = registry.load(load_request);
     auto session = loaded_model->create_task_session(model.task, session_options);
+    if (!session) {
+        throw std::runtime_error("model returned a null task session: " + model.registered_id);
+    }
     engine::runtime::VoiceTaskSessionPool::SessionFactory slot_factory;
     const size_t audited_capacity = audited_slot_capacity(
         session->family(), session->task_kind(), config_.backend, session->run_mode());
@@ -2014,11 +2030,16 @@ LiveIngestLimits ParallelServerState::live_ingest_limits(const HttpRequest & req
     if (model_id.empty()) {
         return config_.live_ingest;
     }
-    const auto it = model_index_.find(model_id);
-    if (it == model_index_.end()) {
-        return config_.live_ingest;
+    LoadedModel * selected = nullptr;
+    {
+        std::lock_guard<std::mutex> state_lock(models_mutex_);
+        const auto it = model_index_.find(model_id);
+        if (it == model_index_.end()) { return config_.live_ingest; }
+        selected = models_.at(it->second).get();
     }
-    return resolve_live_ingest_limits(config_.live_ingest, models_.at(it->second)->config.live_ingest);
+    // Never hold the registry mutex while waiting for per-model metadata.
+    std::shared_lock<std::shared_mutex> metadata_lock(selected->metadata_mutex);
+    return resolve_live_ingest_limits(config_.live_ingest, selected->config.live_ingest);
 }
 
 ParallelServerState::LoadedModel & ParallelServerState::require_model(const Value & body) {
@@ -3853,8 +3874,14 @@ void ParallelServerState::unload_registered_models(
     };
     std::vector<Drain> parallel;
     parallel.reserve(registered.size());
-    for (const auto & [id, model] : registered) {
-        parallel.push_back({id, model, model->busy.queue_management(0, id)});
+    {
+        std::lock_guard<std::mutex> admission_lock(bulk_admission_mutex_);
+        for (const auto & [id, model] : registered) {
+            if (std::any_of(parallel.begin(), parallel.end(), [model](const Drain & d) { return d.model == model; })) {
+                continue;
+            }
+            parallel.push_back({id, model, model->busy.queue_management(0, id)});
+        }
     }
     // Every parallel model already has its own ordered barrier. Release ready
     // idle pools before waiting on a first load or another busy model.
