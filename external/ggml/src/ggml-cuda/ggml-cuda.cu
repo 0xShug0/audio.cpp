@@ -1936,12 +1936,17 @@ static void ggml_cuda_op_mul_mat_cublas(
                 1);
 #else
         CUBLAS_CHECK(cublasSetStream(ctx.cublas_handle(id), stream));
+        // Sgemm inherits TF32 from the handle. Honor an explicit F32 request
+        // for numerically sensitive convolutions and projections.
+        const bool precise_f32 = dst->op_params[0] == GGML_PREC_F32;
+        if (precise_f32) CUBLAS_CHECK(cublasSetMathMode(ctx.cublas_handle(id), CUBLAS_DEFAULT_MATH));
         CUBLAS_CHECK(
             cublasSgemm(ctx.cublas_handle(id), CUBLAS_OP_T, CUBLAS_OP_N,
                     row_diff, src1_ncols, ne10,
                     &alpha, src0_ddf_i,  ne00,
                             src1_ddf1_i, ne10,
                     &beta,  dst_dd_i,    ldc));
+        if (precise_f32) CUBLAS_CHECK(cublasSetMathMode(ctx.cublas_handle(id), CUBLAS_TF32_TENSOR_OP_MATH));
 #endif // defined(GGML_USE_HIP) && defined(GGML_HIP_USE_HIPBLASLT)
     }
 
@@ -2564,6 +2569,8 @@ static void ggml_cuda_mul_mat_batched_cublas_impl(ggml_backend_cuda_context & ct
 static void ggml_cuda_mul_mat_batched_cublas(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     GGML_ASSERT(src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16 || src0->type == GGML_TYPE_F32);
 
+    const bool precise_f32 = src0->type == GGML_TYPE_F32 && dst->op_params[0] == GGML_PREC_F32;
+    if (precise_f32) CUBLAS_CHECK(cublasSetMathMode(ctx.cublas_handle(), CUBLAS_DEFAULT_MATH));
     switch (src0->type) {
         case GGML_TYPE_F32:
             ggml_cuda_mul_mat_batched_cublas_impl<GGML_TYPE_F32>(ctx, src0, src1, dst);
@@ -2577,6 +2584,7 @@ static void ggml_cuda_mul_mat_batched_cublas(ggml_backend_cuda_context & ctx, co
         default:
             GGML_ABORT("Unsupported type");
     }
+    if (precise_f32) CUBLAS_CHECK(cublasSetMathMode(ctx.cublas_handle(), CUBLAS_TF32_TENSOR_OP_MATH));
 }
 
 static bool ggml_cuda_should_fuse_mul_mat(const ggml_tensor * ffn_up,
@@ -2752,7 +2760,9 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     bool use_mul_mat_vec_f = (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
     bool use_mul_mat_f     = !ggml_is_quantized(src0->type)
-        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
+        // The custom F32 MMA kernel uses TF32 operands on NVIDIA.
+        && !(src0->type == GGML_TYPE_F32 && dst->op_params[0] == GGML_PREC_F32);
     const int device_cc = ggml_cuda_info().devices[ctx.device].cc;
     const bool use_nvfp4_f16_mmq = !split && src0->type == GGML_TYPE_NVFP4 && src1->type == GGML_TYPE_F16 &&
         dst->type == GGML_TYPE_F32 && blackwell_mma_available(device_cc) &&

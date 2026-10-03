@@ -1,0 +1,12 @@
+[
+  {"voice":"Bruno","language":"en","text":"Hello there. This is a test of Kitten speech."},
+  {"voice":"Arabic","language":"ar","text":"صباح الخير. هذا اختبار لتحويل النص إلى كلام باللغة العربية."},
+  {"voice":"Chinese","language":"zh","text":"早上好。这是一个中文语音合成测试，希望你今天过得愉快。"},
+  {"voice":"French","language":"fr","text":"Bonjour. Ceci est un test de synthèse vocale en français."},
+  {"voice":"German","language":"de","text":"Guten Morgen. Dies ist ein Test der deutschen Sprachausgabe."},
+  {"voice":"Hindi","language":"hi","text":"नमस्ते। यह हिंदी में आवाज़ बनाने का एक परीक्षण है।"},
+  {"voice":"Italian","language":"it","text":"Buongiorno. Questa è una prova della sintesi vocale in italiano."},
+  {"voice":"Portuguese","language":"pt","text":"Bom dia. Este é um teste de síntese de voz em português."},
+  {"voice":"Russian","language":"ru","text":"Доброе утро. Это проверка синтеза речи на русском языке."},
+  {"voice":"Spanish","language":"es","text":"Buenos días. Esta es una prueba de síntesis de voz en español."}
+]
