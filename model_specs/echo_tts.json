@@ -29,7 +29,7 @@
       {
         "name": "text_guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale on the text condition.",
+        "description": "Classifier-free guidance scale on the text condition (independent-cfg only).",
         "required": false,
         "min": 0.0,
         "default": 3.0
@@ -37,7 +37,15 @@
       {
         "name": "speaker_guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale on the speaker condition.",
+        "description": "Classifier-free guidance scale on the speaker condition (independent-cfg only).",
+        "required": false,
+        "min": 0.0,
+        "default": 8.0
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale on the text and speaker condition (join-cfg only).",
         "required": false,
         "min": 0.0,
         "default": 8.0
@@ -118,6 +126,17 @@
         "required": false,
         "description": "Release Fish S1-DAC decode graph space before encoding reference speaker audio and encode graph space after. Avoids having both allocations resident simulaneously at the cost of rebuilding the graphs when a speaker cache-miss occurs.",
         "default": false
+      },
+      {
+        "name": "cfg_mode",
+        "type": "enum",
+        "description": "Type of classifier free guidance used.",
+        "values": [
+          "independent",
+          "joint"
+        ],
+        "required": false,
+        "default": "independent"
       }
     ],
     "load": []
