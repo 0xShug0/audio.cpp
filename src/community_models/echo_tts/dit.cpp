@@ -503,8 +503,9 @@ private:
             throw std::runtime_error("Echo-TTS KV cache context initialization failed");
         }
         core::ModuleBuildContext ctx{kv_ctx_.get(), "echo_tts.kv_cache", backend_type_};
-        // The cache is allocated at the widest lane count any graph will ask
-        // for, so joint_attention's expand() finds dims[0] already equal to the
+        // The cache is allocated at the widest lane count any graph will ask for in the
+        // session-configured CFG mode,
+        // so joint_attention's expand() finds dims[0] already equal to the
         // batch and short-circuits to a passthrough. The single-lane graph
         // reads lane 0, which is a contiguous prefix because the lane axis is
         // outermost in ggml's layout.
