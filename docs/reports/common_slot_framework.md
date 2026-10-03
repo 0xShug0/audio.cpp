@@ -1,5 +1,15 @@
 # Common slot framework extraction
 
+**Current boundary (2026-10-03):** `--parallel-jobs` selects a separate runtime.
+Without it, the original runtime rejects any explicit slots field; with it, even
+capacity one uses the parallel pool/scheduler. JSON and tensor-source/cache
+synchronization are explicitly opted in. See the [current contract](../maintainers/parallel_sessions.md)
+and [separation validation report](parallel_runtime_separation.md).
+
+The measurements and revisions below are historical validation of earlier
+framework versions; they do not certify the new separation boundary.
+
+
 The reusable server/session framework is extracted from PR #706 onto upstream
 `77491a33` (2026-09-27). Model implementations, checkpoint-specific guards,
 codec fixes and audited admission lists remain in the model follow-up, #706.

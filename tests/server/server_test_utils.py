@@ -16,8 +16,9 @@ import urllib.request
 
 
 class Server:
-    def __init__(self, exe, models, backend, device, out):
+    def __init__(self, exe, models, backend, device, out, parallel_jobs=False):
         self.exe, self.models, self.backend, self.device, self.out = exe, models, backend, device, out
+        self.parallel_jobs = parallel_jobs
 
     def __enter__(self):
         self.out.mkdir(parents=True, exist_ok=True)
@@ -33,7 +34,7 @@ class Server:
         self.log = (self.out / 'server.log').open('w', encoding='utf-8')
         try:
             self.proc = subprocess.Popen(
-                [str(self.exe), '--config', str(path), '--no-ui'],
+                [str(self.exe), '--config', str(path), '--no-ui'] + (['--parallel-jobs'] if self.parallel_jobs else []),
                 cwd=self.exe.parent, stdout=self.log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         except BaseException:

@@ -557,9 +557,9 @@ RawTensorData convert_bnb_nf4_weight(
 
 class SafeTensorSource final : public TensorSource {
 public:
-    explicit SafeTensorSource(std::filesystem::path path)
+    SafeTensorSource(std::filesystem::path path, TensorSourceOptions options)
         : index_(engine::io::load_safetensors_index(path)),
-          bytes_(engine::io::read_binary_blob(path)) {}
+          synchronized_access_(options.synchronized_access), bytes_(engine::io::read_binary_blob(path)) {}
 
     const std::filesystem::path & source_path() const noexcept override {
         return index_.source_path;
@@ -590,7 +590,7 @@ public:
     }
 
     void release_storage() const override {
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         bytes_ = engine::io::BinaryBlob();
     }
 
@@ -599,7 +599,7 @@ public:
         if (info == nullptr) {
             throw std::runtime_error("missing tensor: " + std::string(name));
         }
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         const auto [data, byte_size] = require_data_range(*info);
         RawTensorData tensor;
         tensor.metadata = TensorMetadata{info->name, info->dtype, info->shape};
@@ -621,7 +621,7 @@ public:
         validate_expected_shape(name, info->shape, expected_shape);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         const auto [data, byte_size] = require_data_range(*info);
         if (raw_dtype_matches_ggml_type(info->dtype, type)) {
             validate_raw_tensor_byte_size(name, shape, type, byte_size);
@@ -673,7 +673,7 @@ public:
         if (info->dtype != "I64" || info->data_end - info->data_begin != sizeof(int64_t)) {
             throw std::runtime_error("tensor is not an I64 scalar: " + std::string(name));
         }
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         const auto [data, byte_size] = require_data_range(*info);
         (void) byte_size;
         int64_t value = 0;
@@ -716,7 +716,13 @@ private:
 
     engine::io::SafeTensorIndex index_;
     // Keep mappings alive until each copy or synchronous backend upload completes.
+    const bool synchronized_access_;
     mutable std::mutex storage_mutex_;
+    std::unique_lock<std::mutex> lock_storage() const {
+        std::unique_lock<std::mutex> lock(storage_mutex_, std::defer_lock);
+        if (synchronized_access_) { lock.lock(); }
+        return lock;
+    }
     mutable engine::io::BinaryBlob bytes_;
 };
 
@@ -732,8 +738,8 @@ struct GgufTensorInfo {
 
 class GgufTensorSource final : public TensorSource {
 public:
-    explicit GgufTensorSource(std::filesystem::path path)
-        : source_path_(std::filesystem::weakly_canonical(path)) {
+    GgufTensorSource(std::filesystem::path path, TensorSourceOptions options)
+        : source_path_(std::filesystem::weakly_canonical(path)), synchronized_access_(options.synchronized_access) {
         ggml_context * tensor_context = nullptr;
         gguf_context * gguf = gguf_init_from_file(
             source_path_.string().c_str(),
@@ -842,13 +848,13 @@ public:
     }
 
     void release_storage() const override {
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         bytes_ = engine::io::BinaryBlob();
     }
 
     RawTensorData require_tensor_data(std::string_view name) const override {
         const auto & info = require_info(name);
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         const auto [data, byte_size] = require_data_range(info);
         RawTensorData out;
         out.metadata = {info.logical_name, info.dtype, info.shape};
@@ -867,7 +873,7 @@ public:
         validate_expected_shape(name, info.shape, expected_shape);
         const auto shape = shape_from_dims(expected_shape);
         const ggml_type type = ggml_type_for_tensor_storage(resolve_tensor_storage_type(*this, name, storage_type));
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         const auto [data, byte_size] = require_data_range(info);
         if (info.type == type) {
             validate_raw_tensor_byte_size(name, shape, type, byte_size);
@@ -914,7 +920,7 @@ public:
         if (info.type != GGML_TYPE_I64 || info.byte_size != sizeof(int64_t)) {
             throw std::runtime_error("tensor is not an I64 scalar: " + std::string(name));
         }
-        const std::lock_guard<std::mutex> lock(storage_mutex_);
+        auto lock = lock_storage();
         const auto [data, byte_size] = require_data_range(info);
         (void) byte_size;
         int64_t value = 0;
@@ -943,7 +949,13 @@ private:
     std::vector<GgufTensorInfo> infos_;
     std::unordered_map<std::string, size_t> info_by_name_;
     // Sessions share this source, including lazy remapping and storage release.
+    const bool synchronized_access_;
     mutable std::mutex storage_mutex_;
+    std::unique_lock<std::mutex> lock_storage() const {
+        std::unique_lock<std::mutex> lock(storage_mutex_, std::defer_lock);
+        if (synchronized_access_) { lock.lock(); }
+        return lock;
+    }
     mutable engine::io::BinaryBlob bytes_;
 };
 
@@ -1565,18 +1577,23 @@ std::vector<float> tensor_data_to_f32(std::string_view name, const TensorData & 
 }
 
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path) {
+    return open_tensor_source(path, TensorSourceOptions{});
+}
+
+std::shared_ptr<const TensorSource> open_tensor_source(
+    const std::filesystem::path & path, TensorSourceOptions options) {
     const std::string file_name = lower_ascii(path.filename().string());
     static constexpr std::string_view kIndexSuffix = ".safetensors.index.json";
     if (file_name.size() >= kIndexSuffix.size() &&
         file_name.compare(file_name.size() - kIndexSuffix.size(), kIndexSuffix.size(), kIndexSuffix) == 0) {
-        return open_indexed_tensor_source(path, path.parent_path());
+        return open_indexed_tensor_source(path, path.parent_path(), options);
     }
     const std::string extension = lower_ascii(path.extension().string());
     if (extension == ".safetensors") {
-        return std::make_shared<SafeTensorSource>(path);
+        return std::make_shared<SafeTensorSource>(path, options);
     }
     if (extension == ".gguf") {
-        return std::make_shared<GgufTensorSource>(path);
+        return std::make_shared<GgufTensorSource>(path, options);
     }
     throw std::runtime_error("unsupported tensor source format: " + path.string());
 }
@@ -1586,6 +1603,11 @@ std::shared_ptr<const TensorSource> open_tensor_source(
     std::string_view tensor_prefix) {
     auto source = open_tensor_source(path);
     return make_prefixed_tensor_source(std::move(source), tensor_prefix);
+}
+
+std::shared_ptr<const TensorSource> open_tensor_source(
+    const std::filesystem::path & path, std::string_view tensor_prefix, TensorSourceOptions options) {
+    return make_prefixed_tensor_source(open_tensor_source(path, options), tensor_prefix);
 }
 
 std::shared_ptr<const TensorSource> make_prefixed_tensor_source(
@@ -2242,10 +2264,16 @@ std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(
 std::shared_ptr<const TensorSource> open_indexed_tensor_source(
     const std::filesystem::path & index_path,
     const std::filesystem::path & model_root) {
+    return open_indexed_tensor_source(index_path, model_root, TensorSourceOptions{});
+}
+
+std::shared_ptr<const TensorSource> open_indexed_tensor_source(
+    const std::filesystem::path & index_path, const std::filesystem::path & model_root,
+    TensorSourceOptions options) {
     const auto weight_map = parse_indexed_tensor_weight_map(index_path);
     std::unordered_map<std::string, std::shared_ptr<const TensorSource>> shard_sources;
     for (const auto & path : indexed_tensor_source_shard_paths_from_weight_map(model_root, weight_map)) {
-        shard_sources.emplace(path.filename().string(), open_tensor_source(path));
+        shard_sources.emplace(path.filename().string(), open_tensor_source(path, options));
     }
     return std::make_shared<IndexedTensorSource>(
         index_path,

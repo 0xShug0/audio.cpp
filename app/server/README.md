@@ -161,28 +161,31 @@ or in `server.json`:
 
 ### Experimental parallel model slots
 
-Each model entry accepts `"slots"` from 1 to 16 (default: 1). Omitting this field
-or setting `"slots": 1` uses the original single session and busy guard.
-Setting `"slots": 2` or higher explicitly selects the experimental scheduler
-and session pool; no additional flag is needed. On that path, the server leases
-one independent session to each request and queues work when admission is
-blocked. The requested count must fit the model's advertised parallel capacity;
-this setting does not make an arbitrary model safe to run concurrently.
+The existing implementation remains the default. Opt into the separate parallel
+runtime at process startup:
 
-The common framework retains capacity one for existing models. Model-specific
-parallel adapters and validated offline admission entries are added separately
-in PR #706. Unsupported counts fail before a partial session pool is published.
+```bash
+audiocpp_server --config server.json --parallel-jobs
+```
 
-`GET /v1/models` reports configured `slots`, `active_slots`, `queued_requests`
-and the loaded model's `max_parallel_slots` (`null` when unloaded). Unload,
-eviction and reconfiguration wait for all active sessions to finish. Waiting
-management operations block new requests on the parallel path so management
-cannot starve. The legacy path keeps its original mutex admission without
-management priority and skips unpublished first loads during bulk unload.
+Without `--parallel-jobs`, **any explicit `slots` field** in a model entry or
+dynamic registration is rejected, including `"slots": 1` and `"slots": null`.
+Existing configurations without the field use the original `ServerState`.
 
-An existing model ID cannot switch between one and multiple slots. Such a
-reconfiguration returns HTTP 400 before unloading the model; use a new model ID
-or restart. Changing a parallel count, such as 2 to 4, remains supported.
+With `--parallel-jobs`, every model uses `ParallelServerState`. Omitted slots
+means capacity one; otherwise `"slots"` must be an integer from 1 to 16. Capacity
+one also uses the new scheduler and session pool. Slot count never selects the
+runtime. The requested count must fit the model's advertised parallel capacity.
+The common framework retains capacity one for existing models; model adapters
+and validated admission entries belong to the separate PR #706 follow-up.
+
+`GET /v1/models` on the parallel runtime reports configured `slots`, `active_slots`,
+`queued_requests` and loaded `max_parallel_slots` (`null` when unloaded). Legacy
+model responses retain upstream's schema and do not gain synthetic slots fields.
+Parallel requests and management share FIFO admission; unload, eviction and
+reconfiguration drain active leases. Counts can be resized across one under an
+exclusive lease, but registration never changes the process's selected runtime.
+The inference CLI has no new flag and retains its existing behavior.
 
 Each slot needs private execution contexts, graphs, KV/reference caches,
 stream state and sampling state. Immutable assets/weights can be shared.
@@ -740,7 +743,7 @@ Response:
 }
 ```
 
-For opt-in models (`slots >= 2`), requests and management share FIFO admission.
+With `--parallel-jobs`, all models (including capacity one) use FIFO admission.
 Earlier queued requests drain before a later unload/reconfiguration, and later
 arrivals cannot overtake a reserved waiter. A request binds model configuration
 before preparation and retains its lease through any deferred stream/native

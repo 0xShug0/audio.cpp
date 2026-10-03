@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "engine/framework/core/backend.h"
-#include "engine/framework/runtime/parallel_session.h"
 
 #include "frontend.h"
 #include "http.h"
@@ -47,7 +46,7 @@ struct ServerModelConfig {
     std::string task = "tts";
     std::string mode = "offline";
     bool lazy = false;
-    int slots = 1; // Opt-in concurrent sessions with shared model weights.
+    int slots = 1; // Capacity read only by the startup-selected parallel runtime.
     // Overrides ServerConfig::busy_timeout_ms for this model, and acts as the ceiling
     // a per-request busy_timeout_ms is clamped to. Model runtimes differ by orders of
     // magnitude (a short TTS clip vs. minutes of music generation), so one fleet-wide
@@ -120,5 +119,6 @@ struct ServerConfig {
 
 engine::core::BackendType parse_server_backend(const std::string & value);
 ServerConfig load_server_config(const std::filesystem::path & path);
+ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs);
 
 }  // namespace minitts::server

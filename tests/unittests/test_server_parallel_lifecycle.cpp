@@ -1,6 +1,6 @@
 // Run the actual server handlers with tiny controlled loaders. Barriers force
 // lifecycle overlaps without GPU timing, sleeps in production, or large models.
-#include "runtime.h"
+#include "parallel_runtime.h"
 #include "engine/framework/audio/wav_writer.h"
 #include <chrono>
 #include <condition_variable>
@@ -162,13 +162,13 @@ public:
     }
 };
 std::string quote(const std::string & text) { return engine::io::json::stringify_string(text); }
-srv::HttpResponse post(srv::ServerState & state, const std::string & path, std::string body) {
+srv::HttpResponse post(srv::ParallelServerState & state, const std::string & path, std::string body) {
     srv::HttpRequest request;
     request.method = "POST"; request.path = path; request.body = std::move(body);
     request.headers["content-type"] = "application/json";
     return state.handle(request);
 }
-srv::HttpResponse run(srv::ServerState & state, const std::string & id) {
+srv::HttpResponse run(srv::ParallelServerState & state, const std::string & id) {
     return post(state, "/v1/tasks/run", "{\"model\":" + quote(id) + ",\"text\":\"old request\"}");
 }
 void success(const srv::HttpResponse & response) {
@@ -188,24 +188,24 @@ public:
 namespace minitts::server {
 class ServerRuntimeTestAccess {
 public:
-    static void registry(ServerState & state, const std::shared_ptr<Loader> & loader) {
+    static void registry(ParallelServerState & state, const std::shared_ptr<Loader> & loader) {
         state.registry_factory_ = [loader] {
             rt::ModelRegistry registry; registry.register_loader(loader); return registry;
         };
         state.config_.ui_management = true;
     }
-    static void add(ServerState & state, ServerModelConfig config) {
+    static void add(ParallelServerState & state, ServerModelConfig config) {
         auto model = state.make_model(std::move(config));
         state.model_index_.emplace(model->registered_id, state.models_.size());
         state.models_.push_back(std::move(model));
     }
-    static auto & model(ServerState & state, const std::string & id) {
+    static auto & model(ParallelServerState & state, const std::string & id) {
         return *state.models_.at(state.model_index_.at(id));
     }
-    static ModelSlots::State slots(ServerState & state, const std::string & id) { return model(state, id).busy.state(); }
-    static bool resident(ServerState & state, const std::string & id) { return model(state, id).resident(); }
-    static bool loaded(ServerState & state, const std::string & id) { return model(state, id).loaded.load(); }
-    static auto block_metadata(ServerState & state, const std::string & id) {
+    static ModelSlots::State slots(ParallelServerState & state, const std::string & id) { return model(state, id).busy.state(); }
+    static bool resident(ParallelServerState & state, const std::string & id) { return model(state, id).resident(); }
+    static bool loaded(ParallelServerState & state, const std::string & id) { return model(state, id).loaded.load(); }
+    static auto block_metadata(ParallelServerState & state, const std::string & id) {
         return std::unique_lock<std::shared_mutex>(model(state, id).metadata_mutex);
     }
 };
@@ -216,7 +216,7 @@ namespace {
 struct Fixture {
     std::filesystem::path root;
     std::shared_ptr<Loader> loader = std::make_shared<Loader>();
-    std::unique_ptr<srv::ServerState> state;
+    std::unique_ptr<srv::ParallelServerState> state;
     int count;
     Fixture(int slots, int limit = 0) : count(slots) {
         root = std::filesystem::temp_directory_path() /
@@ -224,7 +224,7 @@ struct Fixture {
         std::filesystem::create_directories(root);
         srv::ServerConfig config; config.backend = engine::core::BackendType::Cpu;
         config.ui_enabled = false; config.max_loaded_models = limit; config.busy_timeout_ms = 0;
-        state = std::make_unique<srv::ServerState>(config, root);
+        state = std::make_unique<srv::ParallelServerState>(config, root);
         Access::registry(*state, loader);
     }
     ~Fixture() {
@@ -436,15 +436,15 @@ void generic_batches_hold_independent_slots(int count) {
     require(Access::slots(*f.state, "batch").active == 0, "generic batch callbacks stranded ownership");
 }
 
-void generic_batch_legacy_and_invalid_input() {
+void generic_batch_single_slot_and_invalid_input() {
     Fixture f(1); f.add("batch");
     auto response = post(*f.state, "/v1/tasks/batch",
         "{\"model\":\"batch\",\"requests\":[{\"text\":\"hello\"}]}");
     success(response); Writer writer; response.stream_body(writer); response.stream_body = {};
-    require(writer.output.find("task.batch.done") != std::string::npos, "legacy generic batch failed");
+    require(writer.output.find("task.batch.done") != std::string::npos, "single-slot parallel generic batch failed");
     require(post(*f.state, "/v1/tasks/batch", "{\"model\":\"batch\",\"requests\":[]}").status == 400,
             "empty generic batch was accepted");
-    require(Access::slots(*f.state, "batch").active == 0, "legacy generic batch leaked ownership");
+    require(Access::slots(*f.state, "batch").active == 0, "single-slot parallel generic batch leaked ownership");
 }
 
 void rejected_preparation_releases_lease(int count) {
@@ -464,11 +464,39 @@ void rejected_preparation_releases_lease(int count) {
 }
 }
 
+void dynamic_capacity_changes_use_parallel_lifecycle() {
+    Fixture f(1); f.add("shared");
+    success(run(*f.state, "shared"));
+    for (int count : {2, 1, 4, 1}) {
+        f.count = count;
+        success(f.replace("shared", "shared", "tts"));
+        const auto state = Access::slots(*f.state, "shared");
+        require(state.slots == count, "parallel runtime could not reconfigure through capacity one");
+        success(run(*f.state, "shared"));
+    }
+    for (const std::string value : {"null", "true", "\"2\"", "1.5", "17"}) {
+        bool rejected = false;
+        try {
+            const auto invalid = post(*f.state, "/v1/models/load",
+            "{\"id\":\"shared\",\"family\":\"lifecycle_fixture\",\"path\":" + quote((f.root / "shared").generic_string()) +
+            ",\"slots\":" + value + "}");
+            rejected = invalid.status == 400;
+        } catch (const std::runtime_error & error) {
+            // A direct validation exception must also identify the bad capacity.
+            rejected = std::string(error.what()).find("model slots must be an integer") != std::string::npos;
+        }
+        require(rejected, "parallel registration accepted invalid capacity");
+        require(Access::resident(*f.state, "shared"), "invalid capacity unloaded an existing model");
+    }
+}
+
 int main() {
     try {
+        engine::io::json::enable_serialized_json_parsing();
         concurrent_json_parsing();
-        generic_batch_legacy_and_invalid_input();
-        for (int count : {2, 4}) {
+        dynamic_capacity_changes_use_parallel_lifecycle();
+        generic_batch_single_slot_and_invalid_input();
+        for (int count : {1, 2, 4}) {
             older_work_before_management(count, false);
             older_work_before_management(count, true);
             overlapping_managers(count);
@@ -480,7 +508,7 @@ int main() {
             deferred_stream_ownership(count, true);
             deferred_batch_ownership(count);
             deferred_batch_ownership(count, true);
-            generic_batches_hold_independent_slots(count);
+            if (count > 1) { generic_batches_hold_independent_slots(count); }
             rejected_preparation_releases_lease(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"

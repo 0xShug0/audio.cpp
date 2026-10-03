@@ -32,12 +32,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('before-server', 'after-server', 'model', 'spec', 'audio', 'output-dir'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--parallel-jobs', action='store_true', help='enable the parallel runtime in both compared builds')
     parser.add_argument('--backend', choices=('cuda', 'vulkan'), required=True)
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--repeats', type=int, default=5)
     parser.add_argument('--slots', type=int, nargs='+', default=[1], choices=(1, 2, 3, 4),
                         help='use 1 for the standalone framework; larger counts require model support')
     args = parser.parse_args()
+    if not args.parallel_jobs and args.slots != [1]:
+        parser.error("multiple slots require --parallel-jobs")
     for name, value in vars(args).items():
         if isinstance(value, Path):
             setattr(args, name, value.resolve())
@@ -76,7 +79,8 @@ def main():
     for label, exe in [('before', args.before_server), ('after', args.after_server)]:
         for slots in args.slots:
             folder = args.output_dir / f'{label}-{slots}'
-            with Server(exe, [{**model, 'slots': slots}], args.backend, args.device, folder) as server:
+            with Server(exe, [{**model, 'slots': slots}] if args.parallel_jobs else [model],
+                        args.backend, args.device, folder, parallel_jobs=args.parallel_jobs) as server:
                 body = {'model': 'canary', 'request': payload}
                 cold = timed(server, body)
                 warm = timed(server, body)

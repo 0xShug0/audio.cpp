@@ -9,15 +9,6 @@
 // looks like from userspace.
 
 #include "busy_guard.h"
-#if defined(AUDIOCPP_TEST_MODEL_SLOTS)
-#include "model_execution_guard.h"
-class TestedGuard : public minitts::server::ModelExecutionGuard {
-public:
-    Lock acquire(int timeout, std::string_view label) { return acquire_run(timeout, label); }
-};
-#else
-using TestedGuard = minitts::server::BusyGuard;
-#endif
 
 #include <atomic>
 #include <chrono>
@@ -43,7 +34,7 @@ void require(bool condition, const std::string & message) {
 // for as long as the test needs.
 class WedgedRun {
 public:
-    explicit WedgedRun(TestedGuard & guard) {
+    explicit WedgedRun(minitts::server::BusyGuard & guard) {
         thread_ = std::thread([this, &guard] {
             auto lock = guard.acquire(0, "wedged");
             held_.store(true);
@@ -86,7 +77,7 @@ bool still_blocked(std::future<T> & future, std::chrono::milliseconds patience) 
 // timeout 0 must reproduce the original std::mutex behavior exactly: a caller
 // arriving behind a wedged run waits, and keeps waiting, with no way out.
 void test_disabled_guard_queues_forever() {
-    TestedGuard guard;
+    minitts::server::BusyGuard guard;
     WedgedRun wedged(guard);
 
     std::atomic<bool> acquired{false};
@@ -114,7 +105,7 @@ void test_disabled_guard_queues_forever() {
 // consumed, so a bounded thread pool is fully exhausted and the server stops
 // serving -- including requests for other, healthy models.
 void test_disabled_guard_exhausts_all_workers() {
-    TestedGuard guard;
+    minitts::server::BusyGuard guard;
     WedgedRun wedged(guard);
 
     constexpr int kWorkers = 8;
@@ -145,7 +136,7 @@ void test_disabled_guard_exhausts_all_workers() {
 // With a positive timeout the same wedged run no longer captures callers: each one
 // gives up and reports busy, so the worker returns to the pool.
 void test_enabled_guard_fails_fast_instead_of_queuing() {
-    TestedGuard guard;
+    minitts::server::BusyGuard guard;
     WedgedRun wedged(guard);
 
     constexpr int kWorkers = 8;
@@ -186,7 +177,7 @@ void test_enabled_guard_fails_fast_instead_of_queuing() {
 // Once the holder has overrun, later arrivals skip the wait entirely -- they must
 // not each burn another full timeout window before reporting busy.
 void test_overrun_holder_fails_without_waiting() {
-    TestedGuard guard;
+    minitts::server::BusyGuard guard;
     WedgedRun wedged(guard);
 
     // Let the holder run past a 50 ms bound.
@@ -211,7 +202,7 @@ void test_overrun_holder_fails_without_waiting() {
 // the next caller acquires immediately rather than inheriting the previous run's
 // elapsed time and being wrongly rejected.
 void test_guard_is_reusable_after_a_normal_run() {
-    TestedGuard guard;
+    minitts::server::BusyGuard guard;
     {
         auto lock = guard.acquire(50, "model");
         std::this_thread::sleep_for(80ms);  // longer than the timeout, but legitimate
@@ -222,7 +213,7 @@ void test_guard_is_reusable_after_a_normal_run() {
 
 // The same must hold when a run ends by throwing.
 void test_guard_is_reusable_after_a_failed_run() {
-    TestedGuard guard;
+    minitts::server::BusyGuard guard;
     try {
         auto lock = guard.acquire(50, "model");
         throw std::runtime_error("inference failed");
@@ -233,7 +224,7 @@ void test_guard_is_reusable_after_a_failed_run() {
 
 // An idle model must be entered without delay regardless of the bound.
 void test_idle_model_acquires_immediately() {
-    TestedGuard guard;
+    minitts::server::BusyGuard guard;
     const auto started = std::chrono::steady_clock::now();
     auto lock = guard.acquire(5000, "model");
     require(

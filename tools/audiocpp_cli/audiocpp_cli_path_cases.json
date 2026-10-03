@@ -2619,6 +2619,74 @@
       ]
     },
     {
+      "id": "crisperwhisper_alignment",
+      "coverage": "Known transcript alignment with insertions, substitutions and repeated requests.",
+      "family": "crisperwhisper",
+      "model": "models/CrisperWhisper2.0-GGUF/crisperwhisper-2-large-bf16.gguf",
+      "task": "align",
+      "outputs": ["text", "words"],
+      "requests": [
+        {
+          "id": "insertions",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+          "text": "Concord returned swiftly to its old place amidst the tents."
+        },
+        {
+          "id": "substitution",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+          "text": "Concord went to its place amidst the tents."
+        },
+        {
+          "id": "insertions_repeat",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+          "text": "Concord returned swiftly to its old place amidst the tents."
+        }
+      ]
+    },
+    {
+      "id": "crisperwhisper_modes_repeat",
+      "coverage": "Verbatim, intended and transcript-conditioned generation, then repeat the first request to check state isolation.",
+      "family": "crisperwhisper",
+      "model": "models/CrisperWhisper2.0-GGUF/crisperwhisper-2-large-bf16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {
+          "id": "verbatim_cold",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"
+        },
+        {
+          "id": "intended",
+          "audio": "assets/resources/sample_16k.wav",
+          "options": {"transcription_mode": "intended"}
+        },
+        {
+          "id": "verbatimize",
+          "audio": "assets/resources/sample_16k.wav",
+          "text": "Some call me nature, others call me Mother Nature. I've been here for over 4.5 billion years, 22,500 times longer than you.",
+          "options": {"transcription_mode": "verbatimize"}
+        },
+        {
+          "id": "verbatim_repeat",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"
+        }
+      ]
+    },
+    {
+      "id": "crisperwhisper_longform_repeat",
+      "coverage": "Long-form continuation with warmed repeats in one session.",
+      "family": "crisperwhisper",
+      "model": "models/CrisperWhisper2.0-GGUF/crisperwhisper-2-large-bf16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "cold", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav"},
+        {"id": "warm1", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav"},
+        {"id": "warm2", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav"},
+        {"id": "warm3", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav"}
+      ]
+    },
+    {
       "id": "qwen3_asr_offline",
       "coverage": "Qwen3 ASR offline audio encoder and thinker decode",
       "family": "qwen3_asr",
@@ -2699,6 +2767,42 @@
           "id": "sample_en_words",
           "audio": "resources/sample_16k.wav",
           "language": "en"
+        }
+      ]
+    },
+    {
+      "id": "lfm2_audio_en_q8_offline",
+      "coverage": "LFM2.5-Audio EN Q8_0 package directory: whole-input, VAD and fixed chunking",
+      "family": "lfm2_audio",
+      "model": "models/LFM2.5-Audio-1.5B-GGUF",
+      "task": "asr",
+      "mode": "offline",
+      "session_options": {
+        "lfm2_audio.model_gguf": "LFM2.5-Audio-1.5B-Q8_0.gguf"
+      },
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "librispeech_whole",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"
+        },
+        {
+          "id": "librispeech_vad",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_other_7902-96591-0000.wav",
+          "options": {
+            "audio_chunk_mode": "vad"
+          }
+        },
+        {
+          "id": "librispeech_fixed_2s",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav",
+          "language": "en",
+          "options": {
+            "audio_chunk_mode": "fixed",
+            "audio_chunk_seconds": 2
+          }
         }
       ]
     },
@@ -4180,6 +4284,62 @@
           },
           "seed": 1986
         }
+      ]
+    },
+    {
+      "id": "audio_flamingo_short",
+      "coverage": "Audio Flamingo Next short transcription, warmed repetition, and changed input length",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-next-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "cold", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "warm", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "different_length", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "short_after_different_length", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "audio_flamingo_understanding",
+      "coverage": "Audio Flamingo Next audio questions, long-context summarization, and short input after long input",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-next-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "speech_question", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Is there speech or music in this recording?", "max_tokens": 128}},
+        {"id": "long_summary", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"instruct": "Summarize the recording in two sentences.", "max_tokens": 256}},
+        {"id": "long_repeat", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"instruct": "Summarize the recording in two sentences.", "max_tokens": 256}},
+        {"id": "short_after_long", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "audio_flamingo_3_short",
+      "coverage": "Audio Flamingo 3 transcription, warmed repetition, and changed input length",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-3-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "cold", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "warm", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"instruct": "Transcribe the input speech.", "max_tokens": 128}},
+        {"id": "different_length", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "options": {"instruct": "Describe the audio.", "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "audio_flamingo_3_long_context",
+      "coverage": "Audio Flamingo 3 five-minute audio context",
+      "family": "audio_flamingo",
+      "model": "models/Audio-Flamingo-GGUF/audio-flamingo-3-bf16.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "long_summary", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"instruct": "Summarize the recording in two sentences.", "max_tokens": 256}}
       ]
     },
     {

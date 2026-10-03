@@ -16,6 +16,12 @@
 
 namespace engine::assets {
 
+// Existing loaders remain unsynchronized. Model adapters explicitly opt in before
+// sharing a source across sessions; the policy is fixed at source construction.
+struct TensorSourceOptions {
+    bool synchronized_access = false;
+};
+
 enum class TensorStorageType {
     Native,
     F32,
@@ -157,6 +163,10 @@ void set_backend_tensor_from_f32_parallel(
     std::vector<std::byte> * retained_bytes = nullptr);
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path);
 std::shared_ptr<const TensorSource> open_tensor_source(
+    const std::filesystem::path & path, TensorSourceOptions options);
+std::shared_ptr<const TensorSource> open_tensor_source(
+    const std::filesystem::path & path, std::string_view tensor_prefix, TensorSourceOptions options);
+std::shared_ptr<const TensorSource> open_tensor_source(
     const std::filesystem::path & path,
     std::string_view tensor_prefix);
 std::shared_ptr<const TensorSource> make_prefixed_tensor_source(
@@ -224,5 +234,8 @@ std::vector<std::filesystem::path> indexed_tensor_source_shard_paths(const std::
     const std::filesystem::path & model_root);
 std::shared_ptr<const TensorSource> open_indexed_tensor_source(const std::filesystem::path & index_path,
     const std::filesystem::path & model_root);
+std::shared_ptr<const TensorSource> open_indexed_tensor_source(
+    const std::filesystem::path & index_path, const std::filesystem::path & model_root,
+    TensorSourceOptions options);
 
 }  // namespace engine::assets

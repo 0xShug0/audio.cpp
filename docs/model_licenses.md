@@ -27,6 +27,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `apollo` | [JusperLee/Apollo](https://huggingface.co/JusperLee/Apollo) | CC-BY-SA-4.0 | Yes | | 2026-09-21 |
 | `audio8_asr` | [Edge0/Audio8-ASR-0.1B](https://huggingface.co/Edge0/Audio8-ASR-0.1B) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `audio8_tts` | [Edge0/Audio8-TTS-Preview-0.6b](https://huggingface.co/Edge0/Audio8-TTS-Preview-0.6b) | Apache-2.0 | Yes | | 2026-09-21 |
+| `audio_flamingo` | [nvidia/audio-flamingo-3-hf](https://huggingface.co/nvidia/audio-flamingo-3-hf), [nvidia/audio-flamingo-next-hf](https://huggingface.co/nvidia/audio-flamingo-next-hf) | NVIDIA OneWay Noncommercial | No | Upstream model-card licenses and terms apply. | 2026-10-02 |
 | `audiosr` | [haoheliu/audiosr_basic](https://huggingface.co/haoheliu/audiosr_basic) | Apache-2.0 | Yes | | 2026-09-21 |
 | `auk` | [tencent/AuK](https://huggingface.co/tencent/AuK)<br>[tencent/AuK-Flash](https://huggingface.co/tencent/AuK-Flash) | MIT | Yes | | 2026-09-21 |
 | `breeze_tts` | [BreezeBlue/Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) | [BreezeBlue Research and Non-Commercial License](https://huggingface.co/BreezeBlue/Breeze-TTS-2/blob/main/LICENSE) | No | | 2026-09-21 |
@@ -37,6 +38,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `chatterbox_turbo` | [ResembleAI/chatterbox-turbo](https://huggingface.co/ResembleAI/chatterbox-turbo) | MIT | Yes | | 2026-09-21 |
 | `citrinet_asr` | [nvidia/stt_en_citrinet_256_ls](https://huggingface.co/nvidia/stt_en_citrinet_256_ls) | CC-BY-4.0 | Yes | | 2026-09-21 |
 | `cohere_asr` | [CohereLabs/cohere-transcribe-03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026) | Apache-2.0 | Yes | | 2026-09-21 |
+| `crisperwhisper` | [nyralabs/CrisperWhisper2.0_large](https://huggingface.co/nyralabs/CrisperWhisper2.0_large) | nyra health Non-Commercial Research License | No | The upstream license also restricts generated outputs; inference software is MIT. | 2026-09-29 |
 | `gigaam_asr` | [ai-sage/GigaAM-v3](https://huggingface.co/ai-sage/GigaAM-v3), [ai-sage/GigaAM-Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) | MIT | Yes | | 2026-09-25 |
 | `confucius4_r2t2` | [netease-youdao/Confucius4-R2T2](https://huggingface.co/netease-youdao/Confucius4-R2T2) | [NetEase Youdao Model License](https://github.com/netease-youdao/Confucius4-R2T2/blob/master/MODEL_LICENSE) | Conditional | A separate license is needed above RMB 1 billion yearly revenue or 100 million monthly users. The model and its outputs may not be used to improve other commercial AI models. | 2026-09-21 |
 | `confucius4_tts` | [netease-youdao/Confucius4-TTS](https://huggingface.co/netease-youdao/Confucius4-TTS) | Apache-2.0 | Yes | | 2026-09-21 |
@@ -66,6 +68,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `kokoro_tts` | [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) | Apache-2.0 | Yes | | 2026-09-21 |
 | `kugelaudio` | [kugelaudio/kugelaudio-0-open](https://huggingface.co/kugelaudio/kugelaudio-0-open) | MIT | Yes | Includes the upstream preset voice features. | 2026-09-28 |
 | `kroko_asr` | [Banafo/Kroko-ASR](https://huggingface.co/Banafo/Kroko-ASR) | CC-BY-SA | Yes | Stated in the model card text only: the LICENSE file is empty and no version is named. Applies to the community models; Kroko's commercial models are licensed separately. | 2026-09-21 |
+| `lfm2_audio` | [LiquidAI/LFM2.5-Audio-1.5B](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B)<br>[LiquidAI/LFM2.5-Audio-1.5B-JP](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B-JP) | [LFM Open License v1.0](https://huggingface.co/LiquidAI/LFM2.5-Audio-1.5B/blob/main/LICENSE) | Conditional | Commercial use is licensed only to organizations with less than USD 10M yearly revenue. The audio encoder is based on canary-180m-flash (CC-BY-4.0). | 2026-09-25 |
 | `liveavatar` | [Quark-Vision/Live-Avatar](https://huggingface.co/Quark-Vision/Live-Avatar)<br>[Wan-AI/Wan2.2-S2V-14B](https://huggingface.co/Wan-AI/Wan2.2-S2V-14B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `magpie_tts` | [nvidia/magpie_tts_multilingual_357m](https://huggingface.co/nvidia/magpie_tts_multilingual_357m) | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes | | 2026-09-21 |
 | `marblenet_vad` | Not linked | Not stated | Unclear | Bundled in `assets/framework/models`; the checkpoint's source is not documented. | 2026-09-21 |

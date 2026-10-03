@@ -13,6 +13,8 @@
 namespace engine::io::json {
 
 namespace {
+// Set once at parallel-server startup, before any concurrent parser callers.
+bool serialized_json_parsing = false;
 
 cJSON * make_cjson(const Value & value) {
     switch (value.kind()) {
@@ -357,14 +359,20 @@ const Value * Value::find(const std::string & key) const noexcept {
     return it == object_value_->end() ? nullptr : &it->second;
 }
 
+void enable_serialized_json_parsing() {
+    serialized_json_parsing = true;
+}
+
 Value parse(std::string_view text) {
     const char * parse_end = nullptr;
     cJSON * root = nullptr;
-    {
+    if (serialized_json_parsing) {
         // cJSON writes its global error position even when return_parse_end is
         // supplied. Serialize that call; conversion and deletion are per-tree.
         static std::mutex parse_mutex;
         std::lock_guard<std::mutex> lock(parse_mutex);
+        root = cJSON_ParseWithLengthOpts(text.data(), text.size(), &parse_end, 0);
+    } else {
         root = cJSON_ParseWithLengthOpts(text.data(), text.size(), &parse_end, 0);
     }
     if (root == nullptr) {

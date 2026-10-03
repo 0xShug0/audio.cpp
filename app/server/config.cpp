@@ -217,6 +217,10 @@ engine::core::BackendType parse_server_backend(const std::string & value) {
 }
 
 ServerConfig load_server_config(const std::filesystem::path & path) {
+    return load_server_config(path, false);
+}
+
+ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs) {
     const auto root = engine::io::json::parse_file(path);
     const auto base = path.parent_path();
     ServerConfig config;
@@ -302,9 +306,18 @@ ServerConfig load_server_config(const std::filesystem::path & path) {
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
-        model.slots = engine::io::json::optional_i32(item, "slots", 1);
-        if (model.slots < 1 || model.slots > static_cast<int>(engine::runtime::kMaxParallelSessions)) {
-            throw std::runtime_error("model slots must be between 1 and 16");
+        if (!parallel_jobs && item.find("slots") != nullptr) {
+            throw std::runtime_error("slots requires --parallel-jobs at server startup");
+        }
+        if (parallel_jobs) {
+            if (const auto * value = item.find("slots")) {
+                if (!value->is_number() || !std::isfinite(value->as_number()) ||
+                    std::floor(value->as_number()) != value->as_number() ||
+                    value->as_number() < 1 || value->as_number() > 16) {
+                    throw std::runtime_error("model slots must be an integer between 1 and 16");
+                }
+                model.slots = static_cast<int>(value->as_number());
+            }
         }
         if (item.find("busy_timeout_ms") != nullptr) {
             const auto busy_timeout_ms = engine::io::json::optional_i32(item, "busy_timeout_ms", 0);

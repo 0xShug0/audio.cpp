@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "family": "crisperwhisper",
+  "display_name": "CrisperWhisper 2.0",
+  "description": "Whisper-based verbatim and intended speech transcription.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr",
+    "align"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "af",
+    "am",
+    "ar",
+    "as",
+    "az",
+    "ba",
+    "be",
+    "bg",
+    "bn",
+    "bo",
+    "br",
+    "bs",
+    "ca",
+    "cs",
+    "cy",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "et",
+    "eu",
+    "fa",
+    "fi",
+    "fo",
+    "fr",
+    "gl",
+    "gu",
+    "ha",
+    "haw",
+    "he",
+    "hi",
+    "hr",
+    "ht",
+    "hu",
+    "hy",
+    "id",
+    "is",
+    "it",
+    "ja",
+    "jw",
+    "ka",
+    "kk",
+    "km",
+    "kn",
+    "ko",
+    "la",
+    "lb",
+    "ln",
+    "lo",
+    "lt",
+    "lv",
+    "mg",
+    "mi",
+    "mk",
+    "ml",
+    "mn",
+    "mr",
+    "ms",
+    "mt",
+    "my",
+    "ne",
+    "nl",
+    "nn",
+    "no",
+    "oc",
+    "pa",
+    "pl",
+    "ps",
+    "pt",
+    "ro",
+    "ru",
+    "sa",
+    "sd",
+    "si",
+    "sk",
+    "sl",
+    "sn",
+    "so",
+    "sq",
+    "sr",
+    "su",
+    "sv",
+    "sw",
+    "ta",
+    "te",
+    "tg",
+    "th",
+    "tk",
+    "tl",
+    "tr",
+    "tt",
+    "uk",
+    "ur",
+    "uz",
+    "vi",
+    "yi",
+    "yo",
+    "zh"
+  ],
+  "capabilities": {
+    "align": [
+      "word_timestamps"
+    ],
+    "asr": [
+      "word_timestamps",
+      "partial_results"
+    ]
+  },
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "return_timestamps",
+        "required": false,
+        "type": "bool",
+        "description": "Return word-level timestamps.",
+        "default": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "description": "Continuation window planning. None requires audio no longer than 30 seconds.",
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "required": false,
+        "type": "float",
+        "description": "Duration of each encoder window in seconds.",
+        "min": 0.02,
+        "max": 30,
+        "default": 30
+      },
+      {
+        "name": "audio_chunk_overlap_sec",
+        "required": false,
+        "type": "float",
+        "description": "Audio overlap between continuation windows in seconds.",
+        "min": 0,
+        "default": 4
+      },
+      {
+        "name": "language",
+        "required": false,
+        "type": "string",
+        "description": "Audio language code.",
+        "default": "en"
+      },
+      {
+        "name": "transcription_mode",
+        "required": false,
+        "type": "enum",
+        "description": "Verbatim speech, intended clean text, or transcript-conditioned verbatimize.",
+        "values": [
+          "verbatim",
+          "intended",
+          "verbatimize"
+        ],
+        "default": "verbatim"
+      },
+      {
+        "name": "max_tokens",
+        "required": false,
+        "type": "int",
+        "description": "Maximum generated tokens per window.",
+        "min": 1,
+        "max": 439,
+        "default": 256
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k",
+          "i8"
+        ],
+        "description": "Matmul weight storage type.",
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/crisperwhisper.md"
+    ],
+    "recommended_package": "crisperwhisper_2_large_q8_0"
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "crisperwhisper_2_large_bf16",
+      "display_name": "CrisperWhisper 2.0 Large GGUF BF16",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "CrisperWhisper2.0-GGUF",
+      "files": [
+        "CrisperWhisper2.0-GGUF/crisperwhisper-2-large-bf16.gguf"
+      ],
+      "strip_prefix": "CrisperWhisper2.0-GGUF"
+    },
+    {
+      "id": "crisperwhisper_2_large_q8_0",
+      "display_name": "CrisperWhisper 2.0 Large GGUF Q8_0",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "CrisperWhisper2.0-GGUF",
+      "files": [
+        "CrisperWhisper2.0-GGUF/crisperwhisper-2-large-q8_0.gguf"
+      ],
+      "strip_prefix": "CrisperWhisper2.0-GGUF"
+    },
+    {
+      "id": "crisperwhisper_2_large_q4_k",
+      "display_name": "CrisperWhisper 2.0 Large GGUF Q4_K",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "CrisperWhisper2.0-GGUF",
+      "files": [
+        "CrisperWhisper2.0-GGUF/crisperwhisper-2-large-q4_k.gguf"
+      ],
+      "strip_prefix": "CrisperWhisper2.0-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "generation_config": "model:generation_config.json",
+        "tokenizer": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    }
+  ]
+}

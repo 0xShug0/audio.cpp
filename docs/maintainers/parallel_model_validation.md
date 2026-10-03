@@ -1,27 +1,19 @@
 # Parallel model validation procedure
 
-Procedure version: **2026-09-30, shared framework + model gate, FIFO parallel admission**.
+Procedure version: **2026-10-03, startup-selected separate runtimes + shared framework/model gate**.
 PR #715 owns the common framework; PR #706 owns model adapters and admission.
 This procedure defines required evidence, not tests already completed.
 
-Execution-path scope: omitted `slots` and explicit `slots: 1` select the legacy
-busy guard and direct session; `slots >= 2` selects the opt-in parallel framework.
-Compare both default forms against upstream single-session behavior. Apply
-parallel FIFO-admission and complete first-load pool-drain assertions only
-to the opt-in path. Legacy bulk unload intentionally skips unpublished loads.
-Cross-path reconfiguration must return HTTP 400 without unloading the existing
-model; changing the path requires a new model ID or restart. Neither restoring
-the default nor passing model parity proves parallel fairness/ordering safety.
-
-Run shared framework checks once for the relevant revision and reference them
-from model results. Run model checks separately for CUDA/Vulkan and the exact
-checkpoint/task/mode/count being admitted. Performance is a separate report.
-
-| Part | Coverage | Repeat when |
-|---|---|---|
-| Shared framework: F1-F6 | Scheduling, ownership and transitions, with representative real-server/backend integration | Relevant framework, shared-resource or backend behavior changes |
-| Model gate: M1-M6 | Baseline parity, every admitted count, mixed/repeated quality, recovery and memory reuse; applicable execution modes | Adapter, checkpoint, preparation, inference or applicable backend behavior changes |
-| Performance | Actual serial versus shared-slot timings; optional independent-server comparison | Reporting performance for a changed workload/build |
+Execution-path scope: absence of `--parallel-jobs` selects the original runtime.
+Any explicit `slots` field, including `1` or `null`, must be rejected on that path.
+With `--parallel-jobs`, omitted slots means capacity one and all capacities use
+the new runtime. Compare unflagged legacy behavior and flagged capacity-one
+cold/warm output against upstream. Verify protected files have no diff and the
+legacy runtime has only the registration rejection. Apply FIFO admission and
+complete first-load pool-drain assertions to every flagged count, including one.
+Legacy bulk unload intentionally retains upstream's unpublished-load skip.
+Runtime selection is immutable for the process; parallel count changes may cross
+one without changing runtime. Model parity does not prove lifecycle safety.
 
 ## Shared framework gate (once, referenced by models)
 
@@ -33,8 +25,8 @@ representatives cover and expand coverage when another path is affected.
 
 | ID | Required assertions |
 |---|---|
-| F1 Scheduling and compatibility | Isolated leases and drained counters/queues. On the opt-in path, force an older queued request, then management, then staggered later requests; older work must drain first and later arrivals cannot barge or starve it. Include a request-only queue and overlapping managers in observed enqueue order. Test overdue work with waiting management/spare slots, healthy plus overdue slots and multiple managers. Both paths require manager/request timeout and timeout-zero coverage. Compare omitted/explicit one-slot admission against the original guard; preserve unsupported-count/mode behavior. Test queue overflow only if a capacity exists; otherwise document timeout rejection. |
-| F2 Load/configuration transitions | Concurrent first requests publish one legacy session or one complete parallel pool. Parallel unload cannot skip a load in progress; legacy bulk unload must retain upstream's unpublished-load skip. Force unload/reconfiguration with queued work. Requests bound before the management barrier must use the previous configuration; unload must not be undone by an older waiter reloading. Deferred stream/batch callbacks retain their validation lease until exchange completion or destruction. Reject execution-path changes without destructive side effects. No mixed configuration or destroyed-session access. |
+| F1 Scheduling and compatibility | Isolated leases and drained counters/queues. On the opt-in path, force an older queued request, then management, then staggered later requests; older work must drain first and later arrivals cannot barge or starve it. Include a request-only queue and overlapping managers in observed enqueue order. Test overdue work with waiting management/spare slots, healthy plus overdue slots and multiple managers. Both paths require manager/request timeout and timeout-zero coverage. Verify unflagged legacy admission against the original guard, reject every explicit slots field there, and test flagged capacity-one FIFO/pool behavior; preserve unsupported-count/mode behavior. Test queue overflow only if a capacity exists; otherwise document timeout rejection. |
+| F2 Load/configuration transitions | Concurrent first requests publish one legacy session or one complete parallel pool. Parallel unload cannot skip a load in progress; legacy bulk unload must retain upstream's unpublished-load skip. On the flagged path, force unload/reconfiguration with queued work. Requests bound before the management barrier must use the previous configuration; unload must not be undone by an older waiter reloading. Deferred stream/batch callbacks retain their validation lease until exchange completion or destruction. Verify runtime selection cannot change through registration/reconfiguration; resizing flagged counts across one retains the parallel lifecycle. No mixed configuration or destroyed-session access. |
 | F3 Failure/resource lifetime | Inject primary/clone/weight-load failures, verify rollback/destruction order and retry. Immutable resources outlive users; mutable graphs/caches/RNG/callbacks are private; every error releases ownership. |
 | F4 Disconnect/shutdown | Disconnect running/queued clients without abandoning ownership/accounting. Finite active/queued workers and callbacks follow the documented drain/reject policy; shutdown cannot destroy live resources. Forced process termination does not prove graceful drain. |
 | F5 Multiple models/eviction | Force two models loading/running/unloading, including residency-limit/idle-eviction contention. Block first loading and verify bulk unload releases a different ready idle model before that load finishes. Block teardown: logical residency must clear before destruction completes, incoming loads under limits 1/2 must not reject or evict an unrelated keeper because of a retiring model. Physical free-memory checks remain separate. Block metadata during bulk/status work and verify unrelated targeted lookups and requests still progress without a global-registry lock convoy. No deadlock, contamination, unsafe backend initialization or destruction of another model's live resources. |
@@ -60,7 +52,7 @@ only to sample memory. Applicable assertions inside each group remain required.
 
 | ID | Required evidence |
 |---|---|
-| M1 Scope/serial quality | One manifest identifies checkpoint/auxiliaries, quantization, task/mode/settings, fixtures/seeds/references, baseline/candidate source/executable hashes, build flags, OS/device/driver/backend and threads. Compare original and candidate one-slot cold, warm and repeated-warm outputs and meaningful metadata. |
+| M1 Scope/serial quality | One manifest identifies checkpoint/auxiliaries, quantization, task/mode/settings, fixtures/seeds/references, baseline/candidate source/executable hashes, build flags, OS/device/driver/backend and threads. Compare upstream legacy, unflagged candidate and flagged capacity-one cold, warm and repeated-warm outputs and meaningful metadata. |
 | M2 Every admitted count | At least three fresh server starts at each advertised count that fits. Each start covers true concurrent cold and mixed warm waves, unload/reload, exact comparisons, observed active loaded leases, drained counters and correct serial reuse. |
 | M3 Mixed/repeated quality | Effective length, seed, reference/preparation changes where supported, and reversed admission order. At the largest admitted count, at least ten mixed warm waves in each of the three starts. Cache-sensitive models need equivalent ordered per-session histories including resizing/reset; stateless models need no invented history requirement. |
 | M4 Model recovery | Reuse M2 unload/reload evidence. Once per model/backend at the largest admitted count: invalid input alongside healthy work, primary-load failure followed by retry, and targeted/all-model unload including during first lazy load. Healthy outputs stay correct; no error strands ownership. Shared queue/timeout/eviction semantics reference F1/F5; test adapter-specific overrides separately. |

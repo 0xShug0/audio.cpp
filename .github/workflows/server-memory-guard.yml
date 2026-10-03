@@ -20,11 +20,15 @@ on:
       - "include/engine/framework/runtime/session.h"
       - "tests/unittests/test_server_model_slots.cpp"
       - "tests/unittests/test_server_parallel_lifecycle.cpp"
-      - "tests/unittests/test_model_execution_guard.cpp"
+      - "tests/unittests/test_server_runtime_selection.cpp"
       - "tests/unittests/test_session_pool.cpp"
       - "tests/unittests/test_server_busy_guard.cpp"
       - "include/engine/framework/core/shared_weight_cache.h"
       - "src/framework/assets/tensor_source.cpp"
+      - "include/engine/framework/assets/tensor_source.h"
+      - "include/engine/framework/assets/resource_bundle.h"
+      - "src/framework/assets/resource_bundle.cpp"
+      - "include/engine/framework/io/json.h"
       - "tests/unittests/test_gguf_tensor_source.cpp"
       - "tests/unittests/test_shared_weight_cache.cpp"
       - "src/framework/io/json.cpp"
@@ -75,27 +79,27 @@ jobs:
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
-          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(nproc)"
+          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(nproc)"
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
-          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(sysctl -n hw.logicalcpu)"
+          cmake --build build --target audiocpp_server server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(sysctl -n hw.logicalcpu)"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake --build build --config Release --target audiocpp_server server_config_test server_busy_guard_test server_single_slot_compat_test model_execution_guard_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel
+          cmake --build build --config Release --target audiocpp_server server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel
 
       - name: Run server lifecycle tests (Linux/macOS)
         if: runner.os != 'Windows'
-        run: ctest --test-dir build --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|model_execution_guard_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+        run: ctest --test-dir build --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
 
       - name: Run server lifecycle tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_single_slot_compat_test|model_execution_guard_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
 
   cpu-sanitizers:
     name: CPU framework ${{ matrix.sanitizer }} sanitizer
@@ -135,7 +139,7 @@ jobs:
       - name: Build ownership and lifecycle regressions
         run: |
           cmake --build build-sanitizer --parallel 4 --target \
-            server_single_slot_compat_test model_execution_guard_test server_parallel_lifecycle_test server_model_slots_test \
+            server_runtime_selection_test server_parallel_lifecycle_test server_model_slots_test \
             session_pool_test shared_weight_cache_test gguf_tensor_source_test \
             server_config_test server_busy_guard_test
       - name: Run sanitizer regressions
@@ -145,7 +149,7 @@ jobs:
         run: |
           ctest --test-dir build-sanitizer --output-on-failure --timeout 60 \
             --output-junit sanitizer-results.xml \
-            -R '^(server_single_slot_compat_test|model_execution_guard_test|server_parallel_lifecycle_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test|server_config_test|server_busy_guard_test)$'
+            -R '^(server_runtime_selection_test|server_parallel_lifecycle_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test|server_config_test|server_busy_guard_test)$'
       - name: Preserve sanitizer diagnostics
         if: always()
         uses: actions/upload-artifact@v4

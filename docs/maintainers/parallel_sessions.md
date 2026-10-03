@@ -5,14 +5,35 @@ streaming and native-batch requests. Existing models keep their single-session
 behavior by default. Parallel model adapters and audited admission rules are
 the separate PR #706 follow-up; no model is newly enabled by this foundation.
 
-Omitting `slots`, or setting `slots: 1`, uses the original `BusyGuard` and
-direct session construction. It does not create a session pool, apply parallel
-admission, or give management priority over waiting inference. `slots >= 2`
-explicitly opts that model into `ModelSlots` and pool construction. No additional
-command-line flag is needed. A registered model cannot switch between these
-execution paths: reconfiguration returns HTTP 400 before unloading it. Use a
-new model ID or restart to change paths; counts within the parallel path can
-still be reconfigured under an exclusive lease.
+The process selects its implementation once at startup:
+
+| Startup | Model configuration | Runtime |
+|---|---|---|
+| No `--parallel-jobs` | No `slots` field | Original `ServerState` and `BusyGuard` |
+| No `--parallel-jobs` | Any explicit `slots`, including `1` or `null` | Configuration/registration error |
+| `--parallel-jobs` | No `slots` field | `ParallelServerState`, capacity one |
+| `--parallel-jobs` | Integer `slots` from 1 to 16 | `ParallelServerState`, validated per-model capacity |
+
+```sh
+audiocpp_server --config server.json
+audiocpp_server --config server.json --parallel-jobs
+```
+
+Slot count never selects the implementation. Even capacity one in an enabled
+process uses a pool, leases, FIFO admission and the parallel lifecycle. Dynamic
+registration follows the selected process policy. Reconfiguration can change a
+parallel model's count from one to several or back under an exclusive lease;
+it cannot switch the process to the legacy implementation. Unsupported capacities
+still fail before pool publication. The inference CLI has no new slot option.
+
+The original runtime header, busy guard, transport, frontend interfaces, session
+interface, inference CLI, model implementations and ggml files are unchanged
+relative to the upstream main used for the change. The original runtime source
+adds only explicit-slot rejection in dynamic registration. All execution and
+lifecycle changes live in `app/server/parallel_runtime.h/.cpp`. Verify the boundary
+with `python tests/server/check_parallel_boundaries.py --base origin/main`. Carry relevant
+future upstream changes into both runtime copies without routing legacy calls
+through parallel helpers.
 
 The optional loaded-model factory creates extra sessions sequentially before
 publishing a pool. Assets can be shared while execution state remains private.
@@ -56,9 +77,13 @@ has actually isolated all mutable state; that requires adapter review and tests.
 
 ## Server lifecycle
 
-`app/server/model_execution_guard.h` selects the legacy or parallel guard at
-registration. On the parallel path, `app/server/model_slots.h` leases one session
-per request. Parallel handlers bind a lease before reading model-dependent
+`app/server/main.cpp` constructs exactly one stack-owned concrete runtime and
+uses the existing transport/frontend interfaces. A local generic listener lambda
+keeps listener destruction before state destruction. Neither runtime delegates
+ownership or lifecycle operations to the other.
+
+`app/server/model_slots.h` is used only on the parallel side and leases one
+independent session per request, including when capacity is one. Parallel handlers bind a lease before reading model-dependent
 configuration or preparing inputs, and retain it through result serialization,
 the entire stream or native batch. Deferred response callbacks own the same
 lease used for validation; dropping a callback releases it. RAII
@@ -91,11 +116,9 @@ models. An unpublished initial load therefore cannot delay releasing unrelated
 idle pools. Full status/voice lookups also release the registry lock before
 waiting for model metadata or inspecting filesystem entries.
 
-The legacy path retains main's bulk-unload behavior: an unpublished first load
-is skipped, and a session being destroyed no longer counts as resident.
-Residency is mirrored with an atomic flag instead of reading a session pointer
-concurrently. Bulk snapshots use immutable registered IDs without acquiring
-metadata locks under the global registry mutex.
+The legacy runtime preserves upstream main's execution, locking, loading,
+unloading, streaming, batching, eviction and shutdown bodies. Its bulk unload
+continues to skip unpublished first loads, exactly as upstream does.
 
 The FIFO, bulk-release and residency behavior has dedicated controlled
 real-handler regressions under F1/F2/F5. Passing them alone does not establish
@@ -110,6 +133,29 @@ reconfiguration after the metadata lock is released.
 `queued_requests`, and `max_parallel_slots`. The latter is `null` until loaded
 and is cleared on unload. These are live status observations, not a reservation
 of memory or an atomic snapshot of the entire server.
+
+## Explicit shared-framework policies
+
+Parallel startup calls `engine::io::json::enable_serialized_json_parsing()` before
+configuration parsing, runtime construction or concurrent parser users. This is
+a startup-only process policy with no disable operation. Only the cJSON parsing
+call is serialized; conversion, validation, errors and deletion retain upstream
+behavior. The current production cJSON parse caller is the framework JSON wrapper;
+audit new direct callers before admitting them. Legacy startup and the CLI leave
+the policy off.
+
+`TensorSourceOptions{true}` explicitly requests synchronization for a source.
+Existing `open_tensor_source` and indexed-shard overloads retain unsynchronized
+behavior. New options-taking overloads forward the immutable policy to every
+GGUF/Safetensors shard. Prefix, folded and composite views retain the underlying
+sources; they do not create independent locks around shared storage.
+
+`ResourceBundle(root, ResourceBundleOptions{true})` separately opts into source
+cache synchronization. `bundle.open_tensor_source(id, TensorSourceOptions{true})`
+selects synchronized storage. Both the resource-ID and canonical-path caches
+separate synchronized and unsynchronized identities. Configure registrations
+before publishing a bundle. Model adapters must explicitly request these policies
+before sharing assets; adding the overloads alone does not enable any loader.
 
 ## Enabling another model
 

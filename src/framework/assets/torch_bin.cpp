@@ -127,6 +127,8 @@ struct PickleValue {
     std::vector<PickleValue> items;   // Tuple items, or a Dict as flat [k0, v0, k1, v1, ...]
     GlobalKind global = GlobalKind::None;  // Global callable, or a Storage/Tensor dtype
     std::vector<int64_t> shape;       // Tensor shape
+    std::vector<int64_t> stride;      // Tensor stride, in elements
+    int64_t storage_offset = 0;       // Tensor start inside its storage, in elements
     int64_t numel = 0;                // Storage/Tensor element count
 };
 
@@ -355,9 +357,12 @@ private:
             return;
         }
         if (func.global == GlobalKind::RebuildTensor) {
-            if (args.kind != PickleValue::Kind::Tuple || args.items.size() < 3 ||
+            // _rebuild_tensor_v2(storage, storage_offset, size, stride, requires_grad, backward_hooks)
+            if (args.kind != PickleValue::Kind::Tuple || args.items.size() < 4 ||
                 args.items[0].kind != PickleValue::Kind::Storage ||
-                args.items[2].kind != PickleValue::Kind::Tuple) {
+                args.items[1].kind != PickleValue::Kind::Int ||
+                args.items[2].kind != PickleValue::Kind::Tuple ||
+                args.items[3].kind != PickleValue::Kind::Tuple) {
                 throw std::runtime_error("torch .bin pickle has an unexpected tensor descriptor");
             }
             PickleValue tensor;
@@ -365,11 +370,24 @@ private:
             tensor.global = args.items[0].global;
             tensor.text = args.items[0].text;
             tensor.numel = args.items[0].numel;
+            tensor.storage_offset = args.items[1].integer;
+            if (tensor.storage_offset < 0) {
+                throw std::runtime_error("torch .bin pickle tensor storage offset is negative");
+            }
             for (const auto & dim : args.items[2].items) {
-                if (dim.kind != PickleValue::Kind::Int) {
-                    throw std::runtime_error("torch .bin pickle tensor shape is not integral");
+                if (dim.kind != PickleValue::Kind::Int || dim.integer < 0) {
+                    throw std::runtime_error("torch .bin pickle tensor shape is not a non-negative integer");
                 }
                 tensor.shape.push_back(dim.integer);
+            }
+            for (const auto & step : args.items[3].items) {
+                if (step.kind != PickleValue::Kind::Int) {
+                    throw std::runtime_error("torch .bin pickle tensor stride is not integral");
+                }
+                tensor.stride.push_back(step.integer);
+            }
+            if (tensor.stride.size() != tensor.shape.size()) {
+                throw std::runtime_error("torch .bin pickle tensor stride does not match its shape");
             }
             push(std::move(tensor));
             return;
@@ -460,6 +478,24 @@ int64_t shape_elements(const std::vector<int64_t> & shape) {
     return total;
 }
 
+// Same rule as torch's Tensor.is_contiguous(): dimensions of size 1 may have any stride.
+bool is_contiguous(const std::vector<int64_t> & shape, const std::vector<int64_t> & stride) {
+    if (shape_elements(shape) == 0) {
+        return true;
+    }
+    int64_t expected = 1;
+    for (size_t i = shape.size(); i-- > 0;) {
+        if (shape[i] == 1) {
+            continue;
+        }
+        if (stride[i] != expected) {
+            return false;
+        }
+        expected *= shape[i];
+    }
+    return true;
+}
+
 class TorchBinTensorSource final : public TensorSource {
 public:
     explicit TorchBinTensorSource(std::filesystem::path path)
@@ -489,15 +525,26 @@ public:
             if (storage == entries.end()) {
                 throw std::runtime_error("torch .bin is missing storage for tensor: " + key.text);
             }
+            if (!is_contiguous(value.shape, value.stride)) {
+                throw std::runtime_error(
+                    "torch .bin tensor is not contiguous, which is not supported: " + key.text);
+            }
             TensorRecord record;
             record.dtype = storage_dtype_name(value.global);
             record.shape = value.shape;
             const size_t element_bytes = dtype_byte_size(record.dtype);
             record.byte_size = static_cast<size_t>(shape_elements(value.shape)) * element_bytes;
-            record.byte_offset = storage->second.offset;
-            if (record.byte_size > storage->second.size) {
-                throw std::runtime_error("torch .bin tensor is larger than its storage: " + key.text);
+            // torch.load views the storage from storage_offset (in elements), so tensors that
+            // share one storage (e.g. slices of the same parameter) start at different bytes.
+            const size_t storage_size = storage->second.size;
+            const size_t max_offset = record.byte_size > storage_size
+                ? 0
+                : (storage_size - record.byte_size) / element_bytes;
+            if (record.byte_size > storage_size || static_cast<uint64_t>(value.storage_offset) > max_offset) {
+                throw std::runtime_error("torch .bin tensor extends past its storage: " + key.text);
             }
+            record.byte_offset =
+                storage->second.offset + static_cast<size_t>(value.storage_offset) * element_bytes;
             records_.emplace(key.text, std::move(record));
         }
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/parallel_session.h"
 
 #include <algorithm>
 #include <functional>

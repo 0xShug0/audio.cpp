@@ -627,19 +627,29 @@ void test_model_memory_estimator() {
 
 void test_model_slots() {
     const auto root = make_temp_root();
-    for (int slots : {1, 2, 16, 0, -1, 17}) {
+    for (const std::string value : {"1", "2", "16", "0", "-1", "17", "null", "true", "\"2\"", "1.5", "4294967297"}) {
         const auto text = std::string(R"({"models":[{"id":"higgs","family":"higgs_audio_tts","path":"model.gguf","slots":)")
-            + std::to_string(slots) + "}]}";
+            + value + "}]}";
+        const auto path = write_config(root, "slots.json", text);
+        bool legacy_rejected = false;
+        try { (void)minitts::server::load_server_config(path); }
+        catch (const std::runtime_error & error) {
+            legacy_rejected = std::string(error.what()).find("slots requires --parallel-jobs") != std::string::npos;
+        }
+        require(legacy_rejected, "legacy configuration accepted an explicit slots field");
         bool rejected = false;
         try {
-            const auto config = minitts::server::load_server_config(write_config(root, "slots.json", text));
-            require(config.models.front().slots == slots, "slots value was not preserved");
+            const auto config = minitts::server::load_server_config(path, true);
+            require(config.models.front().slots == std::stoi(value), "slots value was not preserved");
         } catch (const std::runtime_error &) { rejected = true; }
-        require(rejected == (slots < 1 || slots > 16), "invalid slots value accepted or valid slots rejected");
+        require(rejected == (value != "1" && value != "2" && value != "16"), "parallel capacity validation differs");
     }
-    const auto config = minitts::server::load_server_config(write_config(root, "default-slots.json",
-        R"({"models":[{"id":"higgs","family":"higgs_audio_tts","path":"model.gguf"}]})"));
-    require(config.models.front().slots == 1, "default slots must remain one");
+    const auto path = write_config(root, "default-slots.json",
+        R"({"models":[{"id":"higgs","family":"higgs_audio_tts","path":"model.gguf"}]})");
+    for (bool enabled : {false, true}) {
+        const auto config = minitts::server::load_server_config(path, enabled);
+        require(config.models.front().slots == 1, "default capacity must remain one");
+    }
 }
 
 }  // namespace
