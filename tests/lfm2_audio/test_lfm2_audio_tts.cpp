@@ -65,16 +65,15 @@ struct Point {
 // Backbone output after <|audio_start|>, the depthformer's input.
 const Point kHiddenPoints[] = {{0, -0.218750f}, {17, 0.215646f}, {511, 0.034909f}, {1024, -0.006849f}, {1500, 0.079719f}, {2047, -0.123280f}};
 
-// First frame: each codebook's greedy code, its logit and the runner-up's.
+// First frame: each codebook's greedy code and its logit.
 struct CodebookTop {
     int32_t code;
     float logit;
-    float second;
 };
 
 const CodebookTop kFirstFrame[] = {
-    {1049, 19.91094f, 11.16127f}, {477, 15.77336f, 15.57506f}, {1626, 20.17520f, 16.40806f}, {142, 17.97590f, 16.41392f},
-    {1335, 17.54575f, 16.92247f}, {555, 16.09092f, 15.83577f}, {976, 17.17711f, 15.71645f}, {1648, 17.43196f, 15.52755f},
+    {1049, 19.91094f}, {477, 15.77336f}, {1626, 20.17520f}, {142, 17.97590f},
+    {1335, 17.54575f}, {555, 16.09092f}, {976, 17.17711f}, {1648, 17.43196f},
 };
 
 // generate_sequential's greedy frames; the next frame is end-of-audio.
@@ -97,6 +96,43 @@ const std::vector<std::vector<int32_t>> kFrames = {
     {356, 1056, 1559, 164, 267, 1443, 976, 1744},    {868, 818, 323, 290, 306, 1030, 1238, 1648},
 };
 
+// For each codebook of kFrames, how far the reference's best logit is above
+// its runner-up.
+const float kFrameGaps[][8] = {
+    {8.7497f, 0.1983f, 3.7671f, 1.5620f, 0.6233f, 0.2551f, 1.4607f, 1.9044f},
+    {5.9887f, 4.4497f, 1.1002f, 2.8774f, 0.6214f, 0.4310f, 0.0466f, 4.1133f},
+    {6.2334f, 3.6723f, 0.0738f, 1.1140f, 0.9030f, 2.8178f, 1.5583f, 0.8674f},
+    {1.0494f, 2.5581f, 3.3568f, 0.2945f, 1.2743f, 1.9717f, 1.6806f, 1.5090f},
+    {1.5158f, 1.0875f, 0.3224f, 0.9291f, 0.1325f, 1.7659f, 0.2750f, 0.9055f},
+    {3.9284f, 0.3964f, 0.2994f, 0.3338f, 1.9245f, 0.6460f, 0.6082f, 1.1388f},
+    {5.7928f, 1.8549f, 0.8458f, 1.2390f, 0.8121f, 0.4359f, 0.9546f, 0.3444f},
+    {0.1795f, 0.0528f, 0.4219f, 1.1724f, 0.0565f, 1.2440f, 2.3549f, 0.3909f},
+    {3.2926f, 1.5977f, 3.2096f, 0.0778f, 0.2610f, 1.3376f, 0.0540f, 0.2369f},
+    {0.4930f, 0.6255f, 1.1905f, 0.6213f, 0.5908f, 0.3480f, 0.6047f, 0.0497f},
+    {0.9354f, 0.3649f, 0.3207f, 0.0172f, 0.1111f, 1.0805f, 0.3474f, 0.0274f},
+    {3.0147f, 0.7361f, 0.3225f, 0.2281f, 1.1174f, 0.5528f, 1.0709f, 0.8812f},
+    {2.0617f, 1.5264f, 3.7476f, 0.3078f, 0.6811f, 0.2404f, 0.3665f, 0.5121f},
+    {3.2047f, 1.2930f, 1.3553f, 0.7308f, 0.0038f, 0.6648f, 0.3533f, 0.2499f},
+    {2.2267f, 0.3904f, 0.0553f, 0.9773f, 0.8412f, 0.8955f, 0.9344f, 0.7625f},
+    {2.3502f, 0.2537f, 1.4494f, 1.6078f, 0.1209f, 1.4134f, 0.2676f, 0.5587f},
+    {1.5207f, 0.4524f, 0.4150f, 1.3518f, 2.6995f, 0.5586f, 0.1481f, 0.8708f},
+    {1.0083f, 0.3082f, 0.7947f, 0.1522f, 0.3049f, 0.9793f, 0.7531f, 0.0563f},
+    {0.9020f, 0.6105f, 0.7749f, 1.1957f, 0.4004f, 0.5589f, 0.2698f, 0.2589f},
+    {3.7376f, 1.6121f, 0.4297f, 0.4866f, 1.0517f, 0.2149f, 0.4426f, 1.6593f},
+    {4.4777f, 0.0626f, 0.7395f, 0.1156f, 0.2681f, 0.1772f, 2.7115f, 4.8412f},
+    {3.3083f, 0.1107f, 0.7155f, 1.0171f, 0.3505f, 2.3678f, 0.1161f, 0.0090f},
+    {2.3274f, 0.4537f, 0.0043f, 0.0585f, 1.0131f, 0.8113f, 1.2763f, 1.3800f},
+    {2.1885f, 0.5628f, 0.1090f, 0.2182f, 0.6953f, 0.0006f, 0.3562f, 0.1547f},
+    {2.1961f, 1.1076f, 0.1012f, 0.1799f, 0.8490f, 0.5019f, 0.4110f, 0.4656f},
+    {3.2486f, 0.0501f, 0.1690f, 2.2923f, 0.2975f, 0.4103f, 1.0631f, 0.0793f},
+    {5.0210f, 1.1487f, 1.6144f, 0.6327f, 0.3195f, 0.2209f, 1.1444f, 0.2733f},
+    {4.7366f, 1.3775f, 0.1301f, 0.5289f, 0.6588f, 1.3056f, 0.8659f, 0.0615f},
+    {7.1659f, 4.2903f, 1.9392f, 0.5934f, 3.1354f, 2.5204f, 0.2127f, 0.1226f},
+    {0.4853f, 4.4536f, 1.1995f, 2.5165f, 3.1818f, 1.3993f, 1.7719f, 4.6741f},
+    {0.7524f, 0.0676f, 0.4212f, 0.9022f, 2.0683f, 3.7320f, 0.5490f, 0.0294f},
+    {0.8000f, 1.4172f, 0.3545f, 0.7020f, 0.5260f, 0.8285f, 0.0075f, 0.2785f},
+};
+
 // Detokenizer output for kFrames: head [row][column] and waveform samples.
 struct HeadPoint {
     int64_t row;
@@ -110,8 +146,10 @@ const Point kWavePoints[] = {{1000, 0.000134f}, {12345, 0.028856f}, {30000, -0.0
 constexpr size_t kWaveSamples = 61440;
 constexpr double kWaveRms = 0.069406;
 
-// Greedy frames are compared until a codebook's top two logits come closer
-// than this; past such a near-tie the weights' rounding decides.
+// A greedy frame may differ from the reference's only in codebooks where the
+// two codes' logits are closer than this and so are the reference's top two;
+// past such a near-tie the weights' rounding decides, so the frames after it
+// are not compared.
 constexpr float kNearTie = 0.05f;
 
 std::filesystem::path repo_path(const std::string & relative) {
@@ -193,15 +231,45 @@ void check_stage_numbers(
         frame_logits.push_back(values);
         return static_cast<int32_t>(std::max_element(values.begin(), values.end()) - values.begin());
     };
-    const auto near_tie = [&]() {
-        for (auto values : frame_logits) {
-            std::partial_sort(values.begin(), values.begin() + 2, values.end(), std::greater<float>());
-            if (values[0] - values[1] < kNearTie) {
-                return true;
+    // Whether a frame that differs from the reference's differs only at
+    // near-ties. Each codebook's step reads the code picked before it, so
+    // after one codebook differs the later ones see other input. The frame
+    // is run again with the reference's codes fed in instead: a codebook
+    // differs when its best code is then not the reference's, and each one
+    // that does must have the reference's code within kNearTie of the best,
+    // with the reference's own top two logits as close.
+    const auto differs_only_at_near_ties = [&](size_t frame, const std::vector<float> & frame_hidden, std::string & detail) {
+        const auto & expected = kFrames[frame];
+        std::vector<std::vector<float>> forced;
+        (void)depthformer.frame(frame_hidden, [&](int64_t codebook, std::vector<float> & values) {
+            forced.push_back(values);
+            return expected[static_cast<size_t>(codebook)];
+        });
+
+        size_t differing = 0;
+        bool near_ties = true;
+        for (size_t codebook = 0; codebook < forced.size(); ++codebook) {
+            const auto & values = forced[codebook];
+            const auto best = static_cast<size_t>(std::max_element(values.begin(), values.end()) - values.begin());
+            const auto reference = static_cast<size_t>(expected[codebook]);
+            if (best == reference) {
+                continue;
             }
+
+            const float gap = values[best] - values[reference];
+            const float reference_gap = kFrameGaps[frame][codebook];
+            ++differing;
+            near_ties = near_ties && gap < kNearTie && reference_gap < kNearTie;
+            detail += (differing > 1 ? ", codebook " : "codebook ") + std::to_string(codebook) + " has " + std::to_string(best) +
+                      " for " + std::to_string(reference) + " at a gap of " + std::to_string(gap) + ", the reference's " +
+                      std::to_string(reference_gap);
         }
 
-        return false;
+        if (differing == 0) {
+            detail = "no codebook differs with the reference's codes fed in";
+        }
+
+        return differing > 0 && near_ties;
     };
 
     auto codes = depthformer.frame(hidden, greedy);
@@ -222,7 +290,9 @@ void check_stage_numbers(
         }
 
         if (codes != kFrames[frame]) {
-            checks.expect(near_tie(), "greedy frame " + std::to_string(frame) + " differs only at a near-tie", join(codes));
+            std::string detail;
+            const bool near_ties = differs_only_at_near_ties(frame, hidden, detail);
+            checks.expect(near_ties, "greedy frame " + std::to_string(frame) + " differs only at near-ties (" + detail + ")", join(codes));
             break;
         }
 
