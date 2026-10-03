@@ -503,8 +503,9 @@ private:
             throw std::runtime_error("Echo-TTS KV cache context initialization failed");
         }
         core::ModuleBuildContext ctx{kv_ctx_.get(), "echo_tts.kv_cache", backend_type_};
-        // The cache is allocated at the widest lane count any graph will ask
-        // for, so joint_attention's expand() finds dims[0] already equal to the
+        // The cache is allocated at the widest lane count any graph will ask for in the
+        // session-configured CFG mode,
+        // so joint_attention's expand() finds dims[0] already equal to the
         // batch and short-circuits to a passthrough. The single-lane graph
         // reads lane 0, which is a contiguous prefix because the lane axis is
         // outermost in ggml's layout.
@@ -653,12 +654,12 @@ private:
 
     // Reconciles the cache's lane count with the graph's.
     //
-    // With pre-expansion on, the cache is allocated at kMaxCfgLanes and the
+    // With pre-expansion on, the cache is allocated at 2 or 3 lanes and the
     // single-lane graph reads a prefix of it; the lane axis is outermost, so
     // that is a view with no copy.
     //
     // With pre-expansion off (AUDIOCPP_ECHO_TTS_NO_KV_EXPAND=1) the cache is
-    // batch-1 and the three-lane graph is *wider* than it. Narrowing is not
+    // batch-1 and the two- or three-lane graphs are *wider* than it. Narrowing is not
     // possible and not wanted: returning the cache unchanged leaves
     // joint_attention's expand() to broadcast it per step, which is exactly the
     // pre-patch behaviour the flag exists to restore.

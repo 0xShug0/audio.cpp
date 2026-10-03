@@ -560,6 +560,10 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
     conditioning.speaker_mask.assign(static_cast<size_t>(speaker_frames_), 1.0F);
     conditioning.speaker_frames = speaker_frames_;
 
+    // Note: with cfg_mode_ as a Session-option, it's safe to set the KV cache
+    // allocation based on the current cfg_mode_. If we ever allow cfg_mode_ as a
+    // request-option, this logic will need to be adjusted to the maximum needed
+    // by any allowed cfg mode.
     dit_->prepare_conditioning(conditioning, cfg_mode_to_kv_lanes(cfg_mode_));
 
     // Adaptive window: OFF by default, enable with AUDIOCPP_ECHO_TTS_ADAPTIVE_WINDOW=1.
