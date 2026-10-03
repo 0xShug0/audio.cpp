@@ -161,6 +161,14 @@ or in `server.json`:
 
 ### Experimental parallel model slots
 
+The single authoritative
+[Parallel Server Behavior Contract](../../docs/maintainers/parallel_server_behavior_contract.md)
+defines operation/state matrices, linked tests, validation by area and known
+limitations. Enabling the feature prints a warning with the tested and untested
+scope. Controlled session tests do not admit real catalogue models to multi-slot
+execution; GPU streaming, full lifecycle coverage and hard backend cancellation
+remain unverified. The descriptions below are a usage summary.
+
 The existing implementation remains the default. Opt into the separate parallel
 runtime at process startup:
 
@@ -195,7 +203,7 @@ Each slot needs private execution contexts, graphs, KV/reference caches,
 stream state and sampling state. Immutable assets/weights can be shared.
 More slots can improve throughput but increase latency and working memory.
 This is concurrent session execution; continuous token batching is not included.
-See [the adapter contract](../../docs/maintainers/parallel_sessions.md).
+See [the adapter guide](../../docs/maintainers/parallel_sessions.md).
 
 The [validation procedure](../../docs/maintainers/parallel_model_validation.md)
 keeps model quality/recovery/memory checks separate from shared framework
@@ -755,4 +763,4 @@ batch response. Bulk unload releases ready idle pools before waiting on busy
 ones. Logical residency ends when teardown starts; unload completes when
 resources have been destroyed, and physical-memory guards still apply.
 Registry lookup/snapshot locks never span model admission or metadata waits.
-See the [parallel-session contract](../../docs/maintainers/parallel_sessions.md).
+See the [behavior contract](../../docs/maintainers/parallel_server_behavior_contract.md).

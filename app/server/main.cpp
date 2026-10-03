@@ -302,6 +302,15 @@ int main(int argc, char ** argv) {
             }
         };
         if (parallel_jobs) {
+            std::cerr
+                << "WARNING: --parallel-jobs enables EXPERIMENTAL server behavior.\n"
+                << "Validated scope: controlled CPU session/queue lifecycle tests and representative\n"
+                << "CUDA/Vulkan capacity-one cold/warm inference. No catalogue multi-slot models\n"
+                << "are admitted by this framework PR. Reconfiguration, unload/eviction, disconnect\n"
+                << "and shutdown have partial test coverage; real concurrent GPU streams/batches,\n"
+                << "Metal model execution and hung-backend cancellation remain unverified.\n"
+                << "See docs/maintainers/parallel_server_behavior_contract.md for tested scopes\n"
+                << "and known limitations. Busy timeout does not cancel backend execution.\n";
             minitts::server::ParallelServerState state(config, std::filesystem::current_path(), ui_resource_anchor);
             serve(state);
         } else {

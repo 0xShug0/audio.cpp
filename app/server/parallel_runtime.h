@@ -132,6 +132,9 @@ private:
     // Recompute the per-model, config-derived request-option flags (currently
     // accepts_reference_text). Called at registration and on reconfiguration.
     void refresh_model_option_flags(LoadedModel & model);
+    // Under the existing exclusive lease; reject unsupported replacement slots
+    // before unloading or committing configuration.
+    void validate_replacement_slots(const LoadedModel & existing, LoadedModel & candidate);
     std::filesystem::path resolve_ui_model_path(const std::filesystem::path & path) const;
     HttpResponse handle_model_load(const std::string & body_text);
     HttpResponse handle_model_unload(const std::string & body_text);

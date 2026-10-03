@@ -1,5 +1,11 @@
 # Common slot framework extraction
 
+Historical implementation/evidence report. The
+[Parallel Server Behavior Contract](../maintainers/parallel_server_behavior_contract.md)
+is authoritative for current expected behavior, tested scopes and known limits;
+this report retains its recorded revision's results.
+
+
 **Current boundary (2026-10-03):** `--parallel-jobs` selects a separate runtime.
 Without it, the original runtime rejects any explicit slots field; with it, even
 capacity one uses the parallel pool/scheduler. JSON and tensor-source/cache

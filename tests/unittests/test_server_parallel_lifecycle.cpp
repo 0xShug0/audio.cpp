@@ -83,8 +83,8 @@ class Session final : public rt::IOfflineVoiceTaskSession,
                       public rt::IStreamingVoiceTaskSession,
                       public rt::IParallelVoiceTaskSessionFactory {
 public:
-    Session(std::shared_ptr<Control> c, rt::TaskSpec task, std::string revision)
-        : control_(std::move(c)), task_(task), revision_(std::move(revision)) { ++control_->sessions; }
+    Session(std::shared_ptr<Control> c, rt::TaskSpec task, std::string revision, size_t capacity = 4)
+        : control_(std::move(c)), task_(task), revision_(std::move(revision)), capacity_(capacity) { ++control_->sessions; }
     ~Session() override { --control_->sessions; }
     std::string family() const override { return "lifecycle_fixture"; }
     rt::VoiceTaskKind task_kind() const override { return task_.task; }
@@ -92,12 +92,12 @@ public:
     void prepare(const rt::SessionPreparationRequest &) override {
         if (control_->fail_prepare) { throw std::runtime_error("controlled preparation failure"); }
     }
-    size_t parallel_session_capacity() const noexcept override { return 4; }
+    size_t parallel_session_capacity() const noexcept override { return capacity_; }
     std::unique_ptr<rt::IVoiceTaskSession> create_parallel_session() const override {
         if (++control_->clones == 2 && control_->fail_clone) {
             throw std::runtime_error("controlled partial pool failure");
         }
-        return std::make_unique<Session>(control_, task_, revision_);
+        return std::make_unique<Session>(control_, task_, revision_, capacity_);
     }
     rt::TaskResult run(const rt::TaskRequest & request) override {
         control_->run.wait();
@@ -139,6 +139,7 @@ private:
     std::shared_ptr<Control> control_;
     rt::TaskSpec task_;
     std::string revision_;
+    size_t capacity_;
     rt::TaskResult result_;
     bool emitted_ = false;
 };
@@ -154,9 +155,11 @@ public:
     }
     const rt::ModelMetadata & metadata() const noexcept override { return metadata_; }
     const rt::CapabilitySet & capabilities() const noexcept override { return capabilities_; }
-    std::unique_ptr<rt::IVoiceTaskSession> create_task_session(const rt::TaskSpec & task, const rt::SessionOptions &) const override {
+    std::unique_ptr<rt::IVoiceTaskSession> create_task_session(const rt::TaskSpec & task, const rt::SessionOptions & options) const override {
         if (control_->null_session) { return nullptr; }
-        return std::make_unique<Session>(control_, task, revision_);
+        const auto cap = options.options.find("fixture_capacity");
+        return std::make_unique<Session>(control_, task, revision_,
+            cap == options.options.end() ? 4 : std::stoul(cap->second));
     }
 private:
     std::shared_ptr<Control> control_;
@@ -578,9 +581,18 @@ void loading_and_inference_failures_release_ownership(int count) {
     // A failed replacement load leaves one valid, unloaded entry that can retry.
     auto replacement = f.asset("replacement"); replacement->fail_load = true;
     fails([&] { return f.replace("shared", "replacement"); });
-    require(!Access::resident(*f.state, "shared") && c->sessions == 0 && !c->premature_model_destruction,
-            "replacement failure left stale sessions/weights");
-    replacement->fail_load = false;
+    if (count > 1) {
+        // Multi-slot capability probing occurs before live state changes.
+        require(Access::resident(*f.state, "shared") && c->sessions == count,
+                "failed capability probe destroyed the working registration");
+        replacement->fail_load = false;
+        success(f.replace("shared", "replacement"));
+    } else {
+        require(!Access::resident(*f.state, "shared") && c->sessions == 0,
+                "replacement failure left stale sessions/weights");
+        replacement->fail_load = false;
+    }
+    require(!c->premature_model_destruction, "replacement destroyed weights before sessions");
     const auto result = run(*f.state, "shared"); success(result);
     require(result.body.find("replacement") != std::string::npos, "replacement failed to retry consistently");
 }
@@ -650,6 +662,46 @@ void bulk_publication_excludes_only_other_bulk_calls(int count) {
 }
 }
 
+void unsupported_capacity_preserves_registration() {
+    for (int count : {1, 2, 4}) {
+        Fixture f(count); auto old = f.add("shared"); auto replacement = f.asset("replacement");
+        success(run(*f.state, "shared"));
+        const auto before = Access::model(*f.state, "shared").sessions.get();
+        const auto reject = [&](const std::string & asset, int slots, const std::string & extra = "") {
+            srv::HttpResponse response;
+            try {
+                response = post(*f.state, "/v1/models/load",
+                    "{\"id\":\"shared\",\"family\":\"lifecycle_fixture\",\"path\":" +
+                    quote((f.root / asset).generic_string()) + ",\"slots\":" + std::to_string(slots) + extra + "}");
+            } catch (const std::exception & error) {
+                response.status = 500; response.body = error.what();
+            }
+            const auto & model = Access::model(*f.state, "shared");
+            require(model.sessions.get() == before && model.config.slots == count &&
+                    model.config.path == f.root / "shared" && Access::resident(*f.state, "shared") &&
+                    old->destructions == 0 && old->loads == 1,
+                    "unsupported capacity destroyed or changed a working registration");
+            require(response.status == 400 && response.body.find("capacity=") != std::string::npos,
+                    "unsupported capacity was not rejected as HTTP 400");
+            success(run(*f.state, "shared"));
+            const auto state = Access::slots(*f.state, "shared");
+            require(state.slots == count && state.active == 0 && state.waiting_management == 0,
+                    "unsupported capacity stranded admission ownership");
+        };
+        // Valid schema but unsupported capacity: the maintainer's slots=5 case.
+        reject("shared", 5);
+        // A different checkpoint or session options can advertise a different cap.
+        reject("replacement", 5);
+        reject("shared", 2, ",\"session_options\":{\"fixture_capacity\":\"1\"}");
+        require(replacement->sessions == 0 && !replacement->premature_model_destruction,
+                "capability probe retained state or destroyed weights before its session");
+        f.count = count == 1 ? 2 : 1;
+        success(f.replace("shared", "shared"));
+        require(Access::slots(*f.state, "shared").slots == f.count,
+                "valid resize after rejection could not recover");
+    }
+}
+
 void dynamic_capacity_changes_use_parallel_lifecycle() {
     Fixture f(1); f.add("shared");
     success(run(*f.state, "shared"));
@@ -681,7 +733,8 @@ int main(int argc, char ** argv) {
         engine::io::json::enable_serialized_json_parsing();
         if (argc == 2) {
             const std::string test = argv[1];
-            if (test == "audit-reconfiguration") { invalid_reconfiguration_preserves_live_state(); }
+            if (test == "audit-capacity") { unsupported_capacity_preserves_registration(); }
+            else if (test == "audit-reconfiguration") { invalid_reconfiguration_preserves_live_state(); }
             else if (test == "audit-registration") { registration_is_visible_while_loading(); }
             else if (test == "audit-policy") { live_policy_does_not_hold_registry_lock(); }
             else { throw std::runtime_error("unknown audit case"); }
@@ -691,6 +744,7 @@ int main(int argc, char ** argv) {
         registration_is_visible_while_loading();
         live_policy_does_not_hold_registry_lock();
         concurrent_json_parsing();
+        unsupported_capacity_preserves_registration();
         dynamic_capacity_changes_use_parallel_lifecycle();
         generic_batch_single_slot_and_invalid_input();
         for (int count : {1, 2, 4}) {

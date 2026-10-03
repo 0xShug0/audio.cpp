@@ -1377,6 +1377,76 @@ void ParallelServerState::refresh_model_option_flags(LoadedModel & model) {
     }
 }
 
+void ParallelServerState::validate_replacement_slots(
+    const LoadedModel & existing, LoadedModel & candidate) {
+    if (candidate.config.slots == 1) { return; }
+    const bool same_weights =
+        existing.config.path == candidate.config.path &&
+        existing.config.family == candidate.config.family &&
+        existing.config.config_id == candidate.config.config_id &&
+        existing.config.weight_id == candidate.config.weight_id &&
+        existing.config.load_options == candidate.config.load_options &&
+        existing.config.model_spec_override == candidate.config.model_spec_override;
+    const bool same_session = same_weights &&
+        existing.config.task == candidate.config.task &&
+        existing.config.mode == candidate.config.mode &&
+        existing.config.session_options == candidate.config.session_options;
+    size_t capacity = 1;
+    if (same_session && existing.sessions) {
+        capacity = existing.sessions->capacity();
+    } else {
+        // Capability can depend on task/backend/mode/options. Probe a private
+        // primary, never the live pool. Reuse existing immutable model assets
+        // when possible; a checkpoint change may need temporary extra memory.
+        std::unique_lock<std::mutex> load_lock(model_load_mutex_, std::defer_lock);
+        if (config_.max_loaded_models > 0 || config_.min_free_memory_mb > 0) {
+            load_lock.lock();
+        }
+        std::unique_ptr<engine::runtime::ILoadedVoiceModel> probe_model;
+        auto * source = same_weights ? existing.model.get() : nullptr;
+        if (!source) {
+            // Do not evict another registration just to validate a replacement.
+            // Insufficient staging memory rejects the operation with old state intact.
+            ensure_model_fits_memory(candidate.config);
+            auto registry = registry_factory_ ? registry_factory_() : engine::runtime::make_default_registry();
+            engine::runtime::ModelLoadRequest request;
+            request.model_path = candidate.config.path;
+            request.family_hint = candidate.config.family;
+            request.config_id = candidate.config.config_id;
+            request.weight_id = candidate.config.weight_id;
+            request.options = candidate.config.load_options;
+            request.model_spec_override = candidate.config.model_spec_override.has_value()
+                ? candidate.config.model_spec_override : config_.model_spec_override;
+            probe_model = registry.load(request);
+            source = probe_model.get();
+        }
+        engine::runtime::SessionOptions options;
+        options.backend.type = config_.backend;
+        options.backend.device = config_.device;
+        options.backend.threads = config_.threads;
+        options.options = candidate.config.session_options;
+        auto primary = source->create_task_session(candidate.task, options);
+        if (!primary) {
+            throw std::runtime_error("model returned a null task session: " + candidate.registered_id);
+        }
+        const auto audited = audited_slot_capacity(
+            primary->family(), primary->task_kind(), config_.backend, primary->run_mode());
+        engine::runtime::VoiceTaskSessionPool::SessionFactory factory;
+        if (audited > 1) {
+            factory = [&] { return source->create_task_session(candidate.task, options); };
+        }
+        // The pool's capability precedence is also used for this one-primary
+        // probe. No clones are created, and the probe dies before its weights.
+        engine::runtime::VoiceTaskSessionPool probe(std::move(primary), 1, std::move(factory), audited);
+        capacity = probe.capacity();
+    }
+    if (static_cast<size_t>(candidate.config.slots) > capacity) {
+        throw std::invalid_argument("model '" + candidate.config.family +
+            "' does not support the requested slots for this backend/task/mode (capacity=" +
+            std::to_string(capacity) + ")");
+    }
+}
+
 HttpResponse ParallelServerState::handle_model_load(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "dynamic model management is disabled", "forbidden");
@@ -1425,6 +1495,11 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
             existing->config.session_options != candidate->config.session_options ||
             existing->config.model_spec_override != candidate->config.model_spec_override;
         if (changed) {
+            try {
+                validate_replacement_slots(*existing, *candidate);
+            } catch (const std::invalid_argument & error) {
+                return error_response(400, error.what(), "invalid_request_error");
+            }
             // Teardown is protected by the lease, not the metadata lock. Status
             // and transport policy readers need not wait for GPU destruction.
             existing->unload();

@@ -1,5 +1,11 @@
 # Parallel runtime self-audit
 
+Historical implementation/evidence report. The
+[Parallel Server Behavior Contract](../maintainers/parallel_server_behavior_contract.md)
+is authoritative for current expected behavior, tested scopes and known limits;
+this report retains its recorded revision's results.
+
+
 Audit of PR #715 after startup separation, parent revision
 `612c5e9f34713b4e529f944021e7e3eb7db016f5`, against upstream
 `2892ed3e94b6ccbdacc111fa2896aaae0a5dc8fc`. Production fixes apply only to

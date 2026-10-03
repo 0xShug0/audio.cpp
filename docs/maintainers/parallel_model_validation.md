@@ -1,15 +1,22 @@
 # Parallel model validation procedure
 
-Procedure version: **2026-10-03, startup-selected separate runtimes + shared framework/model gate**.
+Procedure version: **2026-10-04, authoritative behavior contract + shared framework/model gate**.
 PR #715 owns the common framework; PR #706 owns model adapters and admission.
-This procedure defines required evidence, not tests already completed.
+This procedure defines required evidence for future model admission, not tests
+already completed or a requirement to finish every lifecycle combination before
+merging the experimental framework. The
+[Parallel Server Behavior Contract](parallel_server_behavior_contract.md) is the
+single authority for expected state/operation behavior and validation by area.
+PR #715 focuses on startup isolation and the normal inference path; remaining
+lifecycle coverage stays explicitly partial/untested there. Model quality rules
+M1-M6 are unchanged; shared gaps are not copied into every model's test matrix.
 
 Execution-path scope: absence of `--parallel-jobs` selects the original runtime.
 Any explicit `slots` field, including `1` or `null`, must be rejected on that path.
 With `--parallel-jobs`, omitted slots means capacity one and all capacities use
 the new runtime. Compare unflagged legacy behavior and flagged capacity-one
-cold/warm output against upstream. Verify protected files have no diff and the
-legacy runtime has only the registration rejection. Apply FIFO admission and
+cold/warm output against upstream. Verify protected files against the recorded
+upstream commit and confirm the legacy runtime has only the registration rejection. Apply FIFO admission and
 complete first-load pool-drain assertions to every flagged count, including one.
 Legacy bulk unload intentionally retains upstream's unpublished-load skip.
 Runtime selection is immutable for the process; parallel count changes may cross
@@ -26,11 +33,16 @@ representatives cover and expand coverage when another path is affected.
 | ID | Required assertions |
 |---|---|
 | F1 Scheduling and compatibility | Isolated leases and drained counters/queues. On the opt-in path, force an older queued request, then management, then staggered later requests; older work must drain first and later arrivals cannot barge or starve it. Include a request-only queue and overlapping managers in observed enqueue order. Test overdue work with waiting management/spare slots, healthy plus overdue slots and multiple managers. Both paths require manager/request timeout and timeout-zero coverage. Verify unflagged legacy admission against the original guard, reject every explicit slots field there, and test flagged capacity-one FIFO/pool behavior; preserve unsupported-count/mode behavior. Test queue overflow only if a capacity exists; otherwise document timeout rejection. |
-| F2 Load/configuration transitions | Concurrent first requests publish one legacy session or one complete parallel pool. Parallel unload cannot skip a load in progress; legacy bulk unload must retain upstream's unpublished-load skip. On the flagged path, force unload/reconfiguration with queued work. Requests bound before the management barrier must use the previous configuration; unload must not be undone by an older waiter reloading. Deferred stream/batch callbacks retain their validation lease until exchange completion or destruction. Verify runtime selection cannot change through registration/reconfiguration; resizing flagged counts across one retains the parallel lifecycle. No mixed configuration or destroyed-session access. |
-| F3 Failure/resource lifetime | Inject primary/clone/weight-load failures, verify rollback/destruction order and retry. Immutable resources outlive users; mutable graphs/caches/RNG/callbacks are private; every error releases ownership. |
-| F4 Disconnect/shutdown | Disconnect running/queued clients without abandoning ownership/accounting. Finite active/queued workers and callbacks follow the documented drain/reject policy; shutdown cannot destroy live resources. Forced process termination does not prove graceful drain. |
-| F5 Multiple models/eviction | Force two models loading/running/unloading, including residency-limit/idle-eviction contention. Block first loading and verify bulk unload releases a different ready idle model before that load finishes. Block teardown: logical residency must clear before destruction completes, incoming loads under limits 1/2 must not reject or evict an unrelated keeper because of a retiring model. Physical free-memory checks remain separate. Block metadata during bulk/status work and verify unrelated targeted lookups and requests still progress without a global-registry lock convoy. No deadlock, contamination, unsafe backend initialization or destruction of another model's live resources. |
-| F6 Regressions/sanitizers | Relevant common CTests and reproducible seeded stress after controlled scenarios. Applicable CPU tests under ASan and TSan separately where supported, with explicit platform/unrun-job limitations. Sanitizers do not certify GPU kernels/drivers. |
+| F2 Load/configuration transitions | Concurrent first requests publish one legacy session or one complete parallel pool. Parallel unload cannot skip a load in progress; legacy bulk unload must retain upstream's unpublished-load skip. On the flagged path, force unload/reconfiguration with queued work. Requests bound before the management barrier must use the previous configuration; unload must not be undone by an older waiter reloading. Deferred stream/batch callbacks retain their validation lease until exchange completion or destruction. Verify runtime selection cannot change through registration/reconfiguration; resizing flagged counts across one retains the parallel lifecycle. Invalid replacement metadata/capability must preserve a working registration; unsupported but syntactically valid counts (for example 5 against capacity 4) return 400 without changing the old count/pool. Check same-ID publication and pre-commit versus post-commit failure against the contract. No mixed configuration or destroyed-session access. |
+| F3 Failure/resource lifetime | Inject primary/null-primary/partial-clone/weight-load failures, verify rollback/destruction order and retry; include abandoned unstarted callbacks. Immutable resources outlive users; mutable graphs/caches/RNG/callbacks are private; every error releases ownership. |
+| F4 Disconnect/shutdown | Disconnect running/queued clients without abandoning ownership/accounting. Finite active/queued workers and callbacks follow the documented drain/reject policy; shutdown cannot destroy live resources. Default-listener tests include active handlers/callbacks and stalled header/live-body/non-reading response I/O. Distinguish finite worker drain from uncancellable queued/init/backend waits; custom listeners need independent coverage. Forced process termination does not prove graceful drain. |
+| F5 Multiple models/eviction | Force two models loading/running/unloading, including residency-limit/idle-eviction contention. Block first loading and verify bulk unload releases a different ready idle model before that load finishes. Block teardown: logical residency must clear before destruction completes, incoming loads under limits 1/2 must not reject or evict an unrelated keeper because of a retiring model. Physical free-memory checks remain separate. Block metadata during bulk/status work and verify unrelated targeted lookups and requests still progress without a global-registry lock convoy. Include reversed/overlapping bulk selections and duplicates; barrier-publication locking must not block unrelated ordinary work. Check live-ingest policy reads and warm progress during guarded cold load. No deadlock, contamination, unsafe backend initialization or destruction of another model's live resources. |
+| F6 Regressions/sanitizers | Relevant common CTests (including parallel_http_live_body_test and parallel_http_ownership_test for changed default transport) and reproducible seeded stress after controlled scenarios. Applicable CPU tests under ASan and TSan separately where supported, with explicit platform/unrun-job limitations. Sanitizers do not certify GPU kernels/drivers. |
+
+Map applicable F assertions to contract cells and their D/P/U evidence labels.
+A contract area labelled partially tested is not a blanket F-group pass. Missing
+applicable admission evidence remains pending. Shared regression coverage is
+collected once per relevant scope; this revision adds no per-model repetitions.
 
 Use controllable sessions, barriers and injected failures, with representative
 real-server integration. Bound completion externally; retain request/session/
@@ -158,7 +170,8 @@ available hardware and disclose blocked/unverified combinations. Local and
 remote CI results are distinct. Publishing restrictions neither fail evidence
 nor authorize publication.
 
-See the [session contract](parallel_sessions.md),
+See the [authoritative behavior contract](parallel_server_behavior_contract.md),
+[adapter guide](parallel_sessions.md),
 [framework report](../reports/common_slot_framework.md), and
 [scheduler regression](../reports/scheduler_busy_timeout.md) for existing scope
 and reproduction. Historical passes do not certify every requirement here.

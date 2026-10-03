@@ -1,5 +1,11 @@
 # Startup-selected runtime separation
 
+Historical implementation/evidence report. The
+[Parallel Server Behavior Contract](../maintainers/parallel_server_behavior_contract.md)
+is authoritative for current expected behavior, tested scopes and known limits;
+this report retains its recorded revision's results.
+
+
 Implements the [maintainer's Stage 1 proposal](https://github.com/0xShug0/audio.cpp/pull/715#issuecomment-5963682706)
 against upstream `2892ed3e94b6ccbdacc111fa2896aaae0a5dc8fc`.
 This replaces the previous slot-count-selected guard inside a shared server runtime.

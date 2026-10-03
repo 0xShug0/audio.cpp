@@ -5,26 +5,12 @@ streaming and native-batch requests. Existing models keep their single-session
 behavior by default. Parallel model adapters and audited admission rules are
 the separate PR #706 follow-up; no model is newly enabled by this foundation.
 
-The process selects its implementation once at startup:
-
-| Startup | Model configuration | Runtime |
-|---|---|---|
-| No `--parallel-jobs` | No `slots` field | Original `ServerState` and `BusyGuard` |
-| No `--parallel-jobs` | Any explicit `slots`, including `1` or `null` | Configuration/registration error |
-| `--parallel-jobs` | No `slots` field | `ParallelServerState`, capacity one |
-| `--parallel-jobs` | Integer `slots` from 1 to 16 | `ParallelServerState`, validated per-model capacity |
-
-```sh
-audiocpp_server --config server.json
-audiocpp_server --config server.json --parallel-jobs
-```
-
-Slot count never selects the implementation. Even capacity one in an enabled
-process uses a pool, leases, FIFO admission and the parallel lifecycle. Dynamic
-registration follows the selected process policy. Reconfiguration can change a
-parallel model's count from one to several or back under an exclusive lease;
-it cannot switch the process to the legacy implementation. Unsupported capacities
-still fail before pool publication. The inference CLI has no new slot option.
+The [Parallel Server Behavior Contract](parallel_server_behavior_contract.md)
+is the single authority for startup selection, state transitions, ordering,
+management, errors, status, disconnect and shutdown behavior, and tested scope.
+`--parallel-jobs` opts into the experimental path and prints its coverage warning;
+the CLI and unflagged server retain their original implementation. This guide
+covers adapter interfaces and implementation ownership only.
 
 The original runtime header, busy guard, transport, frontend interfaces, session
 interface, inference CLI, model implementations and ggml files are unchanged
@@ -42,7 +28,7 @@ backend/task/mode. The admission extension point is initially empty on all
 backends. Add a model only after checkpoint-backed cold/warm, mixed-request,
 unload/reload, output and memory validation at every advertised slot count.
 
-## Runtime contract
+## Adapter ownership interfaces
 
 Implement `engine::runtime::IParallelVoiceTaskSessionFactory` alongside the
 model's existing session interfaces. Its two methods are:
@@ -75,81 +61,19 @@ validates this contract, owns the primary and clones, and exposes sessions by
 slot index. It does not schedule work. It cannot verify that a model adapter
 has actually isolated all mutable state; that requires adapter review and tests.
 
-## Server lifecycle
+## Server integration
 
-`app/server/main.cpp` constructs exactly one stack-owned concrete runtime and
-uses the existing transport/frontend interfaces. The flagged default HTTP path
-uses `parallel_http.cpp`, which owns, cancels socket I/O, and joins request workers
-before returning. The original listener remains unchanged for default startup.
-Custom frontend listeners must likewise drain their workers before returning.
-Neither runtime delegates
-ownership or lifecycle operations to the other.
+`parallel_runtime.h/.cpp` owns the parallel registry, pool leases and metadata.
+`model_slots.h` provides the FIFO admission primitive; `parallel_http.cpp` owns
+default-listener workers. Consult the
+[behavior matrices](parallel_server_behavior_contract.md#operations-crossed-with-model-states)
+for the expected outcomes and linked tests. Custom frontend listeners must
+honor that document's drain-before-return contract independently.
 
-`app/server/model_slots.h` is used only on the parallel side and leases one
-independent session per request, including when capacity is one. Parallel handlers bind a lease before reading model-dependent
-configuration or preparing inputs, and retain it through result serialization,
-the entire stream or native batch. Deferred response callbacks own the same
-lease used for validation; dropping a callback releases it. RAII
-releases it on completion or exception. Native batching within one session and
-multiple concurrent sessions are independent capabilities.
-
-Requests and management enter one FIFO admission queue per opt-in model. Order
-is defined when a caller joins that queue, not by network arrival timestamps.
-Consecutive requests can fill available slots. A management operation is a barrier
-for later arrivals: earlier queued requests drain first, then the manager runs
-exclusively. Per-waiter notifications assign ownership before waking the caller;
-a later caller cannot take an older caller's reservation. The existing busy-timeout
-and timeout-zero policy applies; expired/cancelled callers release their queue entry.
-Leases must drain before destroying the pool. This does not cancel an in-flight
-GPU operation or provide continuous token batching.
-
-Parallel first-load requests serialize pool construction through a per-model
-initialization mutex. The complete pool is published only after every clone has
-been created successfully. Failed loads can be retried. Eviction checks atomic
-logical residency rather than accessing session pointers without a lease.
-Residency and public loaded state clear before pool/weight destruction begins,
-so a retiring model cannot cause a resident-limit rejection or needless eviction.
-This does not mean its physical memory is already free: the optional memory
-guard still checks actual available memory, and unload completes after teardown.
-Parallel unload leases the model even before its first pool has been published, so an
-in-progress lazy load cannot be skipped. Model-list lookup/snapshot locks are
-released before waiting for that lease. Bulk unload first reserves barriers for
-all selected parallel models, unloads ready idle pools, then waits for blocked
-models. An unpublished initial load therefore cannot delay releasing unrelated
-idle pools. Full status/voice lookups also release the registry lock before
-waiting for model metadata or inspecting filesystem entries.
-
-Bulk barrier publication uses one short mutex to prevent reversed, overlapping
-bulk selections from reserving each other's models in a circular wait. It is
-released before draining; requests and single-model management do not take it.
-Duplicate selected IDs are drained once. Dynamic registration publishes one
-stable entry under an exclusive lease before loading, so concurrent registrations
-and resident-limit accounting see the same entry. Metadata validation occurs
-before replacing live state. If backend loading fails after replacement, the
-complete validated new configuration remains registered but unloaded for retry;
-this does not retain or recreate the old device weights.
-
-See [the self-audit](../reports/parallel_runtime_self_audit.md) for transition,
-ownership, lock-scope and wait-location details, including intentional cold-load
-serialization under memory/resident guards and shutdown limits.
-
-The legacy runtime preserves upstream main's execution, locking, loading,
-unloading, streaming, batching, eviction and shutdown bodies. Its bulk unload
-continues to skip unpublished first loads, exactly as upstream does.
-
-The FIFO, bulk-release and residency behavior has dedicated controlled
-real-handler regressions under F1/F2/F5. Passing them alone does not establish
-the complete framework gate or admit another model/backend/mode.
-
-Never wait for model metadata or admission while holding the global registry
-lock. Do not hold metadata while loading or entering eviction of another model.
-The exclusive model lease protects configuration during
-reconfiguration after the metadata lock is released.
-
-`GET /v1/models` exposes configured `slots`, current `active_slots`,
-`queued_requests`, and `max_parallel_slots`. The latter is `null` until loaded
-and is cleared on unload. These are live status observations, not a reservation
-of memory or an atomic snapshot of the entire server.
+Unsupported replacement capacity must be validated before retiring working
+sessions. Capability depends on the effective backend/task/mode/session options;
+a changed checkpoint may require a private primary probe. See the contract's
+failure matrix for pre-commit versus post-commit failure and staging-memory limits.
 
 ## Explicit shared-framework policies
 

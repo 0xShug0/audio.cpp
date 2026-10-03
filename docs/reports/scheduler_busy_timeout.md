@@ -1,5 +1,11 @@
 # Slot scheduler: overdue rejection while management waits
 
+Historical implementation/evidence report. The
+[Parallel Server Behavior Contract](../maintainers/parallel_server_behavior_contract.md)
+is authoritative for current expected behavior, tested scopes and known limits;
+this report retains its recorded revision's results.
+
+
 ## Problem and fix
 
 An incoming request could wait for its complete `busy_timeout_ms` even when all
