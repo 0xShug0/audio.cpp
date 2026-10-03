@@ -1,6 +1,34 @@
 {
   "cases": [
     {
+      "id": "owsm_ctc_v4_asr",
+      "coverage": "OWSM-CTC v4 transcription, translation, unknown-language input, and repeated requests",
+      "family": "owsm_ctc",
+      "model": "models/OWSM-CTC-GGUF/owsm-ctc-v4-1b-f32.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "first", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng"}},
+        {"id": "different_audio", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "options": {"language": "eng"}},
+        {"id": "translation", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng", "target_language": "deu"}},
+        {"id": "auto_language", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "auto"}},
+        {"id": "repeat_first", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng"}}
+      ]
+    },
+    {
+      "id": "owsm_ctc_v4_longform",
+      "coverage": "OWSM-CTC v4 overlapping long-form windows and short request after long input",
+      "family": "owsm_ctc",
+      "model": "models/OWSM-CTC-GGUF/owsm-ctc-v4-1b-f32.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "warmup", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng"}},
+        {"id": "longform", "audio": "assets/resources/qwen3_tts_longform_asr_input.wav", "options": {"language": "eng"}},
+        {"id": "repeat_short", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "options": {"language": "eng"}}
+      ]
+    },
+    {
       "id": "owsm_v4_asr",
       "coverage": "OWSM v4 transcription, timestamps, translation, language identification, beam search, and repeated requests",
       "family": "owsm",

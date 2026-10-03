@@ -1593,6 +1593,18 @@ audiocpp_add_model(owsm
         engine::models::owsm::make_owsm_loader
 )
 
+audiocpp_add_model(owsm_ctc
+    SOURCES
+        src/models/owsm_ctc/assets.cpp
+        src/models/owsm_ctc/weights.cpp
+        src/models/owsm_ctc/runtime.cpp
+        src/models/owsm_ctc/session.cpp
+    INCLUDES
+        engine/models/owsm_ctc/model.h
+    LOADERS
+        engine::models::owsm_ctc::make_owsm_ctc_loader
+)
+
 audiocpp_add_model(cohere_asr
     SOURCES
         src/models/cohere_asr/assets.cpp
