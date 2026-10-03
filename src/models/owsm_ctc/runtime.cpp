@@ -145,19 +145,14 @@ struct OWSMCTCV4EBranchformerRuntime::Graphs {
             TensorShape::from_dims({1, 1, config.frontend_frames, 128}));
         int64_t valid_frames = (config.frontend_frames - 3) / 2 + 1;
         if (execution.backend_type() == core::BackendType::Cpu) {
-            // Paired with the zero-extended kernel; the retained 3x3 receptive fields are unchanged.
-            // Produce the next convolution's alignment rows here, avoiding padding its large input.
+            // Align the next convolution by padding the small mel input, not its large activation.
             const auto next_frames = (valid_frames - 3) / 2 + 1;
             const auto aligned_next_frames = ((next_frames + 15) / 16) * 16;
-            const auto padded_input_frames = 2 * (2 * aligned_next_frames + 1) + 2;
-            x = modules::Pad2dModule({0, 2, 0, padded_input_frames - config.frontend_frames}).build(ctx, x);
-            x = modules::Conv2dModule({1, d, 4, 4, 2, 2, 0, 0, 1, 1, true})
-                .build(ctx, x, weights.subsampling.conv0);
-            x = modules::SliceModule({3, 0, 63}).build(ctx, x);
-        } else {
-            x = modules::Conv2dModule({1, d, 3, 3, 2, 2, 0, 0, 1, 1, true})
-                .build(ctx, x, weights.subsampling.conv0);
+            const auto padded_input_frames = 2 * (2 * aligned_next_frames + 1) + 1;
+            x = modules::Pad2dModule({0, 0, 0, padded_input_frames - config.frontend_frames}).build(ctx, x);
         }
+        x = modules::Conv2dModule({1, d, 3, 3, 2, 2, 0, 0, 1, 1, true})
+            .build(ctx, x, weights.subsampling.conv0);
         x = modules::ReluModule().build(ctx, x);
         for (const auto * conv : {&weights.subsampling.conv1, &weights.subsampling.conv2}) {
             const auto output_frames = (valid_frames - 3) / 2 + 1;

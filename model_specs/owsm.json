@@ -269,10 +269,7 @@
   },
   "runtime": {
     "tags": [
-      "gguf",
-      "cpu",
-      "cuda",
-      "vulkan"
+      "gguf"
     ]
   },
   "ui": {

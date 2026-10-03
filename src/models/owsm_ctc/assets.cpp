@@ -177,23 +177,8 @@ std::unique_ptr<OWSMCTCV4Weights> load_owsm_ctc_weights(
         return weights;
     };
 
-    if (execution.backend_type() == core::BackendType::Cpu) {
-        // Zero-extend 3x3 to 4x4 so the single-channel convolution can use CPU GEMM.
-        const auto original = source.require_f32("encoder.embed.conv.0.weight", {d, 1, 3, 3});
-        std::vector<float> padded(static_cast<size_t>(d * 16), 0.0F);
-        for (int64_t channel = 0; channel < d; ++channel) {
-            for (int64_t row = 0; row < 3; ++row) {
-                std::copy_n(original.data() + channel * 9 + row * 3, 3,
-                    padded.data() + channel * 16 + row * 4);
-            }
-        }
-        out->subsampling.conv0.weight = store.make_f32(
-            core::TensorShape::from_dims({d, 1, 4, 4}), std::move(padded));
-        out->subsampling.conv0.bias = store.load_f32_tensor(source, "encoder.embed.conv.0.bias", {d});
-    } else {
-        out->subsampling.conv0 = modules::binding::conv2d_from_source(
-            store, source, "encoder.embed.conv.0", assets::TensorStorageType::F32, d, 1, 3, 3, true);
-    }
+    out->subsampling.conv0 = modules::binding::conv2d_from_source(
+        store, source, "encoder.embed.conv.0", assets::TensorStorageType::F32, d, 1, 3, 3, true);
     out->subsampling.conv1 = modules::binding::conv2d_from_source(
         store, source, "encoder.embed.conv.2", assets::TensorStorageType::F32, d, d, 3, 3, true);
     out->subsampling.conv2 = modules::binding::conv2d_from_source(
