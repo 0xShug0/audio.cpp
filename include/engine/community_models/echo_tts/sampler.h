@@ -31,11 +31,20 @@ bool cfg_active(float t, float cfg_min_t, float cfg_max_t);
 //     v = v_cond
 //         + w_text    * (v_cond - v_uncond_text)
 //         + w_speaker * (v_cond - v_uncond_speaker)
-std::vector<float> combine_cfg_lanes(
+std::vector<float> combine_cfg_lanes_independent(
     const std::vector<float> & lanes,
     int64_t lane_elements,
     float cfg_scale_text,
     float cfg_scale_speaker);
+
+// Combines the two CFG lanes into a single velocity, following the
+// joint-guidance form:
+//     v = v_cond
+//         + w_joint * (v_cond - v_undcond)
+std::vector<float> combine_cfg_lanes_independent(
+    const std::vector<float> & lanes,
+    int64_t lane_elements,
+    float cfg_scale);
 
 // Runs the sampler loop. `denoise` supplies the model evaluation and
 // `initial_noise` the starting latent, both injected so this can be tested
