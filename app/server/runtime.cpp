@@ -1274,8 +1274,8 @@ HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_f
     else {
         response = error_response(404, "unknown endpoint: " + request.path, "not_found");
     }
-  } catch (const engine::runtime::CapacityError & ex) {
-    // The request is too big for the device, which is the caller's to fix --
+  } catch (const engine::runtime::RequestValidationError & ex) {
+    // Something is wrong with the request that the caller can fix --
     // reporting it as 500 sends them looking for a server fault that is not
     // there. Checked before ServerBusyError only because both are
     // runtime_error; the two conditions are disjoint.
