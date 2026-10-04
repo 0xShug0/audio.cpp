@@ -54,6 +54,46 @@
   "options": {
     "request": [
       {
+        "name": "language",
+        "type": "string",
+        "description": "Recognition language code or label. Omit to detect language automatically; Auto also selects automatic detection.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated transcript tokens; omitted uses the checkpoint generation_config.json (512 when absent).",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "return_timestamps",
+        "type": "bool",
+        "description": "Return word-level timestamps by running Qwen3 ForcedAligner after ASR; default false and requires forced_aligner_path when enabled.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Audio chunking mode; default auto uses fixed chunks normally and VAD chunks when timestamps are requested.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum audio chunk duration in seconds; default 30 for transcription and 15 when timestamps or VAD chunking are used.",
+        "required": false,
+        "min": 0
+      },
+      {
         "name": "clamp_timestamps_to_audio",
         "type": "bool",
         "description": "Opt-in guard for word timestamp output: keep repaired forced-aligner word spans inside the local audio chunk. Defaults to false to preserve existing timestamp repair behavior.",
@@ -61,13 +101,84 @@
         "default": false
       },
       {
-        "name": "qwen3_asr.preserve_punctuation",
+        "name": "preserve_punctuation",
         "type": "bool",
         "description": "Opt-in text output mode for timestamped chunked ASR: preserve ASR punctuation in text_output instead of rebuilding text from aligned words.",
         "required": false,
         "default": false
       }
-    ]
+    ],
+    "session": [
+      {
+        "name": "forced_aligner_path",
+        "type": "path",
+        "description": "Optional Qwen3 ForcedAligner model path required for return_timestamps.",
+        "required": false
+      },
+      {
+        "name": "vad_path",
+        "type": "path",
+        "description": "Optional Silero VAD model path for VAD chunking; default assets/framework/models/silero_vad.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared text decoder weight storage fallback; default native.",
+        "required": false,
+        "default": "native",
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "audio_encoder_weight_type",
+        "type": "enum",
+        "description": "Audio encoder weight storage type; default native.",
+        "required": false,
+        "default": "native",
+        "preset": "weight_type_conv"
+      },
+      {
+        "name": "text_decoder_weight_type",
+        "type": "enum",
+        "description": "Text decoder matmul weight storage type; defaults to weight_type when set, otherwise native.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "audio_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Audio encoder graph arena size in MiB; default 128.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "text_decoder_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder prefill graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "text_decoder_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Text decoder cached-step graph arena size in MiB; default 256.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "text_decoder_weight_context_mb",
+        "type": "int",
+        "description": "Text decoder weight context size in MiB; default 64.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      }
+    ],
+    "load": []
   },
   "runtime": {
     "tags": [

@@ -567,6 +567,9 @@ Qwen3TTSRequest Qwen3TTSSession::make_request(const runtime::TaskRequest & reque
     Qwen3TTSRequest out;
     out.text = request.text_input->text;
     out.language = !request.text_input->language.empty() ? request.text_input->language : "Auto";
+    if (const auto language = runtime::find_option(request.options, {"language"})) {
+        out.language = *language;
+    }
     out.generation = qwen3_tts_generation_options_from_request(request, assets_->config);
     if (assets_->config.variant == Qwen3TTSVariant::Base) {
         const runtime::AudioBuffer * reference_audio = nullptr;
