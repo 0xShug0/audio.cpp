@@ -178,6 +178,59 @@
         "kind": "huggingface_snapshot",
         "repo": "Qwen/Qwen3-ASR-0.6B"
       }
+    },
+    {
+      "id": "qwencleo_asr_q8_0",
+      "display_name": "QwenCleo-ASR Egyptian Arabic Q8_0 GGUF",
+      "description": "Egyptian Arabic and Arabic-English code-switching fine-tune of Qwen3-ASR-1.7B from mohammedaly22/QwenCleo-ASR. Use language=Arabic.",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "QwenCleo-ASR-GGUF",
+      "files": [
+        "qwencleo-asr-q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mohammedaly22/QwenCleo-ASR-GGUF"
+      }
+    },
+    {
+      "id": "qwencleo_asr_f16",
+      "display_name": "QwenCleo-ASR Egyptian Arabic F16 GGUF",
+      "description": "Egyptian Arabic and Arabic-English code-switching fine-tune of Qwen3-ASR-1.7B from mohammedaly22/QwenCleo-ASR. Use language=Arabic.",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "QwenCleo-ASR-GGUF",
+      "files": [
+        "qwencleo-asr-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mohammedaly22/QwenCleo-ASR-GGUF"
+      }
+    },
+    {
+      "id": "qwencleo_asr_safetensors",
+      "display_name": "QwenCleo-ASR Egyptian Arabic Safetensors",
+      "description": "Egyptian Arabic and Arabic-English code-switching fine-tune of Qwen3-ASR-1.7B from mohammedaly22/QwenCleo-ASR. Use language=Arabic.",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "QwenCleo-ASR",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "vocab.json",
+        "merges.txt",
+        "chat_template.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mohammedaly22/QwenCleo-ASR"
+      }
     }
   ],
   "sources": [

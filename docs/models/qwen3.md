@@ -210,6 +210,36 @@ With word timestamps:
 audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-0.6B-GGUF/qwen3-asr-0.6b-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --language English --text "" --text-out transcript.txt --words-out words.json --session-option qwen3_asr.forced_aligner_model_path=models/Qwen3-ForcedAligner-0.6B-GGUF/qwen3-forced-aligner-0.6b-q8_0.gguf --session-option qwen3_asr.vad_model_path=assets/framework/models/silero_vad
 ```
 
+### QwenCleo-ASR (Egyptian Arabic)
+
+[QwenCleo-ASR](https://huggingface.co/mohammedaly22/QwenCleo-ASR) is a
+Qwen3-ASR-1.7B fine-tune for Egyptian Arabic and Arabic-English code-switching.
+It uses the same `qwen3_asr` family, loader, and options; only the weights
+differ. The checkpoint is saved with tied word embeddings and therefore has no
+`thinker.lm_head.weight`; the loader reuses `thinker.model.embed_tokens.weight`
+for the output projection in that case. Model and integration by
+[@Mohammedaly22](https://github.com/Mohammedaly22).
+
+| Package | Format | Notes |
+|---|---|---|
+| `qwencleo_asr_q8_0` | GGUF Q8_0 | Standalone GGUF, recommended for local inference. |
+| `qwencleo_asr_f16` | GGUF F16 | Closest to the original BF16 weights. |
+| `qwencleo_asr_safetensors` | Safetensors | Original upstream checkpoint, loaded directly. |
+
+Pass `--language Arabic`, as recommended by the model card; quantized packages
+are less reliable at automatic language detection.
+
+```bash
+audiocpp_model_manager install qwencleo_asr_q8_0 --models-dir models
+audiocpp_cli --task asr --family qwen3_asr --model models/QwenCleo-ASR-GGUF --backend cuda --audio egyptian_16k.wav --language Arabic --text "" --text-out transcript.txt
+```
+
+To build the GGUF packages from the upstream checkpoint:
+
+```bash
+audiocpp_gguf --input models/QwenCleo-ASR/model.safetensors --root models/QwenCleo-ASR   --output models/QwenCleo-ASR-GGUF/qwencleo-asr-q8_0.gguf --family qwen3_asr --type q8_0 --overwrite
+```
+
 ### Common Options (use directly)
 
 | Option | Values | Default | Meaning |
