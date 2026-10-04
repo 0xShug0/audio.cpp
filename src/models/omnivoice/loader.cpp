@@ -1,5 +1,6 @@
 #include "engine/models/omnivoice/loader.h"
 
+#include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/models/omnivoice/session.h"
 
@@ -28,7 +29,9 @@ runtime::CapabilitySet capabilities(const OmniVoiceAssets & assets) {
     return out;
 }
 
-runtime::ModelCliInterface cli(const OmniVoiceAssets &) {
+// Compatibility for GGUFs that embed a pre-v1 spec when no v1 contract is available:
+// the help from before the spec migration.
+runtime::ModelCliInterface legacy_cli() {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"text_chunk_mode", "default|tag_aware|japanese|endline", "Text chunking mode; default tag_aware."},
@@ -76,7 +79,8 @@ public:
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);
-        inspection.cli = cli(*assets);
+        const auto contract = model_spec::find_model_contract(family());
+        inspection.cli = contract ? contract->cli : legacy_cli();
         const auto package_spec = engine::model_spec::default_spec_path(family());
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,

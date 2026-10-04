@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "family": "omnivoice",
   "display_name": "OmniVoice",
   "description": "Massively multilingual zero-shot TTS model from k2-fsa for 600+ languages, supporting short-reference voice cloning, attribute-based voice design, pronunciation controls, and nonverbal tags.",
@@ -23,6 +24,216 @@
     "design": [
       "voice_design"
     ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed; omitted requests choose a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Iterative masked-decoding steps; fewer is faster.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "required": false,
+        "default": 2.0
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier; ignored when duration is set.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "duration",
+        "type": "float",
+        "description": "Target output duration in seconds; overrides speed. Omitted requests estimate it from the text.",
+        "required": false
+      },
+      {
+        "name": "t_shift",
+        "type": "float",
+        "description": "Shift of the unmasking schedule across decoding steps.",
+        "required": false,
+        "default": 0.1
+      },
+      {
+        "name": "denoise",
+        "type": "bool",
+        "description": "Add the denoise token to the prompt when cloning from reference audio.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "preprocess_prompt",
+        "type": "bool",
+        "description": "Remove silence from the reference audio and punctuate the reference text.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "postprocess_output",
+        "type": "bool",
+        "description": "Remove long silences from the generated audio and trim its edges.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "layer_penalty_factor",
+        "type": "float",
+        "description": "Score penalty per codebook layer when choosing positions to unmask; favours lower layers.",
+        "required": false,
+        "default": 5.0
+      },
+      {
+        "name": "position_temperature",
+        "type": "float",
+        "description": "Sampling temperature for choosing positions to unmask.",
+        "required": false,
+        "default": 5.0
+      },
+      {
+        "name": "class_temperature",
+        "type": "float",
+        "description": "Sampling temperature for token classes; 0 is greedy.",
+        "required": false,
+        "default": 0.0
+      },
+      {
+        "name": "audio_chunk_duration",
+        "type": "float",
+        "description": "Target audio seconds per chunk when long text is split automatically.",
+        "required": false,
+        "default": 15.0
+      },
+      {
+        "name": "audio_chunk_threshold",
+        "type": "float",
+        "description": "Estimated output seconds above which long text is split automatically.",
+        "required": false,
+        "default": 30.0
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Framework text chunk size in codepoints; when set, replaces the automatic split.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode, used when text_chunk_size is set.",
+        "required": false,
+        "preset": "text_chunk_mode_full",
+        "default": "tag_aware"
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript of the speaker reference audio; required when reference audio is given.",
+        "required": false
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Voice-design instruction such as speaker attributes; without reference audio it selects voice design.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged runtime graphs after request phases.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "perf_mode",
+        "type": "enum",
+        "description": "Generator performance mode; off keeps the exact-safe attention path. flash_attention cannot be combined with mem_saver.",
+        "required": false,
+        "preset": "perf_mode_flash_attention",
+        "default": "off"
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Generator weight storage type.",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native"
+      },
+      {
+        "name": "generator_weight_type",
+        "type": "enum",
+        "description": "Generator weight storage type; overrides weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "audio_tokenizer_weight_type",
+        "type": "enum",
+        "description": "Audio tokenizer weight storage type.",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native"
+      },
+      {
+        "name": "audio_tokenizer_graph_arena_mb",
+        "type": "int",
+        "description": "Audio tokenizer graph arena size in MB.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "generator_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Generator prefill graph arena size in MB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "generator_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Generator decode graph arena size in MB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "audio_tokenizer_weight_context_mb",
+        "type": "int",
+        "description": "Audio tokenizer weight context size in MB.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "generator_weight_context_mb",
+        "type": "int",
+        "description": "Generator weight context size in MB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      }
+    ],
+    "load": []
   },
   "runtime": {
     "tags": [

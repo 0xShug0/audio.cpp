@@ -108,6 +108,9 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 
 ## Request Options (use with `--request-option`)
 
+The complete list of request and session options, with types and defaults, is in
+[`model_specs/omnivoice.json`](../../model_specs/omnivoice.json) under `options`.
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `speed` | float | `1.0` | Speech speed multiplier. |
