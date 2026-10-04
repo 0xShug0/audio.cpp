@@ -115,11 +115,12 @@ bool model_accepts_request_option(
     return contract->request_option_keys.find(std::string(option)) != contract->request_option_keys.end();
 }
 
-// The `options.request` rows of the model's schema-v1 spec, as a JSON array, for
+// The `options.request` rows of the model's spec, as a JSON array, for
 // `GET /v1/models?include_params=true`. Rows are passed through as the spec declares
-// them; an enum row that names a `preset` also gains the preset's `values`, so a client
-// needs no copy of the preset table. A model with no v1 contract (a legacy spec) gets
-// "[]", the same case model_accepts_request_option treats as "no contract".
+// them; an enum row that names a known `preset` also gains the preset's `values`, so a
+// client needs no copy of the preset table. A spec need not be on schema_version 1:
+// older-format specs may document their options too. Those skip the typed validator, so
+// a row that is not an object is left out. A spec with no request options gets "[]".
 std::string model_request_params_json(
     std::string_view family,
     const std::optional<std::filesystem::path> & model_spec_override,
@@ -141,21 +142,28 @@ std::string model_request_params_json(
             return "[]";
         }
     }
-    const auto * options = spec.find("schema_version") != nullptr ? spec.find("options") : nullptr;
+    const auto * options = spec.find("options");
     const auto * request = options != nullptr && options->is_object() ? options->find("request") : nullptr;
     if (request == nullptr || !request->is_array()) {
         return "[]";
     }
     json::Value::Array rows;
     rows.reserve(request->as_array().size());
+    const auto & presets = engine::model_spec::option_presets();
     for (const auto & row : request->as_array()) {
+        if (!row.is_object()) {
+            continue;
+        }
         const auto * preset = row.find("preset");
-        if (preset == nullptr || row.find("values") != nullptr) {
+        const auto known = preset != nullptr && preset->is_string()
+            ? presets.find(preset->as_string())
+            : presets.end();
+        if (known == presets.end() || row.find("values") != nullptr) {
             rows.push_back(row);
             continue;
         }
         json::Value::Array values;
-        for (const auto & value : engine::model_spec::require_option_preset(preset->as_string())) {
+        for (const auto & value : known->second) {
             values.push_back(json::Value::make_string(value));
         }
         auto expanded = row.as_object();

@@ -91,7 +91,7 @@ private:
         bool accepts_speaking_rate = true;
         // The spec's request options as a JSON array, served by
         // `GET /v1/models?include_params=true`. Resolved at registration for the
-        // same cost reason as the flags above; "[]" without a v1 contract.
+        // same cost reason as the flags above; "[]" when the spec declares none.
         std::string request_params_json = "[]";
         // Leases isolated sessions to requests; management requires all slots idle.
         ModelSlots busy;

@@ -374,8 +374,8 @@ Two opt-in query flags add to each entry:
 - `include_params=true` adds `params`: the request options the model's spec
   declares under `options.request`, as the spec writes them (`name`, `type`,
   `required`, `description`, and `default`/`min`/`max` where given). An enum row
-  that names a `preset` also carries the preset's `values`. A model whose spec is
-  not yet on `schema_version: 1` returns `"params": []`.
+  that names a `preset` also carries the preset's `values`. A model whose spec
+  declares no request options returns `"params": []`.
 
 ```bash
 curl 'http://127.0.0.1:8080/v1/models?include_params=true'
