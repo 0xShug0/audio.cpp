@@ -194,15 +194,19 @@ ThinkerWeights load_weights(
         weights.layers.push_back(std::move(w));
     }
     weights.norm = weights.store->load_f32_tensor(source, model_prefix + ".norm.weight", {config.hidden_size});
-    if (assets.config.hf_transformers_layout && assets.config.tie_word_embeddings) {
+    const std::string lm_head_name = assets.config.hf_transformers_layout
+        ? "lm_head.weight"
+        : "thinker.lm_head.weight";
+    // Fine-tuned checkpoints saved with tied embeddings (e.g. QwenCleo-ASR) can omit
+    // thinker.lm_head.weight in the legacy layout; the official checkpoints still ship it.
+    const bool tie_output = assets.config.tie_word_embeddings &&
+        (assets.config.hf_transformers_layout || !source.has_tensor(lm_head_name));
+    if (tie_output) {
         if (config.output_size != config.vocab_size) {
             throw std::runtime_error("Qwen3 ASR tied output embedding requires output_size == vocab_size");
         }
         weights.lm_head = weights.token_embedding;
     } else {
-        const std::string lm_head_name = assets.config.hf_transformers_layout
-            ? "lm_head.weight"
-            : "thinker.lm_head.weight";
         weights.lm_head = weights.store->load_tensor(
             source,
             lm_head_name,

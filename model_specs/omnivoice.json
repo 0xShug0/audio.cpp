@@ -107,6 +107,36 @@
         "kind": "huggingface_snapshot",
         "repo": "k2-fsa/OmniVoice"
       }
+    },
+    {
+      "id": "voicetut_tts_q8_0",
+      "display_name": "VoiceTut-TTS Egyptian Arabic Q8_0 GGUF",
+      "description": "Egyptian Arabic and Arabic-English code-switching fine-tune of OmniVoice from mohammedaly22/VoiceTut-TTS (same architecture and audio tokenizer as OmniVoice). Use language=arz.",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "VoiceTut-TTS-GGUF",
+      "files": [
+        "voicetut-tts-q8_0.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mohammedaly22/VoiceTut-TTS-GGUF"
+      }
+    },
+    {
+      "id": "voicetut_tts_f16",
+      "display_name": "VoiceTut-TTS Egyptian Arabic F16 GGUF",
+      "description": "Egyptian Arabic and Arabic-English code-switching fine-tune of OmniVoice from mohammedaly22/VoiceTut-TTS (same architecture and audio tokenizer as OmniVoice). Use language=arz.",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "VoiceTut-TTS-GGUF",
+      "files": [
+        "voicetut-tts-f16.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "mohammedaly22/VoiceTut-TTS-GGUF"
+      }
     }
   ],
   "sources": [

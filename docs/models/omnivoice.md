@@ -127,6 +127,41 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 
 The two `weight_type` options quantize SafeTensors weights at load time, which is not the same as loading a prebuilt Q8 GGUF package. On CUDA, `omnivoice.generator_weight_type=f16` measured 1.26x faster than `native`, while runtime `omnivoice.audio_tokenizer_weight_type=q8_0` produced unusable audio without being faster. See the [OmniVoice weight-type benchmark](../reports/omnivoice_weight_type_benchmark.md).
 
+## VoiceTut-TTS (Egyptian Arabic)
+
+[VoiceTut-TTS](https://huggingface.co/mohammedaly22/VoiceTut-TTS) is an
+OmniVoice fine-tune for Egyptian Arabic and Arabic-English code-switching. It
+has the same architecture and tensor layout as OmniVoice and reuses the
+OmniVoice audio tokenizer unchanged, so it runs through the `omnivoice` family
+with every route and option above. It was trained with the `arz` (Egyptian
+Arabic) language id, so pass `--language arz`. Model and integration by
+[@Mohammedaly22](https://github.com/Mohammedaly22).
+
+| Package | Format | Notes |
+|---|---|---|
+| `voicetut_tts_q8_0` | GGUF Q8_0 | Standalone GGUF with the audio tokenizer embedded. |
+| `voicetut_tts_f16` | GGUF F16 | Closest to the original weights. |
+
+Voice clone with Egyptian Arabic and English code-switching:
+
+```bash
+audiocpp_model_manager install voicetut_tts_q8_0 --models-dir models
+audiocpp_cli --task tts --family omnivoice --model models/VoiceTut-TTS-GGUF --backend cuda --language arz --text "عندي meeting بكرة الصبح، فهحاول أخلص الشغل بدري النهارده." --voice-ref speaker.wav --reference-text "<transcript of speaker.wav>" --out out.wav
+```
+
+The upstream repository ships 17 reference speakers in `reference_speakers/`
+with transcripts in `references.json`. Copy them into a server `voice_dir`
+(one `<Name>.wav` per speaker plus a `prompt_text` file with
+`<Name>|<transcript>` lines) to use them as named voices, for example
+`"voice": "Mohamed"`. See the server [voice library](../../app/server/README.md#voice-library-voice_dir).
+
+To build the GGUF packages, place the VoiceTut weights and the OmniVoice
+`audio_tokenizer/` directory in one model root, then convert:
+
+```bash
+audiocpp_gguf --input weights=models/VoiceTut-TTS/model.safetensors   --input audio_tokenizer_weights=models/VoiceTut-TTS/audio_tokenizer/model.safetensors   --root models/VoiceTut-TTS --output models/VoiceTut-TTS-GGUF/voicetut-tts-q8_0.gguf   --family omnivoice --type q8_0 --overwrite
+```
+
 ## Tags
 
 Non-verbal tags are written directly in `--text`. Supported spellings include:
