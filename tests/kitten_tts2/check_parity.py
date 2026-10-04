@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Check native prompt/logits against local upstream assets and validate WAV output.
+"""Compare archived native prompt/logit traces with local upstream assets.
 
-The trace is emitted with AUDIOCPP_KITTEN_TTS2_TRACE_DIR. This loads only local
-HF safetensors; no download or pickle checkpoint loading is used. Native decoder
-parity with controlled noise is checked separately by check_native_components.py.
+The current runtime has no custom tensor-dump hooks. This script accepts traces
+saved during the original port, rather than capturing a new session. It loads
+only local HF safetensors; no download or pickle checkpoint loading is used.
+Current component parity is checked separately by check_native_components.py.
 """
 from __future__ import annotations
 

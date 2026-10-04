@@ -18,10 +18,9 @@ The full default decoder is used.
 Shared S3 code is included through the `chatterbox` dependency. No Kitten-specific
 build flag or Torch package is needed.
 
-This port depends on [Chatterbox S3 encoder correctness PR #778](https://github.com/0xShug0/audio.cpp/pull/778)
-(relative-shift padding and attention/feed-forward LayerNorm epsilon). Merge
-that fix before this model integration. Validation uses the combined code;
-the Kitten branch on its original base does not include this prerequisite.
+This port uses the fixes from [Chatterbox S3 encoder correctness PR #778](https://github.com/0xShug0/audio.cpp/pull/778)
+(relative-shift padding and attention/feed-forward LayerNorm epsilon), which
+merged before the Kitten integration. Current upstream includes both changes.
 The Kitten patch does not modify the shared framework, Chatterbox implementation,
 or ggml. Its changes outside model-specific files are build registration,
 documentation indexes, and the WebUI catalog with its generated bundle.

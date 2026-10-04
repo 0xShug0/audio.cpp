@@ -1,6 +1,11 @@
 #include "engine/community_models/kitten_tts2/speaker.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 #include <ggml-alloc.h>
 #include <algorithm>
 #include <array>
@@ -30,11 +35,6 @@ struct Graph {
         ggml_free(ctx);
     }
 };
-ggml_tensor * affine(ggml_context * c, ggml_tensor * x, const Affine & a) {
-    const int64_t channels = x->ne[1];
-    return ggml_add(c, ggml_mul(c, x, ggml_reshape_2d(c, a.scale.tensor, 1, channels)),
-        ggml_reshape_2d(c, a.bias.tensor, 1, channels));
-}
 }
 struct SpeakerEncoder::Impl {
     const core::ExecutionContext & execution;
@@ -119,38 +119,57 @@ std::vector<float> SpeakerEncoder::embed(const std::vector<float> & mono_16k) co
     Graph g(p.execution.backend());
     auto * c = g.ctx;
     core::ModuleBuildContext build{c, "kitten_tts2.speaker", p.execution.backend_type()};
-    auto * input = ggml_new_tensor_3d(c, GGML_TYPE_F32, mono_16k.size(), 1, 1);
-    ggml_set_input(input);
-    auto * x = affine(c, ggml_norm(c, input, 1e-5f), p.waveform_norm);
-    auto conv = [&](ggml_tensor * value, const Conv & layer) {
-        return modules::Conv1dModule(layer.config).build(build,
-            core::wrap_tensor(value, core::TensorShape::from_dims({1, value->ne[1], value->ne[0]})), layer.weights).tensor;
+    const auto input = core::make_tensor(build, GGML_TYPE_F32,
+        core::TensorShape::from_dims({1, 1, static_cast<int64_t>(mono_16k.size())}));
+    ggml_set_input(input.tensor);
+    auto normalize = [&](const core::TensorValue & value, const Affine & weights) {
+        // Normalize each channel over time, then apply its learned scalar affine.
+        return modules::AdaptiveInstanceNorm1dModule({value.shape.at(1), 1e-5f})
+            .build(build, value, {weights.scale, weights.bias});
+    };
+    auto x = normalize(input, p.waveform_norm);
+    const modules::LeakyReluModule activation({0.01f});
+    const modules::ReduceMeanModule mean_over_time({-1});
+    auto conv = [&](const core::TensorValue & value, const Conv & layer) {
+        return modules::Conv1dModule(layer.config).build(build, value, layer.weights);
     };
     for (int i = 0; i < 3; ++i) {
         x = conv(x, p.frontend[i]);
-        if (i == 0) x = ggml_abs(c, x);
+        // Abs and temporal max pooling have no equivalent framework modules.
+        if (i == 0) x = core::wrap_tensor(ggml_abs(c, x.tensor), x.shape);
         // A 3x1 window preserves the channel dimension and is equivalent to
         // temporal MaxPool1d(3, 3). CUDA supports POOL_2D, but not POOL_1D.
-        x = ggml_pool_2d(c, x, GGML_OP_POOL_MAX, 3, 1, 3, 1, 0, 0);
-        x = ggml_leaky_relu(c, affine(c, ggml_norm(c, x, 1e-5f), p.frontend_norm[i]), 0.01f, false);
+        auto * pooled = ggml_pool_2d(c, x.tensor, GGML_OP_POOL_MAX, 3, 1, 3, 1, 0, 0);
+        x = core::wrap_tensor(pooled, x.shape.with_last_dim(pooled->ne[0]));
+        x = activation.build(build, normalize(x, p.frontend_norm[i]));
     }
-    for (int i = 0; i < 5; ++i)
-        x = affine(c, ggml_leaky_relu(c, conv(x, p.tdnn[i]), 0.01f, false), p.batch_norm[i]);
-    const auto frames = x->ne[0];
+    for (int i = 0; i < 5; ++i) {
+        x = activation.build(build, conv(x, p.tdnn[i]));
+        x = modules::BatchNorm1dEvalModule({x.shape.at(1)})
+            .build(build, x, {p.batch_norm[i].scale, p.batch_norm[i].bias});
+    }
+    const auto frames = x.shape.last_dim();
     if (frames < 2) throw std::runtime_error("Kitten speaker reference is too short for statistics pooling");
-    auto * mean = ggml_mean(c, x);
-    auto * diff = ggml_sub(c, x, mean);
-    auto * stddev = ggml_sqrt(c, ggml_scale(c, ggml_mean(c, ggml_sqr(c, diff)),
-        static_cast<float>(frames) / static_cast<float>(frames - 1)));
-    auto * pooled = ggml_reshape_1d(c, ggml_concat(c, mean, stddev, 1), 3000);
-    auto * output = ggml_add(c, ggml_mul_mat(c, p.embedding_weight.tensor, pooled), p.embedding_bias.tensor);
-    ggml_set_output(output);
-    ggml_build_forward_expand(g.graph, output);
+    const auto mean = mean_over_time.build(build, x);
+    // Keep the centered, unbiased variance and its original operation order.
+    // Subtract with broadcasting, square and scalar scale have no direct modules.
+    auto * diff = ggml_sub(c, x.tensor, mean.tensor);
+    const auto squared = core::wrap_tensor(ggml_sqr(c, diff), x.shape);
+    const auto variance = mean_over_time.build(build, squared);
+    const auto unbiased = core::wrap_tensor(ggml_scale(c, variance.tensor,
+        static_cast<float>(frames) / static_cast<float>(frames - 1)), variance.shape);
+    const auto stddev = modules::SqrtModule().build(build, unbiased);
+    const auto statistics = modules::ConcatModule({1}).build(build, mean, stddev);
+    const auto pooled = core::reshape_tensor(build, statistics, core::TensorShape::from_dims({3000}));
+    const auto output = modules::LinearModule({3000, 512, true})
+        .build(build, pooled, {p.embedding_weight, p.embedding_bias});
+    ggml_set_output(output.tensor);
+    ggml_build_forward_expand(g.graph, output.tensor);
     if (!ggml_gallocr_alloc_graph(g.allocator, g.graph)) throw std::runtime_error("cannot allocate Kitten speaker buffers");
-    ggml_backend_tensor_set(input, mono_16k.data(), 0, mono_16k.size()*sizeof(float));
+    ggml_backend_tensor_set(input.tensor, mono_16k.data(), 0, mono_16k.size()*sizeof(float));
     if (core::compute_backend_graph(p.execution.backend(), g.graph) != GGML_STATUS_SUCCESS)
         throw std::runtime_error("Kitten speaker inference failed");
-    auto result = core::read_tensor_f32(output);
+    auto result = core::read_tensor_f32(output.tensor);
     double norm = 0;
     for (float value : result) norm += value*value;
     norm = std::sqrt(norm);

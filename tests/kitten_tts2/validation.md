@@ -2,7 +2,128 @@
 
 Powered by Stellon Labs.
 
-## Reviewed scope and prerequisite
+## Post-merge timing and model-local cleanup (2026-10-04)
+
+Baseline: upstream `d3ab9df288131aeb83a3c361f0eb1e464b41dea0`, which includes
+Kitten PR #776 and Chatterbox correctness PR #778. The follow-up starts the
+`session.wall_ms` timer before reference processing, uses existing framework
+modules for speaker normalization/activation/statistics/projection and the
+speech-head slice, and removes production prompt/logit/code/mel/speaker dumps.
+It changes only Kitten implementation, tests, and documentation. No shared
+framework, Chatterbox, or ggml code is changed.
+
+Speaker `abs`, temporal max pooling, and centered-variance subtraction/square/
+scalar scale retain their existing ggml operations because there are no direct
+framework modules for them. The host speaker projection retains its BF16
+rounding points and accumulation order. Low-level graph allocation, buffer I/O,
+weight-view initialization, and exact Q4 packing also remain model-local.
+
+The hardware, upstream assets and published Q8 GGUF are the same as listed in
+the environment section below. Before/after session runs use eight threads,
+seed 1234 and the default backend precision policy, with custom tracing unset.
+Only controlled CUDA component comparisons use `NVIDIA_TF32_OVERRIDE=0`.
+
+### Output and component comparisons
+
+- CUDA and CPU-only Release builds passed for CLI, server, both Kitten probes
+  and the model-spec system test. The model-spec test passed in both builds.
+- Both CPU and CUDA passed the seven-request session probe: four preset/chunked
+  requests and three cloning requests, with cached repeats, voice/reference
+  changes and invalid-input checks.
+- All **14 before/after float32 WAVs are exactly equal**, compared within the
+  same backend (maximum sample error 0). CPU/CUDA equality is not claimed.
+- All six controlled component outputs are also exactly equal before/after
+  within each backend, including speaker identity and BF16 projection.
+- All 13 CUDA multilingual server cases passed, advertising 48 voices and
+  exercising English, nine other language presets, Chinese chunking and
+  German/Chinese cloning. Prepared reference tokens/transcripts match upstream
+  assets, and output is finite, non-silent, mono 24 kHz. The temporary server
+  was stopped after testing.
+- Loader/catalog synchronization, all four preparation tests and the model-spec
+  system test passed.
+
+Component errors against the upstream Python reference, using Bruno's reference
+WAV for the speaker and `component_codes.json` for the decoder:
+
+| Component | CPU maximum error | CUDA maximum error |
+|---|---:|---:|
+| XVectorSincNet normalized identity | 0.000001563 | 0.000001386 |
+| BF16 speaker projection, same identity input | 0 | 0 |
+| S3 encoder hidden states | 0.000001907 | 0.000002146 |
+| Two-step meanflow mel, zero noise | 0.000592232 | 0.003253222 |
+| HiFT pitch, same native mel | 0.000000298 | 0.000000268 |
+| HiFT waveform, same mel and zero random draws | 0.000013851 | 0.000015877 |
+
+All pass the existing limits. The speaker probe now writes its input WAV and
+output JSON through test-only code using the public speaker API. It does not
+require runtime dump hooks. Decoder comparisons retain the same zero-noise and
+fade handling described below.
+
+### Timing regression
+
+The external timer surrounds only `session->run()`, excluding WAV writing and
+test assertions. `check_session_timing.py` rejects the old logs for the first
+and changed-reference clones on both backends; it passes all seven requests on
+both backends after the fix. The largest post-fix discrepancy was 0.093 ms.
+
+| Backend / request | Before external ms | Before `session.wall_ms` | After external ms | After `session.wall_ms` |
+|---|---:|---:|---:|---:|
+| CPU first clone | 11407.200 | 9654.888 | 9977.830 | 9977.806 |
+| CPU changed reference | 12609.700 | 11308.422 | 10454.600 | 10454.509 |
+| CUDA first clone | 2076.980 | 1319.615 | 2064.510 | 2064.471 |
+| CUDA changed reference | 1697.120 | 1487.054 | 1580.980 | 1580.887 |
+
+These are single desktop runs, not a claim of improved inference speed. The
+fix makes the reported session time include conditioning and lazy encoder
+loading; initial model/session construction remains outside `run()`.
+
+### Reproduction and evidence
+
+Both existing Visual Studio 2022 x64 build directories were reconfigured and
+rebuilt with the following commands (PowerShell). Both caches select only
+`kitten_tts2`, disable llamafile, enable tests, and suppress regeneration. The
+CUDA cache enables CUDA with architecture 89 and disables the native model
+manager; the CPU-only cache disables CUDA and enables the native model manager.
+
+```powershell
+cmake -S . -B build-kitten2-cuda
+cmake --build build-kitten2-cuda --config Release --parallel 8 `
+  --target audiocpp_cli audiocpp_server kitten_tts2_session_probe `
+    kitten_tts2_components_probe model_spec_system_test
+cmake -S . -B build-kitten2-pr
+cmake --build build-kitten2-pr --config Release --parallel 8 `
+  --target audiocpp_cli audiocpp_server kitten_tts2_session_probe `
+    kitten_tts2_components_probe model_spec_system_test
+```
+
+CPU and CUDA inference checks used `build-kitten2-cuda/bin/Release/` with the
+corresponding backend argument. The separate CPU-only build was compile/link
+and model-spec tested; it was not used for another full synthesis run.
+
+The [test README](README.md) contains the current probe/comparison commands and
+assets. Run the session probe once on the baseline and once on this follow-up,
+using separate output directories and the same model, backend, threads and seed.
+Compare corresponding WAVs within each backend. Run the timing checker against
+both captured logs; the baseline cloning failures are expected.
+
+Local evidence is under the ignored `build-kitten2-cuda/followup-validation/`:
+`before.json`, `after.json`, `before-`/`after-` session logs and WAV directories,
+component outputs/reference-comparison logs, timing checks, and
+`after-multilingual/report.json`. No weights or generated audio are committed.
+
+Fresh LM prompt/logit traces are no longer exposed by production inference.
+`check_parity.py` is retained for archived traces only. The updated multilingual
+test checks public API execution and prepared assets, without claiming internal
+BPE/token-limit checks. No new listening study, other-GPU coverage or peak-memory
+measurement was performed for this cleanup.
+
+## Historical pre-merge validation (2026-10-03)
+
+The remaining sections preserve the original port's validation context and
+measurements, including its now-merged correctness prerequisite and old trace
+workflow. Use the updated test README for current commands.
+
+### Reviewed scope and prerequisite
 
 Validated locally on 2026-10-03 after removing the shared precision changes.
 The Kitten implementation depends on
@@ -208,7 +329,7 @@ committed. Earlier logs remain in `build-kitten2-pr/` and `build-kitten2-cuda/`.
 The header-move rebuild results are in `header-rebuild.json` and the
 `headers-{cpu,cuda}-{configure,build,model-spec}.log` files in the same directory.
 
-- #778 must be incorporated before validating the final integrated branch.
+- These historical runs required #778 separately; current upstream includes it.
 - CUDA was tested on one RTX 4060 Ti; other GPU backends, NVIDIA generations,
   sustained-load stability and worst-case memory remain unvalidated.
 - Only the full default decoder is ported; student decoders are unsupported.

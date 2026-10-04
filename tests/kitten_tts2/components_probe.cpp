@@ -1,5 +1,9 @@
 #include "engine/models/chatterbox/s3gen_inference.h"
+#include "engine/community_models/kitten_tts2/speaker.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/wav_reader.h"
+#include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/vocoders/hift_vocoder.h"
 #include <filesystem>
@@ -8,18 +12,45 @@
 
 int main(int argc, char ** argv) {
     try {
-        if (argc < 5 || argc > 6) throw std::runtime_error("usage: kitten_tts2_components_probe S3GEN VOICES_JSON CODES_JSON OUTPUT_DIR [cpu|cuda]");
+        if (argc < 5 || argc > 7) throw std::runtime_error("usage: kitten_tts2_components_probe S3GEN VOICES_JSON CODES_JSON OUTPUT_DIR [cpu|cuda [REFERENCE_MODEL_DIR]]");
         namespace s3 = engine::models::chatterbox;
         namespace json = engine::io::json;
         engine::core::BackendConfig config;
         config.type = engine::core::BackendType::Cpu;
-        if (argc == 6) {
+        if (argc >= 6) {
             const std::string backend = argv[5];
             if (backend == "cuda") config.type = engine::core::BackendType::Cuda;
             else if (backend != "cpu") throw std::runtime_error("probe backend must be cpu or cuda");
         }
         config.threads = 8;
         engine::core::ExecutionContext execution(config);
+        std::filesystem::create_directories(argv[4]);
+        if (argc == 7) {
+            // Test-only speaker comparison through its public component API.
+            const auto root = std::filesystem::path(argv[6]);
+            auto speaker_source = engine::assets::open_tensor_source(root / "speaker/model.safetensors");
+            auto lm_source = engine::assets::open_tensor_source(root / "lm/model.safetensors");
+            engine::community_models::kitten_tts2::SpeakerEncoder speaker(*speaker_source, *lm_source, execution);
+            const auto voices = json::parse_file(root / "voices/voices.json");
+            const auto wav = engine::audio::read_wav_f32(root / "voices" / voices.require("Bruno").require("reference").as_string());
+            const auto mono = engine::audio::mixdown_interleaved_to_mono_average(wav.samples, wav.channels);
+            const auto input = engine::audio::resample_mono_torchaudio_sinc_hann(mono, wav.sample_rate, 16000,
+                engine::audio::torchaudio_sinc_hann_float32_options());
+            const auto embedding = speaker.embed(input);
+            const auto projected = speaker.project(embedding);
+            const auto array = [](const std::vector<float> & values) {
+                json::Value::Array result;
+                for (float value : values) result.push_back(json::Value::make_number(value));
+                return json::Value::make_array(std::move(result));
+            };
+            json::Value::Object result;
+            result.emplace("embedding", array(embedding));
+            result.emplace("projection", array(projected));
+            std::ofstream(std::filesystem::path(argv[4]) / "speaker.json") << json::stringify(json::Value::make_object(std::move(result)));
+            engine::audio::WavWriteOptions options;
+            options.format = engine::audio::WavSampleFormat::Float32;
+            engine::audio::write_wav(std::filesystem::path(argv[4]) / "speaker_input.wav", 16000, 1, input, options);
+        }
         auto source = engine::assets::open_tensor_source(argv[1]);
         auto encoder = s3::load_s3_flow_encoder_weights(*source, execution, engine::assets::TensorStorageType::F32);
         auto decoder = s3::load_s3_flow_decoder_weights(*source, execution, engine::assets::TensorStorageType::F32);
