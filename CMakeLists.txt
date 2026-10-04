@@ -774,6 +774,15 @@ audiocpp_add_model(sidon
         engine::models::sidon::make_sidon_loader
 )
 
+audiocpp_add_model(any_tts
+    SOURCES
+        src/models/any_tts/session.cpp
+    INCLUDES
+        engine/models/any_tts/session.h
+    LOADERS
+        engine::models::any_tts::make_any_tts_loader
+)
+
 audiocpp_add_model(tone_color_vc
     SOURCES
         src/models/tone_color_vc/runtime.cpp
