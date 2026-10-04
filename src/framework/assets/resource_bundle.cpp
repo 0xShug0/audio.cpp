@@ -24,7 +24,11 @@ std::filesystem::path resolve_model_file(
 }  // namespace
 
 ResourceBundle::ResourceBundle(std::filesystem::path model_root)
-    : model_root_(std::move(model_root)) {}
+    : ResourceBundle(std::move(model_root), ResourceBundleOptions{}) {}
+
+ResourceBundle::ResourceBundle(std::filesystem::path model_root, ResourceBundleOptions options)
+    : model_root_(std::move(model_root)),
+      cache_mutex_(options.synchronized_cache_access ? std::make_shared<std::mutex>() : nullptr) {}
 
 void ResourceBundle::add_file(std::string id, const std::filesystem::path & path) {
     if (id.empty()) {
@@ -129,9 +133,18 @@ engine::io::yaml::FlattenedDocument ResourceBundle::parse_flattened_yaml(std::st
 }
 
 std::shared_ptr<const TensorSource> ResourceBundle::open_tensor_source(std::string_view id) const {
+    return open_tensor_source(id, TensorSourceOptions{});
+}
+
+std::shared_ptr<const TensorSource> ResourceBundle::open_tensor_source(
+    std::string_view id, TensorSourceOptions options) const {
+    std::unique_lock<std::mutex> lock;
+    if (cache_mutex_) { lock = std::unique_lock<std::mutex>(*cache_mutex_); }
+    auto & sources = options.synchronized_access ? synchronized_tensor_sources_ : tensor_sources_;
+    auto & paths = options.synchronized_access ? synchronized_tensor_sources_by_path_ : tensor_sources_by_path_;
     const auto key = std::string(id);
-    const auto it = tensor_sources_.find(key);
-    if (it != tensor_sources_.end()) {
+    const auto it = sources.find(key);
+    if (it != sources.end()) {
         return it->second;
     }
     const auto resource = tensor_resources_.find(key);
@@ -139,16 +152,16 @@ std::shared_ptr<const TensorSource> ResourceBundle::open_tensor_source(std::stri
         ? require_file(id)
         : resource->second.path;
     const auto path_key = std::filesystem::weakly_canonical(path).generic_string();
-    auto base = tensor_sources_by_path_.find(path_key);
-    if (base == tensor_sources_by_path_.end()) {
-        base = tensor_sources_by_path_.emplace(
-            path_key, engine::assets::open_tensor_source(path)).first;
+    auto base = paths.find(path_key);
+    if (base == paths.end()) {
+        base = paths.emplace(
+            path_key, engine::assets::open_tensor_source(path, options)).first;
     }
     auto source = resource == tensor_resources_.end()
         ? base->second
         : engine::assets::make_prefixed_tensor_source(
               base->second, resource->second.prefix);
-    tensor_sources_.emplace(key, source);
+    sources.emplace(key, source);
     return source;
 }
 

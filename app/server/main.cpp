@@ -1,6 +1,8 @@
 #include "config.h"
 #include "http.h"
 #include "runtime.h"
+#include "parallel_runtime.h"
+#include "parallel_http.h"
 
 #include "../common/build_info.h"
 
@@ -91,6 +93,7 @@ void print_help() {
         << "                [--log] [--log-file <path>]\n"
         << "                [--cors-origins <origins>]\n"
         << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
+        << "  --parallel-jobs                  opt into the experimental parallel runtime; per-model slots default to 1\n"
         << "  --ui                             serve the embedded WebUI\n"
         << "  --no-ui                          disable the embedded WebUI\n"
         << "  --ui-management                  allow WebUI model management and downloads; requires\n"
@@ -165,6 +168,8 @@ int main(int argc, char ** argv) {
             print_help();
             return 0;
         }
+        const bool parallel_jobs = has_arg(argc, argv, "--parallel-jobs");
+        if (parallel_jobs) { engine::io::json::enable_serialized_json_parsing(); }
         const auto config_path = arg_value(argc, argv, "--config");
         const bool ui_requested = has_arg(argc, argv, "--ui");
         if (!config_path.has_value() && !ui_requested) {
@@ -187,7 +192,7 @@ int main(int argc, char ** argv) {
 #endif
 
         auto config = config_path.has_value()
-            ? minitts::server::load_server_config(*config_path)
+            ? minitts::server::load_server_config(*config_path, parallel_jobs)
             : minitts::server::ServerConfig{};
         if (!config_path.has_value()) {
             config.lazy_load = true;
@@ -274,26 +279,43 @@ int main(int argc, char ** argv) {
         }
 
         const auto ui_resource_anchor = executable_directory(argc > 0 ? argv[0] : nullptr);
-        minitts::server::ServerState state(
-            config,
-            std::filesystem::current_path(),
-            ui_resource_anchor);
-        if (!config.frontend_listener.empty()) {
-            auto listener = state.make_frontend_listener(config.frontend_listener);
-            listener->serve(
-                config.host,
-                config.port,
-                state,
-                shutdown_requested,
-                config.max_request_body_bytes,
-                config.frontend_options);
+        auto serve = [&](auto & state) {
+            if (!config.frontend_listener.empty()) {
+                auto listener = state.make_frontend_listener(config.frontend_listener);
+                listener->serve(
+                    config.host,
+                    config.port,
+                    state,
+                    shutdown_requested,
+                    config.max_request_body_bytes,
+                    config.frontend_options);
+            } else {
+                const auto http_listener = parallel_jobs
+                    ? minitts::server::serve_parallel_http
+                    : minitts::server::serve_http;
+                http_listener(
+                    config.host,
+                    config.port,
+                    state,
+                    shutdown_requested,
+                    config.max_request_body_bytes);
+            }
+        };
+        if (parallel_jobs) {
+            std::cerr
+                << "WARNING: --parallel-jobs enables EXPERIMENTAL server behavior.\n"
+                << "Validated scope: controlled CPU session/queue lifecycle tests and representative\n"
+                << "CUDA/Vulkan capacity-one cold/warm inference. No catalogue multi-slot models\n"
+                << "are admitted by this framework PR. Reconfiguration, unload/eviction, disconnect\n"
+                << "and shutdown have partial test coverage; real concurrent GPU streams/batches,\n"
+                << "Metal model execution and hung-backend cancellation remain unverified.\n"
+                << "See docs/maintainers/parallel_server_behavior_contract.md for tested scopes\n"
+                << "and known limitations. Busy timeout does not cancel backend execution.\n";
+            minitts::server::ParallelServerState state(config, std::filesystem::current_path(), ui_resource_anchor);
+            serve(state);
         } else {
-            minitts::server::serve_http(
-                config.host,
-                config.port,
-                state,
-                shutdown_requested,
-                config.max_request_body_bytes);
+            minitts::server::ServerState state(config, std::filesystem::current_path(), ui_resource_anchor);
+            serve(state);
         }
         return 0;
     } catch (const std::exception & ex) {

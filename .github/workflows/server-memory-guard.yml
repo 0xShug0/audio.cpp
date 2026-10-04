@@ -1,7 +1,7 @@
-name: server-memory-guard cross-platform
+name: server lifecycle cross-platform
 
-# Verifies the server memory-management changes (--idle-unload-ms and
-# --min-free-memory-mb) compile and the config unit tests pass on all three
+# Verifies server memory management and parallel-session lifecycle changes
+# compile and the focused unit tests pass on all three
 # desktop platforms. GPU backends are disabled here: the changes themselves are
 # backend-agnostic (they query memory through ggml_backend_dev_memory), and the
 # existing linux/mac/windows workflows already cover CUDA/Vulkan/Metal builds.
@@ -15,6 +15,23 @@ on:
       - "include/engine/framework/core/backend.h"
       - "src/framework/core/backend.cpp"
       - "tests/unittests/test_server_config.cpp"
+      - "include/engine/framework/runtime/parallel_session.h"
+      - "include/engine/framework/runtime/session_pool.h"
+      - "include/engine/framework/runtime/session.h"
+      - "tests/unittests/test_server_model_slots.cpp"
+      - "tests/unittests/test_server_parallel_lifecycle.cpp"
+      - "tests/unittests/test_server_runtime_selection.cpp"
+      - "tests/unittests/test_session_pool.cpp"
+      - "tests/unittests/test_server_busy_guard.cpp"
+      - "include/engine/framework/core/shared_weight_cache.h"
+      - "src/framework/assets/tensor_source.cpp"
+      - "include/engine/framework/assets/tensor_source.h"
+      - "include/engine/framework/assets/resource_bundle.h"
+      - "src/framework/assets/resource_bundle.cpp"
+      - "include/engine/framework/io/json.h"
+      - "tests/unittests/test_gguf_tensor_source.cpp"
+      - "tests/unittests/test_shared_weight_cache.cpp"
+      - "src/framework/io/json.cpp"
       - ".github/workflows/server-memory-guard.yml"
 
 jobs:
@@ -62,24 +79,82 @@ jobs:
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
-          cmake --build build --target audiocpp_server server_config_test --parallel "$(nproc)"
+          cmake --build build --target audiocpp_server parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(nproc)"
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
-          cmake --build build --target audiocpp_server server_config_test --parallel "$(sysctl -n hw.logicalcpu)"
+          cmake --build build --target audiocpp_server parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(sysctl -n hw.logicalcpu)"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake --build build --config Release --target audiocpp_server server_config_test --parallel
+          cmake --build build --config Release --target audiocpp_server parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel
 
-      - name: Run server_config_test (Linux/macOS)
+      - name: Run server lifecycle tests (Linux/macOS)
         if: runner.os != 'Windows'
-        run: ./build/bin/server_config_test
+        run: ctest --test-dir build --output-on-failure -R '^(parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
 
-      - name: Run server_config_test (Windows)
+      - name: Run server lifecycle tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\build\bin\Release\server_config_test.exe
+        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+
+  cpu-sanitizers:
+    name: CPU framework ${{ matrix.sanitizer }} sanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use TSan-compatible libstdc++ for timed mutexes
+        if: matrix.sanitizer == 'thread'
+        run: |
+          # GCC 13's pthread_mutex_clocklock path lacks a TSan interceptor.
+          # GCC 14 disables that path under TSan (gcc r14-905); keep BusyGuard
+          # unchanged and retain all tests and sanitizer diagnostics.
+          if ! command -v gcc-14 >/dev/null || ! command -v g++-14 >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y gcc-14 g++-14
+          fi
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          g++-14 --version
+      - name: Configure instrumented CPU framework
+        run: |
+          cmake -S . -B build-sanitizer \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${{ matrix.sanitizer }}" \
+            -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXTENDED_TESTS=ON \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF \
+            -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF -DENGINE_ENABLE_LLAMAFILE=OFF \
+            -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=builtin_audio_utils
+      - name: Build ownership and lifecycle regressions
+        run: |
+          cmake --build build-sanitizer --parallel 4 --target \
+            server_runtime_selection_test server_parallel_lifecycle_test server_model_slots_test \
+            session_pool_test shared_weight_cache_test gguf_tensor_source_test \
+            parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test
+      - name: Run sanitizer regressions
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          ctest --test-dir build-sanitizer --output-on-failure --timeout 60 \
+            --output-junit sanitizer-results.xml \
+            -R '^(server_runtime_selection_test|server_parallel_lifecycle_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test|parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test)$'
+      - name: Preserve sanitizer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-framework-${{ matrix.sanitizer }}-sanitizer
+          path: |
+            build-sanitizer/sanitizer-results.xml
+            build-sanitizer/Testing/Temporary/LastTest.log

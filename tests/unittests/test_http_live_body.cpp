@@ -20,11 +20,15 @@
 // by hand against a running server. Removing the route would not fail this test.
 
 #include "../../app/server/http.h"
+#if defined(AUDIOCPP_TEST_PARALLEL_HTTP)
+#include "../../app/server/parallel_http.h"
+#endif
 
 #include "test_assert.h"
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <iostream>
 #include <istream>
 #include <sstream>
@@ -248,6 +252,9 @@ size_t byte_sum(const std::string & data) {
 }  // namespace
 
 int main() {
+#if defined(AUDIOCPP_TEST_PARALLEL_HTTP) && defined(SIGPIPE)
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
 #ifdef _WIN32
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -258,8 +265,13 @@ int main() {
     // the incremental one under test, which has its own LiveIngestLimits.
     constexpr uint64_t kMaxBufferedBody = 2ull * 1024ull * 1024ull * 1024ull;
     std::thread server([&] {
+#if defined(AUDIOCPP_TEST_PARALLEL_HTTP)
+        minitts::server::serve_parallel_http("127.0.0.1", kPort, handler, stop_requested, kMaxBufferedBody);
+#else
         minitts::server::serve_http("127.0.0.1", kPort, handler, stop_requested, kMaxBufferedBody);
+#endif
     });
+    try {
     // No startup sleep: connect_to_server() retries until the listener is up.
 
     // A body split into several chunks must arrive byte-identical and complete.
@@ -442,13 +454,10 @@ int main() {
         require(
             contains(reply, "\"stream\":false"),
             "only the live endpoint may consume an incremental body: " + reply);
-        // Pins pre-existing behaviour rather than endorsing it: the buffered path
-        // sizes the body from Content-Length, which a chunked request does not send,
-        // so it has always yielded an empty body there. Asserted so that a future
-        // change to chunked handling elsewhere is a deliberate one, and to show this
-        // change did not introduce it.
+        // Current upstream de-frames non-live chunked bodies before dispatch.
+        // Both listeners must return the complete four-byte buffered payload.
         require(
-            contains(reply, "\"buffered\":0"),
+            contains(reply, "\"buffered\":4"),
             "chunked bodies on other routes must keep their existing handling: " + reply);
     }
 
@@ -538,6 +547,10 @@ int main() {
             "live-ingest limits must not be resolved for a non-live route");
     }
 
+    } catch (const std::exception & error) {
+        std::cerr << "framing failure: " << error.what() << '\n';
+        g_stop.store(true); server.join(); return 1;
+    }
     g_stop.store(true);
     server.join();
     std::cout << "http_live_body_test: all cases passed\n";
