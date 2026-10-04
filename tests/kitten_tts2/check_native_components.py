@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare native components with upstream PyTorch (validation only, never runtime).
 
-Speaker inputs are captured from a native clone request. Decoder comparison
+Speaker inputs and outputs come from the test-only component probe. Decoder comparison
 replaces both upstream Gaussian draws with zeros and returns the mel boundary,
 avoiding differences between PyTorch CPU RNG and the native S3 RNG.
 """
@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import numpy as np
 import torch
+import soundfile as sf
 
 
 def compare(name, actual, expected, maximum):
@@ -28,23 +29,25 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model', type=Path, required=True)
     p.add_argument('--upstream', type=Path, required=True)
-    p.add_argument('--clone-trace', type=Path)
+    p.add_argument('--speaker-output', type=Path)
     p.add_argument('--decoder-output', type=Path)
     p.add_argument('--codes', type=Path)
     args = p.parse_args()
     torch.set_num_threads(8)
     torch.set_grad_enabled(False)
     results = {}
-    if args.clone_trace:
+    if args.speaker_output:
         spec = importlib.util.spec_from_file_location('kitten_speaker_reference',
             args.upstream/'kittenml/kittentts2/speaker_embedding.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         model = module.load_speaker_embedding_model(args.model/'speaker/model.safetensors')
-        waveform = np.fromfile(args.clone_trace/'reference_16k.f32', dtype=np.float32)
+        waveform, rate = sf.read(args.speaker_output/'speaker_input.wav', dtype='float32')
+        assert rate == 16000 and waveform.ndim == 1
+        native = json.loads((args.speaker_output/'speaker.json').read_text(encoding='utf-8'))
         raw = model(torch.from_numpy(waveform).reshape(1,1,-1)).squeeze(0).numpy()
         reference = raw / np.linalg.norm(raw)
-        actual = np.fromfile(args.clone_trace/'speaker_embedding.f32', dtype=np.float32)
+        actual = np.asarray(native['embedding'], dtype=np.float32)
         results['speaker'] = compare('speaker', actual, reference, 0.00005)
         # Project the same embedding to isolate projection arithmetic from encoder error.
         from safetensors import safe_open
@@ -55,7 +58,7 @@ def main():
         projected = torch.nn.functional.layer_norm(linear, (2048,),
             state['spk_proj.1.weight'], state['spk_proj.1.bias'], 1e-5).float().numpy()
         results['projection'] = compare('projection',
-            np.fromfile(args.clone_trace/'speaker_projection.f32', dtype=np.float32), projected, 0.032)
+            np.asarray(native['projection'], dtype=np.float32), projected, 0.032)
     if args.decoder_output:
         model = torch.jit.load(str(args.model/'cpp/default/decoder.pt'), map_location='cpu')
         graph = model.graph.copy()

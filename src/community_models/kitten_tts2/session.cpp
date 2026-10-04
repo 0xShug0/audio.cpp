@@ -9,6 +9,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/transformers/causal_decoder_runtime.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/options.h"
@@ -21,9 +22,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <limits>
 #include <random>
 #include <regex>
@@ -156,6 +155,8 @@ public:
     void prepare(const runtime::SessionPreparationRequest &) override { mark_prepared(); }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        // Include reference conditioning and lazy cloning encoder loads.
+        const auto start = std::chrono::steady_clock::now();
         require_prepared("Kitten TTS 2 run");
         runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "Kitten TTS 2");
         if (!request.text_input || request.text_input->text.empty())
@@ -186,7 +187,6 @@ public:
         if (!request.option_arrays.empty()) throw std::runtime_error("Kitten TTS 2 does not accept list-valued options");
         const uint64_t seed = static_cast<uint64_t>(parsed_seed
             .value_or(static_cast<int64_t>(runtime::random_u64_seed() & 0x7fffffff)));
-        const auto start = std::chrono::steady_clock::now();
         auto size = text::parse_text_chunk_size_override(request.options).value_or(380);
         if (size < 32 || size > 1000) throw std::runtime_error("Kitten text_chunk_size must be between 32 and 1000");
         auto mode = text::parse_text_chunk_mode_override(request.options).value_or(text::TextChunkMode::TagAware);
@@ -269,16 +269,6 @@ private:
         voice->embedding = std::move(conditioning.embedding);
         if (voice->reference_codes.empty() || voice->prompt_tokens.empty())
             throw std::runtime_error("Kitten reference audio produced no codec tokens");
-        if (const char * trace = std::getenv("AUDIOCPP_KITTEN_TTS2_TRACE_DIR"); trace && *trace) {
-            std::filesystem::create_directories(trace);
-            auto dump = [&](const char * name, const std::vector<float> & values) {
-                std::ofstream out(std::filesystem::path(trace)/name, std::ios::binary);
-                out.write(reinterpret_cast<const char *>(values.data()), values.size()*sizeof(float));
-            };
-            dump("reference_16k.f32", wav16.samples);
-            dump("speaker_embedding.f32", identity);
-            dump("speaker_projection.f32", voice->speaker);
-        }
         // A changed reference invalidates the LM prefix even when its allocation
         // happens to reuse the same address as the previous cached voice.
         last_voice_ = nullptr;
@@ -348,11 +338,11 @@ private:
         const auto & t = assets_->tokens;
         head_context_ = std::shared_ptr<ggml_context>(ggml_init({2 * ggml_tensor_overhead(),nullptr,true}),ggml_free);
         if (!head_context_) throw std::runtime_error("failed to allocate Kitten head metadata");
-        auto * base = embedding_.tensor;
         const int64_t head_rows = t.audio_base + t.audio_count - t.speech_end;
-        auto * head = ggml_view_2d(head_context_.get(),base,hidden,head_rows,base->nb[1],t.speech_end*base->nb[1]);
-        if (ggml_backend_view_init(head) != GGML_STATUS_SUCCESS) throw std::runtime_error("failed to create Kitten speech head");
-        weights.lm_head = modules::LinearWeights{core::wrap_tensor(head,core::TensorShape::from_dims({head_rows,hidden}),embedding_.type),std::nullopt};
+        core::ModuleBuildContext head_build{head_context_.get(), "kitten_tts2.speech_head", execution_context().backend_type()};
+        const auto head = modules::SliceModule({0, t.speech_end, head_rows}).build(head_build, embedding_);
+        if (ggml_backend_view_init(head.tensor) != GGML_STATUS_SUCCESS) throw std::runtime_error("failed to create Kitten speech head");
+        weights.lm_head = modules::LinearWeights{head,std::nullopt};
         modules::CausalDecoderRuntimeConfig runtime_config;
         runtime_config.trace_name = "kitten_tts2.lm";
         runtime_config.prefill_graph_arena_bytes = 16 * 1024 * 1024;
@@ -460,17 +450,6 @@ private:
             return out;
         };
         auto logits=compact(prefill.logits);
-        // Optional parity diagnostics, outside the model's public option surface.
-        const char * trace_dir=std::getenv("AUDIOCPP_KITTEN_TTS2_TRACE_DIR");
-        if (trace_dir && *trace_dir) {
-            const std::filesystem::path dir(trace_dir);
-            std::filesystem::create_directories(dir);
-            json::Value::Array ids;
-            for (auto id:prompt) ids.push_back(json::Value::make_number(id));
-            std::ofstream(dir/"prompt.json") << json::stringify(json::Value::make_array(std::move(ids)));
-            std::ofstream scores(dir/"prefill_logits.f32",std::ios::binary);
-            scores.write(reinterpret_cast<const char *>(logits.data()),logits.size()*sizeof(float));
-        }
         const auto decode_start=std::chrono::steady_clock::now();
         for (int64_t step=0;step<budget;++step) {
             if (!codes.empty()) {
@@ -492,11 +471,6 @@ private:
         }
         debug::timing_log_scalar("kitten_tts2.decode_ms",debug::elapsed_ms(decode_start));
         debug::timing_log_scalar("kitten_tts2.audio_tokens",static_cast<double>(codes.size()));
-        if (trace_dir && *trace_dir) {
-            json::Value::Array ids;
-            for (auto id:codes) ids.push_back(json::Value::make_number(id));
-            std::ofstream(std::filesystem::path(trace_dir)/"codes.json") << json::stringify(json::Value::make_array(std::move(ids)));
-        }
         return codes;
     }
     runtime::TaskSpec task_;

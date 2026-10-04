@@ -6,7 +6,6 @@
 #include "engine/framework/debug/trace.h"
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -82,13 +81,6 @@ int main(int argc, char ** argv) {
             engine::audio::WavWriteOptions wav_options;
             wav_options.format = engine::audio::WavSampleFormat::Float32;
             engine::audio::write_wav(file, audio.sample_rate, audio.channels, audio.samples, wav_options);
-            if (const auto * trace = std::getenv("AUDIOCPP_KITTEN_TTS2_TRACE_DIR"); trace && *trace) {
-                const auto trace_output = std::filesystem::path(argv[2]) / ("request_" + std::to_string(i) + "_trace");
-                std::filesystem::create_directories(trace_output);
-                for (const auto * name : {"prompt.json", "prefill_logits.f32", "codes.json"})
-                    std::filesystem::copy_file(std::filesystem::path(trace) / name, trace_output / name,
-                        std::filesystem::copy_options::overwrite_existing);
-            }
             if (i == 0) first = audio.samples;
             if (i == 1 && first != audio.samples) throw std::runtime_error("same-session seeded repeat differs");
             if (i == 2 && first == audio.samples) throw std::runtime_error("voice switch did not change output");
@@ -128,6 +120,7 @@ int main(int argc, char ** argv) {
                 if (i == 2) reference("Bella");
                 const auto started = std::chrono::steady_clock::now();
                 auto result = session->run(request);
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
                 if (!result.audio_output || result.audio_output->samples.size() < 2400)
                     throw std::runtime_error("cloning returned no audio");
                 const auto & audio = *result.audio_output;
@@ -144,7 +137,6 @@ int main(int argc, char ** argv) {
                 wav_options.format = engine::audio::WavSampleFormat::Float32;
                 engine::audio::write_wav(std::filesystem::path(argv[2])/("clone_"+std::to_string(i)+".wav"),
                     audio.sample_rate, audio.channels, audio.samples, wav_options);
-                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
                 std::cout << "clone=" << i << " seconds=" << seconds << " audio_sec=" << audio.samples.size()/24000.0
                     << " rtf=" << seconds/(audio.samples.size()/24000.0) << std::endl;
             }

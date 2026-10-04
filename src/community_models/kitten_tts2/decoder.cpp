@@ -2,8 +2,6 @@
 #include "engine/models/chatterbox/s3gen_inference.h"
 
 #include <cmath>
-#include <cstdlib>
-#include <fstream>
 #include <stdexcept>
 
 namespace engine::community_models::kitten_tts2 {
@@ -50,10 +48,6 @@ std::vector<float> WaveformDecoder::decode(const std::vector<int32_t> & codes,
     if (result.waveform.empty()) throw std::runtime_error("Kitten decoder returned empty audio");
     for (float value : result.waveform)
         if (!std::isfinite(value)) throw std::runtime_error("Kitten decoder returned non-finite audio");
-    if (const char * trace = std::getenv("AUDIOCPP_KITTEN_TTS2_TRACE_DIR"); trace && *trace) {
-        std::ofstream out(std::filesystem::path(trace) / "mel.f32", std::ios::binary);
-        out.write(reinterpret_cast<const char *>(result.mel.data()), result.mel.size() * sizeof(float));
-    }
     return result.waveform;
 }
 }
