@@ -89,6 +89,10 @@ private:
         bool accepts_language = true;
         bool accepts_speed = true;
         bool accepts_speaking_rate = true;
+        // The spec's request options as a JSON array, served by
+        // `GET /v1/models?include_params=true`. Resolved at registration for the
+        // same cost reason as the flags above; "[]" without a v1 contract.
+        std::string request_params_json = "[]";
         // Leases isolated sessions to requests; management requires all slots idle.
         ModelSlots busy;
         std::mutex initialization_mutex;
@@ -251,7 +255,7 @@ private:
     // that long without a model load/run, unloads every resident (non-busy) model.
     void idle_unload_loop();
     void unload_idle_models();
-    std::string models_json(bool include_session_options = false) const;
+    std::string models_json(bool include_session_options = false, bool include_params = false) const;
     std::string get_allowed_origin(const HttpRequest & request) const;
 
     ServerConfig config_;

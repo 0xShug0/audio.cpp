@@ -368,6 +368,22 @@ Returns server readiness and the number of configured models.
 
 Returns OpenAI-style model entries for the configured audio.cpp model ids.
 
+Two opt-in query flags add to each entry:
+
+- `include_session_options=true` echoes the model's configured `session_options`.
+- `include_params=true` adds `params`: the request options the model's spec
+  declares under `options.request`, as the spec writes them (`name`, `type`,
+  `required`, `description`, and `default`/`min`/`max` where given). An enum row
+  that names a `preset` also carries the preset's `values`. A model whose spec is
+  not yet on `schema_version: 1` returns `"params": []`.
+
+```bash
+curl 'http://127.0.0.1:8080/v1/models?include_params=true'
+```
+
+The list describes options; it does not validate them. Requests are still checked
+per model as before.
+
 ### `POST /v1/audio/speech`
 
 OpenAI-style text-to-audio. The response is `audio/wav` by default.

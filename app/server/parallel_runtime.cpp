@@ -14,6 +14,7 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/model_spec/options.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/registry.h"
@@ -113,6 +114,56 @@ bool model_accepts_request_option(
         return true;
     }
     return contract->request_option_keys.find(std::string(option)) != contract->request_option_keys.end();
+}
+
+// The `options.request` rows of the model's schema-v1 spec, as a JSON array, for
+// `GET /v1/models?include_params=true`. Rows are passed through as the spec declares
+// them; an enum row that names a `preset` also gains the preset's `values`, so a client
+// needs no copy of the preset table. A model with no v1 contract (a legacy spec) gets
+// "[]", the same case model_accepts_request_option treats as "no contract".
+std::string model_request_params_json(
+    std::string_view family,
+    const std::optional<std::filesystem::path> & model_spec_override,
+    const std::filesystem::path & model_path) {
+    namespace json = engine::io::json;
+    json::Value spec;
+    {
+        engine::model_spec::ScopedSpecOverride scoped(model_spec_override, model_path);
+        try {
+            const auto spec_path = engine::model_spec::find_contract_spec_path(family);
+            if (!spec_path.has_value()) {
+                return "[]";
+            }
+            spec = engine::model_spec::load_contract_spec(*spec_path);
+        } catch (const std::runtime_error & ex) {
+            if (!is_missing_model_contract_error(ex.what())) {
+                throw;
+            }
+            return "[]";
+        }
+    }
+    const auto * options = spec.find("schema_version") != nullptr ? spec.find("options") : nullptr;
+    const auto * request = options != nullptr && options->is_object() ? options->find("request") : nullptr;
+    if (request == nullptr || !request->is_array()) {
+        return "[]";
+    }
+    json::Value::Array rows;
+    rows.reserve(request->as_array().size());
+    for (const auto & row : request->as_array()) {
+        const auto * preset = row.find("preset");
+        if (preset == nullptr || row.find("values") != nullptr) {
+            rows.push_back(row);
+            continue;
+        }
+        json::Value::Array values;
+        for (const auto & value : engine::model_spec::require_option_preset(preset->as_string())) {
+            values.push_back(json::Value::make_string(value));
+        }
+        auto expanded = row.as_object();
+        expanded["values"] = json::Value::make_array(std::move(values));
+        rows.push_back(json::Value::make_object(std::move(expanded)));
+    }
+    return json::stringify(json::Value::make_array(std::move(rows)));
 }
 
 std::string json_quote(std::string_view value) {
@@ -1188,7 +1239,10 @@ HttpResponse ParallelServerState::handle_request(const HttpRequest & request, bo
     }
     else if (request.method == "GET" && request.path == "/v1/models") {
         const auto include_session_options = query_param(request.query, "include_session_options");
-        response = json_response(models_json(include_session_options == "true" || include_session_options == "1"));
+        const auto include_params = query_param(request.query, "include_params");
+        response = json_response(models_json(
+            include_session_options == "true" || include_session_options == "1",
+            include_params == "true" || include_params == "1"));
     }
     else if (request.method == "GET" && request.path == "/v1/audio/voices") {
         response = handle_voices(request);
@@ -1375,6 +1429,8 @@ void ParallelServerState::refresh_model_option_flags(LoadedModel & model) {
         model.accepts_speaking_rate = model_accepts_request_option(
             model.config.family, "speaking_rate", effective_override, model.config.path);
     }
+    model.request_params_json = model_request_params_json(
+        model.config.family, effective_override, model.config.path);
 }
 
 void ParallelServerState::validate_replacement_slots(
@@ -1513,6 +1569,7 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
             existing->accepts_language = candidate->accepts_language;
             existing->accepts_speed = candidate->accepts_speed;
             existing->accepts_speaking_rate = candidate->accepts_speaking_rate;
+            existing->request_params_json.swap(candidate->request_params_json);
         }
         // On a backend/load failure the complete new configuration remains
         // registered but unloaded, ready for retry; no partial pool is published.
@@ -3777,7 +3834,7 @@ HttpResponse ParallelServerState::handle_voices(const HttpRequest & request) con
     return json_response(out.str());
 }
 
-std::string ParallelServerState::models_json(bool include_session_options) const {
+std::string ParallelServerState::models_json(bool include_session_options, bool include_params) const {
     std::vector<LoadedModel *> registered;
     {
         std::lock_guard<std::mutex> state_lock(models_mutex_);
@@ -3807,6 +3864,9 @@ std::string ParallelServerState::models_json(bool include_session_options) const
             << ",\"path\":" << json_quote(model.config.path.string());
         if (include_session_options) {
             out << ",\"session_options\":" << options_json(model.config.session_options);
+        }
+        if (include_params) {
+            out << ",\"params\":" << model.request_params_json;
         }
         out << "}";
     }
