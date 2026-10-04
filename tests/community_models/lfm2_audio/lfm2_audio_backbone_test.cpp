@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -458,6 +459,52 @@ void test_requests_are_independent(Fixture & fixture) {
     require_eq(run(short_case.prompt, short_case.audio, 6), short_expected, "short after a full-context request");
 }
 
+// Steps attend over the whole decode cache, and on some backends the logits
+// change in their last bits with its length, enough to flip a near-tie: a
+// LibriSpeech clip transcribed in 2 s chunks on a 16-thread CPU gained a word
+// when its cache went from 556 to 768 steps. This tiny model has no near-ties
+// for that to show in its tokens, so the lengths are checked instead.
+void test_decode_cache_length() {
+    BackboneShape shape;
+    shape.context = 1024;
+    Fixture fixture("audiocpp_lfm2_audio_backbone_cache_test", shape, 7, {});
+    auto runtime = fixture.runtime();
+    // Every token stops, so a request only prefills and sizes the cache.
+    std::vector<int32_t> every_token(static_cast<size_t>(kVocab));
+    std::iota(every_token.begin(), every_token.end(), 0);
+    const auto generate = [&](int64_t prompt_steps, int64_t max_new_tokens) {
+        (void)runtime->generate(text_prompt(prompt_steps, 40), {}, {max_new_tokens, every_token});
+        return runtime->decode_cache_steps();
+    };
+    const auto start = [&](int64_t prompt_steps, int64_t max_steps) {
+        (void)runtime->start(text_prompt(prompt_steps, 41), {}, max_steps);
+        return runtime->decode_cache_steps();
+    };
+
+    require_eq(runtime->decode_cache_steps(), int64_t{0}, "before any request");
+
+    // generate(), which the ASR runs, on those chunks: 45 prompt steps, 47 in
+    // the last one, and max_tokens 512.
+    require_eq(generate(45, 512), int64_t{556}, "generate: what the first request needs");
+    require_eq(generate(45, 512), int64_t{556}, "generate: the same need keeps the cache");
+    require_eq(generate(47, 512), int64_t{558}, "generate: a larger need replaces it");
+    require_eq(generate(45, 512), int64_t{558}, "generate: a smaller need keeps it");
+    require_eq(generate(45, 200), int64_t{244}, "generate: a cache over twice the need is replaced");
+    require_eq(generate(45, 100), int64_t{244}, "generate: one twice the need at most is kept");
+    require_eq(generate(45, 78), int64_t{244}, "generate: one exactly twice the need is kept");
+    require_eq(generate(45, 77), int64_t{121}, "generate: one just over twice the need is replaced");
+    require_eq(generate(5, 1), int64_t{6}, "generate: one step past the prompt at least");
+
+    // start(), which TTS runs: the step budget rounded up to 256, whatever
+    // ran before.
+    require_eq(generate(47, 512), int64_t{558}, "generate before start");
+    require_eq(start(45, 511), int64_t{768}, "start: rounded up after a cache that fits");
+    require_eq(start(47, 511), int64_t{768}, "start: the same rounded length");
+    require_eq(start(45, 200), int64_t{256}, "start: a smaller budget, a smaller cache");
+    require_eq(start(255, 1), int64_t{256}, "start: an exact multiple");
+    require_eq(start(5, 0), int64_t{256}, "start: one step past the prompt at least");
+}
+
 void test_rejects_bad_requests(Fixture & fixture) {
     auto runtime = fixture.runtime();
     const lfm2::Lfm2AudioEmbeddings no_audio;
@@ -576,6 +623,7 @@ int main() {
         test_decode_matches_reference(fixture);
         test_stops(fixture);
         test_requests_are_independent(fixture);
+        test_decode_cache_length();
         test_rejects_bad_requests(fixture);
         test_quantized_weights();
         std::cout << "lfm2_audio_backbone_test: PASS\n";

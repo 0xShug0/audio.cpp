@@ -59,14 +59,17 @@ public:
     Lfm2BackboneRuntime(const Lfm2BackboneRuntime &) = delete;
     Lfm2BackboneRuntime & operator=(const Lfm2BackboneRuntime &) = delete;
 
-    // Greedy text generation until a stop token or max_new_tokens.
+    // Greedy text generation until a stop token or max_new_tokens. The decode
+    // cache of an earlier request is kept when it holds this one and is at
+    // most twice its size.
     Lfm2GenerationResult generate(
         const Lfm2Prompt & prompt,
         const Lfm2AudioEmbeddings & audio,
         const Lfm2GenerationOptions & options);
 
     // Prefills the prompt, leaving room for `max_steps` more steps, and
-    // returns the text logits after it.
+    // returns the text logits after it. The decode cache is the step budget
+    // rounded up to 256, whatever ran before.
     std::vector<float> start(const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps);
 
     // One step after start(): a text token, or the codes of an audio frame
@@ -74,7 +77,19 @@ public:
     std::vector<float> step_text(int32_t token, Lfm2StepOutput output);
     std::vector<float> step_audio(const std::vector<int32_t> & codes, Lfm2StepOutput output);
 
+    // The decode cache length of the last request, 0 before the first. Steps
+    // attend over the whole cache, and on some backends the logits change in
+    // their last bits with its length.
+    [[nodiscard]] int64_t decode_cache_steps() const noexcept;
+
 private:
+    // generate() prefills with Reuse and start() with Rounded; their comments
+    // say how each sizes the decode cache.
+    enum class DecodeCache { Reuse, Rounded };
+
+    std::vector<float> prefill(
+        const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, DecodeCache cache);
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
