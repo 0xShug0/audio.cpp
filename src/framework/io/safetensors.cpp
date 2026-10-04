@@ -1,5 +1,7 @@
 #include "engine/framework/io/safetensors.h"
 
+#include "engine/framework/io/filesystem.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -267,19 +269,19 @@ SafeTensorIndex load_safetensors_index(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         throw std::runtime_error(
-            "failed to open safetensors file: " + path.string() +
+            "failed to open safetensors file: " + engine::io::path_to_utf8(path) +
             "; the file may be missing, malformed, or placed in the wrong location");
     }
 
     uint64_t header_len = 0;
     input.read(reinterpret_cast<char *>(&header_len), sizeof(header_len));
     if (!input) {
-        throw std::runtime_error("failed to read safetensors header length: " + path.string());
+        throw std::runtime_error("failed to read safetensors header length: " + engine::io::path_to_utf8(path));
     }
     std::string header(static_cast<size_t>(header_len), '\0');
     input.read(header.data(), static_cast<std::streamsize>(header.size()));
     if (!input) {
-        throw std::runtime_error("failed to read safetensors header: " + path.string());
+        throw std::runtime_error("failed to read safetensors header: " + engine::io::path_to_utf8(path));
     }
 
     SafeTensorIndex index;
@@ -474,7 +476,7 @@ void write_safetensors_file(
     }
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) {
-        throw std::runtime_error("failed to open safetensors output file: " + path.string());
+        throw std::runtime_error("failed to open safetensors output file: " + engine::io::path_to_utf8(path));
     }
     write_u64_le(output, static_cast<uint64_t>(header.size()));
     output.write(header.data(), static_cast<std::streamsize>(header.size()));

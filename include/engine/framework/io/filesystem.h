@@ -8,6 +8,20 @@
 
 namespace engine::io {
 
+/// A path from a UTF-8 string.
+///
+/// On Windows a narrow string handed to std::filesystem::path is decoded with
+/// the process code page, which is UTF-8 only when the executable asks for it.
+/// A DLL runs under its host's code page, so "Thiền Tâm Đức.wav" would name a
+/// file that is not there. Bytes that are not valid UTF-8 are decoded with the
+/// process code page instead, as before. Everywhere else this is the identity.
+std::filesystem::path path_from_utf8(std::string_view value);
+
+/// A path as UTF-8, for ggml (which opens files by UTF-8 name) and for
+/// messages. path::string() uses the process code page on Windows, so it
+/// mangles or throws on a name that page cannot hold.
+std::string path_to_utf8(const std::filesystem::path & path);
+
 bool is_existing_directory(const std::filesystem::path & path);
 bool is_existing_file(const std::filesystem::path & path);
 

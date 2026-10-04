@@ -1,5 +1,7 @@
 #include "engine/framework/assets/torch_bin.h"
 
+#include "engine/framework/io/filesystem.h"
+
 #include <ggml.h>
 
 #include <cstdint>
@@ -28,16 +30,16 @@ uint32_t read_u32le(const uint8_t * data) {
 std::vector<uint8_t> read_file(const std::filesystem::path & path) {
     std::ifstream stream(path, std::ios::binary | std::ios::ate);
     if (!stream) {
-        throw std::runtime_error("torch .bin cannot be opened: " + path.string());
+        throw std::runtime_error("torch .bin cannot be opened: " + engine::io::path_to_utf8(path));
     }
     const std::streamsize size = stream.tellg();
     if (size < 0) {
-        throw std::runtime_error("torch .bin has an invalid size: " + path.string());
+        throw std::runtime_error("torch .bin has an invalid size: " + engine::io::path_to_utf8(path));
     }
     stream.seekg(0);
     std::vector<uint8_t> bytes(static_cast<size_t>(size));
     if (size > 0 && !stream.read(reinterpret_cast<char *>(bytes.data()), size)) {
-        throw std::runtime_error("torch .bin could not be read: " + path.string());
+        throw std::runtime_error("torch .bin could not be read: " + engine::io::path_to_utf8(path));
     }
     return bytes;
 }
@@ -511,7 +513,7 @@ public:
             }
         }
         if (pickle == nullptr) {
-            throw std::runtime_error("torch .bin does not contain a data.pkl: " + path_.string());
+            throw std::runtime_error("torch .bin does not contain a data.pkl: " + engine::io::path_to_utf8(path_));
         }
         PickleReader reader(bytes_.data() + pickle->offset, pickle->size);
         const std::vector<PickleValue> entries_flat = reader.parse();

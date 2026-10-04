@@ -1,3 +1,4 @@
+#include "engine/framework/io/filesystem.h"
 #include "engine/models/miotts/session.h"
 
 #include "engine/framework/audio/dsp.h"
@@ -92,7 +93,7 @@ std::filesystem::path default_asr_model_path(const std::filesystem::path & miott
 
 std::filesystem::path resolve_codec_model_path(const runtime::SessionOptions & options, const MioTTSAssets & assets) {
     if (const auto value = runtime::find_option(options.options, {"miotts.codec_model_path"})) {
-        return std::filesystem::path(*value);
+        return engine::io::path_from_utf8(*value);
     }
     return default_codec_model_path(assets.resources.model_root());
 }
@@ -103,7 +104,7 @@ std::filesystem::path resolve_best_of_n_asr_model_path(
     if (const auto value = runtime::find_option(
             options.options,
             {"miotts.best_of_n_asr_model_path"})) {
-        return std::filesystem::path(*value);
+        return engine::io::path_from_utf8(*value);
     }
     return default_asr_model_path(assets.resources.model_root());
 }

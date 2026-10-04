@@ -85,7 +85,7 @@ ConfigMap parse_key_value_text(const std::string & text, char separator) {
 
 ConfigMap load_config_map(const std::filesystem::path & path) {
     const auto text = read_text_file(path);
-    const auto ext = path.extension().string();
+    const auto ext = engine::io::path_to_utf8(path.extension());
     if (ext == ".json") {
         return parse_flat_json_object(text);
     }

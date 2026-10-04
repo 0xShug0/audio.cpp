@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -29,7 +30,7 @@ constexpr const char *kModelName = "Kitten TTS";
 
 std::filesystem::path session_path(const runtime::SessionOptions &options, const char *key) {
     const auto found = options.options.find(key);
-    return found == options.options.end() ? std::filesystem::path{} : std::filesystem::path(found->second);
+    return found == options.options.end() ? std::filesystem::path{} : engine::io::path_from_utf8(found->second);
 }
 
 std::string request_cache_key(const runtime::Transcript &text, const KittenFrontendSessionState &state) {

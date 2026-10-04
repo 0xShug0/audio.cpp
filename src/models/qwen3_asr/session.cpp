@@ -1,3 +1,4 @@
+#include "engine/framework/io/filesystem.h"
 #include "engine/models/qwen3_asr/session.h"
 
 #include "engine/framework/audio/chunking.h"
@@ -246,7 +247,7 @@ Qwen3ASRSession::Qwen3ASRSession(
         forced_aligner_session_ = std::make_unique<engine::models::qwen3_forced_aligner::Qwen3ForcedAlignerSession>(
             runtime::TaskSpec{runtime::VoiceTaskKind::Alignment, runtime::RunMode::Offline},
             aligner_options,
-            load_qwen3_asr_assets(std::filesystem::path(*aligner_path), "qwen3_forced_aligner"));
+            load_qwen3_asr_assets(engine::io::path_from_utf8(*aligner_path), "qwen3_forced_aligner"));
     }
     assets_->model_weights->release_storage();
 }

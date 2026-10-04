@@ -1,5 +1,7 @@
 #include "engine/framework/io/binary.h"
 
+#include "engine/framework/io/filesystem.h"
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -25,18 +27,18 @@ template <typename T>
 std::vector<T> read_typed_file(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("failed to open binary file: " + path.string());
+        throw std::runtime_error("failed to open binary file: " + engine::io::path_to_utf8(path));
     }
     input.seekg(0, std::ios::end);
     const auto size = static_cast<size_t>(input.tellg());
     input.seekg(0, std::ios::beg);
     if (size % sizeof(T) != 0) {
-        throw std::runtime_error("binary file has invalid size for requested element type: " + path.string());
+        throw std::runtime_error("binary file has invalid size for requested element type: " + engine::io::path_to_utf8(path));
     }
     std::vector<T> values(size / sizeof(T));
     input.read(reinterpret_cast<char *>(values.data()), static_cast<std::streamsize>(size));
     if (!input) {
-        throw std::runtime_error("failed to read binary file: " + path.string());
+        throw std::runtime_error("failed to read binary file: " + engine::io::path_to_utf8(path));
     }
     return values;
 }
@@ -199,7 +201,7 @@ BinaryBlob read_binary_blob(const std::filesystem::path & path) {
 #endif
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("failed to open binary file: " + path.string());
+        throw std::runtime_error("failed to open binary file: " + engine::io::path_to_utf8(path));
     }
     input.seekg(0, std::ios::end);
     const auto size = static_cast<size_t>(input.tellg());
@@ -208,7 +210,7 @@ BinaryBlob read_binary_blob(const std::filesystem::path & path) {
     if (size > 0) {
         input.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(size));
         if (!input) {
-            throw std::runtime_error("failed to read binary file: " + path.string());
+            throw std::runtime_error("failed to read binary file: " + engine::io::path_to_utf8(path));
         }
     }
     return BinaryBlob(std::move(bytes));

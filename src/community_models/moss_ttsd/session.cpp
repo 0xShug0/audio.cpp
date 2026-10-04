@@ -3,6 +3,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/options.h"
 
 #include <algorithm>
@@ -357,7 +358,7 @@ runtime::TaskResult MossTtsdSession::run(const runtime::TaskRequest & request) {
                 speakers.emplace_back();
                 continue;
             }
-            const auto wav = engine::audio::read_wav_f32(std::filesystem::path(*path));
+            const auto wav = engine::audio::read_wav_f32(engine::io::path_from_utf8(*path));
             speakers.emplace_back(encode_reference(
                 runtime::AudioBuffer{wav.sample_rate, wav.channels, wav.samples}));
         }

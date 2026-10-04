@@ -35,7 +35,7 @@ const std::unordered_map<std::string, std::string_view> & builtin_model_specs() 
 std::optional<std::string_view> builtin_model_spec(const std::filesystem::path & spec_path) {
     if (spec_path.parent_path() != "@builtin")
         return std::nullopt;
-    const auto it = builtin_model_specs().find(spec_path.stem().string());
+    const auto it = builtin_model_specs().find(engine::io::path_to_utf8(spec_path.stem()));
     if (it == builtin_model_specs().end())
         return std::nullopt;
     return it->second;
@@ -43,18 +43,18 @@ std::optional<std::string_view> builtin_model_spec(const std::filesystem::path &
 
 std::string model_spec_description(const std::filesystem::path & spec_path) {
     if (spec_path.parent_path() == "@gguf") {
-        return "embedded GGUF model spec for family '" + spec_path.stem().string() + "'";
+        return "embedded GGUF model spec for family '" + engine::io::path_to_utf8(spec_path.stem()) + "'";
     }
     if (spec_path.parent_path() == "@builtin") {
-        return "builtin model spec for family '" + spec_path.stem().string() + "'";
+        return "builtin model spec for family '" + engine::io::path_to_utf8(spec_path.stem()) + "'";
     }
-    return "model spec '" + spec_path.string() + "'";
+    return "model spec '" + engine::io::path_to_utf8(spec_path) + "'";
 }
 
 bool is_gguf_file(const std::filesystem::path & path) {
     if (!engine::io::is_existing_file(path))
         return false;
-    std::string extension = path.extension().string();
+    std::string extension = engine::io::path_to_utf8(path.extension());
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
     return extension == ".gguf";
@@ -66,7 +66,7 @@ std::string gguf_file_list(const std::vector<std::filesystem::path> & files) {
         if (i != 0) {
             names += ", ";
         }
-        names += files[i].filename().string();
+        names += engine::io::path_to_utf8(files[i].filename());
     }
     return names;
 }
@@ -75,7 +75,7 @@ std::string gguf_file_list(const std::vector<std::filesystem::path> & files) {
 // (e.g. both vevo2-q8_0.gguf and vevo2-f16.gguf installed side by side).
 std::string ambiguous_directory_gguf_message(const std::filesystem::path & directory,
     const std::vector<std::filesystem::path> & files) {
-    return "model directory contains " + std::to_string(files.size()) + " GGUF files: " + directory.string() +
+    return "model directory contains " + std::to_string(files.size()) + " GGUF files: " + engine::io::path_to_utf8(directory) +
            "; found: " + gguf_file_list(files) +
            "; pass one of them directly with --model, or keep a single GGUF in the directory";
 }
@@ -92,7 +92,7 @@ std::string directory_gguf_hint(std::string_view family) {
         return ambiguous_directory_gguf_message(*active_model_path, files);
     }
     return "GGUF has no embedded model spec for family '" + std::string(family) + "': " +
-           files.front().string() + "; install model_specs/" + std::string(family) +
+           engine::io::path_to_utf8(files.front()) + "; install model_specs/" + std::string(family) +
            ".json next to it, or pass --model-spec-override";
 }
 
@@ -147,7 +147,7 @@ bool external_spec_matches_family(const std::filesystem::path & path, std::strin
         const auto root = engine::io::json::parse_file(path);
         return engine::io::json::require_string(root, "family") == family;
     } catch (const std::exception & error) {
-        throw std::runtime_error("invalid candidate model spec '" + path.string() +
+        throw std::runtime_error("invalid candidate model spec '" + engine::io::path_to_utf8(path) +
                                  "' while resolving family '" + std::string(family) + "': " + error.what());
     }
 }
@@ -200,9 +200,9 @@ engine::io::json::Value parse_model_spec(const std::filesystem::path & spec_path
     engine::io::json::Value root;
     if (spec_path.parent_path() == "@gguf") {
         const auto & spec = embedded_model_spec();
-        if (!spec.has_value() || spec->family != spec_path.stem().string()) {
+        if (!spec.has_value() || spec->family != engine::io::path_to_utf8(spec_path.stem())) {
             throw std::runtime_error("embedded GGUF model spec is not available for: " +
-                                     spec_path.stem().string());
+                                     engine::io::path_to_utf8(spec_path.stem()));
         }
         root = engine::io::json::parse(spec->json);
         if (engine::io::json::require_string(root, "family") != spec->family) {
@@ -226,7 +226,7 @@ std::filesystem::path resolve_model_root(const std::filesystem::path & model_pat
     if (engine::io::is_existing_file(model_path)) {
         return std::filesystem::weakly_canonical(model_path.parent_path());
     }
-    throw std::runtime_error("model path does not exist: " + model_path.string());
+    throw std::runtime_error("model path does not exist: " + engine::io::path_to_utf8(model_path));
 }
 
 std::string require_source_format(const engine::io::json::Value & source) {
@@ -246,7 +246,7 @@ ResourceRoots resolve_source_roots(const std::filesystem::path & model_root, con
         }
         const auto root_path = root_value == "$gguf" ? *standalone_gguf : model_root / root_value;
         if (!engine::io::is_existing_directory(root_path) && !engine::io::is_existing_file(root_path)) {
-            throw std::runtime_error("missing model root: " + id + "=" + root_path.string());
+            throw std::runtime_error("missing model root: " + id + "=" + engine::io::path_to_utf8(root_path));
         }
         roots.emplace(id, std::filesystem::weakly_canonical(root_path));
     }
@@ -280,7 +280,7 @@ void add_resource_map(assets::ResourceBundle & bundle,
     for (const auto & [id, ref] : map_value->as_object()) {
         const auto path = resolve_resource_ref(roots, ref.as_string());
         if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error("missing model package file '" + id + "': " + path.string());
+            throw std::runtime_error("missing model package file '" + id + "': " + engine::io::path_to_utf8(path));
         }
         bundle.add_file(id, path);
     }
@@ -312,7 +312,7 @@ void add_tensor_map(assets::ResourceBundle & bundle,
         std::string prefix;
         const auto path = resolve_tensor_source_ref(roots, ref, prefix);
         if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error("missing model tensor source '" + id + "': " + path.string());
+            throw std::runtime_error("missing model tensor source '" + id + "': " + engine::io::path_to_utf8(path));
         }
         bundle.add_tensor_source(id, path, std::move(prefix));
     }
@@ -475,7 +475,7 @@ std::filesystem::path default_package_spec_path(std::string_view family) {
             path /= std::string(family) + ".json";
         }
         if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error("model spec override not found: " + path.string());
+            throw std::runtime_error("model spec override not found: " + engine::io::path_to_utf8(path));
         }
         return std::filesystem::weakly_canonical(path);
     }
@@ -519,7 +519,7 @@ std::optional<std::filesystem::path> find_contract_spec_path(std::string_view fa
             path /= std::string(family) + ".json";
         }
         if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error("model spec override not found: " + path.string());
+            throw std::runtime_error("model spec override not found: " + engine::io::path_to_utf8(path));
         }
         return std::filesystem::weakly_canonical(path);
     }

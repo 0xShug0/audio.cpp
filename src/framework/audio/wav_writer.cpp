@@ -1,5 +1,7 @@
 #include "engine/framework/audio/wav_writer.h"
 
+#include "engine/framework/io/filesystem.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -202,7 +204,7 @@ void write_wav(
     const WavWriteOptions & options) {
     std::ofstream out(path, std::ios::binary);
     if (!out) {
-        throw std::runtime_error("could not open WAV output: " + path.string());
+        throw std::runtime_error("could not open WAV output: " + engine::io::path_to_utf8(path));
     }
     if (sample_rate <= 0) {
         throw std::runtime_error("sample rate must be positive");
@@ -310,7 +312,7 @@ void write_wav(
         }
     }
     if (!out) {
-        throw std::runtime_error("failed to write WAV output: " + path.string());
+        throw std::runtime_error("failed to write WAV output: " + engine::io::path_to_utf8(path));
     }
 }
 

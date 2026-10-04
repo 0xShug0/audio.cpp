@@ -15,6 +15,8 @@
  *   - Handles are not thread-safe individually. Separate handles may be used
  *     concurrently from separate threads.
  *   - Freeing NULL is a no-op, so cleanup paths need no null checks.
+ *   - Strings passed in, file paths included, are UTF-8 whatever code page
+ *     the host process runs under on Windows. Strings returned are UTF-8.
  *
  * Lifetime note: handles keep their parents alive internally (a session holds
  * its model, a model holds its registry). Freeing out of order is therefore

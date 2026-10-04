@@ -729,12 +729,12 @@ public:
         : source_path_(std::filesystem::weakly_canonical(path)) {
         ggml_context * tensor_context = nullptr;
         gguf_context * gguf = gguf_init_from_file(
-            source_path_.string().c_str(),
+            engine::io::path_to_utf8(source_path_).c_str(),
             gguf_init_params{true, &tensor_context});
         if (gguf == nullptr || tensor_context == nullptr) {
             if (gguf != nullptr) gguf_free(gguf);
             if (tensor_context != nullptr) ggml_free(tensor_context);
-            throw std::runtime_error("failed to read GGUF tensor source: " + source_path_.string());
+            throw std::runtime_error("failed to read GGUF tensor source: " + engine::io::path_to_utf8(source_path_));
         }
         try {
             data_begin_ = gguf_get_data_offset(gguf);
@@ -942,7 +942,7 @@ std::unordered_map<std::string, std::string> parse_indexed_tensor_weight_map(
         weight_map.emplace(name, value.as_string());
     }
     if (weight_map.empty()) {
-        throw std::runtime_error("indexed tensor source has an empty weight_map: " + index_path.string());
+        throw std::runtime_error("indexed tensor source has an empty weight_map: " + engine::io::path_to_utf8(index_path));
     }
     return weight_map;
 }
@@ -959,7 +959,7 @@ std::vector<std::filesystem::path> indexed_tensor_source_shard_paths_from_weight
     for (const auto & name : shard_names) {
         const auto path = model_root / name;
         if (!engine::io::is_existing_file(path)) {
-            throw std::runtime_error("missing indexed tensor shard: " + path.string());
+            throw std::runtime_error("missing indexed tensor shard: " + engine::io::path_to_utf8(path));
         }
         paths.push_back(std::filesystem::weakly_canonical(path));
     }
@@ -1550,20 +1550,20 @@ std::vector<float> tensor_data_to_f32(std::string_view name, const TensorData & 
 }
 
 std::shared_ptr<const TensorSource> open_tensor_source(const std::filesystem::path & path) {
-    const std::string file_name = lower_ascii(path.filename().string());
+    const std::string file_name = lower_ascii(engine::io::path_to_utf8(path.filename()));
     static constexpr std::string_view kIndexSuffix = ".safetensors.index.json";
     if (file_name.size() >= kIndexSuffix.size() &&
         file_name.compare(file_name.size() - kIndexSuffix.size(), kIndexSuffix.size(), kIndexSuffix) == 0) {
         return open_indexed_tensor_source(path, path.parent_path());
     }
-    const std::string extension = lower_ascii(path.extension().string());
+    const std::string extension = lower_ascii(engine::io::path_to_utf8(path.extension()));
     if (extension == ".safetensors") {
         return std::make_shared<SafeTensorSource>(path);
     }
     if (extension == ".gguf") {
         return std::make_shared<GgufTensorSource>(path);
     }
-    throw std::runtime_error("unsupported tensor source format: " + path.string());
+    throw std::runtime_error("unsupported tensor source format: " + engine::io::path_to_utf8(path));
 }
 
 std::shared_ptr<const TensorSource> open_tensor_source(
@@ -1596,10 +1596,10 @@ std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
     bool with_contents) {
     ggml_context * tensor_context = nullptr;
     gguf_context * gguf = gguf_init_from_file(
-        path.string().c_str(), gguf_init_params{true, &tensor_context});
+        engine::io::path_to_utf8(path).c_str(), gguf_init_params{true, &tensor_context});
     if (gguf == nullptr) {
         if (tensor_context != nullptr) ggml_free(tensor_context);
-        throw std::runtime_error("failed to read GGUF metadata: " + path.string());
+        throw std::runtime_error("failed to read GGUF metadata: " + engine::io::path_to_utf8(path));
     }
     std::vector<std::pair<std::string, std::string>> result;
     try {
@@ -1656,10 +1656,10 @@ std::vector<std::pair<std::string, std::string>> read_gguf_embedded_sidecars(
                 std::string content;
                 const size_t length = static_cast<size_t>(offsets[i + 1] - offsets[i]);
                 if (with_contents && length > 0) content.assign(data + offsets[i], length);
-                result.emplace_back(normalized.generic_string(), std::move(content));
+                result.emplace_back(normalized.generic_u8string(), std::move(content));
             } else {
                 result.emplace_back(
-                    normalized.generic_string(),
+                    normalized.generic_u8string(),
                     with_contents ? std::string(gguf_get_arr_str(gguf, contents_key, i)) : std::string());
             }
         }
@@ -1689,11 +1689,11 @@ std::vector<std::string> gguf_embedded_sidecar_names(const std::filesystem::path
 
 std::optional<GgufEmbeddedModelSpec> read_gguf_embedded_model_spec(const std::filesystem::path & path) {
     ggml_context * tensor_context = nullptr;
-    gguf_context * gguf = gguf_init_from_file(path.string().c_str(), gguf_init_params{true, &tensor_context});
+    gguf_context * gguf = gguf_init_from_file(engine::io::path_to_utf8(path).c_str(), gguf_init_params{true, &tensor_context});
     if (gguf == nullptr) {
         if (tensor_context != nullptr)
             ggml_free(tensor_context);
-        throw std::runtime_error("failed to read GGUF metadata: " + path.string());
+        throw std::runtime_error("failed to read GGUF metadata: " + engine::io::path_to_utf8(path));
     }
     std::optional<GgufEmbeddedModelSpec> result;
     try {
@@ -1736,10 +1736,10 @@ std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & pa
     const auto canonical = std::filesystem::weakly_canonical(path);
     const auto sidecars = read_gguf_embedded_sidecars(canonical, true);
     if (sidecars.empty()) {
-        throw std::runtime_error("GGUF does not contain embedded model sidecars: " + canonical.string());
+        throw std::runtime_error("GGUF does not contain embedded model sidecars: " + engine::io::path_to_utf8(canonical));
     }
     const auto fingerprint_source =
-        canonical.string() + ":" + std::to_string(std::filesystem::file_size(canonical)) + ":" +
+        engine::io::path_to_utf8(canonical) + ":" + std::to_string(std::filesystem::file_size(canonical)) + ":" +
         std::to_string(static_cast<long long>(std::filesystem::last_write_time(canonical).time_since_epoch().count()));
     std::ostringstream fingerprint;
     fingerprint << std::hex << std::hash<std::string>{}(fingerprint_source);
@@ -1753,10 +1753,10 @@ std::filesystem::path materialize_gguf_sidecars(const std::filesystem::path & pa
         std::filesystem::create_directories(output_path.parent_path());
         std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
         if (!output)
-            throw std::runtime_error("failed to materialize GGUF sidecar: " + output_path.string());
+            throw std::runtime_error("failed to materialize GGUF sidecar: " + engine::io::path_to_utf8(output_path));
         output.write(content.data(), static_cast<std::streamsize>(content.size()));
         if (!output)
-            throw std::runtime_error("failed to write GGUF sidecar: " + output_path.string());
+            throw std::runtime_error("failed to write GGUF sidecar: " + engine::io::path_to_utf8(output_path));
     }
     return root;
 }
@@ -1768,7 +1768,7 @@ std::vector<std::filesystem::path> directory_gguf_files(const std::filesystem::p
     }
     for (const auto & entry : std::filesystem::directory_iterator(directory)) {
         const auto & candidate = entry.path();
-        if (engine::io::is_existing_file(candidate) && lower_ascii(candidate.extension().string()) == ".gguf") {
+        if (engine::io::is_existing_file(candidate) && lower_ascii(engine::io::path_to_utf8(candidate.extension())) == ".gguf") {
             files.push_back(candidate);
         }
     }
@@ -1799,9 +1799,9 @@ PreparedModelDirectory prepare_model_directory(const std::filesystem::path & mod
     } else if (engine::io::is_existing_file(model_path)) {
         gguf_path = model_path;
     } else {
-        throw std::runtime_error("model path does not exist: " + model_path.string());
+        throw std::runtime_error("model path does not exist: " + engine::io::path_to_utf8(model_path));
     }
-    if (engine::io::is_existing_file(gguf_path) && lower_ascii(gguf_path.extension().string()) == ".gguf") {
+    if (engine::io::is_existing_file(gguf_path) && lower_ascii(engine::io::path_to_utf8(gguf_path.extension())) == ".gguf") {
         const auto canonical_gguf = std::filesystem::weakly_canonical(gguf_path);
         if (gguf_has_embedded_sidecars(gguf_path)) {
             return {materialize_gguf_sidecars(gguf_path), canonical_gguf};
@@ -1825,24 +1825,24 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
         throw std::runtime_error("GGUF conversion requires at least one tensor source");
     }
     if (engine::io::is_existing_file(output_path) && !overwrite) {
-        throw std::runtime_error("GGUF output already exists: " + output_path.string());
+        throw std::runtime_error("GGUF output already exists: " + engine::io::path_to_utf8(output_path));
     }
     std::vector<CompositeTensorSource::Component> components;
     components.reserve(inputs.size());
     for (const auto & input : inputs) {
         if (!engine::io::is_existing_file(input.path)) {
-            throw std::runtime_error("input tensor source does not exist: " + input.path.string());
+            throw std::runtime_error("input tensor source does not exist: " + engine::io::path_to_utf8(input.path));
         }
         try {
             components.push_back({input.tensor_prefix, open_tensor_source(input.path)});
         } catch (const std::exception & error) {
-            throw std::runtime_error("failed to open tensor source " + input.path.string() + ": " + error.what());
+            throw std::runtime_error("failed to open tensor source " + engine::io::path_to_utf8(input.path) + ": " + error.what());
         }
     }
     const auto sidecar_root = std::filesystem::weakly_canonical(
         requested_sidecar_root.empty() ? inputs.front().path.parent_path() : requested_sidecar_root);
     if (!engine::io::is_existing_directory(sidecar_root)) {
-        throw std::runtime_error("GGUF sidecar root is not a directory: " + sidecar_root.string());
+        throw std::runtime_error("GGUF sidecar root is not a directory: " + engine::io::path_to_utf8(sidecar_root));
     }
     std::shared_ptr<const TensorSource> source =
         std::make_shared<CompositeTensorSource>(sidecar_root, std::move(components));
@@ -1940,10 +1940,10 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
 
     try {
         gguf_set_val_str(gguf, "general.architecture", "audiocpp");
-        gguf_set_val_str(gguf, "general.name", sidecar_root.filename().string().c_str());
+        gguf_set_val_str(gguf, "general.name", engine::io::path_to_utf8(sidecar_root.filename()).c_str());
         gguf_set_val_str(gguf, "audiocpp.tensor_name_format", "native");
         gguf_set_val_str(gguf, "audiocpp.source_format",
-                         inputs.size() == 1 ? lower_ascii(inputs.front().path.extension().string()).c_str() : "packed");
+                         inputs.size() == 1 ? lower_ascii(engine::io::path_to_utf8(inputs.front().path.extension())).c_str() : "packed");
         const std::string output_weight_type =
             preserve_source_dtype ? "orig" : lower_ascii(ggml_type_name(requested_type));
         gguf_set_val_str(gguf, "audiocpp.weight_type", output_weight_type.c_str());
@@ -1968,7 +1968,7 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             const auto relative_path = std::filesystem::relative(input.path, sidecar_root, relative_error);
             source_paths.push_back((relative_error || relative_path.empty()
                 ? std::filesystem::absolute(input.path).lexically_normal()
-                : relative_path).generic_string());
+                : relative_path).generic_u8string());
         }
         for (const auto & value : source_names) source_name_ptrs.push_back(value.c_str());
         for (const auto & value : source_paths) source_path_ptrs.push_back(value.c_str());
@@ -1987,14 +1987,14 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             for (const auto & sidecar : extra_sidecars) {
                 const auto normalized = sidecar.destination.lexically_normal();
                 if (normalized.empty() || normalized.is_absolute() || *normalized.begin() == "..") {
-                    throw std::runtime_error("invalid embedded sidecar destination: " + sidecar.destination.string());
+                    throw std::runtime_error("invalid embedded sidecar destination: " + engine::io::path_to_utf8(sidecar.destination));
                 }
                 if (!engine::io::is_existing_file(sidecar.source_path)) {
-                    throw std::runtime_error("embedded sidecar source does not exist: " + sidecar.source_path.string());
+                    throw std::runtime_error("embedded sidecar source does not exist: " + engine::io::path_to_utf8(sidecar.source_path));
                 }
-                if (!explicit_destinations.insert(normalized.generic_string()).second) {
+                if (!explicit_destinations.insert(normalized.generic_u8string()).second) {
                     throw std::runtime_error(
-                        "duplicate embedded sidecar destination: " + normalized.generic_string());
+                        "duplicate embedded sidecar destination: " + normalized.generic_u8string());
                 }
             }
             for (std::filesystem::recursive_directory_iterator it(sidecar_root, walk_error), end;
@@ -2006,13 +2006,13 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 }
                 if (!it->is_regular_file()) continue;
                 const auto & path = it->path();
-                const std::string extension = lower_ascii(path.extension().string());
+                const std::string extension = lower_ascii(engine::io::path_to_utf8(path.extension()));
                 if (extension == ".safetensors" || extension == ".gguf" || extension == ".bin" ||
                     extension == ".pt" || extension == ".pth" || path == output_path ||
                     it->file_size() > kMaxEmbeddedSidecarBytes) {
                     continue;
                 }
-                const auto relative = std::filesystem::relative(path, sidecar_root).generic_string();
+                const auto relative = std::filesystem::relative(path, sidecar_root).generic_u8string();
                 if (explicit_destinations.find(relative) != explicit_destinations.end()) continue;
                 sidecar_paths.push_back(path);
             }
@@ -2023,13 +2023,13 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             for (const auto & path : sidecar_paths) {
                 const auto relative = std::filesystem::relative(path, sidecar_root);
                 const std::string content = engine::io::read_text_file(path);
-                embedded_names.push_back(relative.generic_string());
+                embedded_names.push_back(relative.generic_u8string());
                 embedded_data.insert(embedded_data.end(), content.begin(), content.end());
                 embedded_offsets.push_back(static_cast<uint64_t>(embedded_data.size()));
             }
             for (const auto & sidecar : extra_sidecars) {
                 const std::string content = engine::io::read_text_file(sidecar.source_path);
-                embedded_names.push_back(sidecar.destination.lexically_normal().generic_string());
+                embedded_names.push_back(sidecar.destination.lexically_normal().generic_u8string());
                 embedded_data.insert(embedded_data.end(), content.begin(), content.end());
                 embedded_offsets.push_back(static_cast<uint64_t>(embedded_data.size()));
             }
@@ -2150,8 +2150,8 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
         auto temporary_path = output_path;
         temporary_path += ".tmp";
         std::filesystem::remove(temporary_path);
-        if (!gguf_write_to_file(gguf, temporary_path.string().c_str(), true)) {
-            throw std::runtime_error("failed to write GGUF metadata: " + temporary_path.string());
+        if (!gguf_write_to_file(gguf, engine::io::path_to_utf8(temporary_path).c_str(), true)) {
+            throw std::runtime_error("failed to write GGUF metadata: " + engine::io::path_to_utf8(temporary_path));
         }
 
         try {
@@ -2230,7 +2230,7 @@ std::shared_ptr<const TensorSource> open_indexed_tensor_source(
     const auto weight_map = parse_indexed_tensor_weight_map(index_path);
     std::unordered_map<std::string, std::shared_ptr<const TensorSource>> shard_sources;
     for (const auto & path : indexed_tensor_source_shard_paths_from_weight_map(model_root, weight_map)) {
-        shard_sources.emplace(path.filename().string(), open_tensor_source(path));
+        shard_sources.emplace(engine::io::path_to_utf8(path.filename()), open_tensor_source(path));
     }
     return std::make_shared<IndexedTensorSource>(
         index_path,

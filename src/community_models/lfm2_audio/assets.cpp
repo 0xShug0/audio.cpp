@@ -26,7 +26,7 @@ public:
         params.no_alloc = true;
         params.ctx = nullptr;
 
-        ctx_.reset(gguf_init_from_file(path.string().c_str(), params));
+        ctx_.reset(gguf_init_from_file(engine::io::path_to_utf8(path).c_str(), params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("LFM2-Audio failed to read GGUF metadata: " + path.string());
         }
@@ -173,7 +173,7 @@ std::string join(const std::vector<std::string> & values) {
 
 std::filesystem::path resolve_component(
     const std::filesystem::path & root, const char * option_name, const std::string & value) {
-    const auto relative = std::filesystem::path(value).lexically_normal();
+    const auto relative = engine::io::path_from_utf8(value).lexically_normal();
     if (value.empty() || relative.is_absolute() || (!relative.empty() && *relative.begin() == "..")) {
         throw std::runtime_error(std::string(option_name) + " must be a nonempty path inside the model directory");
     }
