@@ -580,10 +580,10 @@
   }
 
   function modelMatchesSelectedPackage(model: LoadedModel, entry: CatalogEntry | undefined) {
-    if (!entry) return comparablePath(model.path) === comparablePath(modelPath);
+    if (!entry) return catalogPathMatches(modelPath, model.path);
     const choice = selectedPackageChoice(entry);
-    if (!choice) return comparablePath(model.path) === comparablePath(modelPath);
-    return comparablePath(model.path) === comparablePath(modelPath) &&
+    if (!choice) return catalogPathMatches(modelPath, model.path);
+    return catalogPathMatches(modelPath, model.path) &&
       packageSessionOptionsMatch(entry, choice, model);
   }
 
@@ -1226,9 +1226,8 @@
     status = `Loading ${selected.display_name}…`;
     log(status);
     try {
-      const targetPath = comparablePath(modelPath);
       const replaced = loadedModels.filter((model) => model.loaded &&
-        (model.id !== selected.id || comparablePath(model.path) !== targetPath ||
+        (model.id !== selected.id || !catalogPathMatches(modelPath, model.path) ||
           !modelMatchesSelectedPackage(model, selected)));
       for (const model of replaced) {
         log(`Unloading ${loadedModelName(model)} before loading ${selected.display_name}.`);
