@@ -57,7 +57,6 @@ These are validation-only dependencies.
 build-kitten2/bin/kitten_tts2_session_probe \
   models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf build-kitten2/native-session \
   8 native /absolute/path/kitten-tts-2 cpu > build-kitten2/session.log 2>&1
-python tests/kitten_tts2/check_session_timing.py build-kitten2/session.log
 ```
 
 One session checks exact seeded repeats, voice switching, three-chunk synthesis,
@@ -68,9 +67,7 @@ weights come from the first argument. A final `cpu` or `cuda` argument selects
 the backend (default: `cpu`). Output WAVs are float32, mono, 24 kHz.
 Reported RTF and the framework's `session.wall_ms` cover the entire `run()` call,
 including reference conditioning and first-clone lazy encoder loading. Initial
-model/session construction is outside this timer. The timing checker compares
-all seven internal timings with the probe's external timer, allowing the larger
-of 5 ms or 2% for logging/return overhead. Capture both stdout and stderr.
+model/session construction is outside this timer.
 
 The production model has no custom tensor-dump environment variable or hooks.
 Normal framework timing/profiling remains available. `check_parity.py` is retained

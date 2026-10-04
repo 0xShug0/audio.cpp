@@ -59,24 +59,6 @@ output JSON through test-only code using the public speaker API. It does not
 require runtime dump hooks. Decoder comparisons retain the same zero-noise and
 fade handling described below.
 
-### Timing regression
-
-The external timer surrounds only `session->run()`, excluding WAV writing and
-test assertions. `check_session_timing.py` rejects the old logs for the first
-and changed-reference clones on both backends; it passes all seven requests on
-both backends after the fix. The largest post-fix discrepancy was 0.093 ms.
-
-| Backend / request | Before external ms | Before `session.wall_ms` | After external ms | After `session.wall_ms` |
-|---|---:|---:|---:|---:|
-| CPU first clone | 11407.200 | 9654.888 | 9977.830 | 9977.806 |
-| CPU changed reference | 12609.700 | 11308.422 | 10454.600 | 10454.509 |
-| CUDA first clone | 2076.980 | 1319.615 | 2064.510 | 2064.471 |
-| CUDA changed reference | 1697.120 | 1487.054 | 1580.980 | 1580.887 |
-
-These are single desktop runs, not a claim of improved inference speed. The
-fix makes the reported session time include conditioning and lazy encoder
-loading; initial model/session construction remains outside `run()`.
-
 ### Reproduction and evidence
 
 Both existing Visual Studio 2022 x64 build directories were reconfigured and
@@ -103,12 +85,11 @@ and model-spec tested; it was not used for another full synthesis run.
 The [test README](README.md) contains the current probe/comparison commands and
 assets. Run the session probe once on the baseline and once on this follow-up,
 using separate output directories and the same model, backend, threads and seed.
-Compare corresponding WAVs within each backend. Run the timing checker against
-both captured logs; the baseline cloning failures are expected.
+Compare corresponding WAVs within each backend.
 
 Local evidence is under the ignored `build-kitten2-cuda/followup-validation/`:
 `before.json`, `after.json`, `before-`/`after-` session logs and WAV directories,
-component outputs/reference-comparison logs, timing checks, and
+component outputs/reference-comparison logs, and
 `after-multilingual/report.json`. No weights or generated audio are committed.
 
 Fresh LM prompt/logit traces are no longer exposed by production inference.
