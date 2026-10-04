@@ -100,6 +100,7 @@ Status labels:
 | `moss_tts_local` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_tts_nano` | Done | Pass | --- | Pass | Pass (ASR match, drift) |
 | `moss_transcribe_diarize` | Done | --- | Pass | --- | Pass |
+| `mossformer2` | Done | --- | Pass (F32) | --- | --- |
 | `muscriptor` | Done | Pass | Pass | --- | --- |
 | `nemotron_3_diar` | Done | --- | Pass | --- | --- |
 | `nemotron_asr` | Done | Pass | --- | Pass | Pass (minor filler drift) |

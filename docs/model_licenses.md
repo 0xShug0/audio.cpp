@@ -91,6 +91,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `moss_tts_nano` | [OpenMOSS-Team/MOSS-TTS-Nano-100M](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M) | Apache-2.0 | Yes | | 2026-09-21 |
 | `moss_tts_v15` | [OpenMOSS-Team/MOSS-TTS-v1.5](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5) | Apache-2.0 | Yes | | 2026-09-22 |
 | `moss_voicegen` | [OpenMOSS-Team/MOSS-VoiceGenerator](https://huggingface.co/OpenMOSS-Team/MOSS-VoiceGenerator) | Apache-2.0 | Yes | | 2026-09-21 |
+| `mossformer2` | [alibabasglab/MossFormer2_SS_16K](https://huggingface.co/alibabasglab/MossFormer2_SS_16K) | Apache-2.0 | Yes | Two-speaker separation checkpoint from ClearerVoice-Studio. | 2026-10-04 |
 | `muscriptor` | [MuScriptor/muscriptor-small](https://huggingface.co/MuScriptor/muscriptor-small) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `nemotron_3_diar` | [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) | Yes | | 2026-09-24 |
 | `nemotron_asr` | [nvidia/nemotron-3.5-asr-streaming-0.6b](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) | Yes | | 2026-09-21 |
