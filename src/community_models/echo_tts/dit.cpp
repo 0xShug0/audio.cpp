@@ -654,12 +654,12 @@ private:
 
     // Reconciles the cache's lane count with the graph's.
     //
-    // With pre-expansion on, the cache is allocated at kMaxCfgLanes and the
+    // With pre-expansion on, the cache is allocated at 2 or 3 lanes and the
     // single-lane graph reads a prefix of it; the lane axis is outermost, so
     // that is a view with no copy.
     //
     // With pre-expansion off (AUDIOCPP_ECHO_TTS_NO_KV_EXPAND=1) the cache is
-    // batch-1 and the three-lane graph is *wider* than it. Narrowing is not
+    // batch-1 and the two- or three-lane graphs are *wider* than it. Narrowing is not
     // possible and not wanted: returning the cache unchanged leaves
     // joint_attention's expand() to broadcast it per step, which is exactly the
     // pre-patch behaviour the flag exists to restore.
