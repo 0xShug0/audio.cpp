@@ -105,23 +105,48 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode when `--text-chunk-size` is set. |
 | `--num-inference-steps` | integer | `32` | Decoder diffusion steps. |
 | `--guidance-scale` | float | `2.0` | Decoder CFG strength. |
+| `--seed` | unsigned 32-bit integer | random session RNG | Generation seed; omitted requests continue the session RNG state. |
+
+The corresponding request-option names are `reference_text`, `instruction`,
+`language`, `text_chunk_size`, `text_chunk_mode`, `num_inference_steps`,
+`guidance_scale`, and `seed`.
 
 ## Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `speed` | float | `1.0` | Speech speed multiplier. |
-| `audio_chunk_duration` | seconds | `15.0` | Model-side automatic chunk duration when framework chunking is not explicitly enabled. |
-| `audio_chunk_threshold` | seconds | `30.0` | Estimated audio length threshold before model-side chunking is used. |
+| `duration_sec` | seconds | estimated | Optional target output duration. |
+| `shift` | float | `0.1` | Diffusion timestep schedule shift. |
+| `denoise` | bool | `true` | Add the denoise control token when reference audio is present. |
+| `preprocess_prompt` | bool | `true` | Preprocess reference audio before tokenization. |
+| `postprocess_output` | bool | `true` | Apply output postprocessing and trimming. |
+| `layer_penalty_factor` | float | `5.0` | Layer-order penalty for masked audio-codebook position selection. |
+| `position_temperature` | float | `5.0` | Gumbel temperature for masked-position selection. |
+| `class_temperature` | nonnegative float | `0.0` | Audio-token class sampling temperature; `0` selects classes greedily. |
+| `audio_chunk_duration_sec` | seconds | `15.0` | Model-side automatic chunk duration when framework chunking is not explicitly enabled. |
+| `audio_chunk_threshold_sec` | seconds | `30.0` | Estimated audio length threshold before model-side chunking is used. |
+
+Legacy request names `duration`, `t_shift`, `audio_chunk_duration`, and
+`audio_chunk_threshold` remain accepted, respectively. Use one spelling per
+option. Both spellings work with existing GGUFs; no reconversion is required.
 
 ## Session Options (use with `--session-option`)
+
+Arena and weight-context sizes are in MiB.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `omnivoice.mem_saver` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 | `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
-| `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for generator weights. Also accepted as `omnivoice.weight_type`. |
+| `omnivoice.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Generator weight storage fallback. |
+| `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit generator weight storage override. |
 | `omnivoice.audio_tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |
+| `omnivoice.audio_tokenizer_graph_arena_mb` | positive integer | `128` | Audio tokenizer graph arena. |
+| `omnivoice.generator_prefill_graph_arena_mb` | positive integer | `256` | Generator prefill graph arena. |
+| `omnivoice.generator_decode_graph_arena_mb` | positive integer | `256` | Generator decode graph arena. |
+| `omnivoice.audio_tokenizer_weight_context_mb` | positive integer | `128` | Audio tokenizer weight tensor context. |
+| `omnivoice.generator_weight_context_mb` | positive integer | `256` | Generator weight tensor context. |
 
 `omnivoice.perf_mode=flash_attention` is only available on the normal graph path and cannot be combined with `omnivoice.mem_saver=true`.
 

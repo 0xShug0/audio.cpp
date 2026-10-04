@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 
 #include <chrono>
@@ -74,6 +75,17 @@ std::string_view perf_mode_name(OmniVoiceGeneratorPerfMode mode) {
 
 using Clock = std::chrono::steady_clock;
 
+std::unordered_map<std::string, std::string> normalize_request_options(
+    std::unordered_map<std::string, std::string> options) {
+    return runtime::apply_option_v1_compatibility(
+        std::move(options),
+        {{"duration", "duration_sec"},
+         {"t_shift", "shift"},
+         {"audio_chunk_duration", "audio_chunk_duration_sec"},
+         {"audio_chunk_threshold", "audio_chunk_threshold_sec"}},
+        "OmniVoice", "request");
+}
+
 OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_map<std::string, std::string> & options_map) {
     OmniVoiceGenerationOptions options;
     if (const auto seed = runtime::parse_u32_option(options_map, {"seed"})) {
@@ -84,8 +96,8 @@ OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_
     options.guidance_scale = runtime::parse_float_option(options_map, {"guidance_scale"})
         .value_or(options.guidance_scale);
     options.speed = runtime::parse_float_option(options_map, {"speed"}).value_or(options.speed);
-    options.duration_seconds = runtime::parse_float_option(options_map, {"duration"});
-    options.t_shift = runtime::parse_float_option(options_map, {"t_shift"}).value_or(options.t_shift);
+    options.duration_seconds = runtime::parse_float_option(options_map, {"duration_sec"});
+    options.t_shift = runtime::parse_float_option(options_map, {"shift"}).value_or(options.t_shift);
     if (const auto value = runtime::find_option(options_map, {"denoise"})) {
         options.denoise = runtime::parse_bool_option(*value, "denoise");
     }
@@ -109,11 +121,11 @@ OmniVoiceGenerationOptions generation_options_from_options(const std::unordered_
         .value_or(options.class_temperature);
     options.audio_chunk_duration_seconds = runtime::parse_float_option(
         options_map,
-        {"audio_chunk_duration"})
+        {"audio_chunk_duration_sec"})
         .value_or(options.audio_chunk_duration_seconds);
     options.audio_chunk_threshold_seconds = runtime::parse_float_option(
         options_map,
-        {"audio_chunk_threshold"})
+        {"audio_chunk_threshold_sec"})
         .value_or(options.audio_chunk_threshold_seconds);
     options.text_chunk_size = engine::text::parse_text_chunk_size_override(options_map);
     options.text_chunk_mode = engine::text::parse_text_chunk_mode_override(options_map)
@@ -274,7 +286,7 @@ void OmniVoiceSession::prepare(const runtime::SessionPreparationRequest & reques
     if (request.voice.has_value() && request.voice->speaker.has_value() && request.voice->speaker->audio.has_value()) {
         session_defaults_.reference_audio = *request.voice->speaker->audio;
     }
-    session_defaults_.options = request.options;
+    session_defaults_.options = normalize_request_options(request.options);
     if (const auto reference_text = request_option(request.options, "reference_text"); reference_text.has_value()) {
         session_defaults_.reference_text = std::move(reference_text);
     }
@@ -618,6 +630,9 @@ OmniVoiceRequest OmniVoiceSession::make_request(const runtime::TaskRequest & req
         out.language = session_defaults_.text->language;
     }
     const auto merged_options = merged_request_options(request);
+    if (const auto language = runtime::find_option(merged_options, {"language"})) {
+        out.language = *language;
+    }
     out.generation = generation_options_from_options(merged_options);
     out.reference_audio = resolve_reference_audio(request);
     if (const auto reference_text = resolve_reference_text(request); reference_text.has_value()) {
@@ -664,7 +679,7 @@ std::optional<std::string> OmniVoiceSession::resolve_instruct(const runtime::Tas
 
 std::unordered_map<std::string, std::string> OmniVoiceSession::merged_request_options(const runtime::TaskRequest & request) const {
     auto merged = session_defaults_.options;
-    for (const auto & [key, value] : request.options) {
+    for (const auto & [key, value] : normalize_request_options(request.options)) {
         merged[key] = value;
     }
     return merged;
