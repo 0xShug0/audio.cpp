@@ -56,6 +56,7 @@ struct HifiGanVocoderConfig {
     HifiGanGlobalConditioningConfig global_conditioning;
     bool release_source_storage_after_load = false;
     bool lower_padded_conv_transpose_as_crop = false;
+    bool optimize_cpu_graph = false;
 };
 
 struct HifiGanVocoderWeights {
