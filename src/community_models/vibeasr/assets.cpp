@@ -1,5 +1,6 @@
 #include "engine/community_models/vibeasr/assets.h"
 
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/model_spec/package.h"
 
 #include <gguf.h>
@@ -127,7 +128,7 @@ public:
         gguf_init_params params{};
         params.no_alloc = true;
         params.ctx = nullptr;
-        gguf_context * gguf = gguf_init_from_file(path.string().c_str(), params);
+        gguf_context * gguf = gguf_init_from_file(engine::io::path_to_utf8(path).c_str(), params);
         if (gguf == nullptr) {
             throw std::runtime_error("Failed to read VibeASR GGUF metadata from " + path.string());
         }

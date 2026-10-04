@@ -1,3 +1,4 @@
+#include "engine/framework/io/filesystem.h"
 #include "engine/models/controlfoley/pipeline.h"
 
 #include "engine/framework/codecs/mel_latent_vae44k_runtime.h"
@@ -177,7 +178,7 @@ ControlFoleyOptions parse_controlfoley_options(
     out.seed = engine::runtime::parse_u32_option(options, {"seed"}).value_or(42);
     out.negative_prompt = engine::runtime::find_option(options, {"negative_prompt"}).value_or("");
     if (const auto video = engine::runtime::find_option(options, {"video"}); video.has_value() && !video->empty()) {
-        out.video = std::filesystem::path(*video);
+        out.video = engine::io::path_from_utf8(*video);
     }
     if (const auto value = engine::runtime::find_option(options, {"mask_away_clip"}); value.has_value()) {
         out.mask_away_clip = engine::runtime::parse_bool_option(*value, "mask_away_clip");

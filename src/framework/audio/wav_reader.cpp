@@ -1,5 +1,7 @@
 #include "engine/framework/audio/wav_reader.h"
 
+#include "engine/framework/io/filesystem.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -409,7 +411,7 @@ WavData read_wav_f32(std::string_view input) {
 WavData read_wav_f32(const std::filesystem::path & path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("could not open WAV input: " + path.string());
+        throw std::runtime_error("could not open WAV input: " + engine::io::path_to_utf8(path));
     }
 
     return read_wav_f32(input);

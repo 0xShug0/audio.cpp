@@ -1,6 +1,7 @@
 #include "engine/community_models/outetts/session.h"
 
 #include "engine/framework/audio/fft.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/debug/trace.h"
@@ -486,7 +487,7 @@ resolve_aligner_assets(const runtime::SessionOptions &options,
        "outetts.forced_aligner_model_path"});
   if (model_path.has_value()) {
     return engine::models::qwen3_asr::load_qwen3_asr_assets(
-        std::filesystem::path(*model_path), "qwen3_forced_aligner");
+        engine::io::path_from_utf8(*model_path), "qwen3_forced_aligner");
   }
   return model_assets.embedded_aligner;
 }

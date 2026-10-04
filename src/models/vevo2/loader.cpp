@@ -1,3 +1,4 @@
+#include "engine/framework/io/filesystem.h"
 #include "engine/models/vevo2/loader.h"
 
 #include "engine/framework/model_spec/package.h"
@@ -179,7 +180,7 @@ public:
             request.model_path,
             whisper_path == request.options.end() || whisper_path->second.empty()
                 ? std::nullopt
-                : std::make_optional(std::filesystem::path(whisper_path->second)));
+                : std::make_optional(engine::io::path_from_utf8(whisper_path->second)));
         runtime::ModelInspection inspection;
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
@@ -210,7 +211,7 @@ std::unique_ptr<runtime::ILoadedVoiceModel> load_vevo2_model(const runtime::Mode
         request.model_path,
         whisper_path == request.options.end() || whisper_path->second.empty()
             ? std::nullopt
-            : std::make_optional(std::filesystem::path(whisper_path->second)));
+            : std::make_optional(engine::io::path_from_utf8(whisper_path->second)));
     return std::make_unique<Vevo2LoadedModel>(
         metadata(*assets),
         capabilities(*assets),

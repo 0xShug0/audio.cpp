@@ -1,3 +1,4 @@
+#include "engine/framework/io/filesystem.h"
 #include "engine/models/chatterbox/vc.h"
 
 #include "engine/framework/audio/conversion.h"
@@ -53,7 +54,7 @@ runtime::AudioBuffer load_chatterbox_vc_audio_mono(
     return runtime::AudioBuffer{
         sample_rate,
         1,
-        engine::audio::read_wav_f32_as_mono_linear_resampled(std::filesystem::path(path), sample_rate),
+        engine::audio::read_wav_f32_as_mono_linear_resampled(engine::io::path_from_utf8(path), sample_rate),
     };
 }
 

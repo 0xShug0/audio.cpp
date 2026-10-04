@@ -1,3 +1,4 @@
+#include "engine/framework/io/filesystem.h"
 #include "engine/models/gigaam_asr/model.h"
 
 #include "engine/framework/audio/chunking.h"
@@ -175,7 +176,7 @@ private:
             if (!path || path->empty()) {
                 throw std::runtime_error("GigaAM audio_chunk_mode=vad requires vad_model_path");
             }
-            auto model = runtime::make_default_registry().load(std::filesystem::path(*path));
+            auto model = runtime::make_default_registry().load(engine::io::path_from_utf8(*path));
             auto session = model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
                                                       {options().backend, {}});
             auto * offline = dynamic_cast<runtime::IOfflineVoiceTaskSession *>(session.get());

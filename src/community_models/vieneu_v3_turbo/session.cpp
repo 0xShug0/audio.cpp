@@ -4,6 +4,7 @@
 #include "engine/community_models/vieneu_v3_turbo/orchestration.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
@@ -36,7 +37,7 @@ std::filesystem::path option_path(
     const std::unordered_map<std::string, std::string> & options,
     std::initializer_list<std::string_view> keys) {
     if (const auto value = runtime::find_option(options, keys)) {
-        return std::filesystem::path(*value);
+        return engine::io::path_from_utf8(*value);
     }
     return {};
 }

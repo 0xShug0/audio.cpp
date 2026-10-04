@@ -44,7 +44,7 @@ void log_model_load_trace(const ModelInspection & inspection, const ILoadedVoice
     const auto & metadata = model.metadata();
     engine::debug::trace_log_scalar("runtime.model.family", metadata.family);
     engine::debug::trace_log_scalar("runtime.model.variant", metadata.variant);
-    engine::debug::trace_log_scalar("runtime.model.root", inspection.model_root.string());
+    engine::debug::trace_log_scalar("runtime.model.root", engine::io::path_to_utf8(inspection.model_root));
     engine::debug::trace_log_scalar("runtime.model.discovered_config_count", inspection.discovered_configs.size());
     engine::debug::trace_log_scalar("runtime.model.discovered_weight_count", inspection.discovered_weights.size());
     engine::debug::trace_log_scalar("runtime.model.task_count", model.capabilities().supported_tasks.size());
@@ -115,7 +115,7 @@ ModelInspection ModelRegistry::inspect(const ModelLoadRequest & request) const {
     validate_request(request);
     const auto * loader = find_loader(request);
     if (loader == nullptr) {
-        throw std::runtime_error("no registered model loader can inspect: " + request.model_path.string());
+        throw std::runtime_error("no registered model loader can inspect: " + engine::io::path_to_utf8(request.model_path));
     }
     return loader->inspect(request);
 }
@@ -131,7 +131,7 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const ModelLoadRequest & 
     validate_request(request);
     const auto * loader = find_loader(request);
     if (loader == nullptr) {
-        throw std::runtime_error("no registered model loader can load: " + request.model_path.string());
+        throw std::runtime_error("no registered model loader can load: " + engine::io::path_to_utf8(request.model_path));
     }
     const auto inspection = engine::debug::trace_log_enabled()
         ? std::optional<ModelInspection>(loader->inspect(request))
@@ -153,11 +153,11 @@ void ModelRegistry::validate_request(const ModelLoadRequest & request) const {
     const bool builtin_audio_utility_id =
         request.family_hint.has_value() &&
         *request.family_hint == "builtin_audio_utils" &&
-        engine::audio::find_builtin_audio_utility(request.model_path.generic_string()).has_value();
+        engine::audio::find_builtin_audio_utility(request.model_path.generic_u8string()).has_value();
     if (!builtin_audio_utility_id &&
         !engine::io::is_existing_file(request.model_path) &&
         !engine::io::is_existing_directory(request.model_path)) {
-        throw std::runtime_error("model path does not exist: " + request.model_path.string());
+        throw std::runtime_error("model path does not exist: " + engine::io::path_to_utf8(request.model_path));
     }
     if (request.family_hint.has_value() && !supports_family(*request.family_hint)) {
         throw std::runtime_error("unsupported model family hint: " + *request.family_hint);

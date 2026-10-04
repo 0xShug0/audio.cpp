@@ -31,7 +31,7 @@ void ResourceBundle::add_file(std::string id, const std::filesystem::path & path
         throw std::runtime_error("asset resource id must not be empty");
     }
     if (!engine::io::is_existing_file(path)) {
-        throw std::runtime_error("asset resource file does not exist: " + path.string());
+        throw std::runtime_error("asset resource file does not exist: " + engine::io::path_to_utf8(path));
     }
     auto [it, inserted] = files_.emplace(std::move(id), std::filesystem::weakly_canonical(path));
     if (!inserted) {
@@ -138,7 +138,7 @@ std::shared_ptr<const TensorSource> ResourceBundle::open_tensor_source(std::stri
     const auto path = resource == tensor_resources_.end()
         ? require_file(id)
         : resource->second.path;
-    const auto path_key = std::filesystem::weakly_canonical(path).generic_string();
+    const auto path_key = std::filesystem::weakly_canonical(path).generic_u8string();
     auto base = tensor_sources_by_path_.find(path_key);
     if (base == tensor_sources_by_path_.end()) {
         base = tensor_sources_by_path_.emplace(

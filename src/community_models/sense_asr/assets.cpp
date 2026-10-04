@@ -1,6 +1,7 @@
 #include "engine/community_models/sense_asr/assets.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/io/filesystem.h"
 #include "engine/framework/model_spec/package.h"
 
 #include <gguf.h>
@@ -33,7 +34,7 @@ public:
     gguf_init_params params{};
     params.no_alloc = false;
     params.ctx = nullptr;
-    gguf_context *gguf = gguf_init_from_file(path.string().c_str(), params);
+    gguf_context *gguf = gguf_init_from_file(engine::io::path_to_utf8(path).c_str(), params);
     if (gguf == nullptr) {
       throw std::runtime_error(
           "SenseVoice failed to open GGUF metadata at " + path.string());
