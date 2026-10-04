@@ -483,7 +483,8 @@ engine::core::TensorValue relative_shift(
     const int64_t pos = input.shape.dims[3];
     auto zero_col = zero_like_last_column(ctx, input);
     auto padded = engine::core::wrap_tensor(
-        ggml_concat(ctx.ggml, input.tensor, zero_col.tensor, engine::core::logical_axis_to_ggml_axis(4, 3)),
+        // ESPnet relative shift prepends the zero column before flattening.
+        ggml_concat(ctx.ggml, zero_col.tensor, input.tensor, engine::core::logical_axis_to_ggml_axis(4, 3)),
         engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], query, pos + 1}),
         GGML_TYPE_F32);
     auto padded_contiguous = contiguous(ctx, padded);
@@ -1124,7 +1125,7 @@ private:
                     engine::core::TensorShape::from_dims({1, (frames * 2) - 1, hidden_size}),
                     flow_relative_positional_encoding(frames, hidden_size),
                     writer_);
-                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_mha, writer_);
+                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_mha, writer_, 1.0e-12f);
                 auto attn = flow_relative_attention_backend(
                     ctx,
                     x,
@@ -1202,7 +1203,7 @@ private:
                     ctx,
                     GGML_TYPE_F32,
                     engine::core::TensorShape::from_dims({1, frames, hidden_size}));
-                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_ff, writer_);
+                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_ff, writer_, 1.0e-12f);
                 auto ff = linear_lastdim(ctx, x, weights.ff.w1, writer_);
                 ff = engine::core::wrap_tensor(ggml_silu(ctx.ggml, ff.tensor), ff.shape, GGML_TYPE_F32);
                 ff = linear_lastdim(ctx, ff, weights.ff.w2, writer_);
