@@ -210,9 +210,9 @@ core::TensorValue group_norm_affine(
     float eps,
     const modules::NormWeights & weights) {
     core::TensorValue output;
-    if (ctx.backend_type == core::BackendType::Cuda && input.shape.rank == 3 && groups == 1) {
+    if (input.shape.rank == 3 && groups == 1) {
         // Reduce channels independently before combining them, rather than assigning
-        // the entire long waveform to a single CUDA block.
+        // the entire long waveform to a single reduction block.
         auto mean = modules::ReduceMeanModule({2}).build(ctx, input);
         mean = modules::ReduceMeanModule({1}).build(ctx, mean);
         auto centered = core::wrap_tensor(ggml_sub(ctx.ggml, input.tensor, mean.tensor), input.shape, GGML_TYPE_F32);
@@ -887,7 +887,7 @@ core::TensorValue build_freq_conv_transpose_2d(
     const int64_t kernel = weights.weight.shape.dims[3];
     const modules::ConvTranspose1dConfig conv_config{
         channels, weights.weight.shape.dims[1], kernel, stride, 0, 1, weights.bias.has_value()};
-    if (ctx.backend_type == core::BackendType::Cuda && kernel % stride == 0) {
+    if (kernel % stride == 0) {
         // Zero gaps keep neighboring time frames independent in a single 1D convolution.
         const int64_t gap = kernel / stride - 1;
         const int64_t output_freqs = (freqs - 1) * stride + kernel;
