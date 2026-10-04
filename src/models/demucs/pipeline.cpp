@@ -209,7 +209,23 @@ core::TensorValue group_norm_affine(
     int64_t groups,
     float eps,
     const modules::NormWeights & weights) {
-    auto output = core::wrap_tensor(ggml_group_norm(ctx.ggml, input.tensor, groups, eps), input.shape, GGML_TYPE_F32);
+    core::TensorValue output;
+    if (ctx.backend_type == core::BackendType::Cuda && input.shape.rank == 3 && groups == 1) {
+        // Reduce channels independently before combining them, rather than assigning
+        // the entire long waveform to a single CUDA block.
+        auto mean = modules::ReduceMeanModule({2}).build(ctx, input);
+        mean = modules::ReduceMeanModule({1}).build(ctx, mean);
+        auto centered = core::wrap_tensor(ggml_sub(ctx.ggml, input.tensor, mean.tensor), input.shape, GGML_TYPE_F32);
+        auto squared = modules::MulModule{}.build(ctx, centered, centered);
+        auto variance = modules::ReduceMeanModule({2}).build(ctx, squared);
+        variance = modules::ReduceMeanModule({1}).build(ctx, variance);
+        auto stabilized = core::wrap_tensor(
+            ggml_scale_bias(ctx.ggml, variance.tensor, 1.0f, eps), variance.shape, GGML_TYPE_F32);
+        auto stddev = modules::SqrtModule{}.build(ctx, stabilized);
+        output = core::wrap_tensor(ggml_div(ctx.ggml, centered.tensor, stddev.tensor), input.shape, GGML_TYPE_F32);
+    } else {
+        output = core::wrap_tensor(ggml_group_norm(ctx.ggml, input.tensor, groups, eps), input.shape, GGML_TYPE_F32);
+    }
     if (weights.weight.has_value()) {
         core::TensorShape weight_shape = {};
         weight_shape.rank = input.shape.rank;
@@ -867,6 +883,25 @@ core::TensorValue build_freq_conv_transpose_2d(
     const int64_t frames = input.shape.dims[3];
     if (weights.weight.shape.dims[0] != channels) {
         throw std::runtime_error("HTDemucs frequency transposed-conv input channel mismatch");
+    }
+    const int64_t kernel = weights.weight.shape.dims[3];
+    const modules::ConvTranspose1dConfig conv_config{
+        channels, weights.weight.shape.dims[1], kernel, stride, 0, 1, weights.bias.has_value()};
+    if (ctx.backend_type == core::BackendType::Cuda && kernel % stride == 0) {
+        // Zero gaps keep neighboring time frames independent in a single 1D convolution.
+        const int64_t gap = kernel / stride - 1;
+        const int64_t output_freqs = (freqs - 1) * stride + kernel;
+        auto x = modules::TransposeModule({{0, 1, 3, 2}, 4}).build(ctx, input);
+        x = ensure_contiguous(ctx, x);
+        x = modules::Pad2dModule({0, gap, 0, 0}).build(ctx, x);
+        x = core::reshape_tensor(ctx, x, core::TensorShape::from_dims({batch, channels, frames * (freqs + gap)}));
+        auto weight = core::reshape_tensor(
+            ctx, weights.weight, core::TensorShape::from_dims({channels, weights.weight.shape.dims[1], kernel}));
+        auto output = modules::ConvTranspose1dModule(conv_config).build(ctx, x, {weight, weights.bias});
+        output = modules::SliceModule({2, 0, frames * output_freqs}).build(ctx, output);
+        output = core::reshape_tensor(ctx, ensure_contiguous(ctx, output),
+            core::TensorShape::from_dims({batch, weights.weight.shape.dims[1], frames, output_freqs}));
+        return ensure_contiguous(ctx, modules::TransposeModule({{0, 1, 3, 2}, 4}).build(ctx, output));
     }
     const auto batch_time_shape = core::TensorShape::from_dims({batch, frames, channels, freqs});
     auto * batch_time_tensor = ggml_permute(ctx.ggml, input.tensor, 2, 0, 1, 3);
