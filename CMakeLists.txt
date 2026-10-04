@@ -2824,7 +2824,6 @@ endif()
 if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
     add_executable(audiocpp_kitten_tts2_prepare_voices tools/community_models/prepare_kitten_tts2_voices.cpp)
     audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
-    target_include_directories(audiocpp_kitten_tts2_prepare_voices PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/community_models/kitten_tts2")
     target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
 endif()
 

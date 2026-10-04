@@ -18,6 +18,14 @@ The full default decoder is used.
 Shared S3 code is included through the `chatterbox` dependency. No Kitten-specific
 build flag or Torch package is needed.
 
+This port depends on [Chatterbox S3 encoder correctness PR #778](https://github.com/0xShug0/audio.cpp/pull/778)
+(relative-shift padding and attention/feed-forward LayerNorm epsilon). Merge
+that fix before this model integration. Validation uses the combined code;
+the Kitten branch on its original base does not include this prerequisite.
+The Kitten patch does not modify the shared framework, Chatterbox implementation,
+or ggml. Its changes outside model-specific files are build registration,
+documentation indexes, and the WebUI catalog with its generated bundle.
+
 ```sh
 cmake -S . -B build-kitten2 -DAUDIOCPP_MODEL_SET=custom \
   -DAUDIOCPP_MODELS=kitten_tts2 -DENGINE_ENABLE_CUDA=OFF
@@ -41,18 +49,21 @@ building specifically for this card; choose the architecture for other cards.
 CUDA 13.3 places its runtime DLLs in `CUDA_PATH/bin/x64`; ensure that directory
 is on `PATH` when launching the executable on Windows.
 
-The speaker's temporal max pooling uses a CUDA-supported 3x1 window. F32 speaker,
-S3, and HiFT matrix operations explicitly preserve full precision: TF32 error in
-the first speaker convolution otherwise changes the identity embedding. The CUDA
-backend honors this precision request automatically; no environment override is
-needed. See the [fresh CUDA validation](../../tests/kitten_tts2/validation.md#fresh-cuda-validation-on-bf50ab82)
+The speaker's temporal max pooling uses a CUDA-supported 3x1 window. Inference
+uses the existing backend precision and dispatch policy. For controlled CUDA
+component comparisons, set `NVIDIA_TF32_OVERRIDE=0` before starting the native
+probes, as described in the [test setup](../../tests/kitten_tts2/README.md).
+This is a parity-test setting; ordinary synthesis is also tested without it.
+See the [validation record](../../tests/kitten_tts2/validation.md)
 for the current port's build, server/cloning checks, measured RTF and component
 errors.
 
-The WebUI shows **7 GB estimated VRAM** for the native Q8 package. A local CUDA
-server run with a 238-character passage peaked approximately 4.7 GiB above the
-desktop baseline for preset speech and 5.9 GiB for cloning. The estimate includes
-headroom; it is guidance, not a tested minimum for every input or weight type.
+The WebUI shows **7 GB estimated VRAM** for the native Q8 package. An earlier
+CUDA server run, before removing the shared precision edits, used a 238-character
+passage and peaked approximately 4.7 GiB above the desktop baseline for preset
+speech and 5.9 GiB for cloning. This measurement has not been repeated after
+the cleanup. The estimate includes headroom; it is guidance, not a tested
+minimum for every input or weight type.
 
 ## Download and preset speech
 

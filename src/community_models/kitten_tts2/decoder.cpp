@@ -1,4 +1,4 @@
-#include "decoder.h"
+#include "engine/community_models/kitten_tts2/decoder.h"
 #include "engine/models/chatterbox/s3gen_inference.h"
 
 #include <cmath>

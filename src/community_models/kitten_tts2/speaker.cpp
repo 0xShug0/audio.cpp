@@ -1,4 +1,4 @@
-#include "speaker.h"
+#include "engine/community_models/kitten_tts2/speaker.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/conv_modules.h"
 #include <ggml-alloc.h>
@@ -146,12 +146,6 @@ std::vector<float> SpeakerEncoder::embed(const std::vector<float> & mono_16k) co
     auto * output = ggml_add(c, ggml_mul_mat(c, p.embedding_weight.tensor, pooled), p.embedding_bias.tensor);
     ggml_set_output(output);
     ggml_build_forward_expand(g.graph, output);
-    // TF32 convolution error is amplified by the learned SincNet filters and
-    // changes speaker identity. Keep the F32 checkpoint's arithmetic precision.
-    for (int i = 0; i < ggml_graph_n_nodes(g.graph); ++i) {
-        auto * node = ggml_graph_node(g.graph, i);
-        if (node->op == GGML_OP_MUL_MAT) ggml_mul_mat_set_prec(node, GGML_PREC_F32);
-    }
     if (!ggml_gallocr_alloc_graph(g.allocator, g.graph)) throw std::runtime_error("cannot allocate Kitten speaker buffers");
     ggml_backend_tensor_set(input, mono_16k.data(), 0, mono_16k.size()*sizeof(float));
     if (core::compute_backend_graph(p.execution.backend(), g.graph) != GGML_STATUS_SUCCESS)

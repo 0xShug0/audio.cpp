@@ -1,7 +1,7 @@
 #include "engine/community_models/kitten_tts2/session.h"
-#include "decoder.h"
-#include "speaker.h"
-#include "reference.h"
+#include "engine/community_models/kitten_tts2/decoder.h"
+#include "engine/community_models/kitten_tts2/speaker.h"
+#include "engine/community_models/kitten_tts2/reference.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/models/chatterbox/components.h"
 

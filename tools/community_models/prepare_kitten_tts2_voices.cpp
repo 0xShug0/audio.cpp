@@ -1,6 +1,6 @@
 // Offline preset conditioning. All neural inference uses audio.cpp / GGML.
-#include "speaker.h"
-#include "reference.h"
+#include "engine/community_models/kitten_tts2/speaker.h"
+#include "engine/community_models/kitten_tts2/reference.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/io/json.h"

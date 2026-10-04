@@ -747,14 +747,6 @@ std::vector<float> waveform_from_post(
     return wav.values;
 }
 
-void preserve_f32_matmul_precision(ggml_cgraph * graph) {
-    for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
-        auto * node = ggml_graph_node(graph, i);
-        if (node->op == GGML_OP_MUL_MAT && node->src[0]->type == GGML_TYPE_F32)
-            ggml_mul_mat_set_prec(node, GGML_PREC_F32);
-    }
-}
-
 class F0Runner {
 public:
     F0Runner(const HiftVocoderWeights & weights, int64_t frames)
@@ -768,7 +760,6 @@ public:
         output_ = build_f0_graph(ctx_, weights, input_);
         graph_ = ggml_new_graph_custom(ctx_, 32768, false);
         ggml_build_forward_expand(graph_, output_);
-        preserve_f32_matmul_precision(graph_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights.execution_context->backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
@@ -861,7 +852,6 @@ public:
             weights.execution_context->uses_host_graph_plan());
         graph_ = ggml_new_graph_custom(ctx_, 65536, false);
         ggml_build_forward_expand(graph_, post_);
-        preserve_f32_matmul_precision(graph_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights.execution_context->backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||

@@ -15,9 +15,15 @@ setup is shown separately for both shells.
 Build per the [model guide](../../docs/community_models/kitten_tts2.md), adding
 `-DENGINE_BUILD_TESTS=ON`. Build `kitten_tts2_session_probe`,
 `kitten_tts2_components_probe`, and `model_spec_system_test`.
-The [fresh CUDA validation record](validation.md#fresh-cuda-validation-on-bf50ab82)
+The [validation record](validation.md)
 includes the Windows configure/build commands and results for the current port.
 On Visual Studio, use `bin/Release/` and append `.exe` below.
+
+Apply [Chatterbox S3 encoder correctness PR #778](https://github.com/0xShug0/audio.cpp/pull/778)
+before numerical validation. Until it is incorporated upstream, use a separate
+test branch for the combined changes. The Kitten model PR intentionally contains
+no shared S3, framework, or ggml changes; its original base alone will fail the
+encoder comparison. The validation record identifies the combined code tested.
 
 ```sh
 python tools/check_loader_catalog_sync.py
@@ -52,6 +58,21 @@ safetensors. These are validation-only dependencies.
 ## Session regression
 
 Enable tracing **before** the probe so later parity commands have their inputs.
+For a controlled **CUDA parity** run, also disable TF32 before launching both
+the session probe (which captures speaker intermediates) and component probe.
+Setting it only for the later Python comparison cannot change captured tensors.
+
+```sh
+export NVIDIA_TF32_OVERRIDE=0
+```
+
+```powershell
+$env:NVIDIA_TF32_OVERRIDE = "0"
+```
+
+This environment setting is not required for ordinary synthesis or CPU tests.
+The runtime leaves shared backend precision and dispatch unchanged.
+
 In a POSIX shell:
 
 ```sh
@@ -128,14 +149,20 @@ meanflow mel with the published decoder's Gaussian draws fixed to zero.
 Finally, it supplies identical mel and zero random draws to HiFT and checks
 pitch and waveform. The graph extraction rejects incompatible exports.
 Append `cuda` to the component probe command to check NVIDIA execution. Use the
-same numerical comparison limits on CPU and CUDA; no TF32 override is needed.
+same numerical comparison limits on CPU and CUDA, with TF32 disabled for the
+controlled CUDA run as described above.
 
-This regression catches the shared S3 relative-position zero-column placement
-and layer-norm epsilon bugs fixed by the port. Max-error limits are 0.00005
-for speaker identity, 0.0001 for encoder hidden states, 0.005 for mel, 0.032
-for BF16 projection, and 0.01 for pitch/waveform.
+The encoder comparison fails with the original relative-shift padding order.
+The shift fix alone passes its tolerance; using the upstream LayerNorm epsilon
+further reduces the error (see the ablation in [PR #778](https://github.com/0xShug0/audio.cpp/pull/778)).
+Max-error limits are 0.00005 for speaker identity, 0.0001 for encoder hidden
+states, 0.005 for mel, 0.032 for BF16 projection, and 0.01 for pitch/waveform.
 
 ## Server and dependencies
+
+Run ordinary synthesis/server checks without the parity override, in a fresh
+shell or after `unset NVIDIA_TF32_OVERRIDE` (POSIX) /
+`Remove-Item Env:NVIDIA_TF32_OVERRIDE -ErrorAction SilentlyContinue` (PowerShell).
 
 Register the GGUF as `kitten_tts2`, task `tts`, mode `offline`.
 POST to `/v1/audio/speech` with a preset `voice` or reference audio:

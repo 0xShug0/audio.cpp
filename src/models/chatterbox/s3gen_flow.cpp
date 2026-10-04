@@ -212,21 +212,11 @@ void release_graph_resources(
     }
 }
 
-void preserve_f32_matmul_precision(ggml_cgraph * graph) {
-    // F32 speech weights must not silently use TF32 on CUDA.
-    for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
-        auto * node = ggml_graph_node(graph, i);
-        if (node->op == GGML_OP_MUL_MAT && node->src[0]->type == GGML_TYPE_F32)
-            ggml_mul_mat_set_prec(node, GGML_PREC_F32);
-    }
-}
-
 void allocate_graph_resources(
     const engine::core::ExecutionContext & execution_context,
     ggml_cgraph * graph,
     ggml_gallocr_t & gallocr,
     const char * label) {
-    preserve_f32_matmul_precision(graph);
     gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context.backend()));
     if (gallocr == nullptr ||
         !ggml_gallocr_reserve(gallocr, graph) ||
@@ -493,8 +483,7 @@ engine::core::TensorValue relative_shift(
     const int64_t pos = input.shape.dims[3];
     auto zero_col = zero_like_last_column(ctx, input);
     auto padded = engine::core::wrap_tensor(
-        // ESPnet relative shift prepends the zero column before flattening.
-        ggml_concat(ctx.ggml, zero_col.tensor, input.tensor, engine::core::logical_axis_to_ggml_axis(4, 3)),
+        ggml_concat(ctx.ggml, input.tensor, zero_col.tensor, engine::core::logical_axis_to_ggml_axis(4, 3)),
         engine::core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], query, pos + 1}),
         GGML_TYPE_F32);
     auto padded_contiguous = contiguous(ctx, padded);
@@ -1135,7 +1124,7 @@ private:
                     engine::core::TensorShape::from_dims({1, (frames * 2) - 1, hidden_size}),
                     flow_relative_positional_encoding(frames, hidden_size),
                     writer_);
-                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_mha, writer_, 1.0e-12f);
+                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_mha, writer_);
                 auto attn = flow_relative_attention_backend(
                     ctx,
                     x,
@@ -1213,7 +1202,7 @@ private:
                     ctx,
                     GGML_TYPE_F32,
                     engine::core::TensorShape::from_dims({1, frames, hidden_size}));
-                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_ff, writer_, 1.0e-12f);
+                auto x = layer_norm_lastdim(ctx, input_tensor_, weights.norm_ff, writer_);
                 auto ff = linear_lastdim(ctx, x, weights.ff.w1, writer_);
                 ff = engine::core::wrap_tensor(ggml_silu(ctx.ggml, ff.tensor), ff.shape, GGML_TYPE_F32);
                 ff = linear_lastdim(ctx, ff, weights.ff.w2, writer_);
@@ -1557,7 +1546,6 @@ public:
 
         graph_ = ggml_new_graph_custom(graph_ggml_, 262144, false);
         ggml_build_forward_expand(graph_, output_tensor_.tensor);
-        preserve_f32_matmul_precision(graph_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
