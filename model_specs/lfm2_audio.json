@@ -2,33 +2,43 @@
   "schema_version": 1,
   "family": "lfm2_audio",
   "display_name": "LFM2.5-Audio",
-  "description": "Liquid AI's LFM2.5-Audio: a FastConformer audio encoder feeding an LFM2 hybrid short-conv/attention backbone, loaded from the llama.cpp-format GGUF components Liquid publishes. ASR only for now.",
+  "description": "Liquid AI's LFM2.5-Audio, loaded from the llama.cpp-format GGUF components Liquid publishes. ASR: a FastConformer encoder feeds an LFM2 hybrid short-conv/attention backbone. TTS: the backbone generates audio frames through a depthformer, and an LFM2 detokenizer and ISTFT turn them into 24 kHz audio.",
   "category": "asr",
   "status": "experimental",
   "tasks": [
-    "asr"
+    "asr",
+    "tts"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "en",
     "ja"
   ],
-  "capabilities": {},
+  "capabilities": {
+    "asr": [
+      "vad_chunking"
+    ],
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ]
+  },
   "options": {
     "request": [
       {
         "name": "language",
         "type": "string",
-        "description": "Must match the checkpoint's language (en or ja) when given; each published checkpoint transcribes one language.",
+        "description": "Must match the checkpoint's language (en or ja) when given; each published checkpoint transcribes and speaks one language.",
         "required": false,
         "default": "auto"
       },
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum number of generated transcript tokens per audio chunk; a transcript that reaches it is cut off there, with a warning on stderr.",
+        "description": "ASR: transcript tokens per audio chunk. TTS: audio frames (80 ms each) per text chunk. A transcript or a text chunk's speech that reaches it is cut off there, with a warning on stderr.",
         "required": false,
         "min": 1,
         "default": 512
@@ -53,6 +63,57 @@
         "required": false,
         "min": 1,
         "default": 30
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "TTS: audio code sampling temperature; 0 picks the most likely code.",
+        "required": false,
+        "min": 0,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "TTS: sample audio codes from the k most likely; 0 keeps all, 1 is greedy.",
+        "required": false,
+        "min": 0,
+        "default": 64
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "TTS: sampling seed; omitted requests choose a random seed. Text chunk i uses seed + i.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "TTS: long-form text chunking mode; japanese for the Japanese checkpoint and default otherwise when omitted.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "TTS: maximum Unicode codepoints per text chunk, each spoken as its own turn.",
+        "required": false,
+        "min": 32,
+        "default": 200
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "TTS streaming: audio frames (80 ms each) per event; each event's audio is final. ASR runs offline only.",
+        "required": false,
+        "min": 1,
+        "default": 1
       }
     ],
     "session": [
@@ -67,6 +128,20 @@
         "name": "mmproj_gguf",
         "type": "string",
         "description": "Audio encoder (mmproj) GGUF, relative to the model directory. Defaults to mmproj-<backbone GGUF name>, or else the directory's only mmproj GGUF.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "vocoder_gguf",
+        "type": "string",
+        "description": "TTS: vocoder GGUF (depthformer), relative to the model directory. Defaults to vocoder-<backbone GGUF name>, or else the directory's only vocoder GGUF.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "detokenizer_gguf",
+        "type": "string",
+        "description": "TTS: audio detokenizer GGUF, relative to the model directory. Defaults to tokenizer-<backbone GGUF name>, or else the directory's only tokenizer GGUF.",
         "required": false,
         "default": ""
       },
@@ -98,7 +173,9 @@
       "target_directory": "LFM2.5-Audio-1.5B-GGUF",
       "files": [
         "LFM2.5-Audio-1.5B-Q8_0.gguf",
-        "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf"
+        "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf",
+        "vocoder-LFM2.5-Audio-1.5B-Q8_0.gguf",
+        "tokenizer-LFM2.5-Audio-1.5B-Q8_0.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -115,7 +192,9 @@
       "target_directory": "LFM2.5-Audio-1.5B-GGUF",
       "files": [
         "LFM2.5-Audio-1.5B-F16.gguf",
-        "mmproj-LFM2.5-Audio-1.5B-F16.gguf"
+        "mmproj-LFM2.5-Audio-1.5B-F16.gguf",
+        "vocoder-LFM2.5-Audio-1.5B-F16.gguf",
+        "tokenizer-LFM2.5-Audio-1.5B-F16.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -132,7 +211,9 @@
       "target_directory": "LFM2.5-Audio-1.5B-GGUF",
       "files": [
         "LFM2.5-Audio-1.5B-Q4_0.gguf",
-        "mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf"
+        "mmproj-LFM2.5-Audio-1.5B-Q4_0.gguf",
+        "vocoder-LFM2.5-Audio-1.5B-Q4_0.gguf",
+        "tokenizer-LFM2.5-Audio-1.5B-Q4_0.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -149,7 +230,9 @@
       "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
       "files": [
         "LFM2.5-Audio-1.5B-JP-Q8_0.gguf",
-        "mmproj-LFM2.5-Audio-1.5B-JP-Q8_0.gguf"
+        "mmproj-LFM2.5-Audio-1.5B-JP-Q8_0.gguf",
+        "vocoder-LFM2.5-Audio-1.5B-JP-Q8_0.gguf",
+        "tokenizer-LFM2.5-Audio-1.5B-JP-Q8_0.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -166,7 +249,9 @@
       "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
       "files": [
         "LFM2.5-Audio-1.5B-JP-F16.gguf",
-        "mmproj-LFM2.5-Audio-1.5B-JP-F16.gguf"
+        "mmproj-LFM2.5-Audio-1.5B-JP-F16.gguf",
+        "vocoder-LFM2.5-Audio-1.5B-JP-F16.gguf",
+        "tokenizer-LFM2.5-Audio-1.5B-JP-F16.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -183,7 +268,9 @@
       "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
       "files": [
         "LFM2.5-Audio-1.5B-JP-F32.gguf",
-        "mmproj-LFM2.5-Audio-1.5B-JP-F32.gguf"
+        "mmproj-LFM2.5-Audio-1.5B-JP-F32.gguf",
+        "vocoder-LFM2.5-Audio-1.5B-JP-F32.gguf",
+        "tokenizer-LFM2.5-Audio-1.5B-JP-F32.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -200,7 +287,9 @@
       "target_directory": "LFM2.5-Audio-1.5B-JP-GGUF",
       "files": [
         "LFM2.5-Audio-1.5B-JP-Q4_0.gguf",
-        "mmproj-LFM2.5-Audio-1.5B-JP-Q4_0.gguf"
+        "mmproj-LFM2.5-Audio-1.5B-JP-Q4_0.gguf",
+        "vocoder-LFM2.5-Audio-1.5B-JP-Q4_0.gguf",
+        "tokenizer-LFM2.5-Audio-1.5B-JP-Q4_0.gguf"
       ],
       "download": {
         "kind": "huggingface_snapshot",
@@ -214,13 +303,22 @@
   "ui": {
     "tags": [
       "ASR",
-      "GGUF"
+      "TTS",
+      "GGUF",
+      "Stream"
     ],
     "recommended_package": "lfm2_audio_1_5b_q8_0",
     "docs": [
       "docs/community_models/lfm2_audio.md"
     ],
-    "summary": "LFM2.5-Audio transcription (English and Japanese checkpoints) from Liquid's published GGUFs."
+    "summary": "LFM2.5-Audio transcription and speech (English and Japanese checkpoints) from Liquid's published GGUFs.",
+    "builtin_voices": [
+      "us_male",
+      "us_female",
+      "uk_male",
+      "uk_female"
+    ],
+    "default_voice": "us_male"
   },
   "sources": [
     {

@@ -1,9 +1,10 @@
 #include "engine/community_models/lfm2_audio/backbone.h"
 
+#include "lfm2_blocks.h"
+
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
-#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -35,39 +36,32 @@ namespace {
 namespace modules = engine::modules;
 using core::TensorShape;
 using core::TensorValue;
+using lfm2_blocks::GgmlBufferDeleter;
+using lfm2_blocks::GgmlContextDeleter;
+using lfm2_blocks::GgmlGallocrDeleter;
+using lfm2_blocks::LayerWeights;
+using lfm2_blocks::attention_layer_config;
+using lfm2_blocks::backend_gathers;
+using lfm2_blocks::contiguous;
+using lfm2_blocks::conv_kernel;
+using lfm2_blocks::feed_forward;
+using lfm2_blocks::rms_norm;
+using lfm2_blocks::short_conv_input;
+using lfm2_blocks::short_conv_output;
 
 constexpr size_t kWeightContextBytes = 16ull * 1024ull * 1024ull;
 constexpr size_t kPrefillArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr size_t kDecodeArenaBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 32768;
 constexpr int64_t kMaxRetainedPrefillSteps = 1024;
-
-struct GgmlContextDeleter {
-    void operator()(ggml_context * ctx) const noexcept { ggml_free(ctx); }
-};
-
-struct GgmlGallocrDeleter {
-    void operator()(ggml_gallocr_t alloc) const noexcept { ggml_gallocr_free(alloc); }
-};
-
-struct GgmlBufferDeleter {
-    void operator()(ggml_backend_buffer_t buffer) const noexcept { ggml_backend_buffer_free(buffer); }
-};
-
-struct ShortConvWeights {
-    TensorValue in_proj;
-    TensorValue out_proj;
-    TensorValue kernel;  // [hidden, kernel_size]
-};
-
-// Every layer is x += op(norm(x)); x += ffn(norm(x)). Attention layers map
-// onto the framework's decoder layer (QK-norm, NEOX RoPE, SwiGLU); the
-// short-conv layers are built here.
-struct LayerWeights {
-    bool attention = false;
-    modules::DecoderLayerWeights decoder;
-    ShortConvWeights conv;
-};
+// Every decode step attends over the whole cache, and on some backends the
+// logits change in their last bits with the cache's length (ggml's CPU flash
+// attention splits the cache into one piece per thread), enough to flip a
+// near-tie. TTS (start()) sizes a request's cache from its step budget alone,
+// rounded up to this, so seeded speech does not depend on the requests before.
+// ASR (generate()) reuses a cache that fits, the sizing it has always had, so
+// transcripts do not change.
+constexpr int64_t kCacheStepGranule = 256;
 
 struct BackboneWeights {
     std::unique_ptr<core::BackendWeightStore> store;
@@ -75,30 +69,30 @@ struct BackboneWeights {
     TensorValue token_lookup;     // token_embedding, or an F16 copy (see load_weights)
     modules::NormWeights final_norm;
     std::vector<LayerWeights> layers;
+    // Audio frames fed back: [codebooks * audio_vocab_size, hidden], empty
+    // for text-only use.
+    std::optional<TensorValue> audio_embedding;
+    int64_t codebooks = 0;
+    int64_t audio_vocab_size = 0;
 };
 
-// Whether the backend has a get_rows kernel for this tensor type.
-bool backend_gathers(ggml_backend_t backend, ggml_type type) {
-    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx(ggml_init({4 * ggml_tensor_overhead(), nullptr, true}));
-    if (ctx == nullptr) {
-        throw std::runtime_error("failed to initialize the LFM2-Audio op probe context");
-    }
-
-    auto * table = ggml_new_tensor_2d(ctx.get(), type, ggml_blck_size(type), 1);
-    auto * ids = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
-    return ggml_backend_supports_op(backend, ggml_get_rows(ctx.get(), table, ids));
-}
+struct AudioEmbeddingSource {
+    std::shared_ptr<const assets::TensorSource> source;
+    int64_t codebooks = 0;
+    int64_t vocab_size = 0;
+};
 
 BackboneWeights load_weights(
-    const assets::TensorSource & source, const Lfm2BackboneConfig & config, core::ExecutionContext & execution) {
+    const assets::TensorSource & source,
+    const Lfm2BackboneConfig & config,
+    core::ExecutionContext & execution,
+    const AudioEmbeddingSource & audio) {
     BackboneWeights out;
     out.store = std::make_unique<core::BackendWeightStore>(
         execution.backend(), execution.backend_type(), "lfm2_audio.backbone.weights", kWeightContextBytes);
     auto & store = *out.store;
     const auto native = assets::TensorStorageType::Native;
     const int64_t d = config.hidden_size;
-    const int64_t ff = config.intermediate_size;
-    const int64_t hd = config.head_dim;
 
     out.token_embedding = store.load_tensor(source, "token_embd.weight", native, {config.vocab_size, d});
     // ggml's CUDA get_rows has no K-quant kernels, and Liquid's Q4_0 packages
@@ -109,113 +103,32 @@ BackboneWeights load_weights(
         : store.load_tensor(source, "token_embd.weight", assets::TensorStorageType::F16, {config.vocab_size, d});
     out.final_norm = {store.load_f32_tensor(source, "token_embd_norm.weight", {d}), std::nullopt};
 
-    for (int64_t layer = 0; layer < config.num_layers(); ++layer) {
-        const std::string p = "blk." + std::to_string(layer) + ".";
-        LayerWeights w;
-        w.attention = config.is_attention_layer(layer);
+    out.layers = lfm2_blocks::load_layers(store, source, config);
 
-        w.decoder.input_norm = {store.load_f32_tensor(source, p + "attn_norm.weight", {d}), std::nullopt};
-        w.decoder.post_norm = {store.load_f32_tensor(source, p + "ffn_norm.weight", {d}), std::nullopt};
-        w.decoder.mlp.gate_proj = {store.load_tensor(source, p + "ffn_gate.weight", native, {ff, d}), std::nullopt};
-        w.decoder.mlp.up_proj = {store.load_tensor(source, p + "ffn_up.weight", native, {ff, d}), std::nullopt};
-        w.decoder.mlp.down_proj = {store.load_tensor(source, p + "ffn_down.weight", native, {d, ff}), std::nullopt};
-
-        if (w.attention) {
-            const int64_t kv = config.kv_heads[static_cast<size_t>(layer)] * hd;
-            w.decoder.self_attention.q_weight = store.load_tensor(source, p + "attn_q.weight", native, {config.num_attention_heads * hd, d});
-            w.decoder.self_attention.k_weight = store.load_tensor(source, p + "attn_k.weight", native, {kv, d});
-            w.decoder.self_attention.v_weight = store.load_tensor(source, p + "attn_v.weight", native, {kv, d});
-            w.decoder.self_attention.out_weight = store.load_tensor(source, p + "attn_output.weight", native, {d, config.num_attention_heads * hd});
-            w.decoder.q_norm = {store.load_f32_tensor(source, p + "attn_q_norm.weight", {hd}), std::nullopt};
-            w.decoder.k_norm = {store.load_f32_tensor(source, p + "attn_k_norm.weight", {hd}), std::nullopt};
-        } else {
-            w.conv.in_proj = store.load_tensor(source, p + "shortconv.in_proj.weight", native, {3 * d, d});
-            w.conv.out_proj = store.load_tensor(source, p + "shortconv.out_proj.weight", native, {d, d});
-            w.conv.kernel = store.load_f32_tensor(source, p + "shortconv.conv.weight", {d, config.conv_kernel_size});
-        }
-
-        out.layers.push_back(std::move(w));
+    if (audio.source != nullptr) {
+        // F32 in every published mmproj (the vocoder's copy is quantized with
+        // the package), and ggml gathers F32 rows on every backend.
+        out.audio_embedding = store.load_f32_tensor(*audio.source, "a.position_embd.weight", {audio.codebooks * audio.vocab_size, d});
+        out.codebooks = audio.codebooks;
+        out.audio_vocab_size = audio.vocab_size;
     }
 
     store.upload();
     return out;
 }
 
-modules::DecoderLayerConfig attention_layer_config(const Lfm2BackboneConfig & config, int64_t layer) {
-    modules::DecoderLayerConfig out;
-    out.hidden_size = config.hidden_size;
-    out.num_attention_heads = config.num_attention_heads;
-    out.num_key_value_heads = config.kv_heads[static_cast<size_t>(layer)];
-    out.head_dim = config.head_dim;
-    out.intermediate_size = config.intermediate_size;
-    out.rms_norm_eps = config.rms_norm_eps;
-    out.rope_theta = config.rope_theta;
-    out.rope_type = GGML_ROPE_TYPE_NEOX;
-    out.use_qk_norm = true;
-    out.runtime.static_cache.update_mode = modules::DecoderStaticCacheUpdateMode::DirectSetRows;
-    return out;
-}
-
-TensorValue rms_norm(core::ModuleBuildContext & ctx, const TensorValue & x, const modules::NormWeights & weights, const Lfm2BackboneConfig & config) {
-    return modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false}).build(ctx, x, weights);
-}
-
-TensorValue contiguous(core::ModuleBuildContext & ctx, const TensorValue & x) {
-    return core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, x.type);
-}
-
-struct ShortConvInput {
-    TensorValue gate;       // C, [1, steps, hidden]
-    TensorValue conv_in;    // B * x, transposed to [1, hidden, steps]
-};
-
-// in_proj splits into B, C and x; the conv runs over B * x and its output is
-// gated by C (transformers Lfm2ShortConv).
-ShortConvInput short_conv_input(core::ModuleBuildContext & ctx, const TensorValue & normed, const ShortConvWeights & weights, int64_t d) {
-    auto bcx = modules::LinearModule({d, 3 * d, false}).build(ctx, normed, {weights.in_proj, std::nullopt});
-    auto b = contiguous(ctx, modules::SliceModule({2, 0, d}).build(ctx, bcx));
-    auto c = contiguous(ctx, modules::SliceModule({2, d, d}).build(ctx, bcx));
-    auto x = contiguous(ctx, modules::SliceModule({2, 2 * d, d}).build(ctx, bcx));
-    auto bx = modules::MulModule{}.build(ctx, b, x);
-    bx = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, bx);
-    return {c, contiguous(ctx, bx)};
-}
-
-TensorValue short_conv_output(
-    core::ModuleBuildContext & ctx,
-    const TensorValue & residual,
-    const TensorValue & conv,
-    const TensorValue & gate,
-    const ShortConvWeights & weights,
-    int64_t d) {
-    auto y = modules::MulModule{}.build(ctx, gate, conv);
-    y = modules::LinearModule({d, d, false}).build(ctx, y, {weights.out_proj, std::nullopt});
-    return modules::AddModule{}.build(ctx, residual, y);
-}
-
-TensorValue feed_forward(core::ModuleBuildContext & ctx, const TensorValue & x, const LayerWeights & weights, const Lfm2BackboneConfig & config) {
-    auto h = rms_norm(ctx, x, weights.decoder.post_norm, config);
-
-    modules::GatedFeedForwardConfig ff_config;
-    ff_config.hidden_size = config.hidden_size;
-    ff_config.intermediate_size = config.intermediate_size;
-    ff_config.activation = modules::GatedFeedForwardActivation::Silu;
-    h = modules::GatedFeedForwardModule(ff_config).build(
-        ctx, h, {weights.decoder.mlp.gate_proj, weights.decoder.mlp.up_proj, weights.decoder.mlp.down_proj});
-    return modules::AddModule{}.build(ctx, x, h);
-}
-
-TensorValue conv_kernel(core::ModuleBuildContext & ctx, const ShortConvWeights & weights, const Lfm2BackboneConfig & config) {
-    return core::reshape_tensor(ctx, weights.kernel, TensorShape::from_dims({config.hidden_size, config.conv_kernel_size}));
-}
-
-TensorValue logits_from_last_step(
+// The final norm's output is Lfm2Model's last_hidden_state; the text head is
+// tied to the token embedding.
+TensorValue hidden_of_last_step(
     core::ModuleBuildContext & ctx, const TensorValue & x, const BackboneWeights & weights, const Lfm2BackboneConfig & config) {
     const int64_t steps = x.shape.dims[1];
     auto last = steps == 1 ? x : contiguous(ctx, modules::SliceModule({1, steps - 1, 1}).build(ctx, x));
-    last = rms_norm(ctx, last, weights.final_norm, config);
+    return rms_norm(ctx, last, weights.final_norm, config);
+}
+
+TensorValue text_logits(core::ModuleBuildContext & ctx, const TensorValue & hidden, const BackboneWeights & weights, const Lfm2BackboneConfig & config) {
     return modules::LinearModule({config.hidden_size, config.vocab_size, false})
-        .build(ctx, last, {weights.token_embedding, std::nullopt});
+        .build(ctx, hidden, {weights.token_embedding, std::nullopt});
 }
 
 struct PrefillState {
@@ -237,7 +150,6 @@ public:
         auto * g = ctx_.get();
         core::ModuleBuildContext ctx{g, "lfm2_audio.prefill", execution.backend_type()};
         const int64_t d = config.hidden_size;
-        const int64_t k = config.conv_kernel_size;
 
         token_ids_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, steps);
         ggml_set_input(token_ids_);
@@ -258,37 +170,13 @@ public:
         ggml_set_input(positions_);
         const auto positions = core::wrap_tensor(positions_, TensorShape::from_dims({steps}), GGML_TYPE_I32);
 
-        for (int64_t layer = 0; layer < config.num_layers(); ++layer) {
-            const auto & w = weights.layers[static_cast<size_t>(layer)];
-            if (w.attention) {
-                // No mask argument: without one the layer applies ggml_diag_mask_inf,
-                // which is the causal mask.
-                auto out = modules::DecoderLayerModule(attention_layer_config(config, layer)).build(ctx, x, positions, w.decoder);
-                x = out.output;
-                keys_.push_back(pin_output(out.key.tensor));
-                values_.push_back(pin_output(out.value.tensor));
-                continue;
-            }
+        lfm2_blocks::SequenceTaps taps;
+        x = lfm2_blocks::build_sequence(ctx, x, positions, weights.layers, config, std::nullopt, &taps);
+        for (auto * t : taps.keys) keys_.push_back(pin_output(t));
+        for (auto * t : taps.values) values_.push_back(pin_output(t));
+        for (auto * t : taps.conv_tails) conv_tails_.push_back(pin_output(t));
 
-            auto in = short_conv_input(ctx, rms_norm(ctx, x, w.decoder.input_norm, config), w.conv, d);
-            // Left-pad with the kernel's history: prefill starts from zeros.
-            auto padded = core::wrap_tensor(
-                ggml_pad_ext(g, in.conv_in.tensor, static_cast<int>(k - 1), 0, 0, 0, 0, 0, 0, 0),
-                TensorShape::from_dims({1, d, steps + k - 1}),
-                GGML_TYPE_F32);
-            auto conv = core::wrap_tensor(
-                ggml_ssm_conv(g, padded.tensor, conv_kernel(ctx, w.conv, config).tensor),
-                TensorShape::from_dims({1, steps, d}),
-                GGML_TYPE_F32);
-
-            x = short_conv_output(ctx, x, conv, in.gate, w.conv, d);
-            x = feed_forward(ctx, x, w, config);
-
-            auto tail = contiguous(ctx, modules::SliceModule({2, steps, k - 1}).build(ctx, padded));
-            conv_tails_.push_back(pin_output(tail.tensor));
-        }
-
-        logits_ = logits_from_last_step(ctx, x, weights, config).tensor;
+        logits_ = text_logits(ctx, hidden_of_last_step(ctx, x, weights, config), weights, config).tensor;
         ggml_set_output(logits_);
 
         graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
@@ -378,10 +266,17 @@ private:
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> allocator_;
 };
 
+// A step's input: a text token, or the rows of an audio frame's codes in the
+// stacked audio embedding.
+struct StepInput {
+    int32_t token = 0;
+    std::vector<int32_t> audio_rows;
+};
+
 class DecodeGraph {
 public:
     DecodeGraph(const BackboneWeights & weights, const Lfm2BackboneConfig & config, core::ExecutionContext & execution, int64_t cache_steps)
-        : config_(config), execution_(execution), cache_steps_(cache_steps) {
+        : config_(config), execution_(execution), cache_steps_(cache_steps), codebooks_(weights.codebooks) {
         ctx_.reset(ggml_init({kDecodeArenaBytes, nullptr, true}));
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize the LFM2-Audio decode graph context");
@@ -399,13 +294,27 @@ public:
 
         auto x = modules::EmbeddingModule({config.vocab_size, d})
                      .build(ctx, core::wrap_tensor(token_, TensorShape::from_dims({1}), GGML_TYPE_I32), weights.token_lookup);
+        if (weights.audio_embedding.has_value()) {
+            // Both inputs are always built; the step picks one by weighting
+            // the other with zero. A frame goes in as the sum of its codes'
+            // embeddings (LFM2AudioModel.generate_sequential).
+            audio_rows_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, codebooks_);
+            text_weight_ = ggml_new_tensor_1d(g, GGML_TYPE_F32, 1);
+            audio_weight_ = ggml_new_tensor_1d(g, GGML_TYPE_F32, 1);
+            auto * rows = ggml_get_rows(g, weights.audio_embedding->tensor, audio_rows_);
+            auto * frame = ggml_sum_rows(g, ggml_cont(g, ggml_transpose(g, rows)));
+            frame = ggml_reshape_2d(g, frame, d, 1);
+            auto * mixed = ggml_add(g, ggml_mul(g, x.tensor, text_weight_), ggml_mul(g, frame, audio_weight_));
+            x = core::wrap_tensor(mixed, x.shape, GGML_TYPE_F32);
+        }
+
         x = core::reshape_tensor(ctx, x, TensorShape::from_dims({1, 1, d}));
 
         const auto positions = core::wrap_tensor(positions_, TensorShape::from_dims({1}), GGML_TYPE_I32);
         const auto slot = core::wrap_tensor(cache_slot_, TensorShape::from_dims({1}), GGML_TYPE_I32);
         const auto mask = core::wrap_tensor(mask_, TensorShape::from_dims({1, 1, 1, cache_steps}), GGML_TYPE_F16);
 
-        graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        hidden_graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
 
         std::vector<TensorValue> keys;
         std::vector<TensorValue> values;
@@ -423,7 +332,7 @@ public:
                 values.push_back(core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, cache_steps, kv_heads, config.head_dim})));
 
                 x = modules::DecoderLayerModule(attention_layer_config(config, layer))
-                        .build_with_static_cache_tail(ctx, graph_, x, positions, w.decoder, keys.back(), values.back(), slot, mask)
+                        .build_with_static_cache_tail(ctx, hidden_graph_, x, positions, w.decoder, keys.back(), values.back(), slot, mask)
                         .output;
                 continue;
             }
@@ -442,13 +351,22 @@ public:
             x = feed_forward(ctx, x, w, config);
 
             auto next_tail = contiguous(ctx, modules::SliceModule({2, 1, k - 1}).build(ctx, window));
-            ggml_build_forward_expand(graph_, ggml_cpy(g, next_tail.tensor, tail.tensor));
+            ggml_build_forward_expand(hidden_graph_, ggml_cpy(g, next_tail.tensor, tail.tensor));
         }
 
-        logits_ = logits_from_last_step(ctx, x, weights, config).tensor;
+        const auto hidden = hidden_of_last_step(ctx, x, weights, config);
+        hidden_ = hidden.tensor;
+        logits_ = text_logits(ctx, hidden, weights, config).tensor;
+        ggml_set_output(hidden_);
         ggml_set_output(logits_);
-        ggml_build_forward_expand(graph_, logits_);
-        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio decode graph");
+
+        // Two graphs over the same nodes and cache writes: one stops at the
+        // hidden state, the other goes on through the text head.
+        ggml_build_forward_expand(hidden_graph_, hidden_);
+        logits_graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
+        ggml_graph_cpy(hidden_graph_, logits_graph_);
+        ggml_build_forward_expand(logits_graph_, logits_);
+        core::validate_backend_graph_supported(execution.backend(), logits_graph_, "LFM2-Audio decode graph");
 
         buffer_.reset(ggml_backend_alloc_ctx_tensors(g, execution.backend()));
         if (buffer_ == nullptr) {
@@ -460,7 +378,12 @@ public:
         mask_scratch_.assign(static_cast<size_t>(cache_steps), ggml_fp32_to_fp16(-INFINITY));
     }
 
-    ~DecodeGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
+    ~DecodeGraph() {
+        core::release_backend_graph_resources(execution_.backend(), logits_graph_, true);
+        core::release_backend_graph_resources(execution_.backend(), hidden_graph_, true);
+    }
+
+    [[nodiscard]] int64_t cache_steps() const noexcept { return cache_steps_; }
 
     // Every step attends over the whole cache, so a cache sized for an
     // unusually long request is replaced rather than reused.
@@ -468,7 +391,10 @@ public:
         return cache_steps_ >= required_steps && cache_steps_ <= 2 * required_steps;
     }
 
+    // Starts from zeros, so nothing an earlier request left in the masked
+    // slots can reach this one.
     void import_state(const PrefillState & state) {
+        ggml_backend_buffer_clear(buffer_.get(), 0);
         cache_.import_state(state.kv);
         if (state.conv_tails.size() != conv_tails_.size()) {
             throw std::runtime_error("LFM2-Audio conv state does not match the decode graph");
@@ -479,45 +405,68 @@ public:
         }
     }
 
-    std::vector<float> run_step(int32_t token) {
+    std::vector<float> run_step(const StepInput & input, Lfm2StepOutput output) {
         if (cache_.valid_steps() >= cache_steps_) {
             throw std::runtime_error("LFM2-Audio decode cache exhausted");
         }
 
+        const bool audio = !input.audio_rows.empty();
+        if (audio && audio_rows_ == nullptr) {
+            throw std::runtime_error("LFM2-Audio backbone was loaded without the audio embedding");
+        }
+
         const auto position = static_cast<int32_t>(cache_.current_end());
         const auto slot = static_cast<int32_t>(cache_.valid_steps());
-        ggml_backend_tensor_set(token_, &token, 0, sizeof(int32_t));
+        ggml_backend_tensor_set(token_, &input.token, 0, sizeof(int32_t));
         ggml_backend_tensor_set(positions_, &position, 0, sizeof(int32_t));
         ggml_backend_tensor_set(cache_slot_, &slot, 0, sizeof(int32_t));
+        if (audio_rows_ != nullptr) {
+            // The unused input still needs valid rows: 0 * NaN would be NaN.
+            const std::vector<int32_t> rows = audio ? input.audio_rows : std::vector<int32_t>(static_cast<size_t>(codebooks_), 0);
+            const float text_weight = audio ? 0.0f : 1.0f;
+            const float audio_weight = audio ? 1.0f : 0.0f;
+            ggml_backend_tensor_set(audio_rows_, rows.data(), 0, rows.size() * sizeof(int32_t));
+            ggml_backend_tensor_set(text_weight_, &text_weight, 0, sizeof(float));
+            ggml_backend_tensor_set(audio_weight_, &audio_weight, 0, sizeof(float));
+        }
+
         modules::write_decoder_cached_step_mask(mask_, mask_scratch_, cache_steps_, cache_.valid_steps(), cache_.valid_steps());
 
+        auto * graph = output == Lfm2StepOutput::Logits ? logits_graph_ : hidden_graph_;
         core::set_backend_threads(execution_.backend(), std::max(1, execution_.config().threads));
-        const ggml_status status = core::compute_backend_graph(execution_.backend(), graph_);
+        const ggml_status status = core::compute_backend_graph(execution_.backend(), graph);
         ggml_backend_synchronize(execution_.backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("LFM2-Audio decode graph compute failed");
         }
 
-        std::vector<float> logits(static_cast<size_t>(config_.vocab_size));
-        ggml_backend_tensor_get(logits_, logits.data(), 0, logits.size() * sizeof(float));
+        auto * result = output == Lfm2StepOutput::Logits ? logits_ : hidden_;
+        std::vector<float> values(static_cast<size_t>(ggml_nelements(result)));
+        ggml_backend_tensor_get(result, values.data(), 0, values.size() * sizeof(float));
         cache_.advance_after_direct_append(1);
-        return logits;
+        return values;
     }
 
 private:
     const Lfm2BackboneConfig & config_;
     core::ExecutionContext & execution_;
     int64_t cache_steps_ = 0;
+    int64_t codebooks_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ = nullptr;
+    ggml_tensor * audio_rows_ = nullptr;
+    ggml_tensor * text_weight_ = nullptr;
+    ggml_tensor * audio_weight_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * cache_slot_ = nullptr;
     ggml_tensor * mask_ = nullptr;
+    ggml_tensor * hidden_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     std::vector<ggml_tensor *> conv_tails_;
     std::vector<ggml_fp16_t> mask_scratch_;
     runtime::TransformerKVCache cache_;
-    ggml_cgraph * graph_ = nullptr;
+    ggml_cgraph * hidden_graph_ = nullptr;
+    ggml_cgraph * logits_graph_ = nullptr;
     std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, GgmlBufferDeleter> buffer_;
 };
 
@@ -550,11 +499,22 @@ void validate_prompt(const Lfm2Prompt & prompt, const Lfm2BackboneConfig & confi
 }  // namespace
 
 struct Lfm2BackboneRuntime::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm2BackboneConfig & config_in, core::ExecutionContext & execution_in)
+    Impl(std::shared_ptr<const assets::TensorSource> source_in,
+         const Lfm2BackboneConfig & config_in,
+         core::ExecutionContext & execution_in,
+         const AudioEmbeddingSource & audio)
         : source(std::move(source_in)),
           config(config_in),
           execution(execution_in),
-          weights(load_weights(*source, config, execution_in)) {}
+          weights(load_weights(*source, config, execution_in, audio)) {}
+
+    DecodeGraph & require_started() {
+        if (decode == nullptr || !started) {
+            throw std::runtime_error("LFM2-Audio backbone step before start()");
+        }
+
+        return *decode;
+    }
 
     std::shared_ptr<const assets::TensorSource> source;
     Lfm2BackboneConfig config;
@@ -562,25 +522,37 @@ struct Lfm2BackboneRuntime::Impl {
     BackboneWeights weights;
     std::unique_ptr<PrefillGraph> prefill;
     std::unique_ptr<DecodeGraph> decode;
+    bool started = false;
 };
 
 Lfm2BackboneRuntime::Lfm2BackboneRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     const Lfm2BackboneConfig & config,
-    core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(std::move(source), config, execution)) {}
+    core::ExecutionContext & execution,
+    std::shared_ptr<const assets::TensorSource> audio_embedding,
+    int64_t codebooks,
+    int64_t audio_vocab_size) {
+    if (audio_embedding != nullptr && (codebooks <= 0 || audio_vocab_size <= 0)) {
+        throw std::runtime_error("LFM2-Audio audio embedding needs its codebook count and size");
+    }
+
+    impl_ = std::make_unique<Impl>(std::move(source), config, execution, AudioEmbeddingSource{std::move(audio_embedding), codebooks, audio_vocab_size});
+}
 
 Lfm2BackboneRuntime::~Lfm2BackboneRuntime() = default;
 
-Lfm2GenerationResult Lfm2BackboneRuntime::generate(
-    const Lfm2Prompt & prompt,
-    const Lfm2AudioEmbeddings & audio,
-    const Lfm2GenerationOptions & options) {
+std::vector<float> Lfm2BackboneRuntime::start(const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps) {
+    return prefill(prompt, audio, max_steps, DecodeCache::Rounded);
+}
+
+std::vector<float> Lfm2BackboneRuntime::prefill(
+    const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, DecodeCache cache) {
     const auto & config = impl_->config;
     const auto steps = static_cast<int64_t>(prompt.input_ids.size());
     const auto audio_tokens = static_cast<int64_t>(prompt.audio_positions.size());
-    if (steps == 0 || options.max_new_tokens <= 0) {
-        throw std::runtime_error("LFM2-Audio generation needs a prompt and a positive token budget");
+    impl_->started = false;
+    if (steps == 0 || max_steps < 0) {
+        throw std::runtime_error("LFM2-Audio generation needs a prompt and a nonnegative step budget");
     }
 
     if (audio_tokens != audio.tokens || audio.values.size() != static_cast<size_t>(audio.tokens * config.hidden_size)) {
@@ -593,10 +565,10 @@ Lfm2GenerationResult Lfm2BackboneRuntime::generate(
         throw std::runtime_error("LFM2-Audio encoder produced non-finite audio embeddings");
     }
 
-    if (options.max_new_tokens > config.context_length - steps) {
+    if (max_steps > config.context_length - steps) {
         throw runtime::CapacityError(
-            "LFM2-Audio request needs " + std::to_string(steps) + " prompt steps plus max_tokens, more than the " +
-            std::to_string(config.context_length) + "-token context");
+            "LFM2-Audio request needs " + std::to_string(steps) + " prompt steps plus " + std::to_string(max_steps) +
+            " more, more than the " + std::to_string(config.context_length) + "-token context");
     }
 
     validate_prompt(prompt, config);
@@ -616,18 +588,75 @@ Lfm2GenerationResult Lfm2BackboneRuntime::generate(
 
     debug::timing_log_scalar("lfm2_audio.prefill.ms", engine::debug::elapsed_ms(prefill_start));
 
-    // The last generated token is never fed back, hence the - 1.
-    const int64_t required = steps + options.max_new_tokens - 1;
-    if (impl_->decode == nullptr || !impl_->decode->fits(required)) {
+    const int64_t required = steps + max_steps;
+    const int64_t needed = std::max<int64_t>(required, steps + 1);
+    const bool rounded = cache == DecodeCache::Rounded;
+    const int64_t cache_steps = rounded ? (needed + kCacheStepGranule - 1) / kCacheStepGranule * kCacheStepGranule : needed;
+    const bool keep =
+        impl_->decode != nullptr && (rounded ? impl_->decode->cache_steps() == cache_steps : impl_->decode->fits(required));
+    if (!keep) {
         impl_->decode.reset();
-        impl_->decode = std::make_unique<DecodeGraph>(impl_->weights, config, impl_->execution, std::max<int64_t>(required, steps + 1));
+        impl_->decode = std::make_unique<DecodeGraph>(impl_->weights, config, impl_->execution, cache_steps);
     }
 
     impl_->decode->import_state(state);
+    impl_->started = true;
+    return std::move(state.logits);
+}
 
+std::vector<float> Lfm2BackboneRuntime::step_text(int32_t token, Lfm2StepOutput output) {
+    if (token < 0 || token >= impl_->config.vocab_size) {
+        throw std::runtime_error("LFM2-Audio token id " + std::to_string(token) + " is outside the vocabulary");
+    }
+
+    return impl_->require_started().run_step({token, {}}, output);
+}
+
+std::vector<float> Lfm2BackboneRuntime::step_audio(const std::vector<int32_t> & codes, Lfm2StepOutput output) {
+    const auto & weights = impl_->weights;
+    if (!weights.audio_embedding.has_value()) {
+        throw std::runtime_error("LFM2-Audio backbone was loaded without the audio embedding");
+    }
+
+    if (static_cast<int64_t>(codes.size()) != weights.codebooks) {
+        throw std::runtime_error("LFM2-Audio audio frame needs one code per codebook");
+    }
+
+    StepInput input;
+    for (size_t codebook = 0; codebook < codes.size(); ++codebook) {
+        if (codes[codebook] < 0 || codes[codebook] >= weights.audio_vocab_size) {
+            throw std::runtime_error("LFM2-Audio audio code " + std::to_string(codes[codebook]) + " is outside the codebook");
+        }
+
+        input.audio_rows.push_back(static_cast<int32_t>(static_cast<int64_t>(codebook) * weights.audio_vocab_size + codes[codebook]));
+    }
+
+    return impl_->require_started().run_step(input, output);
+}
+
+int64_t Lfm2BackboneRuntime::decode_cache_steps() const noexcept {
+    return impl_->decode == nullptr ? 0 : impl_->decode->cache_steps();
+}
+
+Lfm2GenerationResult Lfm2BackboneRuntime::generate(
+    const Lfm2Prompt & prompt,
+    const Lfm2AudioEmbeddings & audio,
+    const Lfm2GenerationOptions & options) {
+    const auto steps = static_cast<int64_t>(prompt.input_ids.size());
+    if (steps == 0 || options.max_new_tokens <= 0) {
+        throw std::runtime_error("LFM2-Audio generation needs a prompt and a positive token budget");
+    }
+
+    if (options.max_new_tokens > impl_->config.context_length - steps) {
+        throw runtime::CapacityError(
+            "LFM2-Audio request needs " + std::to_string(steps) + " prompt steps plus max_tokens, more than the " +
+            std::to_string(impl_->config.context_length) + "-token context");
+    }
+
+    // The last generated token is never fed back, hence the - 1.
     Lfm2GenerationResult out;
-    out.prefill_logits = state.logits;
-    std::vector<float> logits = std::move(state.logits);
+    out.prefill_logits = prefill(prompt, audio, options.max_new_tokens - 1, DecodeCache::Reuse);
+    std::vector<float> logits = out.prefill_logits;
 
     const auto decode_start = std::chrono::steady_clock::now();
     for (int64_t step = 0; step < options.max_new_tokens; ++step) {
@@ -642,7 +671,7 @@ Lfm2GenerationResult Lfm2BackboneRuntime::generate(
             break;
         }
 
-        logits = impl_->decode->run_step(token);
+        logits = step_text(token, Lfm2StepOutput::Logits);
     }
 
     debug::timing_log_scalar("lfm2_audio.decode.ms", engine::debug::elapsed_ms(decode_start));

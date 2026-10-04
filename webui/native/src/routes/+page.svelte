@@ -325,6 +325,7 @@
     universr: 'UniverSR',
     pulsevad: 'PulseVAD',
     nemotron_3_diar: 'Nemotron 3 Diarization',
+    lfm2_audio: 'LFM2.5-Audio',
     personaplex: 'PersonaPlex'
   };
 
@@ -461,7 +462,8 @@
     selected?.family === 'midashenglm_gen';
   $: supportsTextOnlyTts = (
     selected?.family === 'breeze_tts' ||
-    selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1'
+    selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' ||
+    (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit || selected?.family === 'liveavatar' ||

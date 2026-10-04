@@ -35,6 +35,7 @@
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
 | KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](community_models/kitten_tts.md) |
 | Kitten TTS 2 | `kitten_tts2` | `tts`, `clon` | [Kitten TTS 2](community_models/kitten_tts2.md) |
+| LFM2.5-Audio | `lfm2_audio` | `asr`, `tts` | [LFM2.5-Audio](community_models/lfm2_audio.md) |
 | GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
