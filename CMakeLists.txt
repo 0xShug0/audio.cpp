@@ -924,6 +924,15 @@ audiocpp_add_model(piper_tts
         engine::models::piper_tts::make_piper_tts_loader
 )
 
+audiocpp_add_model(kitten_tts2
+    SOURCES
+        src/community_models/kitten_tts2/session.cpp
+        src/community_models/kitten_tts2/decoder.cpp
+        src/community_models/kitten_tts2/speaker.cpp
+    INCLUDES engine/community_models/kitten_tts2/session.h
+    LOADERS engine::community_models::kitten_tts2::make_kitten_tts2_loader
+    DEPENDS chatterbox)
+
 audiocpp_add_model(kitten_tts
     SOURCES
         src/community_models/kitten_tts/assets.cpp
@@ -2814,6 +2823,12 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(audiocpp_gguf PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_executable(audiocpp_kitten_tts2_prepare_voices tools/community_models/prepare_kitten_tts2_voices.cpp)
+    audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
+    target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
+endif()
+
 if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     add_executable(audiocpp_model_manager
         app/model_manager/main.cpp
@@ -2834,6 +2849,14 @@ if (ENGINE_ENABLE_OPENMP)
 endif()
 
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
+    if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(kitten_tts2_session_probe tests/kitten_tts2/session_probe.cpp)
+        audiocpp_use_utf8_codepage(kitten_tts2_session_probe)
+        target_link_libraries(kitten_tts2_session_probe PRIVATE engine_runtime)
+        add_executable(kitten_tts2_components_probe tests/kitten_tts2/components_probe.cpp)
+        audiocpp_use_utf8_codepage(kitten_tts2_components_probe)
+        target_link_libraries(kitten_tts2_components_probe PRIVATE engine_runtime)
+    endif()
     add_executable(yue2_vae_parity_probe
         tests/yue2/yue2_vae_parity_probe.cpp
     )

@@ -7,6 +7,8 @@
 
   "models": [
     { "id": "omnivoice",              "display_name": "OmniVoice (tts)",                       "family": "omnivoice",            "path": "models/OmniVoice",                       "task": "tts",   "mode": "offline", "download_id": "omnivoice",               "min_vram_gb": 10 },
+    { "id": "kitten-tts2",            "display_name": "Kitten TTS 2",                          "family": "kitten_tts2",          "path": "models/kitten-tts2/kitten-tts2-native-q8-multilingual.gguf", "task": "tts", "mode": "offline", "download_id": "kitten_tts2_q8_0", "min_vram_gb": 7,
+      "input_hint": "Multilingual speech: choose a matching language preset or supply a reference clip and its transcript. Write numbers and abbreviations as spoken words." },
     { "id": "pocket-tts",             "display_name": "Pocket TTS (tts)",                      "family": "pocket_tts",           "path": "models/pocket-tts",                      "task": "tts",   "mode": "offline", "download_id": "pocket_tts",              "min_vram_gb": 2 },
     { "id": "dots-tts-soar",          "display_name": "DotTTS SOAR (tts + clone)",             "family": "dots_tts",             "path": "models/DotTTS-SOAR-GGUF",               "task": "tts",   "mode": "offline", "download_id": "dots_tts_soar_q8_0",      "min_vram_gb": 8 },
     { "id": "dots-tts-meanflow",      "display_name": "DotTTS MeanFlow (tts + clone)",         "family": "dots_tts",             "path": "models/DotTTS-MF-GGUF",                 "task": "tts",   "mode": "offline", "download_id": "dots_tts_mf_q8_0",        "min_vram_gb": 8 },
