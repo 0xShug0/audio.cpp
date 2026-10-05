@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/text_encoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
@@ -251,11 +252,16 @@ public:
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
           assets_(std::move(assets)),
-          weights_(load_text_encoder_weights(backend_, backend_type_, *assets_, weight_storage_type)) {
+          weights_(assets_->backend_weights_cache.acquire<Qwen3TextEncoderWeights>(
+              execution, weight_storage_type, [&](core::ExecutionContext & upload) {
+                  auto weights = std::make_shared<Qwen3TextEncoderWeights>(load_text_encoder_weights(
+                      upload.backend(), upload.backend_type(), *assets_, weight_storage_type));
+                  assets_->text_encoder_weights->release_storage();
+                  return weights;
+              })) {
         if (backend_ == nullptr) {
             throw std::runtime_error("ACE-Step text encoder backend initialization failed");
         }
-        assets_->text_encoder_weights->release_storage();
     }
 
     ~Graph() {
@@ -280,7 +286,7 @@ public:
             "ace_step.text_encoder.encode.input_upload_ms",
             engine::debug::elapsed_ms(input_start, Clock::now()));
         const auto compute_start = Clock::now();
-        const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+        const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step text encoder graph compute failed");
         }
@@ -324,7 +330,7 @@ public:
             "ace_step.text_encoder.embed.input_upload_ms",
             engine::debug::elapsed_ms(input_start, Clock::now()));
         const auto compute_start = Clock::now();
-        const ggml_status status = engine::core::compute_backend_graph(backend_, embedding_graph_);
+        const ggml_status status = ace_step_compute_backend_graph(backend_, embedding_graph_);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step text encoder embedding graph compute failed");
         }
@@ -424,7 +430,7 @@ private:
         auto embedded = modules::EmbeddingModule({config.vocab_size, config.hidden_size}).build(
             build_ctx,
             embedding_input_ids_value_,
-            weights_.embed_tokens);
+            weights_->embed_tokens);
         embedding_output_ = core::reshape_tensor(
             build_ctx,
             embedded,
@@ -468,16 +474,16 @@ private:
         auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size}).build(
             build_ctx,
             input_ids_value_,
-            weights_.embed_tokens);
+            weights_->embed_tokens);
         x = core::reshape_tensor(build_ctx, x, core::TensorShape::from_dims({1, encode_capacity_, config.hidden_size}));
         for (int64_t layer_index = 0; layer_index < config.num_hidden_layers; ++layer_index) {
-            const auto & layer = weights_.layers[static_cast<size_t>(layer_index)];
+            const auto & layer = weights_->layers[static_cast<size_t>(layer_index)];
             x = decoder_layer(build_ctx, x, positions, std::nullopt, layer, config);
         }
         x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false}).build(
             build_ctx,
             x,
-            {weights_.norm, std::nullopt});
+            {weights_->norm, std::nullopt});
 
         output_ = x.tensor;
         ggml_set_output(output_);
@@ -507,7 +513,7 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     std::shared_ptr<const AceStepAssets> assets_;
-    Qwen3TextEncoderWeights weights_;
+    std::shared_ptr<const Qwen3TextEncoderWeights> weights_;
     mutable std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     mutable ggml_tensor * input_ids_ = nullptr;
     mutable ggml_tensor * positions_ = nullptr;

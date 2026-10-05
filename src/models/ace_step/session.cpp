@@ -1,4 +1,6 @@
 #include "engine/models/ace_step/session.h"
+#include "engine/models/ace_step/cuda_graph_execution.h"
+#include "engine/models/ace_step/device_execution.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/profiler.h"
@@ -214,6 +216,11 @@ runtime::RunMode AceStepSession::run_mode() const {
 }
 
 void AceStepSession::prepare(const runtime::SessionPreparationRequest &request) {
+    const AceStepDeviceExecutionLease device_lease(execution_context().backend_type(),
+        execution_context().config().device, assets_.get());
+    const AceStepCudaGraphScope cuda_graph_scope(*assets_, execution_context().backend_type(),
+        execution_context().config().device);
+
     ensure_planner();
     if (rewrite_caption_requested(request.options)) {
         mark_prepared();
@@ -227,6 +234,10 @@ void AceStepSession::prepare(const runtime::SessionPreparationRequest &request) 
 }
 
 runtime::TaskResult AceStepSession::run(const runtime::TaskRequest &request) {
+    const AceStepDeviceExecutionLease device_lease(execution_context().backend_type(),
+        execution_context().config().device, assets_.get());
+    const AceStepCudaGraphScope cuda_graph_scope(*assets_, execution_context().backend_type(),
+        execution_context().config().device);
     require_prepared("ACE-Step run()");
     const auto total_start = Clock::now();
 
@@ -413,8 +424,10 @@ void AceStepSession::ensure_diffusion() {
 
 void AceStepSession::ensure_dit_weights_runtime() {
     if (!dit_weights_runtime_) {
-        dit_weights_runtime_ =
-            std::make_shared<AceStepDitWeightsRuntime>(assets_, execution_context(), dit_weight_storage_type_);
+        dit_weights_runtime_ = assets_->backend_weights_cache.acquire<AceStepDitWeightsRuntime>(
+            execution_context(), dit_weight_storage_type_, [&](core::ExecutionContext & upload) {
+                return std::make_shared<AceStepDitWeightsRuntime>(assets_, upload, dit_weight_storage_type_);
+            });
     }
 }
 

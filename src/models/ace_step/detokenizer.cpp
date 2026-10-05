@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/detokenizer.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/modules/transformers/decoder.h"
@@ -161,7 +162,7 @@ public:
                 "ace_step.detokenizer.chunk.input_upload_ms",
                 engine::debug::elapsed_ms(input_start, Clock::now()));
             const auto compute_start = Clock::now();
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step detokenizer graph compute failed");
             }

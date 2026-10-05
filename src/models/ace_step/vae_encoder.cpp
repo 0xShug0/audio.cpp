@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/vae_encoder.h"
 #include "vae_common.h"
 #include "engine/framework/core/backend.h"
@@ -183,7 +184,7 @@ AceStepLatents AceStepVAEEncodeGraph::encode(
         "ace_step.vae.encode.input_upload_ms",
         engine::debug::elapsed_ms(input_start, Clock::now()));
     const auto compute_start = Clock::now();
-    const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+    const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
     ggml_backend_synchronize(backend_);
     if (status != GGML_STATUS_SUCCESS) {
         throw std::runtime_error("ACE-Step VAE encoder graph compute failed");
@@ -441,8 +442,13 @@ public:
           backend_(require_backend(execution)),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
-          weights_(std::make_shared<VAEEncoderWeights>(
-              load_vae_encoder_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type))),
+          weights_(assets_->backend_weights_cache.acquire<VAEEncoderWeights>(
+              execution, weight_storage_type, [&](core::ExecutionContext & upload) {
+                  auto weights = std::make_shared<VAEEncoderWeights>(load_vae_encoder_weights(
+                      *assets_, upload.backend(), upload.backend_type(), weight_context_bytes, weight_storage_type));
+                  assets_->vae_weights->release_storage();
+                  return weights;
+              })),
           runtime_(
               std::make_unique<AceStepVAEEncoderRuntimeCore>(
                   assets_,
@@ -451,7 +457,6 @@ public:
                   threads_,
                   weights_,
                   graph_arena_bytes)) {
-        assets_->vae_weights->release_storage();
     }
 
     AceStepLatents encode(const runtime::AudioBuffer & audio, uint32_t seed, const std::string & noise_file) {

@@ -406,7 +406,9 @@ AceStepPreDitRuntime::AceStepPreDitRuntime(
     if (execution_ == nullptr) {
         throw std::runtime_error("ACE-Step pre-DiT runtime requires execution context");
     }
-    silence_latent_ = load_silence_latent_transposed(*assets_, silence_latent_frames_, silence_latent_channels_);
+    silence_latent_ = assets_->backend_weights_cache.with_source_lock([&] {
+        return load_silence_latent_transposed(*assets_, silence_latent_frames_, silence_latent_channels_);
+    });
 }
 
 void AceStepPreDitRuntime::prepare_runtime() const {

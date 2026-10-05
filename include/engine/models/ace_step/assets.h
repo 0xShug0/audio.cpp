@@ -2,10 +2,12 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/models/ace_step/backend_weights_cache.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -116,6 +118,7 @@ struct AceStepConfig {
 };
 
 struct AceStepAssets {
+    AceStepBackendWeightsCache backend_weights_cache;
     assets::ResourceBundle resources;
     AceStepModelSelection selection;
     AceStepConfig config;

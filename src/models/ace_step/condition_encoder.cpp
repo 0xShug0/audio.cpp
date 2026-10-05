@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/condition_encoder.h"
 
 #include "engine/framework/core/backend.h"
@@ -324,7 +325,7 @@ public:
             std::copy(input.values.begin(), input.values.end(), padded.begin());
             core::write_tensor_f32(input_value_, padded);
             core::set_backend_threads(backend_, threads_);
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step text projector graph compute failed");
             }
@@ -422,7 +423,7 @@ public:
                 padding_mask_value_,
                 build_padding_attention_mask_values(tokens_, input.tokens));
             core::set_backend_threads(backend_, threads_);
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step lyric encoder graph compute failed");
             }
@@ -593,7 +594,7 @@ public:
                 padding_mask_value_,
                 build_padding_attention_mask_values(tokens_, frames + cls_tokens()));
             core::set_backend_threads(backend_, threads_);
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step timbre encoder graph compute failed");
             }

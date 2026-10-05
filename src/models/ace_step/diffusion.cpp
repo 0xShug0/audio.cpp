@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/diffusion.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/io/binary.h"
@@ -989,7 +990,7 @@ public:
             }
             core::write_tensor_f32(encoder_value_, encoder_hidden_states);
             core::set_backend_threads(backend_, threads_);
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             ggml_backend_synchronize(backend_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step diffusion cross-attention cache graph compute failed");
@@ -1198,7 +1199,7 @@ public:
                 0,
                 position_values_.size() * sizeof(int32_t));
             core::set_backend_threads(backend_, threads_);
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             ggml_backend_synchronize(backend_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step diffusion graph compute failed");

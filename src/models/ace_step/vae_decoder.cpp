@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/vae_decoder.h"
 
 #include "vae_common.h"
@@ -616,7 +617,7 @@ public:
                 "ace_step.vae.decode.input_upload_ms",
                 engine::debug::elapsed_ms(input_start, Clock::now()));
             const auto compute_start = Clock::now();
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             ggml_backend_synchronize(backend_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step VAE graph compute failed");
@@ -739,15 +740,19 @@ public:
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
           graph_arena_bytes_(graph_arena_bytes),
-          weights_(std::make_shared<VAEDecoderWeights>(
-              load_vae_decoder_weights(*assets_, backend_, backend_type_, weight_context_bytes, weight_storage_type))) {
+          weights_(assets_->backend_weights_cache.acquire<VAEDecoderWeights>(
+              execution, weight_storage_type, [&](core::ExecutionContext & upload) {
+                  auto weights = std::make_shared<VAEDecoderWeights>(load_vae_decoder_weights(
+                      *assets_, upload.backend(), upload.backend_type(), weight_context_bytes, weight_storage_type));
+                  assets_->vae_weights->release_storage();
+                  return weights;
+              })) {
         if (assets_ == nullptr) {
             throw std::runtime_error("ACE-Step VAE runtime requires assets");
         }
         if (backend_ == nullptr) {
             throw std::runtime_error("ACE-Step VAE backend is not initialized");
         }
-        assets_->vae_weights->release_storage();
     }
 
     static int64_t decode_direct_frame_limit(core::BackendType backend_type) noexcept {

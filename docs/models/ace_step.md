@@ -306,3 +306,58 @@ namespaces, package spec and sidecars:
 audiocpp_gguf --input ace-step-1.5-xl-turbo-bf16.gguf --type q8_0 \
   --keep-type "lm_weights*=bf16" --output ace-step-1.5-xl-turbo-q8dit.gguf
 ```
+
+## Experimental offline parallel adapter
+ACE-Step originally creates separate DiT, planner, text-encoder and VAE device weights for each session. This adapter shares immutable uploaded weights within a loaded package while keeping execution backends, graphs, request caches and RNG state private. It covers Base, Turbo, XL Turbo and XL SFT for the opt-in server path introduced by merged #715.
+
+This draft contains **model-specific code only**. The common creation guard and validation hooks are in independent #800; the shared CUDA transpose-convolution optimization is in independent #801. Apply #800 when testing this adapter. No server-runtime implementation or ggml kernel is duplicated here.
+
+- Cache keys distinguish weight class, backend/device and storage precision. A separate upload owner outlives every borrowing session; weak package cache entries permit release and avoid ownership cycles.
+- TensorSource import/release and complete uploaded-value publication are serialized. Exceptions do not publish a failed weight owner.
+- CUDA ACE-Step graphs retain a per-device execution guard. Different ACE packages also use a FIFO preparation/run guard because narrowing it produced output mismatches. This is an ACE-specific safety policy, not a change to the common scheduler; it does not enable simultaneous CUDA GPU pipelines.
+- Vulkan graph execution remains concurrent. Backend construction protection lives in #800 and applies to other models too.
+
+**Admission status:** normal builds retain the existing one-slot catalogue. The fixture at `tests/ace_step/slot_validation_admission.h` permits offline CUDA/Vulkan counts up to four only with #800's explicit test-build switch/header. It is not a production admission entry. Full-family admission is pending: previous CUDA Turbo original cold-output variability, an XL SFT two-slot history mismatch, and incomplete applicable shared-framework evidence have not been waived by benchmark success. A subsequent 48-response cold diagnostic matched frozen original outputs but is not a root-cause resolution. Streaming/native batching are not admitted.
+
+The two tables below are **combined-build benchmark evidence**, not the isolated adapter's speedup. In particular, CUDA measurements include #801; the large CUDA speedup must not be attributed to slot scheduling or this model adapter alone. Vulkan uses the safe adapter without a CUDA change.
+
+RTX 3090 / Windows, one named model resident per row, eight host threads, seed 1234, five seconds requested, eight diffusion steps, direct generation with thinking/CoT disabled, memory saver enabled. Base/Turbo use Q8 DiT/encoder/planner; XL uses Q8 DiT and BF16 encoder/planner. The caption is:
+
+> Tired of juggling a dozen Conda environments, hundreds of Python packages, and dependency conflicts just to try a few audio models? audio.cpp gives those paths a shared native runtime instead. Runs on Windows, Linux, and macOS, with support for NVIDIA, AMD, Apple Silicon, and CPU-only machines.
+
+Warm times are medians of three repetitions after a cold wave and a warmup. Original uses the unflagged server: one request and four **actual serial** requests. Combined candidates use separate fresh servers with `--parallel-jobs` and capacities one/four; four-request waves use simultaneous HTTP requests.
+
+| Backend | Model | Original 1 task, s | Combined candidate 1 task, s | Original 4 serial, s | Combined candidate 4 simultaneous, s | Four-task time saved | Fixture exact |
+|---|---|---:|---:|---:|---:|---:|---|
+| CUDA | Base | 0.934 | 0.376 | 3.721 | 1.395 | 62.5% | true |
+| CUDA | Turbo | 0.933 | 0.369 | 3.730 | 1.383 | 62.9% | true |
+| CUDA | XL Turbo | 1.102 | 0.553 | 4.402 | 2.070 | 53.0% | true |
+| CUDA | XL SFT | 1.126 | 0.548 | 4.490 | 2.069 | 53.9% | true |
+| VULKAN | Base | 0.471 | 0.462 | 1.965 | 1.406 | 28.4% | true |
+| VULKAN | Turbo | 0.471 | 0.473 | 2.032 | 1.404 | 30.9% | true |
+| VULKAN | XL Turbo | 0.639 | 0.641 | 2.673 | 2.171 | 18.8% | true |
+| VULKAN | XL SFT | 0.639 | 0.657 | 2.649 | 2.160 | 18.4% | true |
+
+
+Sampled peak VRAM:
+
+| Backend | Model | Original 1-slot server, GiB | Combined candidate 1-slot server, GiB | Combined candidate 4-slot server, GiB |
+|---|---|---:|---:|---:|
+| CUDA | Base | 7.02 | 7.02 | 8.45 |
+| CUDA | Turbo | 7.02 | 7.02 | 9.42 |
+| CUDA | XL Turbo | 11.92 | 11.74 | 14.67 |
+| CUDA | XL SFT | 11.92 | 11.73 | 14.54 |
+| VULKAN | Base | 6.80 | 6.82 | 10.98 |
+| VULKAN | Turbo | 6.80 | 6.80 | 12.20 |
+| VULKAN | XL Turbo | 12.17 | 11.52 | 15.96 |
+| VULKAN | XL SFT | 12.17 | 11.52 | 15.71 |
+
+
+VRAM includes weights, contexts, workspaces and other device use. It is sampled device-wide usage at approximately 10 ms from health-ready through cold and warm requests, not allocator maxima or cache-only memory. Original peaks cover the single and four-serial runs on its one-slot server. All 336 benchmark responses matched original bytes and sample-rate/channel fields; independent WAV checks confirmed 5.12-second, stereo 48 kHz PCM16 output, and active/queued counters drained. No memory guard fired.
+
+The frozen benchmark base is `d3ab9df288131aeb83a3c361f0eb1e464b41dea0`; these isolated PRs are based on refreshed main `3cf216142adbc0f6aace698c4f659e87c982cdbb`. ACE-Step and ggml sources were unchanged between those bases. Executable hashes, raw replies, observed session histories and memory traces are retained locally under `outputs/ace-family-performance-20261005`, `outputs/ace-cuda-overlap-20261005` and `outputs/pr-ace-step-slots-20261005`. The development integration rebuilds changed translation units and the CUDA operator while reusing unchanged prebuilt ggml libraries; a full clean CUDA rebuild has not been claimed. Forced harness cleanup is not graceful-shutdown evidence.
+
+
+After separating the PRs, the combined integration build passed **15/15 CPU, 7/7 CUDA and 8/8 Vulkan CTests**. Base and Turbo together passed **46/46 exact observed-history comparisons on CUDA and 46/46 on Vulkan**, covering concurrent cold requests, ten warm waves, targeted unload beside a keeper request and reload. This checks the relocation of the backend guard; it does not close the independent full-admission gaps above. The initial Vulkan test selection had one unbuilt test target; it was built and the full eight-test selection then passed, with the initial log retained. GPU cache tests skip only when the backend is unavailable and otherwise prefer the discrete GPU.
+
+For adapter validation after applying #800, configure `-DENGINE_BUILD_TESTS=ON -DAUDIOCPP_SLOT_VALIDATION=ON "-DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/ace_step/slot_validation_admission.h"`, then start the server with `--parallel-jobs` and explicit model `slots`. Set `AUDIOCPP_SLOT_VALIDATION_OBSERVER=1` only when collecting the intended test fixture histories. Ordinary builds retain one-slot admission.

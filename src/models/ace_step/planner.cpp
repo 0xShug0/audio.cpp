@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/planner.h"
 
 #include "engine/framework/assets/tensor_source.h"
@@ -1704,8 +1705,13 @@ public:
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
-          weights_(std::make_shared<Qwen3PlannerWeights>(
-              load_planner_weights(*assets_, backend_, backend_type_, weight_context_bytes, storage_type))) {
+          weights_(assets_->backend_weights_cache.acquire<Qwen3PlannerWeights>(
+              execution, storage_type, [&](core::ExecutionContext & upload) {
+                  auto weights = std::make_shared<Qwen3PlannerWeights>(load_planner_weights(
+                      *assets_, upload.backend(), upload.backend_type(), weight_context_bytes, storage_type));
+                  assets_->lm_weights->release_storage();
+                  return weights;
+              })) {
         if (assets_ == nullptr) {
             throw std::runtime_error("ACE-Step planner weights runtime requires assets");
         }
@@ -1863,7 +1869,7 @@ public:
         }
         ggml_backend_tensor_set(query_mask_, query_mask_values.data(), 0, query_mask_values.size() * sizeof(float));
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
-        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        const ggml_status status = ace_step_compute_backend_graph(runtime_->backend(), graph_);
         ggml_backend_synchronize(runtime_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step planner prefill graph compute failed");
@@ -2042,7 +2048,7 @@ public:
             0,
             attention_mask_values_.size() * sizeof(ggml_fp16_t));
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
-        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        const ggml_status status = ace_step_compute_backend_graph(runtime_->backend(), graph_);
         ggml_backend_synchronize(runtime_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step planner decode graph compute failed");
@@ -2314,7 +2320,7 @@ public:
         ggml_backend_tensor_set(query_mask_, query_mask_values.data(), 0, query_mask_values.size() * sizeof(float));
 
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
-        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        const ggml_status status = ace_step_compute_backend_graph(runtime_->backend(), graph_);
         ggml_backend_synchronize(runtime_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step planner CFG prefill graph compute failed");
@@ -2578,7 +2584,7 @@ public:
             attention_mask_values_.size() * sizeof(ggml_fp16_t));
 
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
-        const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
+        const ggml_status status = ace_step_compute_backend_graph(runtime_->backend(), graph_);
         ggml_backend_synchronize(runtime_->backend());
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("ACE-Step planner CFG decode graph compute failed");
@@ -2767,7 +2773,6 @@ AceStepQwen3PlannerRuntime::AceStepQwen3PlannerRuntime(
             weight_storage_type);
     }
     is_audio_code_token_.assign(static_cast<size_t>(assets_->config.planner.vocab_size), 0);
-    assets_->lm_weights->release_storage();
     for (int32_t code = 0; code < 64000; ++code) {
         const auto token_id = tokenizer_.find_token_id("<|audio_code_" + std::to_string(code) + "|>");
         if (!token_id.has_value()) {

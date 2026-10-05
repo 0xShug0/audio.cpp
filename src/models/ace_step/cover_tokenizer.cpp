@@ -1,3 +1,4 @@
+#include "engine/models/ace_step/cuda_graph_execution.h"
 #include "engine/models/ace_step/cover_tokenizer.h"
 
 #include "engine/framework/core/backend.h"
@@ -250,7 +251,7 @@ public:
                 engine::debug::elapsed_ms(input_start, Clock::now()));
 
             const auto compute_start = Clock::now();
-            const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
+            const ggml_status status = ace_step_compute_backend_graph(backend_, graph_);
             if (status != GGML_STATUS_SUCCESS) {
                 throw std::runtime_error("ACE-Step cover tokenizer graph compute failed");
             }
@@ -418,6 +419,7 @@ public:
         std::shared_ptr<const AceStepAssets> assets,
         assets::TensorStorageType storage_type)
         : assets_(std::move(assets)),
+          execution_(&execution),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
@@ -495,7 +497,10 @@ private:
     void ensure_weights() const {
         if (!weights_) {
             const auto start = Clock::now();
-            weights_ = load_cover_tokenizer_weights(backend_, backend_type_, *assets_, storage_type_);
+            weights_ = assets_->backend_weights_cache.acquire<AceStepCoverTokenizerWeights>(
+                *execution_, storage_type_, [&](core::ExecutionContext & upload) {
+                    return load_cover_tokenizer_weights(upload.backend(), upload.backend_type(), *assets_, storage_type_);
+                });
             engine::debug::timing_log_scalar(
                 "ace_step.cover_tokenizer.load_weights_ms",
                 engine::debug::elapsed_ms(start, Clock::now()));
@@ -503,6 +508,7 @@ private:
     }
 
     std::shared_ptr<const AceStepAssets> assets_;
+    core::ExecutionContext * execution_ = nullptr;
     ggml_backend_t backend_ = nullptr;
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
