@@ -6,7 +6,6 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/options.h"
-#include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/silero_vad/session.h"
@@ -43,6 +42,10 @@ constexpr int64_t kDefaultMaxFrames = 512;
 constexpr int64_t kDefaultTextChunkSize = 200;
 // Frames per streaming event: liquid-audio's demo decodes every frame.
 constexpr int64_t kDefaultStreamFramesPerEvent = 1;
+// S2S: liquid-audio's chat demo lets a reply run to 1024 steps (text tokens
+// and audio frames together, about a minute of speech); the README's
+// example stops at 512.
+constexpr int64_t kDefaultReplySteps = 1024;
 
 const engine::model_spec::ModelContract & require_contract(
     const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
@@ -74,10 +77,11 @@ runtime::SessionOptions validate_session_setup(
         throw std::runtime_error("LFM2-Audio session created for the wrong task");
     }
 
-    // Streaming is speech output only; ASR takes whole files.
-    if (task.mode != runtime::RunMode::Offline && !(kind == runtime::VoiceTaskKind::Tts && task.mode == runtime::RunMode::Streaming)) {
-        throw std::runtime_error(kind == runtime::VoiceTaskKind::Tts ? "LFM2-Audio TTS runs offline or streaming"
-                                                                      : "LFM2-Audio ASR runs offline only");
+    // Streaming is for the tasks that speak; ASR takes whole files.
+    if (task.mode != runtime::RunMode::Offline && !(kind != runtime::VoiceTaskKind::Asr && task.mode == runtime::RunMode::Streaming)) {
+        throw std::runtime_error(kind == runtime::VoiceTaskKind::Tts   ? "LFM2-Audio TTS runs offline or streaming"
+                                 : kind == runtime::VoiceTaskKind::Asr ? "LFM2-Audio ASR runs offline only"
+                                                                       : "LFM2-Audio s2s runs offline or streaming");
     }
 
     runtime::validate_spec_backed_session_options(options, contract, kFamily, kModelName);
@@ -124,6 +128,24 @@ bool check_turn_end(const Lfm2SpeechGenerator & generator, size_t frames, size_t
     const std::string which = turns > 1 ? " of text chunk " + std::to_string(turn + 1) + " of " + std::to_string(turns) : "";
     warn("the speech" + which + " reached max_tokens=" + std::to_string(max_frames) +
          " and is cut off there; raise max_tokens or lower text_chunk_size for the rest");
+    return true;
+}
+
+// A reply ends on <|im_end|>, or at max_tokens, where its text and speech are
+// cut off and kept, with a warning, as liquid-audio's generate_interleaved
+// keeps what it generated when max_new_tokens runs out. Either way it needs
+// speech. Returns whether max_tokens cut it.
+bool check_reply_end(const Lfm2InterleavedGenerator & generator, size_t frames, int64_t max_steps) {
+    if (frames == 0) {
+        throw std::runtime_error(generator.ended() ? "LFM2-Audio replied without speech"
+                                                   : "LFM2-Audio reached max_tokens before the reply spoke; raise max_tokens");
+    }
+
+    if (generator.ended()) {
+        return false;
+    }
+
+    warn("the reply reached max_tokens=" + std::to_string(max_steps) + " and is cut off there; raise max_tokens for the rest");
     return true;
 }
 
@@ -273,13 +295,16 @@ Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const r
 }
 
 // liquid-audio transcribes the whole input in one pass, which holds up to
-// about a minute: on joined LibriSpeech test-clean clips its WER is 2% at
-// 60 s, 9% at 90 s (dropped words) and over 80% from 120 s (repetition).
+// about a minute in English and about 40 s in Japanese: on joined LibriSpeech
+// test-clean clips its WER is 2% at 60 s, 9% at 90 s (dropped words) and over
+// 80% from 120 s (repetition); on joined Japanese clips it starts to skip
+// whole sentences between 41 and 45 s.
 // auto therefore keeps input that fits one chunk whole, like liquid-audio,
 // and splits longer audio at pauses found by the bundled Silero VAD, as the
-// other ASR families do (vad mode forces that). That stays at 1-2% WER up to
-// 180 s; silence between the spans is not transcribed, so it cannot come back
-// as words. fixed cuts at the chunk length regardless (2.4-2.9%: words get cut).
+// other ASR families do (vad mode forces that). In English that stays at 1-2%
+// WER up to 180 s; silence between the spans is not transcribed, so it cannot
+// come back as words. fixed cuts at the chunk length regardless (1.8-2.9%:
+// words get cut).
 std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
     const runtime::TaskRequest & request, const std::vector<float> & samples) {
     const auto total = static_cast<int64_t>(samples.size());
@@ -361,9 +386,9 @@ std::string Lfm2AudioSession::transcribe(
 
     // Byte-level tokens need not end on a character boundary, and the next
     // chunk cannot complete one: end the text at its last whole character.
-    auto text = tokenizer_.decode(result.tokens);
-    text.resize(runtime::transcript_publishable_end(text));
-    return text;
+    // Bytes that can never make a character become U+FFFD (lfm2_take_text).
+    auto bytes = tokenizer_.decode(result.tokens);
+    return lfm2_take_text(bytes);
 }
 
 bool Lfm2AudioSession::reached_max_tokens() const {
@@ -543,13 +568,13 @@ runtime::TaskResult Lfm2AudioTtsSession::run(const runtime::TaskRequest & reques
     return result;
 }
 
-// One turn at a time: its frames so far, decoded as they come, and the ISTFT
-// that turns their rows into final samples.
+// One turn at a time: its frames, decoded as they come by the detokenizer's
+// stream, and the ISTFT that turns their rows into final samples.
 struct Lfm2AudioTtsSession::Stream {
     RequestOptions options;
     size_t next_turn = 0;
     std::unique_ptr<Lfm2SpeechGenerator> generator;
-    std::vector<std::vector<int32_t>> frames;
+    size_t turn_frames = 0;
     std::unique_ptr<Lfm2StreamingIstft> istft;
     runtime::AudioBuffer audio;  // everything emitted
 };
@@ -594,29 +619,31 @@ std::optional<runtime::StreamEvent> Lfm2AudioTtsSession::next_stream_event() {
             }
 
             st.generator = start_turn(st.options, st.next_turn++);
-            st.frames.clear();
+            st.turn_frames = 0;
+            detokenizer_.start_stream();
             st.istft = std::make_unique<Lfm2StreamingIstft>(detokenizer_.window(), config.hop_length);
         }
 
-        const size_t first_new = st.frames.size();
+        std::vector<std::vector<int32_t>> frames;
         bool turn_over = false;
-        while (st.frames.size() - first_new < static_cast<size_t>(st.options.stream_frames_per_event)) {
+        while (frames.size() < static_cast<size_t>(st.options.stream_frames_per_event)) {
             auto frame = st.generator->next_frame();
             if (!frame.has_value()) {
                 turn_over = true;
                 break;
             }
 
-            st.frames.push_back(std::move(*frame));
+            frames.push_back(std::move(*frame));
         }
 
-        if (st.frames.size() > first_new) {
-            const auto rows = static_cast<int64_t>(st.frames.size() - first_new) * config.upsample;
-            samples = st.istft->push(detokenizer_.spectrum(st.frames, static_cast<int64_t>(first_new)), rows);
+        if (!frames.empty()) {
+            st.turn_frames += frames.size();
+            const auto rows = static_cast<int64_t>(frames.size()) * config.upsample;
+            samples = st.istft->push(detokenizer_.stream(frames), rows);
         }
 
         if (turn_over) {
-            if (check_turn_end(*st.generator, st.frames.size(), st.next_turn - 1, st.options.texts.size(), st.options.speech.max_frames)) {
+            if (check_turn_end(*st.generator, st.turn_frames, st.next_turn - 1, st.options.texts.size(), st.options.speech.max_frames)) {
                 reached_max_tokens_ = true;
             }
 
@@ -663,6 +690,313 @@ runtime::TaskResult Lfm2AudioTtsSession::finalize() {
     return {};
 }
 
+Lfm2AudioChatSession::Lfm2AudioChatSession(
+    runtime::TaskSpec task,
+    runtime::SessionOptions options,
+    std::shared_ptr<const Lfm2AudioAssets> assets,
+    std::shared_ptr<const engine::model_spec::ModelContract> contract)
+    : RuntimeSessionBase(
+          validate_session_setup(task, std::move(options), require_contract(contract), runtime::VoiceTaskKind::SpeechToSpeech)),
+      task_(std::move(task)),
+      assets_(std::move(assets)),
+      contract_(std::move(contract)),
+      components_(select_components(assets_, RuntimeSessionBase::options())),
+      output_(select_output_components(assets_, components_, RuntimeSessionBase::options())),
+      tokenizer_(components_->vocabulary),
+      features_(components_->encoder.n_mels, execution_context().config().threads),
+      encoder_(components_->mmproj, components_->encoder, execution_context()),
+      backbone_(
+          components_->model,
+          components_->backbone,
+          execution_context(),
+          components_->mmproj,
+          output_->depthformer.codebooks,
+          output_->depthformer.audio_vocab_size),
+      depthformer_(output_->vocoder, output_->depthformer, execution_context()),
+      detokenizer_(output_->detokenizer, output_->vocoder, output_->detokenizer_config, execution_context()),
+      language_(model_language(*components_)) {
+    components_->model->release_storage();
+    components_->mmproj->release_storage();
+    output_->vocoder->release_storage();
+    output_->detokenizer->release_storage();
+}
+
+Lfm2AudioChatSession::~Lfm2AudioChatSession() = default;
+
+std::string Lfm2AudioChatSession::family() const {
+    return kFamily;
+}
+
+runtime::VoiceTaskKind Lfm2AudioChatSession::task_kind() const {
+    return task_.task;
+}
+
+runtime::RunMode Lfm2AudioChatSession::run_mode() const {
+    return task_.mode;
+}
+
+void Lfm2AudioChatSession::prepare(const runtime::SessionPreparationRequest & request) {
+    (void)request;
+    mark_prepared();
+}
+
+Lfm2AudioChatSession::RequestOptions Lfm2AudioChatSession::parse_request(const runtime::TaskRequest & request) const {
+    runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
+    reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds", "text_chunk_mode", "text_chunk_size"}, "s2s");
+
+    if (const auto language = runtime::find_option(request.options, {"language"});
+        language.has_value() && *language != "auto" && *language != language_) {
+        throw std::runtime_error("this LFM2-Audio checkpoint speaks " + language_ + ", not " + *language);
+    }
+
+    if (request.voice.has_value() && request.voice->speaker.has_value()) {
+        throw std::runtime_error("LFM2-Audio s2s replies in the checkpoint's voice and takes no voice");
+    }
+
+    RequestOptions out;
+    out.system_prompt = kLfm2ChatSystemPrompt;
+    if (request.text_input.has_value() && !io::trim_ascii_whitespace(request.text_input->text).empty()) {
+        out.system_prompt = request.text_input->text;
+    }
+
+    out.reply.text_steps = output_->interleave.text_steps;
+    out.reply.audio_steps = output_->interleave.audio_steps;
+    out.reply.max_steps = runtime::parse_positive_i64_option(request.options, {"max_tokens"}, kDefaultReplySteps);
+
+    auto & sampling = out.reply.sampling;
+    sampling.temperature = runtime::parse_finite_float_option(request.options, {"temperature"}).value_or(sampling.temperature);
+    sampling.top_k = runtime::parse_int_option(request.options, {"top_k"}).value_or(static_cast<int>(sampling.top_k));
+    if (sampling.temperature < 0.0f || sampling.top_k < 0) {
+        throw std::runtime_error("LFM2-Audio temperature and top_k must not be negative");
+    }
+
+    sampling.seed = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
+    out.stream_frames_per_event =
+        runtime::parse_positive_i64_option(request.options, {"stream_frames_per_event"}, kDefaultStreamFramesPerEvent);
+    return out;
+}
+
+// The user's turn goes in the way ASR takes its audio, under the chat system
+// prompt (liquid-audio's demo, ChatState).
+std::unique_ptr<Lfm2InterleavedGenerator> Lfm2AudioChatSession::start_reply(
+    const RequestOptions & options, const runtime::AudioBuffer & audio) {
+    const auto features = features_.extract(lfm2_audio_mono_16k(audio));
+    auto embeddings = encoder_.encode(features);
+    auto prompt = make_lfm2_spoken_prompt(tokenizer_, options.system_prompt).with_audio(embeddings.tokens);
+    debug_dump("prompt_ids.i32", prompt.input_ids.data(), prompt.input_ids.size() * sizeof(int32_t));
+    debug::trace_log_scalar("lfm2_audio.session.audio_tokens", embeddings.tokens);
+
+    return std::make_unique<Lfm2InterleavedGenerator>(
+        backbone_, depthformer_, tokenizer_, std::move(prompt), std::move(embeddings), output_->depthformer.end_of_audio(), options.reply);
+}
+
+bool Lfm2AudioChatSession::reached_max_tokens() const {
+    return reached_max_tokens_;
+}
+
+runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & request) {
+    require_prepared("LFM2-Audio run()");
+    reached_max_tokens_ = false;
+    if (!request.audio_input.has_value()) {
+        throw std::runtime_error("LFM2-Audio s2s requires audio_input");
+    }
+
+    const auto wall_start = std::chrono::steady_clock::now();
+    const auto options = parse_request(request);
+    const auto generator = start_reply(options, *request.audio_input);
+
+    // The frame that ends the audio is a marker, not sound, and so is one that
+    // picked end-of-audio for another codebook (lfm2_speaks).
+    const int32_t end_of_audio = output_->depthformer.end_of_audio();
+    std::vector<int32_t> tokens;
+    std::vector<std::vector<int32_t>> frames;
+    while (auto step = generator->next()) {
+        if (step->codes.empty()) {
+            tokens.push_back(step->token);
+        } else if (lfm2_speaks(step->codes, end_of_audio)) {
+            frames.push_back(std::move(step->codes));
+        }
+    }
+
+    reached_max_tokens_ = check_reply_end(*generator, frames.size(), options.reply.max_steps);
+    debug::trace_log_scalar("lfm2_audio.session.text_tokens", static_cast<int64_t>(tokens.size()));
+    debug::trace_log_scalar("lfm2_audio.session.audio_frames", static_cast<int64_t>(frames.size()));
+
+    // A character the reply's bytes leave open stays in `bytes` and is
+    // dropped, as the stream drops it.
+    auto bytes = tokenizer_.decode(tokens);
+    runtime::TaskResult result;
+    result.audio_output = runtime::AudioBuffer{output_->detokenizer_config.sample_rate, 1, detokenizer_.decode(frames)};
+    result.text_output = runtime::Transcript{lfm2_take_text(bytes), language_};
+    debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
+    return result;
+}
+
+// The user's audio as it comes, then the reply: its frames, decoded as they
+// come by the detokenizer's stream, the ISTFT that turns their rows into final
+// samples, and its text.
+struct Lfm2AudioChatSession::Stream {
+    RequestOptions options;
+    runtime::AudioBuffer input;
+    std::unique_ptr<Lfm2InterleavedGenerator> generator;
+    bool done = false;
+    size_t frames = 0;
+    std::unique_ptr<Lfm2StreamingIstft> istft;
+    Lfm2StreamedText text;       // the reply's text, and what of it is in events
+    runtime::AudioBuffer audio;  // everything emitted
+};
+
+runtime::StreamingPolicy Lfm2AudioChatSession::streaming_policy() const {
+    runtime::StreamingPolicy policy;
+    policy.input = runtime::StreamingInputKind::AudioChunks;
+    policy.output = runtime::StreamingOutputKind::PullEvents;
+    // The user's turn is only collected, so the chunk size does not matter.
+    policy.preferred_audio_chunk_seconds = 0.1;
+    return policy;
+}
+
+void Lfm2AudioChatSession::start_stream(const runtime::TaskRequest & request) {
+    require_prepared("LFM2-Audio start_stream()");
+    reached_max_tokens_ = false;
+    if (task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("LFM2-Audio start_stream() needs a streaming session");
+    }
+
+    // The driver feeds the request's audio, if it has any, as chunks.
+    reset();
+    auto stream = std::make_unique<Stream>();
+    stream->options = parse_request(request);
+    stream->audio.sample_rate = output_->detokenizer_config.sample_rate;
+    stream->audio.channels = 1;
+    stream_ = std::move(stream);
+}
+
+runtime::StreamEvent Lfm2AudioChatSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
+    if (stream_ == nullptr) {
+        throw std::runtime_error("LFM2-Audio streaming has not been started");
+    }
+
+    auto & st = *stream_;
+    if (st.generator != nullptr || st.done) {
+        throw std::runtime_error("LFM2-Audio s2s takes no more audio once the reply has started");
+    }
+
+    if (chunk.sample_rate <= 0 || chunk.channels <= 0 || chunk.samples.size() % static_cast<size_t>(chunk.channels) != 0) {
+        throw std::runtime_error("LFM2-Audio audio chunks need a positive sample rate and channel count and whole frames");
+    }
+
+    if (st.input.samples.empty() && st.input.sample_rate == 0) {
+        st.input.sample_rate = chunk.sample_rate;
+        st.input.channels = chunk.channels;
+    } else if (chunk.sample_rate != st.input.sample_rate || chunk.channels != st.input.channels) {
+        throw std::runtime_error("LFM2-Audio audio chunk format changed during the stream");
+    }
+
+    st.input.samples.insert(st.input.samples.end(), chunk.samples.begin(), chunk.samples.end());
+    return {};
+}
+
+// The reply starts once the driver pulls, after the user's audio has all
+// come. Each event's samples are final (see the TTS stream) and its text is
+// what the reply wrote since the last event, in whole characters.
+std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
+    if (stream_ == nullptr) {
+        throw std::runtime_error("LFM2-Audio streaming has not been started");
+    }
+
+    auto & st = *stream_;
+    if (st.done) {
+        return std::nullopt;
+    }
+
+    const auto & config = output_->detokenizer_config;
+    if (st.generator == nullptr) {
+        if (st.input.samples.empty()) {
+            throw std::runtime_error("LFM2-Audio s2s streaming received no audio");
+        }
+
+        st.generator = start_reply(st.options, st.input);
+        detokenizer_.start_stream();
+        st.istft = std::make_unique<Lfm2StreamingIstft>(detokenizer_.window(), config.hop_length);
+    }
+
+    const int32_t end_of_audio = output_->depthformer.end_of_audio();
+    std::vector<std::vector<int32_t>> frames;
+    std::vector<int32_t> tokens;
+    bool reply_over = false;
+    while (frames.size() < static_cast<size_t>(st.options.stream_frames_per_event)) {
+        auto step = st.generator->next();
+        if (!step.has_value()) {
+            reply_over = true;
+            break;
+        }
+
+        if (step->codes.empty()) {
+            tokens.push_back(step->token);
+        } else if (lfm2_speaks(step->codes, end_of_audio)) {
+            frames.push_back(std::move(step->codes));
+        }
+    }
+
+    std::vector<float> samples;
+    if (!frames.empty()) {
+        st.frames += frames.size();
+        const auto rows = static_cast<int64_t>(frames.size()) * config.upsample;
+        samples = st.istft->push(detokenizer_.stream(frames), rows);
+    }
+
+    if (reply_over) {
+        reached_max_tokens_ = check_reply_end(*st.generator, st.frames, st.options.reply.max_steps);
+        const auto rest = st.istft->finish();
+        samples.insert(samples.end(), rest.begin(), rest.end());
+        st.done = true;
+    }
+
+    // Tokens are bytes, so their text adds up token by token, and a character
+    // split across tokens waits for the event that completes it. Bytes that
+    // make no character are U+FFFD, and one the reply leaves open (as a cut at
+    // max_tokens can) is left out, as offline.
+    runtime::StreamEvent event;
+    if (auto delta = st.text.add(tokenizer_.decode(tokens)); !delta.empty()) {
+        event.partial_text = runtime::Transcript{std::move(delta), language_};
+    }
+
+    if (!samples.empty()) {
+        runtime::AudioBuffer chunk{config.sample_rate, 1, std::move(samples)};
+        runtime::append_audio_buffer(st.audio, chunk);
+        event.audio_output = std::move(chunk);
+    }
+
+    return event;
+}
+
+void Lfm2AudioChatSession::set_stream_event_sink(runtime::StreamEventCallback sink) {
+    // As for TTS: the driver forwards what next_stream_event returns.
+    (void)sink;
+}
+
+runtime::TaskResult Lfm2AudioChatSession::finish_stream() {
+    if (stream_ == nullptr) {
+        throw std::runtime_error("LFM2-Audio streaming has not been started");
+    }
+
+    // The text the events carried: a stream finished before its reply is
+    // over leaves out a character the reply has not finished.
+    runtime::TaskResult result;
+    result.audio_output = std::move(stream_->audio);
+    result.text_output = runtime::Transcript{stream_->text.text(), language_};
+    reset();
+    return result;
+}
+
+void Lfm2AudioChatSession::reset() {
+    stream_.reset();
+}
+
+runtime::TaskResult Lfm2AudioChatSession::finalize() {
+    return {};
+}
+
 std::shared_ptr<runtime::IVoiceModelLoader> make_lfm2_audio_loader() {
     class LoadedModel final : public runtime::ILoadedVoiceModel {
     public:
@@ -678,8 +1012,12 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_lfm2_audio_loader() {
                 return std::make_unique<Lfm2AudioTtsSession>(task, options, assets_, contract_);
             }
 
+            if (task.task == runtime::VoiceTaskKind::SpeechToSpeech) {
+                return std::make_unique<Lfm2AudioChatSession>(task, options, assets_, contract_);
+            }
+
             if (task.task != runtime::VoiceTaskKind::Asr) {
-                throw std::runtime_error("LFM2-Audio supports the asr and tts tasks");
+                throw std::runtime_error("LFM2-Audio supports the asr, tts and s2s tasks");
             }
 
             return std::make_unique<Lfm2AudioSession>(task, options, assets_, contract_);

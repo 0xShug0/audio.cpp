@@ -495,8 +495,8 @@ void test_decode_cache_length() {
     require_eq(generate(45, 77), int64_t{121}, "generate: one just over twice the need is replaced");
     require_eq(generate(5, 1), int64_t{6}, "generate: one step past the prompt at least");
 
-    // start(), which TTS runs: the step budget rounded up to 256, whatever
-    // ran before.
+    // start(), which TTS and S2S run: the step budget rounded up to 256,
+    // whatever ran before.
     require_eq(generate(47, 512), int64_t{558}, "generate before start");
     require_eq(start(45, 511), int64_t{768}, "start: rounded up after a cache that fits");
     require_eq(start(47, 511), int64_t{768}, "start: the same rounded length");

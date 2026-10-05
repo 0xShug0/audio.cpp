@@ -455,6 +455,20 @@ void test_multibyte_transcript() {
         std::string("日日日"), "Japanese chunks");
 }
 
+// Bytes that can never make a character come out as U+FFFD, as liquid-audio
+// decodes them: here a Thai character left open before " ay", as S2S replies
+// in Thai script have it. Each chunk's transcript is decoded on its own. A
+// transcript that ends inside a character ends at the last whole one instead
+// (test_ends_inside_a_character).
+void test_ill_formed_transcript() {
+    const Package package("audiocpp_lfm2_audio_session_ill_formed_test");
+    write_package(package.root, "\xE0\xB8 ay");
+    auto session = open_session(package.root);
+    require_eq(transcribe(*session, request(tone(1.0))), std::string("\xEF\xBF\xBD ay"), "a character left open mid-text");
+    require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}})),
+        std::string("\xEF\xBF\xBD ay\xEF\xBF\xBD ay\xEF\xBF\xBD ay"), "chunks with a character left open mid-text");
+}
+
 // <|audio_start|> would switch liquid-audio to audio output, so it ends the
 // transcript just like <|im_end|>.
 void test_audio_start_stops() {
@@ -510,8 +524,11 @@ void test_loader(const Package & package) {
         "ASR runs offline only", "a streaming ASR session");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Tts, runtime::RunMode::Offline}, options); },
         "cannot pick the vocoder GGUF", "a TTS session without the vocoder file");
+    require_throws_with(
+        [&] { (void)model->create_task_session({runtime::VoiceTaskKind::SpeechToSpeech, runtime::RunMode::Streaming}, options); },
+        "cannot pick the vocoder GGUF", "a streaming s2s session without the vocoder file");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline}, options); },
-        "supports the asr and tts tasks", "another task");
+        "supports the asr, tts and s2s tasks", "another task");
 }
 
 }  // namespace
@@ -532,6 +549,7 @@ int main() {
         test_japanese_checkpoint();
         test_checkpoint_metadata();
         test_multibyte_transcript();
+        test_ill_formed_transcript();
         test_audio_start_stops();
         test_numeric_failure_is_an_error();
         test_loader(package);

@@ -4,7 +4,8 @@
 // backbone, prompted with the ASR system prompt from liquid-audio's README
 // and decoded greedily like LFM2AudioModel.generate_sequential
 // (model/lfm2_audio.py). TTS: text -> backbone -> depthformer, one audio
-// frame per step, -> detokenizer -> 24 kHz audio.
+// frame per step, -> detokenizer -> 24 kHz audio. S2S: audio in as for ASR,
+// a reply of text and audio out as for TTS, interleaved.
 
 #include "engine/community_models/lfm2_audio/asr_inputs.h"
 #include "engine/community_models/lfm2_audio/assets.h"
@@ -12,6 +13,7 @@
 #include "engine/community_models/lfm2_audio/backbone.h"
 #include "engine/community_models/lfm2_audio/depthformer.h"
 #include "engine/community_models/lfm2_audio/detokenizer.h"
+#include "engine/community_models/lfm2_audio/interleaved.h"
 #include "engine/community_models/lfm2_audio/tokenizer.h"
 #include "engine/community_models/lfm2_audio/tts.h"
 #include "engine/framework/text/chunking.h"
@@ -130,6 +132,70 @@ private:
     std::shared_ptr<const Lfm2AudioComponents> components_;
     std::shared_ptr<const Lfm2AudioOutputComponents> output_;
     Lfm2TextTokenizer tokenizer_;
+    Lfm2BackboneRuntime backbone_;
+    Lfm2DepthformerRuntime depthformer_;
+    Lfm2DetokenizerRuntime detokenizer_;
+    std::string language_;
+    std::unique_ptr<Stream> stream_;
+    bool reached_max_tokens_ = false;
+};
+
+// Speech-to-speech (s2s): a spoken user turn in, a reply of interleaved text
+// and audio out (LFM2AudioModel.generate_interleaved) under the system prompt
+// of liquid-audio's chat demo, which text_input replaces when given. Each
+// request is a new conversation. Streaming takes the user's audio in chunks
+// and, once it has all come, pulls the reply as events: the audio of the next
+// stream_frames_per_event frames and the text written since the last event.
+class Lfm2AudioChatSession final : public runtime::RuntimeSessionBase,
+                                   public runtime::IOfflineVoiceTaskSession,
+                                   public runtime::IStreamingVoiceTaskSession {
+public:
+    Lfm2AudioChatSession(
+        runtime::TaskSpec task,
+        runtime::SessionOptions options,
+        std::shared_ptr<const Lfm2AudioAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract);
+    ~Lfm2AudioChatSession() override;
+
+    std::string family() const override;
+    runtime::VoiceTaskKind task_kind() const override;
+    runtime::RunMode run_mode() const override;
+    void prepare(const runtime::SessionPreparationRequest & request) override;
+    runtime::TaskResult run(const runtime::TaskRequest & request) override;
+
+    runtime::StreamingPolicy streaming_policy() const override;
+    void start_stream(const runtime::TaskRequest & request) override;
+    std::optional<runtime::StreamEvent> next_stream_event() override;
+    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
+    runtime::TaskResult finish_stream() override;
+    void reset() override;
+    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
+    runtime::TaskResult finalize() override;
+
+    // Whether max_tokens cut the reply off, in the last run() or in the
+    // stream since start_stream().
+    [[nodiscard]] bool reached_max_tokens() const;
+
+private:
+    struct RequestOptions {
+        std::string system_prompt;
+        Lfm2InterleavedOptions reply;
+        int64_t stream_frames_per_event = 0;
+    };
+
+    struct Stream;
+
+    RequestOptions parse_request(const runtime::TaskRequest & request) const;
+    std::unique_ptr<Lfm2InterleavedGenerator> start_reply(const RequestOptions & options, const runtime::AudioBuffer & audio);
+
+    runtime::TaskSpec task_;
+    std::shared_ptr<const Lfm2AudioAssets> assets_;
+    std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    std::shared_ptr<const Lfm2AudioComponents> components_;
+    std::shared_ptr<const Lfm2AudioOutputComponents> output_;
+    Lfm2TextTokenizer tokenizer_;
+    Lfm2AudioFeatureExtractor features_;
+    Lfm2FastConformerEncoderRuntime encoder_;
     Lfm2BackboneRuntime backbone_;
     Lfm2DepthformerRuntime depthformer_;
     Lfm2DetokenizerRuntime detokenizer_;

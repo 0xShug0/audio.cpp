@@ -315,6 +315,22 @@ Lfm2FastConformerEncoderConfig read_encoder_config(const GgufMetadata & meta, co
 constexpr int64_t kDetokenizerUpsample = 6;
 constexpr int64_t kDetokenizerHopLength = 320;
 constexpr int kDetokenizerSampleRate = 24000;
+// liquid-audio's config.json values for the English checkpoint, whose vocoder
+// GGUF does not record them; the Japanese vocoder records its own 6 and 9.
+constexpr int64_t kInterleavedTextSteps = 6;
+constexpr int64_t kInterleavedAudioSteps = 12;
+
+Lfm2InterleaveConfig read_interleave_config(const GgufMetadata & meta) {
+    Lfm2InterleaveConfig config;
+    config.text_steps = meta.has("interleaved_n_text") ? meta.require_int("interleaved_n_text") : kInterleavedTextSteps;
+    config.audio_steps = meta.has("interleaved_n_audio") ? meta.require_int("interleaved_n_audio") : kInterleavedAudioSteps;
+    if (config.text_steps <= 0 || config.audio_steps <= 0) {
+        throw std::runtime_error("LFM2-Audio vocoder GGUF has empty interleaved blocks");
+    }
+
+    return config;
+}
+
 constexpr float kDepthformerNormEps = 1e-5f;
 constexpr float kDepthformerRopeTheta = 1e6f;
 
@@ -541,6 +557,7 @@ std::shared_ptr<const Lfm2AudioOutputComponents> load_lfm2_audio_output_componen
     out->vocoder = assets::open_tensor_source(out->vocoder_path);
     out->detokenizer = assets::open_tensor_source(out->detokenizer_path);
     out->depthformer = read_depthformer_config(vocoder_meta, *out->vocoder, components.backbone);
+    out->interleave = read_interleave_config(vocoder_meta);
 
     // Generated frames go back into the backbone through the mmproj's audio
     // embedding (LFM2AudioModel.audio_embedding), one table per codebook.

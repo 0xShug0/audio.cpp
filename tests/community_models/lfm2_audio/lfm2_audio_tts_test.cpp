@@ -115,7 +115,19 @@ void test_istft_inverts_stft() {
         const auto rest = stream.finish();
         streamed.insert(streamed.end(), rest.begin(), rest.end());
         require(streamed == out, "ISTFT in pieces of " + std::to_string(piece) + " rows gives the one-call samples");
+        // finish() emitted the samples a later row would add to.
+        require_throws_with([&] { (void)stream.push(log_magnitude_phase, rows); }, "no rows after finish", "rows after finish()");
     }
+}
+
+// A frame speaks unless a codebook picked end-of-audio: the first, which ends
+// the audio, or another, which liquid-audio's demo skips.
+void test_speaking_frames() {
+    const int32_t end = 2048;
+    require(lfm2::lfm2_speaks({1, 2, 3, 4, 5, 6, 7, 2047}, end), "a frame of codes speaks");
+    require(!lfm2::lfm2_speaks({end, end, end, end, end, end, end, end}, end), "the frame that ends the audio");
+    require(!lfm2::lfm2_speaks({end, 2, 3, 4, 5, 6, 7, 8}, end), "end-of-audio first");
+    require(!lfm2::lfm2_speaks({1, 2, 3, end, 5, 6, 7, 8}, end), "end-of-audio for another codebook");
 }
 
 }  // namespace
@@ -124,6 +136,7 @@ int main() {
     try {
         test_voices();
         test_istft_inverts_stft();
+        test_speaking_frames();
         std::cout << "lfm2_audio_tts_test: PASS\n";
         return 0;
     } catch (const std::exception & error) {

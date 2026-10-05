@@ -2,12 +2,13 @@
   "schema_version": 1,
   "family": "lfm2_audio",
   "display_name": "LFM2.5-Audio",
-  "description": "Liquid AI's LFM2.5-Audio, loaded from the llama.cpp-format GGUF components Liquid publishes. ASR: a FastConformer encoder feeds an LFM2 hybrid short-conv/attention backbone. TTS: the backbone generates audio frames through a depthformer, and an LFM2 detokenizer and ISTFT turn them into 24 kHz audio.",
+  "description": "Liquid AI's LFM2.5-Audio, loaded from the llama.cpp-format GGUF components Liquid publishes. ASR: a FastConformer encoder feeds an LFM2 hybrid short-conv/attention backbone. TTS: the backbone generates audio frames through a depthformer, and an LFM2 detokenizer and ISTFT turn them into 24 kHz audio. S2S: a spoken question goes in as for ASR, and the reply comes out as interleaved text and audio.",
   "category": "asr",
   "status": "experimental",
   "tasks": [
     "asr",
-    "tts"
+    "tts",
+    "s2s"
   ],
   "modes": [
     "offline",
@@ -38,10 +39,9 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "ASR: transcript tokens per audio chunk. TTS: audio frames (80 ms each) per text chunk. A transcript or a text chunk's speech that reaches it is cut off there, with a warning on stderr.",
+        "description": "ASR: transcript tokens per audio chunk, 512 by default. TTS: audio frames (80 ms each) per text chunk, 512 by default. S2S: text tokens and audio frames of the reply together, 1024 by default. A transcript, a text chunk's speech or a reply that reaches it is cut off there, with a warning on stderr.",
         "required": false,
-        "min": 1,
-        "default": 512
+        "min": 1
       },
       {
         "name": "audio_chunk_mode",
@@ -67,23 +67,21 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "TTS: audio code sampling temperature; 0 picks the most likely code.",
+        "description": "TTS and S2S: audio code sampling temperature, 0.8 by default for TTS and 1.0 for S2S; 0 picks the most likely code.",
         "required": false,
-        "min": 0,
-        "default": 0.8
+        "min": 0
       },
       {
         "name": "top_k",
         "type": "int",
-        "description": "TTS: sample audio codes from the k most likely; 0 keeps all, 1 is greedy.",
+        "description": "TTS and S2S: sample audio codes from the k most likely, 64 by default for TTS and 4 for S2S; 0 keeps all, 1 is greedy.",
         "required": false,
-        "min": 0,
-        "default": 64
+        "min": 0
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "TTS: sampling seed; omitted requests choose a random seed. Text chunk i uses seed + i.",
+        "description": "TTS and S2S: sampling seed; omitted requests choose a random seed. TTS text chunk i uses seed + i.",
         "required": false,
         "min": 0
       },
@@ -110,7 +108,7 @@
       {
         "name": "stream_frames_per_event",
         "type": "int",
-        "description": "TTS streaming: audio frames (80 ms each) per event; each event's audio is final. ASR runs offline only.",
+        "description": "TTS and S2S streaming: audio frames (80 ms each) per event; each event's audio is final. ASR runs offline only.",
         "required": false,
         "min": 1,
         "default": 1
@@ -311,7 +309,7 @@
     "docs": [
       "docs/community_models/lfm2_audio.md"
     ],
-    "summary": "LFM2.5-Audio transcription and speech (English and Japanese checkpoints) from Liquid's published GGUFs.",
+    "summary": "LFM2.5-Audio transcription, speech and spoken chat (English and Japanese checkpoints) from Liquid's published GGUFs.",
     "builtin_voices": [
       "us_male",
       "us_female",

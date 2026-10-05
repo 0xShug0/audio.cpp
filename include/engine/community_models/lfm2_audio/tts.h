@@ -8,10 +8,12 @@
 #include "engine/community_models/lfm2_audio/backbone.h"
 #include "engine/community_models/lfm2_audio/depthformer.h"
 #include "engine/community_models/lfm2_audio/tokenizer.h"
+#include "engine/framework/sampling/hf_sampler.h"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -39,13 +41,38 @@ struct Lfm2AudioSampling {
     uint64_t seed = 0;
 };
 
+// Picks the codes of audio frames with one random stream per sampler.
+class Lfm2CodeSampler {
+public:
+    explicit Lfm2CodeSampler(const Lfm2AudioSampling & sampling);
+
+    // May change `logits`.
+    int32_t pick(std::vector<float> & logits);
+
+private:
+    bool greedy_;
+    sampling::HfSamplingOptions options_;
+    sampling::HfSampler sampler_;
+    sampling::HfSamplerScratch scratch_;
+    std::mt19937 rng_;
+};
+
+// The first of the largest logits, like torch.argmax. Throws on non-finite
+// logits.
+int32_t lfm2_greedy(const std::vector<float> & logits);
+
+// Whether a frame has sound: no codebook picked end-of-audio. The frame that
+// ends the audio has it first; liquid-audio's demo also skips a frame that
+// picked it for another codebook, which the detokenizer has no code for.
+bool lfm2_speaks(const std::vector<int32_t> & codes, int32_t end_of_audio);
+
 struct Lfm2SpeechOptions {
     int64_t max_frames = 0;
     Lfm2AudioSampling sampling;
 };
 
 struct Lfm2Speech {
-    std::vector<std::vector<int32_t>> frames;  // without the end-of-audio frame
+    std::vector<std::vector<int32_t>> frames;  // the frames that speak (lfm2_speaks)
     std::vector<int32_t> text_tokens;          // any text before <|audio_start|>
     bool ended = false;                        // false when max_frames ran out
 };
@@ -69,9 +96,11 @@ public:
     Lfm2SpeechGenerator(const Lfm2SpeechGenerator &) = delete;
     Lfm2SpeechGenerator & operator=(const Lfm2SpeechGenerator &) = delete;
 
-    // The next frame, or nothing once the speech has ended or max_frames ran
-    // out (ended() tells which). The first call runs the prompt. Throws if the
-    // turn ends with no speech.
+    // The next frame that speaks, or nothing once the speech has ended or
+    // max_frames ran out (ended() tells which). A frame with end-of-audio for
+    // another codebook still goes back into the backbone and counts against
+    // max_frames, but is not returned. The first call runs the prompt, and
+    // throws if the turn ends with no speech.
     std::optional<std::vector<int32_t>> next_frame();
 
     [[nodiscard]] bool ended() const;

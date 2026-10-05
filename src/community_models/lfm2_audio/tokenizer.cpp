@@ -2,6 +2,8 @@
 
 #include "bpe-core.h"
 
+#include <algorithm>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -66,6 +68,23 @@ std::shared_ptr<const vendor::BpeVocabulary> build_vocabulary(const Lfm2TextVoca
     return vocab;
 }
 
+// The well-formed UTF-8 byte sequences (Unicode Table 3-7) by the range of
+// their first byte: the range of the second byte, and the length. Any further
+// bytes are 80..BF.
+struct Utf8Sequence {
+    unsigned char first_low;
+    unsigned char first_high;
+    unsigned char second_low;
+    unsigned char second_high;
+    size_t length;
+};
+
+constexpr Utf8Sequence kWellFormedUtf8[] = {
+    {0x00, 0x7F, 0x00, 0x00, 1}, {0xC2, 0xDF, 0x80, 0xBF, 2}, {0xE0, 0xE0, 0xA0, 0xBF, 3},
+    {0xE1, 0xEC, 0x80, 0xBF, 3}, {0xED, 0xED, 0x80, 0x9F, 3}, {0xEE, 0xEF, 0x80, 0xBF, 3},
+    {0xF0, 0xF0, 0x90, 0xBF, 4}, {0xF1, 0xF3, 0x80, 0xBF, 4}, {0xF4, 0xF4, 0x80, 0x8F, 4},
+};
+
 }  // namespace
 
 Lfm2TextTokenizer::Lfm2TextTokenizer(const Lfm2TextVocabulary & vocabulary) : vocab_(build_vocabulary(vocabulary)) {
@@ -110,6 +129,49 @@ int32_t Lfm2TextTokenizer::require_token_id(const std::string & token) const {
 bool Lfm2TextTokenizer::is_control_token(int32_t token_id) const {
     const auto it = vocab_->id_to_token.find(token_id);
     return it != vocab_->id_to_token.end() && (it->second.attr & vendor::TOKEN_ATTR_CONTROL) != 0;
+}
+
+std::string lfm2_take_text(std::string & bytes) {
+    std::string text;
+    size_t pos = 0;
+    while (pos < bytes.size()) {
+        const auto first = static_cast<unsigned char>(bytes[pos]);
+        const auto * sequence = std::find_if(std::begin(kWellFormedUtf8), std::end(kWellFormedUtf8),
+            [&](const Utf8Sequence & row) { return first >= row.first_low && first <= row.first_high; });
+        const size_t needed = sequence == std::end(kWellFormedUtf8) ? 0 : sequence->length;
+
+        // How much of a well-formed sequence starts here: at least this byte,
+        // which is the maximal subpart when no sequence starts with it.
+        size_t length = 1;
+        while (length < needed && pos + length < bytes.size()) {
+            const auto byte = static_cast<unsigned char>(bytes[pos + length]);
+            const bool fits = length == 1 ? byte >= sequence->second_low && byte <= sequence->second_high : (byte & 0xC0) == 0x80;
+            if (!fits) {
+                break;
+            }
+
+            ++length;
+        }
+
+        if (length == needed) {
+            text.append(bytes, pos, length);
+        } else if (needed != 0 && pos + length == bytes.size()) {
+            break;  // the next bytes may finish it
+        } else {
+            text += "\xEF\xBF\xBD";
+        }
+
+        pos += length;
+    }
+
+    bytes.erase(0, pos);
+    return text;
+}
+
+std::string Lfm2StreamedText::add(const std::string & bytes) {
+    bytes_ += bytes;
+    text_ += lfm2_take_text(bytes_);
+    return partials_.publish(text_);
 }
 
 }  // namespace engine::community_models::lfm2_audio

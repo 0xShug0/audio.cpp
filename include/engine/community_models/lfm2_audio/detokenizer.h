@@ -44,6 +44,15 @@ public:
     // Mono audio at config.sample_rate, hop_length samples per spectrum row.
     std::vector<float> decode(const std::vector<std::vector<int32_t>> & frames);
 
+    // A stream takes frames in order and returns the rows of each call's
+    // frames as spectrum() gives them for all frames so far. Instead of
+    // running the frames before them again, it carries each layer's state
+    // from frame to frame: the attention layers' last sliding_window - 1 keys
+    // and values and the short-conv layers' last inputs. start_stream()
+    // begins a new one; one stream runs at a time.
+    void start_stream();
+    std::vector<float> stream(const std::vector<std::vector<int32_t>> & frames);
+
     [[nodiscard]] const std::vector<float> & window() const;
     [[nodiscard]] const Lfm2DetokenizerConfig & config() const;
 
@@ -58,7 +67,8 @@ private:
 // framework's Vocos ISTFT, the magnitude is not clamped, as in the reference.
 //
 // Rows can come in pieces: a sample is final once every window over it has
-// been added, and pieces give the same samples as one call.
+// been added, and pieces give the same samples as one call. No rows can
+// follow finish().
 class Lfm2StreamingIstft {
 public:
     Lfm2StreamingIstft(std::vector<float> window, int64_t hop_length);
@@ -79,6 +89,7 @@ private:
     int64_t rows_ = 0;
     int64_t emitted_ = 0;
     int64_t base_ = 0;  // overlap-add index of folded_[0]
+    bool finished_ = false;
     std::vector<float> folded_;
     std::vector<float> envelope_;
 };

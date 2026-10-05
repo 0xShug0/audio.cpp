@@ -71,9 +71,7 @@ Lfm2Prompt Lfm2AsrPrompt::with_audio(int64_t audio_tokens) const {
     return out;
 }
 
-Lfm2AsrPrompt make_lfm2_asr_prompt(const Lfm2TextTokenizer & tokenizer, const std::string & language) {
-    const auto system_prompt = asr_system_prompt(language);
-
+Lfm2AsrPrompt make_lfm2_spoken_prompt(const Lfm2TextTokenizer & tokenizer, const std::string & system_prompt) {
     // The pieces below spell these; without them the tokenizer would quietly
     // split the markup into bytes.
     for (const char * token : {"<|startoftext|>", "<|im_start|>", "<|im_end|>"}) {
@@ -94,6 +92,12 @@ Lfm2AsrPrompt make_lfm2_asr_prompt(const Lfm2TextTokenizer & tokenizer, const st
     for (const char * piece : {"<|im_end|>\n", "<|im_start|>assistant\n"}) {
         append(out.suffix, tokenizer.encode(piece));
     }
+
+    return out;
+}
+
+Lfm2AsrPrompt make_lfm2_asr_prompt(const Lfm2TextTokenizer & tokenizer, const std::string & language) {
+    auto out = make_lfm2_spoken_prompt(tokenizer, asr_system_prompt(language));
 
     // <|audio_start|> would switch generate_sequential to audio output, which
     // ASR does not produce.

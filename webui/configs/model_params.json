@@ -199,6 +199,16 @@
     {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "default": 200, "minimum": 32, "step": 1, "precision": 0, "info_en": "Codepoints of text per spoken turn."}
   ],
 
+  "lfm2-audio-s2s": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Audio code sampling temperature; 0 is greedy."},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0}
+  ],
+
+  "lfm2-audio-jp-s2s": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Audio code sampling temperature; 0 is greedy."},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0}
+  ],
+
   "lfm2_audio": [
     {"name": "audio_chunk_mode", "type": "choice", "label": "audio_chunk_mode", "default": "auto", "choices": ["auto", "vad", "fixed", "none"], "info_en": "auto keeps audio up to audio_chunk_seconds whole and splits longer audio at pauses; none transcribes it in one pass, which the model handles up to about a minute."},
     {"name": "audio_chunk_seconds", "type": "number", "label": "audio_chunk_seconds", "default": 30, "minimum": 1, "step": 1},

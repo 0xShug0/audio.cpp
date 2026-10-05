@@ -2337,6 +2337,7 @@ audiocpp_add_model(lfm2_audio
         src/community_models/lfm2_audio/depthformer.cpp
         src/community_models/lfm2_audio/detokenizer.cpp
         src/community_models/lfm2_audio/tts.cpp
+        src/community_models/lfm2_audio/interleaved.cpp
         src/community_models/lfm2_audio/session.cpp
     INCLUDES
         engine/community_models/lfm2_audio/session.h
@@ -3646,6 +3647,19 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_test(NAME test_lfm2_audio_tts COMMAND test_lfm2_audio_tts)
             # Needs the lfm2_audio_1_5b_f16 package in models/; exits 125 (skip) without it.
             set_tests_properties(test_lfm2_audio_tts PROPERTIES
+                SKIP_RETURN_CODE 125
+                TIMEOUT 900
+            )
+
+            add_executable(test_lfm2_audio_s2s tests/lfm2_audio/test_lfm2_audio_s2s.cpp)
+            target_compile_definitions(test_lfm2_audio_s2s PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+            target_link_libraries(test_lfm2_audio_s2s PRIVATE engine_runtime ggml)
+            if (ENGINE_ENABLE_OPENMP)
+                target_link_libraries(test_lfm2_audio_s2s PRIVATE OpenMP::OpenMP_CXX)
+            endif()
+            add_test(NAME test_lfm2_audio_s2s COMMAND test_lfm2_audio_s2s)
+            # Needs the lfm2_audio_1_5b_f16 package in models/; exits 125 (skip) without it.
+            set_tests_properties(test_lfm2_audio_s2s PROPERTIES
                 SKIP_RETURN_CODE 125
                 TIMEOUT 900
             )

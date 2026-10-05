@@ -336,6 +336,22 @@ void check_stage_numbers(
 
     checks.expect_close(chunk_difference, 0.0, 0.1, "chunked detokenizer against one pass, largest difference");
 
+    // A stream decodes a frame at a time from the state the frames before it
+    // left; that must give the one-pass rows too.
+    one_pass.start_stream();
+    std::vector<float> streamed_head;
+    for (const auto & frame : long_frames) {
+        const auto rows = one_pass.stream({frame});
+        streamed_head.insert(streamed_head.end(), rows.begin(), rows.end());
+    }
+
+    double stream_difference = streamed_head.size() == one_pass_head.size() ? 0.0 : INFINITY;
+    for (size_t i = 0; i < std::min(streamed_head.size(), one_pass_head.size()); ++i) {
+        stream_difference = std::max(stream_difference, std::fabs(static_cast<double>(streamed_head[i]) - one_pass_head[i]));
+    }
+
+    checks.expect_close(stream_difference, 0.0, 0.1, "detokenizer stream against one pass, largest difference");
+
     const auto wave = detokenizer.decode(kFrames);
     checks.expect(wave.size() == kWaveSamples, "waveform length", std::to_string(wave.size()));
     if (wave.size() == kWaveSamples) {
@@ -410,6 +426,7 @@ void check_round_trip(
     const std::filesystem::path & spec_override,
     const std::string & model_gguf,
     const engine::core::BackendConfig & backend,
+    bool full_precision,
     Checks & checks) {
     auto registry = engine::runtime::make_default_registry();
     engine::runtime::ModelLoadRequest load_request;
@@ -543,9 +560,19 @@ void check_round_trip(
                 energy += static_cast<double>(greedy_speech[i]) * greedy_speech[i];
             }
 
-            // Measured with F16: 1.2e-4 on Metal, 3e-4 to 6e-4 on CPUs, 5.7e-3 on
-            // CUDA, whose kernels change with the graph size.
-            checks.expect_close(std::sqrt(difference / energy), 0.0, 0.02, "streamed against offline speech, relative RMS difference");
+            // Measured with F16: 5.5e-4 on an x86 CPU, 1.7e-3 on the M3 Ultra's
+            // CPU, 7.2e-4 on Metal, 5.4e-3 on CUDA, whose cuBLAS accumulates the
+            // offline products in half precision. Quantized packages round
+            // activations to 8 bits on the CPU and CUDA, and graphs of other
+            // sizes round them differently: on CUDA 2.2e-2 with Q8_0 and 6.0e-2
+            // with Q4_0. The stream's six-row Q4_0 matmuls run ggml-cuda's MMVQ
+            // kernel, whose dot product makes the rounding error two to three
+            // times larger than in the kernel offline decoding uses. They get
+            // the S2S test's 0.3, five times the Q4_0 number on this text
+            // (other texts reach 0.32 on CUDA, see the streaming docs) and
+            // still under a stream that lost its context: 1.2, or 0.70 to 0.81
+            // when it restarts every 5 frames.
+            checks.expect_close(std::sqrt(difference / energy), 0.0, full_precision ? 0.02 : 0.3, "streamed against offline speech, relative RMS difference");
         }
 
         // Cut off at max_tokens, the stream is the offline cut speech. Its
@@ -605,6 +632,9 @@ int main(int argc, char ** argv) {
     backend.type = backend_name == "cpu" ? engine::core::BackendType::Cpu : engine::core::BackendType::BestAvailable;
     backend.threads = threads > 0 ? threads : 1;
 
+    // Quantized weights move the stage numbers and the stream's arithmetic by
+    // design; their speech is still checked.
+    const bool full_precision = model_gguf.find("-F16.") != std::string::npos || model_gguf.find("-F32.") != std::string::npos;
     Checks checks;
     try {
         {
@@ -612,9 +642,6 @@ int main(int argc, char ** argv) {
             const auto components = lfm2::load_lfm2_audio_components(*assets, model_gguf, "");
             const auto output = lfm2::load_lfm2_audio_output_components(*assets, *components, "", "");
             check_prompt(*components, checks);
-            // Quantized weights move these numbers by design; their speech is
-            // still checked below.
-            const bool full_precision = model_gguf.find("-F16.") != std::string::npos || model_gguf.find("-F32.") != std::string::npos;
             if (full_precision) {
                 check_stage_numbers(*components, *output, backend, checks);
             } else {
@@ -622,7 +649,7 @@ int main(int argc, char ** argv) {
             }
         }
 
-        check_round_trip(model_dir, spec_override, model_gguf, backend, checks);
+        check_round_trip(model_dir, spec_override, model_gguf, backend, full_precision, checks);
     } catch (const std::exception & error) {
         std::cerr << "FAIL: " << error.what() << "\n";
         return kExitFail;

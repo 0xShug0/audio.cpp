@@ -134,6 +134,13 @@ std::shared_ptr<const Lfm2AudioComponents> load_lfm2_audio_components(
     const std::string & model_gguf,
     const std::string & mmproj_gguf);
 
+// Interleaved generation alternates blocks of this many text tokens and
+// audio frames.
+struct Lfm2InterleaveConfig {
+    int64_t text_steps = 0;
+    int64_t audio_steps = 0;
+};
+
 // The components speech output adds: the vocoder GGUF (depthformer and the
 // detokenizer's code embedding) and the detokenizer GGUF. The backbone's
 // audio-frame input embedding stays in the mmproj file.
@@ -144,6 +151,7 @@ struct Lfm2AudioOutputComponents {
     std::shared_ptr<const assets::TensorSource> detokenizer;
     Lfm2DepthformerConfig depthformer;
     Lfm2DetokenizerConfig detokenizer_config;
+    Lfm2InterleaveConfig interleave;
 };
 
 // An empty name means "vocoder-<backbone file>" / "tokenizer-<backbone file>",
