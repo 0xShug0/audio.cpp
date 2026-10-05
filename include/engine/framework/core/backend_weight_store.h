@@ -158,6 +158,17 @@ public:
         if (buffer_ != nullptr) {
             throw std::runtime_error(name_ + " weights were already uploaded");
         }
+        // ggml's graph builder assigns names to unnamed leaves. Complete this
+        // metadata before publication so concurrent graphs only read shared
+        // weight headers. Preserve names explicitly provided by callers.
+        for (size_t i = 0; i < pending_.size(); ++i) {
+            auto & upload = pending_[i];
+            if (ggml_get_name(upload.tensor)[0] == '\0') {
+                const auto tensor_name = upload.name.empty()
+                    ? name_ + ".weight_" + std::to_string(i) : upload.name;
+                ggml_set_name(upload.tensor, tensor_name.c_str());
+            }
+        }
         buffer_ = buffer_type_ != nullptr
             ? ggml_backend_alloc_ctx_tensors_from_buft(ctx_.get(), buffer_type_)
             : ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);

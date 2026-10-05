@@ -12,6 +12,11 @@ guard. These guards protect construction only; they do not serialize uploads,
 graph execution, requests, or backend lifetimes. `backend_initialization_test`
 and its Vulkan variant cover cold creation, shared device weights and retry.
 
+`BackendWeightStore::upload` also finalizes empty tensor names before sharing
+the weights, preserving caller-provided names. ggml otherwise names unnamed
+leaves during graph traversal, which can race between concurrent graphs. The
+initialization regression checks stable metadata and 128 parallel computations.
+
 Configure with `-DENGINE_BUILD_TESTS=ON -DAUDIOCPP_SLOT_VALIDATION=ON`. An optional
 `-DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=/absolute/path/to/fixture.h` selects
 temporary admission tables. Both options default off/empty; a capacity header

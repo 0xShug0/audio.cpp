@@ -81,13 +81,20 @@ int main(int argc, char ** argv) {
         std::vector<float> values(32 * 32);
         for (int i = 0; i < 32 * 32; ++i) values[i] = float(i % 7 - 3) * 0.125F;
         auto matrix = store->make_f32(engine::core::TensorShape::from_dims({32, 32}), std::move(values));
+        auto named = store->make_f32(engine::core::TensorShape::from_dims({1}), {1.0F});
+        ggml_set_name(named.tensor, "caller-provided-weight");
         store->upload();
+        const std::string matrix_name = ggml_get_name(matrix.tensor);
+        if (matrix_name.empty() || std::string(ggml_get_name(named.tensor)) != "caller-provided-weight")
+            throw std::runtime_error("shared weight metadata was not finalized before publication");
         std::vector<std::future<void>> jobs;
         for (auto & context : contexts) {
             auto * execution = context.get();
             jobs.push_back(std::async(std::launch::async, [&, execution] { infer(*execution, matrix.tensor); }));
         }
         for (auto & job : jobs) job.get();
+        if (std::string(ggml_get_name(matrix.tensor)) != matrix_name)
+            throw std::runtime_error("parallel graph construction changed shared weight metadata");
         store.reset(); // Release uploaded weights before the backend owners.
         contexts.clear();
         ExecutionContext retry(config);

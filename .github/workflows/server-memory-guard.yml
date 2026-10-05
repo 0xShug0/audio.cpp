@@ -14,6 +14,7 @@ on:
       - "src/framework/core/host_memory.cpp"
       - "include/engine/framework/core/backend.h"
       - "src/framework/core/backend.cpp"
+      - "include/engine/framework/core/backend_weight_store.h"
       - "tests/unittests/test_backend_initialization.cpp"
       - "tests/unittests/test_server_slot_validation.cpp"
       - "tests/unittests/slot_validation_admission_fixture.h"
