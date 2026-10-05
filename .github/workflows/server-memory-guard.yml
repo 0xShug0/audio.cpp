@@ -57,7 +57,7 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DAUDIOCPP_VERSION=ci \
-            -DAUDIOCPP_SLOT_VALIDATION=ON -DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h -DENGINE_BUILD_TESTS=ON \
+            -DAUDIOCPP_SLOT_VALIDATION=ON "-DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h" -DENGINE_BUILD_TESTS=ON \
             -DENGINE_BUILD_EXTENDED_TESTS=ON \
             -DENGINE_ENABLE_OPENMP=OFF \
             -DENGINE_ENABLE_CUDA=OFF \
@@ -72,7 +72,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_CXX_FLAGS="/utf-8 /EHsc" `
             -DAUDIOCPP_VERSION=ci `
-            -DAUDIOCPP_SLOT_VALIDATION=ON -DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h -DENGINE_BUILD_TESTS=ON `
+            -DAUDIOCPP_SLOT_VALIDATION=ON "-DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h" -DENGINE_BUILD_TESTS=ON `
             -DENGINE_BUILD_EXTENDED_TESTS=ON `
             -DENGINE_ENABLE_OPENMP=OFF `
             -DENGINE_ENABLE_CUDA=OFF `
@@ -134,7 +134,7 @@ jobs:
             -DCMAKE_C_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
             -DCMAKE_CXX_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${{ matrix.sanitizer }}" \
-            -DAUDIOCPP_SLOT_VALIDATION=ON -DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXTENDED_TESTS=ON \
+            -DAUDIOCPP_SLOT_VALIDATION=ON "-DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h" -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXTENDED_TESTS=ON \
             -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF \
             -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
             -DENGINE_ENABLE_NATIVE_CPU=OFF -DENGINE_ENABLE_LLAMAFILE=OFF \
