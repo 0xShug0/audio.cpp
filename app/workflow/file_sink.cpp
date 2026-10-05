@@ -161,10 +161,37 @@ std::optional<std::filesystem::path> suffixed_json_path(
     return base->parent_path() / (base->stem().string() + "_" + request_id + base->extension().string());
 }
 
+// FIFOs, /dev/stdout and other char/socket special files can't go through
+// the temp-file + rename dance below: rename() would unlink the special
+// file and replace it with a plain regular file, so nothing ever reaches
+// whatever has the other end open (e.g. `aplay` reading from a pipe).
+// WavSink::write() itself is a single sequential pass with no seeking
+// (the RIFF/data sizes are computed up front from the in-memory buffer),
+// so it's safe to write straight to a special file.
+bool is_special_output_target(const std::filesystem::path & path) {
+    std::error_code ec;
+    const auto status = std::filesystem::status(path, ec);
+    if (ec) {
+        return false;
+    }
+    switch (status.type()) {
+        case std::filesystem::file_type::fifo:
+        case std::filesystem::file_type::character:
+        case std::filesystem::file_type::socket:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void write_wav_output(
     const std::filesystem::path & path,
     const engine::audio::AudioBuffer & audio,
     const engine::audio::WavWriteOptions & wav_options) {
+    if (is_special_output_target(path)) {
+        engine::audio::WavSink(wav_options).write(path, audio);
+        return;
+    }
     if (!path.parent_path().empty()) {
         std::filesystem::create_directories(path.parent_path());
     }
