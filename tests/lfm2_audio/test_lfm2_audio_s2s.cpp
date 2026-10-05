@@ -91,7 +91,8 @@ const Top kFirstFrame[] = {
     {1335, 17.07018f, 15.24617f}, {1350, 19.51537f, 9.71587f}, {666, 16.72897f, 9.72017f}, {1630, 17.04280f, 13.54772f},
 };
 
-// The first audio block, greedy. Frame 10 holds a near-tie (0.015).
+// The first audio block, greedy. Frame 10 holds a near-tie in codebook 2
+// (0.015).
 const std::vector<std::vector<int32_t>> kAudioBlock = {
     {1049, 811, 1626, 290, 1335, 1350, 666, 1630}, {127, 1470, 457, 1422, 481, 1509, 1978, 1533},
     {1880, 91, 1029, 1229, 457, 1030, 43, 1177},   {972, 1050, 1697, 104, 340, 1030, 825, 1744},
@@ -101,8 +102,27 @@ const std::vector<std::vector<int32_t>> kAudioBlock = {
     {1140, 875, 325, 1478, 143, 1556, 1603, 1691}, {1268, 257, 1365, 1414, 35, 565, 1700, 158},
 };
 
-// Greedy picks are compared until the reference's top two come closer than
-// this; past such a near-tie the weights' rounding decides.
+// For each codebook of kAudioBlock, how far the reference's best logit is
+// above its runner-up.
+const float kAudioBlockGaps[][8] = {
+    {12.7751f, 2.8806f, 6.8310f, 5.8118f, 1.8240f, 9.7995f, 7.0088f, 3.4951f},
+    {13.0188f, 10.2181f, 11.6306f, 10.7541f, 5.4512f, 10.3253f, 6.8596f, 11.1509f},
+    {12.1370f, 2.4994f, 5.3629f, 3.7745f, 10.0284f, 10.6857f, 9.5876f, 0.5420f},
+    {11.2426f, 2.2192f, 1.4951f, 9.6916f, 0.6387f, 3.2996f, 1.0865f, 1.1269f},
+    {11.1424f, 5.8873f, 5.0426f, 4.4161f, 8.9407f, 2.3557f, 5.2584f, 7.5267f},
+    {9.5922f, 9.1646f, 6.4173f, 2.1134f, 8.7944f, 7.4509f, 4.9751f, 7.0356f},
+    {10.6470f, 8.5040f, 4.0465f, 9.5790f, 9.1019f, 0.6501f, 8.9544f, 5.5013f},
+    {9.1969f, 10.5134f, 2.2397f, 8.8024f, 8.3988f, 2.3821f, 7.6328f, 6.7684f},
+    {10.4493f, 10.6883f, 8.4089f, 0.2643f, 5.0878f, 9.7272f, 3.2462f, 4.4449f},
+    {9.4810f, 1.2032f, 1.9796f, 7.9592f, 6.9397f, 5.1225f, 0.2985f, 3.9237f},
+    {0.8270f, 3.9798f, 0.0147f, 4.0144f, 3.0430f, 3.5802f, 1.4994f, 0.4992f},
+    {4.3692f, 3.2428f, 3.4653f, 1.9455f, 3.0203f, 0.0587f, 2.3085f, 1.4134f},
+};
+
+// A greedy pick may differ from the reference's only where the two picks'
+// logits are closer than this and so are the reference's top two; past such a
+// near-tie the weights' rounding decides, so the steps after it are not
+// compared.
 constexpr float kNearTie = 0.05f;
 
 // A spoken reply transcribed back matches its text but for the names the
@@ -159,11 +179,6 @@ private:
 
 int32_t argmax(const std::vector<float> & values) {
     return static_cast<int32_t>(std::max_element(values.begin(), values.end()) - values.begin());
-}
-
-float margin(std::vector<float> values) {
-    std::partial_sort(values.begin(), values.begin() + 2, values.end(), std::greater<float>());
-    return values[0] - values[1];
 }
 
 // Lower-case words; ’ is an apostrophe and anything else neither a letter nor
@@ -264,7 +279,11 @@ void check_stage_numbers(
         const int32_t token = argmax(out);
         checks.expect_close(out[static_cast<size_t>(top.id)], top.logit, 0.15, "text step " + std::to_string(i) + " top logit");
         if (token != top.id) {
-            checks.expect(top.logit - top.second < kNearTie, "text step " + std::to_string(i) + " differs only at a near-tie", std::to_string(token));
+            const float gap = out[static_cast<size_t>(token)] - out[static_cast<size_t>(top.id)];
+            const float reference_gap = top.logit - top.second;
+            checks.expect(gap < kNearTie && reference_gap < kNearTie, "text step " + std::to_string(i) + " differs only at a near-tie",
+                std::to_string(token) + " for " + std::to_string(top.id) + " at a gap of " + std::to_string(gap) + ", the reference's " +
+                    std::to_string(reference_gap));
             return;
         }
 
@@ -284,6 +303,46 @@ void check_stage_numbers(
         frame_logits.push_back(values);
         return argmax(values);
     };
+    // Whether a frame that differs from the reference's differs only at
+    // near-ties. Each codebook's step reads the code picked before it, so
+    // after one codebook differs the later ones see other input. The frame
+    // is run again with the reference's codes fed in instead: a codebook
+    // differs when its best code is then not the reference's, and each one
+    // that does must have the reference's code within kNearTie of the best,
+    // with the reference's own top two logits as close.
+    const auto differs_only_at_near_ties = [&](size_t frame, const std::vector<float> & frame_hidden, std::string & detail) {
+        const auto & expected = kAudioBlock[frame];
+        std::vector<std::vector<float>> forced;
+        (void)depthformer.frame(frame_hidden, [&](int64_t codebook, std::vector<float> & values) {
+            forced.push_back(values);
+            return expected[static_cast<size_t>(codebook)];
+        });
+
+        size_t differing = 0;
+        bool near_ties = true;
+        for (size_t codebook = 0; codebook < forced.size(); ++codebook) {
+            const auto & values = forced[codebook];
+            const auto best = static_cast<size_t>(argmax(values));
+            const auto reference = static_cast<size_t>(expected[codebook]);
+            if (best == reference) {
+                continue;
+            }
+
+            const float gap = values[best] - values[reference];
+            const float reference_gap = kAudioBlockGaps[frame][codebook];
+            ++differing;
+            near_ties = near_ties && gap < kNearTie && reference_gap < kNearTie;
+            detail += (differing > 1 ? ", codebook " : "codebook ") + std::to_string(codebook) + " has " + std::to_string(best) +
+                      " for " + std::to_string(reference) + " at a gap of " + std::to_string(gap) + ", the reference's " +
+                      std::to_string(reference_gap);
+        }
+
+        if (differing == 0) {
+            detail = "no codebook differs with the reference's codes fed in";
+        }
+
+        return differing > 0 && near_ties;
+    };
 
     size_t compared = 0;
     for (size_t frame = 0; frame < kAudioBlock.size(); ++frame) {
@@ -302,8 +361,9 @@ void check_stage_numbers(
         }
 
         if (codes != kAudioBlock[frame]) {
-            const bool tie = std::any_of(frame_logits.begin(), frame_logits.end(), [](const auto & values) { return margin(values) < kNearTie; });
-            checks.expect(tie, "greedy frame " + std::to_string(frame) + " differs only at a near-tie", join(codes));
+            std::string detail;
+            const bool near_ties = differs_only_at_near_ties(frame, out, detail);
+            checks.expect(near_ties, "greedy frame " + std::to_string(frame) + " differs only at near-ties (" + detail + ")", join(codes));
             break;
         }
 
