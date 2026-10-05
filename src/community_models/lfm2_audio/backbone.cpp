@@ -57,10 +57,10 @@ constexpr int64_t kMaxRetainedPrefillSteps = 1024;
 // Every decode step attends over the whole cache, and on some backends the
 // logits change in their last bits with the cache's length (ggml's CPU flash
 // attention splits the cache into one piece per thread), enough to flip a
-// near-tie. TTS (start()) sizes a request's cache from its step budget alone,
-// rounded up to this, so seeded speech does not depend on the requests before.
-// ASR (generate()) reuses a cache that fits, the sizing it has always had, so
-// transcripts do not change.
+// near-tie. TTS and S2S (start()) size a request's cache from its step budget
+// alone, rounded up to this, so seeded speech does not depend on the requests
+// before. ASR (generate()) reuses a cache that fits, the sizing it has always
+// had, so transcripts do not change.
 constexpr int64_t kCacheStepGranule = 256;
 
 struct BackboneWeights {

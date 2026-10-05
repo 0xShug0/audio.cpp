@@ -9,7 +9,8 @@
 //   frame's depthformer logits;
 // - replies through the registry, offline and streamed, whose audio says what
 //   their text says, checked by transcribing it back with the ASR task;
-// - a reply cut off at max_tokens, offline and streamed.
+// - a reply cut off at max_tokens, offline and streamed;
+// - the first request again after the others, which must give the same reply.
 //
 // --model is the directory of LiquidAI/LFM2.5-Audio-1.5B-GGUF (default
 // models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install);
@@ -543,6 +544,15 @@ void check_replies(
     checks.expect(cut_warnings.find("[warning][lfm2_audio] the reply reached max_tokens=40") != std::string::npos &&
                       cut_warnings.find("raise max_tokens") != std::string::npos,
         "a warning says what to raise", cut_warnings);
+
+    // The first request again, after replies with other seeds and budgets and
+    // transcripts in between, is the reply the fresh session gave: S2S sizes
+    // its decode cache from the request alone, as TTS does.
+    const auto again = run(*s2s, question());
+    checks.expect(again.text_output.has_value() && again.text_output->text == text, "the first request again has the same text",
+        again.text_output.has_value() ? again.text_output->text : "");
+    checks.expect(has_audio && again.audio_output.has_value() && again.audio_output->samples == reply.audio_output->samples,
+        "the first request again has the same audio");
 
     // Streamed with the same seed: the same reply, its audio decoded a frame
     // at a time. The other sessions go first, so one set of weights is loaded.

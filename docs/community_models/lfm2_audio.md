@@ -526,9 +526,10 @@ threads) finished its text but not its audio within `max_tokens`.
 `test_lfm2_audio_s2s` checks the prompt, the first text and audio blocks, the
 round trip of three replies through ASR (their median, a reply that fails or is
 cut off at `max_tokens` counting as a miss), well-formed text, streaming
-against offline, a stream finished early, and a reply cut off at `max_tokens`,
-offline and streamed; it runs when `lfm2_audio_1_5b_f16` is installed in
-`models/`.
+against offline, a stream finished early, a reply cut off at `max_tokens`,
+offline and streamed, and that the first request, sent again after the others,
+gets the same reply (S2S sizes its decode cache from the request alone, as TTS
+does); it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
 
 ### Memory
 
