@@ -1,0 +1,65 @@
+name: ACE-Step slot ownership
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ace-step-slot-ownership.yml'
+      - 'CMakeLists.txt'
+      - 'include/engine/models/ace_step/**'
+      - 'src/models/ace_step/**'
+      - 'tests/unittests/test_ace_step_*'
+  workflow_dispatch:
+
+jobs:
+  ownership:
+    name: ${{ matrix.os }} / ${{ matrix.sanitizer }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            sanitizer: none
+          - os: windows-2022
+            sanitizer: none
+          - os: macos-14
+            sanitizer: none
+          - os: ubuntu-24.04
+            sanitizer: address
+          - os: ubuntu-24.04
+            sanitizer: thread
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CPU ownership tests
+        shell: bash
+        run: |
+          flags=()
+          if [ '${{ matrix.sanitizer }}' != none ]; then
+            flags+=("-DCMAKE_C_FLAGS=-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer")
+            flags+=("-DCMAKE_CXX_FLAGS=-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer")
+            flags+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${{ matrix.sanitizer }}")
+          fi
+          cmake -S . -B build-ace-ownership -DCMAKE_BUILD_TYPE=Debug \
+            -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=ace_step \
+            -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXTENDED_TESTS=ON \
+            -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF \
+            -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF -DENGINE_ENABLE_LLAMAFILE=OFF \
+            -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_BUILD_SERVER_FRONTENDS=OFF \
+            "${flags[@]}"
+      - name: Build ownership tests
+        run: cmake --build build-ace-ownership --config Debug --parallel 4 --target ace_step_device_execution_test ace_step_cuda_graph_scope_test
+      - name: Test guards and exception cleanup
+        env:
+          ASAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-ace-ownership --build-config Debug --output-on-failure --timeout 60 --output-junit ownership-results.xml -R "^ace_step_(device_execution|cuda_graph_scope)_test$"
+      - name: Retain diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ace-ownership-${{ matrix.os }}-${{ matrix.sanitizer }}
+          path: |
+            build-ace-ownership/ownership-results.xml
+            build-ace-ownership/Testing/Temporary/LastTest.log

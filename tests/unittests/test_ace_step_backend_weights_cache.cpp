@@ -81,9 +81,31 @@ int main(int argc, char ** argv) {
         } catch (const std::runtime_error &) {}
         auto recovered=cache.acquire<Weights>(next, assets::TensorStorageType::BF16, factory);
         require(failures==1 && recovered && loads==4, "failed upload poisoned future retry");
+        bool rejected_null = false;
+        try {
+            cache.acquire<Weights>(next, assets::TensorStorageType::F16,
+                [](core::ExecutionContext &) -> std::shared_ptr<const Weights> { return {}; });
+        } catch (const std::runtime_error & e) {
+            rejected_null = std::string(e.what()).find("returned null") != std::string::npos;
+        }
+        auto after_null = cache.acquire<Weights>(next, assets::TensorStorageType::F16, factory);
+        require(rejected_null && after_null && loads==5, "null publication poisoned future retry");
+        std::weak_ptr<const Weights> partial;
+        bool failed_after_upload = false;
+        try {
+            cache.acquire<Weights>(next, assets::TensorStorageType::I8,
+                [&](core::ExecutionContext & upload) -> std::shared_ptr<const Weights> {
+                    auto unpublished = factory(upload);
+                    partial = unpublished;
+                    throw std::bad_alloc(); // uploaded device resources must unwind too
+                });
+        } catch (const std::bad_alloc &) { failed_after_upload = true; }
+        require(failed_after_upload && partial.expired(), "failed partial upload retained unpublished weights");
+        auto after_partial = cache.acquire<Weights>(next, assets::TensorStorageType::I8, factory);
+        require(after_partial && loads==7, "partially uploaded failure poisoned future retry");
         require(core::read_tensor_f32(retry->tensor.tensor)==std::vector<float>({3.0F,7.0F}),
                 "unrelated cached weights were modified");
-        std::cout << "PASS: concurrent upload, precision isolation, independent backend lifetime, weak unload and retry\n";
+        std::cout << "PASS: concurrent upload, precision isolation, independent backend lifetime, weak unload, null/partial failure and retry\n";
         return 0;
     } catch (const std::exception & e) {
         std::cerr << e.what() << '\n'; return 1;
