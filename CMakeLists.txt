@@ -3014,7 +3014,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME ${validation_target} COMMAND ${validation_target})
     endforeach()
     target_compile_definitions(server_slot_validation_fixture_test PRIVATE
-        AUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER="slot_validation_admission_fixture.h")
+        AUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER="${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/slot_validation_admission_fixture.h")
     if (ENGINE_ENABLE_VULKAN)
         add_test(NAME vulkan_backend_initialization_test COMMAND backend_initialization_test vulkan)
         set_tests_properties(vulkan_backend_initialization_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
