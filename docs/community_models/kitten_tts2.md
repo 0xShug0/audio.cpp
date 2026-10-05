@@ -27,7 +27,8 @@ documentation indexes, and the WebUI catalog with its generated bundle.
 
 ```sh
 cmake -S . -B build-kitten2 -DAUDIOCPP_MODEL_SET=custom \
-  -DAUDIOCPP_MODELS=kitten_tts2 -DENGINE_ENABLE_CUDA=OFF
+  -DAUDIOCPP_MODELS=kitten_tts2 -DENGINE_ENABLE_CUDA=OFF \
+  -DENGINE_BUILD_MODEL_TESTS=ON
 cmake --build build-kitten2 --config Release \
   --target audiocpp_cli audiocpp_server audiocpp_gguf audiocpp_kitten_tts2_prepare_voices --parallel 8
 ```
