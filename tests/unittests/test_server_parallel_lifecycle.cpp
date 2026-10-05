@@ -1,7 +1,9 @@
 // Run the actual server handlers with tiny controlled loaders. Barriers force
 // lifecycle overlaps without GPU timing, sleeps in production, or large models.
 #include "parallel_runtime.h"
+#include "parallel_http.h"
 #include "engine/framework/audio/wav_writer.h"
+#include <csignal>
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
@@ -10,6 +12,15 @@
 #include <map>
 #include <sstream>
 #include <tuple>
+#include <thread>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 using namespace std::chrono_literals;
 namespace rt = engine::runtime;
@@ -728,7 +739,123 @@ void dynamic_capacity_changes_use_parallel_lifecycle() {
     }
 }
 
+// Exercise the actual listener and scheduler together. Closing a socket does
+// not cancel a scheduler/backend wait: finite accepted work must finish while
+// its sessions remain alive, even after the listener starts shutting down.
+std::atomic<bool> listener_stopping{false};
+bool stop_listener() { return listener_stopping.load(); }
+#ifdef _WIN32
+using TestSocket = SOCKET;
+constexpr TestSocket no_socket = INVALID_SOCKET;
+#else
+using TestSocket = int;
+constexpr TestSocket no_socket = -1;
+#endif
+void close_test_socket(TestSocket socket) {
+#ifdef _WIN32
+    closesocket(socket);
+#else
+    close(socket);
+#endif
+}
+struct LoopbackClient {
+    TestSocket socket = no_socket;
+    explicit LoopbackClient(int port) {
+        sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(port);
+        inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            socket = ::socket(AF_INET, SOCK_STREAM, 0);
+            require(socket != no_socket, "loopback socket creation failed");
+            if (connect(socket, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0) { return; }
+            disconnect(); std::this_thread::sleep_for(5ms);
+        }
+        throw std::runtime_error("lifecycle listener did not start");
+    }
+    ~LoopbackClient() { disconnect(); }
+    void disconnect() {
+        if (socket != no_socket) { close_test_socket(socket); socket = no_socket; }
+    }
+    void post(const std::string & path, const std::string & body) {
+        const auto request = "POST " + path + " HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: " +
+            std::to_string(body.size()) + "\r\n\r\n" + body;
+        size_t offset = 0;
+        while (offset < request.size()) {
+            const auto written = send(socket, request.data() + offset, static_cast<int>(request.size() - offset), 0);
+            require(written > 0, "lifecycle request write failed"); offset += written;
+        }
+    }
+};
+void listener_drains_disconnected_model_work(const std::string & phase) {
+    const bool loading = phase == "loading";
+    Fixture f(loading ? 2 : 1);
+    auto control = f.add("shared");
+    auto replacement = f.asset("replacement");
+    if (!loading) { success(run(*f.state, "shared")); }
+    Gate * held = phase == "loading" ? &control->load : phase == "running" ? &control->run :
+        phase == "reconfiguration" ? &replacement->load : &control->destroy;
+    held->arm();
+    listener_stopping = false;
+    const int port = loading ? 18127 : phase == "running" ? 18128 : phase == "reconfiguration" ? 18129 : 18130;
+    auto listener = std::async(std::launch::async, [&] {
+        srv::serve_parallel_http("127.0.0.1", port, *f.state, stop_listener, 1024 * 1024);
+    });
+    // Destroy this before futures: a failed assertion must release controlled
+    // work, then join the listener, and only then destroy the runtime.
+    struct Cleanup {
+        Gate & held;
+        ~Cleanup() { listener_stopping = true; held.release(); }
+    } cleanup{*held};
+    const std::string body = "{\"model\":\"shared\",\"text\":\"old request\"}";
+    LoopbackClient first(port);
+    if (phase == "reconfiguration") {
+        first.post("/v1/models/load", "{\"id\":\"shared\",\"path\":" + quote((f.root / "replacement").generic_string()) +
+            ",\"family\":\"lifecycle_fixture\",\"task\":\"tts\",\"slots\":1}");
+    } else if (phase == "unloading") {
+        first.post("/v1/tasks/unload_models", "{\"model_ids\":[\"shared\"]}");
+    } else { first.post("/v1/tasks/run", body); }
+    require(observe([&] { return held->seen(); }), "first worker did not reach controlled model operation");
+    std::unique_ptr<LoopbackClient> waiting_initializer;
+    if (loading) {
+        waiting_initializer = std::make_unique<LoopbackClient>(port);
+        waiting_initializer->post("/v1/tasks/run", body);
+        require(observe([&] { return Access::slots(*f.state, "shared").active == 2; }),
+                "second admitted worker did not wait for the first initializer");
+    }
+    LoopbackClient queued(port); queued.post("/v1/tasks/run", body);
+    require(f.queued("shared", 1), "last disconnected client was not actually queued");
+    first.disconnect(); queued.disconnect();
+    if (waiting_initializer) { waiting_initializer->disconnect(); }
+    // At this point socket delivery can fail, but all accepted work is still
+    // waiting on a finite gate and must retain the model's ownership/accounting.
+    require(Access::slots(*f.state, "shared").waiting_requests == 1,
+            "disconnect silently discarded a queued worker before normal drain");
+    listener_stopping = true;
+    const bool retained = listener.wait_for(0ms) == std::future_status::timeout;
+    held->release();
+    const bool drained = listener.wait_for(3s) == std::future_status::ready;
+    listener.get();
+    require(retained && drained, "listener did not retain and then drain finite model workers");
+    const auto state = Access::slots(*f.state, "shared");
+    require(state.active == 0 && state.waiting_requests == 0 && state.waiting_management == 0,
+            "disconnected/shutdown workers stranded scheduler ownership");
+    const auto owner = phase == "reconfiguration" ? replacement : control;
+    require(owner->runs == (loading ? 3 : phase == "running" ? 3 : phase == "unloading" ? 2 : 1),
+            "accepted disconnected work did not complete in the expected model/session");
+    f.state.reset();
+    require(control->sessions == 0 && replacement->sessions == 0 &&
+            !control->premature_model_destruction && !replacement->premature_model_destruction,
+            "shutdown destroyed model assets before their sessions");
+}
+
 int main(int argc, char ** argv) {
+#ifdef _WIN32
+    WSADATA socket_data;
+    if (WSAStartup(MAKEWORD(2, 2), &socket_data) != 0) { return 1; }
+    struct SocketCleanup { ~SocketCleanup() { WSACleanup(); } } socket_cleanup;
+#endif
+#ifdef SIGPIPE
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     try {
         engine::io::json::enable_serialized_json_parsing();
         if (argc == 2) {
@@ -747,6 +874,9 @@ int main(int argc, char ** argv) {
         unsupported_capacity_preserves_registration();
         dynamic_capacity_changes_use_parallel_lifecycle();
         generic_batch_single_slot_and_invalid_input();
+        for (const std::string phase : {"loading", "running", "reconfiguration", "unloading"}) {
+            listener_drains_disconnected_model_work(phase);
+        }
         for (int count : {1, 2, 4}) {
             older_work_before_management(count, false);
             older_work_before_management(count, true);

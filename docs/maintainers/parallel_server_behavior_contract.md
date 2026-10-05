@@ -75,10 +75,10 @@ atomic all-model unload. Eviction/idle retirement try-acquire rather than enqueu
 | M state | Inference | Register / reconfigure M | Unload M | Bulk unload containing M | Eviction / idle retirement | Status | Shutdown |
 |---|---|---|---|---|---|---|---|
 | Unloaded | Admit; initialize then execute; 200 result, ready. D [T1] | Exclusive; validate/load; 200 loaded, ready. P [T4] | Exclusive; idempotent 200 loaded=false, unloaded. P [T4] | Barrier; include M once in 200 unloaded list; unloaded. P [T5] | No resident victim; skip, unloaded. P [T6] | Read metadata/counters; 200 unloaded/null capacity; no load. P [T7] | No new accepts; drain any admitted work before destruction. P [T8] |
-| Loading | Spare slots admit and wait on initialization; full pool queues; 200 results after complete publication, ready. P [T1] | Barrier behind earlier load/requests; 200 new ready state. P [T2] | Barrier waits for first load and earlier work; 200 unloaded. D [T5] | Publish barrier even before pool exists; free ready B first, then M; 200 unloaded. D [T5] | Busy M skipped; use another idle victim or load gets 503; M continues loading. P [T6] | 200 observation, pool not partially exposed; M unchanged. P [T4] | Join finite initialization/request worker; no pool destruction while in use. U [GAP] |
+| Loading | Spare slots admit and wait on initialization; full pool queues; 200 results after complete publication, ready. P [T1] | Barrier behind earlier load/requests; 200 new ready state. P [T2] | Barrier waits for first load and earlier work; 200 unloaded. D [T5] | Publish barrier even before pool exists; free ready B first, then M; 200 unloaded. D [T5] | Busy M skipped; use another idle victim or load gets 503; M continues loading. P [T6] | 200 observation, pool not partially exposed; M unchanged. P [T4] | Join finite initialization/request worker; no pool destruction while in use. D controlled default listener [T19] |
 | Ready | Admit into spare capacity or queue; 200 result; ready. D [T1] | Earlier work drains, private validation/probe precedes teardown; 200 loaded; ready. D [T2] [T9] | Earlier work drains; 200 loaded=false; unloaded. D [T2] | Per-model barriers; ready-idle M freed first; 200 unloaded. D [T5] | Only idle and queue-free M can retire; no client response; unloaded. P [T6] | 200 counters/metadata, no lease reservation; ready. P [T7] | Cancel I/O, join finite workers/callbacks, then destroy. D [T8] |
-| Reconfiguring | Queue behind manager, bind new config after release; 200 result; ready or retry load. D [T2] | Later manager queues; exclusive in scheduler order; 200 final ready config. D [T10] | Later manager queues; after replacement drains, 200 unloaded. P [T10] | Barrier queues behind existing manager; unrelated ready B can retire; 200 unloaded. P [T11] | Busy M skipped; reconfiguration continues. P [T6] | May wait briefly for metadata commit; 200 old/new complete metadata, never partial mix. P [T7] | Existing management finishes before worker join; hung work can block exit. U [GAP] |
-| Unloading | Queue; after teardown reload and run; 200 result, ready. P [T6] | Queue; after teardown validate/load; 200 ready replacement. P [T10] | Queue; idempotent second unload; 200 unloaded. P [T10] | Barrier queues; ready B freed before waiting for M; 200 unloaded. P [T5] | Already retiring M is not a resident victim; other idle victims considered independently. D [T6] | 200 logical unloaded/null capacity while physical teardown can continue. D [T6] | Wait for finite teardown/worker completion before destruction; no forced backend cancellation. U [GAP] |
+| Reconfiguring | Queue behind manager, bind new config after release; 200 result; ready or retry load. D [T2] | Later manager queues; exclusive in scheduler order; 200 final ready config. D [T10] | Later manager queues; after replacement drains, 200 unloaded. P [T10] | Barrier queues behind existing manager; unrelated ready B can retire; 200 unloaded. P [T11] | Busy M skipped; reconfiguration continues. P [T6] | May wait briefly for metadata commit; 200 old/new complete metadata, never partial mix. P [T7] | Existing management finishes before worker join; hung work can block exit. D finite reconfiguration [T19] |
+| Unloading | Queue; after teardown reload and run; 200 result, ready. P [T6] | Queue; after teardown validate/load; 200 ready replacement. P [T10] | Queue; idempotent second unload; 200 unloaded. P [T10] | Barrier queues; ready B freed before waiting for M; 200 unloaded. P [T5] | Already retiring M is not a resident victim; other idle victims considered independently. D [T6] | 200 logical unloaded/null capacity while physical teardown can continue. D [T6] | Wait for finite teardown/worker completion before destruction; no forced backend cancellation. D finite teardown [T19] |
 | Shutting down | New connections not accepted; preaccepted/queued work may still run; socket response may be lost; resources destroyed after drain. P [T8] | No new accepts; preaccepted manager may finish; no guaranteed delivered response. U [GAP] | No new accepts; preaccepted unload may finish before final destruction. U [GAP] | Existing barriers drain/cancel through ownership; no guaranteed delivered response. U [GAP] | Idle thread stops/joins; resources eventually destroyed after workers. U [GAP] | No guaranteed response; custom/direct callers must stop using the handler before destruction. U [GAP] | Repeated stop signal changes no ownership rule; join remains required. P [T8] |
 
 A **new registration** validates privately, acquires an exclusive lease before
@@ -141,12 +141,12 @@ starting situation; combined arrival orders follow the next matrix.
 | Admission timeout; request or targeted manager | Effective per-model/server ceiling with request override where supported. HTTP 503 server_busy; queued ownership removed. Overdue blockers may cause immediate rejection. Existing work continues. | D [T3] |
 | Healthy plus overdue slots, or spare slots behind management | Healthy blocker permits bounded waiting; older manager still prevents barging. If all occupied inference blockers are overdue, fail fast even with spare capacity/queued managers. | D [T3] |
 | Timeout zero / bulk drains | Zero means unbounded admission wait; bulk uses zero regardless of normal policy. Not an end-to-end initialization/inference/shutdown deadline. | D [T3] |
-| Client disconnect while queued or waiting initialization | No scheduler cancellation token. Wait can continue, then finite work can execute before response I/O notices disconnect. Eventually release on completion/error; prompt cancellation is not promised. | U [GAP] |
-| Client disconnect executing offline request | Cannot preempt backend; join/cleanup after finite work and failed write. Response may not be delivered; release lease. | P active finite handler [T8] |
+| Client disconnect while queued or waiting initialization | No scheduler cancellation token. Wait can continue, then finite work can execute before response I/O notices disconnect. Eventually release on completion/error; prompt cancellation is not promised. | D finite queued/cold/running work [T19] |
+| Client disconnect executing offline request | Cannot preempt backend; join/cleanup after finite work and failed write. Response may not be delivered; release lease. | D finite model worker [T19] |
 | Disconnect active stream / abandon unstarted response | Write failure unwinds callback; dropping callback releases its bound lease. Model reset/recovery depends on adapter. | D controlled stream [T14] [T18]; real streams partial |
 | Shutdown stalled header/live body/non-reading response | Stop accepting; cancel socket I/O (readiness polls at most 250 ms per slice), then join. No registry/model/socket mutex held across worker join. | D loopback [T8] |
 | Shutdown active finite offline handler/deferred callback | Listener waits until handler/callback returns; runtime outlives joined workers; response delivery not guaranteed. | D loopback [T8] |
-| Shutdown queued request, cold load, manager or hung GPU | Existing scheduler/init/backend waits are not globally canceled. Finite work must drain; timeout-zero/hung work can delay exit indefinitely. Backend termination/cancellation is not implemented. | U [GAP] |
+| Shutdown queued request, cold load, manager or hung GPU | Existing scheduler/init/backend waits are not globally canceled. Finite work must drain; timeout-zero/hung work can delay exit indefinitely. Backend termination/cancellation is not implemented. | D finite queued/init/reconfigure/unload [T19]; U hung GPU |
 | Custom frontend listener shutdown | Must independently stop callers and drain its workers before return. Default listener tests do not validate HTTPS/WebSocket/external listener ownership. | U [GAP] |
 
 ## Validation by area and known limits
@@ -170,8 +170,8 @@ the parent's completed CI and recorded separately in the PR.
 | Cold loading | Partially tested | Controlled first load/publication, failure/retry and guarded cold-vs-warm progress; real representative capacity-one loading. Exhaustive concurrent GPU initialization/OOM/platform coverage missing. |
 | Reconfiguration | Partially tested | Controlled manager ordering, invalid metadata, count resize, unsupported capability preservation, backend failure/retry. Changed-checkpoint capability probes/temporary staging memory not validated on GPUs. |
 | Unloading / eviction | Partially tested | Controlled lazy-load barriers, ready-idle-first bulk, overlapping selections, limits 1/2 and slow logical retirement. Exhaustive device memory guards, backend teardown faults and catalogue recovery missing. |
-| Disconnects | Partially tested | Controlled write failure/dropped callbacks; default transport loopback stalled I/O. Prompt queued-request cancellation unimplemented; real model streaming/reset and custom listeners untested. |
-| Shutdown | Partially tested | Default listener owns/joins finite offline/deferred workers and cancels stalled socket I/O. No explicit scheduler-wide cancellation; cold-load/management/queued shutdown matrix, hung GPU and custom listeners untested. |
+| Disconnects | Partially tested | Controlled write failure/dropped callbacks; default transport loopback stalled I/O. Default-listener clients disconnected during queued/init/running work drain with real handler ownership [T19]. Prompt queued-request cancellation unimplemented; real model streaming/reset and custom listeners untested. |
+| Shutdown | Partially tested | Default listener owns/joins finite offline/deferred workers and cancels stalled socket I/O. Controlled cold-load/management/queued finite worker drain also passes [T19]. No explicit scheduler-wide cancellation; hung GPU and custom listeners untested. |
 
 Known limitations are deliberately explicit: no hard backend cancellation or
 bounded shutdown; no immediate disconnected-waiter cancellation; no full atomic
@@ -181,6 +181,13 @@ still serialize in the backend; capability preflight can add temporary memory
 and a second primary construction; fresh failed registration remains unloaded
 until corrected/retried; allocation/thread-construction failure paths are source-
 audited where no injection exists. No claim of complete model/platform validation.
+
+The 2026-10-05 admission follow-up [T19] runs the actual default listener and
+parallel runtime together. It disconnects admitted and queued clients while
+loading, running, reconfiguring or unloading, then stops the listener. Finite
+controlled work drains before listener return; queues/leases clear and model
+assets outlive sessions. This is controlled CPU evidence, not a real GPU shutdown
+or a bounded-cancellation claim.
 
 ## Evidence references and maintenance
 
@@ -204,6 +211,7 @@ audited where no injection exists. No claim of complete model/platform validatio
 [T16]: ../../tests/unittests/test_server_parallel_lifecycle.cpp#L665
 [T17]: ../../tests/unittests/test_session_pool.cpp#L107
 [T18]: ../../tests/unittests/test_server_parallel_lifecycle.cpp#L600
+[T19]: ../../tests/unittests/test_server_parallel_lifecycle.cpp#L788
 
 [T1] is the nearest initialization/happy-request test where a cold concurrency
 combination is marked P, not proof of every such interleaving. Preserve D/P/U
