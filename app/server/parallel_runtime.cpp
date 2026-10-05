@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -2418,6 +2419,26 @@ ParallelServerState::TimedTaskResult ParallelServerState::run_model(
     if (offline == nullptr) {
         throw std::runtime_error("configured model does not provide offline execution: " + model.config.id);
     }
+#if defined(AUDIOCPP_SLOT_VALIDATION)
+    // Test-only observer: no request, preparation or inference settings change.
+    const auto * observer = std::getenv("AUDIOCPP_SLOT_VALIDATION_OBSERVER");
+    if (observer != nullptr && std::string_view(observer) == "1") {
+        static std::mutex observation_mutex;
+        Value::Object fields;
+        fields["model"] = Value::make_string(model.config.id);
+        fields["slot"] = Value::make_number(static_cast<double>(slot));
+        std::ostringstream address;
+        address << &session;
+        fields["session"] = Value::make_string(address.str());
+        fields["text"] = Value::make_string(request.text_input ? request.text_input->text : "");
+        fields["audio_samples"] = Value::make_number(request.audio_input ? static_cast<double>(request.audio_input->samples.size()) : 0);
+        fields["voice_samples"] = Value::make_number(request.voice && request.voice->speaker && request.voice->speaker->audio ? static_cast<double>(request.voice->speaker->audio->samples.size()) : 0);
+        auto seed = request.options.find("seed");
+        fields["seed"] = Value::make_string(seed == request.options.end() ? "" : seed->second);
+        std::lock_guard<std::mutex> observation_lock(observation_mutex);
+        std::cerr << "[SLOT_VALIDATION] " << engine::io::json::stringify(Value::make_object(std::move(fields))) << std::endl;
+    }
+#endif
     const auto started = Clock::now();
     session.prepare(engine::runtime::build_preparation_request(request));
     auto result = offline->run(request);

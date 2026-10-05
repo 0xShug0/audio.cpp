@@ -14,6 +14,9 @@ on:
       - "src/framework/core/host_memory.cpp"
       - "include/engine/framework/core/backend.h"
       - "src/framework/core/backend.cpp"
+      - "tests/unittests/test_backend_initialization.cpp"
+      - "tests/unittests/test_server_slot_validation.cpp"
+      - "tests/unittests/slot_validation_admission_fixture.h"
       - "tests/unittests/test_server_config.cpp"
       - "include/engine/framework/runtime/parallel_session.h"
       - "include/engine/framework/runtime/session_pool.h"
@@ -54,7 +57,7 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DAUDIOCPP_VERSION=ci \
-            -DENGINE_BUILD_TESTS=ON \
+            -DAUDIOCPP_SLOT_VALIDATION=ON -DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h -DENGINE_BUILD_TESTS=ON \
             -DENGINE_BUILD_EXTENDED_TESTS=ON \
             -DENGINE_ENABLE_OPENMP=OFF \
             -DENGINE_ENABLE_CUDA=OFF \
@@ -69,7 +72,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_CXX_FLAGS="/utf-8 /EHsc" `
             -DAUDIOCPP_VERSION=ci `
-            -DENGINE_BUILD_TESTS=ON `
+            -DAUDIOCPP_SLOT_VALIDATION=ON -DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h -DENGINE_BUILD_TESTS=ON `
             -DENGINE_BUILD_EXTENDED_TESTS=ON `
             -DENGINE_ENABLE_OPENMP=OFF `
             -DENGINE_ENABLE_CUDA=OFF `
@@ -79,27 +82,27 @@ jobs:
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: |
-          cmake --build build --target audiocpp_server parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(nproc)"
+          cmake --build build --target audiocpp_server backend_initialization_test server_slot_validation_default_test server_slot_validation_fixture_test parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(nproc)"
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: |
-          cmake --build build --target audiocpp_server parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(sysctl -n hw.logicalcpu)"
+          cmake --build build --target audiocpp_server backend_initialization_test server_slot_validation_default_test server_slot_validation_fixture_test parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel "$(sysctl -n hw.logicalcpu)"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake --build build --config Release --target audiocpp_server parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel
+          cmake --build build --config Release --target audiocpp_server backend_initialization_test server_slot_validation_default_test server_slot_validation_fixture_test parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test server_runtime_selection_test server_model_slots_test server_parallel_lifecycle_test session_pool_test shared_weight_cache_test gguf_tensor_source_test --parallel
 
       - name: Run server lifecycle tests (Linux/macOS)
         if: runner.os != 'Windows'
-        run: ctest --test-dir build --output-on-failure -R '^(parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+        run: ctest --test-dir build --output-on-failure -R '^(backend_initialization_test|server_slot_validation_default_test|server_slot_validation_fixture_test|parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
 
       - name: Run server lifecycle tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
+        run: ctest --test-dir build --build-config Release --output-on-failure -R '^(backend_initialization_test|server_slot_validation_default_test|server_slot_validation_fixture_test|parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test|server_runtime_selection_test|server_model_slots_test|server_parallel_lifecycle_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test)$' --parallel 4
 
   cpu-sanitizers:
     name: CPU framework ${{ matrix.sanitizer }} sanitizer
@@ -131,7 +134,7 @@ jobs:
             -DCMAKE_C_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
             -DCMAKE_CXX_FLAGS="-fsanitize=${{ matrix.sanitizer }} -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=${{ matrix.sanitizer }}" \
-            -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXTENDED_TESTS=ON \
+            -DAUDIOCPP_SLOT_VALIDATION=ON -DAUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER=tests/unittests/slot_validation_admission_fixture.h -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXTENDED_TESTS=ON \
             -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_METAL=OFF \
             -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF \
             -DENGINE_ENABLE_NATIVE_CPU=OFF -DENGINE_ENABLE_LLAMAFILE=OFF \
@@ -139,6 +142,7 @@ jobs:
       - name: Build ownership and lifecycle regressions
         run: |
           cmake --build build-sanitizer --parallel 4 --target \
+            backend_initialization_test server_slot_validation_default_test server_slot_validation_fixture_test \
             server_runtime_selection_test server_parallel_lifecycle_test server_model_slots_test \
             session_pool_test shared_weight_cache_test gguf_tensor_source_test \
             parallel_http_live_body_test parallel_http_ownership_test server_config_test server_busy_guard_test
@@ -149,7 +153,7 @@ jobs:
         run: |
           ctest --test-dir build-sanitizer --output-on-failure --timeout 60 \
             --output-junit sanitizer-results.xml \
-            -R '^(server_runtime_selection_test|server_parallel_lifecycle_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test|parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test)$'
+            -R '^(backend_initialization_test|server_slot_validation_default_test|server_slot_validation_fixture_test|server_runtime_selection_test|server_parallel_lifecycle_test|server_model_slots_test|session_pool_test|shared_weight_cache_test|gguf_tensor_source_test|parallel_http_live_body_test|parallel_http_ownership_test|server_config_test|server_busy_guard_test)$'
       - name: Preserve sanitizer diagnostics
         if: always()
         uses: actions/upload-artifact@v4

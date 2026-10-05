@@ -15,8 +15,13 @@ struct AuditedModelSlots {
 
 // Model-specific validation adds entries in the model-support follow-up.
 // The common framework alone does not opt any legacy model into parallel runs.
+// Optional test fixture defines tables here, inside minitts::server.
+#if defined(AUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER)
+#include AUDIOCPP_SLOT_VALIDATION_CAPACITY_HEADER
+#else
 inline constexpr std::array<AuditedModelSlots, 0> kAuditedCudaOfflineModels = {};
 inline constexpr std::array<AuditedModelSlots, 0> kAuditedVulkanOfflineModels = {};
+#endif
 
 inline size_t audited_slot_capacity(
     std::string_view family,

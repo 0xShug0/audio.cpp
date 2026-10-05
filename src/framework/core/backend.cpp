@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -11,6 +12,10 @@
 namespace engine::core {
 
 void ensure_backends_loaded() {
+    // Backend discovery may also be reached from device enumeration. Do not
+    // allow two first callers to mutate the backend registry concurrently.
+    static std::mutex discovery_mutex;
+    std::lock_guard<std::mutex> discovery_lock(discovery_mutex);
     if (ggml_backend_reg_count() == 0) {
         ggml_backend_load_all();
     }
@@ -224,6 +229,12 @@ void print_backend_devices(std::ostream & out) {
 }
 
 ggml_backend_t init_backend(const BackendConfig & config) {
+    // Backend initialization can publish device-wide state before returning
+    // (notably Vulkan's logical-device cache). Keep creation atomic across
+    // models and slots, including BestAvailable. The guard ends here: upload,
+    // allocation, graph compute and the lifetime of the backend stay unlocked.
+    static std::mutex initialization_mutex;
+    std::lock_guard<std::mutex> initialization_lock(initialization_mutex);
     ensure_backends_loaded();
     switch (config.type) {
         case BackendType::Cpu: {
