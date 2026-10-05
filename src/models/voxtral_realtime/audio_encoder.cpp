@@ -388,6 +388,10 @@ public:
         }
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, encoder_steps);
         mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, encoder_steps, encoder_steps, 1, 1);
+        // These constants are uploaded once. Keep their storage intact when the
+        // graph allocator reuses intermediate buffers across transcriptions.
+        ggml_set_output(positions_);
+        ggml_set_output(mask_);
         auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({encoder_steps}), GGML_TYPE_I32);
         auto mask = core::wrap_tensor(mask_, core::TensorShape::from_dims({1, 1, encoder_steps, encoder_steps}), GGML_TYPE_F16);
         for (const auto & layer : weights_->layers) {

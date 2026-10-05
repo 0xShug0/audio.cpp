@@ -483,6 +483,10 @@ public:
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, capacity_);
         mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, capacity_, capacity_, 1, 1);
         step_index_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, 1);
+        // Reused prefill graphs retain these once-uploaded constants. Prevent
+        // the graph allocator from recycling their storage after their last use.
+        ggml_set_output(positions_);
+        ggml_set_output(mask_);
         auto ids = core::wrap_tensor(token_ids_, core::TensorShape::from_dims({capacity_}), GGML_TYPE_I32);
         auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size}).build(ctx, ids, weights_->token_embedding);
         auto audio = core::wrap_tensor(audio_embeddings_, core::TensorShape::from_dims({capacity_, config.hidden_size}), GGML_TYPE_F32);
