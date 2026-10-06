@@ -37,9 +37,6 @@ runtime::SessionOptions validate_session_setup(
     if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Niagara ASR only supports offline ASR");
     }
-    if (options.backend.type != core::BackendType::Cpu) {
-        throw std::runtime_error("Niagara ASR CPU variants require --backend cpu");
-    }
     for (const char * key : {"weight_type", "graph_arena_mb", "weight_context_mb"}) {
         if (options.options.find(key) != options.options.end()) {
             throw std::runtime_error(

@@ -151,8 +151,8 @@ AukSession::AukSession(runtime::TaskSpec task, runtime::SessionOptions options,
     if (!assets_ || !assets_->model || !assets_->qwen || !assets_->vae || !assets_->tokenizer) {
         throw std::runtime_error("AuK requires model, Qwen, VAE, and tokenizer assets");
     }
-    if (options.backend.type != core::BackendType::Cuda) {
-        throw std::runtime_error("AuK native session currently requires CUDA");
+    if (execution_context().backend_type() == core::BackendType::Cpu) {
+        throw std::runtime_error("AuK native session does not support the CPU backend");
     }
     if (const auto value = runtime::find_option(options.options, {"auk.mem_saver"})) {
         mem_saver_ = runtime::parse_bool_option(*value, "auk.mem_saver");
@@ -226,7 +226,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
             "\". The content to speak is: \"" + request.text_input->text + "\".";
     }
     auto & execution = execution_context();
-    const auto policy = sampling::resolve_torch_cuda_sampling_policy(core::BackendType::Cuda,
+    const auto policy = sampling::resolve_torch_cuda_sampling_policy(execution.backend_type(),
         options().backend.device, "auk", "AuK");
     std::vector<float> audio_embeddings, reference_latents;
     int64_t reference_frames = 0, valid_reference_frames = 0;
