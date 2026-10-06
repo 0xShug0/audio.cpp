@@ -2232,7 +2232,8 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
         if (!std::isfinite(rate) || rate <= 0.0f) {
             throw std::runtime_error("speed must be a positive finite number");
         }
-        if (!is_neutral_speech_option("speed", speed_value)) {
+        if (model.accepts_speed || model.accepts_speaking_rate ||
+            !is_neutral_speech_option("speed", speed_value)) {
             if (!model.accepts_speed && !model.accepts_speaking_rate) {
                 throw std::runtime_error("speed is not supported by this model");
             }

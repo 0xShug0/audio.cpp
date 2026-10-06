@@ -2,7 +2,7 @@
 
 `audiocpp_server` is an HTTP adapter over the framework runtime registry. It keeps one loaded model and one offline task session per active model id, so repeated HTTP requests reuse the same framework session and model-owned graph/cache state.
 
-`POST /v1/audio/speech` accepts top-level `speed` (or `speaking_rate`) as a positive speech-rate multiplier when the model spec declares support. The neutral value `1` is accepted as a no-op for all models; unsupported non-default values are rejected. For Kokoro, use the [GGUF version published on Hugging Face on September 22, 2026 (UTC)](https://huggingface.co/audio-cpp/audio.cpp-gguf/commit/406756ee8e3b16e902ce40112986c1010775f888) or a later published version.
+`POST /v1/audio/speech` accepts top-level `speed` (or `speaking_rate`) as a positive speech-rate multiplier when the model spec declares support. Explicit values, including `1`, override configured request defaults. For models without declared speed support, `1` is accepted as omitted; other values are rejected. For Kokoro, use the [GGUF version published on Hugging Face on September 22, 2026 (UTC)](https://huggingface.co/audio-cpp/audio.cpp-gguf/commit/406756ee8e3b16e902ce40112986c1010775f888) or a later published version.
 
 ## Build
 
