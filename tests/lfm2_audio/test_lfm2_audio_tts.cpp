@@ -525,6 +525,7 @@ void check_round_trip(
     }, "does not clone", "reference audio");
     rejects([](auto & r) { r.text_input->language = "ja"; }, "speaks en", "another language");
     rejects([](auto & r) { r.options["audio_chunk_mode"] = "vad"; }, "does not take request option audio_chunk_mode", "an ASR option");
+    rejects([](auto & r) { r.options["text_temperature"] = "0.7"; }, "does not take request option text_temperature", "an S2S option");
     rejects([](auto & r) { r.text_input->text = "  "; }, "requires text_input", "empty text");
 
     // Streaming, one frame per event by default: the events add up to the

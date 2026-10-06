@@ -79,9 +79,25 @@
         "min": 0
       },
       {
+        "name": "text_temperature",
+        "type": "float",
+        "description": "S2S: text token sampling temperature; 0, the default, picks the most likely token, as liquid-audio's README and demo do.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "text_top_k",
+        "type": "int",
+        "description": "S2S: with a text_temperature above 0, sample text tokens from the k most likely; 0, the default, keeps all, and 1 is greedy.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
         "name": "seed",
         "type": "int",
-        "description": "TTS and S2S: sampling seed; omitted requests choose a random seed. TTS text chunk i uses seed + i.",
+        "description": "TTS and S2S: sampling seed; omitted requests choose a random seed. TTS text chunk i uses seed + i. S2S text sampling draws from a stream of its own, so with the same seed a reply follows the greedy-text reply until a text token differs.",
         "required": false,
         "min": 0
       },

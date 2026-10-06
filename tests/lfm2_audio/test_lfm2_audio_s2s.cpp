@@ -10,7 +10,9 @@
 // - replies through the registry, offline and streamed, whose audio says what
 //   their text says, checked by transcribing it back with the ASR task;
 // - a reply cut off at max_tokens, offline and streamed;
-// - the first request again after the others, which must give the same reply.
+// - the first request again after the others, which must give the same reply;
+// - text sampling, which follows the greedy-text reply of the same seed until
+//   a text token differs.
 //
 // --model is the directory of LiquidAI/LFM2.5-Audio-1.5B-GGUF (default
 // models/LFM2.5-Audio-1.5B-GGUF, where the lfm2_audio_1_5b_* packages install);
@@ -374,6 +376,69 @@ void check_stage_numbers(
     std::cout << "greedy frames identical: " << compared << " of " << kAudioBlock.size() << "\n";
 }
 
+// Sampled text draws from a stream of its own, so a reply with
+// text_temperature is step for step the greedy-text reply of the same seed,
+// audio codes included, until a text token differs.
+void check_text_sampling(
+    const lfm2::Lfm2AudioComponents & components,
+    const lfm2::Lfm2AudioOutputComponents & output,
+    const engine::core::BackendConfig & backend,
+    Checks & checks) {
+    engine::core::ExecutionContext execution(backend);
+    const lfm2::Lfm2TextTokenizer tokenizer(components.vocabulary);
+    lfm2::Lfm2FastConformerEncoderRuntime encoder(components.mmproj, components.encoder, execution);
+    lfm2::Lfm2BackboneRuntime backbone(
+        components.model, components.backbone, execution, components.mmproj, output.depthformer.codebooks, output.depthformer.audio_vocab_size);
+    lfm2::Lfm2DepthformerRuntime depthformer(output.vocoder, output.depthformer, execution);
+
+    const auto wav = engine::audio::read_wav_f32(repo_path(kAudio));
+    const auto samples = lfm2::lfm2_audio_mono_16k({wav.sample_rate, wav.channels, wav.samples});
+    const auto audio = encoder.encode(lfm2::Lfm2AudioFeatureExtractor(components.encoder.n_mels, backend.threads).extract(samples));
+    const auto prompt = lfm2::make_lfm2_spoken_prompt(tokenizer, lfm2::kLfm2ChatSystemPrompt).with_audio(audio.tokens);
+
+    // 120 steps hold the first seven text blocks.
+    const auto reply = [&](uint64_t seed, const lfm2::Lfm2TextSampling & text_sampling) {
+        lfm2::Lfm2InterleavedOptions options;
+        options.text_steps = output.interleave.text_steps;
+        options.audio_steps = output.interleave.audio_steps;
+        options.max_steps = 120;
+        options.sampling.seed = seed;
+        options.text_sampling = text_sampling;
+        lfm2::Lfm2InterleavedGenerator generator(backbone, depthformer, tokenizer, prompt, audio, output.depthformer.end_of_audio(), options);
+        std::vector<lfm2::Lfm2ReplyStep> steps;
+        while (auto step = generator.next()) {
+            steps.push_back(std::move(*step));
+        }
+
+        return steps;
+    };
+
+    size_t differing = 0;
+    for (const auto & seed : kReplySeeds) {
+        const auto greedy = reply(std::stoull(seed), {});
+        const auto sampled = reply(std::stoull(seed), {1.0f, 0});
+        size_t first = 0;
+        while (first < greedy.size() && first < sampled.size() && greedy[first].token == sampled[first].token &&
+               greedy[first].codes == sampled[first].codes) {
+            ++first;
+        }
+
+        if (first == greedy.size() && first == sampled.size()) {
+            continue;
+        }
+
+        // A reply that drew <|im_end|> ends at that text step.
+        const auto text_at_first = [&](const std::vector<lfm2::Lfm2ReplyStep> & steps) {
+            return first >= steps.size() || steps[first].codes.empty();
+        };
+        ++differing;
+        checks.expect(text_at_first(greedy) && text_at_first(sampled), "seed " + seed + ": sampled text first differs at a text token",
+            "step " + std::to_string(first));
+    }
+
+    checks.expect(differing > 0, "text_temperature 1.0 changes a reply's steps");
+}
+
 std::unique_ptr<engine::runtime::IVoiceTaskSession> open_session(
     engine::runtime::ILoadedVoiceModel & model,
     engine::runtime::VoiceTaskKind task,
@@ -525,6 +590,8 @@ void check_replies(
     rejects([](auto & r) { r.options["language"] = "ja"; }, "speaks en", "another language");
     // The first 6 steps are the first text block.
     rejects([](auto & r) { r.options["max_tokens"] = "6"; }, "before the reply spoke", "a max_tokens that ends the reply before it speaks");
+    rejects([](auto & r) { r.options["text_temperature"] = "-1"; }, "must not be negative", "a negative text_temperature");
+    rejects([](auto & r) { r.options["text_top_k"] = "-1"; }, "must not be negative", "a negative text_top_k");
 
     // A reply that reaches max_tokens keeps its text and speech, as
     // liquid-audio keeps what it generated at max_new_tokens, with a warning.
@@ -553,6 +620,15 @@ void check_replies(
         again.text_output.has_value() ? again.text_output->text : "");
     checks.expect(has_audio && again.audio_output.has_value() && again.audio_output->samples == reply.audio_output->samples,
         "the first request again has the same audio");
+
+    // Top-k 1 keeps the text greedy at any temperature, as in liquid-audio.
+    auto top_1 = question();
+    top_1.options["text_temperature"] = "0.7";
+    top_1.options["text_top_k"] = "1";
+    const auto top_1_reply = run(*s2s, top_1);
+    checks.expect(top_1_reply.text_output.has_value() && top_1_reply.text_output->text == text, "text_top_k=1 gives the greedy text");
+    checks.expect(has_audio && top_1_reply.audio_output.has_value() && top_1_reply.audio_output->samples == reply.audio_output->samples,
+        "text_top_k=1 gives the greedy reply's audio");
 
     // Streamed with the same seed: the same reply, its audio decoded a frame
     // at a time. The other sessions go first, so one set of weights is loaded.
@@ -731,6 +807,8 @@ int main(int argc, char ** argv) {
             } else {
                 std::cout << "SKIP stage numbers: " << model_gguf << " is quantized\n";
             }
+
+            check_text_sampling(*components, *output, backend, checks);
         }
 
         check_replies(model_dir, spec_override, model_gguf, backend, full_precision, checks);

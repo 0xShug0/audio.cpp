@@ -41,16 +41,31 @@ struct Lfm2AudioSampling {
     uint64_t seed = 0;
 };
 
-// Picks the codes of audio frames with one random stream per sampler.
+// S2S text tokens, sampled like LFM2AudioModel._sample_text_token by the same
+// rule as the audio codes. Greedy by default, as in liquid-audio's README and
+// demo.
+struct Lfm2TextSampling {
+    float temperature = 0.0f;
+    int64_t top_k = 0;
+};
+
+// Picks the codes of audio frames, or text tokens, with one random stream per
+// sampler.
 class Lfm2CodeSampler {
 public:
     explicit Lfm2CodeSampler(const Lfm2AudioSampling & sampling);
+    // Text draws come from a stream of their own, seeded from a fixed mix of
+    // the request seed, so they leave the audio codes' draws as they were.
+    Lfm2CodeSampler(const Lfm2TextSampling & sampling, uint64_t seed);
 
-    // May change `logits`.
+    // May change `logits`. Throws on non-finite logits, greedy or not.
     int32_t pick(std::vector<float> & logits);
 
 private:
+    Lfm2CodeSampler(float temperature, int64_t top_k, uint64_t seed, const char * context);
+
     bool greedy_;
+    const char * context_;
     sampling::HfSamplingOptions options_;
     sampling::HfSampler sampler_;
     sampling::HfSamplerScratch scratch_;
