@@ -2,6 +2,7 @@
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/models/pocket_tts/assets.h"
 #include "engine/models/pocket_tts/session.h"
 
@@ -16,7 +17,9 @@ namespace engine::models::pocket_tts {
 namespace {
 
 std::string requested_language(const runtime::ModelLoadRequest & request) {
-    return runtime::find_option(request.options, {"language"}).value_or("english");
+    const auto options = runtime::apply_option_v1_compatibility(
+        request.options, {{"language", "pocket_tts.language"}}, "PocketTTS", "load");
+    return runtime::find_option(options, {"pocket_tts.language"}).value_or("english");
 }
 
 runtime::CapabilitySet capabilities(const PocketTTSAssets & assets) {

@@ -15,6 +15,175 @@
   "languages": [
     "en"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "prompt",
+        "type": "string",
+        "description": "Fallback text prompt when text_input is absent; pipe separates batch prompts.",
+        "required": false
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "description": "Negative prompt; pipe separates batch prompts.",
+        "required": false
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Positive duration in seconds; batch requests also accept a comma-separated string matching the prompt count, not a JSON array.",
+        "required": false,
+        "default": 120
+      },
+      {
+        "name": "batch_size",
+        "type": "int",
+        "description": "Prompt batch size.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Diffusion steps.",
+        "required": false,
+        "min": 1,
+        "default": 8
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "apg_scale",
+        "type": "float",
+        "description": "Adaptive projected guidance scale.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "sampler",
+        "type": "enum",
+        "description": "Stable Audio 3 supports pingpong/euler; Foundation supports euler/dpmpp-2m/dpmpp-3m-sde.",
+        "required": false,
+        "values": [
+          "pingpong",
+          "euler",
+          "dpmpp-2m",
+          "dpmpp-3m-sde"
+        ]
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted chooses a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "duration_padding_sec",
+        "type": "float",
+        "description": "Generated padding before truncation.",
+        "required": false,
+        "min": 0,
+        "default": 6
+      },
+      {
+        "name": "truncate_output_to_duration",
+        "type": "bool",
+        "description": "Trim decoded audio to requested duration.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "chunked_decode",
+        "type": "bool",
+        "description": "Decode audio in chunks.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "init_noise_level",
+        "type": "float",
+        "description": "Audio-conditioned generation strength.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 1
+      },
+      {
+        "name": "audio_input_kind",
+        "type": "enum",
+        "description": "How to use audio_input.",
+        "required": false,
+        "values": [
+          "init_audio",
+          "inpaint_audio"
+        ],
+        "default": "init_audio"
+      },
+      {
+        "name": "inpaint_mask_start_sec",
+        "type": "string",
+        "description": "Comma-separated inpaint region starts in seconds.",
+        "required": false
+      },
+      {
+        "name": "inpaint_mask_end_sec",
+        "type": "string",
+        "description": "Comma-separated inpaint region ends in seconds.",
+        "required": false
+      },
+      {
+        "name": "sigma_min",
+        "type": "float",
+        "description": "Foundation sampler minimum noise level.",
+        "required": false
+      },
+      {
+        "name": "sigma_max",
+        "type": "float",
+        "description": "Foundation sampler maximum noise level.",
+        "required": false
+      },
+      {
+        "name": "rho",
+        "type": "float",
+        "description": "Foundation sampler noise schedule exponent.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "max_batch",
+        "type": "int",
+        "description": "Maximum prompt batch size.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; defaults to native.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Stable Audio 3: release staged runtime graphs; not used by Foundation.",
+        "required": false,
+        "default": false
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "music": [
       "lyrics"

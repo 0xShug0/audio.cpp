@@ -56,6 +56,92 @@
       "stream"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "values": [
+          "M1",
+          "M2",
+          "M3",
+          "M4",
+          "M5",
+          "F1",
+          "F2",
+          "F3",
+          "F4",
+          "F5"
+        ],
+        "default": "M1",
+        "description": "Built-in voice preset; --voice-id takes precedence.",
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "min": 1,
+        "default": 8,
+        "description": "Flow denoising steps.",
+        "required": false
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "min": 0,
+        "default": 1.05,
+        "description": "Positive speech speed multiplier; voice.style.speaking_rate takes precedence.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "min": 0,
+        "max": 4294967295,
+        "default": 1234,
+        "description": "Noise seed.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Framework text chunk size; defaults to 120 for Korean/Japanese, otherwise 300.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "default": "default",
+        "description": "Framework text chunking mode.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "default": "native",
+        "description": "Weight storage type.",
+        "required": false
+      },
+      {
+        "name": "style_cache_slots",
+        "type": "int",
+        "min": 0,
+        "default": 4,
+        "description": "Cached preset style slots; zero disables reuse.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
   "ui": {
     "recommended_package": "supertonic_3_orig",
     "tags": [

@@ -115,10 +115,19 @@ audiocpp_gguf.exe --input models\citrinet\citrinet_256.safetensors --root models
 The GGUF embeds `citrinet_256_config.json` and the vocabulary/tokenizer sidecars, so the
 completed `model.gguf` can be moved, renamed, and passed directly to `--model`.
 
+### Common Options (use directly)
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. Use 16 kHz WAV for the example path. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Compute backend. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `citrinet_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage type used by the encoder. |
+
 
 ## Kroko Community ASR
 

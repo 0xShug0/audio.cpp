@@ -1109,7 +1109,11 @@ void test_options_schema() {
 
 void test_option_name_mapping_from_production_spec() {
     // Reference option tables do not opt legacy loaders into v1 contracts.
-    for (const auto * family : {"omnivoice", "qwen3_tts", "qwen3_asr"}) {
+    for (const auto * family : {
+             "omnivoice", "qwen3_tts", "qwen3_asr", "chatterbox", "citrinet_asr",
+             "higgs_audio_tts", "index_tts2", "miocodec", "miotts", "moss_tts_local",
+             "moss_tts_nano", "pocket_tts", "stable_audio", "supertonic", "vibevoice",
+             "vibevoice_asr", "voxcpm2", "voxtral_realtime"}) {
         const auto cli = engine::model_spec::cli_interface(family);
         engine::test::require(!cli.has_value(), "legacy spec should not expose v1 CLI metadata");
         const auto spec = engine::model_spec::load_spec(

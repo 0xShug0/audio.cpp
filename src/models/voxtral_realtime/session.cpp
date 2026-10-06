@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/runtime/partial_text.h"
 
 #include <algorithm>
@@ -40,13 +41,15 @@ int64_t source_frames_for_target_samples(int64_t target_samples, int source_rate
 }
 
 VoxtralRealtimeGenerationOptions parse_generation_options(
-    const std::unordered_map<std::string, std::string> & options) {
+    const std::unordered_map<std::string, std::string> & supplied_options) {
+    const auto options = runtime::apply_option_v1_compatibility(
+        supplied_options, {{"max_new_tokens", "max_tokens"}}, "VoxTral realtime", "request");
     VoxtralRealtimeGenerationOptions out;
-    if (const auto max_new_tokens = runtime::parse_i64_option(options, {"max_new_tokens"})) {
+    if (const auto max_new_tokens = runtime::parse_i64_option(options, {"max_tokens"})) {
         out.max_new_tokens = *max_new_tokens;
         out.max_new_tokens_set = true;
         if (out.max_new_tokens <= 0) {
-            throw std::runtime_error("VoxTral realtime max_new_tokens must be positive");
+            throw std::runtime_error("VoxTral realtime max_tokens must be positive");
         }
     }
     if (const auto do_sample = runtime::find_option_match(options, {"do_sample"})) {

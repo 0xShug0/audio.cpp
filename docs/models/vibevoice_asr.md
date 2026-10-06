@@ -102,17 +102,41 @@ directory may contain only `model.gguf`.
 | `--top-k` | integer | model default | Top-k sampling limit; `0` disables top-k filtering. |
 | `--num-beams` | integer | `1` | Beam count for deterministic beam search. |
 | `--repetition-penalty` | float | model default | Generation repetition penalty. |
-| `--seed` | integer | random if omitted | Sampling seed. |
+| `--seed` | integer | `1234` | Acoustic latent sampling seed. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
 | `--audio-chunk-seconds` | float seconds | `1200` | Fixed audio chunk duration. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 | `--segments-out` | JSON path | not set | Write structured ASR segments when produced. |
 | `--turns-out` | JSON path | not set | Write speaker turns when produced. |
 
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `context` | text | not set | Context hint; context_info is also accepted. |
+| `language` | text | not set | ASR language label. |
+| `max_tokens` | integer >= 1 | `32768` | Maximum generated text tokens. |
+| `temperature` | float | `0` | Sampling temperature; zero uses deterministic decoding. |
+| `top_p` | float | `1` | Nucleus probability in (0, 1]. |
+| `top_k` | integer >= 0 | `50` | Top-k sampling limit; zero disables filtering. |
+| `num_beams` | integer >= 1 | `1` | Deterministic beam search width. |
+| `repetition_penalty` | float | `1` | Positive generation repetition penalty. |
+| `seed` | integer >= 0 | `1234` | Acoustic latent sampling seed. |
+| `audio_chunk_mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Pre-encoder audio splitting; auto uses fixed chunks. |
+| `audio_chunk_duration_sec` | float | `1200` | Positive audio chunk duration in seconds. |
+
 ### Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `vibevoice_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.connector_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `vibevoice_asr.tokenizer_weight_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+| `vibevoice_asr.connector_weight_context_mb` | integer >= 1 | `128` | Context or graph arena size in MiB. |
+| `vibevoice_asr.decoder_weight_context_mb` | integer >= 1 | not set | Decoder weight context in MiB; 4096 on 64-bit builds, 1024 on 32-bit builds. |
+| `vibevoice_asr.max_history_steps` | integer | `0` | Maximum retained decoder history; zero uses the model limit. |
 | `vibevoice_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
 
 ## VibeVoice ASR Streaming 7B

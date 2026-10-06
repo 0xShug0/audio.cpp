@@ -19,6 +19,269 @@
     "pt",
     "es"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "frames_after_eos",
+        "type": "int",
+        "description": "Extra frames after EOS; -1 uses the model-derived value.",
+        "required": false,
+        "min": -1,
+        "default": -1
+      },
+      {
+        "name": "max_steps",
+        "type": "int",
+        "description": "Maximum generated audio frames; zero estimates the cap from text length. Captured during session preparation.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Tokenizer tokens per text chunk. Captured during session preparation.",
+        "required": false,
+        "min": 1,
+        "default": 50
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Positive flow noise temperature; defaults to the model configuration. Captured during session preparation.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Noise seed; omitted chooses a random seed. Captured during session preparation.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "noise_clamp",
+        "type": "float",
+        "description": "Noise clamp; a negative value disables clamping. Captured during session preparation.",
+        "required": false,
+        "default": -1
+      },
+      {
+        "name": "eos_threshold",
+        "type": "float",
+        "description": "EOS detection threshold. Captured during session preparation.",
+        "required": false,
+        "default": -4
+      },
+      {
+        "name": "noise_file",
+        "type": "path",
+        "description": "Precomputed noise schedule file. Captured during session preparation.",
+        "required": false
+      },
+      {
+        "name": "voice_embedding_path",
+        "type": "path",
+        "description": "Precomputed voice-state embedding path. Captured during session preparation.",
+        "required": false
+      },
+      {
+        "name": "voice_clone_text",
+        "type": "string",
+        "description": "Accepted clone transcript field; currently stored but not consumed by voice encoding. Requires clone audio.",
+        "required": false
+      },
+      {
+        "name": "truncate_clone_audio",
+        "type": "bool",
+        "description": "Truncate voice clone audio. Captured during session preparation.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Optional per-request character chunk size; otherwise use sentence/token budgeting.",
+        "required": false
+      },
+      {
+        "name": "export_voice_state_path",
+        "type": "path",
+        "description": "Export the prepared voice state during session preparation.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "voice_state_cache_slots",
+        "type": "int",
+        "description": "Cached prepared voice states; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 4
+      },
+      {
+        "name": "offline_graph_capacity_mode",
+        "type": "enum",
+        "description": "Offline graph capacity policy; CPU/Metal default tiered, other backends double.",
+        "required": false,
+        "values": [
+          "fixed",
+          "double",
+          "tiered",
+          "grow"
+        ]
+      },
+      {
+        "name": "prompt_graph_capacity",
+        "type": "int",
+        "description": "Optional reserved prompt capacity.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "generation_graph_capacity",
+        "type": "int",
+        "description": "Optional reserved generation capacity.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "matmul_weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage.",
+        "required": false,
+        "preset": "weight_type_conv",
+        "default": "native"
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "flow_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "mimi_encoder_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "mimi_decoder_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "flow_weights_view_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "flow_step_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "mimi_encoder_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "mimi_conv_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "mimi_transformer_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 96
+      },
+      {
+        "name": "mimi_tail_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "mimi_full_chunk_frames",
+        "type": "int",
+        "description": "Full-sequence decoder chunk frames.",
+        "required": false,
+        "min": 1,
+        "default": 90
+      },
+      {
+        "name": "mimi_stage2_chunk_frames",
+        "type": "int",
+        "description": "Second-stage decoder chunk frames.",
+        "required": false,
+        "min": 1,
+        "default": 900
+      },
+      {
+        "name": "use_full_mimi",
+        "type": "bool",
+        "description": "Use full-sequence Mimi decoding.",
+        "required": false,
+        "default": true
+      }
+    ],
+    "load": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Model language selection.",
+        "required": false,
+        "default": "english"
+      }
+    ]
+  },
   "capabilities": {
     "clone": [
       "speaker_reference"

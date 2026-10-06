@@ -14,6 +14,164 @@
     "auto",
     "51 languages"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "context",
+        "type": "string",
+        "description": "Context hint; context_info is also accepted.",
+        "required": false
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "ASR language label.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated text tokens.",
+        "required": false,
+        "min": 1,
+        "default": 32768
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature; zero uses deterministic decoding.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus probability in (0, 1].",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit; zero disables filtering.",
+        "required": false,
+        "min": 0,
+        "default": 50
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Deterministic beam search width.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Positive generation repetition penalty.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Acoustic latent sampling seed.",
+        "required": false,
+        "min": 0,
+        "default": 1234
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Pre-encoder audio splitting; auto uses fixed chunks.",
+        "required": false,
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Positive audio chunk duration in seconds.",
+        "required": false,
+        "default": 1200
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "tokenizer_weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "connector_weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "decoder_weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "tokenizer_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "connector_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "decoder_weight_context_mb",
+        "type": "int",
+        "description": "Decoder weight context in MiB; 4096 on 64-bit builds, 1024 on 32-bit builds.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "max_history_steps",
+        "type": "int",
+        "description": "Maximum retained decoder history; zero uses the model limit.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "vad_model_path",
+        "type": "path",
+        "description": "Silero VAD model used with audio_chunk_mode=vad.",
+        "required": false,
+        "default": "assets/framework/models/silero_vad"
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "asr": [
       "segments",

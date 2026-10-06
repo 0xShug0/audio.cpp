@@ -14,7 +14,7 @@ MOSS-TTS-Local is the larger local-transformer path.
 | Task | `tts`, `clon` |
 | Modes | `offline` |
 | Languages | Model auto-handles supported languages; `--language` can pass a language hint |
-| Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
+| Voice input | Optional reference WAV through `--voice-ref`; Local does not consume a reference transcript |
 | Built-in voices | Not exposed |
 
 Text-only speech:
@@ -26,7 +26,7 @@ audiocpp_cli --task tts --family moss_tts_local --model /path/to/MOSS-TTS-Local-
 Voice clone:
 
 ```bash
-audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local-Transformer-v1.5 --backend cuda --text "Hello from MOSS-TTS-Local." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
+audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local-Transformer-v1.5 --backend cuda --text "Hello from MOSS-TTS-Local." --voice-ref /path/to/reference.wav --out out.wav
 ```
 
 ### MOSS-TTS-Local Common Options (use directly)
@@ -49,9 +49,18 @@ audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `text_temperature` | float | `1.0` | Text-gate sampling temperature. |
-| `text_top_p` | float | `1.0` | Text-gate nucleus sampling limit. |
+| `max_tokens` | integer >= 1 | `4096` | Maximum generated audio frames. |
+| `do_sample` | bool | `true` | Enable sampling. |
+| `temperature` | float | `1.7` | Audio sampling temperature. |
+| `top_p` | float | `0.8` | Audio nucleus sampling probability. |
+| `top_k` | integer | `25` | Audio top-k sampling limit. |
+| `repetition_penalty` | float | `1` | Audio repetition penalty. |
+| `text_temperature` | float | `1` | Text-gate sampling temperature. |
+| `text_top_p` | float | `1` | Text-gate nucleus sampling limit. |
 | `text_top_k` | integer | `50` | Text-gate top-k sampling limit. |
+| `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
+| `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ### MOSS-TTS-Local Session Options (use with `--session-option`)
 
@@ -106,17 +115,28 @@ audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-1
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `reference_text` | text | empty string | Transcript for reference audio; a nonempty value requires `--voice-ref`. |
+| `max_tokens` | integer >= 1 | `300` | Maximum generated audio frames. |
+| `active_codebooks` | integer >= 1 | model default | Active codebooks; defaults to the checkpoint n_vq. |
+| `do_sample` | bool | `true` | Enable sampling. |
+| `temperature` | float | `1.7` | Audio sampling temperature. |
+| `top_p` | float | `0.8` | Audio nucleus sampling probability. |
+| `top_k` | integer | `25` | Audio top-k sampling limit. |
+| `repetition_penalty` | float | `1` | Audio repetition penalty. |
 | `text_temperature` | float | `1.5` | Text-gate sampling temperature. |
-| `text_top_p` | float | `1.0` | Text-gate nucleus sampling limit. |
+| `text_top_p` | float | `1` | Text-gate nucleus sampling limit. |
 | `text_top_k` | integer | `50` | Text-gate top-k sampling limit. |
+| `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
+| `text_chunk_size` | integer | `256` | Framework long-form text chunk size. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ### MOSS-TTS-Nano Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `moss_tts_nano.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Global and local-frame weight storage type. |
-| `moss_tts_nano.global_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Global transformer weight storage type. |
-| `moss_tts_nano.local_frame_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Local frame decoder weight storage type. |
+| `moss_tts_nano.global_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Global transformer weight storage type. |
+| `moss_tts_nano.local_frame_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Local frame decoder weight storage type. |
 | `moss_tts_nano.global_prefill_graph_arena_mb` | MB | `256` | Global prefill graph arena size. |
 | `moss_tts_nano.global_decode_graph_arena_mb` | MB | `128` | Global decode graph arena size. |
 | `moss_tts_nano.global_weight_context_mb` | MB | `512` | Global transformer weight context size. |

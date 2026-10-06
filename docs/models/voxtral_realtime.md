@@ -200,15 +200,20 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `max_new_tokens` | integer | model-derived limit | Maximum generated transcript tokens. |
+| `max_tokens` | integer | not set | Maximum generated transcript tokens. |
+| `do_sample` | bool | `false` | Sample rather than greedily decode. |
+| `temperature` | float | `1` | Positive sampling temperature. |
+| `top_p` | float | `1` | Nucleus sampling probability in (0, 1]. |
+| `top_k` | integer >= 0 | `50` | Top-k sampling limit; zero disables filtering. |
+| `seed` | integer >= 0 | `1234` | Sampling seed. |
+
+The legacy request name `max_new_tokens` remains accepted. Use only one name per request.
 
 ## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `voxtral_realtime.stream_batch_tokens` | integer >= 1 | `1` | Audio tokens per encoder forward. The decoder still runs one step per 80 ms; batching amortizes the encoder's fixed per-forward cost at the price of delaying each partial by up to `n * 80 ms`. |
-| `voxtral_realtime.stream_decode_cache_steps` | integer >= 1 | `1024` | Decoder KV cache size in 80 ms steps, about 82 seconds of context. The cache ring wraps in place during long sessions. Lower values trade context for memory, not speed. |
-| `voxtral_realtime.weight_type` | `native`, `f32`, `f16`, `bf16`, `q4_0`, `q4_k`, `q5_k`, `q6_k`, `q8_0` | `native` | Shared matmul weight storage type. |
+| `voxtral_realtime.weight_type` | `native`, `f32`, `f16`, `bf16`, `q4_0`, `q4_1`, `q5_0`, `q5_1`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, `q6_k`, `q8_0`, `nvfp4` | `native` | Shared matmul weight storage type accepted by the tensor loader; backend and shape support still apply. |
 | `voxtral_realtime.audio_encoder_weight_type` | same as above | shared setting | Audio encoder matmul weight storage type. Leave at `native` for streaming: the encoder is not bandwidth-bound there, so quantizing it makes it slower. |
 | `voxtral_realtime.text_decoder_weight_type` | same as above | shared setting | Text decoder matmul weight storage type. `q4_k` roughly halves the streaming decoder step cost. |
 | `voxtral_realtime.audio_encoder_graph_arena_mb` | integer MiB | `512` | Audio encoder graph arena size. |
@@ -216,6 +221,8 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 | `voxtral_realtime.text_decoder_prefill_graph_arena_mb` | integer MiB | `512` | Text decoder prefill graph arena size. |
 | `voxtral_realtime.text_decoder_decode_graph_arena_mb` | integer MiB | `512` | Text decoder cached-step graph arena size. |
 | `voxtral_realtime.text_decoder_weight_context_mb` | integer MiB | `128` | Text decoder weight context arena size. |
+| `voxtral_realtime.stream_decode_cache_steps` | integer >= 1 | `1024` | Decoder KV cache size in 80 ms steps, about 82 seconds of context. The cache ring wraps in place during long sessions. Lower values trade context for memory, not speed. |
+| `voxtral_realtime.stream_batch_tokens` | integer >= 1 | `1` | Audio tokens per encoder forward. The decoder still runs one step per 80 ms; batching amortizes the encoder's fixed per-forward cost at the price of delaying each partial by up to `n * 80 ms`. |
 
 Weight storage types are applied when the model loads, so requesting a type the
 GGUF does not already hold requantizes on the CPU before the first token. This
