@@ -157,18 +157,18 @@
       {
         "name": "graph_arena_mb",
         "type": "int",
-        "description": "Reusable runtime graph arena size in MiB; default 1024.",
+        "description": "Reusable runtime graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "weight_context_mb",
         "type": "int",
-        "description": "Weight loading context size in MiB; default 2048.",
+        "description": "Weight loading context size in MiB; default 4.",
         "required": false,
         "min": 1,
-        "default": 2048
+        "default": 4
       },
       {
         "name": "reference_cache_slots",

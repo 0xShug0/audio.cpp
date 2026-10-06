@@ -185,11 +185,11 @@ BreezeTTSSession::BreezeTTSSession(
     const auto graph_arena_bytes = runtime::parse_size_mb_option(
         options.options,
         {"graph_arena_mb"},
-        1024ull * 1024ull * 1024ull);
+        32ull * 1024ull * 1024ull);
     const auto weight_context_bytes = runtime::parse_size_mb_option(
         options.options,
         {"weight_context_mb"},
-        2048ull * 1024ull * 1024ull);
+        4ull * 1024ull * 1024ull);
     const auto attention_preference = attention_preference_from_options(options);
     trace_attention_preference(attention_preference);
     const auto bf16_activations = bf16_activation_mode_from_options(options);
@@ -236,7 +236,7 @@ BreezeSpeechCodes BreezeTTSSession::resolve_reference_codes(const runtime::Audio
     }
     const auto start = std::chrono::steady_clock::now();
     ReferenceCacheEntry entry;
-    entry.codes = generator_->encode_reference(audio);
+    entry.codes = generator_->encode_reference(audio, reference_cache_.capacity() == 0);
     engine::debug::trace_log_scalar("breeze_tts.reference.frames", entry.codes.frames);
     engine::debug::trace_log_scalar("breeze_tts.reference.codebooks", entry.codes.code_groups);
     if (reference_cache_.capacity() == 0) {

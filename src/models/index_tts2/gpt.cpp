@@ -1146,7 +1146,7 @@ public:
         output_dims_ = out.shape.dims[2];
         ggml_set_output(output_);
 
-        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(65536, frames_ * 4096 + 8192)), false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
         if (input_buffer_ == nullptr) {
@@ -1438,7 +1438,7 @@ public:
         mel = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, mel), core::TensorShape::from_dims({1, 1, kModelDim}));
         auto x = modules::ConcatModule({1}).build(ctx, conds, text);
         x = modules::ConcatModule({1}).build(ctx, x, mel);
-        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(65536, prompt_steps_ * 8192)), false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         for (const auto & layer : weights_->gpt_layers) {
             auto out = gpt2_layer_full(ctx, x, layer);
             x = out.output;
@@ -1681,10 +1681,7 @@ public:
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
 
-        graph_ = ggml_new_graph_custom(
-            ctx_.get(),
-            static_cast<size_t>(std::max<int64_t>(65536, (kV2ConditionTokens + text_steps_ + mel_steps_) * 8192)),
-            false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
         if (input_buffer_ == nullptr) {

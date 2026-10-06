@@ -100,8 +100,8 @@ audiocpp_cli --task tts --family index_tts2 \
 | `index_tts2.speaker_cache_slots` | integer slots | `1` | Prepared speaker-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_cache_slots` | integer slots | `1` | Prepared emotion-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_text_cache_slots` | integer slots | `1` | Emotion-text weight cache slots; set `0` to disable reuse. |
-| `index_tts2.gpt_graph_arena_mb` | MB | `2048` | GPT graph arena size. |
-| `index_tts2.s2mel_graph_arena_mb` | MB | `2048` | S2Mel graph arena size. |
+| `index_tts2.gpt_graph_arena_mb` | MB | `32` | GPT graph arena size. |
+| `index_tts2.s2mel_graph_arena_mb` | MB | `32` | S2Mel graph arena size. |
 | `index_tts2.reference_graph_arena_mb` | MB | `512` | Reference encoder and codec graph arena size. |
 | `index_tts2.emotion_text_prefill_graph_arena_mb` | MB | `2048` | Emotion-text prefill graph arena size. |
 | `index_tts2.emotion_text_decode_graph_arena_mb` | MB | `512` | Emotion-text cached-step graph arena size. |
@@ -251,8 +251,8 @@ or commercial use.
 | `index_tts2.speaker_cache_slots` | integer slots | `1` | Prepared speaker-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_cache_slots` | integer slots | `1` | Prepared emotion-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_text_cache_slots` | integer slots | `1` | Emotion-text weight cache slots; set `0` to disable reuse. |
-| `index_tts2.gpt_graph_arena_mb` | MB | `2048` | GPT graph arena size. |
-| `index_tts2.s2mel_graph_arena_mb` | MB | `2048` | S2Mel graph arena size. |
+| `index_tts2.gpt_graph_arena_mb` | MB | `32` | GPT graph arena size. |
+| `index_tts2.s2mel_graph_arena_mb` | MB | `32` | S2Mel graph arena size. |
 | `index_tts2.reference_graph_arena_mb` | MB | `512` | Reference encoder and codec graph arena size. |
 | `index_tts2.emotion_text_prefill_graph_arena_mb` | MB | `2048` | Emotion-text prefill graph arena size. |
 | `index_tts2.emotion_text_decode_graph_arena_mb` | MB | `512` | Emotion-text cached-step graph arena size. |
