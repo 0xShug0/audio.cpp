@@ -2099,6 +2099,7 @@ audiocpp_add_model(sopro_tts
         src/community_models/sopro_tts/semantic_lm.cpp
         src/community_models/sopro_tts/session.cpp
         src/community_models/sopro_tts/speaker_encoder.cpp
+        src/community_models/sopro_tts/streaming.cpp
         src/community_models/sopro_tts/text_tokenizer.cpp
         src/community_models/sopro_tts/vocoder.cpp
     INCLUDES

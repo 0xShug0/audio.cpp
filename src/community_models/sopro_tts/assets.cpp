@@ -128,9 +128,9 @@ SoproSpeakerEncoderConfig parse_speaker_encoder(const json::Value & root) {
     return out;
 }
 
-SoproVocoderConfig parse_vocoder(const json::Value & root, const std::string & key) {
+SoproVocoderConfig parse_vocoder(const json::Value & root) {
     SoproVocoderConfig out;
-    const auto * node = root.find(key);
+    const auto * node = root.find("vocoder");
     if (node == nullptr) {
         return out;
     }
@@ -143,10 +143,14 @@ SoproVocoderConfig parse_vocoder(const json::Value & root, const std::string & k
     out.intermediate_dim = json::optional_i64(cfg, "intermediate_dim", out.intermediate_dim);
     out.num_layers = json::optional_i64(cfg, "num_layers", out.num_layers);
     out.max_magnitude = json::optional_f32(cfg, "max_magnitude", out.max_magnitude);
-    out.band_limit_hz = json::optional_f32(cfg, "band_limit_hz", out.band_limit_hz);
     out.causal = json::optional_bool(cfg, "causal", out.causal);
     out.lookahead_frames = json::optional_nullable_i64(cfg, "lookahead_frames", out.lookahead_frames);
-    out.block_lookaheads = json::optional_i64_array(cfg, "block_lookaheads");
+    out.block_lookaheads = json::optional_i64_array(cfg, "block_lookaheads", out.block_lookaheads);
+    // sopro/vocoder.py Backbone: an empty list means no block lookahead.
+    if (!out.block_lookaheads.empty() &&
+        static_cast<int64_t>(out.block_lookaheads.size()) != out.num_layers) {
+        throw std::runtime_error("Sopro vocoder.block_lookaheads must have num_layers entries");
+    }
     return out;
 }
 
@@ -178,8 +182,7 @@ SoproTTSConfig parse_config(const assets::ResourceBundle & resources) {
     out.model = parse_model(root);
     out.semantic_encoder = parse_semantic_encoder(root);
     out.speaker_encoder = parse_speaker_encoder(root);
-    out.vocoder = parse_vocoder(root, "vocoder");
-    out.vocoder_streaming = parse_vocoder(root, "vocoder_streaming");
+    out.vocoder = parse_vocoder(root);
     out.generation = parse_generation(root);
     const int64_t codebook = out.semantic_encoder.codebook_size();
     if (codebook != out.model.semantic_vocab_size) {

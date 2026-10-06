@@ -74,6 +74,48 @@ engine::modules::TransposeConfig swap_channel_time() {
     return engine::modules::TransposeConfig{{0, 2, 1, 3}, 3};
 }
 
+constexpr int64_t kVocoderKernel = 7;
+
+struct TimePadding {
+    int left = 0;
+    int right = 0;
+};
+
+// sopro/vocoder.py _conv_causal: a causal conv sees kernel - 1 - lookahead past
+// frames and `lookahead` future ones; a non-causal conv is centred.
+TimePadding conv_padding(const SoproVocoderConfig & config, int64_t lookahead) {
+    const int64_t context = kVocoderKernel - 1;
+    if (!config.causal) {
+        return {static_cast<int>(context / 2), static_cast<int>(context / 2)};
+    }
+    if (lookahead < 0 || lookahead > context) {
+        throw std::runtime_error("Sopro vocoder lookahead must be between 0 and kernel_size - 1");
+    }
+    return {static_cast<int>(context - lookahead), static_cast<int>(lookahead)};
+}
+
+int64_t block_lookahead(const SoproVocoderConfig & config, int64_t layer) {
+    if (!config.causal || config.block_lookaheads.empty()) {
+        return 0;
+    }
+    return config.block_lookaheads[static_cast<size_t>(layer)];
+}
+
+// Zero-pad the time axis of a [B, C, T] tensor.
+engine::core::TensorValue pad_time(
+    engine::core::ModuleBuildContext & ctx,
+    const engine::core::TensorValue & value,
+    int left,
+    int right) {
+    auto contiguous = engine::core::ensure_backend_addressable_layout(ctx, value);
+    auto shape = contiguous.shape;
+    shape.dims[2] += left + right;
+    return engine::core::wrap_tensor(
+        ggml_pad_ext(ctx.ggml, contiguous.tensor, left, right, 0, 0, 0, 0, 0, 0),
+        shape,
+        GGML_TYPE_F32);
+}
+
 std::shared_ptr<const SoproVocosWeights> load_vocoder_weights(
     ggml_backend_t backend,
     engine::core::BackendType backend_type,
@@ -132,10 +174,13 @@ engine::core::TensorValue build_convnext_block(
     engine::core::ModuleBuildContext & ctx,
     const engine::core::TensorValue & input_bct,
     const SoproVocoderConvNeXtWeights & weights,
-    const SoproVocoderConfig & config) {
+    const SoproVocoderConfig & config,
+    int64_t layer) {
+    const auto padding = conv_padding(config, block_lookahead(config, layer));
+    const bool centred = padding.left == padding.right;
     auto hidden = engine::modules::DepthwiseConv1dModule({
-        config.dim, 7, 1, 3, 1, weights.dwconv.bias.has_value(),
-    }).build(ctx, input_bct, weights.dwconv);
+        config.dim, kVocoderKernel, 1, centred ? padding.left : 0, 1, weights.dwconv.bias.has_value(),
+    }).build(ctx, centred ? input_bct : pad_time(ctx, input_bct, padding.left, padding.right), weights.dwconv);
     hidden = engine::modules::TransposeModule(swap_channel_time()).build(ctx, hidden);
     hidden = engine::modules::LayerNormModule({config.dim, 1.0e-6F, true, true})
                  .build(ctx, hidden, weights.norm);
@@ -154,15 +199,17 @@ engine::core::TensorValue build_vocoder_head(
     const engine::core::TensorValue & mel_bct,
     const SoproVocosWeights & weights,
     const SoproVocoderConfig & config) {
+    const auto padding = conv_padding(config, config.lookahead_frames);
+    const bool centred = padding.left == padding.right;
     auto hidden = engine::modules::Conv1dModule({
-        config.n_mels, config.dim, 7, 1, 3, 1, weights.embed.bias.has_value(),
-    }).build(ctx, mel_bct, weights.embed);
+        config.n_mels, config.dim, kVocoderKernel, 1, centred ? padding.left : 0, 1, weights.embed.bias.has_value(),
+    }).build(ctx, centred ? mel_bct : pad_time(ctx, mel_bct, padding.left, padding.right), weights.embed);
     hidden = engine::modules::TransposeModule(swap_channel_time()).build(ctx, hidden);
     hidden = engine::modules::LayerNormModule({config.dim, 1.0e-6F, true, true})
                  .build(ctx, hidden, weights.norm);
     hidden = engine::modules::TransposeModule(swap_channel_time()).build(ctx, hidden);
-    for (const auto & block : weights.convnext) {
-        hidden = build_convnext_block(ctx, hidden, block, config);
+    for (size_t layer = 0; layer < weights.convnext.size(); ++layer) {
+        hidden = build_convnext_block(ctx, hidden, weights.convnext[layer], config, static_cast<int64_t>(layer));
     }
     hidden = engine::modules::TransposeModule(swap_channel_time()).build(ctx, hidden);
     hidden = engine::modules::LayerNormModule({config.dim, 1.0e-6F, true, true})
@@ -171,63 +218,39 @@ engine::core::TensorValue build_vocoder_head(
         .build(ctx, hidden, weights.head_out);
 }
 
-}  // namespace
-
-int64_t band_limit_bin(const SoproVocoderConfig & config) {
-    const int64_t freq_bins = config.n_fft / 2 + 1;
-    if (config.band_limit_hz <= 0.0F) {
-        return freq_bins;
-    }
-    const auto cut = static_cast<int64_t>(std::ceil(
-        static_cast<double>(config.band_limit_hz) * static_cast<double>(config.n_fft) /
-        static_cast<double>(config.sample_rate)));
-    return std::clamp<int64_t>(cut, 0, freq_bins);
-}
-
-namespace {
-
-// ISTFTHead.spectrogram + ISTFT.forward. torch.fft.irfft(norm="backward")
-// scales by 1/n_fft; the overlap-add envelope is fold(window^2) and, unlike
-// the streaming path, the offline path divides by it without clamping.
-std::vector<float> istft_from_head(
-    const std::vector<float> & head,
+// ISTFTHead.spectrogram, then torch.fft.irfft(norm="backward") (which scales
+// by 1/n_fft) times the synthesis window: one windowed frame per head row,
+// [frames, n_fft].
+std::vector<float> synthesis_frames(
+    const float * head,
     int64_t frames,
     const SoproVocoderConfig & config,
     const std::vector<float> & window,
     size_t threads) {
     const int64_t freq_bins = config.n_fft / 2 + 1;
     const int64_t out_dim = config.n_fft + 2;
-    if (static_cast<int64_t>(head.size()) != frames * out_dim) {
-        throw std::runtime_error("Sopro vocoder head output shape mismatch");
-    }
     if (static_cast<int64_t>(window.size()) != config.n_fft) {
         throw std::runtime_error("Sopro vocoder ISTFT window shape mismatch");
     }
-    if (frames < 2) {
-        throw std::runtime_error("Sopro vocoder requires at least two mel frames");
+    std::vector<float> framed(static_cast<size_t>(frames * config.n_fft), 0.0F);
+    if (frames <= 0) {
+        return framed;
     }
     const float log_max_magnitude = std::log(config.max_magnitude);
-    // Everything at or above band_limit_hz is zeroed before the inverse
-    // transform, which kills the vocoder's high-frequency hiss. spectrum is
-    // value-initialised, so the loop below simply stops at the cut instead of
-    // writing zeros over the tail.
-    const int64_t synthesised_bins = band_limit_bin(config);
     std::vector<std::complex<float>> spectrum(static_cast<size_t>(frames * freq_bins));
     const int omp_threads = static_cast<int>(std::max<size_t>(1, threads));
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(omp_threads) if (frames >= 8)
 #endif
     for (int64_t frame = 0; frame < frames; ++frame) {
-        const float * row = head.data() + static_cast<size_t>(frame * out_dim);
-        for (int64_t freq = 0; freq < synthesised_bins; ++freq) {
+        const float * row = head + static_cast<size_t>(frame * out_dim);
+        for (int64_t freq = 0; freq < freq_bins; ++freq) {
             const float magnitude = std::exp(std::min(row[freq], log_max_magnitude));
             const float phase = row[freq_bins + freq];
             spectrum[static_cast<size_t>(frame * freq_bins + freq)] = {
                 magnitude * std::cos(phase), magnitude * std::sin(phase)};
         }
     }
-
-    std::vector<float> framed(static_cast<size_t>(frames * config.n_fft), 0.0F);
     engine::audio::real_fft_inverse(
         {static_cast<size_t>(frames), static_cast<size_t>(config.n_fft)},
         {
@@ -240,50 +263,13 @@ std::vector<float> istft_from_head(
         },
         1, spectrum.data(), framed.data(),
         1.0F / static_cast<float>(config.n_fft), threads);
-
-    const int64_t output_size = (frames - 1) * config.hop_length + config.n_fft;
-    std::vector<float> folded(static_cast<size_t>(output_size), 0.0F);
-    std::vector<float> envelope(static_cast<size_t>(output_size), 0.0F);
-    {
-        // Blocked over the output axis so each sample is accumulated in the
-        // same frame order as the serial loop.
-        const int64_t block = 4096;
-        const int64_t blocks = (output_size + block - 1) / block;
-#ifdef _OPENMP
-#pragma omp parallel for num_threads(omp_threads) if (blocks > 1)
-#endif
-        for (int64_t b = 0; b < blocks; ++b) {
-            const int64_t begin = b * block;
-            const int64_t end = std::min(output_size, begin + block);
-            int64_t first = (begin - config.n_fft) / config.hop_length + 1;
-            first = std::max<int64_t>(first, 0);
-            int64_t last = std::min<int64_t>((end - 1) / config.hop_length, frames - 1);
-            for (int64_t frame = first; frame <= last; ++frame) {
-                const int64_t start = frame * config.hop_length;
-                const int64_t i0 = std::max<int64_t>(begin - start, 0);
-                const int64_t i1 = std::min<int64_t>(end - start, config.n_fft);
-                const float * src = framed.data() + static_cast<size_t>(frame * config.n_fft);
-                for (int64_t i = i0; i < i1; ++i) {
-                    const float w = window[static_cast<size_t>(i)];
-                    folded[static_cast<size_t>(start + i)] += src[i] * w;
-                    envelope[static_cast<size_t>(start + i)] += w * w;
-                }
-            }
+    for (int64_t frame = 0; frame < frames; ++frame) {
+        float * row = framed.data() + static_cast<size_t>(frame * config.n_fft);
+        for (int64_t i = 0; i < config.n_fft; ++i) {
+            row[i] *= window[static_cast<size_t>(i)];
         }
     }
-
-    const int64_t pad = config.n_fft / 2;
-    const int64_t samples = output_size - 2 * pad;
-    if (samples <= 0) {
-        throw std::runtime_error("Sopro vocoder ISTFT produced no samples after trimming");
-    }
-    std::vector<float> audio(static_cast<size_t>(samples), 0.0F);
-    for (int64_t i = 0; i < samples; ++i) {
-        const size_t src = static_cast<size_t>(i + pad);
-        const float denominator = envelope[src];
-        audio[static_cast<size_t>(i)] = denominator != 0.0F ? folded[src] / denominator : 0.0F;
-    }
-    return audio;
+    return framed;
 }
 
 }  // namespace
@@ -341,7 +327,8 @@ struct SoproVocosGraph {
         return weights.get() == &other && frames == other_frames;
     }
 
-    std::vector<float> run(const std::vector<float> & mel, size_t threads) {
+    // Head output, one row of n_fft + 2 values per frame.
+    std::vector<float> run(const std::vector<float> & mel) {
         ggml_backend_tensor_set(input, mel.data(), 0, mel.size() * sizeof(float));
         const ggml_status status = engine::core::compute_backend_graph(backend, graph);
         ggml_backend_synchronize(backend);
@@ -350,7 +337,7 @@ struct SoproVocosGraph {
         }
         std::vector<float> head(static_cast<size_t>(frames * head_dim), 0.0F);
         ggml_backend_tensor_get(output, head.data(), 0, head.size() * sizeof(float));
-        return istft_from_head(head, frames, *config, weights->istft_window, threads);
+        return head;
     }
 
     ggml_backend_t backend = nullptr;
@@ -386,9 +373,7 @@ SoproVocosRuntime::SoproVocosRuntime(
 
 SoproVocosRuntime::~SoproVocosRuntime() = default;
 
-std::vector<float> SoproVocosRuntime::decode(
-    const std::vector<float> & mel,
-    int64_t frames) const {
+std::vector<float> SoproVocosRuntime::head(const std::vector<float> & mel, int64_t frames) const {
     if (frames <= 0 || static_cast<int64_t>(mel.size()) != frames * config_.n_mels) {
         throw std::runtime_error("Sopro vocoder requires a [n_mels, frames] input");
     }
@@ -404,7 +389,130 @@ std::vector<float> SoproVocosRuntime::decode(
             weights_,
             frames);
     }
-    return graph_->run(mel, static_cast<size_t>(execution_context_.config().threads));
+    return graph_->run(mel);
+}
+
+// ISTFT.forward is the streaming overlap-add fed every frame at once: the same
+// sums in the same order, and its envelope never falls near the clamp inside
+// the trimmed span.
+std::vector<float> SoproVocosRuntime::decode(const std::vector<float> & mel, int64_t frames) const {
+    if (frames < 2) {
+        throw std::runtime_error("Sopro vocoder requires at least two mel frames");
+    }
+    return SoproVocoderStream(*this).push(mel, frames, true);
+}
+
+std::vector<float> SoproVocosRuntime::synthesis_frames(const float * head, int64_t frames) const {
+    return sopro_tts::synthesis_frames(
+        head, frames, config_, weights_->istft_window, static_cast<size_t>(execution_context_.config().threads));
+}
+
+const std::vector<float> & SoproVocosRuntime::synthesis_window() const noexcept {
+    return weights_->istft_window;
+}
+
+int64_t SoproVocosRuntime::context_frames(bool right) const {
+    int64_t total = 0;
+    for (int64_t layer = -1; layer < config_.num_layers; ++layer) {
+        const auto padding = conv_padding(config_, layer < 0 ? config_.lookahead_frames : block_lookahead(config_, layer));
+        total += right ? padding.right : padding.left;
+    }
+    return total;
+}
+
+SoproVocoderStream::SoproVocoderStream(const SoproVocosRuntime & vocoder)
+    : vocoder_(vocoder),
+      left_(vocoder.context_frames(false)),
+      right_(vocoder.context_frames(true)) {}
+
+std::vector<float> SoproVocoderStream::push(const std::vector<float> & mel, int64_t frames, bool flush) {
+    const int64_t n_mels = vocoder_.n_mels();
+    if (frames < 0 || static_cast<int64_t>(mel.size()) != frames * n_mels) {
+        throw std::runtime_error("Sopro streaming vocoder requires a [n_mels, frames] input");
+    }
+    for (int64_t t = 0; t < frames; ++t) {
+        for (int64_t c = 0; c < n_mels; ++c) {
+            history_.push_back(mel[static_cast<size_t>(c * frames + t)]);
+        }
+    }
+    received_ += frames;
+
+    // Backbone frames whose receptive field is complete, recomputed over a
+    // window that carries that field on both sides.
+    const int64_t ready = flush ? received_ : received_ - right_;
+    std::vector<float> framed;
+    int64_t new_frames = 0;
+    if (ready > decoded_) {
+        const int64_t start = std::max<int64_t>(0, decoded_ - left_);
+        const int64_t window = received_ - start;
+        std::vector<float> window_mel(static_cast<size_t>(n_mels * window));
+        for (int64_t t = 0; t < window; ++t) {
+            const float * row = history_.data() + static_cast<size_t>((start - history_start_ + t) * n_mels);
+            for (int64_t c = 0; c < n_mels; ++c) {
+                window_mel[static_cast<size_t>(c * window + t)] = row[c];
+            }
+        }
+        const auto rows = vocoder_.head(window_mel, window);
+        new_frames = ready - decoded_;
+        framed = vocoder_.synthesis_frames(
+            rows.data() + static_cast<size_t>((decoded_ - start) * (vocoder_.n_fft() + 2)), new_frames);
+        decoded_ = ready;
+        const int64_t keep_from = std::max<int64_t>(0, decoded_ - left_);
+        history_.erase(history_.begin(), history_.begin() + static_cast<ptrdiff_t>((keep_from - history_start_) * n_mels));
+        history_start_ = keep_from;
+    }
+    auto audio = overlap_add(framed, new_frames, flush);
+    if (flush) {
+        history_.clear();
+        history_start_ = received_ = decoded_ = 0;
+        processed_ = emitted_ = tail_start_ = 0;
+        ola_.clear();
+        envelope_.clear();
+    }
+    return audio;
+}
+
+// ISTFT.forward_stream: accumulate each frame's windowed signal and squared
+// window, then emit every sample past the centre padding whose overlap is
+// complete (everything that is left on flush).
+std::vector<float> SoproVocoderStream::overlap_add(const std::vector<float> & framed, int64_t frames, bool flush) {
+    const int64_t n_fft = vocoder_.n_fft();
+    const int64_t hop = vocoder_.hop_length();
+    const int64_t pad = n_fft / 2;
+    const auto & window = vocoder_.synthesis_window();
+    const int64_t offset = processed_ * hop - tail_start_;
+    const int64_t required = frames > 0 ? offset + (frames - 1) * hop + n_fft : 0;
+    if (static_cast<int64_t>(ola_.size()) < required) {
+        ola_.resize(static_cast<size_t>(required), 0.0F);
+        envelope_.resize(static_cast<size_t>(required), 0.0F);
+    }
+    for (int64_t frame = 0; frame < frames; ++frame) {
+        const float * src = framed.data() + static_cast<size_t>(frame * n_fft);
+        const int64_t base = offset + frame * hop;
+        for (int64_t i = 0; i < n_fft; ++i) {
+            const float w = window[static_cast<size_t>(i)];
+            ola_[static_cast<size_t>(base + i)] += src[i];
+            envelope_[static_cast<size_t>(base + i)] += w * w;
+        }
+    }
+    processed_ += frames;
+    int64_t target = std::max<int64_t>(0, processed_ * hop - pad);
+    if (flush && processed_ > 0) {
+        target = std::max(target, (processed_ - 1) * hop + n_fft - 2 * pad);
+    }
+    const int64_t count = std::max<int64_t>(0, target - emitted_);
+    const int64_t first = emitted_ + pad - tail_start_;
+    std::vector<float> out(static_cast<size_t>(count));
+    for (int64_t i = 0; i < count; ++i) {
+        const auto index = static_cast<size_t>(first + i);
+        out[static_cast<size_t>(i)] = ola_[index] / std::max(envelope_[index], 1.0e-8F);
+    }
+    emitted_ = target;
+    const int64_t trim = std::min<int64_t>(emitted_ + pad - tail_start_, static_cast<int64_t>(ola_.size()));
+    ola_.erase(ola_.begin(), ola_.begin() + static_cast<ptrdiff_t>(trim));
+    envelope_.erase(envelope_.begin(), envelope_.begin() + static_cast<ptrdiff_t>(trim));
+    tail_start_ = emitted_ + pad;
+    return out;
 }
 
 std::vector<float> SoproVocosRuntime::log_mel(const std::vector<float> & audio) const {
@@ -452,7 +560,7 @@ int64_t SoproVocosRuntime::mel_frames(int64_t samples) const noexcept {
 }
 
 int64_t SoproVocosRuntime::hop_length() const noexcept { return config_.hop_length; }
+int64_t SoproVocosRuntime::n_fft() const noexcept { return config_.n_fft; }
 int64_t SoproVocosRuntime::n_mels() const noexcept { return config_.n_mels; }
-int SoproVocosRuntime::sample_rate() const noexcept { return static_cast<int>(config_.sample_rate); }
 
 }  // namespace engine::community_models::sopro_tts

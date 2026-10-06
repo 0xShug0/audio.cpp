@@ -25,6 +25,7 @@ constexpr float kSegmentSkipSeconds = 0.10F;
 constexpr float kTrailSeconds = 0.30F;
 constexpr float kJoinFadeSeconds = 0.01F;
 constexpr float kFinalFadeSeconds = 0.08F;
+constexpr float kGateHoldSeconds = 2.0F;
 
 struct SpeechLevel {
     float level_db = 0.0F;
@@ -45,12 +46,20 @@ SpeechLevel speech_level_db(const std::vector<float> & wav, int sample_rate);
 // Boost-only and peak-guarded: a reference already at or above the prompt level
 // is left alone, and the boost never pushes the peak past 0.95.
 NormalizedReference normalize_reference(const std::vector<float> & wav, int sample_rate);
+// The output gain both synthesis modes apply: maps the prompt's speech level
+// to kOutputLevelDb.
 float output_gain(float prompt_level_db = kPromptLevelDb);
-float match_gain(
-    const std::vector<float> & wav, int sample_rate, float target_db = kOutputLevelDb,
-    float prompt_level_db = kPromptLevelDb);
 void soft_limit(std::vector<float> & wav, float knee = kLimiterKnee);
 std::optional<int64_t> speech_onset(const std::vector<float> & wav, int sample_rate);
+// First sample of `min_frames` consecutive 10 ms frames over the noise floor.
+std::optional<int64_t> energy_onset(
+    const std::vector<float> & wav, int sample_rate, float over_floor_db = 10.0F, int64_t min_frames = 3);
+// Share of the 10 ms frames in [start, end) that are over the noise floor.
+float energy_fraction(
+    const std::vector<float> & wav, int sample_rate, int64_t start, int64_t end, float over_floor_db = 10.0F);
+// Where the lead-in is cut for speech starting at `onset`: `lead` seconds before
+// it, never before `skip` seconds, and at least 20 ms before the onset.
+int64_t lead_cut(int64_t onset, int sample_rate, float lead, float skip);
 std::vector<float> trim_lead(
     const std::vector<float> & wav, int sample_rate,
     float lead = kLeadInSeconds, float skip = 0.0F);

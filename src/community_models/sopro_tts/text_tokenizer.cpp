@@ -371,7 +371,6 @@ public:
         bos_id_ = processor_.bos_id() >= 0 ? processor_.bos_id() : 1;
         eos_id_ = processor_.eos_id() >= 0 ? processor_.eos_id() : 2;
         unk_id_ = processor_.unk_id() >= 0 ? processor_.unk_id() : 0;
-        vocab_size_ = processor_.GetPieceSize();
         if (max_length_ < 2) {
             throw std::runtime_error("Sopro tokenizer max_length must be at least 2");
         }
@@ -407,7 +406,6 @@ public:
     int32_t bos_id_ = 1;
     int32_t eos_id_ = 2;
     int32_t unk_id_ = 0;
-    int64_t vocab_size_ = 0;
 
 private:
     sentencepiece::SentencePieceProcessor processor_;
@@ -425,9 +423,5 @@ std::vector<int32_t> SoproTextTokenizer::encode(
     return impl_->encode(text, language);
 }
 
-int32_t SoproTextTokenizer::bos_id() const noexcept { return impl_->bos_id_; }
-int32_t SoproTextTokenizer::eos_id() const noexcept { return impl_->eos_id_; }
-int32_t SoproTextTokenizer::unk_id() const noexcept { return impl_->unk_id_; }
-int64_t SoproTextTokenizer::vocab_size() const noexcept { return impl_->vocab_size_; }
 
 }  // namespace engine::community_models::sopro_tts
