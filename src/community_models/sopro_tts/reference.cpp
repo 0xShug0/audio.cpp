@@ -31,7 +31,6 @@ constexpr float kOnsetThresholdDb = -45.0F;
 constexpr float kOnsetOverFloorDb = 15.0F;
 constexpr int64_t kOnsetWindowFrames = 6;
 constexpr int64_t kOnsetMinFrames = 5;
-constexpr float kMinActiveSeconds = 0.4F;
 
 // torch.unfold + RMS: floor((n - win) / hop) + 1 frames, floored at 1e-6.
 std::vector<float> frame_rms(
@@ -111,6 +110,14 @@ float onset_threshold(const std::vector<float> & rms) {
             threshold, quantile(rms, 0.1F) * std::pow(10.0F, kOnsetOverFloorDb / 20.0F));
     }
     return threshold;
+}
+
+// energy_onset / energy_fraction: `over_floor_db` above the 10th-percentile
+// frame, never below the absolute onset threshold.
+float energy_threshold(const std::vector<float> & rms, float over_floor_db) {
+    return std::max(
+        quantile(rms, 0.1F) * std::pow(10.0F, over_floor_db / 20.0F),
+        std::pow(10.0F, kOnsetThresholdDb / 20.0F));
 }
 
 // x[:(n // win) * win].view(-1, win) RMS, i.e. non-overlapping windows.
@@ -291,15 +298,6 @@ float output_gain(float prompt_level_db) {
     return std::pow(10.0F, (kOutputLevelDb - prompt_level_db) / 20.0F);
 }
 
-float match_gain(
-    const std::vector<float> & wav, int sample_rate, float target_db, float prompt_level_db) {
-    const auto level = speech_level_db(wav, sample_rate);
-    if (level.active_seconds < kMinActiveSeconds) {
-        return output_gain(prompt_level_db);
-    }
-    return std::pow(10.0F, (target_db - level.level_db) / 20.0F);
-}
-
 void soft_limit(std::vector<float> & wav, float knee) {
     const float span = 1.0F - knee;
     if (span <= 0.0F) {
@@ -328,17 +326,56 @@ std::optional<int64_t> speech_onset(const std::vector<float> & wav, int sample_r
     return *hit * window;
 }
 
+std::optional<int64_t> energy_onset(
+    const std::vector<float> & wav, int sample_rate, float over_floor_db, int64_t min_frames) {
+    const auto window = static_cast<int64_t>(static_cast<float>(sample_rate) * 0.010F);
+    if (window <= 0 || static_cast<int64_t>(wav.size()) < window * min_frames) {
+        return std::nullopt;
+    }
+    const auto rms = block_rms(wav, window);
+    if (static_cast<int64_t>(rms.size()) < min_frames) {
+        return std::nullopt;
+    }
+    const auto hit = first_sustained_hit(rms, energy_threshold(rms, over_floor_db), min_frames, min_frames);
+    if (!hit.has_value()) {
+        return std::nullopt;
+    }
+    return *hit * window;
+}
+
+float energy_fraction(
+    const std::vector<float> & wav, int sample_rate, int64_t start, int64_t end, float over_floor_db) {
+    const auto window = static_cast<int64_t>(static_cast<float>(sample_rate) * 0.010F);
+    if (window <= 0 || end <= start || static_cast<int64_t>(wav.size()) < window) {
+        return 0.0F;
+    }
+    const auto rms = block_rms(wav, window);
+    const float threshold = energy_threshold(rms, over_floor_db);
+    const int64_t first = std::min<int64_t>(start / window, static_cast<int64_t>(rms.size()));
+    const int64_t last = std::min<int64_t>(std::max(start / window + 1, end / window), static_cast<int64_t>(rms.size()));
+    if (last <= first) {
+        return 0.0F;
+    }
+    int64_t above = 0;
+    for (int64_t i = first; i < last; ++i) {
+        above += rms[static_cast<size_t>(i)] > threshold ? 1 : 0;
+    }
+    return static_cast<float>(above) / static_cast<float>(last - first);
+}
+
+int64_t lead_cut(int64_t onset, int sample_rate, float lead, float skip) {
+    const auto rate = static_cast<float>(sample_rate);
+    const int64_t cut = std::max(onset - static_cast<int64_t>(lead * rate), static_cast<int64_t>(skip * rate));
+    return std::min(cut, std::max<int64_t>(0, onset - static_cast<int64_t>(0.02F * rate)));
+}
+
 std::vector<float> trim_lead(
     const std::vector<float> & wav, int sample_rate, float lead, float skip) {
     const auto onset = speech_onset(wav, sample_rate);
     if (!onset.has_value()) {
         return wav;
     }
-    const auto rate = static_cast<float>(sample_rate);
-    int64_t cut = std::max(*onset - static_cast<int64_t>(lead * rate),
-                           static_cast<int64_t>(skip * rate));
-    cut = std::min(cut, std::max<int64_t>(0, *onset - static_cast<int64_t>(0.02F * rate)));
-    cut = std::min(cut, static_cast<int64_t>(wav.size()));
+    const int64_t cut = std::min(lead_cut(*onset, sample_rate, lead, skip), static_cast<int64_t>(wav.size()));
     return std::vector<float>(wav.begin() + static_cast<ptrdiff_t>(cut), wav.end());
 }
 

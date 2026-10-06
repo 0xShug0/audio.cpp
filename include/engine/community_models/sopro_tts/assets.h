@@ -109,7 +109,7 @@ struct SoproSpeakerEncoderConfig {
     int64_t attn_hidden = 128;
 };
 
-// config.json -> "vocoder" / "vocoder_streaming"
+// config.json -> "vocoder"
 struct SoproVocoderConfig {
     int64_t sample_rate = 24000;
     int64_t n_fft = 1024;
@@ -117,15 +117,14 @@ struct SoproVocoderConfig {
     int64_t n_mels = 100;
     int64_t dim = 512;
     int64_t intermediate_dim = 1536;
-    int64_t num_layers = 14;
+    int64_t num_layers = 8;
     float max_magnitude = 100.0F;
-    // sopro/config.py VocoderConfig.band_limit_hz. Zero (or a negative value)
-    // disables the cut; the published checkpoints do not carry the key, so the
-    // default has to match the reference dataclass.
-    float band_limit_hz = 10900.0F;
-    bool causal = false;
-    int64_t lookahead_frames = 0;
-    std::vector<int64_t> block_lookaheads;
+    // sopro/config.py VocoderConfig: a causal backbone whose embed conv and
+    // ConvNeXt blocks each look `lookahead` frames ahead. With the 7-tap
+    // kernels and a lookahead of 3 this is the stock (centred) Vocos layout.
+    bool causal = true;
+    int64_t lookahead_frames = 3;
+    std::vector<int64_t> block_lookaheads{3, 3, 3, 3, 3, 3, 3, 3};
 };
 
 // config.json -> "generation"
@@ -149,7 +148,6 @@ struct SoproTTSConfig {
     SoproSemanticEncoderConfig semantic_encoder;
     SoproSpeakerEncoderConfig speaker_encoder;
     SoproVocoderConfig vocoder;
-    SoproVocoderConfig vocoder_streaming;
     SoproGenerationConfig generation;
 
     // Mel frames produced per semantic token (token_samples_24k / mel hop).

@@ -34,11 +34,6 @@ public:
     // max_length; never empty (falls back to the unk id).
     std::vector<int32_t> encode(const std::string & text, const std::string & language) const;
 
-    int32_t bos_id() const noexcept;
-    int32_t eos_id() const noexcept;
-    int32_t unk_id() const noexcept;
-    int64_t vocab_size() const noexcept;
-
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

@@ -1,9 +1,8 @@
-// Host-side checks for the sopro reference level chain and the ISTFT head's
-// band limit. Both are pure functions over plain buffers, so none of this needs
-// the checkpoint; the weight-bound stages are covered by sopro_probe instead.
+// Host-side checks for the sopro reference level chain and the vocoder config
+// defaults. Neither needs the checkpoint; the weight-bound stages are covered
+// by sopro_probe instead.
 #include "engine/community_models/sopro_tts/assets.h"
 #include "engine/community_models/sopro_tts/reference.h"
-#include "engine/community_models/sopro_tts/vocoder.h"
 #include "test_assert.h"
 
 #include <cmath>
@@ -114,51 +113,17 @@ void test_output_gain_tracks_the_reference_level() {
         "hot reference output gain");
 }
 
-void test_match_gain_falls_back_to_the_reference_level() {
-    // Under kMinActiveSeconds of measurable speech, so match_gain cannot level
-    // off the audio itself and defers to the reference it was cloned from.
-    const std::vector<float> too_short(100, 0.1F);
-    test::require_close(
-        audio_ops::match_gain(too_short, kSampleRate, audio_ops::kOutputLevelDb, -11.24F),
-        audio_ops::output_gain(-11.24F), 1.0e-6F, "fallback uses the reference level");
-    test::require(
-        audio_ops::match_gain(too_short, kSampleRate, audio_ops::kOutputLevelDb, -11.24F) !=
-            audio_ops::match_gain(too_short, kSampleRate),
-        "fallback varies with the reference level");
-
-    // With enough speech to measure, the reference level is irrelevant: the
-    // gain comes from the audio actually produced.
-    const auto measurable = flat(0.1F);  // -20 dB, 0.98 s active
-    const float expected = std::pow(10.0F, -3.0F / 20.0F);
-    test::require_close(
-        audio_ops::match_gain(measurable, kSampleRate), expected, 1.0e-4F, "measured gain");
-    test::require_close(
-        audio_ops::match_gain(measurable, kSampleRate, audio_ops::kOutputLevelDb, -11.24F),
-        expected, 1.0e-4F, "measured gain ignores the reference level");
-}
-
-void test_band_limit_bin() {
-    sopro::SoproVocoderConfig config;  // 24 kHz, n_fft 1024, 10900 Hz
-    // ceil(10900 * 1024 / 24000) = 466 of 513 bins, i.e. a 10921.9 Hz cut.
-    test::require_eq(sopro::band_limit_bin(config), int64_t{466}, "default cut");
-
-    config.band_limit_hz = 0.0F;
-    test::require_eq(sopro::band_limit_bin(config), int64_t{513}, "zero keeps every bin");
-    config.band_limit_hz = -1.0F;
-    test::require_eq(sopro::band_limit_bin(config), int64_t{513}, "negative keeps every bin");
-
-    // Nyquist itself is bin 512, and the cut is inclusive, so a 12 kHz limit
-    // still drops that last bin — which is the one the unlimited head used to
-    // synthesise with a bogus imaginary part.
-    config.band_limit_hz = 12000.0F;
-    test::require_eq(sopro::band_limit_bin(config), int64_t{512}, "Nyquist cut");
-    config.band_limit_hz = 48000.0F;
-    test::require_eq(sopro::band_limit_bin(config), int64_t{513}, "above Nyquist clamps");
-
-    // The cut follows the transform size, not a hardcoded bin index.
-    config.band_limit_hz = 10900.0F;
-    config.n_fft = 2048;
-    test::require_eq(sopro::band_limit_bin(config), int64_t{931}, "n_fft 2048 cut");
+void test_vocoder_defaults_match_the_package() {
+    // sopro 2.2.0 config.VocoderConfig: one 8-block causal Vocos whose 7-tap
+    // convs all look 3 frames ahead, i.e. the stock centred layout.
+    const sopro::SoproVocoderConfig config;
+    test::require_eq(config.num_layers, int64_t{8}, "num_layers");
+    test::require(config.causal, "causal");
+    test::require_eq(config.lookahead_frames, int64_t{3}, "embed lookahead");
+    test::require_eq(static_cast<int64_t>(config.block_lookaheads.size()), int64_t{8}, "block lookaheads");
+    for (const int64_t lookahead : config.block_lookaheads) {
+        test::require_eq(lookahead, int64_t{3}, "block lookahead");
+    }
 }
 
 }  // namespace
@@ -171,8 +136,7 @@ int main() {
         test_peak_guard_caps_the_boost();
         test_boost_is_limited_to_thirty_db();
         test_output_gain_tracks_the_reference_level();
-        test_match_gain_falls_back_to_the_reference_level();
-        test_band_limit_bin();
+        test_vocoder_defaults_match_the_package();
     } catch (const std::exception & error) {
         std::cerr << "FAIL: " << error.what() << "\n";
         return 1;

@@ -124,9 +124,15 @@
         "description": "Default language tag for requests that do not set one.",
         "required": false,
         "default": ""
-      }
-    ],
-    "load": [
+      },
+      {
+        "name": "voice_cache_slots",
+        "type": "int",
+        "description": "Reference voices kept prepared between requests, so a repeated voice skips the encoders and, when streaming, the prompt solve. Output is identical with or without it. A streamed 10 s voice holds about 60 MB. Default 0 (off).",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
       {
         "name": "matmul_weight_type",
         "type": "enum",
@@ -143,27 +149,27 @@
         "required": false,
         "default": "f32"
       }
-    ]
-  },
-  "package_defaults": {
-    "download": {
-      "kind": "unsupported",
-      "reason": "No audio.cpp GGUF build of sopro-v2-turbo is published yet: install the sopro_v2_turbo_safetensors package and run from safetensors, or pack one locally with audiocpp_gguf (one --input namespace per stage: model, semantic_encoder, speaker_encoder, vocoder)."
-    }
+    ],
+    "load": []
   },
   "packages": [
     {
       "id": "sopro_v2_turbo_f16",
       "display_name": "Sopro V2 Turbo F16 GGUF",
-      "description": "Locally packed GGUF holding all four stages plus the embedded config and tokenizer sidecars. Produced with audiocpp_gguf --family sopro_tts.",
+      "description": "Single-file GGUF of all four stages with the config and tokenizer embedded: f16 weights, mel front ends kept in f32.",
       "default": true,
       "format": "gguf",
       "precision": "f16",
       "target_directory": "sopro-v2-turbo-GGUF",
       "files": [
-        "sopro-v2-turbo-GGUF/sopro-v2-turbo-f16.gguf"
+        "sopro-v2-turbo-f16.gguf"
       ],
-      "strip_prefix": "sopro-v2-turbo-GGUF"
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "samuel-vitorino/sopro-v2-turbo",
+        "revision": "main",
+        "gated": false
+      }
     },
     {
       "id": "sopro_v2_turbo_safetensors",

@@ -19,15 +19,11 @@ namespace engine::community_models::sopro_tts {
 struct SoproVocosWeights;
 struct SoproVocosGraph;
 
-// ISTFTHead band limit (sopro/vocoder.py band_limit_bin): the first FFT bin the
-// head zeroes, i.e. how many of the n_fft/2 + 1 bins it actually synthesises.
-// A band_limit_hz of zero or less keeps every bin.
-int64_t band_limit_bin(const SoproVocoderConfig & config);
-
-// sopro/vocoder.py, offline path. A Vocos backbone (Conv1d embed, 14 ConvNeXt
-// blocks with per-channel gamma, final LayerNorm) feeding one ISTFT head:
-// Linear(dim -> n_fft + 2) split into log-magnitude and phase, then a single
-// centred inverse STFT with the checkpoint's Hann window.
+// sopro/vocoder.py. A Vocos backbone (Conv1d embed, num_layers ConvNeXt blocks
+// with per-channel gamma, final LayerNorm, convs padded from the config's
+// lookaheads) feeding one ISTFT head: Linear(dim -> n_fft + 2) split into
+// log-magnitude and phase, then a centred inverse STFT with the checkpoint's
+// Hann window.
 //
 // The same object also owns the analysis mel filterbank, because the acoustic
 // stage conditions on the reference mel produced by exactly this extractor.
@@ -49,6 +45,14 @@ public:
     // Returns (frames - 1) * hop_length mono samples at config.sample_rate.
     std::vector<float> decode(const std::vector<float> & mel, int64_t frames) const;
 
+    // Backbone + ISTFT head linear: one row of n_fft + 2 values per frame.
+    std::vector<float> head(const std::vector<float> & mel, int64_t frames) const;
+    // Windowed inverse FFT of `frames` head rows: [frames, n_fft].
+    std::vector<float> synthesis_frames(const float * head, int64_t frames) const;
+    const std::vector<float> & synthesis_window() const noexcept;
+    // Input frames the backbone reads on the left (right) of an output frame.
+    int64_t context_frames(bool right) const;
+
     // MelFeatures.forward: log(clamp(|STFT|, min=1e-7)) with the torchaudio
     // MelSpectrogram buffers stored in the checkpoint (power=1, centred).
     // Returns [n_mels, frames] channel-major.
@@ -56,8 +60,8 @@ public:
 
     int64_t mel_frames(int64_t samples) const noexcept;
     int64_t hop_length() const noexcept;
+    int64_t n_fft() const noexcept;
     int64_t n_mels() const noexcept;
-    int sample_rate() const noexcept;
 
 private:
     const SoproVocoderConfig & config_;
@@ -65,6 +69,35 @@ private:
     size_t graph_context_bytes_ = 0;
     std::shared_ptr<const SoproVocosWeights> weights_;
     mutable std::unique_ptr<SoproVocosGraph> graph_;
+};
+
+// Vocoder.decode_stream: the vocoder fed chunk by chunk. Each push decodes the
+// frames whose receptive field is now complete by re-running the backbone over
+// them plus that field on both sides, which equals the causal convs' streaming
+// state; an overlap-add ISTFT then emits every sample whose window sum is
+// complete. A flush decodes the rest and resets the stream.
+class SoproVocoderStream final {
+public:
+    explicit SoproVocoderStream(const SoproVocosRuntime & vocoder);
+
+    // mel: [n_mels, frames], channel-major, in the vocoder's (denormalised) space.
+    std::vector<float> push(const std::vector<float> & mel, int64_t frames, bool flush);
+
+private:
+    std::vector<float> overlap_add(const std::vector<float> & framed, int64_t frames, bool flush);
+
+    const SoproVocosRuntime & vocoder_;
+    int64_t left_ = 0;
+    int64_t right_ = 0;
+    std::vector<float> history_;  // [frames][n_mels], starting at history_start_
+    int64_t history_start_ = 0;
+    int64_t received_ = 0;  // mel frames pushed
+    int64_t decoded_ = 0;   // frames handed to the ISTFT
+    int64_t processed_ = 0;
+    int64_t emitted_ = 0;
+    int64_t tail_start_ = 0;
+    std::vector<float> ola_;
+    std::vector<float> envelope_;
 };
 
 }  // namespace engine::community_models::sopro_tts

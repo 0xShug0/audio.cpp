@@ -400,7 +400,7 @@
     },
     {
       "id": "sopro_tts_voice_clone_longform_streaming",
-      "coverage": "Sopro V2 Turbo streaming clone: one pull event per text segment over the same long-form text",
+      "coverage": "Sopro V2 Turbo streaming clone: chunk-level pull events over the same long-form text",
       "family": "sopro_tts",
       "model": "models/sopro-v2-turbo",
       "task": "tts",

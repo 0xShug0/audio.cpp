@@ -19,8 +19,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
-#include <string>
 #include <memory>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -362,10 +362,10 @@ std::vector<float> sinusoidal_time_embedding(float t, int64_t dim, float scale) 
     return out;
 }
 
-// One graph produces mu (constant across solver steps); the other evaluates the
-// DiT velocity field and is replayed once per Euler step.
-struct SoproAcousticGraphs {
-    SoproAcousticGraphs(
+// semantic tokens -> mu (PreLookahead, LearnedCausalUpsampler, mu_proj). It is
+// constant across solver steps, so it runs once per solve or streaming render.
+struct SoproConditioningGraph {
+    SoproConditioningGraph(
         ggml_backend_t backend_in,
         engine::core::BackendType backend_type,
         size_t graph_context_bytes,
@@ -384,34 +384,13 @@ struct SoproAcousticGraphs {
         if (tokens <= 0 || frames <= 0) {
             throw std::runtime_error("Sopro acoustic graphs require positive lengths");
         }
-        build_conditioning(backend_type, graph_context_bytes, config_in);
-        build_velocity(backend_type, graph_context_bytes, config_in);
-    }
-
-    ~SoproAcousticGraphs() {
-        if (conditioning_allocr != nullptr) {
-            ggml_gallocr_free(conditioning_allocr);
-        }
-        if (velocity_allocr != nullptr) {
-            ggml_gallocr_free(velocity_allocr);
-        }
-    }
-
-    bool matches(const SoproAcousticWeights & other, int64_t token_count, int64_t frame_count) const noexcept {
-        return weights.get() == &other && tokens == token_count && frames == frame_count;
-    }
-
-    void build_conditioning(
-        engine::core::BackendType backend_type,
-        size_t graph_context_bytes,
-        const SoproModelConfig & config_in) {
         ggml_init_params params{graph_context_bytes, nullptr, true};
-        conditioning_ctx.reset(ggml_init(params));
-        if (conditioning_ctx == nullptr) {
+        ctx_holder.reset(ggml_init(params));
+        if (ctx_holder == nullptr) {
             throw std::runtime_error("failed to initialize the Sopro conditioning graph context");
         }
         engine::core::ModuleBuildContext ctx{
-            conditioning_ctx.get(), "sopro_tts.acoustic.conditioning", backend_type};
+            ctx_holder.get(), "sopro_tts.acoustic.conditioning", backend_type};
         const int64_t latent = config_in.latent_dim;
         const int64_t upsampler_hidden = std::max<int64_t>(8, latent);
 
@@ -470,27 +449,114 @@ struct SoproAcousticGraphs {
         hidden = engine::core::ensure_backend_addressable_layout(ctx, hidden);
         mu_output = hidden.tensor;
         ggml_set_output(mu_output);
-        conditioning_graph = ggml_new_graph_custom(conditioning_ctx.get(), 65536, false);
-        ggml_build_forward_expand(conditioning_graph, mu_output);
-        conditioning_allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-        if (conditioning_allocr == nullptr ||
-            !ggml_gallocr_reserve(conditioning_allocr, conditioning_graph) ||
-            !ggml_gallocr_alloc_graph(conditioning_allocr, conditioning_graph)) {
+        graph = ggml_new_graph_custom(ctx_holder.get(), 65536, false);
+        ggml_build_forward_expand(graph, mu_output);
+        allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (allocr == nullptr || !ggml_gallocr_reserve(allocr, graph) ||
+            !ggml_gallocr_alloc_graph(allocr, graph)) {
             throw std::runtime_error("failed to allocate the Sopro conditioning graph");
         }
     }
 
-    void build_velocity(
+    ~SoproConditioningGraph() {
+        if (allocr != nullptr) {
+            ggml_gallocr_free(allocr);
+        }
+    }
+
+    bool matches(int64_t token_count, int64_t frame_count) const noexcept {
+        return tokens == token_count && frames == frame_count;
+    }
+
+    // Returns mu as [mu_dim, frames], channel-major.
+    std::vector<float> run(const int32_t * token_ids) {
+        std::vector<int32_t> index(static_cast<size_t>(frames), 0);
+        for (int64_t frame = 0; frame < frames; ++frame) {
+            index[static_cast<size_t>(frame)] = static_cast<int32_t>(
+                std::min<int64_t>(frame * tokens / frames, tokens - 1));
+        }
+        ggml_backend_tensor_set(token_input, token_ids, 0, static_cast<size_t>(tokens) * sizeof(int32_t));
+        ggml_backend_tensor_set(expand_index, index.data(), 0, index.size() * sizeof(int32_t));
+        const ggml_status status = engine::core::compute_backend_graph(backend, graph);
+        ggml_backend_synchronize(backend);
+        if (status != GGML_STATUS_SUCCESS) {
+            throw std::runtime_error("Sopro acoustic conditioning graph compute failed");
+        }
+        std::vector<float> mu(static_cast<size_t>(config->acoustic_mu_dim * frames), 0.0F);
+        ggml_backend_tensor_get(mu_output, mu.data(), 0, mu.size() * sizeof(float));
+        return mu;
+    }
+
+    ggml_backend_t backend = nullptr;
+    std::shared_ptr<const SoproAcousticWeights> weights;
+    int64_t tokens = 0;
+    int64_t frames = 0;
+    const SoproModelConfig * config = nullptr;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_holder;
+    ggml_tensor * token_input = nullptr;
+    ggml_tensor * expand_index = nullptr;
+    ggml_tensor * mu_output = nullptr;
+    ggml_cgraph * graph = nullptr;
+    ggml_gallocr_t allocr = nullptr;
+};
+
+// One velocity pass. The input embedding sees `window` frames; the first
+// `context` of them only feed the causal positional convs, the rest are the
+// frames this pass solves. Those sit at positions starting at `cached` and
+// attend to the cached frames before them through per-layer key/value inputs.
+// The offline solve is one pass over the whole canvas with nothing cached.
+struct SoproVelocityShape {
+    int64_t window = 0;
+    int64_t context = 0;
+    int64_t cached = 0;
+    bool masked = false;   // block-causal attention mask input
+    bool emit_kv = false;  // this pass's keys and values as outputs
+
+    int64_t frames() const noexcept { return window - context; }
+    // The positional convs are zero-padded only when the window starts at frame 0.
+    bool padded() const noexcept { return cached == context; }
+    bool operator==(const SoproVelocityShape & other) const noexcept {
+        return window == other.window && context == other.context && cached == other.cached &&
+               masked == other.masked && emit_kv == other.emit_kv;
+    }
+};
+
+struct SoproVelocityInputs {
+    const std::vector<float> * x = nullptr;          // [n_mels, window]
+    const std::vector<float> * cond_mel = nullptr;   // [n_mels, window]
+    const std::vector<float> * cond_mask = nullptr;  // [window]
+    const std::vector<float> * mu = nullptr;         // [mu_dim, window]
+    const std::vector<float> * spk = nullptr;        // [spk_dim]
+    const std::vector<float> * emb = nullptr;        // [dit_dim]
+    const std::vector<ggml_fp16_t> * mask = nullptr;           // [frames, cached + frames]
+    const std::vector<std::vector<float>> * keys = nullptr;    // per layer [cached, heads * head_dim]
+    const std::vector<std::vector<float>> * values = nullptr;
+};
+
+struct SoproVelocityGraph {
+    SoproVelocityGraph(
+        ggml_backend_t backend_in,
         engine::core::BackendType backend_type,
         size_t graph_context_bytes,
-        const SoproModelConfig & config_in) {
+        const SoproModelConfig & config_in,
+        std::shared_ptr<const SoproAcousticWeights> weights_in,
+        const SoproVelocityShape & shape_in)
+        : backend(backend_in), weights(std::move(weights_in)), shape(shape_in), config(&config_in) {
+        if (backend == nullptr || weights == nullptr) {
+            throw std::runtime_error("Sopro acoustic graphs require a backend and weights");
+        }
+        const int64_t frames = shape.frames();
+        const int64_t total = shape.cached + frames;
+        if (frames <= 0 || shape.context < 0 || shape.cached < shape.context) {
+            throw std::runtime_error("Sopro acoustic velocity pass has an invalid shape");
+        }
         ggml_init_params params{graph_context_bytes, nullptr, true};
-        velocity_ctx.reset(ggml_init(params));
-        if (velocity_ctx == nullptr) {
+        ctx_holder.reset(ggml_init(params));
+        if (ctx_holder == nullptr) {
             throw std::runtime_error("failed to initialize the Sopro velocity graph context");
         }
-        engine::core::ModuleBuildContext ctx{
-            velocity_ctx.get(), "sopro_tts.acoustic.velocity", backend_type};
+        engine::core::ModuleBuildContext ctx{ctx_holder.get(), "sopro_tts.acoustic.velocity", backend_type};
+        const int64_t window = shape.window;
         const int64_t mel = config_in.acoustic_mel_n_mels;
         const int64_t mu_dim = config_in.acoustic_mu_dim;
         const int64_t spk_dim = config_in.acoustic_spk_dim;
@@ -500,29 +566,31 @@ struct SoproAcousticGraphs {
         const int64_t inner = heads * head_dim;
         const int64_t ff_dim = config_in.acoustic_dit_ff_dim();
 
-        const auto mel_shape = engine::core::TensorShape::from_dims({1, mel, frames});
-        const auto mu_shape = engine::core::TensorShape::from_dims({1, mu_dim, frames});
-        const auto mask_shape = engine::core::TensorShape::from_dims({1, 1, frames});
-        x_input = engine::core::make_tensor(ctx, GGML_TYPE_F32, mel_shape).tensor;
-        cond_mel_input = engine::core::make_tensor(ctx, GGML_TYPE_F32, mel_shape).tensor;
-        cond_mask_input = engine::core::make_tensor(ctx, GGML_TYPE_F32, mask_shape).tensor;
-        mu_input = engine::core::make_tensor(ctx, GGML_TYPE_F32, mu_shape).tensor;
-        spk_input = engine::core::make_tensor(
-            ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, 1, spk_dim})).tensor;
-        emb_input = engine::core::make_tensor(
-            ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, 1, dim})).tensor;
-        // The solver replays this graph once per Euler step and only re-uploads
-        // x_t and the time embedding, so every leaf must survive the allocator.
-        for (ggml_tensor * leaf :
-             {x_input, cond_mel_input, cond_mask_input, mu_input, spk_input, emb_input}) {
-            ggml_set_input(leaf);
+        auto input = [&](ggml_type type, std::initializer_list<int64_t> dims) {
+            auto * tensor = engine::core::make_tensor(ctx, type, engine::core::TensorShape::from_dims(dims)).tensor;
+            ggml_set_input(tensor);
+            return tensor;
+        };
+        x_input = input(GGML_TYPE_F32, {1, mel, window});
+        cond_mel_input = input(GGML_TYPE_F32, {1, mel, window});
+        cond_mask_input = input(GGML_TYPE_F32, {1, 1, window});
+        mu_input = input(GGML_TYPE_F32, {1, mu_dim, window});
+        spk_input = input(GGML_TYPE_F32, {1, 1, spk_dim});
+        emb_input = input(GGML_TYPE_F32, {1, 1, dim});
+        positions = input(GGML_TYPE_I32, {frames});
+        if (shape.masked) {
+            mask_input = input(GGML_TYPE_F16, {1, 1, frames, total});
         }
-        positions = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, frames);
-        ggml_set_input(positions);
+        if (shape.cached > 0) {
+            for (size_t layer = 0; layer < weights->blocks.size(); ++layer) {
+                key_inputs.push_back(input(GGML_TYPE_F32, {1, shape.cached, heads, head_dim}));
+                value_inputs.push_back(input(GGML_TYPE_F32, {1, shape.cached, heads, head_dim}));
+            }
+        }
 
         auto to_btc = [&](ggml_tensor * tensor, int64_t channels) {
             auto value = engine::core::wrap_tensor(
-                tensor, engine::core::TensorShape::from_dims({1, channels, frames}), GGML_TYPE_F32);
+                tensor, engine::core::TensorShape::from_dims({1, channels, window}), GGML_TYPE_F32);
             return dense(ctx, mod::TransposeModule(swap_channel_time()).build(ctx, value));
         };
         auto emb = engine::core::wrap_tensor(
@@ -535,7 +603,7 @@ struct SoproAcousticGraphs {
             auto spk = engine::core::wrap_tensor(
                 spk_input, engine::core::TensorShape::from_dims({1, 1, spk_dim}), GGML_TYPE_F32);
             auto broadcast = mod::RepeatModule({
-                engine::core::TensorShape::from_dims({1, frames, spk_dim})}).build(ctx, spk);
+                engine::core::TensorShape::from_dims({1, window, spk_dim})}).build(ctx, spk);
             features = mod::ConcatModule({2}).build(ctx, features, broadcast);
         }
         const int64_t proj_in = mel * 2 + mu_dim + spk_dim;
@@ -547,18 +615,33 @@ struct SoproAcousticGraphs {
                 .build(ctx, to_btc(cond_mask_input, 1), weights->cond_mask_proj));
         {
             // CausalConvPositionEmbedding: two causal grouped convolutions.
+            // Past the start of the canvas the window carries their receptive
+            // field instead of zero padding.
             const auto kernel = static_cast<int>(config_in.acoustic_pos_kernel_size);
+            const int pad = shape.padded() ? kernel - 1 : 0;
             auto y = dense(ctx, mod::TransposeModule(swap_channel_time()).build(ctx, hidden));
-            y = build_grouped_conv(ctx, pad_time(ctx, y, kernel - 1, 0), weights->pos_conv1);
+            y = build_grouped_conv(ctx, pad_time(ctx, y, pad, 0), weights->pos_conv1);
             y = mish(ctx, y);
-            y = build_grouped_conv(ctx, pad_time(ctx, y, kernel - 1, 0), weights->pos_conv2);
+            y = build_grouped_conv(ctx, pad_time(ctx, y, pad, 0), weights->pos_conv2);
             y = mish(ctx, y);
+            if (shape.padded() && shape.context > 0) {
+                y = dense(ctx, mod::SliceModule({2, shape.context, frames}).build(ctx, y));
+            }
             y = dense(ctx, mod::TransposeModule(swap_channel_time()).build(ctx, y));
+            if (shape.context > 0) {
+                hidden = dense(ctx, mod::SliceModule({1, shape.context, frames}).build(ctx, hidden));
+            }
             hidden = mod::AddModule{}.build(ctx, hidden, y);
         }
 
+        std::optional<engine::core::TensorValue> mask;
+        if (mask_input != nullptr) {
+            mask = engine::core::wrap_tensor(
+                mask_input, engine::core::TensorShape::from_dims({1, 1, frames, total}), GGML_TYPE_F16);
+        }
         auto silu_emb = mod::SiluModule{}.build(ctx, emb);
-        for (const auto & block : weights->blocks) {
+        for (size_t layer = 0; layer < weights->blocks.size(); ++layer) {
+            const auto & block = weights->blocks[layer];
             auto modulation = mod::LinearModule({dim, dim * 6, true, GGML_PREC_F32})
                                   .build(ctx, silu_emb, block.modulation);
             auto chunk = [&](int64_t index) {
@@ -586,22 +669,34 @@ struct SoproAcousticGraphs {
             };
             // Half-rotation RoPE over the frame index, applied per head.
             auto rope = [&](engine::core::TensorValue value) {
-                return mod::RoPEModule({head_dim, GGML_ROPE_TYPE_NEOX, 10000.0F})
+                return dense(ctx, mod::RoPEModule({head_dim, GGML_ROPE_TYPE_NEOX, 10000.0F})
                     .build(ctx, value, engine::core::wrap_tensor(
-                        positions, engine::core::TensorShape::from_dims({frames}), GGML_TYPE_I32));
+                        positions, engine::core::TensorShape::from_dims({frames}), GGML_TYPE_I32)));
             };
             auto to_flash = [&](const engine::core::TensorValue & value) {
                 return dense(ctx, mod::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, value));
             };
-            auto q_heads = to_flash(rope(reshape_heads(q)));
-            auto k_heads = to_flash(rope(reshape_heads(k)));
-            auto v_heads = to_flash(reshape_heads(v));
+            auto keys = rope(reshape_heads(k));
+            auto values = reshape_heads(v);
+            if (shape.emit_kv) {
+                ggml_set_output(keys.tensor);
+                ggml_set_output(values.tensor);
+                key_outputs.push_back(keys.tensor);
+                value_outputs.push_back(values.tensor);
+            }
+            if (shape.cached > 0) {
+                const auto cache_shape = engine::core::TensorShape::from_dims({1, shape.cached, heads, head_dim});
+                keys = mod::ConcatModule({1}).build(
+                    ctx, engine::core::wrap_tensor(key_inputs[layer], cache_shape, GGML_TYPE_F32), keys);
+                values = mod::ConcatModule({1}).build(
+                    ctx, engine::core::wrap_tensor(value_inputs[layer], cache_shape, GGML_TYPE_F32), values);
+            }
             auto attention = mod::ScaledDotProductAttentionModule({
                 head_dim,
                 mod::ScaledDotProductAttentionLowering::Flash,
                 GGML_PREC_F32,
                 mod::AttentionCausality::NonCausal,
-            }).build(ctx, q_heads, k_heads, v_heads);
+            }).build(ctx, to_flash(rope(reshape_heads(q))), to_flash(keys), to_flash(values), mask);
             auto flat = engine::core::reshape_tensor(
                 ctx, engine::core::ensure_backend_addressable_layout(ctx, attention),
                 engine::core::TensorShape::from_dims({1, frames, inner}));
@@ -643,94 +738,86 @@ struct SoproAcousticGraphs {
         hidden = dense(ctx, mod::TransposeModule(swap_channel_time()).build(ctx, hidden));
         velocity_output = hidden.tensor;
         ggml_set_output(velocity_output);
-        velocity_graph = ggml_new_graph_custom(velocity_ctx.get(), 262144, false);
-        ggml_build_forward_expand(velocity_graph, velocity_output);
-        velocity_allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-        if (velocity_allocr == nullptr ||
-            !ggml_gallocr_reserve(velocity_allocr, velocity_graph) ||
-            !ggml_gallocr_alloc_graph(velocity_allocr, velocity_graph)) {
+        graph = ggml_new_graph_custom(ctx_holder.get(), 262144, false);
+        ggml_build_forward_expand(graph, velocity_output);
+        for (size_t layer = 0; layer < key_outputs.size(); ++layer) {
+            ggml_build_forward_expand(graph, key_outputs[layer]);
+            ggml_build_forward_expand(graph, value_outputs[layer]);
+        }
+        allocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (allocr == nullptr || !ggml_gallocr_reserve(allocr, graph) ||
+            !ggml_gallocr_alloc_graph(allocr, graph)) {
             throw std::runtime_error("failed to allocate the Sopro velocity graph");
         }
     }
 
-    std::vector<float> run_conditioning(const std::vector<int32_t> & token_ids) {
-        std::vector<int32_t> index(static_cast<size_t>(frames), 0);
-        for (int64_t frame = 0; frame < frames; ++frame) {
-            index[static_cast<size_t>(frame)] = static_cast<int32_t>(
-                std::min<int64_t>(frame * tokens / frames, tokens - 1));
+    ~SoproVelocityGraph() {
+        if (allocr != nullptr) {
+            ggml_gallocr_free(allocr);
         }
-        ggml_backend_tensor_set(token_input, token_ids.data(), 0, token_ids.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(expand_index, index.data(), 0, index.size() * sizeof(int32_t));
-        const ggml_status status = engine::core::compute_backend_graph(backend, conditioning_graph);
-        ggml_backend_synchronize(backend);
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Sopro acoustic conditioning graph compute failed");
-        }
-        std::vector<float> mu(static_cast<size_t>(config->acoustic_mu_dim * frames), 0.0F);
-        ggml_backend_tensor_get(mu_output, mu.data(), 0, mu.size() * sizeof(float));
-        return mu;
     }
 
     // ggml_gallocr only exempts GGML_TENSOR_FLAG_OUTPUT tensors from being
     // freed and reused (ggml-alloc.c, ggml_gallocr_free_node); an input leaf's
     // arena space is handed to a later intermediate once its last consumer has
-    // run. That is fine for a one-shot graph, but the solver replays this one
-    // per Euler step, so every leaf has to be re-uploaded before each compute
-    // rather than staged once.
-    void set_constants(
-        std::vector<float> cond_mel,
-        std::vector<float> cond_mask,
-        std::vector<float> mu,
-        std::vector<float> spk) {
-        cond_mel_host = std::move(cond_mel);
-        cond_mask_host = std::move(cond_mask);
-        mu_host = std::move(mu);
-        spk_host = std::move(spk);
-        position_host.assign(static_cast<size_t>(frames), 0);
-        for (int64_t frame = 0; frame < frames; ++frame) {
-            position_host[static_cast<size_t>(frame)] = static_cast<int32_t>(frame);
+    // run. The solver replays this graph once per Euler step, so every leaf is
+    // uploaded before each compute rather than staged once.
+    std::vector<float> run(
+        const SoproVelocityInputs & in,
+        std::vector<std::vector<float>> * new_keys = nullptr,
+        std::vector<std::vector<float>> * new_values = nullptr) {
+        auto upload = [](ggml_tensor * tensor, const void * data, size_t bytes) {
+            if (ggml_nbytes(tensor) != bytes) {
+                throw std::runtime_error("Sopro acoustic velocity input has the wrong size");
+            }
+            ggml_backend_tensor_set(tensor, data, 0, bytes);
+        };
+        const int64_t frames = shape.frames();
+        std::vector<int32_t> position(static_cast<size_t>(frames));
+        for (int64_t i = 0; i < frames; ++i) {
+            position[static_cast<size_t>(i)] = static_cast<int32_t>(shape.cached + i);
         }
-    }
-
-    void upload_constants() {
-        ggml_backend_tensor_set(positions, position_host.data(), 0,
-                                position_host.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(cond_mel_input, cond_mel_host.data(), 0,
-                                cond_mel_host.size() * sizeof(float));
-        ggml_backend_tensor_set(cond_mask_input, cond_mask_host.data(), 0,
-                                cond_mask_host.size() * sizeof(float));
-        ggml_backend_tensor_set(mu_input, mu_host.data(), 0, mu_host.size() * sizeof(float));
-        ggml_backend_tensor_set(spk_input, spk_host.data(), 0, spk_host.size() * sizeof(float));
-    }
-
-    std::vector<float> run_velocity(const std::vector<float> & x, const std::vector<float> & emb) {
-        upload_constants();
-        ggml_backend_tensor_set(x_input, x.data(), 0, x.size() * sizeof(float));
-        ggml_backend_tensor_set(emb_input, emb.data(), 0, emb.size() * sizeof(float));
-        const ggml_status status = engine::core::compute_backend_graph(backend, velocity_graph);
+        upload(x_input, in.x->data(), in.x->size() * sizeof(float));
+        upload(cond_mel_input, in.cond_mel->data(), in.cond_mel->size() * sizeof(float));
+        upload(cond_mask_input, in.cond_mask->data(), in.cond_mask->size() * sizeof(float));
+        upload(mu_input, in.mu->data(), in.mu->size() * sizeof(float));
+        upload(spk_input, in.spk->data(), in.spk->size() * sizeof(float));
+        upload(emb_input, in.emb->data(), in.emb->size() * sizeof(float));
+        upload(positions, position.data(), position.size() * sizeof(int32_t));
+        if (mask_input != nullptr) {
+            upload(mask_input, in.mask->data(), in.mask->size() * sizeof(ggml_fp16_t));
+        }
+        for (size_t layer = 0; layer < key_inputs.size(); ++layer) {
+            const auto & keys = (*in.keys)[layer];
+            const auto & values = (*in.values)[layer];
+            upload(key_inputs[layer], keys.data(), keys.size() * sizeof(float));
+            upload(value_inputs[layer], values.data(), values.size() * sizeof(float));
+        }
+        const ggml_status status = engine::core::compute_backend_graph(backend, graph);
         ggml_backend_synchronize(backend);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Sopro acoustic velocity graph compute failed");
         }
-        std::vector<float> velocity(x.size(), 0.0F);
+        std::vector<float> velocity(ggml_nelements(velocity_output));
         ggml_backend_tensor_get(velocity_output, velocity.data(), 0, velocity.size() * sizeof(float));
+        if (new_keys != nullptr && new_values != nullptr) {
+            new_keys->assign(key_outputs.size(), {});
+            new_values->assign(value_outputs.size(), {});
+            for (size_t layer = 0; layer < key_outputs.size(); ++layer) {
+                (*new_keys)[layer].resize(ggml_nelements(key_outputs[layer]));
+                (*new_values)[layer].resize(ggml_nelements(value_outputs[layer]));
+                ggml_backend_tensor_get(key_outputs[layer], (*new_keys)[layer].data(), 0, ggml_nbytes(key_outputs[layer]));
+                ggml_backend_tensor_get(value_outputs[layer], (*new_values)[layer].data(), 0, ggml_nbytes(value_outputs[layer]));
+            }
+        }
         return velocity;
     }
 
     ggml_backend_t backend = nullptr;
     std::shared_ptr<const SoproAcousticWeights> weights;
-    int64_t tokens = 0;
-    int64_t frames = 0;
+    SoproVelocityShape shape;
     const SoproModelConfig * config = nullptr;
-
-    std::unique_ptr<ggml_context, GgmlContextDeleter> conditioning_ctx;
-    ggml_tensor * token_input = nullptr;
-    ggml_tensor * expand_index = nullptr;
-    ggml_tensor * mu_output = nullptr;
-    ggml_cgraph * conditioning_graph = nullptr;
-    ggml_gallocr_t conditioning_allocr = nullptr;
-
-    std::unique_ptr<ggml_context, GgmlContextDeleter> velocity_ctx;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_holder;
     ggml_tensor * x_input = nullptr;
     ggml_tensor * cond_mel_input = nullptr;
     ggml_tensor * cond_mask_input = nullptr;
@@ -738,15 +825,56 @@ struct SoproAcousticGraphs {
     ggml_tensor * spk_input = nullptr;
     ggml_tensor * emb_input = nullptr;
     ggml_tensor * positions = nullptr;
+    ggml_tensor * mask_input = nullptr;
+    std::vector<ggml_tensor *> key_inputs;
+    std::vector<ggml_tensor *> value_inputs;
+    std::vector<ggml_tensor *> key_outputs;
+    std::vector<ggml_tensor *> value_outputs;
     ggml_tensor * velocity_output = nullptr;
-    std::vector<float> cond_mel_host;
-    std::vector<float> cond_mask_host;
-    std::vector<float> mu_host;
-    std::vector<float> spk_host;
-    std::vector<int32_t> position_host;
-    ggml_cgraph * velocity_graph = nullptr;
-    ggml_gallocr_t velocity_allocr = nullptr;
+    ggml_cgraph * graph = nullptr;
+    ggml_gallocr_t allocr = nullptr;
 };
+
+struct SoproAcousticGraphs {
+    std::unique_ptr<SoproConditioningGraph> conditioning;
+    std::unique_ptr<SoproVelocityGraph> velocity;
+};
+
+namespace {
+
+// _speaker_embedding: spk_proj(normalize(cond_vec)); an all-zero conditioning
+// vector disables the speaker branch (_row_has_signal).
+std::vector<float> speaker_embedding(
+    const SoproAcousticWeights & weights, const SoproModelConfig & config, const std::vector<float> & cond_vec) {
+    float peak = 0.0F;
+    double norm = 0.0;
+    for (const float value : cond_vec) {
+        peak = std::max(peak, std::fabs(value));
+        norm += static_cast<double>(value) * static_cast<double>(value);
+    }
+    if (peak <= 0.0F) {
+        return std::vector<float>(static_cast<size_t>(config.acoustic_spk_dim), 0.0F);
+    }
+    // F.normalize uses an epsilon floor rather than a plain division.
+    const auto inv = static_cast<float>(1.0 / std::max(std::sqrt(norm), 1.0e-12));
+    std::vector<float> normalised(cond_vec);
+    for (auto & value : normalised) {
+        value *= inv;
+    }
+    return affine(weights.spk_proj_w, weights.spk_proj_b, normalised, config.cond_hidden_dim, config.acoustic_spk_dim);
+}
+
+// time_mlp(sinusoidal_time_embedding(t)).
+std::vector<float> time_embedding(const SoproAcousticWeights & weights, const SoproModelConfig & config, float t) {
+    const auto raw = sinusoidal_time_embedding(t, config.acoustic_time_embed_dim);
+    auto emb = affine(weights.time_mlp_w0, weights.time_mlp_b0, raw, config.acoustic_time_embed_dim, config.acoustic_dit_dim);
+    for (auto & value : emb) {
+        value = value / (1.0F + std::exp(-value));  // SiLU
+    }
+    return affine(weights.time_mlp_w2, weights.time_mlp_b2, emb, config.acoustic_dit_dim, config.acoustic_dit_dim);
+}
+
+}  // namespace
 
 SoproAcousticRuntime::SoproAcousticRuntime(
     const SoproTTSAssets & assets,
@@ -765,9 +893,33 @@ SoproAcousticRuntime::SoproAcousticRuntime(
           assets.config.model,
           weight_context_bytes,
           matmul_storage_type,
-          conv_storage_type)) {}
+          conv_storage_type)),
+      graphs_(std::make_unique<SoproAcousticGraphs>()) {}
 
 SoproAcousticRuntime::~SoproAcousticRuntime() = default;
+
+std::vector<float> SoproAcousticRuntime::conditioning(const int32_t * tokens, int64_t token_count, int64_t frames) const {
+    auto & graph = graphs_->conditioning;
+    if (graph == nullptr || !graph->matches(token_count, frames)) {
+        // Free the previous arena first so the two are never resident together.
+        graph.reset();
+        graph = std::make_unique<SoproConditioningGraph>(
+            execution_context_.backend(), execution_context_.backend_type(), graph_context_bytes_,
+            config_, weights_, token_count, frames);
+    }
+    return graph->run(tokens);
+}
+
+SoproVelocityGraph & SoproAcousticRuntime::velocity_graph(const SoproVelocityShape & shape) const {
+    auto & graph = graphs_->velocity;
+    if (graph == nullptr || !(graph->shape == shape)) {
+        graph.reset();
+        graph = std::make_unique<SoproVelocityGraph>(
+            execution_context_.backend(), execution_context_.backend_type(), graph_context_bytes_,
+            config_, weights_, shape);
+    }
+    return *graph;
+}
 
 std::vector<float> SoproAcousticRuntime::solve(const SoproAcousticRequest & request) const {
     const int64_t mel = config_.acoustic_mel_n_mels;
@@ -787,44 +939,8 @@ std::vector<float> SoproAcousticRuntime::solve(const SoproAcousticRequest & requ
     }
     const int64_t steps = std::max<int64_t>(1, request.steps);
 
-    if (graphs_ == nullptr || !graphs_->matches(*weights_, tokens, frames)) {
-        // Free the previous arena first; otherwise both are resident while the
-        // replacement is allocated, and every segment rebuilds this graph.
-        graphs_.reset();
-        graphs_ = std::make_unique<SoproAcousticGraphs>(
-            execution_context_.backend(),
-            execution_context_.backend_type(),
-            graph_context_bytes_,
-            config_,
-            weights_,
-            tokens,
-            frames);
-    }
-
-    // _row_has_signal: an all-zero conditioning vector disables the speaker
-    // branch entirely (the reference uses it for unconditional batches).
-    float cond_peak = 0.0F;
-    for (const float value : request.cond_vec) {
-        cond_peak = std::max(cond_peak, std::fabs(value));
-    }
-    std::vector<float> spk(static_cast<size_t>(config_.acoustic_spk_dim), 0.0F);
-    if (cond_peak > 0.0F) {
-        double norm = 0.0;
-        for (const float value : request.cond_vec) {
-            norm += static_cast<double>(value) * static_cast<double>(value);
-        }
-        // F.normalize uses an epsilon floor rather than a plain division.
-        const auto inv = static_cast<float>(1.0 / std::max(std::sqrt(norm), 1.0e-12));
-        std::vector<float> normalised(request.cond_vec);
-        for (auto & value : normalised) {
-            value *= inv;
-        }
-        spk = affine(
-            weights_->spk_proj_w, weights_->spk_proj_b, normalised,
-            config_.cond_hidden_dim, config_.acoustic_spk_dim);
-    }
-
-    auto mu = graphs_->run_conditioning(request.semantic_tokens);
+    const auto spk = speaker_embedding(*weights_, config_, request.cond_vec);
+    const auto mu = conditioning(request.semantic_tokens.data(), tokens, frames);
     dump("mu", mu);
     dump("spk", spk);
 
@@ -837,7 +953,6 @@ std::vector<float> SoproAcousticRuntime::solve(const SoproAcousticRequest & requ
             cond_mel.begin() + static_cast<ptrdiff_t>(c * frames));
     }
     std::fill(cond_mask.begin(), cond_mask.begin() + static_cast<ptrdiff_t>(request.prompt_frames), 1.0F);
-    graphs_->set_constants(cond_mel, cond_mask, mu, spk);
 
     std::mt19937_64 rng(request.seed);
     std::normal_distribution<float> normal(0.0F, 1.0F);
@@ -849,33 +964,21 @@ std::vector<float> SoproAcousticRuntime::solve(const SoproAcousticRequest & requ
     dump("x_init", x_init);
     dump("cond_mel", cond_mel);
 
+    auto & graph = velocity_graph({frames, 0, 0, false, false});
     const auto grid = build_time_grid(steps, config_.acoustic_sway_sampling_coef);
     const float sigma_min = config_.acoustic_sigma_min;
     for (int64_t step = 0; step < steps; ++step) {
         const float t0 = grid[static_cast<size_t>(step)];
         const float t1 = grid[static_cast<size_t>(step + 1)];
-        const auto raw = sinusoidal_time_embedding(t0, config_.acoustic_time_embed_dim);
-        auto emb = affine(
-            weights_->time_mlp_w0, weights_->time_mlp_b0, raw,
-            config_.acoustic_time_embed_dim, config_.acoustic_dit_dim);
-        for (auto & value : emb) {
-            value = value / (1.0F + std::exp(-value));  // SiLU
-        }
-        emb = affine(
-            weights_->time_mlp_w2, weights_->time_mlp_b2, emb,
-            config_.acoustic_dit_dim, config_.acoustic_dit_dim);
-
-        const std::string tag = std::to_string(step);
-        if (step == 0) {
-            dump("emb0", emb);
-            dump("x_step0", x);
-        }
-        dump(("traj_x_" + tag).c_str(), x);
-        const auto velocity = graphs_->run_velocity(x, emb);
-        if (step == 0) {
-            dump("velocity0", velocity);
-        }
-        dump(("traj_v_" + tag).c_str(), velocity);
+        const auto emb = time_embedding(*weights_, config_, t0);
+        SoproVelocityInputs inputs;
+        inputs.x = &x;
+        inputs.cond_mel = &cond_mel;
+        inputs.cond_mask = &cond_mask;
+        inputs.mu = &mu;
+        inputs.spk = &spk;
+        inputs.emb = &emb;
+        const auto velocity = graph.run(inputs);
         const float dt = t1 - t0;
         for (size_t i = 0; i < x.size(); ++i) {
             x[i] += dt * velocity[i];
@@ -897,6 +1000,161 @@ std::vector<float> SoproAcousticRuntime::solve(const SoproAcousticRequest & requ
         }
     }
     dump("solved", x);
+    return x;
+}
+
+std::vector<float> SoproAcousticRuntime::solve_chunked(
+    SoproChunkedSolveState & state,
+    const SoproChunkedRequest & request,
+    int64_t keep_end) const {
+    const int64_t mel = config_.acoustic_mel_n_mels;
+    const int64_t mu_dim = config_.acoustic_mu_dim;
+    const auto & tokens = request.semantic_tokens;
+    const auto token_count = static_cast<int64_t>(tokens.size());
+    const auto canvas = static_cast<int64_t>(request.x0.size()) / mel;
+    if (token_count <= 0 || canvas % token_count != 0 || static_cast<int64_t>(request.x0.size()) != mel * canvas) {
+        throw std::runtime_error("Sopro streaming canvas must be a whole number of frames per token");
+    }
+    if (static_cast<int64_t>(request.prompt_mel.size()) != mel * request.prompt_frames) {
+        throw std::runtime_error("Sopro acoustic prompt mel shape mismatch");
+    }
+    const int64_t ratio = canvas / token_count;
+    const int64_t steps = std::max<int64_t>(1, request.steps);
+    const int64_t cached = state.cached;
+    const int64_t end = std::min(keep_end, canvas);
+    const int64_t frames = end - cached;
+    if (frames <= 0) {
+        return {};
+    }
+    const auto layers = weights_->blocks.size();
+    if (state.x.empty()) {
+        state.x.assign(static_cast<size_t>(steps), {});
+        state.keys.assign(static_cast<size_t>(steps), std::vector<std::vector<float>>(layers));
+        state.values.assign(static_cast<size_t>(steps), std::vector<std::vector<float>>(layers));
+    }
+
+    // _extend_mu: mu for frames [have, end). It is recomputed over a token
+    // window that starts early enough to carry the receptive field of the
+    // pre-lookahead (2 tokens) and the upsampler mix (kernel - 1 frames).
+    const auto have = static_cast<int64_t>(state.mu.size()) / mu_dim;
+    if (end > have) {
+        const int64_t mix_context = config_.acoustic_upsampler_kernel_size - 1;
+        const int64_t first = std::max<int64_t>(0, (have - mix_context) / ratio - 2);
+        const int64_t window_frames = ratio * (token_count - first);
+        const auto mu = conditioning(tokens.data() + first, token_count - first, window_frames);
+        for (int64_t f = have; f < end; ++f) {
+            for (int64_t c = 0; c < mu_dim; ++c) {
+                state.mu.push_back(mu[static_cast<size_t>(c * window_frames + f - ratio * first)]);
+            }
+        }
+    }
+
+    // Window: the new frames plus the causal positional convs' receptive field.
+    const int64_t pos_context = 2 * (config_.acoustic_pos_kernel_size - 1);
+    const int64_t start = std::max<int64_t>(0, cached - pos_context);
+    const int64_t window = end - start;
+    std::vector<float> cond_mel(static_cast<size_t>(mel * window), 0.0F);
+    std::vector<float> cond_mask(static_cast<size_t>(window), 0.0F);
+    std::vector<float> mu(static_cast<size_t>(mu_dim * window), 0.0F);
+    for (int64_t t = 0; t < window; ++t) {
+        const int64_t frame = start + t;
+        if (frame < request.prompt_frames) {
+            cond_mask[static_cast<size_t>(t)] = 1.0F;
+            for (int64_t c = 0; c < mel; ++c) {
+                cond_mel[static_cast<size_t>(c * window + t)] =
+                    request.prompt_mel[static_cast<size_t>(c * request.prompt_frames + frame)];
+            }
+        }
+        for (int64_t c = 0; c < mu_dim; ++c) {
+            mu[static_cast<size_t>(c * window + t)] = state.mu[static_cast<size_t>(frame * mu_dim + c)];
+        }
+    }
+
+    // build_chunk_mask: a frame sees every frame up to the end of its chunk
+    // (and from num_left_chunks chunks back, when that is not -1).
+    const int64_t chunk = std::max<int64_t>(1, request.chunk_frames);
+    const int64_t left = config_.acoustic_num_left_chunks;
+    std::vector<ggml_fp16_t> mask(static_cast<size_t>(frames * end), ggml_fp32_to_fp16(-INFINITY));
+    for (int64_t q = 0; q < frames; ++q) {
+        const int64_t index = (cached + q) / chunk;
+        const int64_t visible_end = std::min(end, (index + 1) * chunk);
+        const int64_t visible_start = left < 0 ? 0 : std::min(end, std::max<int64_t>(0, index - left) * chunk);
+        for (int64_t key = visible_start; key < visible_end; ++key) {
+            mask[static_cast<size_t>(q * end + key)] = ggml_fp32_to_fp16(0.0F);
+        }
+    }
+
+    std::vector<float> x0(static_cast<size_t>(mel * frames));
+    for (int64_t c = 0; c < mel; ++c) {
+        std::copy_n(
+            request.x0.begin() + static_cast<ptrdiff_t>(c * canvas + cached),
+            frames,
+            x0.begin() + static_cast<ptrdiff_t>(c * frames));
+    }
+    std::vector<float> x(x0);
+    const auto spk = speaker_embedding(*weights_, config_, request.cond_vec);
+    const auto grid = build_time_grid(steps, config_.acoustic_sway_sampling_coef);
+    const float sigma_min = config_.acoustic_sigma_min;
+    auto & graph = velocity_graph({window, cached - start, cached, true, true});
+    std::vector<float> x_window(static_cast<size_t>(mel * window));
+    for (int64_t step = 0; step < steps; ++step) {
+        const float t0 = grid[static_cast<size_t>(step)];
+        const float t1 = grid[static_cast<size_t>(step + 1)];
+        const auto emb = time_embedding(*weights_, config_, t0);
+        auto & x_cache = state.x[static_cast<size_t>(step)];
+        for (int64_t c = 0; c < mel; ++c) {
+            for (int64_t t = 0; t < window; ++t) {
+                const int64_t frame = start + t;
+                x_window[static_cast<size_t>(c * window + t)] = frame < cached
+                    ? x_cache[static_cast<size_t>(frame * mel + c)]
+                    : x[static_cast<size_t>(c * frames + frame - cached)];
+            }
+        }
+        SoproVelocityInputs inputs;
+        inputs.x = &x_window;
+        inputs.cond_mel = &cond_mel;
+        inputs.cond_mask = &cond_mask;
+        inputs.mu = &mu;
+        inputs.spk = &spk;
+        inputs.emb = &emb;
+        inputs.mask = &mask;
+        inputs.keys = &state.keys[static_cast<size_t>(step)];
+        inputs.values = &state.values[static_cast<size_t>(step)];
+        std::vector<std::vector<float>> new_keys;
+        std::vector<std::vector<float>> new_values;
+        const auto velocity = graph.run(inputs, &new_keys, &new_values);
+        for (size_t layer = 0; layer < layers; ++layer) {
+            auto & keys = state.keys[static_cast<size_t>(step)][layer];
+            auto & values = state.values[static_cast<size_t>(step)][layer];
+            keys.insert(keys.end(), new_keys[layer].begin(), new_keys[layer].end());
+            values.insert(values.end(), new_values[layer].begin(), new_values[layer].end());
+        }
+        for (int64_t t = 0; t < frames; ++t) {
+            for (int64_t c = 0; c < mel; ++c) {
+                x_cache.push_back(x[static_cast<size_t>(c * frames + t)]);
+            }
+        }
+        const float dt = t1 - t0;
+        const float prompt_scale = 1.0F - (1.0F - sigma_min) * t1;
+        for (int64_t c = 0; c < mel; ++c) {
+            for (int64_t t = 0; t < frames; ++t) {
+                const auto index = static_cast<size_t>(c * frames + t);
+                x[index] += dt * velocity[index];
+                const auto window_index = static_cast<size_t>(c * window + cached - start + t);
+                if (cond_mask[static_cast<size_t>(cached - start + t)] > 0.0F) {
+                    x[index] = prompt_scale * x0[index] + t1 * cond_mel[window_index];
+                }
+            }
+        }
+    }
+    for (int64_t c = 0; c < mel; ++c) {
+        for (int64_t t = 0; t < frames; ++t) {
+            if (cond_mask[static_cast<size_t>(cached - start + t)] > 0.0F) {
+                x[static_cast<size_t>(c * frames + t)] = cond_mel[static_cast<size_t>(c * window + cached - start + t)];
+            }
+        }
+    }
+    state.cached = end;
     return x;
 }
 

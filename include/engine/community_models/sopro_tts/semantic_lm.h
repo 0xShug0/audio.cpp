@@ -53,7 +53,15 @@ public:
         const SoproSemanticLMOptions & options,
         std::mt19937_64 & rng) const;
 
-    void release_runtime_graphs();
+    // Incremental form of generate: begin() prefills the prompt, next() then
+    // samples up to `count` more tokens (fewer once the stream has ended, none
+    // after that).
+    void begin(
+        const std::vector<int32_t> & text_ids,
+        const std::vector<int32_t> & style_tokens,
+        const std::vector<int32_t> & prompt_tokens,
+        const SoproSemanticLMOptions & options) const;
+    std::vector<int32_t> next(int64_t count, std::mt19937_64 & rng) const;
 
 private:
     class Impl;

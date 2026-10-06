@@ -472,12 +472,11 @@ public:
             execution, std::move(runtime_config), std::move(runtime_weights));
     }
 
-    std::vector<int32_t> generate(
+    void begin(
         const std::vector<int32_t> & text_ids,
         const std::vector<int32_t> & style_tokens,
         const std::vector<int32_t> & prompt_tokens,
-        const SoproSemanticLMOptions & options,
-        std::mt19937_64 & rng) {
+        const SoproSemanticLMOptions & options) {
         const int64_t dim = config_.ar_model_dim;
         const auto text_steps = std::min<int64_t>(
             static_cast<int64_t>(text_ids.size()), config_.max_text_len);
@@ -517,39 +516,43 @@ public:
             static_cast<int32_t>(config_.semantic_bos_id()),
             prefix.data() + static_cast<size_t>(offset * dim));
 
-        const int64_t max_steps = std::max<int64_t>(1, options.max_steps);
+        options_ = options;
+        options_.max_steps = std::max<int64_t>(1, options.max_steps);
+        options_.min_steps = std::max<int64_t>(1, options.min_steps);
         auto prefill = decoder_->prefill_embeddings(prefix, steps);
-        decoder_->start_decode_embeddings(prefill.state, steps + max_steps);
+        decoder_->start_decode_embeddings(prefill.state, steps + options_.max_steps);
+        logits_ = std::move(prefill.logits);
+        step_ = 0;
+        finished_ = false;
+    }
 
+    // SoproModel.stream_semantic_tokens: up to `count` more tokens, fewer once
+    // EOS or the step budget ends the stream.
+    std::vector<int32_t> next(int64_t count, std::mt19937_64 & rng) {
         const auto bos_id = static_cast<int32_t>(config_.semantic_bos_id());
         const auto eos_id = static_cast<int32_t>(config_.semantic_eos_id());
-        const int64_t min_steps = std::max<int64_t>(1, options.min_steps);
         std::vector<int32_t> tokens;
-        tokens.reserve(static_cast<size_t>(max_steps));
-        std::vector<float> logits = std::move(prefill.logits);
-        std::vector<float> embedding(static_cast<size_t>(dim), 0.0F);
-        for (int64_t step = 0; step < max_steps; ++step) {
-            const bool allow_eos = (step + 1) >= min_steps;
+        std::vector<float> embedding(static_cast<size_t>(config_.ar_model_dim), 0.0F);
+        while (!finished_ && static_cast<int64_t>(tokens.size()) < count) {
+            const bool allow_eos = (step_ + 1) >= options_.min_steps;
             int32_t token = sample_next_token(
-                logits, options.temperature, options.top_p, options.top_k,
+                logits_, options_.temperature, options_.top_p, options_.top_k,
                 bos_id, eos_id, allow_eos, rng);
             if (allow_eos && token == eos_id) {
+                finished_ = true;
                 break;
             }
             token = std::min<int32_t>(
                 std::max<int32_t>(token, 0), static_cast<int32_t>(config_.semantic_vocab_size - 1));
             tokens.push_back(token);
-            if (step + 1 >= max_steps) {
+            if (++step_ >= options_.max_steps) {
+                finished_ = true;
                 break;
             }
             copy_semantic_row(token, embedding.data());
-            logits = std::move(decoder_->decode_embedding(embedding).logits);
+            logits_ = std::move(decoder_->decode_embedding(embedding).logits);
         }
         return tokens;
-    }
-
-    void release_runtime_graphs() {
-        decoder_->release_runtime_graphs();
     }
 
 private:
@@ -566,6 +569,10 @@ private:
     SoproSemanticLMHostWeights host_;
     SoproSemanticLMBackendWeights backend_;
     std::unique_ptr<engine::modules::CausalDecoderRuntime> decoder_;
+    SoproSemanticLMOptions options_;
+    std::vector<float> logits_;
+    int64_t step_ = 0;
+    bool finished_ = true;
 };
 
 SoproSemanticLMRuntime::SoproSemanticLMRuntime(
@@ -587,11 +594,20 @@ std::vector<int32_t> SoproSemanticLMRuntime::generate(
     const std::vector<int32_t> & prompt_tokens,
     const SoproSemanticLMOptions & options,
     std::mt19937_64 & rng) const {
-    return impl_->generate(text_ids, style_tokens, prompt_tokens, options, rng);
+    impl_->begin(text_ids, style_tokens, prompt_tokens, options);
+    return impl_->next(std::max<int64_t>(1, options.max_steps), rng);
 }
 
-void SoproSemanticLMRuntime::release_runtime_graphs() {
-    impl_->release_runtime_graphs();
+void SoproSemanticLMRuntime::begin(
+    const std::vector<int32_t> & text_ids,
+    const std::vector<int32_t> & style_tokens,
+    const std::vector<int32_t> & prompt_tokens,
+    const SoproSemanticLMOptions & options) const {
+    impl_->begin(text_ids, style_tokens, prompt_tokens, options);
+}
+
+std::vector<int32_t> SoproSemanticLMRuntime::next(int64_t count, std::mt19937_64 & rng) const {
+    return impl_->next(count, rng);
 }
 
 }  // namespace engine::community_models::sopro_tts

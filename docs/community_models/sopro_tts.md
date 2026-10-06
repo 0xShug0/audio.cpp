@@ -13,16 +13,21 @@ German, released under Apache-2.0. It clones from 5–20 s of reference audio an
 
 ## Installation
 
-The upstream safetensors checkpoint runs directly — no conversion step:
+Both packages come from the model repo. The f16 GGUF is a single self-contained file and the
+one the WebUI installs; the upstream safetensors checkpoint runs directly in full precision:
 
 ```bash
+python3 tools/model_manager_v2.py install sopro_v2_turbo_f16
+# -> models/sopro-v2-turbo-GGUF/sopro-v2-turbo-f16.gguf
 python3 tools/model_manager_v2.py install sopro_v2_turbo_safetensors
 # -> models/sopro-v2-turbo/{config.json,tokenizer.model,*.safetensors}
 ```
 
-To run from GGUF instead, pack the four stages into one file. `audiocpp_gguf` takes one
+The GGUF was packed from the safetensors with the command below. `audiocpp_gguf` takes one
 namespaced input per stage, and `--root` makes it embed `config.json` and `tokenizer.model` as
-sidecars, so the resulting `.gguf` is self-contained:
+sidecars. Keep the mel front ends' filterbanks and windows in f32 when packing your own:
+`--type f16` would otherwise round them too, and the reference mel the acoustic head copies from
+drifts by several dB.
 
 ```bash
 build/bin/audiocpp_gguf \
@@ -31,12 +36,10 @@ build/bin/audiocpp_gguf \
     --input speaker_encoder=models/sopro-v2-turbo/speaker_encoder.safetensors \
     --input vocoder=models/sopro-v2-turbo/vocoder.safetensors \
     --family sopro_tts --root models/sopro-v2-turbo \
+    --keep-type 'vocoder/feature_extractor.*=f32' --keep-type 'vocoder/head.istft.window*=f32' \
+    --keep-type 'speaker_encoder/frontend.*=f32' --keep-type 'semantic_encoder/frontend.*=f32' \
     --output models/sopro-v2-turbo-GGUF/sopro-v2-turbo-f16.gguf --type f16
 ```
-
-No public audio.cpp GGUF build of this family is published yet, so the spec's default
-`sopro_v2_turbo_f16` package has `download.kind = "unsupported"` and expects the file above to
-be produced locally.
 
 ## Build
 
@@ -63,14 +66,14 @@ build/bin/audiocpp_cli \
 
 `--task clon` works the same way. The reference is resampled to 24 kHz, cropped at a pause near
 `ref_seconds`, and level-normalised before the speaker and semantic encoders see it. That
-normalisation is boost-only and peak-guarded (sopro 2.1): a reference already at or above the
+normalisation is boost-only and peak-guarded (sopro 2.2): a reference already at or above the
 −19.8 dB prompt level is passed through untouched, and a boost is never large enough to push
-the peak past 0.95. The level the reference ends up at is what the output gain falls back to
-when the generated audio is too short to measure.
+the peak past 0.95. The output gain is fixed by the level the reference ends up at: it maps that
+level to −23 dB (`output_gain`), the same for every segment and in both run modes.
 
 ## Streaming
 
-`--mode streaming` emits one pull event per text segment instead of one buffer at the end:
+`--mode streaming` emits audio as the semantic LM runs, like `SoproTTS.stream` upstream:
 
 ```bash
 build/bin/audiocpp_cli \
@@ -79,32 +82,47 @@ build/bin/audiocpp_cli \
     --backend cpu --threads 8 --mode streaming \
     --text "$(cat article.txt)" \
     --voice-ref ref.wav --language en \
-    --text-chunk-size 120 \
-    --out stream.wav --out-dir segments/
+    --out stream.wav --out-dir chunks/
 ```
 
-Each event carries a `segment_<n>` named audio buffer that is already levelled, trimmed and
-faded, so a consumer can play events back to back; `--out` still writes the whole utterance,
-and it is exactly the concatenation of the events. The reference voice is encoded once in
-`start_stream`, so every event after the first costs only its own LM, solver and vocoder pass.
+Each event carries a `chunk_<n>` named audio buffer that is already levelled, gated and faded,
+so a consumer can play events back to back; `--out` writes the whole utterance, which is exactly
+the concatenation of the events.
 
-**Granularity is one text segment, not one frame.** The acoustic DiT and the Vocos vocoder both
-see a whole span at once, and this checkpoint ships no causal vocoder, so a segment is the
-smallest unit that can leave without boundary artefacts. `text_chunk_size` is the latency dial:
-on a 16-core CPU build at 8 threads, 8 solver steps and a 14 s reference, `text_chunk_size=120`
-put the first audio out at ~3.1 s for a 6.7 s segment, against ~9.9 s for the same text offline.
+How it works (`streaming.cpp`, a port of `sopro/streaming.py`):
 
-Two things to know before turning it down further:
+- The reference prompt is trimmed to a whole number of semantic tokens and its complete
+  `stream_chunk_frames` (64-frame) chunks are solved once, before the first text segment.
+- Every 16 semantic tokens, the acoustic head solves the frames that can no longer change
+  (a 3-token lookahead margin behind the last token, rounded down to whole chunks). Each frame
+  attends to everything solved before it within its chunk boundary, and the solver keeps every
+  DiT layer's keys and values per Euler step, so a chunk costs only its own frames.
+- The vocoder decodes each chunk once its receptive field (27 frames each side) is complete and
+  overlap-adds it into a streaming ISTFT.
+- The opening audio of each text segment is held until speech starts, then the lead-in is cut
+  the same way the offline path trims it.
 
-- Every segment re-solves the *whole* reference mel prompt alongside its own frames, so the
-  per-segment cost has a floor of roughly `ref_seconds` worth of DiT work. Segments shorter
-  than about 1 s take longer to generate than to play, even though the stream as a whole stays
-  ahead of real time (`text_chunk_size=40` measured 0.75 RTF overall, with the shortest
-  segment at 2.1). Lowering `ref_seconds` shrinks that floor at some cost to cloning fidelity.
-- Streaming reproduces the offline waveform for the same `seed`, sample count included, with
-  one deliberate exception: offline level-matches over the finished utterance, which a stream
-  cannot see, so the first segment fixes the gain for the rest. The measured difference is a
-  constant scale factor (1.15x, +1.2 dB, on the clip above) with a −47 dB residual.
+Streaming is not a re-cut of the offline output: it solves with chunk-limited attention and its
+own noise draws, as the Python package does, so the two modes differ for the same `seed`. On an
+8-core Apple M-series CPU at 6 threads the first chunk arrives about 1.6–1.8 s after the request
+starts (reference encoding ~0.3–0.45 s, prompt solve ~0.8–0.95 s, first chunk ~0.4–0.5 s for a
+10 s reference), and each later 0.68 s chunk takes about 0.2 s. `ref_seconds` scales the prompt
+solve.
+
+### Voice cache
+
+`sopro_tts.voice_cache_slots=<n>` (off by default) keeps the last `n` prepared voices, keyed by
+the clip and `ref_seconds`, together with each streamed voice's solved prompt, like reusing a
+`prepare_reference` result upstream. A repeated voice skips the encoders and the prompt solve,
+which brought the first chunk down from ~1.8 s to ~0.4–0.5 s in the setup above. A streamed
+10 s voice holds about 60 MB.
+
+To prepare a voice without generating anything, pass `audiocpp_session_prepare` a request that
+carries only the voice audio (plus `ref_seconds` or `num_inference_steps` if the requests that
+follow set them).
+
+The cache never changes the audio: the draws a voice needs for itself (room tone for a clip
+without a usable pause, the prompt noise) are seeded from the clip rather than the request.
 
 ## Options
 
@@ -124,14 +142,12 @@ Two things to know before turning it down further:
 | Session option | Default | Meaning |
 |---|---|---|
 | `sopro_tts.language` | *(empty)* | Default language tag for requests that do not set one |
-
-| Load option | Default | Meaning |
-|---|---|---|
+| `sopro_tts.voice_cache_slots` | `0` | Prepared voices kept between requests; see [Voice cache](#voice-cache) |
 | `sopro_tts.matmul_weight_type` | `f32` | Storage type for matmul weights (`native`, `f32`, `f16`, `bf16`, `q8_0`) |
 | `sopro_tts.conv_weight_type` | `f32` | Storage type for convolution weights (`native`, `f32`, `f16`) |
 
-Every default comes from the checkpoint's `config.json` `generation` block, so a retrained
-variant picks up its own values without a code change.
+Every request-option default comes from the checkpoint's `config.json` `generation` block, so a
+retrained variant picks up its own values without a code change.
 
 ## Architecture notes
 
@@ -147,20 +163,22 @@ Five stages run per request, mirroring `sopro/` upstream:
    non-causal transformer layers, resampled to one frame per 1024 output samples and quantised
    by an FSQ head with levels `[7,5,5,5,5]` (4375 codes).
 4. **Semantic LM** (`semantic_lm.cpp`) — 12 pre-norm blocks, dim 512, QK RMS-norm, SwiGLU,
-   half-rotation RoPE. The prompt is `[style prefix | text | carried tokens | BOS]`. Because the
-   only structural difference from a Qwen3 decoder is a LayerScale vector on each residual
-   branch, and those branches end in a bias-free projection, the scale is folded into that
-   projection's rows at load time and the shared `QwenCausalDecodeRuntime` runs the stack
-   unmodified. The eight-query style prefix cross-attention runs on the host.
+   half-rotation RoPE. The prompt is `[style prefix | text | prompt tokens | BOS]`, where the
+   prompt tokens are the first `prompt_tokens` reference tokens for the first segment and the
+   tail of the previous segment's tokens after that. Because the only structural difference
+   from a Qwen3 decoder is a LayerScale vector on each residual branch, and those branches end
+   in a bias-free projection, the scale is folded into that projection's rows at load time and
+   the shared `QwenCausalDecodeRuntime` runs the stack unmodified. The eight-query style prefix
+   cross-attention runs on the host.
 5. **Acoustic head + vocoder** (`acoustic.cpp`, `vocoder.cpp`) — an 8-block adaptive-layer-norm
    DiT solving a rectified flow in two Euler steps on a sway-sampled time grid, with the prompt
-   mel re-pinned after every step; then a 14-layer Vocos ConvNeXt backbone and one centred
-   ISTFT. The ISTFT head is band-limited: bins at or above `vocoder.band_limit_hz` (10900 Hz by
-   default, as in sopro 2.1) are zeroed before the inverse transform, which removes the
-   high-frequency hiss the unlimited head produced. `mu` (the upsampled semantic conditioning)
-   is built in its own graph because it is constant across solver steps.
+   mel re-pinned after every step; then an 8-block Vocos ConvNeXt backbone and one centred
+   ISTFT over the full band. The vocoder config is causal with a lookahead of 3 frames on every
+   7-tap conv, which is the stock centred Vocos layout; other lookaheads are padded to match.
+   `mu` (the upsampled semantic conditioning) is built in its own graph because it is constant
+   across solver steps.
 
-Two implementation details worth knowing:
+Implementation details worth knowing:
 
 - **Front-end buffers come from the checkpoint.** torchaudio stores its analysis window and mel
   filterbank as persistent buffers, and all three front ends load those rather than rebuilding
@@ -175,21 +193,20 @@ Two implementation details worth knowing:
   later intermediate once its last consumer has run. That is correct for a one-shot graph, but
   the solver replays the velocity graph once per step, so staging `mu`, `cond_mel`, `cond_mask`,
   `spk` and the RoPE positions once would leave the second and later steps reading whatever
-  overwrote them. `SoproAcousticGraphs::upload_constants` re-uploads all of them before every
-  compute; it costs a few hundred kB per step against a multi-GFLOP DiT pass.
+  overwrote them. `SoproVelocityGraph::run` uploads all of them before every compute; it costs
+  a few hundred kB per step against a multi-GFLOP DiT pass.
 
 ## Known limitations
 
-- **Streaming is segment-level, not frame-level.** The upstream frame-level path (chunked DiT
-  attention plus the causal vocoder, `vocoder_streaming.safetensors`) is not implemented, and
-  that vocoder is not part of the published checkpoint this family loads. What ships is one
-  pull event per text segment; see [Streaming](#streaming) for the latency it actually buys.
+- **Without the voice cache, every request prepares its voice again.** The reference arrives
+  with each request, so a stream pays the encoders and the prompt solve unless
+  [`sopro_tts.voice_cache_slots`](#voice-cache) is set.
 - **Sampling RNG is not torch-bit-exact.** `sample_next_token` reproduces the reference's
   masking, temperature, top-k and top-p arithmetic exactly, but draws from a seeded
   `std::mt19937_64` rather than torch's generator, so a given `seed` will not reproduce the
   Python output sample-for-sample. The same `seed` is reproducible within audio.cpp.
-- **No `int8` AR path.** The upstream `--int8` CPU option has no equivalent; use
-  `sopro_tts.matmul_weight_type=q8_0` instead.
+- **No `int8` AR path.** The upstream `--int8` CPU option quantises only the semantic LM; the
+  closest here, `sopro_tts.matmul_weight_type=q8_0`, quantises the matmuls of every stage.
 - The text front end is deliberately minimal upstream: prefer words to symbols (`one plus two`,
   not `1 + 2`), and avoid mixing languages inside one sentence.
 
@@ -203,7 +220,7 @@ against the C++.
 |---|---|---|
 | Tensor inventory | 762 names + shapes vs. the four real files | exact match |
 | Vocoder mel front end | vs. numpy STFT + checkpoint filterbank | max diff 1.9e-3 |
-| Vocos backbone + ISTFT head | vs. numpy, all 14 blocks | max diff 1.0e-5 (measured before the band limit; the numpy reference does not zero the bins above 10900 Hz) |
+| Vocos backbone + ISTFT head | vs. numpy, all 14 blocks of the sopro 2.1 vocoder | max diff 1.0e-5 |
 | Semantic encoder mel | vs. numpy | max diff 1.9e-5 |
 | Semantic encoder transformer | vs. numpy, all 6 layers | max diff 6.0e-5 |
 | FSQ token ids | vs. numpy | 188/188 identical |
@@ -212,15 +229,50 @@ against the C++.
 | Acoustic velocity field, every Euler step | vs. numpy | max diff 5.8e-3 |
 | Acoustic self-reconstruction | NMSE vs. the reference's own mel | 0.38 |
 | Fixed `seed` reproducibility | byte-identical WAV across runs | pass |
-| Streaming vs. offline, same `seed` | 22.5 s clip, 4 segments | identical sample count; a constant 1.15x gain, −47 dB residual |
-| Streaming segment sum | segments vs. `--out` | exact |
-| Long-form, 6026 chars | 371.6 s of audio, 48 segments | offline and streaming both complete; peak RSS 1.083 vs 1.086 GB |
-| `matmul_weight_type` f16 / bf16 / q8_0 | runs clean | pass |
-| Single-file GGUF | end to end | pass |
+| Streaming chunk sum | chunks vs. `--out` | exact |
+| Voice cache on vs. off | server, 7 requests per mode (repeats, a new seed, an eviction) | byte-identical |
+| Voice prepared ahead vs. not | C API, `audiocpp_session_prepare` with only the voice, both modes | byte-identical |
+| Long-form, 6026 chars, `text_chunk_size=200` | ~371 s of audio, Apple M3, 6 threads | offline 118 s, streaming 136 s; peak RSS 1.57 / 1.95 GB |
+| `matmul_weight_type` f16 / bf16 / q8_0 | vs. f32, same `seed`, both modes | f16 0.12–0.16 dB, bf16 0.5–2.1 dB spectrum; q8_0 samples different tokens |
+| Published f16 GGUF | vs. safetensors, 12 cases, same `seed`, both modes | 0.03–0.08 dB spectrum on 8 of 12, both greedy cases included; the f16 LM samples different tokens on the 4 long sampled cases |
+| `orig` GGUF | vs. safetensors, same `seed`, both modes | byte-identical |
 
-Numeric parity against the upstream PyTorch implementation has still not been measured
-directly; the numpy references above are independent reimplementations from the same source,
-which catches implementation bugs but not a shared misreading of the architecture.
+The numpy references above are independent reimplementations from the same source, which
+catches implementation bugs but not a shared misreading of the architecture.
+
+### Parity with the Python package (sopro 2.2.0)
+
+Measured end to end against `SoproTTS.synthesize` and `SoproTTS.stream` from the published 2.2.0
+wheel and the published checkpoint, CPU backend: EN and PT, single- and multi-segment text, 16-
+and 32-bit references, one reference short enough to take the room-tone crop branch. For these
+checks the C++ run was given the Python run's random draws (AR tokens, solver noise, room tone),
+so every other stage is computed independently on each side.
+
+| Check | Result |
+|---|---|
+| Reference crop, normalisation, 16 kHz resample | max sample diff 5e-7 |
+| Reference semantic tokens | identical, all cases |
+| Reference analysis mel | max diff 6e-5 to 1.3e-3 on 16-bit references |
+| Acoustic solve (2 Euler steps), PT case | max diff 6e-4, mean 6.5e-5 (normalised mel units) |
+| Vocoder + gain + trims + fades, PT case | 77.5 dB waveform SNR when fed the same solved mel |
+| Greedy AR (temperature 0, C++ samples its own tokens) | identical tokens and length, 2 cases |
+| Output length | identical, all cases |
+| Output level | within 0.02 dB |
+| Output spectrum (STFT magnitude, cells within 60 dB of peak) | mean diff 0.03–0.05 dB on 16-bit references |
+| Streaming vs `SoproTTS.stream`, 5 cases (up to 47 chunks, 2 segments) | identical length and chunk boundaries |
+| Streaming output spectrum | mean diff 0.03 dB on 16-bit references |
+
+Two things to read the numbers right:
+
+- **Compare spectra, not samples.** The vocoder predicts phase, so the waveform is very
+  sensitive to its input: adding 1e-5 of noise to the normalised mel moves the Python output
+  itself to ~52 dB waveform SNR, and the 6e-4 float32 difference of the solve gives ~31 dB.
+  The magnitude spectra stay within a few hundredths of a dB.
+- **Near-silent reference bands are float32 noise.** On two 32-bit studio references the analysis
+  mel differs (up to 0.3) in cells ~30 dB below the frame, mostly near 11–12 kHz. Those cells
+  sit below float32 resolution: adding 1e-8 of noise to the Python reference moves them by up
+  to 0.45. Those outputs differ by 0.16–0.26 dB mean; with the C++ reference mel fed to Python
+  the gap closes to 0.01–0.02 dB.
 
 ### Debugging
 
