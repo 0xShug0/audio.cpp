@@ -253,21 +253,22 @@ core::TensorValue build_niagara_state_space(
     constexpr int64_t kernel_size = 128;
     auto x = build_niagara_l1_norm(ctx, input, weights.norm, config);
     x = modules::LinearModule({config.hidden_size, config.state_channels, true}).build(ctx, x, weights.dense1);
+    // Materialize the matrix transpose before adding the singleton spatial axis.
+    x = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
+    x = core::ensure_backend_addressable_layout(ctx, x);
     x = core::reshape_tensor(
         ctx,
         x,
-        core::TensorShape::from_dims({x.shape.dims[0], x.shape.dims[1], 1, config.state_channels}));
-    x = modules::TransposeModule({{0, 3, 1, 2}, 4}).build(ctx, x);
-    x = core::ensure_backend_addressable_layout(ctx, x);
+        core::TensorShape::from_dims({input.shape.dims[0], config.state_channels, input.shape.dims[1], 1}));
     x = modules::Pad2dModule({0, 0, kernel_size - 1, 0}).build(ctx, x);
     x = modules::DepthwiseConv2dModule({config.state_channels, kernel_size, 1, 1, 1, 0, 0, 1, 1, false})
             .build(ctx, x, {weights.conv_kernel, std::nullopt});
-    x = modules::TransposeModule({{0, 2, 3, 1}, 4}).build(ctx, x);
-    x = core::ensure_backend_addressable_layout(ctx, x);
     x = core::reshape_tensor(
         ctx,
         x,
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.state_channels}));
+        core::TensorShape::from_dims({input.shape.dims[0], config.state_channels, input.shape.dims[1]}));
+    x = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, x);
+    x = core::ensure_backend_addressable_layout(ctx, x);
 
     if (config.state_channels == config.hidden_size * 2) {
         const int channel_axis = static_cast<int>(x.shape.rank - 1);

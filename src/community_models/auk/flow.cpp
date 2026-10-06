@@ -460,6 +460,10 @@ struct FlowGraph {
         ggml_build_forward_expand(graph, guided_velocity.tensor);
         auto optimization = runtime::graph_optimization_options_for_backend(execution.backend_type() == core::BackendType::Cpu
             ? runtime::GraphOptimizationBackend::Cpu : runtime::GraphOptimizationBackend::Gpu);
+        // Metal MUL requires its left input to have the output shape.
+        if (execution.backend_type() == core::BackendType::Metal) {
+            optimization.fold_two_sided_broadcast_repeats = false;
+        }
         // Identity folding updates src edges but not view_src. Keep copies
         // backing live views so gallocr can allocate the sliced conv weights.
         std::unordered_set<const ggml_tensor *> view_backings;

@@ -226,7 +226,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
             "\". The content to speak is: \"" + request.text_input->text + "\".";
     }
     auto & execution = execution_context();
-    const auto policy = sampling::resolve_torch_cuda_sampling_policy(core::BackendType::Cuda,
+    const auto policy = sampling::resolve_torch_cuda_sampling_policy(execution.backend_type(),
         options().backend.device, "auk", "AuK");
     std::vector<float> audio_embeddings, reference_latents;
     int64_t reference_frames = 0, valid_reference_frames = 0;
