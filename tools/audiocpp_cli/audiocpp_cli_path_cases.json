@@ -1834,6 +1834,123 @@
       ]
     },
     {
+      "id": "stable_audio_short_conditioning",
+      "coverage": "SAME encoder short-input prefix cropping, 128-latent boundary, multi-chunk stitching, and repeated-session reuse",
+      "family": "stable_audio",
+      "model": "models/stable-audio-3-small-music",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "text": "Replace only the masked sections with a tight snare fill and bright guitar swell.",
+          "audio": "resources/mel_roformer_test_10s.wav",
+          "seed": 42,
+          "num_inference_steps": 8,
+          "guidance_scale": 1,
+          "id": "short_stereo",
+          "options": {
+            "duration_sec": 10,
+            "duration_padding_sec": 0,
+            "audio_input_kind": "inpaint_audio",
+            "inpaint_mask_start_sec": "2.5,6.5",
+            "inpaint_mask_end_sec": "3.5,8.0"
+          }
+        },
+        {
+          "text": "Replace only the masked sections with a tight snare fill and bright guitar swell.",
+          "audio": "assets/resources/sample.wav",
+          "seed": 42,
+          "num_inference_steps": 8,
+          "guidance_scale": 1,
+          "id": "short_mono",
+          "options": {
+            "duration_sec": 10,
+            "duration_padding_sec": 0,
+            "audio_input_kind": "inpaint_audio",
+            "inpaint_mask_start_sec": "2.5,6.5",
+            "inpaint_mask_end_sec": "3.5,8.0"
+          }
+        },
+        {
+          "text": "Replace only the masked sections with a tight snare fill and bright guitar swell.",
+          "audio": "resources/mel_roformer_test_10s.wav",
+          "seed": 42,
+          "num_inference_steps": 8,
+          "guidance_scale": 1,
+          "id": "exact_chunk",
+          "options": {
+            "duration_sec": 11.888616780045352,
+            "duration_padding_sec": 0,
+            "audio_input_kind": "inpaint_audio",
+            "inpaint_mask_start_sec": "2.5,6.5",
+            "inpaint_mask_end_sec": "3.5,8.0"
+          }
+        },
+        {
+          "text": "Replace only the masked sections with a tight snare fill and bright guitar swell.",
+          "audio": "resources/mel_roformer_test_10s.wav",
+          "seed": 42,
+          "num_inference_steps": 8,
+          "guidance_scale": 1,
+          "id": "above_chunk",
+          "options": {
+            "duration_sec": 12,
+            "duration_padding_sec": 0,
+            "audio_input_kind": "inpaint_audio",
+            "inpaint_mask_start_sec": "2.5,6.5",
+            "inpaint_mask_end_sec": "3.5,8.0"
+          }
+        },
+        {
+          "text": "Replace only the masked sections with a tight snare fill and bright guitar swell.",
+          "audio": "resources/mel_roformer_test_10s.wav",
+          "seed": 42,
+          "num_inference_steps": 8,
+          "guidance_scale": 1,
+          "id": "short_init_audio",
+          "options": {
+            "duration_sec": 10,
+            "duration_padding_sec": 0,
+            "audio_input_kind": "init_audio",
+            "init_noise_level": 0.5
+          }
+        },
+        {
+          "text": "Replace only the masked sections with a tight snare fill and bright guitar swell.",
+          "audio": "resources/mel_roformer_test_10s.wav",
+          "seed": 42,
+          "num_inference_steps": 8,
+          "guidance_scale": 1,
+          "id": "normal_padding",
+          "options": {
+            "duration_sec": 10,
+            "duration_padding_sec": 6,
+            "audio_input_kind": "inpaint_audio",
+            "inpaint_mask_start_sec": "2.5,6.5",
+            "inpaint_mask_end_sec": "3.5,8.0"
+          }
+        },
+        {
+          "text": "Replace only the masked sections with a tight snare fill and bright guitar swell.",
+          "audio": "resources/mel_roformer_test_10s.wav",
+          "seed": 42,
+          "num_inference_steps": 8,
+          "guidance_scale": 1,
+          "id": "short_stereo_again",
+          "options": {
+            "duration_sec": 10,
+            "duration_padding_sec": 0,
+            "audio_input_kind": "inpaint_audio",
+            "inpaint_mask_start_sec": "2.5,6.5",
+            "inpaint_mask_end_sec": "3.5,8.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "stable_audio_music_text",
       "coverage": "Stable Audio 3 small-music text-to-music path",
       "family": "stable_audio",
