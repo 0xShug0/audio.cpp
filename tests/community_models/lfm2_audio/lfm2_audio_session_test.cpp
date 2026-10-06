@@ -5,6 +5,7 @@
 // transcript predictable while the encoder, prefill and decode all run.
 #include "engine/community_models/lfm2_audio/session.h"
 #include "engine/framework/audio/wav_reader.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session.h"
 #include "lfm2_audio_test_package.h"
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -353,6 +355,57 @@ void test_chunking(const Package & package) {
         "auto on audio shorter than one chunk");
 }
 
+// The encoder takes at most max_pass_seconds of audio in one pass; longer
+// input is rejected before it is encoded, as a CapacityError (a client error
+// in the server).
+void test_one_pass_limit(const Package & package) {
+    const auto capacity_error = [](const std::function<void()> & fn, const std::string & needle, const std::string & label) {
+        try {
+            fn();
+        } catch (const engine::runtime::CapacityError & error) {
+            const std::string message = error.what();
+            require(message.find(needle) != std::string::npos, label + " threw \"" + message + "\", expected \"" + needle + "\"");
+            return;
+        }
+
+        require(false, label + " must throw a CapacityError");
+    };
+
+    auto session = open_session(package.root, {{"lfm2_audio.max_pass_seconds", "2"}});
+    capacity_error([&] { (void)session->run(request(tone(3.0), {{"audio_chunk_mode", "none"}})); },
+        "the input is 3.0 s; use audio_chunk_mode=auto", "none over the limit");
+    capacity_error([&] { (void)session->run(request(tone(3.0), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "3"}})); },
+        "lower audio_chunk_seconds", "chunks over the limit");
+    capacity_error([&] { (void)session->run(request(tone(3.0), {{"audio_chunk_mode", "auto"}, {"audio_chunk_seconds", "30"}})); },
+        "audio_chunk_seconds allows chunks of up to 3.0 s", "auto keeping the input whole over the limit");
+    require_eq(transcribe(*session, request(tone(2.0), {{"audio_chunk_mode", "none"}})), std::string("hi"), "none at the limit");
+    require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}})),
+        std::string("hi hi hi"), "chunks under the limit");
+
+    // A limit under the default 30 s chunk lowers it for requests that leave
+    // audio_chunk_seconds alone (auto falls back to fixed without the VAD).
+    require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_mode", "fixed"}})), std::string("hi hi"),
+        "fixed chunks of the limit");
+    const auto missing_vad = (package.root / "no_vad").string();
+    auto no_vad = open_session(package.root, {{"lfm2_audio.max_pass_seconds", "2"}, {"lfm2_audio.vad_model_path", missing_vad}});
+    require_eq(transcribe(*no_vad, request(tone(3.0))), std::string("hi hi"), "default chunks of the limit");
+
+    // The limit is compared in samples, so audio exactly at a limit with no
+    // exact binary form passes, and a sample more is shown rounded up.
+    auto tenths = open_session(package.root, {{"lfm2_audio.max_pass_seconds", "2.1"}});
+    require_eq(transcribe(*tenths, request(tone(2.1), {{"audio_chunk_mode", "none"}})), std::string("hi"), "none at a limit of 2.1 s");
+    capacity_error([&] { (void)tenths->run(request(tone(33601.0 / 16000), {{"audio_chunk_mode", "none"}})); },
+        "at most 2.1 s of audio in one pass (lfm2_audio.max_pass_seconds), and the input is 2.2 s", "a sample over a limit of 2.1 s");
+
+    // 120 s by default.
+    auto defaults = open_session(package.root);
+    require_eq(transcribe(*defaults, request(tone(3.0), {{"audio_chunk_mode", "none"}})), std::string("hi"), "the default limit");
+    capacity_error([&] { (void)defaults->run(request(tone(120.5), {{"audio_chunk_mode", "none"}})); },
+        "at most 120.0 s of audio in one pass (lfm2_audio.max_pass_seconds), and the input is 120.5 s", "none over the default");
+    require_throws_with([&] { (void)open_session(package.root, {{"lfm2_audio.max_pass_seconds", "0.5"}}); }, "must be at least 1",
+        "a limit under a second");
+}
+
 // 3.5 s of LibriSpeech speech followed by `silence_seconds` of zeros, and the
 // same again when `twice`.
 runtime::AudioBuffer speech(double silence_seconds, bool twice = false) {
@@ -523,10 +576,10 @@ void test_loader(const Package & package) {
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Asr, runtime::RunMode::Streaming}, options); },
         "ASR runs offline only", "a streaming ASR session");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Tts, runtime::RunMode::Offline}, options); },
-        "cannot pick the vocoder GGUF", "a TTS session without the vocoder file");
+        "tools/model_manager_v2.py install", "a TTS session without the vocoder file");
     require_throws_with(
         [&] { (void)model->create_task_session({runtime::VoiceTaskKind::SpeechToSpeech, runtime::RunMode::Streaming}, options); },
-        "cannot pick the vocoder GGUF", "a streaming s2s session without the vocoder file");
+        "tools/model_manager_v2.py install", "a streaming s2s session without the vocoder file");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline}, options); },
         "supports the asr, tts and s2s tasks", "another task");
 }
@@ -544,6 +597,7 @@ int main() {
         test_max_tokens_inside_a_character();
         test_ends_inside_a_character();
         test_chunking(package);
+        test_one_pass_limit(package);
         test_vad_chunking(package);
         test_selects_backbone();
         test_japanese_checkpoint();

@@ -17,6 +17,7 @@ namespace {
 
 using engine::community_models::lfm2_audio::load_lfm2_audio_assets;
 using engine::community_models::lfm2_audio::load_lfm2_audio_components;
+using engine::community_models::lfm2_audio::load_lfm2_audio_output_components;
 using engine::test::require;
 using engine::test::require_eq;
 
@@ -323,6 +324,66 @@ void test_rejects_other_packages() {
     std::filesystem::remove_all(root);
 }
 
+// Packages installed before audio.cpp had LFM2-Audio TTS hold the backbone
+// and mmproj only; TTS and S2S must say to reinstall rather than to choose a
+// vocoder that is not there.
+void test_missing_output_files() {
+    const auto models = fresh_directory("audiocpp_lfm2_audio_old_package_test");
+    const auto root = models / "LFM2.5-Audio-1.5B-GGUF";
+    std::filesystem::create_directories(root);
+    write_backbone(root / "LFM2.5-Audio-1.5B-Q8_0.gguf");
+    write_mmproj(root / "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf");
+    const auto assets = load_lfm2_audio_assets(root);
+    const auto components = load_lfm2_audio_components(*assets, "", "");
+    const auto output = [&] { (void)load_lfm2_audio_output_components(*assets, *components, "", ""); };
+    const auto command = "python3 tools/model_manager_v2.py install lfm2_audio_1_5b_q8_0 --models-root " + models.string() + " --overwrite";
+    require_throws_with(output, "need vocoder-LFM2.5-Audio-1.5B-Q8_0.gguf and tokenizer-LFM2.5-Audio-1.5B-Q8_0.gguf, which",
+        "both files named");
+    require_throws_with(output, command, "the package's reinstall command");
+
+    // The directory given with a trailing separator.
+    const auto slashed = load_lfm2_audio_assets(root.string() + "/");
+    const auto slashed_components = load_lfm2_audio_components(*slashed, "", "");
+    require_throws_with([&] { (void)load_lfm2_audio_output_components(*slashed, *slashed_components, "", ""); }, command,
+        "the reinstall command for a directory ending in a separator");
+
+    // A relative directory is printed absolute: the command runs from the
+    // repository root, not from where the session was opened.
+    const auto relative = std::filesystem::relative(root);
+    const auto relative_assets = load_lfm2_audio_assets(relative);
+    const auto relative_components = load_lfm2_audio_components(*relative_assets, "", "");
+    require_throws_with([&] { (void)load_lfm2_audio_output_components(*relative_assets, *relative_components, "", ""); },
+        "--models-root " + (std::filesystem::current_path() / relative).lexically_normal().parent_path().string() + " --overwrite",
+        "the reinstall command for a relative directory");
+
+    // A models directory whose path has a space is quoted.
+    const auto spaced = fresh_directory("audiocpp lfm2_audio spaced package test");
+    const auto spaced_root = spaced / "LFM2.5-Audio-1.5B-GGUF";
+    std::filesystem::create_directories(spaced_root);
+    write_backbone(spaced_root / "LFM2.5-Audio-1.5B-Q8_0.gguf");
+    write_mmproj(spaced_root / "mmproj-LFM2.5-Audio-1.5B-Q8_0.gguf");
+    const auto spaced_assets = load_lfm2_audio_assets(spaced_root);
+    const auto spaced_components = load_lfm2_audio_components(*spaced_assets, "", "");
+    require_throws_with([&] { (void)load_lfm2_audio_output_components(*spaced_assets, *spaced_components, "", ""); },
+        "--models-root \"" + spaced.string() + "\" --overwrite", "the reinstall command for a path with a space");
+    std::filesystem::remove_all(spaced);
+
+    // A file of the pair still there: only the other is missing.
+    write_other(root / "vocoder-LFM2.5-Audio-1.5B-Q8_0.gguf", "vocoder");
+    require_throws_with(output, "need tokenizer-LFM2.5-Audio-1.5B-Q8_0.gguf, which", "only the missing file named");
+    std::filesystem::remove_all(models);
+
+    // Files no package lists get placeholders.
+    const auto renamed = fresh_directory("audiocpp_lfm2_audio_renamed_test");
+    write_backbone(renamed / "Model-F16.gguf");
+    write_mmproj(renamed / "mmproj-Model-F16.gguf");
+    const auto renamed_assets = load_lfm2_audio_assets(renamed);
+    const auto renamed_components = load_lfm2_audio_components(*renamed_assets, "", "");
+    require_throws_with([&] { (void)load_lfm2_audio_output_components(*renamed_assets, *renamed_components, "", ""); },
+        "install <package> --models-root <models directory> --overwrite", "a renamed package");
+    std::filesystem::remove_all(renamed);
+}
+
 }  // namespace
 
 int main() {
@@ -333,6 +394,7 @@ int main() {
         test_rejects_bad_choices();
         test_file_names();
         test_rejects_other_packages();
+        test_missing_output_files();
         std::cout << "lfm2_audio_assets_test: PASS\n";
         return 0;
     } catch (const std::exception & error) {

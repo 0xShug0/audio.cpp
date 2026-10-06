@@ -149,6 +149,14 @@
         "description": "Path to the Silero VAD model directory used by automatic audio chunking.",
         "required": false,
         "default": "assets/framework/models/silero_vad"
+      },
+      {
+        "name": "max_pass_seconds",
+        "type": "float",
+        "description": "Most audio, in seconds, the encoder takes in one pass: an ASR chunk (the whole input with audio_chunk_mode=none) or the S2S question. Longer audio is rejected before it is encoded.",
+        "required": false,
+        "min": 1,
+        "default": 120
       }
     ],
     "load": []

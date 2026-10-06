@@ -71,6 +71,7 @@ private:
     std::string language_;
     Lfm2AsrPrompt prompt_;
     std::filesystem::path vad_model_path_;
+    double max_pass_seconds_;
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
     std::unique_ptr<runtime::IOfflineVoiceTaskSession> vad_session_;
     bool reached_max_tokens_ = false;
@@ -200,6 +201,7 @@ private:
     Lfm2DepthformerRuntime depthformer_;
     Lfm2DetokenizerRuntime detokenizer_;
     std::string language_;
+    double max_pass_seconds_;
     std::unique_ptr<Stream> stream_;
     bool reached_max_tokens_ = false;
 };
