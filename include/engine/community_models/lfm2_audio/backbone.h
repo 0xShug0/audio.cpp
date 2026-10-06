@@ -35,6 +35,22 @@ struct Lfm2GenerationOptions {
 // uses one or the other depending on the modality it is in).
 enum class Lfm2StepOutput { Logits, Hidden };
 
+// How a request sizes the backbone's decode cache. Every step attends over the
+// whole cache, and on some backends the logits change in their last bits with
+// its length (ggml's CPU flash attention splits a long cache into one piece
+// per thread), enough to flip a near-tie. So the length decides what a
+// request's output can depend on, and each task picks its own.
+enum class Lfm2DecodeCache {
+    // ASR. Exactly the prompt plus the step budget, and a cache an earlier
+    // Transcript request left is kept while it holds this one and is at most
+    // twice its size: the sizing ASR has always had, so transcripts stay as
+    // they were. A cache sized for Speech is never reused.
+    Transcript,
+    // TTS and S2S. The prompt plus the step budget rounded up to 256, whatever
+    // ran before, so seeded speech does not depend on earlier requests.
+    Speech,
+};
+
 struct Lfm2GenerationResult {
     std::vector<int32_t> tokens;  // without the stop token
     // False when max_new_tokens ran out before a stop token.
@@ -59,18 +75,18 @@ public:
     Lfm2BackboneRuntime(const Lfm2BackboneRuntime &) = delete;
     Lfm2BackboneRuntime & operator=(const Lfm2BackboneRuntime &) = delete;
 
-    // Greedy text generation until a stop token or max_new_tokens. The decode
-    // cache of an earlier request is kept when it holds this one and is at
-    // most twice its size.
+    // Greedy text generation until a stop token or max_new_tokens: the ASR
+    // decoder, so its cache is always sized as Lfm2DecodeCache::Transcript.
     Lfm2GenerationResult generate(
         const Lfm2Prompt & prompt,
         const Lfm2AudioEmbeddings & audio,
         const Lfm2GenerationOptions & options);
 
     // Prefills the prompt, leaving room for `max_steps` more steps, and
-    // returns the text logits after it. The decode cache is the step budget
-    // rounded up to 256, whatever ran before.
-    std::vector<float> start(const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps);
+    // returns the text logits after it. `cache` is the task's sizing policy:
+    // Transcript for a text decoder that transcribes, Speech for TTS and S2S.
+    std::vector<float> start(
+        const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, Lfm2DecodeCache cache);
 
     // One step after start(): a text token, or the codes of an audio frame
     // (the sum of their audio embeddings goes in).
@@ -83,13 +99,6 @@ public:
     [[nodiscard]] int64_t decode_cache_steps() const noexcept;
 
 private:
-    // generate() prefills with Reuse and start() with Rounded; their comments
-    // say how each sizes the decode cache.
-    enum class DecodeCache { Reuse, Rounded };
-
-    std::vector<float> prefill(
-        const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, DecodeCache cache);
-
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

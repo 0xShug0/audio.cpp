@@ -143,7 +143,7 @@ struct Lfm2SpeechGenerator::Impl {
     // The prompt and any text before <|audio_start|>; leaves the backbone
     // output that the first frame comes from.
     void start() {
-        auto logits = backbone.start(prompt, {}, kMaxTextTokens + options.max_frames);
+        auto logits = backbone.start(prompt, {}, kMaxTextTokens + options.max_frames, Lfm2DecodeCache::Speech);
         while (true) {
             const int32_t token = lfm2_greedy(logits);
             if (token == end_of_turn) {

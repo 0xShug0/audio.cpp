@@ -54,13 +54,7 @@ constexpr size_t kPrefillArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr size_t kDecodeArenaBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kGraphNodes = 32768;
 constexpr int64_t kMaxRetainedPrefillSteps = 1024;
-// Every decode step attends over the whole cache, and on some backends the
-// logits change in their last bits with the cache's length (ggml's CPU flash
-// attention splits the cache into one piece per thread), enough to flip a
-// near-tie. TTS and S2S (start()) size a request's cache from its step budget
-// alone, rounded up to this, so seeded speech does not depend on the requests
-// before. ASR (generate()) reuses a cache that fits, the sizing it has always
-// had, so transcripts do not change.
+// Lfm2DecodeCache::Speech rounds the decode cache up to this.
 constexpr int64_t kCacheStepGranule = 256;
 
 struct BackboneWeights {
@@ -522,6 +516,7 @@ struct Lfm2BackboneRuntime::Impl {
     BackboneWeights weights;
     std::unique_ptr<PrefillGraph> prefill;
     std::unique_ptr<DecodeGraph> decode;
+    Lfm2DecodeCache decode_policy = Lfm2DecodeCache::Transcript;  // the policy `decode` was sized by
     bool started = false;
 };
 
@@ -541,12 +536,8 @@ Lfm2BackboneRuntime::Lfm2BackboneRuntime(
 
 Lfm2BackboneRuntime::~Lfm2BackboneRuntime() = default;
 
-std::vector<float> Lfm2BackboneRuntime::start(const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps) {
-    return prefill(prompt, audio, max_steps, DecodeCache::Rounded);
-}
-
-std::vector<float> Lfm2BackboneRuntime::prefill(
-    const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, DecodeCache cache) {
+std::vector<float> Lfm2BackboneRuntime::start(
+    const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, Lfm2DecodeCache cache) {
     const auto & config = impl_->config;
     const auto steps = static_cast<int64_t>(prompt.input_ids.size());
     const auto audio_tokens = static_cast<int64_t>(prompt.audio_positions.size());
@@ -590,13 +581,14 @@ std::vector<float> Lfm2BackboneRuntime::prefill(
 
     const int64_t required = steps + max_steps;
     const int64_t needed = std::max<int64_t>(required, steps + 1);
-    const bool rounded = cache == DecodeCache::Rounded;
-    const int64_t cache_steps = rounded ? (needed + kCacheStepGranule - 1) / kCacheStepGranule * kCacheStepGranule : needed;
-    const bool keep =
-        impl_->decode != nullptr && (rounded ? impl_->decode->cache_steps() == cache_steps : impl_->decode->fits(required));
+    const bool speech = cache == Lfm2DecodeCache::Speech;
+    const int64_t cache_steps = speech ? (needed + kCacheStepGranule - 1) / kCacheStepGranule * kCacheStepGranule : needed;
+    const bool keep = impl_->decode != nullptr && impl_->decode_policy == cache &&
+                      (speech ? impl_->decode->cache_steps() == cache_steps : impl_->decode->fits(required));
     if (!keep) {
         impl_->decode.reset();
         impl_->decode = std::make_unique<DecodeGraph>(impl_->weights, config, impl_->execution, cache_steps);
+        impl_->decode_policy = cache;
     }
 
     impl_->decode->import_state(state);
@@ -655,7 +647,7 @@ Lfm2GenerationResult Lfm2BackboneRuntime::generate(
 
     // The last generated token is never fed back, hence the - 1.
     Lfm2GenerationResult out;
-    out.prefill_logits = prefill(prompt, audio, options.max_new_tokens - 1, DecodeCache::Reuse);
+    out.prefill_logits = start(prompt, audio, options.max_new_tokens - 1, Lfm2DecodeCache::Transcript);
     std::vector<float> logits = out.prefill_logits;
 
     const auto decode_start = std::chrono::steady_clock::now();
