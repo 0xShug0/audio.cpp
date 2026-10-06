@@ -218,9 +218,7 @@ against the C++.
 
 | Stage | Check | Result |
 |---|---|---|
-| Tensor inventory | 762 names + shapes vs. the four real files | exact match |
 | Vocoder mel front end | vs. numpy STFT + checkpoint filterbank | max diff 1.9e-3 |
-| Vocos backbone + ISTFT head | vs. numpy, all 14 blocks of the sopro 2.1 vocoder | max diff 1.0e-5 |
 | Semantic encoder mel | vs. numpy | max diff 1.9e-5 |
 | Semantic encoder transformer | vs. numpy, all 6 layers | max diff 6.0e-5 |
 | FSQ token ids | vs. numpy | 188/188 identical |
