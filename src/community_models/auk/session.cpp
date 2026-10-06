@@ -151,8 +151,8 @@ AukSession::AukSession(runtime::TaskSpec task, runtime::SessionOptions options,
     if (!assets_ || !assets_->model || !assets_->qwen || !assets_->vae || !assets_->tokenizer) {
         throw std::runtime_error("AuK requires model, Qwen, VAE, and tokenizer assets");
     }
-    if (options.backend.type != core::BackendType::Cuda) {
-        throw std::runtime_error("AuK native session currently requires CUDA");
+    if (options.backend.type == core::BackendType::Cpu) {
+        throw std::runtime_error("AuK native session does not support the CPU backend");
     }
     if (const auto value = runtime::find_option(options.options, {"auk.mem_saver"})) {
         mem_saver_ = runtime::parse_bool_option(*value, "auk.mem_saver");

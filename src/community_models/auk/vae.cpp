@@ -375,9 +375,15 @@ struct DecoderGraph {
         ggml_set_output(output.tensor);
         graph = ggml_new_graph_custom(context.get(), nodes, false);
         ggml_build_forward_expand(graph, output.tensor);
-        const auto optimization = runtime::optimize_graph(*graph,
+        auto optimization_options = runtime::graph_optimization_options_for_backend(
             execution.backend_type() == core::BackendType::Cpu
                 ? runtime::GraphOptimizationBackend::Cpu : runtime::GraphOptimizationBackend::Gpu);
+        // Keep SCALE's input materialized: CPU requires contiguous storage,
+        // and Vulkan requires equal input/output element counts.
+        if (!core::uses_ggml_cuda_or_hip_backend(execution.backend_type())) {
+            optimization_options.fold_unary_broadcast_repeats = false;
+        }
+        const auto optimization = runtime::optimize_graph(*graph, optimization_options);
         debug::trace_log_scalar("auk.vae.graph_nodes_before", optimization.nodes_before);
         debug::trace_log_scalar("auk.vae.graph_nodes_after", optimization.nodes_after);
         allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
