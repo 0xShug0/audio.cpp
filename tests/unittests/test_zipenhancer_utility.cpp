@@ -60,6 +60,7 @@ void require_close(
     size_t max_index = 0;
     double mean_diff = 0.0;
     for (size_t i = 0; i < actual.size(); ++i) {
+        require(std::isfinite(actual[i]), label + " contains non-finite output");
         const float diff = std::fabs(actual[i] - expected.values[i]);
         mean_diff += static_cast<double>(diff);
         if (diff > max_diff) {
@@ -88,6 +89,8 @@ void run_case(const engine::audio::ZipEnhancerModel & model, int case_index) {
     const auto output = model.denoise_mono_16k(input.values);
     require(output.sample_rate == 16000, "ZipEnhancer sample rate mismatch");
     require_close(output.samples, expected, 3.0e-3f, 3.0e-4, "case " + std::to_string(case_index));
+    const auto repeated = model.denoise_mono_16k(input.values);
+    require(repeated.samples == output.samples, "ZipEnhancer cached graph changed repeated output");
 }
 
 }  // namespace
