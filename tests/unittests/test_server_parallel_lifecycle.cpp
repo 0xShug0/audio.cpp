@@ -74,9 +74,9 @@ struct Gate {
 struct Control {
     Gate load, run, destroy;
     std::atomic<int> loads{0}, destructions{0}, runs{0};
-    std::atomic<int> sessions{0}, clones{0};
+    std::atomic<int> sessions{0}, clones{0}, final_text{0};
     std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false};
-    std::atomic<bool> premature_model_destruction{false};
+    std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false};
 };
 class Session final : public rt::IOfflineVoiceTaskSession,
                       public rt::IBatchedOfflineVoiceTaskSession,
@@ -107,7 +107,7 @@ public:
             throw std::runtime_error("replacement ASR requires audio input");
         }
         rt::TaskResult result;
-        result.text_output = rt::Transcript{revision_, "en"};
+        if (!control_->no_text) { result.text_output = rt::Transcript{revision_, "en"}; }
         result.audio_output = rt::AudioBuffer{16000, 1, {0.1f, -0.1f}};
         return result;
     }
@@ -118,8 +118,8 @@ public:
     }
     rt::StreamingPolicy streaming_policy() const override {
         rt::StreamingPolicy policy;
-        policy.input = rt::StreamingInputKind::None;
-        policy.output = rt::StreamingOutputKind::PullEvents;
+        policy.input = control_->live_input ? rt::StreamingInputKind::AudioChunks : rt::StreamingInputKind::None;
+        policy.output = rt::StreamingOutputKind::PullEvents; policy.preferred_audio_chunk_samples = 160;
         return policy;
     }
     void start_stream(const rt::TaskRequest & request) override { result_ = run(request); emitted_ = false; }
@@ -128,13 +128,13 @@ public:
         emitted_ = true;
         rt::StreamEvent event;
         event.audio_output = result_.audio_output;
-        event.partial_text = result_.text_output;
+        event.partial_text = result_.text_output; if (control_->final_text == 2) { event.partial_text->text += "!"; }
         event.is_final = true;
         return event;
     }
     void reset() override { emitted_ = false; }
     rt::StreamEvent process_audio_chunk(const rt::AudioChunk &) override { return {}; }
-    rt::TaskResult finalize() override { return result_; }
+    rt::TaskResult finalize() override { auto r = result_; if (control_->final_text == 1) { r.text_output.reset(); } return r; }
 private:
     std::shared_ptr<Control> control_;
     rt::TaskSpec task_;
@@ -728,6 +728,67 @@ void dynamic_capacity_changes_use_parallel_lifecycle() {
     }
 }
 
+// An SSE stream's event types in order, its joined text deltas and its final text.
+std::tuple<std::string, std::string, std::string> sse_events(const std::string & sse) {
+    std::string types, deltas, done;
+    for (size_t at = sse.find("data: {"); at != std::string::npos; at = sse.find("data: {", at + 1)) {
+        const auto event = parse(sse.substr(at + 6, sse.find("\n\n", at) - at - 6));
+        const auto type = event.require("type").as_string();
+        if (type == "speech.text.delta") { deltas += event.require("delta").as_string(); }
+        if (type == "speech.text.done") { done = event.require("text").as_string(); }
+        types += (types.empty() ? "" : " ") + type;
+    }
+    return {types, deltas, done};
+}
+
+// With live_input the fixture reads the body as audio chunks, then writes its
+// revision ("live") as text in the one event that carries its audio.
+void live_speech_return_text(int count) {
+    Fixture f(count); auto c = f.add("live", "streaming"); c->live_input = true;
+    std::string error;
+    const auto live = [&](const std::string & query) {
+        std::istringstream pcm(std::string(640, '\0'));
+        srv::HttpRequest request; request.method = "POST"; request.path = "/v1/audio/speech/live";
+        request.query = "model=live&input=hello" + query; request.body_stream = &pcm;
+        auto response = f.state->handle(request);
+        Writer writer; error.clear();
+        try { if (response.stream_body) { response.stream_body(writer); } }
+        catch (const std::runtime_error & e) { error = e.what(); }
+        if (response.stream_body) { response.body = writer.output; response.stream_body = {}; }
+        require(Access::slots(*f.state, "live").active == 0, "live speech '" + query + "' left its lease held");
+        return response;
+    };
+    const auto text = live("&return_text=true"); success(text);
+    const auto [types, deltas, done] = sse_events(text.body);
+    require(deltas == "live" && done == deltas, "return_text did not stream the model's text: " + types);
+    require(types == "speech.text.delta speech.audio.delta speech.text.done speech.audio.done" && error.empty(),
+            "return_text events out of order: " + types);
+    for (const std::string query : {"", "&return_text=false", "&return_text=0"}) {
+        const auto audio = live(query); success(audio);
+        require(std::get<0>(sse_events(audio.body)) == "speech.audio.delta speech.audio.done" && error.empty(),
+                "live speech '" + query + "' streamed text");
+    }
+    for (const auto & [query, message] : std::vector<std::pair<std::string, std::string>>{
+        {"&return_text=yes", "live speech return_text must be true or false"},
+        {"&return_text=true&stream_format=audio", "live speech return_text needs stream_format=sse"}}) {
+        const auto rejected = live(query);
+        require(rejected.status == 400 && rejected.body.find(message) != std::string::npos,
+                "live speech '" + query + "' was not rejected: HTTP " + std::to_string(rejected.status));
+    }
+    // speech.text.done is the model's final text, or the joined deltas when it gives none.
+    for (const auto & [mode, streamed] : std::vector<std::pair<int, std::string>>{{1, "live"}, {2, "live!"}}) {
+        c->final_text = mode;
+        const auto [order, joined, done_text] = sse_events(live("&return_text=true").body);
+        require(joined == streamed && done_text == "live" && order == types && error.empty(),
+                "speech.text.done '" + done_text + "' after deltas '" + joined + "': " + error);
+    }
+    c->final_text = 0; c->no_text = true;
+    const auto silent = live("&return_text=1");
+    require(silent.status == 200 && std::get<0>(sse_events(silent.body)) == "speech.audio.delta" &&
+            error == "live speech model wrote no text; return_text needs a model that writes text",
+            "return_text without model text did not fail after the audio: " + error);
+}
+
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
@@ -766,9 +827,10 @@ int main(int argc, char ** argv) {
             overlapping_bulk_operations(count);
             bulk_publication_excludes_only_other_bulk_calls(count);
             guarded_loading_does_not_block_warm_model(count);
+            live_speech_return_text(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"
-                         " resident limits 1/2, deferred stream/disconnect\n";
+                         " resident limits 1/2, deferred stream/disconnect, live speech return_text\n";
         }
     } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
 }

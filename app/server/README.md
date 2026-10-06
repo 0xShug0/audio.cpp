@@ -449,6 +449,19 @@ The SSE stream emits `speech.audio.delta` events with base64 PCM chunks, then `s
 
 `POST /v1/audio/speech/live` is the live-ingest variant for speech-to-speech models: the request body is raw PCM sent with `Transfer-Encoding: chunked`, and the response can emit audio while the input stream is still open. Its `speech.audio.done` timing reports `ttft_ms` only when first output audio occurs after the input stream ends. If output audio starts before the input stream closes, `ttft_ms` is `null`, `first_audio_before_input_end=true`, and `overlap_ms` reports how much earlier the first output arrived. `request_start_to_first_audio_ms` is also included for transport diagnostics.
 
+With `return_text=true` (or `1`), the stream also carries the text the model writes as it speaks, such as a spoken reply's words. `speech.text.delta` events carry the text written since the previous event, in order with the audio deltas (an event's text comes before its audio), and `speech.text.done` carries the whole text before `speech.audio.done`:
+
+```text
+data: {"type":"speech.text.delta","delta":"Sure! How about"}
+data: {"type":"speech.audio.delta","audio":"<base64 PCM>"}
+...
+data: {"type":"speech.text.done","text":"Sure! How about ..."}
+data: {"type":"speech.audio.done","timing":{...}}
+data: [DONE]
+```
+
+Without `return_text` the stream is audio only. `return_text` needs `stream_format=sse`; a model that writes no text ends the stream with an error event after its audio.
+
 ### `POST /v1/audio/transcriptions`
 
 JSON transcription request using a server-local WAV audio path.
