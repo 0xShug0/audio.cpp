@@ -81,11 +81,9 @@ std::optional<Lfm2ReplyStep> Lfm2InterleavedGenerator::next() {
     if (!s.started) {
         s.started = true;
         s.left = s.options.text_steps;
-        // start() sizes the decode cache from the step budget alone, rounded
-        // up, as for TTS: a reply samples its audio, and a cache of another
-        // length can move the logits in their last bits, so a seeded reply
-        // must not depend on the requests the session ran before.
-        s.output = s.backbone.start(s.prompt, s.audio, s.options.max_steps);
+        // A reply samples its audio, so it takes the speech sizing, as TTS
+        // does: a seeded reply must not depend on the requests before.
+        s.output = s.backbone.start(s.prompt, s.audio, s.options.max_steps, Lfm2DecodeCache::Speech);
     }
 
     if (s.steps == s.options.max_steps) {

@@ -476,33 +476,52 @@ void test_decode_cache_length() {
         (void)runtime->generate(text_prompt(prompt_steps, 40), {}, {max_new_tokens, every_token});
         return runtime->decode_cache_steps();
     };
-    const auto start = [&](int64_t prompt_steps, int64_t max_steps) {
-        (void)runtime->start(text_prompt(prompt_steps, 41), {}, max_steps);
+    const auto start = [&](int64_t prompt_steps, int64_t max_steps, lfm2::Lfm2DecodeCache cache) {
+        (void)runtime->start(text_prompt(prompt_steps, 41), {}, max_steps, cache);
         return runtime->decode_cache_steps();
+    };
+    const auto transcript = [&](int64_t prompt_steps, int64_t max_new_tokens) {
+        return start(prompt_steps, max_new_tokens - 1, lfm2::Lfm2DecodeCache::Transcript);
+    };
+    const auto speech = [&](int64_t prompt_steps, int64_t max_steps) {
+        return start(prompt_steps, max_steps, lfm2::Lfm2DecodeCache::Speech);
     };
 
     require_eq(runtime->decode_cache_steps(), int64_t{0}, "before any request");
 
-    // generate(), which the ASR runs, on those chunks: 45 prompt steps, 47 in
-    // the last one, and max_tokens 512.
-    require_eq(generate(45, 512), int64_t{556}, "generate: what the first request needs");
-    require_eq(generate(45, 512), int64_t{556}, "generate: the same need keeps the cache");
-    require_eq(generate(47, 512), int64_t{558}, "generate: a larger need replaces it");
-    require_eq(generate(45, 512), int64_t{558}, "generate: a smaller need keeps it");
-    require_eq(generate(45, 200), int64_t{244}, "generate: a cache over twice the need is replaced");
-    require_eq(generate(45, 100), int64_t{244}, "generate: one twice the need at most is kept");
-    require_eq(generate(45, 78), int64_t{244}, "generate: one exactly twice the need is kept");
-    require_eq(generate(45, 77), int64_t{121}, "generate: one just over twice the need is replaced");
-    require_eq(generate(5, 1), int64_t{6}, "generate: one step past the prompt at least");
+    // The ASR decoders, generate() and any text decoder on start(Transcript),
+    // on those chunks: 45 prompt steps, 47 in the last one, and max_tokens 512.
+    // The same sequence through each must give the same lengths.
+    const auto asr_sequence = [&](const std::string & name, const std::function<int64_t(int64_t, int64_t)> & asr) {
+        require_eq(asr(45, 512), int64_t{556}, name + ": what the first request needs");
+        require_eq(asr(45, 512), int64_t{556}, name + ": the same need keeps the cache");
+        require_eq(asr(47, 512), int64_t{558}, name + ": a larger need replaces it");
+        require_eq(asr(45, 512), int64_t{558}, name + ": a smaller need keeps it");
+        require_eq(asr(45, 200), int64_t{244}, name + ": a cache over twice the need is replaced");
+        require_eq(asr(45, 100), int64_t{244}, name + ": one twice the need at most is kept");
+        require_eq(asr(45, 78), int64_t{244}, name + ": one exactly twice the need is kept");
+        require_eq(asr(45, 77), int64_t{121}, name + ": one just over twice the need is replaced");
+        require_eq(asr(5, 1), int64_t{6}, name + ": one step past the prompt at least");
+    };
+    asr_sequence("generate", generate);
+    asr_sequence("start(Transcript)", transcript);
 
-    // start(), which TTS and S2S run: the step budget rounded up to 256,
-    // whatever ran before.
-    require_eq(generate(47, 512), int64_t{558}, "generate before start");
-    require_eq(start(45, 511), int64_t{768}, "start: rounded up after a cache that fits");
-    require_eq(start(47, 511), int64_t{768}, "start: the same rounded length");
-    require_eq(start(45, 200), int64_t{256}, "start: a smaller budget, a smaller cache");
-    require_eq(start(255, 1), int64_t{256}, "start: an exact multiple");
-    require_eq(start(5, 0), int64_t{256}, "start: one step past the prompt at least");
+    // Speech, which TTS and S2S run: the step budget rounded up to 256,
+    // whatever ran before, a Transcript cache that would hold it included.
+    require_eq(generate(47, 512), int64_t{558}, "generate before speech");
+    require_eq(speech(45, 511), int64_t{768}, "speech: rounded up after a transcript cache that fits");
+    require_eq(speech(47, 511), int64_t{768}, "speech: the same rounded length");
+    require_eq(speech(45, 200), int64_t{256}, "speech: a smaller budget, a smaller cache");
+    require_eq(speech(255, 1), int64_t{256}, "speech: an exact multiple");
+    require_eq(speech(5, 0), int64_t{256}, "speech: one step past the prompt at least");
+
+    // Nor does an ASR request take a Speech cache that would hold it: its
+    // cache length would then follow the budget of the TTS or S2S request
+    // before. After one, it sizes its cache as on a fresh backbone.
+    require_eq(speech(45, 511), int64_t{768}, "speech before ASR");
+    require_eq(generate(45, 512), int64_t{556}, "generate after speech sizes its own cache");
+    require_eq(speech(45, 511), int64_t{768}, "speech again");
+    require_eq(transcript(45, 512), int64_t{556}, "start(Transcript) after speech sizes its own cache");
 }
 
 void test_rejects_bad_requests(Fixture & fixture) {

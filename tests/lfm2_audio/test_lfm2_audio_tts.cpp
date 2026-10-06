@@ -217,7 +217,7 @@ void check_stage_numbers(
     lfm2::Lfm2DepthformerRuntime depthformer(output.vocoder, output.depthformer, execution);
 
     const auto prompt = lfm2::make_lfm2_tts_prompt(tokenizer, lfm2::lfm2_tts_system_prompt("en", kVoice), kText);
-    const auto logits = backbone.start(prompt, {}, static_cast<int64_t>(kFrames.size()) + 2);
+    const auto logits = backbone.start(prompt, {}, static_cast<int64_t>(kFrames.size()) + 2, lfm2::Lfm2DecodeCache::Speech);
     const auto first = static_cast<int32_t>(std::max_element(logits.begin(), logits.end()) - logits.begin());
     checks.expect(first == tokenizer.require_token_id("<|audio_start|>"), "speech starts with <|audio_start|>", std::to_string(first));
 

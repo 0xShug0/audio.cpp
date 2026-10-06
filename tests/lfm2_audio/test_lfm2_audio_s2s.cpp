@@ -273,7 +273,7 @@ void check_stage_numbers(
     const auto prompt = lfm2::make_lfm2_spoken_prompt(tokenizer, lfm2::kLfm2ChatSystemPrompt).with_audio(audio.tokens);
 
     // The text block, greedy: text logits in, the next token back.
-    auto out = backbone.start(prompt, audio, 64);
+    auto out = backbone.start(prompt, audio, 64, lfm2::Lfm2DecodeCache::Speech);
     std::vector<int32_t> block;
     for (size_t i = 0; i < std::size(kTextBlock); ++i) {
         const auto & top = kTextBlock[i];
