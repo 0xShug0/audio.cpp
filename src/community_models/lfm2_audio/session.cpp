@@ -5,6 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/text.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -46,6 +47,13 @@ constexpr int64_t kDefaultStreamFramesPerEvent = 1;
 // and audio frames together, about a minute of speech); the README's
 // example stops at 512.
 constexpr int64_t kDefaultReplySteps = 1024;
+// The most audio the encoder takes in one pass by default: an ASR chunk (the
+// whole input with audio_chunk_mode=none) or the S2S question. One pass is of
+// little use by then (none is at 29% WER on the docs' 120 s English files,
+// and Japanese loses sentences from about 41 to 45 s), and the encoder's
+// buffer, linear in the length up to about 240 s, grows with its square past
+// that.
+constexpr float kDefaultMaxPassSeconds = 120.0f;
 
 const engine::model_spec::ModelContract & require_contract(
     const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
@@ -61,11 +69,50 @@ void warn(const std::string & message) {
     std::cerr << "[warning][" << kFamily << "] " << message << "\n";
 }
 
-// A position in the 16 kHz input, in seconds to a tenth.
-std::string seconds_at(int64_t sample) {
+// Seconds to a tenth.
+std::string seconds_text(double seconds) {
     char out[32];
-    std::snprintf(out, sizeof(out), "%.1f", static_cast<double>(sample) / kSampleRate);
+    std::snprintf(out, sizeof(out), "%.1f", seconds);
     return out;
+}
+
+// A position in the 16 kHz input.
+std::string seconds_at(int64_t sample) {
+    return seconds_text(static_cast<double>(sample) / kSampleRate);
+}
+
+// The audio's frames; none without a sample rate or channels, which the
+// input checks reject.
+int64_t frame_count(const runtime::AudioBuffer & audio) {
+    return audio.sample_rate > 0 && audio.channels > 0
+               ? static_cast<int64_t>(audio.samples.size() / static_cast<size_t>(audio.channels))
+               : 0;
+}
+
+// A limit under kMinChunkSeconds would turn away even the shortest chunks
+// audio_chunk_seconds allows; the spec's min matches.
+double parse_max_pass_seconds(const runtime::SessionOptions & options) {
+    const auto value =
+        runtime::parse_finite_float_option(options.options, {"lfm2_audio.max_pass_seconds"}).value_or(kDefaultMaxPassSeconds);
+    if (value < kMinChunkSeconds) {
+        throw std::runtime_error("lfm2_audio.max_pass_seconds must be at least 1");
+    }
+
+    return value;
+}
+
+// Checked before the audio reaches the encoder, whose graph grows with the
+// audio; nothing else stops a long pass before its allocation. The check is in
+// samples, so audio exactly at a limit like 45.3 s passes, and the length is
+// rounded up to a tenth, so audio just over the limit never reads as equal to
+// it.
+void require_one_pass(int64_t frames, int sample_rate, double limit, const std::string & what, const std::string & remedy) {
+    if (frames > std::llround(limit * sample_rate)) {
+        const auto tenths = (frames * 10 + sample_rate - 1) / sample_rate;
+        throw runtime::CapacityError("LFM2-Audio encodes at most " + seconds_text(limit) +
+                                     " s of audio in one pass (lfm2_audio.max_pass_seconds), and " + what + " " +
+                                     seconds_text(static_cast<double>(tenths) / 10) + " s; " + remedy);
+    }
 }
 
 runtime::SessionOptions validate_session_setup(
@@ -255,7 +302,8 @@ Lfm2AudioSession::Lfm2AudioSession(
       language_(model_language(*components_)),
       prompt_(make_lfm2_asr_prompt(tokenizer_, language_)),
       vad_model_path_(runtime::find_option(RuntimeSessionBase::options().options, {"lfm2_audio.vad_model_path"})
-                          .value_or(default_vad_model_path().string())) {
+                          .value_or(default_vad_model_path().string())),
+      max_pass_seconds_(parse_max_pass_seconds(RuntimeSessionBase::options())) {
     components_->model->release_storage();
     components_->mmproj->release_storage();
 }
@@ -310,6 +358,7 @@ std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
     const auto total = static_cast<int64_t>(samples.size());
     const auto mode = audio::parse_audio_chunk_mode(request.options);
     if (mode == audio::AudioChunkMode::None) {
+        require_one_pass(total, kSampleRate, max_pass_seconds_, "the input is", "use audio_chunk_mode=auto, or raise the limit");
         return {{0, total}};
     }
 
@@ -317,12 +366,20 @@ std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
         throw std::runtime_error("LFM2-Audio supports audio_chunk_mode=auto, fixed, vad, or none");
     }
 
-    const float seconds = audio::parse_audio_chunk_seconds_override(request.options).value_or(kDefaultChunkSeconds);
+    // A limit under the default chunk length lowers the default, so that
+    // requests which leave audio_chunk_seconds alone still run.
+    const auto requested = audio::parse_audio_chunk_seconds_override(request.options);
+    const double seconds = requested ? *requested : std::min<double>(kDefaultChunkSeconds, max_pass_seconds_);
     if (!std::isfinite(seconds) || seconds < kMinChunkSeconds) {
         throw std::runtime_error("LFM2-Audio audio_chunk_seconds must be at least 1");
     }
 
-    const auto chunk_samples = static_cast<int64_t>(std::llround(static_cast<double>(seconds) * kSampleRate));
+    const auto chunk_samples = static_cast<int64_t>(std::llround(seconds * kSampleRate));
+    // Before any chunk is planned or encoded, so vad is held to the setting
+    // rather than to its spans. fixed can make the last chunk up to a second
+    // longer (a shorter tail joins it), which the limit lets through.
+    require_one_pass(std::min(total, chunk_samples), kSampleRate, max_pass_seconds_, "audio_chunk_seconds allows chunks of up to",
+                     "lower audio_chunk_seconds, or raise the limit");
     if (mode == audio::AudioChunkMode::Auto && total <= chunk_samples) {
         return {{0, total}};
     }
@@ -714,7 +771,8 @@ Lfm2AudioChatSession::Lfm2AudioChatSession(
           output_->depthformer.audio_vocab_size),
       depthformer_(output_->vocoder, output_->depthformer, execution_context()),
       detokenizer_(output_->detokenizer, output_->vocoder, output_->detokenizer_config, execution_context()),
-      language_(model_language(*components_)) {
+      language_(model_language(*components_)),
+      max_pass_seconds_(parse_max_pass_seconds(RuntimeSessionBase::options())) {
     components_->model->release_storage();
     components_->mmproj->release_storage();
     output_->vocoder->release_storage();
@@ -780,6 +838,7 @@ Lfm2AudioChatSession::RequestOptions Lfm2AudioChatSession::parse_request(const r
 // prompt (liquid-audio's demo, ChatState).
 std::unique_ptr<Lfm2InterleavedGenerator> Lfm2AudioChatSession::start_reply(
     const RequestOptions & options, const runtime::AudioBuffer & audio) {
+    require_one_pass(frame_count(audio), audio.sample_rate, max_pass_seconds_, "the question is", "send a shorter one, or raise the limit");
     const auto features = features_.extract(lfm2_audio_mono_16k(audio));
     auto embeddings = encoder_.encode(features);
     auto prompt = make_lfm2_spoken_prompt(tokenizer_, options.system_prompt).with_audio(embeddings.tokens);
@@ -893,6 +952,9 @@ runtime::StreamEvent Lfm2AudioChatSession::process_audio_chunk(const runtime::Au
     }
 
     st.input.samples.insert(st.input.samples.end(), chunk.samples.begin(), chunk.samples.end());
+    // As soon as the question is too long, rather than once it has all come.
+    require_one_pass(frame_count(st.input), st.input.sample_rate, max_pass_seconds_, "the question so far is",
+                     "send a shorter one, or raise the limit");
     return {};
 }
 

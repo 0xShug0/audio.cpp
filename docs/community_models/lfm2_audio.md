@@ -136,6 +136,10 @@ Hugging Face tokenizer decodes them, in replies and transcripts alike; a
 character left open at the end of the text is dropped, as in a transcript cut
 at `max_tokens`.
 
+The question goes through the encoder in one pass, as in liquid-audio, so it
+can be at most `lfm2_audio.max_pass_seconds` long (120 s by default; see
+[Long audio](#long-audio)): a longer one is rejected before it is encoded.
+
 The server takes the same directory and session options:
 
 ```json
@@ -225,6 +229,8 @@ arithmetic, as for TTS. On CUDA, streamed replies to
 reply cut off at `max_tokens` streams as it does offline, with the same
 warning; a character left open at the cut is dropped in both. A stream
 finished before its reply is over returns the text its events carried.
+A question longer than `lfm2_audio.max_pass_seconds` fails as soon as that
+much of it has come, without waiting for the rest.
 The server's live route, `/v1/audio/speech/live`, takes the question as
 chunked raw PCM and requires an `input` query parameter, which becomes the
 system prompt, so pass liquid-audio's:
@@ -259,7 +265,7 @@ English reply in 2.1 s on CUDA (F16).
 | `language` | all | The checkpoint's | `en` or `ja`; must match the checkpoint. |
 | `max_tokens` | all | `512`; S2S `1024` | ASR: transcript tokens per audio chunk. TTS: 80 ms audio frames per text chunk. S2S: text tokens and audio frames of the reply together. A transcript, a text chunk's speech or a reply that reaches it is cut off there and kept, as liquid-audio keeps it, and a warning goes to stderr; the other chunks go on. Text tokens need not end on a character boundary, so a cut can fall inside a character: liquid-audio then shows U+FFFD for the partial character, while audio.cpp drops it and ends the transcript or reply at the last whole character. On the CPU, `max_tokens` can change an output at a near-tie even where it is not reached, so a cut transcript, speech or reply is not always the start of the uncut one: the decode cache's length follows `max_tokens`, and ggml's CPU flash attention splits a cache of 512 steps or more into one piece per thread. |
 | `audio_chunk_mode` | ASR | `auto` | `auto`, `vad`, `fixed` or `none`; see [Long audio](#long-audio). |
-| `audio_chunk_seconds` | ASR | `30` | Longest chunk in seconds, at least 1. |
+| `audio_chunk_seconds` | ASR | `30`, or `lfm2_audio.max_pass_seconds` if lower | Longest chunk in seconds, at least 1. |
 | `temperature` | TTS, S2S | `0.8`; S2S `1.0` | Audio code sampling temperature; 0 is greedy. |
 | `top_k` | TTS, S2S | `64`; S2S `4` | Sample from the k most likely codes; 0 keeps all, 1 is greedy. |
 | `seed` | TTS, S2S | Random | Sampling seed; TTS text chunk i uses seed + i. |
@@ -278,6 +284,7 @@ Each task rejects the options it does not take.
 | `lfm2_audio.vocoder_gguf` | `vocoder-<backbone file>`, else the only vocoder | TTS depthformer GGUF, relative to the model directory. |
 | `lfm2_audio.detokenizer_gguf` | `tokenizer-<backbone file>`, else the only tokenizer | TTS audio detokenizer GGUF, relative to the model directory. |
 | `lfm2_audio.vad_model_path` | `assets/framework/models/silero_vad` | Silero VAD model used to split long audio. |
+| `lfm2_audio.max_pass_seconds` | `120` | Most audio, in seconds, the encoder takes in one pass: an ASR chunk (the whole input with `audio_chunk_mode=none`) or the S2S question; at least 1. Longer audio is rejected before it is encoded; see [Long audio](#long-audio). |
 
 ## Long Audio
 
@@ -292,7 +299,7 @@ short input whole and splits longer input:
 | `auto` | Input up to `audio_chunk_seconds` is transcribed whole, as liquid-audio does. Longer input is split at pauses found by the bundled Silero VAD, and silence between speech is skipped. Without the VAD model, it falls back to `fixed`. |
 | `vad` | Always splits at pauses; fails without the VAD model. |
 | `fixed` | Cuts every `audio_chunk_seconds`; a last piece shorter than 1 s joins the previous chunk. |
-| `none` | One pass over the whole input, as liquid-audio does. |
+| `none` | One pass over the whole input, as liquid-audio does; input longer than `lfm2_audio.max_pass_seconds` is rejected. |
 
 Each chunk is transcribed on its own, and the transcripts are joined with a
 space between English words and without one in Japanese text. Audio the VAD
@@ -302,6 +309,24 @@ others around it, or a whole 40 s file turned down by 60 dB (7 of 8 such files
 came back empty). A split can also land on a short pause inside a sentence,
 and the model may then leave out the words that open the next chunk (1 of 12
 such sentences in the Japanese tests below).
+
+No pass takes more than `lfm2_audio.max_pass_seconds` of audio, 120 s by
+default, except that `fixed`, and `auto` without the VAD model, can make the
+last chunk up to 1 s longer, from a short tail it absorbs. `none` rejects
+longer input. The other modes reject an `audio_chunk_seconds` above the limit
+on input longer than the limit, before any chunk is planned or encoded, so
+`vad` is refused on the setting even when its spans would be shorter; a request
+that leaves `audio_chunk_seconds` unset gets chunks of the limit when that is
+under 30 s. One pass is of little use past 120 s: `none` is at 29% WER on the
+120 s English files below, and Japanese loses sentences from about 41 to 45 s.
+The encoder's buffer grows linearly, at about 6.46 MB per second of audio, up
+to about 240 s (775 MB at 120 s), and with the square of the length beyond
+that (8.8 GB measured at 600 s on an A10); without the limit, on the CPU or
+with unified memory, nothing stops a long pass before allocation. The server
+answers such a request with 400. The limit is a session option, so the
+operator can raise it (`--session-option` on the CLI, `session_options` in a
+server entry), and a task request cannot (with `--ui-management`,
+`/v1/models/load` sets session options like any server entry).
 
 Word error rate by input length, EN F16 on CUDA, 8 files per length built from
 consecutive LibriSpeech test-clean utterances joined with 0.3 s gaps (each file
@@ -320,7 +345,9 @@ up to about 5 s longer than its length):
 `none` follows liquid-audio up to 90 s (2.6%, 1.7%, 1.7%, 2.0% and 9.4%).
 At 120 s it finishes all 8 files at 29%, 6 of them word for word as
 liquid-audio. At 180 s, 7 of the 8 reach `max_tokens` and come back cut off
-there, repetitions included, with a warning.
+there, repetitions included, with a warning. Those runs predate the limit:
+with the default, `none` now rejects the 120 s files (up to 125 s long) and the
+180 s ones.
 
 Character error rate by input length, JP F32 on CUDA, 8 files per length built
 from consecutive Common Voice ja test clips (one sentence each) joined with
