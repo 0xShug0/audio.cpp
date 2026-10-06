@@ -576,10 +576,10 @@ void test_loader(const Package & package) {
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Asr, runtime::RunMode::Streaming}, options); },
         "ASR runs offline only", "a streaming ASR session");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Tts, runtime::RunMode::Offline}, options); },
-        "cannot pick the vocoder GGUF", "a TTS session without the vocoder file");
+        "tools/model_manager_v2.py install", "a TTS session without the vocoder file");
     require_throws_with(
         [&] { (void)model->create_task_session({runtime::VoiceTaskKind::SpeechToSpeech, runtime::RunMode::Streaming}, options); },
-        "cannot pick the vocoder GGUF", "a streaming s2s session without the vocoder file");
+        "tools/model_manager_v2.py install", "a streaming s2s session without the vocoder file");
     require_throws_with([&] { (void)model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline}, options); },
         "supports the asr, tts and s2s tasks", "another task");
 }

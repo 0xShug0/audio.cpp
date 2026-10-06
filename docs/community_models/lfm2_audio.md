@@ -85,7 +85,9 @@ All quantizations of a checkpoint install into one directory,
 `models/LFM2.5-Audio-1.5B-GGUF` or `models/LFM2.5-Audio-1.5B-JP-GGUF`, so
 components of different quantizations can be combined with the session options
 below. The WebUI lists both checkpoints under ASR, TTS and speech-to-speech with
-their Q8_0 and F16 packages.
+their Q8_0 and F16 packages. A package installed before audio.cpp had
+LFM2-Audio TTS holds only the backbone and mmproj GGUFs; TTS and S2S then name
+the missing files, and installing it again with `--overwrite` brings all four.
 
 ## Run
 

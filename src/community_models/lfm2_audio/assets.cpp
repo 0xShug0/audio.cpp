@@ -1,6 +1,8 @@
 #include "engine/community_models/lfm2_audio/assets.h"
 
 #include "engine/framework/io/filesystem.h"
+#include "engine/framework/io/json.h"
+#include "engine/framework/model_spec/package.h"
 
 #include <gguf.h>
 
@@ -241,6 +243,68 @@ std::string default_paired_gguf(
     throw std::runtime_error(std::string("LFM2-Audio cannot pick the ") + what + " GGUF for " + model_path.filename().string() +
                              (candidates.empty() ? std::string(": none found") : " among " + join(candidates)) +
                              "; choose one with " + option);
+}
+
+// The command that reinstalls the model spec's package with `backbone_file`,
+// into `model_root` when that is the package's directory. Placeholders stand
+// for what the spec cannot tell (renamed files, another directory), since
+// this only words an error.
+std::string reinstall_command(const std::filesystem::path & model_root, const std::string & backbone_file) {
+    // A path ending in a separator has an empty file name.
+    const auto directory = model_root.has_filename() ? model_root : model_root.parent_path();
+    std::string package = "<package>";
+    std::string models_root = "<models directory>";
+    try {
+        const auto spec = model_spec::load_contract_spec(model_spec::default_package_spec_path("lfm2_audio"));
+        for (const auto & entry : spec.require("packages").as_array()) {
+            const auto files = io::json::optional_string_array(entry, "files");
+            if (std::find(files.begin(), files.end(), backbone_file) == files.end()) {
+                continue;
+            }
+
+            package = io::json::require_string(entry, "id");
+            if (directory.filename() == io::json::require_string(entry, "target_directory")) {
+                // Absolute, as the command runs from the repository root, not
+                // from where this process runs; quoted if a shell would split it.
+                models_root = std::filesystem::absolute(directory).lexically_normal().parent_path().string();
+                if (std::any_of(models_root.begin(), models_root.end(), [](unsigned char ch) { return std::isspace(ch) != 0; })) {
+                    models_root = "\"" + models_root + "\"";
+                }
+            }
+
+            break;
+        }
+    } catch (const std::exception &) {
+    }
+
+    return "python3 tools/model_manager_v2.py install " + package + " --models-root " + models_root + " --overwrite";
+}
+
+// TTS and S2S need the vocoder and detokenizer GGUFs, which packages
+// installed before audio.cpp had LFM2-Audio TTS do not have: those held the
+// backbone and mmproj only. Both package managers refuse to add files to a
+// package that is partly there without --overwrite.
+void require_output_files(
+    const Lfm2AudioAssets & assets, const std::filesystem::path & model_path, bool vocoder_chosen, bool detokenizer_chosen) {
+    std::vector<std::string> missing;
+    const std::pair<Component, bool> outputs[] = {{Component::Vocoder, vocoder_chosen}, {Component::Detokenizer, detokenizer_chosen}};
+    for (const auto & [component, chosen] : outputs) {
+        const auto paired = std::string(component_prefix(component)) + model_path.filename().string();
+        if (!chosen && !io::is_existing_file(assets.model_root / paired) && list_gguf_files(assets.model_root, component).empty()) {
+            missing.push_back(paired);
+        }
+    }
+
+    if (missing.empty()) {
+        return;
+    }
+
+    const auto files = missing.size() == 1 ? missing[0] : missing[0] + " and " + missing[1];
+    throw std::runtime_error("LFM2-Audio TTS and speech-to-speech need " + files + ", which " + assets.model_root.string() +
+                             " does not have. Packages installed before audio.cpp had LFM2-Audio TTS hold only the backbone "
+                             "and mmproj GGUFs; reinstall with: " +
+                             reinstall_command(assets.model_root, model_path.filename().string()) +
+                             " (or choose the files with lfm2_audio.vocoder_gguf and lfm2_audio.detokenizer_gguf)");
 }
 
 int64_t require_dim(const assets::TensorSource & source, const std::string & name, size_t axis) {
@@ -529,6 +593,7 @@ std::shared_ptr<const Lfm2AudioOutputComponents> load_lfm2_audio_output_componen
     const Lfm2AudioComponents & components,
     const std::string & vocoder_gguf,
     const std::string & detokenizer_gguf) {
+    require_output_files(assets, components.model_path, !vocoder_gguf.empty(), !detokenizer_gguf.empty());
     auto out = std::make_shared<Lfm2AudioOutputComponents>();
     out->vocoder_path = resolve_component(
         assets.model_root,
