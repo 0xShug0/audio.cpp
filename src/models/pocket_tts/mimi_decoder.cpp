@@ -217,15 +217,19 @@ public:
             ctx,
             GGML_TYPE_F32,
             core::TensorShape::from_dims({1, channels_, frames_}));
-        output_ = modules::ConvTranspose1dModule({
-            channels_,
-            channels_,
-            kernel_size_,
-            stride_,
-            0,
-            1,
-            false,
-        }).build(ctx, input_, {weight, std::nullopt});
+        if (core::uses_host_graph_plan(backend_type)) {
+            output_ = modules::DepthwiseConvTranspose1dModule({
+                channels_,
+                kernel_size_,
+                // One frame needs no inserted zeros; overlap still uses stride_.
+                frames_ == 1 ? 1 : stride_,
+                false,
+            }).build(ctx, input_, {weight, std::nullopt});
+        } else {
+            output_ = modules::ConvTranspose1dModule({
+                channels_, channels_, kernel_size_, stride_, 0, 1, false,
+            }).build(ctx, input_, {weight, std::nullopt});
+        }
 
         if (core::is_host_backend(backend_)) {
             params_buffer_ = ggml_backend_alloc_ctx_tensors(ggml_ctx_, backend_);

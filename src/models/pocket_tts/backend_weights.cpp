@@ -1,6 +1,7 @@
 #include "engine/models/pocket_tts/backend_weights.h"
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <algorithm>
@@ -120,27 +121,6 @@ modules::TimedConditionedFlowMLPWeights load_backend_flow_net_weights(
     return weights;
 }
 
-std::vector<float> expand_depthwise_convtranspose_weight(
-    const assets::TensorSource & source,
-    const std::string & name,
-    int64_t channels,
-    int64_t kernel_size) {
-    const auto values = source.require_f32(name);
-    if (static_cast<int64_t>(values.size()) != channels * kernel_size) {
-        throw std::runtime_error(name + " has invalid depthwise conv transpose weight size");
-    }
-    std::vector<float> dense(static_cast<size_t>(channels * channels * kernel_size), 0.0F);
-    for (int64_t channel = 0; channel < channels; ++channel) {
-        const size_t src_offset = static_cast<size_t>(channel * kernel_size);
-        const size_t dst_offset = static_cast<size_t>(((channel * channels) + channel) * kernel_size);
-        std::copy_n(
-            values.begin() + static_cast<ptrdiff_t>(src_offset),
-            static_cast<size_t>(kernel_size),
-            dense.begin() + static_cast<ptrdiff_t>(dst_offset));
-    }
-    return dense;
-}
-
 PocketTTSBackendFlowWeights load_backend_flow_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
@@ -196,7 +176,8 @@ PocketTTSBackendMimiDecoderWeights load_backend_mimi_decoder_weights(
     const assets::TensorSource & source,
     const PocketTTSModelConfig & config,
     assets::TensorStorageType matmul_storage_type,
-    assets::TensorStorageType conv_storage_type) {
+    assets::TensorStorageType conv_storage_type,
+    core::BackendType backend_type) {
     PocketTTSBackendMimiDecoderWeights weights;
     weights.transformer_layers.reserve(static_cast<size_t>(config.mimi_layers));
     for (int64_t layer = 0; layer < config.mimi_layers; ++layer) {
@@ -205,18 +186,33 @@ PocketTTSBackendMimiDecoderWeights load_backend_mimi_decoder_weights(
     }
     weights.quantizer_output_proj_weight =
         binding::tensor_from_named_source(store, source, "mimi.quantizer.output_proj.weight", conv_storage_type);
-    const auto dense_upsample = expand_depthwise_convtranspose_weight(
-        source,
-        "mimi.upsample.convtr.convtr.weight",
-        config.mimi_dim,
-        config.mimi_encoder_upsample_stride * 2);
-    weights.encoder_upsample_weight = store.make_f32(
-        core::TensorShape::from_dims({
-            config.mimi_dim,
-            config.mimi_dim,
-            config.mimi_encoder_upsample_stride * 2,
-        }),
-        dense_upsample);
+    const int64_t upsample_kernel_size = config.mimi_encoder_upsample_stride * 2;
+    auto upsample_weight = source.require_f32("mimi.upsample.convtr.convtr.weight");
+    if (static_cast<int64_t>(upsample_weight.size()) != config.mimi_dim * upsample_kernel_size) {
+        throw std::runtime_error("mimi.upsample.convtr.convtr.weight has invalid depthwise conv transpose weight size");
+    }
+    if (core::uses_host_graph_plan(backend_type)) {
+        // The depthwise module implements transpose convolution with a reversed FIR.
+        for (int64_t channel = 0; channel < config.mimi_dim; ++channel) {
+            auto * kernel = upsample_weight.data() + channel * upsample_kernel_size;
+            std::reverse(kernel, kernel + upsample_kernel_size);
+        }
+        weights.encoder_upsample_weight = store.make_f32(
+            core::TensorShape::from_dims({config.mimi_dim, 1, 1, upsample_kernel_size}),
+            upsample_weight);
+    } else {
+        // Preserve the existing GPU GEMM lowering and its arithmetic.
+        std::vector<float> dense(static_cast<size_t>(config.mimi_dim * config.mimi_dim * upsample_kernel_size), 0.0F);
+        for (int64_t channel = 0; channel < config.mimi_dim; ++channel) {
+            std::copy_n(
+                upsample_weight.data() + channel * upsample_kernel_size,
+                upsample_kernel_size,
+                dense.data() + (channel * config.mimi_dim + channel) * upsample_kernel_size);
+        }
+        weights.encoder_upsample_weight = store.make_f32(
+            core::TensorShape::from_dims({config.mimi_dim, config.mimi_dim, upsample_kernel_size}),
+            dense);
+    }
     weights.input_projection = binding::conv1d_from_named_source(store, source, "mimi.decoder.model.0.conv.weight", "mimi.decoder.model.0.conv.bias", conv_storage_type);
     weights.stage0_upsample = binding::conv_transpose1d_from_named_source(store, source, "mimi.decoder.model.2.convtr.weight", "mimi.decoder.model.2.convtr.bias", conv_storage_type);
     weights.stage0_upsample_bias_values = source.require_f32("mimi.decoder.model.2.convtr.bias");
@@ -282,7 +278,8 @@ std::shared_ptr<const PocketTTSBackendWeights> load_pocket_tts_backend_weights(
             *manifest.model_weights,
             manifest.model_config,
             matmul_storage_type,
-            conv_storage_type);
+            conv_storage_type,
+            backend_type);
     weights->mimi_decoder_store->upload();
 
     manifest.model_weights->release_storage();
