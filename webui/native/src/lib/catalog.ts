@@ -259,7 +259,8 @@ function packageSessionOptions(entry: PackageEntry): Record<string, string> | un
 }
 
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
-  if (['maya1', 'gigaam_asr', 'samsone', 'sam_audio', 'tone_color_vc', 'moss_ttsd', 'moss_voicegen'].includes(entry.family)) {
+  if (['maya1', 'gigaam_asr', 'samsone', 'sam_audio', 'tone_color_vc', 'moss_ttsd', 'moss_voicegen',
+    'kugelaudio', 'crisperwhisper', 'index_echo', 'audio_flamingo', 'owsm', 'owsm_ctc', 'reuse', 'sidon', 'smart_turn'].includes(entry.family)) {
     const stem = (entry.download_id || '').replace(/_(?:q8_0|q4_k|bf16|f16|f32|orig)(?:_codec_f16(?:_decode)?)?$/, '');
     return packages.filter((candidate) => candidate.family === entry.family && candidate.format === 'gguf' &&
       candidate.id.replace(/_(?:q8_0|q4_k|bf16|f16|f32|orig)(?:_codec_f16(?:_decode)?)?$/, '') === stem)
@@ -412,5 +413,6 @@ export const taskLabels: Record<string, string> = {
   diar: 'Speaker diarization',
   align: 'Forced alignment',
   vdes: 'Voice design',
-  spk: 'Speaker analysis'
+  spk: 'Speaker analysis',
+  turn: 'Turn detection'
 };

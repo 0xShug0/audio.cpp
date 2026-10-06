@@ -148,6 +148,7 @@
     demo_4_woman: 'demo_4_woman'
   };
   const exposeAllStudioPackageFamilies = new Set([
+    'kugelaudio', 'crisperwhisper', 'index_echo', 'audio_flamingo', 'owsm', 'owsm_ctc', 'reuse', 'sidon', 'smart_turn',
     'maya1',
     'gigaam_asr',
     'samsone',
@@ -289,7 +290,7 @@
     { id: 'conversion', label: 'Voice conversion', filterLabel: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
     { id: 'enhancement', label: 'Enhancement / denoising', filterLabel: 'Enhancement / denoising', tasks: ['s2s'] },
     { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep', 's2s'] },
-    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi', 'asr'] },
+    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi', 'asr', 'turn'] },
     { id: 'design', label: 'Voice design', filterLabel: 'Voice design', tasks: ['vdes'] }
   ] as const;
 
@@ -302,6 +303,9 @@
   }
 
   const familyLabels: Record<string, string> = {
+    kugelaudio: 'KugelAudio', crisperwhisper: 'CrisperWhisper', index_echo: 'Index-Echo S2TT',
+    audio_flamingo: 'Audio Flamingo', owsm: 'OWSM', owsm_ctc: 'OWSM-CTC',
+    reuse: 'RE-USE', sidon: 'Sidon', smart_turn: 'Smart Turn',
     gigaam_asr: 'GigaAM ASR',
     samsone: 'SAMSONE',
     sam_audio: 'SAM Audio',
@@ -462,10 +466,10 @@
     selected?.family === 'midashenglm_gen';
   $: supportsTextOnlyTts = (
     selected?.family === 'breeze_tts' ||
-    selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' ||
+    selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' || selected?.family === 'kugelaudio' ||
     (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
-  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
+  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi', 'turn'].includes(selected?.task) ||
     isFireRedAudioEdit || selected?.family === 'liveavatar' ||
     (selected?.family === 'auk' && selected?.task === 'gen');
   $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
@@ -498,7 +502,7 @@
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
-    !['apollo', 'universr', 'builtin_audio_utils'].includes(selected?.family) &&
+    !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected?.family) &&
     !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming', 'confucius4_r2t2'].includes(selected?.family);
@@ -1075,6 +1079,7 @@
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
     if (selected?.family === 'confucius4_r2t2') language = 'Auto';
+    else if (['owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'smart_turn', 'reuse', 'sidon'].includes(selected?.family)) language = '';
     else if (selected?.family in asrLanguages) language = 'en';
     if (selected?.family === 'minimax_h3') {
       duration = 15;
@@ -1761,7 +1766,7 @@
             seed: chunkSeed(resolvedSeed, index),
             options
           };
-          if (supportsMaxTokens(selected)) body.max_tokens = maxTokens;
+          if (supportsMaxTokens(selected) && selected.family !== 'kugelaudio') body.max_tokens = maxTokens;
           if (voiceRef) body.voice_ref = voiceRef;
           else if (quickStartVoice) body.voice = demoVoiceSources[quickStartVoice] || quickStartVoice;
           else if (selected.default_voice) body.voice = selected.default_voice;
@@ -1796,14 +1801,14 @@
           language,
           text: context,
           options
-        }, aborter.signal);
+        }, aborter.signal, ['owsm', 'crisperwhisper'].includes(selected.family) && options.return_timestamps === true);
         outputText = String(result.text || '');
         outputJson = JSON.stringify(result, null, 2);
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !['apollo', 'universr'].includes(selected.family)) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr'].includes(selected.family)) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'sidon'].includes(selected.family)) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'sidon'].includes(selected.family)) request.language = language;
         if (selected.task === 'gen') {
           if (usesYue2Request) {
             request.lyrics = lyrics.trim();
@@ -1819,7 +1824,7 @@
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
-          if (selected.family !== 'apollo') request.seed = resolvedSeed;
+          if (!['apollo', 'reuse', 'sidon'].includes(selected.family)) request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
@@ -2407,7 +2412,7 @@
           {/if}
         {/if}
 
-        {#if selected.task === 'asr' && selected.family !== 'samsone'}
+        {#if selected.task === 'asr' && !['samsone', 'audio_flamingo', 'index_echo'].includes(selected.family)}
           <label for="context">{tr('request.context')} <span>{tr('request.contextHint')}</span></label>
           <textarea id="context" rows="2" bind:value={context}></textarea>
         {/if}
@@ -2419,7 +2424,7 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1'].includes(selected.family)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'sidon'].includes(selected.family)}
             <div>
               <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
               {#if ['moss_ttsd', 'moss_voicegen'].includes(selected.family)}
@@ -2433,13 +2438,13 @@
               {/if}
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils'].includes(selected.family)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected.family)}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
             </div>
           {/if}
-          {#if supportsMaxTokens(selected)}
+          {#if supportsMaxTokens(selected) && !['kugelaudio', 'crisperwhisper', 'audio_flamingo', 'owsm'].includes(selected.family)}
             <div>
               <label for="tokens">{tr('request.maxTokens')}</label>
               {#if selected.family in asrTokenDefaults}
@@ -2510,18 +2515,18 @@
               <MediaPreview file={videoFile} kind="video" label={tr('file.preview')} />
             {/if}
 
-            {#if needsVoice && !usesVibeVoiceSpeakerFiles}
+            {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles}
           {#if allowsQuickStartVoice && quickStartVoices.length}
-            <label for="quick-start-voice">{server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
+            <label for="quick-start-voice">{selected.family === 'kugelaudio' ? 'Voice preset' : server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
-              <option value="">{tr('voice.useReference')}</option>
+              {#if selected.family !== 'kugelaudio'}<option value="">{tr('voice.useReference')}</option>{/if}
               {#each quickStartVoices as voice}<option value={voice}>{voice}</option>{/each}
             </select>
             {#if quickStartVoice}
-              <div class="quick-voice-note">
+              {#if selected.family !== 'kugelaudio'}<div class="quick-voice-note">
                 {tr('voice.bundledNote')}
-              </div>
+              </div>{/if}
               {#if quickStartVoicePreview}
                 <MediaPreview src={quickStartVoicePreview} name={quickStartVoice} kind="audio" label={tr('file.preview')} />
               {/if}
