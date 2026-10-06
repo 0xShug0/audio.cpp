@@ -199,6 +199,24 @@
   },
   "packages": [
     {
+      "id": "breeze_tts_2_q4_0",
+      "display_name": "BreezeTTS 2 Q4_0 GGUF",
+      "default": false,
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "Breeze-TTS-2-GGUF",
+      "files": [
+        "Breeze-TTS-2-GGUF/breeze-tts-2-q4_0.gguf"
+      ],
+      "strip_prefix": "Breeze-TTS-2-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
       "id": "breeze_tts_2_q8_0",
       "display_name": "BreezeTTS 2 Q8_0 GGUF",
       "default": true,

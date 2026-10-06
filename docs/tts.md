@@ -414,7 +414,7 @@ OmniVoice streaming is pseudo streaming: audio.cpp emits audio chunk events from
 
 ## PocketTTS
 
-PocketTTS supports built-in voices and voice cloning. The upstream project also supports exported voice states for fast reuse; the CLI surface here exposes built-in voice ids and reference WAVs.
+PocketTTS supports built-in voices, voice cloning from reference WAVs, and exported voice states for fast reuse.
 
 PocketTTS language selection is a model-load option. When the model path points at the PocketTTS root, the loader uses `english` unless you pass `--load-option language=<name>`. Kyutai's normal non-English PocketTTS releases are smaller distilled language models intended for the fast PocketTTS path. The `_24l` variants are larger 24-layer, undistilled preview models that can sound better but are slower. Kyutai currently publishes French only as `french_24l`, not as a normal distilled `french` language directory, so French is not listed as a normal PocketTTS language here.
 
@@ -440,11 +440,30 @@ Voice clone:
 audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
 
+To reuse a cloned voice across runs, export its prepared state once. This skips reference-audio encoding and voice-state preparation on subsequent runs:
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
+  --backend cuda --voice-ref assets/resources/b.wav \
+  --voice-state-out models/PocketTTS-GGUF/english/embeddings/my_voice.safetensors
+```
+
+The export command exits after saving the state; no text or output WAV is needed. Save it in the language package's `embeddings` directory, then use the filename without `.safetensors` as the voice id, just like a built-in voice:
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
+  --backend cuda --text "Hello from my saved voice." \
+  --voice-id my_voice --out out.wav
+```
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--load-option language=<name>` | language package name | `english` | Select PocketTTS language package at load time. |
-| `--voice-id` | packaged voice id | not set | Built-in voice id. |
+| `--voice-id` | packaged or exported voice id | not set | Voice-state filename in `embeddings`, without `.safetensors`. |
 | `--voice-ref` | WAV path | not set | Reference speaker audio for cloning. |
+| `--voice-state-out` | `.safetensors` path | not set | Export prepared voice state from `--voice-ref` and exit. |
 | `--text-chunk-size` | integer chars | `256` | Long-form chunk size. |
 | `--session-option pocket_tts.voice_state_cache_slots=<n>` | integer slots | `4` | Prepared voice-state cache slots; set `0` to disable reuse. |
 
