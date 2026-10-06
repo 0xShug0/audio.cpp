@@ -14,6 +14,164 @@
   "languages": [
     "100+ languages"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated AR tokens; zero uses the default.",
+        "required": false,
+        "min": 0,
+        "default": 2048
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "AR sampling temperature.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "AR nucleus sampling probability.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "AR top-k sampling limit.",
+        "required": false,
+        "default": 30
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Accepted for Python API compatibility; audio sampling does not consume this value.",
+        "required": false,
+        "default": 1.1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Torch sampling seed; omitted chooses a random seed.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript accompanying reference audio.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Framework long-form text chunk size.",
+        "required": false,
+        "default": 1024
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "required": false,
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "default": "default"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type.",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native"
+      },
+      {
+        "name": "ar_weight_type",
+        "type": "enum",
+        "description": "AR weight storage; inherits weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "description": "Codec weight storage; inherits weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "ar_weight_context_mb",
+        "type": "int",
+        "description": "AR weight context in MiB; 4096 on 64-bit builds, 1024 on 32-bit builds.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "codec_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "ar_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "codec_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "codec_encode_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Encoded reference cache slots; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "description": "Attention lowering preference.",
+        "required": false,
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
+        "default": "auto"
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "clone": [
       "speaker_reference"

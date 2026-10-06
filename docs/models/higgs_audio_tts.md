@@ -43,14 +43,28 @@ audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-T
 | `--top-p` | float | `0.8` | AR nucleus sampling limit. The Python client's unfiltered equivalent is `1.0`. |
 | `--repetition-penalty` | float | `1.1` | Accepted for Python API compatibility; Higgs audio-code sampling does not consume it. |
 
+## Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `max_tokens` | integer >= 0 | `2048` | Maximum generated AR tokens; zero uses the default. |
+| `temperature` | float | `0.8` | AR sampling temperature. |
+| `top_p` | float | `0.8` | AR nucleus sampling probability. |
+| `top_k` | integer | `30` | AR top-k sampling limit. |
+| `repetition_penalty` | float | `1.1` | Accepted for Python API compatibility; audio sampling does not consume this value. |
+| `seed` | integer >= 0 | random | Torch sampling seed; omitted chooses a random seed. |
+| `reference_text` | text | empty string | Transcript accompanying reference audio. |
+| `text_chunk_size` | integer | `1024` | Framework long-form text chunk size. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
+
 ## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `higgs_audio_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared AR and codec weight storage type. |
-| `higgs_audio_tts.ar_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Autoregressive decoder weight storage override. |
-| `higgs_audio_tts.codec_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Audio codec weight storage override. |
-| `higgs_audio_tts.ar_weight_context_mb` | integer MiB >= 1 | `4096` (`1024` on 32-bit builds) | AR weight context size. |
+| `higgs_audio_tts.ar_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Autoregressive decoder weight storage override. |
+| `higgs_audio_tts.codec_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Audio codec weight storage override. |
+| `higgs_audio_tts.ar_weight_context_mb` | integer MiB >= 1 | not set | AR weight context size. |
 | `higgs_audio_tts.codec_weight_context_mb` | integer MiB >= 1 | `1536` | Codec weight context size. |
 | `higgs_audio_tts.ar_decode_graph_arena_mb` | integer MiB >= 1 | `512` | AR decode graph arena size. |
 | `higgs_audio_tts.codec_decode_graph_arena_mb` | integer MiB >= 1 | `128` | Codec decode graph arena size. |

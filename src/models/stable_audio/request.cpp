@@ -1,6 +1,7 @@
 #include "engine/models/stable_audio/request.h"
 
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
 #include <cctype>
@@ -55,10 +56,10 @@ void require_positive(float value, const char * name) {
     }
 }
 
-std::vector<float> durations_from_request(const runtime::TaskRequest & request, int batch_size) {
+std::vector<float> durations_from_request(const std::unordered_map<std::string, std::string> & options, int batch_size) {
     std::vector<float> durations;
-    if (const auto value = runtime::find_option(request.options, {"duration_seconds"})) {
-        durations = split_float_list(*value, "duration_seconds");
+    if (const auto value = runtime::find_option(options, {"duration_sec"})) {
+        durations = split_float_list(*value, "duration_sec");
     } else {
         durations.push_back(120.0F);
     }
@@ -108,17 +109,17 @@ std::vector<std::string> negative_prompts_from_request(const runtime::TaskReques
     return prompts;
 }
 
-std::vector<StableAudioInpaintRegion> inpaint_regions_from_request(const runtime::TaskRequest & request) {
-    const auto starts_value = runtime::find_option(request.options, {"inpaint_mask_start_seconds", "inpaint_start"});
-    const auto ends_value = runtime::find_option(request.options, {"inpaint_mask_end_seconds", "inpaint_end"});
+std::vector<StableAudioInpaintRegion> inpaint_regions_from_request(const std::unordered_map<std::string, std::string> & options) {
+    const auto starts_value = runtime::find_option(options, {"inpaint_mask_start_sec", "inpaint_start"});
+    const auto ends_value = runtime::find_option(options, {"inpaint_mask_end_sec", "inpaint_end"});
     if (starts_value.has_value() != ends_value.has_value()) {
         throw std::runtime_error("Stable Audio inpaint start/end options must be provided together");
     }
     if (!starts_value.has_value()) {
         return {};
     }
-    const auto starts = split_float_list(*starts_value, "inpaint_mask_start_seconds");
-    const auto ends = split_float_list(*ends_value, "inpaint_mask_end_seconds");
+    const auto starts = split_float_list(*starts_value, "inpaint_mask_start_sec");
+    const auto ends = split_float_list(*ends_value, "inpaint_mask_end_sec");
     if (starts.size() != ends.size()) {
         throw std::runtime_error("Stable Audio inpaint start/end counts must match");
     }
@@ -136,6 +137,13 @@ std::vector<StableAudioInpaintRegion> inpaint_regions_from_request(const runtime
 }  // namespace
 
 StableAudioRequest parse_stable_audio_request(const runtime::TaskRequest & request) {
+    const auto options = runtime::apply_option_v1_compatibility(
+        request.options,
+        {{"duration_seconds", "duration_sec"},
+         {"duration_padding_seconds", "duration_padding_sec"},
+         {"inpaint_mask_start_seconds", "inpaint_mask_start_sec"},
+         {"inpaint_mask_end_seconds", "inpaint_mask_end_sec"}},
+        "Stable Audio", "request");
     StableAudioRequest out;
     if (const auto value = runtime::parse_int_option(request.options, {"batch_size"})) {
         if (*value <= 0) {
@@ -145,7 +153,7 @@ StableAudioRequest parse_stable_audio_request(const runtime::TaskRequest & reque
     }
     out.prompts = prompts_from_request(request, out.batch_size);
     out.negative_prompts = negative_prompts_from_request(request, out.batch_size);
-    out.durations_seconds = durations_from_request(request, out.batch_size);
+    out.durations_seconds = durations_from_request(options, out.batch_size);
     if (const auto value = runtime::parse_int_option(request.options, {"num_inference_steps"})) {
         if (*value <= 0) {
             throw std::runtime_error("Stable Audio num_inference_steps must be positive");
@@ -176,9 +184,9 @@ StableAudioRequest parse_stable_audio_request(const runtime::TaskRequest & reque
     if (const auto value = runtime::find_option(request.options, {"chunked_decode"})) {
         out.chunked_decode = runtime::parse_bool_option(*value, "chunked_decode");
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"duration_padding_seconds"})) {
+    if (const auto value = runtime::parse_finite_float_option(options, {"duration_padding_sec"})) {
         if (*value < 0.0F) {
-            throw std::runtime_error("Stable Audio duration_padding_seconds must be non-negative");
+            throw std::runtime_error("Stable Audio duration_padding_sec must be non-negative");
         }
         out.duration_padding_seconds = *value;
     }
@@ -197,7 +205,7 @@ StableAudioRequest parse_stable_audio_request(const runtime::TaskRequest & reque
     } else if (request.audio_input.has_value() && *audio_input_kind == "inpaint_audio") {
         out.inpaint_audio = request.audio_input;
     }
-    out.inpaint_regions = inpaint_regions_from_request(request);
+    out.inpaint_regions = inpaint_regions_from_request(options);
     if (!out.inpaint_regions.empty() && request.audio_input.has_value() && !out.inpaint_audio.has_value()) {
         out.inpaint_audio = request.audio_input;
     }

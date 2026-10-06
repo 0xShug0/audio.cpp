@@ -32,6 +32,205 @@
     "tr",
     "zh"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript for reference audio; a nonempty value requires voice reference audio.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated audio frames.",
+        "required": false,
+        "min": 1,
+        "default": 300
+      },
+      {
+        "name": "active_codebooks",
+        "type": "int",
+        "description": "Active codebooks; defaults to the checkpoint n_vq.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable sampling.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Audio sampling temperature.",
+        "required": false,
+        "default": 1.7
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Audio nucleus sampling probability.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Audio top-k sampling limit.",
+        "required": false,
+        "default": 25
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Audio repetition penalty.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "text_temperature",
+        "type": "float",
+        "description": "Text sampling temperature.",
+        "required": false,
+        "default": 1.5
+      },
+      {
+        "name": "text_top_p",
+        "type": "float",
+        "description": "Text nucleus sampling probability.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "text_top_k",
+        "type": "int",
+        "description": "Text top-k sampling limit.",
+        "required": false,
+        "default": 50
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted chooses a random seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Framework long-form text chunk size.",
+        "required": false,
+        "default": 256
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "required": false,
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "default": "default"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type.",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native"
+      },
+      {
+        "name": "global_weight_type",
+        "type": "enum",
+        "description": "Global transformer weight storage; inherits weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "local_frame_weight_type",
+        "type": "enum",
+        "description": "Local frame decoder weight storage; inherits weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "global_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "global_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "global_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "local_frame_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "local_frame_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "audio_tokenizer_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "audio_tokenizer_decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "audio_tokenizer_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "clone": [
       "speaker_reference"

@@ -14,6 +14,20 @@
     "en"
   ],
   "capabilities": {},
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type used by the encoder.",
+        "default": "native",
+        "preset": "weight_type_full",
+        "required": false
+      }
+    ],
+    "load": []
+  },
   "runtime": {
     "tags": [
       "gguf"

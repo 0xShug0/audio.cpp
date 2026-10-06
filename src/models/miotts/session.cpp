@@ -4,6 +4,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/speech_encoders/wavlm_encoder.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/framework/text/utf8.h"
 #include "engine/models/miocodec/assets.h"
@@ -200,17 +201,23 @@ ResolvedBestOfN best_of_n_from_request(
     int session_max,
     const std::string & session_language) {
     ResolvedBestOfN out;
+    const auto options = runtime::apply_option_v1_compatibility(
+        request.options,
+        {{"miotts.best_of_n", "best_of_n"},
+         {"miotts.best_of_n_enabled", "best_of_n_enabled"},
+         {"miotts.best_of_n_language", "best_of_n_language"}},
+        "MioTTS", "request");
     out.enabled = session_enabled;
     out.n = clamp_best_of_n(session_default, session_max);
     out.language = normalized_best_of_n_language(session_language);
-    if (const auto value = runtime::parse_int_option(request.options, {"miotts.best_of_n"})) {
+    if (const auto value = runtime::parse_int_option(options, {"best_of_n"})) {
         out.n = clamp_best_of_n(*value, session_max);
         out.enabled = out.n > 1;
     }
-    if (const auto value = runtime::find_option(request.options, {"miotts.best_of_n_enabled"})) {
-        out.enabled = runtime::parse_bool_option(*value, "miotts.best_of_n_enabled");
+    if (const auto value = runtime::find_option(options, {"best_of_n_enabled"})) {
+        out.enabled = runtime::parse_bool_option(*value, "best_of_n_enabled");
     }
-    if (const auto value = runtime::find_option(request.options, {"miotts.best_of_n_language"})) {
+    if (const auto value = runtime::find_option(options, {"best_of_n_language"})) {
         out.language = normalized_best_of_n_language(*value);
     }
     if (!out.enabled) {
@@ -575,8 +582,12 @@ MioTTSSession::MioTTSSession(
     }
     const auto lm_weight_type = option_weight_type(options, "miotts.weight_type", engine::assets::TensorStorageType::Native);
     validate_matmul_weight_storage(lm_weight_type, "miotts.weight_type");
-    text_chunk_size_ = engine::text::parse_text_chunk_size_override(options.options)
-        .value_or(kReferenceTextChunkCodepoints);
+    const auto chunk_options = runtime::apply_option_v1_compatibility(
+        options.options, {{"text_chunk_size", "miotts.text_chunk_size"}}, "MioTTS", "session");
+    const auto chunk_size = runtime::find_option(chunk_options, {"miotts.text_chunk_size", "chunk_size"});
+    text_chunk_size_ = chunk_size.has_value()
+        ? engine::text::parse_text_chunk_size_override({{"text_chunk_size", *chunk_size}}).value()
+        : kReferenceTextChunkCodepoints;
     if (const auto value = runtime::find_option(options.options, {"miotts.best_of_n_enabled"})) {
         best_of_n_enabled_ = runtime::parse_bool_option(*value, "miotts.best_of_n_enabled");
     }

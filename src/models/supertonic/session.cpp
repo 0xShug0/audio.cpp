@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/supertonic/runtime.h"
 
@@ -187,6 +188,10 @@ runtime::TaskResult SupertonicSession::finalize() {
 }
 
 SupertonicGenerationOptions SupertonicSession::generation_options_from_request(const runtime::TaskRequest & request) const {
+    const auto request_options = runtime::apply_option_v1_compatibility(
+        request.options,
+        {{"voice", "voice_id"}, {"supertonic.voice", "voice_id"}, {"speaking_rate", "speed"}},
+        "Supertonic", "request");
     SupertonicGenerationOptions options;
     if (request.text_input.has_value() && !request.text_input->language.empty()) {
         options.language = request.text_input->language;
@@ -201,7 +206,7 @@ SupertonicGenerationOptions SupertonicSession::generation_options_from_request(c
         // (see webui/configs/model_params.json). Accept it as a fallback so the
         // voice picker takes effect; unknown ids are rejected downstream by the
         // voice-style loader.
-        if (const auto preset = runtime::find_option(request.options, {"voice", "supertonic.voice"})) {
+        if (const auto preset = runtime::find_option(request_options, {"voice_id"})) {
             if (!preset->empty()) {
                 options.voice = *preset;
             }
@@ -213,7 +218,7 @@ SupertonicGenerationOptions SupertonicSession::generation_options_from_request(c
         }
         options.num_inference_steps = static_cast<int>(*value);
     }
-    if (const auto value = runtime::parse_positive_finite_float_option(request.options, {"speed", "speaking_rate"})) {
+    if (const auto value = runtime::parse_positive_finite_float_option(request_options, {"speed"})) {
         options.speaking_rate = *value;
     }
     if (request.voice.has_value() && request.voice->style.has_value() &&

@@ -218,13 +218,26 @@ Speech-to-speech:
 audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v2-GGUF/miocodec-25hz-44khz-v2-q8_0.gguf --backend cuda --audio assets/resources/a.wav --voice-ref assets/resources/b.wav --out converted.wav
 ```
 
+### Common Options (use directly)
+
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `--audio` | WAV path | required | Source speech audio. |
 | `--voice-ref` | WAV path | required | Target speaker/reference audio. |
 | `--task` | `vc`, `s2s` | required | Conversion task. |
 | `--out` | WAV path | required | Output audio path. |
-| `--session-option miocodec.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Model weight type when supported by each component. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `miocodec.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | Weight storage type. |
+| `miocodec.weight_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
+| `miocodec.constant_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
+| `miocodec.content_graph_arena_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+| `miocodec.global_graph_arena_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
+| `miocodec.wave_graph_arena_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+
 
 ## RVC
 

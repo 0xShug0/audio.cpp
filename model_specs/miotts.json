@@ -15,6 +15,216 @@
     "en",
     "ja"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "presence_penalty",
+        "type": "float",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "frequency_penalty",
+        "type": "float",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Generation control; defaults to the checkpoint config.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted chooses a random seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "best_of_n",
+        "type": "int",
+        "description": "Candidate count, capped by the session maximum; greater than one enables best-of-N.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "best_of_n_enabled",
+        "type": "bool",
+        "description": "Override the session best-of-N setting.",
+        "required": false
+      },
+      {
+        "name": "best_of_n_language",
+        "type": "enum",
+        "description": "ASR language used to rank candidates.",
+        "required": false,
+        "values": [
+          "auto",
+          "en",
+          "ja"
+        ]
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Framework long-form text chunk size; inherits the session setting.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; defaults to native.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "codec_model_path",
+        "type": "path",
+        "description": "MioCodec model path; defaults to sibling MioCodec-25Hz-44.1kHz-v2.",
+        "required": false
+      },
+      {
+        "name": "best_of_n_asr_model_path",
+        "type": "path",
+        "description": "ASR model path for candidate ranking; defaults to sibling Qwen3-ASR-0.6B.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Default framework text chunk size.",
+        "required": false,
+        "default": 180
+      },
+      {
+        "name": "best_of_n_enabled",
+        "type": "bool",
+        "description": "Enable candidate generation and ASR ranking.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "best_of_n_default",
+        "type": "int",
+        "description": "Default candidate count.",
+        "required": false,
+        "min": 1,
+        "default": 1
+      },
+      {
+        "name": "best_of_n_max",
+        "type": "int",
+        "description": "Maximum candidate count.",
+        "required": false,
+        "min": 1,
+        "default": 8
+      },
+      {
+        "name": "best_of_n_language",
+        "type": "enum",
+        "description": "ASR language used to rank candidates.",
+        "required": false,
+        "values": [
+          "auto",
+          "en",
+          "ja"
+        ],
+        "default": "auto"
+      },
+      {
+        "name": "prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "decode_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "codec_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "codec_constant_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "global_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "wave_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "clone": [
       "speaker_reference"

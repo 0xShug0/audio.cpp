@@ -18,6 +18,263 @@
     "es",
     "ar"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "text",
+        "type": "string",
+        "description": "Fallback target text when text_input is absent; prompt is also accepted.",
+        "required": false
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "IndexTTS2.5 text language; empty or auto selects from text.",
+        "required": false
+      },
+      {
+        "name": "emotion_alpha",
+        "type": "float",
+        "description": "Emotion conditioning blend strength.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 1
+      },
+      {
+        "name": "emotion_vector",
+        "type": "string",
+        "description": "Eight comma-separated finite emotion strengths.",
+        "required": false
+      },
+      {
+        "name": "use_emotion_text",
+        "type": "bool",
+        "description": "Use text-derived emotion conditioning.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "emotion_text",
+        "type": "string",
+        "description": "Emotion description.",
+        "required": false
+      },
+      {
+        "name": "use_random_emotion",
+        "type": "bool",
+        "description": "Use random emotion conditioning.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "interval_silence_ms",
+        "type": "int",
+        "description": "Silence between generated segments in milliseconds.",
+        "required": false,
+        "min": 0,
+        "default": 200
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable sampling.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus sampling probability.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit.",
+        "required": false,
+        "min": 1,
+        "default": 30
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "length_penalty",
+        "type": "float",
+        "description": "Beam search length penalty.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Beam search width.",
+        "required": false,
+        "min": 1,
+        "default": 3
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Sampling repetition penalty.",
+        "required": false,
+        "default": 10
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated mel tokens.",
+        "required": false,
+        "min": 1,
+        "default": 1500
+      },
+      {
+        "name": "duration_factor",
+        "type": "float",
+        "description": "IndexTTS2.5 output duration multiplier; greater than one is slower.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted chooses a random seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Optional framework long-form text chunk size; omitted keeps the full input together.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "required": false,
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "default": "default"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; defaults to native.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Convolution weight storage; native on HIP resolves to F16.",
+        "required": false,
+        "preset": "weight_type_conv",
+        "default": "native"
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged runtime graphs.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "speaker_cache_slots",
+        "type": "int",
+        "description": "Reference or emotion cache slots; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "emotion_cache_slots",
+        "type": "int",
+        "description": "Reference or emotion cache slots; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "emotion_text_cache_slots",
+        "type": "int",
+        "description": "Reference or emotion cache slots; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "gpt_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "s2mel_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "reference_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "emotion_text_prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "emotion_text_decode_graph_arena_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "emotion_text_max_tokens",
+        "type": "int",
+        "description": "Emotion description generation token limit; emotion_text_max_new_tokens is also accepted.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "tts": [
       "emotion_control"

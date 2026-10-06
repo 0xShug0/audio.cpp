@@ -3,6 +3,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
+#include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/pocket_tts/assets.h"
 #include "engine/models/pocket_tts/backend_weights.h"
@@ -579,10 +580,12 @@ PocketTTSGraphCapacityConfig PocketTTSSession::resolve_graph_capacity_config() c
     const runtime::GraphCapacityMode default_mode = core::requested_backend_uses_host_graph_plan(options().backend)
         ? runtime::GraphCapacityMode::Tiered
         : runtime::GraphCapacityMode::Double;
+    const auto capacity_options = runtime::apply_option_v1_compatibility(
+        options(), {{"offline_graph_capacity_mode", "pocket_tts.offline_graph_capacity_mode"}}, "PocketTTS");
     const auto mode = runtime::resolve_graph_capacity_mode(
-        options(),
+        capacity_options,
         default_mode,
-        {"offline_graph_capacity_mode", "graph_capacity_mode"});
+        {"pocket_tts.offline_graph_capacity_mode", "graph_capacity_mode"});
     PocketTTSGraphCapacityConfig config;
     config.prompt_mode = mode;
     config.generation_mode = mode;

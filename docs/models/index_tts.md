@@ -69,32 +69,44 @@ audiocpp_cli --task tts --family index_tts2 \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `emotion_alpha` | float in `[0, 1]` | `1.0` | Blend strength for explicit emotion conditioning. |
+| `text` | text | not set | Fallback target text when text_input is absent; prompt is also accepted. |
+| `language` | text | not set | IndexTTS2.5 text language; empty or auto selects from text. |
+| `emotion_alpha` | float in `[0, 1]` | `1` | Blend strength for explicit emotion conditioning. |
 | `emotion_vector` | 8 floats | not set | Explicit emotion vector. |
 | `use_emotion_text` | bool | `false` | Infer emotion from text. |
 | `emotion_text` | text | not set | Text used when emotion-text conditioning is enabled. |
 | `use_random_emotion` | bool | `false` | Use random emotion weights in the emotion mixer. |
 | `interval_silence_ms` | milliseconds | `200` | Silence inserted between generated text chunks. |
-| `duration_factor` | positive float | `1.0` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`; also accepted for the v2 variant. |
-| `length_penalty` | float | `0.0` | GPT beam-search length penalty. |
+| `do_sample` | bool | `true` | Enable sampling. |
+| `top_p` | float | `0.8` | Nucleus sampling probability. |
+| `top_k` | integer >= 1 | `30` | Top-k sampling limit. |
+| `temperature` | float | `0.8` | Sampling temperature. |
+| `length_penalty` | float | `0` | GPT beam-search length penalty. |
+| `num_beams` | integer >= 1 | `3` | Beam search width. |
+| `repetition_penalty` | float | `10` | Sampling repetition penalty. |
+| `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
+| `duration_factor` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`; also accepted for the v2 variant. |
+| `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
+| `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ### IndexTTS2 Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `index_tts2.mem_saver` | bool | `false` | Release staged reference and conditioning graphs after request phases. |
-| `index_tts2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type. |
+| `index_tts2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Matmul weight storage type. |
 | `index_tts2.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type. |
+| `index_tts2.mem_saver` | bool | `false` | Release staged reference and conditioning graphs after request phases. |
 | `index_tts2.speaker_cache_slots` | integer slots | `1` | Prepared speaker-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_cache_slots` | integer slots | `1` | Prepared emotion-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_text_cache_slots` | integer slots | `1` | Emotion-text weight cache slots; set `0` to disable reuse. |
-| `index_tts2.gpt_graph_arena_mb` | MB | model default | GPT graph arena size. |
-| `index_tts2.s2mel_graph_arena_mb` | MB | model default | S2Mel graph arena size. |
-| `index_tts2.reference_graph_arena_mb` | MB | model default | Reference encoder and codec graph arena size. |
-| `index_tts2.emotion_text_prefill_graph_arena_mb` | MB | model default | Emotion-text prefill graph arena size. |
-| `index_tts2.emotion_text_decode_graph_arena_mb` | MB | model default | Emotion-text cached-step graph arena size. |
-| `index_tts2.emotion_text_max_tokens` | tokens | `256` | Maximum generated tokens for emotion-text classification; old name `index_tts2.emotion_text_max_new_tokens` is still accepted. |
+| `index_tts2.gpt_graph_arena_mb` | MB | `2048` | GPT graph arena size. |
+| `index_tts2.s2mel_graph_arena_mb` | MB | `2048` | S2Mel graph arena size. |
+| `index_tts2.reference_graph_arena_mb` | MB | `512` | Reference encoder and codec graph arena size. |
+| `index_tts2.emotion_text_prefill_graph_arena_mb` | MB | `2048` | Emotion-text prefill graph arena size. |
+| `index_tts2.emotion_text_decode_graph_arena_mb` | MB | `512` | Emotion-text cached-step graph arena size. |
 | `index_tts2.weight_context_mb` | MB | `32` | Shared ggml weight metadata context size. |
+| `index_tts2.emotion_text_max_tokens` | tokens | `256` | Maximum generated tokens for emotion-text classification; old name `index_tts2.emotion_text_max_new_tokens` is still accepted. |
 
 Text normalization note: audio.cpp reimplements the official IndexTTS text
 front-end (wetext-style number/date/symbol rules, pinyin-tone and name
@@ -208,34 +220,44 @@ or commercial use.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `language` | `auto`, `zh`, `en`, `ja`, `es`, `ar`, ... | `auto` | Text language hint; `auto` infers `zh` when the text contains Han characters, otherwise `en`. |
-| `emotion_alpha` | float in `[0, 1]` | `1.0` | Blend strength for explicit emotion conditioning. |
+| `text` | text | not set | Fallback target text when text_input is absent; prompt is also accepted. |
+| `language` | `auto`, `zh`, `en`, `ja`, `es`, `ar`, ... | not set | Text language hint; `auto` infers `zh` when the text contains Han characters, otherwise `en`. |
+| `emotion_alpha` | float in `[0, 1]` | `1` | Blend strength for explicit emotion conditioning. |
 | `emotion_vector` | 8 floats | not set | Explicit emotion vector. |
 | `use_emotion_text` | bool | `false` | Infer emotion from text. |
 | `emotion_text` | text | not set | Text used when emotion-text conditioning is enabled. |
 | `use_random_emotion` | bool | `false` | Use random emotion weights in the emotion mixer. |
 | `interval_silence_ms` | milliseconds | `200` | Silence inserted between generated text chunks. |
-| `duration_factor` | positive float | `1.0` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`. |
-| `length_penalty` | float | `0.0` | GPT beam-search length penalty. |
+| `do_sample` | bool | `true` | Enable sampling. |
+| `top_p` | float | `0.8` | Nucleus sampling probability. |
+| `top_k` | integer >= 1 | `30` | Top-k sampling limit. |
+| `temperature` | float | `0.8` | Sampling temperature. |
+| `length_penalty` | float | `0` | GPT beam-search length penalty. |
 | `num_beams` | integer | `3` | GPT beam count. |
+| `repetition_penalty` | float | `10` | Sampling repetition penalty. |
+| `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
+| `duration_factor` | positive float | `1` | Output duration multiplier for speech-rate control; `>1` slower, `<1` faster. Matches the official IndexTTS2.5 `duration_factor`. |
+| `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
+| `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 
 ### IndexTTS2.5 Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `index_tts2.mem_saver` | bool | `false` | Release staged reference and conditioning graphs after request phases. |
-| `index_tts2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type. |
+| `index_tts2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Matmul weight storage type. |
 | `index_tts2.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type. |
+| `index_tts2.mem_saver` | bool | `false` | Release staged reference and conditioning graphs after request phases. |
 | `index_tts2.speaker_cache_slots` | integer slots | `1` | Prepared speaker-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_cache_slots` | integer slots | `1` | Prepared emotion-reference cache slots; set `0` to disable reuse. |
 | `index_tts2.emotion_text_cache_slots` | integer slots | `1` | Emotion-text weight cache slots; set `0` to disable reuse. |
-| `index_tts2.gpt_graph_arena_mb` | MB | model default | GPT graph arena size. |
-| `index_tts2.s2mel_graph_arena_mb` | MB | model default | S2Mel graph arena size. |
-| `index_tts2.reference_graph_arena_mb` | MB | model default | Reference encoder and codec graph arena size. |
-| `index_tts2.emotion_text_prefill_graph_arena_mb` | MB | model default | Emotion-text prefill graph arena size. |
-| `index_tts2.emotion_text_decode_graph_arena_mb` | MB | model default | Emotion-text cached-step graph arena size. |
-| `index_tts2.emotion_text_max_tokens` | tokens | `256` | Maximum generated tokens for emotion-text classification; old name `index_tts2.emotion_text_max_new_tokens` is still accepted. |
+| `index_tts2.gpt_graph_arena_mb` | MB | `2048` | GPT graph arena size. |
+| `index_tts2.s2mel_graph_arena_mb` | MB | `2048` | S2Mel graph arena size. |
+| `index_tts2.reference_graph_arena_mb` | MB | `512` | Reference encoder and codec graph arena size. |
+| `index_tts2.emotion_text_prefill_graph_arena_mb` | MB | `2048` | Emotion-text prefill graph arena size. |
+| `index_tts2.emotion_text_decode_graph_arena_mb` | MB | `512` | Emotion-text cached-step graph arena size. |
 | `index_tts2.weight_context_mb` | MB | `32` | Shared ggml weight metadata context size. |
+| `index_tts2.emotion_text_max_tokens` | tokens | `256` | Maximum generated tokens for emotion-text classification; old name `index_tts2.emotion_text_max_new_tokens` is still accepted. |
 
 ## Converting IndexTTS2.5 From Upstream Weights
 

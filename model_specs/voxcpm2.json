@@ -46,6 +46,241 @@
     "tr",
     "vi"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "min_tokens",
+        "type": "int",
+        "description": "Minimum generated audio tokens.",
+        "required": false,
+        "min": 0,
+        "default": 2
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated audio tokens.",
+        "required": false,
+        "min": 0,
+        "default": 4096
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Flow sampling steps.",
+        "required": false,
+        "default": 10
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "required": false,
+        "default": 2
+      },
+      {
+        "name": "retry_badcase",
+        "type": "bool",
+        "description": "Retry detected bad generations.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "retry_badcase_max_times",
+        "type": "int",
+        "description": "Maximum bad-case retries.",
+        "required": false,
+        "default": 3
+      },
+      {
+        "name": "retry_badcase_ratio_threshold",
+        "type": "float",
+        "description": "Bad-case audio/text length ratio threshold.",
+        "required": false,
+        "default": 6
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295,
+        "default": 1234
+      },
+      {
+        "name": "cfm_noise_file",
+        "type": "path",
+        "description": "Precomputed flow noise file.",
+        "required": false
+      },
+      {
+        "name": "stream_left_context",
+        "type": "int",
+        "description": "Previous patches decoded as streaming left context.",
+        "required": false,
+        "min": 0,
+        "max": 8,
+        "default": 3
+      },
+      {
+        "name": "prompt_text",
+        "type": "string",
+        "description": "Transcript for continuation prompt audio, distinct from the base voice reference.",
+        "required": false
+      },
+      {
+        "name": "chunk_strategy",
+        "type": "enum",
+        "description": "Long-form continuation or independent generation per chunk.",
+        "required": false,
+        "values": [
+          "continuation",
+          "stateless"
+        ],
+        "default": "continuation"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Framework long-form text chunk size.",
+        "required": false,
+        "default": 2048
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "required": false,
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "default": "tag_aware"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "audiovae_weight_type",
+        "type": "enum",
+        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "prompt_cache_slots",
+        "type": "int",
+        "description": "Cached encoded prompt slots; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release staged runtime graphs.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 3072
+      },
+      {
+        "name": "text_embedding_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 64
+      },
+      {
+        "name": "lm_step_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "projection_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "local_encoder_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "dit_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "audiovae_weight_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 768
+      },
+      {
+        "name": "audiovae_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "audiovae_encoder_graph_context_mb",
+        "type": "int",
+        "description": "Context or graph arena size in MiB.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "audiovae_latent_capacity",
+        "type": "int",
+        "description": "Optional reserved latent frame capacity; omitted selects automatically.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "audiovae_encoder_sample_capacity",
+        "type": "int",
+        "description": "Reserved encoder sample capacity.",
+        "required": false,
+        "min": 1,
+        "default": 240000
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "clone": [
       "speaker_reference"

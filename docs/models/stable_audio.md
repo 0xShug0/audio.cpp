@@ -82,22 +82,35 @@ audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-medi
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `negative_prompt` | text | empty string | Negative prompt. |
-| `sampler` | `pingpong`, `euler`, `dpmpp-2m`, `dpmpp-3m-sde` | `pingpong` | Diffusion sampler for Stable Audio 3. The foundation/medium path also accepts the DPM++ samplers. |
-| `apg_scale` | float | `1.0` | Adaptive projected guidance scale. |
+| `prompt` | text | not set | Fallback text prompt when text_input is absent; pipe separates batch prompts. |
+| `negative_prompt` | text | not set | Negative prompt. |
+| `duration_sec` | seconds or comma-separated seconds | `120` | Target duration per batch prompt; encode multiple durations as a comma-separated string, not a JSON array. |
 | `batch_size` | integer | `1` | Prompt batch size. |
-| `duration_padding_seconds` | seconds | `6.0` | Extra generated padding before truncation. |
+| `num_inference_steps` | integer >= 1 | `8` | Diffusion steps. |
+| `guidance_scale` | float | `1` | Classifier-free guidance scale. |
+| `apg_scale` | float | `1` | Adaptive projected guidance scale. |
+| `sampler` | `pingpong`, `euler`, `dpmpp-2m`, `dpmpp-3m-sde` | not set | Diffusion sampler for Stable Audio 3. The foundation/medium path also accepts the DPM++ samplers. |
+| `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
+| `duration_padding_sec` | seconds | `6` | Extra generated padding before truncation. |
 | `truncate_output_to_duration` | bool | `true` | Trim decoded audio to requested duration. |
 | `chunked_decode` | bool | `true` | Decode the autoencoder in chunks. |
-| `audio_input_kind` | `init_audio`, `inpaint_audio` | `init_audio` when `--audio` is provided | How the model uses input audio. |
-| `init_noise_level` | `0..1` | `1.0` | Strength for audio-conditioned generation. |
-| `inpaint_mask_start_seconds` | comma-separated seconds | not set | Inpaint region start times. |
-| `inpaint_mask_end_seconds` | comma-separated seconds | not set | Inpaint region end times. |
+| `init_noise_level` | `0..1` | `1` | Strength for audio-conditioned generation. |
+| `audio_input_kind` | `init_audio`, `inpaint_audio` | `init_audio` | How the model uses input audio. |
+| `inpaint_mask_start_sec` | comma-separated seconds | not set | Inpaint region start times. |
+| `inpaint_mask_end_sec` | comma-separated seconds | not set | Inpaint region end times. |
+| `sigma_min` | float | not set | Foundation sampler minimum noise level. |
+| `sigma_max` | float | not set | Foundation sampler maximum noise level. |
+| `rho` | float | not set | Foundation sampler noise schedule exponent. |
+
+The corresponding legacy `*_seconds` request names remain accepted. Use only
+one name for each control in a request.
 
 ## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `stable_audio.max_batch` | integer >= 1 | `1` | Maximum prompt batch size. |
+| `stable_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; defaults to native. |
 | `stable_audio.mem_saver` | bool | `false` | Release staged graph/cache state after conditioner, diffusion, and autoencoder phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family stable_audio`.

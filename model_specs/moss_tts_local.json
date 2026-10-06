@@ -44,6 +44,138 @@
     "yue",
     "zh"
   ],
+  "options": {
+    "request": [
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated audio frames.",
+        "required": false,
+        "min": 1,
+        "default": 4096
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable sampling.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Audio sampling temperature.",
+        "required": false,
+        "default": 1.7
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Audio nucleus sampling probability.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Audio top-k sampling limit.",
+        "required": false,
+        "default": 25
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Audio repetition penalty.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "text_temperature",
+        "type": "float",
+        "description": "Text sampling temperature.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "text_top_p",
+        "type": "float",
+        "description": "Text nucleus sampling probability.",
+        "required": false,
+        "default": 1
+      },
+      {
+        "name": "text_top_k",
+        "type": "int",
+        "description": "Text top-k sampling limit.",
+        "required": false,
+        "default": 50
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted chooses a random seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Framework long-form text chunk size.",
+        "required": false,
+        "default": 2048
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "required": false,
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "default": "default"
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Backbone weight storage; auto uses F32 on CPU, BF16 on CUDA, native on other backends.",
+        "required": false,
+        "values": [
+          "auto",
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k",
+          "q8_0",
+          "nvfp4"
+        ],
+        "default": "auto"
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Encoded reference cache slots; zero disables reuse.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "load": []
+  },
   "capabilities": {
     "clone": [
       "speaker_reference"
