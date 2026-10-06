@@ -2233,7 +2233,7 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
             throw std::runtime_error("speed must be a positive finite number");
         }
         if (!is_neutral_speech_option("speed", speed_value)) {
-            if (!model.accepts_speed && !model.accepts_speaking_rate && model.config.family != "kokoro_tts") {
+            if (!model.accepts_speed && !model.accepts_speaking_rate) {
                 throw std::runtime_error("speed is not supported by this model");
             }
             if (model.accepts_speed) {
