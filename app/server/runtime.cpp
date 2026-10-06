@@ -3,6 +3,7 @@
 #include "base64.h"
 #include "model_memory.h"
 #include "multipart.h"
+#include "speech_option_exceptions.h"
 #include "ui_assets.h"
 
 #include "../cli/request.h"
@@ -1420,7 +1421,9 @@ void ServerState::refresh_model_option_flags(LoadedModel & model) {
         "language",
         effective_override,
         model.config.path);
-    if (model.config.task == "tts") {
+    if (model.task.task == engine::runtime::VoiceTaskKind::Tts ||
+        model.task.task == engine::runtime::VoiceTaskKind::VoiceCloning ||
+        model.task.task == engine::runtime::VoiceTaskKind::VoiceDesign) {
         model.accepts_speed = model_accepts_request_option(
             model.config.family, "speed", effective_override, model.config.path);
         model.accepts_speaking_rate = model_accepts_request_option(
@@ -2224,21 +2227,25 @@ engine::runtime::TaskRequest ServerState::build_speech_request(const LoadedModel
         speed = body.find("speaking_rate");
     }
     if (speed != nullptr) {
-        const float rate = static_cast<float>(speed->as_number());
+        const double speed_value = speed->as_number();
+        const float rate = static_cast<float>(speed_value);
         if (!std::isfinite(rate) || rate <= 0.0f) {
             throw std::runtime_error("speed must be a positive finite number");
         }
-        if (!model.accepts_speed && !model.accepts_speaking_rate && model.config.family != "kokoro_tts") {
-            throw std::runtime_error("speed is not supported by this model");
+        if (model.accepts_speed || model.accepts_speaking_rate ||
+            !is_neutral_speech_option("speed", speed_value)) {
+            if (!model.accepts_speed && !model.accepts_speaking_rate) {
+                throw std::runtime_error("speed is not supported by this model");
+            }
+            if (model.accepts_speed) {
+                request.options["speed"] = std::to_string(rate);
+            } else if (model.accepts_speaking_rate) {
+                request.options["speaking_rate"] = std::to_string(rate);
+            }
+            voice.style = engine::runtime::StyleCondition{};
+            voice.style->speaking_rate = rate;
+            has_voice = true;
         }
-        if (model.accepts_speed) {
-            request.options["speed"] = std::to_string(rate);
-        } else if (model.accepts_speaking_rate) {
-            request.options["speaking_rate"] = std::to_string(rate);
-        }
-        voice.style = engine::runtime::StyleCondition{};
-        voice.style->speaking_rate = rate;
-        has_voice = true;
     }
     if (has_voice) {
         request.voice = std::move(voice);

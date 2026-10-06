@@ -3063,6 +3063,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_TESTS)
+        add_executable(server_speech_option_exceptions_test
+            tests/unittests/test_server_speech_option_exceptions.cpp)
+        target_include_directories(server_speech_option_exceptions_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
+        add_test(NAME server_speech_option_exceptions_test COMMAND server_speech_option_exceptions_test)
+
         add_executable(server_model_slots_test tests/unittests/test_server_model_slots.cpp)
         target_include_directories(server_model_slots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server ${CMAKE_CURRENT_SOURCE_DIR}/include)
         target_link_libraries(server_model_slots_test PRIVATE Threads::Threads)

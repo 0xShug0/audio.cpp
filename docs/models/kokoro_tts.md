@@ -6,6 +6,12 @@ with all 54 upstream voice packs.
 
 ## Install
 
+For server speed control, use the Kokoro GGUF version published on
+[Hugging Face on September 22, 2026 (UTC)](https://huggingface.co/audio-cpp/audio.cpp-gguf/commit/406756ee8e3b16e902ce40112986c1010775f888)
+or a later published version. Its embedded spec declares
+`speed`. Older GGUFs missing that declaration must be updated to use non-default
+speed through `/v1/audio/speech`; `speed: 1` remains accepted when the declaration is absent.
+
 ```bash
 python3 tools/model_manager_v2.py install kokoro_82m_q8_0
 ```
