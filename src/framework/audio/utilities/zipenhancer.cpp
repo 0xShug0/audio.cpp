@@ -368,6 +368,8 @@ core::TensorValue make_relative_projection_constant(
     const Param & pos_weight) {
     const auto shape = core::TensorShape::from_dims({1, seq, seq});
     auto value = core::make_tensor(ctx, GGML_TYPE_F32, shape);
+    // Uploaded once; keep the allocator from overwriting it between runs.
+    ggml_set_output(value.tensor);
     constants.push_back(GraphConstant{value.tensor, seq, head, dim, &pos_weight});
     return value;
 }
@@ -410,11 +412,6 @@ core::TensorValue graph_mul(core::ModuleBuildContext & ctx, const core::TensorVa
 core::TensorValue graph_scale(core::ModuleBuildContext & ctx, const core::TensorValue & input, float scale) {
     const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     return core::wrap_tensor(ggml_scale(ctx.ggml, contiguous.tensor, scale), input.shape, GGML_TYPE_F32);
-}
-
-core::TensorValue graph_scale_bias(core::ModuleBuildContext & ctx, const core::TensorValue & input, float scale, float bias) {
-    const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
-    return core::wrap_tensor(ggml_scale_bias(ctx.ggml, contiguous.tensor, scale, bias), input.shape, GGML_TYPE_F32);
 }
 
 core::TensorValue graph_reshape(
@@ -466,25 +463,6 @@ core::TensorValue graph_concat_all(
         out = modules::ConcatModule({axis}).build(ctx, out, tensors[i]);
     }
     return out;
-}
-
-core::TensorValue graph_softplus_shifted(core::ModuleBuildContext & ctx, const core::TensorValue & input, float offset) {
-    auto shifted = graph_scale_bias(ctx, input, 1.0f, -offset);
-    auto exp_value = core::wrap_tensor(ggml_exp(ctx.ggml, shifted.tensor), input.shape, GGML_TYPE_F32);
-    auto plus_one = graph_scale_bias(ctx, exp_value, 1.0f, 1.0f);
-    return core::wrap_tensor(ggml_log(ctx.ggml, plus_one.tensor), input.shape, GGML_TYPE_F32);
-}
-
-core::TensorValue graph_swoosh_l(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    auto y = graph_softplus_shifted(ctx, input, 4.0f);
-    y = graph_add(ctx, y, graph_scale(ctx, input, -0.08f));
-    return graph_scale_bias(ctx, y, 1.0f, -0.035f);
-}
-
-core::TensorValue graph_swoosh_r(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
-    auto y = graph_softplus_shifted(ctx, input, 1.0f);
-    y = graph_add(ctx, y, graph_scale(ctx, input, -0.08f));
-    return graph_scale_bias(ctx, y, 1.0f, -0.313261687f);
 }
 
 core::TensorValue graph_broadcast_channel_scale(
@@ -608,7 +586,7 @@ core::TensorValue graph_feed_forward(
     int64_t hidden) {
     const std::string base = prefix + "." + which;
     auto y = graph_linear(ctx, x, params, base + ".in_proj", hidden);
-    y = graph_swoosh_l(ctx, y);
+    y = modules::SwooshLModule().build(ctx, y);
     return graph_linear(ctx, y, params, base + ".out_proj", kDense);
 }
 
@@ -662,7 +640,7 @@ core::TensorValue graph_conv_module(
         require_param(params, base + ".depthwise_conv.weight"),
         require_param(params, base + ".depthwise_conv.bias"),
         base + ".depthwise_conv");
-    conv = graph_swoosh_r(ctx, conv);
+    conv = modules::SwooshRModule().build(ctx, conv);
     auto seq_first = graph_transpose(ctx, conv, {{2, 0, 1, 3}}, 3);
     return graph_linear(ctx, seq_first, params, base + ".out_proj", kDense);
 }
