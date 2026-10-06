@@ -126,15 +126,18 @@ conversation under liquid-audio's chat system prompt, `Respond with interleaved
 text and audio.`; `--text` replaces that prompt, which the checkpoints were
 trained with, so leave it out unless experimenting. The reply is sampled like
 liquid-audio's README and demo (temperature 1.0, top-k 4) and may run to 1024
-steps, text tokens and audio frames together, about a minute of speech. A reply
-that reaches `max_tokens` is cut off there, its text and speech kept, as
-liquid-audio keeps what it generated, and a warning goes to stderr. Greedy
-audio (`--temperature 0`) can go on speaking after the text until
-`max_tokens`, as liquid-audio's greedy decoding does: to one Japanese
-question both gave the same text and 972 audio frames, all 1024 steps. Text
-tokens stand for bytes, not characters. Bytes that make no whole character,
-which replies in scripts such as Thai can have, come out as U+FFFD, as the
-Hugging Face tokenizer decodes them, in replies and transcripts alike; a
+steps, text tokens and audio frames together, about a minute of speech. Use the
+Q8_0 package, the default, or F16 for S2S: with Q4_0, 2 of 30 replies to one
+English question on CUDA and 2 of 30 on the M3 Ultra CPU (2 of 60 on the x86
+CPU, none on Metal) repeated a sentence until `max_tokens`; with Q8_0 and F16
+none did (see [Validation](#s2s)). A reply that reaches `max_tokens` is cut off
+there, its text and speech kept, as liquid-audio keeps what it generated, and a
+warning goes to stderr. Greedy audio (`--temperature 0`) can go on speaking
+after the text until `max_tokens`, as liquid-audio's greedy decoding does: to
+one Japanese question both gave the same text and 972 audio frames, all 1024
+steps. Text tokens stand for bytes, not characters. Bytes that make no whole
+character, which replies in scripts such as Thai can have, come out as U+FFFD,
+as the Hugging Face tokenizer decodes them, in replies and transcripts alike; a
 character left open at the end of the text is dropped, as in a transcript cut
 at `max_tokens`.
 
