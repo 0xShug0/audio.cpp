@@ -76,7 +76,7 @@ struct Control {
     std::atomic<int> loads{0}, destructions{0}, runs{0};
     std::atomic<int> sessions{0}, clones{0}, final_text{0};
     std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false};
-    std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false};
+    std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false}; std::optional<rt::Transcript> live_text;
 };
 class Session final : public rt::IOfflineVoiceTaskSession,
                       public rt::IBatchedOfflineVoiceTaskSession,
@@ -122,7 +122,7 @@ public:
         policy.output = rt::StreamingOutputKind::PullEvents; policy.preferred_audio_chunk_samples = 160;
         return policy;
     }
-    void start_stream(const rt::TaskRequest & request) override { result_ = run(request); emitted_ = false; }
+    void start_stream(const rt::TaskRequest & request) override { result_ = run(request); emitted_ = false; if (control_->live_input) { control_->live_text = request.text_input; } }
     std::optional<rt::StreamEvent> next_stream_event() override {
         if (emitted_) { return {}; }
         emitted_ = true;
@@ -789,6 +789,59 @@ void live_speech_return_text(int count) {
             "return_text without model text did not fail after the audio: " + error);
 }
 
+// On the live route `input` is the text a tts model speaks, so it stays
+// required there. An s2s or vc model answers or converts the live audio and
+// takes `input` as an optional prompt: without it the model gets no text_input
+// and uses its own default, as /v1/tasks/run does without `text`.
+void live_speech_optional_input(int count) {
+    Fixture f(count);
+    std::map<std::string, std::shared_ptr<Control>> controls;
+    for (const std::string task : {"s2s", "vc", "tts"}) {
+        auto c = f.asset(task); c->live_input = true; controls[task] = c;
+        srv::ServerModelConfig model;
+        model.id = task; model.path = f.root / task; model.family = f.loader->family();
+        model.task = task; model.mode = "streaming"; model.slots = count; model.lazy = true;
+        Access::add(*f.state, model);
+    }
+    std::string error;
+    const auto live = [&](const std::string & query) {
+        std::istringstream pcm(std::string(640, '\0'));
+        srv::HttpRequest request; request.method = "POST"; request.path = "/v1/audio/speech/live";
+        request.query = query; request.body_stream = &pcm;
+        auto response = f.state->handle(request);
+        Writer writer; error.clear();
+        try { if (response.stream_body) { response.stream_body(writer); } }
+        catch (const std::runtime_error & e) { error = e.what(); }
+        if (response.stream_body) { response.body = writer.output; response.stream_body = {}; }
+        return response;
+    };
+    for (const std::string task : {"s2s", "vc"}) {
+        const auto & c = controls.at(task);
+        for (const std::string input : {"", "&input="}) {
+            c->live_text = rt::Transcript{"stale", ""};
+            const auto response = live("model=" + task + input); success(response);
+            require(std::get<0>(sse_events(response.body)) == "speech.audio.delta speech.audio.done" && error.empty(),
+                    task + " live speech without input did not stream: " + error);
+            require(!c->live_text.has_value(), task + " live speech without input passed a text_input");
+        }
+        success(live("model=" + task + "&input=Be%20brief."));
+        require(c->live_text.has_value() && c->live_text->text == "Be brief.", task + " live speech lost its input");
+        success(live("model=" + task + "&language=ja"));
+        require(c->live_text.has_value() && c->live_text->text.empty() && c->live_text->language == "ja",
+                task + " live speech without input lost its language");
+    }
+    for (const std::string input : {"", "&input="}) {
+        const auto rejected = live("model=tts" + input);
+        require(rejected.status == 400 &&
+                rejected.body.find("live speech requires an 'input' query parameter") != std::string::npos,
+                "tts live speech without input was not rejected: HTTP " + std::to_string(rejected.status));
+    }
+    require(controls.at("tts")->runs == 0, "tts live speech without input reached the model");
+    for (const std::string task : {"s2s", "vc", "tts"}) {
+        require(Access::slots(*f.state, task).active == 0, task + " live speech left its lease held");
+    }
+}
+
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
@@ -828,9 +881,10 @@ int main(int argc, char ** argv) {
             bulk_publication_excludes_only_other_bulk_calls(count);
             guarded_loading_does_not_block_warm_model(count);
             live_speech_return_text(count);
+            live_speech_optional_input(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"
-                         " resident limits 1/2, deferred stream/disconnect, live speech return_text\n";
+                         " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input\n";
         }
     } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
 }
