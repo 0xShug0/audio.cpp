@@ -37,6 +37,8 @@
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
   import { prepareLiveAvatarOutput } from '$lib/models/liveavatar/video';
   import Arena from './Arena.svelte';
+  import Configuration from './Configuration.svelte';
+  import { loadUiConfiguration, uiConfiguration, uiConfigurationError } from '$lib/configuration';
   import type {
     AudioOutput,
     CatalogEntry,
@@ -53,7 +55,7 @@
   } from '$lib/voices';
   import '../app.css';
 
-  let tab: 'studio' | 'arena' | 'models' | 'logs' = 'studio';
+  let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' = 'studio';
   let arenaComponent: { runArena: () => Promise<void> } | null = null;
   let selectedId = catalog[0]?.id || '';
   let selected: CatalogEntry = catalog[0];
@@ -97,6 +99,24 @@
   let outputText = '';
   let outputJson = '';
   let outputSettings: { url: string; filename: string } | null = null;
+  type GenerationHistoryEntry = {
+    id: number;
+    modelId: string;
+    task: string;
+    label: string;
+    createdAt: string;
+    seed: number;
+    audio: AudioOutput[];
+    artifacts: typeof outputArtifacts;
+    text: string;
+    json: string;
+    settings: { url: string; filename: string };
+  };
+  let generationHistory: GenerationHistoryEntry[] = [];
+  let historyError = '';
+  let nextGenerationId = 1;
+  let selectedGenerationId: number | null = null;
+  let outputModelId = '';
   let generationElapsedSeconds = 0;
   let generationTimer: number | null = null;
   let settingsInput: HTMLInputElement | null = null;
@@ -1175,6 +1195,7 @@
   }
 
   function chooseModel(id: string) {
+    historyError = '';
     if (!id) {
       clearModelSelection();
       status = 'No model selected. Choose an installed model or download one from the Models tab.';
@@ -1454,15 +1475,77 @@
   }
 
   function clearOutput() {
-    for (const output of outputAudio) URL.revokeObjectURL(output.url);
-    for (const artifact of outputArtifacts) URL.revokeObjectURL(artifact.url);
-    if (outputSettings) URL.revokeObjectURL(outputSettings.url);
+    if (selectedGenerationId === null) {
+      for (const output of outputAudio) URL.revokeObjectURL(output.url);
+      for (const artifact of outputArtifacts) URL.revokeObjectURL(artifact.url);
+      if (outputSettings) URL.revokeObjectURL(outputSettings.url);
+    }
     outputAudio = [];
     outputArtifacts = [];
     outputText = '';
     outputJson = '';
     outputSettings = null;
+    selectedGenerationId = null;
+    outputModelId = '';
   }
+
+  function releaseGeneration(entry: GenerationHistoryEntry) {
+    for (const audio of entry.audio) URL.revokeObjectURL(audio.url);
+    for (const artifact of entry.artifacts) URL.revokeObjectURL(artifact.url);
+    URL.revokeObjectURL(entry.settings.url);
+  }
+
+  function selectGeneration(entry: GenerationHistoryEntry) {
+    if (entry.modelId !== selectedId || entry.task !== selected.task) {
+      historyError = `Cannot open history for ${entry.label}: the current model is ${selected.display_name}.`;
+      log(historyError);
+      return;
+    }
+    historyError = '';
+    clearOutput();
+    selectedGenerationId = entry.id;
+    outputModelId = entry.modelId;
+    outputAudio = entry.audio;
+    outputArtifacts = entry.artifacts;
+    outputText = entry.text;
+    outputJson = entry.json;
+    outputSettings = entry.settings;
+  }
+
+  function deleteGeneration(id: number) {
+    const entry = generationHistory.find((candidate) => candidate.id === id);
+    if (!entry) return;
+    const wasSelected = selectedGenerationId === id;
+    if (wasSelected) clearOutput();
+    generationHistory = generationHistory.filter((candidate) => candidate.id !== id);
+    releaseGeneration(entry);
+    if (wasSelected) {
+      const next = generationHistory.find((candidate) => candidate.modelId === selectedId && candidate.task === selected.task);
+      if (next) selectGeneration(next);
+    }
+  }
+
+  function clearGenerationHistory() {
+    if (selectedGenerationId !== null) clearOutput();
+    for (const entry of generationHistory) releaseGeneration(entry);
+    generationHistory = [];
+    historyError = '';
+  }
+
+  function trimGenerationHistory(limit: number) {
+    const expired = generationHistory.slice(limit);
+    if (!expired.length) return;
+    const wasSelected = expired.some((entry) => entry.id === selectedGenerationId);
+    if (wasSelected) clearOutput();
+    generationHistory = generationHistory.slice(0, limit);
+    for (const entry of expired) releaseGeneration(entry);
+    if (wasSelected) {
+      const next = generationHistory.find((entry) => entry.modelId === selectedId && entry.task === selected.task);
+      if (next) selectGeneration(next);
+    }
+  }
+
+  $: trimGenerationHistory($uiConfiguration.historyLimit);
 
   async function ensureLoaded() {
     if (!server?.ui_management) {
@@ -1886,6 +1969,7 @@
         resolved_seed: resolvedSeed,
         model: {
           id: selected.id,
+          display_name: selected.display_name,
           family: selected.family,
           task: selected.task,
           mode: resident?.mode || selected.mode || 'offline',
@@ -2057,6 +2141,26 @@
       outputText = nextText;
       outputJson = nextJson;
       outputSettings = { url: settingsUrl, filename: `${submittedSettings.model.id}-${Date.now()}.settings.json` };
+      outputModelId = submittedSettings.model.id;
+      {
+        const entry: GenerationHistoryEntry = {
+          id: nextGenerationId++,
+          modelId: outputModelId,
+          task: submittedSettings.model.task,
+          label: submittedSettings.model.display_name,
+          createdAt: new Date().toISOString(),
+          seed: resolvedSeed,
+          audio: nextAudio,
+          artifacts: nextArtifacts,
+          text: nextText,
+          json: nextJson,
+          settings: outputSettings
+        };
+        generationHistory = [entry, ...generationHistory];
+        selectedGenerationId = entry.id;
+        trimGenerationHistory($uiConfiguration.historyLimit);
+      }
+      historyError = '';
       outputCommitted = true;
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       warningStatus = '';
@@ -2332,6 +2436,12 @@
   }
 
   onMount(async () => {
+    try {
+      loadUiConfiguration();
+    } catch (error) {
+      uiConfigurationError.set(error instanceof Error ? error.message : String(error));
+      log(`Configuration could not be loaded: ${error instanceof Error ? error.message : error}`);
+    }
     await clearLegacyUiCaches();
     themePreferenceQuery = window.matchMedia('(prefers-color-scheme: dark)');
     systemPrefersDark = themePreferenceQuery.matches;
@@ -2394,15 +2504,14 @@
 
   onDestroy(() => {
     if (generationTimer !== null) window.clearInterval(generationTimer);
-    if (outputSettings) URL.revokeObjectURL(outputSettings.url);
+    clearOutput();
+    for (const entry of generationHistory) releaseGeneration(entry);
     aborter?.abort();
     recorder?.state === 'recording' && recorder.stop();
     liveStopRequested = true;
     liveRecorder?.state === 'recording' && liveRecorder.stop();
     recordingStream?.getTracks().forEach((track) => track.stop());
     liveStream?.getTracks().forEach((track) => track.stop());
-    for (const output of outputAudio) URL.revokeObjectURL(output.url);
-    for (const artifact of outputArtifacts) URL.revokeObjectURL(artifact.url);
     if (installPoll !== null) window.clearInterval(installPoll);
     if (packageSizePoll !== null) window.clearInterval(packageSizePoll);
     if (themePreferenceQuery && themePreferenceListener) {
@@ -2429,6 +2538,7 @@
       <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
     {/if}
     <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>{tr('nav.runtime')}</button>
+    <button class:active={tab === 'configuration'} on:click={() => tab = 'configuration'}>Configuration</button>
   </nav>
   <label class="language-picker">
     <span>{tr('language.label')}</span>
@@ -2918,11 +3028,31 @@
           {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>Save settings JSON</a>{/if}
           {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
+        {#if generationHistory.length}
+          <details class="generation-history">
+            <summary>Run history (Experimental) <span>{generationHistory.length}/{$uiConfiguration.historyLimit}</span></summary>
+            {#if historyError}<div class="history-error" role="alert">{historyError}</div>{/if}
+            <div class="history-actions"><button type="button" on:click={clearGenerationHistory}>Clear history</button></div>
+            <ul>
+              {#each generationHistory as entry (entry.id)}
+                <li class:active={selectedGenerationId === entry.id}>
+                  <button type="button" class="history-select" aria-pressed={selectedGenerationId === entry.id}
+                    on:click={() => selectGeneration(entry)}>
+                    <strong>{entry.label}</strong>
+                    <small>{new Date(entry.createdAt).toLocaleTimeString()} · {localizedTaskLabel(entry.task)}{#if ['gen', 'tts', 'clon', 'vdes'].includes(entry.task)} · Seed {entry.seed}{/if}</small>
+                  </button>
+                  <button type="button" title={`Delete generation ${entry.id}`}
+                    aria-label={`Delete generation ${entry.id}`} on:click={() => deleteGeneration(entry.id)}>Delete</button>
+                </li>
+              {/each}
+            </ul>
+          </details>
+        {/if}
         {#if outputAudio.length}
           <div class="audio-list">
             {#each outputAudio as output}
               <article>
-                <div><strong>{output.id}</strong><a href={output.url} download={`${selected.id}-${output.id}.wav`}>{tr('result.saveWav')}</a></div>
+                <div><strong>{output.id}</strong><a href={output.url} download={`${outputModelId}-${selectedGenerationId || 'output'}-${output.id}.wav`}>{tr('result.saveWav')}</a></div>
                 <audio controls src={output.url}></audio>
               </article>
             {/each}
@@ -2932,7 +3062,7 @@
           <div class="audio-list">
             {#each outputArtifacts as artifact}
               <article>
-                <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${selected.id}-${artifact.id}.${artifact.extension}`}>Save {artifact.extension.toUpperCase()}</a></div>
+                <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${outputModelId}-${selectedGenerationId || 'output'}-${artifact.id}.${artifact.extension}`}>Save {artifact.extension.toUpperCase()}</a></div>
                 {#if artifact.mime.startsWith('video/')}
                   <MediaPreview src={artifact.url} name={`${selected.id}-${artifact.id}.${artifact.extension}`}
                     kind="video" label="Video preview" />
@@ -3104,6 +3234,8 @@
         </div>
       {/each}
     </section>
+  {:else if tab === 'configuration'}
+    <Configuration />
   {:else}
     <section class="page-head"><p class="eyebrow">{tr('runtime.eyebrow')}</p><h1>{tr('runtime.title')}</h1><p>{tr('runtime.subtitle')}</p></section>
     <section class="panel log-panel">
