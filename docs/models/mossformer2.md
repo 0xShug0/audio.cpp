@@ -30,11 +30,12 @@ and audio is resampled to the checkpoint sample rate.
 | Option | Default | Description |
 | --- | --- | --- |
 | `audio_chunk_duration_sec` | `2` | Separation window duration; `0` processes the whole recording. |
+| `audio_chunk_overlap_sec` | `0.5` | Overlap in seconds; recommended 25% of the chunk duration, matching official Python settings. Must be non-negative and smaller than the chunk duration. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference. |
 | `normalize_output` | `true` | Match each trimmed track's RMS to the input, following ClearVoice's NumPy interface. |
 
 ## Long Recordings
 
-The default path uses two-second windows with a 1.5-second hop and trims window
+The default path uses two-second windows with 0.5-second overlap (a 1.5-second hop) and trims window
 edges as in ClearVoice. A session reuses its graph for repeated windows; changing
 the window size replaces that graph rather than retaining multiple graph sizes.
 
@@ -60,3 +61,6 @@ python tests/mossformer2/convert_gguf.py \
 
 The converter discards training optimizer state, embeds the configuration and
 model spec, and verifies every F32 tensor byte against the checkpoint.
+Use `--type f16` and an `-f16.gguf` output name for the smaller package. Small
+affine and positional tensors remain F32 for the elementwise operations; the
+converter verifies the remaining tensors against the F16-rounded source.

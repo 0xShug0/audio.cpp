@@ -41,7 +41,11 @@ public:
             audio.samples, audio.sample_rate, audio.channels, assets_->config.sample_rate);
         if (input.size() < static_cast<size_t>(assets_->config.kernel)) throw std::runtime_error("MossFormer2 audio is shorter than the encoder kernel");
         const auto seconds = runtime::parse_finite_float_option(request.options, {"audio_chunk_duration_sec"}).value_or(2.0f);
+        const auto overlap_seconds = runtime::parse_finite_float_option(request.options, {"audio_chunk_overlap_sec"}).value_or(0.5f);
         if (seconds < 0) throw std::runtime_error("MossFormer2 chunk duration must be non-negative");
+        if (overlap_seconds < 0 || (seconds > 0 && overlap_seconds >= seconds)) {
+            throw std::runtime_error("MossFormer2 chunk overlap must be non-negative and smaller than chunk duration");
+        }
         const int64_t samples = input.size();
         const int64_t window = std::llrint(seconds * assets_->config.sample_rate);
         if (seconds > 0 && window < assets_->config.kernel) throw std::runtime_error("MossFormer2 chunk duration is shorter than the encoder kernel");
@@ -52,7 +56,9 @@ public:
         if (window == 0) {
             outputs = runtime_->separate(input);
         } else {
-            const int64_t stride = window * 3 / 4;
+            const int64_t overlap = std::llrint(double(overlap_seconds) * assets_->config.sample_rate);
+            const int64_t stride = window - overlap;
+            if (stride <= 0) throw std::runtime_error("MossFormer2 chunk overlap leaves no hop samples");
             int64_t padded = samples;
             if (samples < window) padded = window;
             else if (samples < window + stride) padded = window + stride;

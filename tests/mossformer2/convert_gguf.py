@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the official ClearVoice MossFormer2 separation checkpoint as F32 GGUF."""
+"""Package the official ClearVoice MossFormer2 separation checkpoint as GGUF."""
 
 import argparse
 import json
@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--type", choices=("f32", "f16"), default="f32")
     parser.add_argument("--audiocpp-gguf", type=Path, default=ROOT / "build/debug/bin/audiocpp_gguf")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--log", type=Path, required=True)
@@ -52,8 +53,14 @@ def main():
         save_file(state, staging / "model.safetensors")
         (staging / "config.json").write_text(json.dumps(config, indent=2) + "\n")
         command = [str(args.audiocpp_gguf.resolve()), "--input", f"weights={staging / 'model.safetensors'}",
-                   "--output", str(args.output.resolve()), "--type", "orig", "--family", "mossformer2",
+                   "--output", str(args.output.resolve()), "--type", "orig" if args.type == "f32" else args.type, "--family", "mossformer2",
                    "--model-spec", str(ROOT / "model_specs/mossformer2.json"), "--root", str(staging)]
+        # Affine and positional tensors feed F32 elementwise operations.
+        keep_f32 = {key for key, value in state.items()
+                    if value.ndim < 2 or ".qk_offset_scale." in key}
+        if args.type == "f16":
+            for key in sorted(keep_f32):
+                command.extend(["--keep-type", f"weights/{key}=f32"])
         if args.overwrite:
             command.append("--overwrite")
         logging.info("command=%s", command)
@@ -67,9 +74,11 @@ def main():
         raise ValueError("GGUF tensor names differ from checkpoint")
     for name, tensor in zip(names, reader.tensors):
         original = expected[name]
+        if args.type == "f16" and name.removeprefix("weights/") not in keep_f32:
+            original = original.astype(np.float16)
         if not np.array_equal(tensor.data.reshape(-1).view(np.uint8), original.reshape(-1).view(np.uint8)):
             raise ValueError(f"GGUF tensor bytes differ: {name}")
-    logging.info("Verified %d original F32 tensors byte-exact", len(expected))
+    logging.info("Verified %d tensors against source with %s conversion", len(expected), args.type)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,14 @@
         "required": false
       },
       {
+        "name": "audio_chunk_overlap_sec",
+        "type": "float",
+        "description": "Overlap between adjacent audio chunks, in seconds. Recommended: 25% of audio_chunk_duration_sec, matching the official Python settings. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference.",
+        "min": 0,
+        "default": 0.5,
+        "required": false
+      },
+      {
         "name": "normalize_output",
         "type": "bool",
         "description": "Match each trimmed track RMS to the input as in ClearVoice's NumPy interface.",
@@ -63,6 +71,18 @@
       "target_directory": "MossFormer2-GGUF",
       "files": [
         "MossFormer2-GGUF/mossformer2-ss-16k-f32.gguf"
+      ],
+      "strip_prefix": "MossFormer2-GGUF"
+    },
+    {
+      "id": "mossformer2_ss_16k_f16",
+      "display_name": "MossFormer2 SS 16K F16",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "MossFormer2-GGUF",
+      "files": [
+        "MossFormer2-GGUF/mossformer2-ss-16k-f16.gguf"
       ],
       "strip_prefix": "MossFormer2-GGUF"
     }
