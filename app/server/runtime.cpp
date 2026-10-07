@@ -1344,6 +1344,10 @@ HttpResponse ServerState::handle_request(const HttpRequest & request, bool use_f
     // there. Checked before ServerBusyError only because both are
     // runtime_error; the two conditions are disjoint.
     response = error_response(400, ex.what(), "invalid_request_error");
+  } catch (const engine::runtime::InvalidRequestError & ex) {
+    // A request turned away as sent, such as an input the model does not
+    // take: the caller's to fix as well.
+    response = error_response(400, ex.what(), "invalid_request_error");
   } catch (const InsufficientMemoryError & ex) {
     response = error_response(503, ex.what(), "insufficient_memory");
   } catch (const ServerBusyError & ex) {
