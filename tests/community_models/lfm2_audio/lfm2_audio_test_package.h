@@ -10,6 +10,7 @@
 #include <gguf.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -409,6 +410,117 @@ inline void write_mmproj(
     gguf.set_u32("clip.audio.attention.head_count", static_cast<uint32_t>(shape.heads));
     gguf.set_f32("clip.audio.attention.layer_norm_epsilon", 1e-5f);
 
+    gguf.add(tensors);
+    gguf.write(path);
+}
+
+// The depthformer of a vocoder GGUF.
+struct DepthformerShape {
+    int64_t hidden = 8;
+    int64_t layers = 1;
+    int64_t head_dim = 4;
+    int64_t kv_heads = 1;
+    int64_t intermediate = 8;
+    int64_t codebooks = 2;
+    int64_t audio_vocab = 9;  // the codes and end-of-audio, the last
+};
+
+// The detokenizer GGUF's LFM2 hybrid and the ISTFT it feeds. Its codes are
+// embedded with the vocoder GGUF's emb.emb, and its window is there too.
+struct DetokenizerShape {
+    BackboneShape lfm;
+    int64_t sliding_window = 4;
+    int64_t n_fft = 1280;  // hop 320 and upsampling 6 are fixed
+};
+
+// What speech output reads from the vocoder GGUF: the depthformer, which
+// takes the backbone's `backbone_hidden`-wide output, the detokenizer's code
+// embedding and the ISTFT window (periodic Hann, as torch.hann_window).
+inline TensorMap vocoder_tensors(const DepthformerShape & shape, int64_t backbone_hidden, const DetokenizerShape & detokenizer, const Fill & fill) {
+    const int64_t d = shape.hidden;
+    const int64_t hd = shape.head_dim;
+    TensorMap out;
+    const auto add = [&](const std::string & name, std::vector<int64_t> dims) { out[name] = make_tensor(name, std::move(dims), fill); };
+    add("depth_linear.weight", {shape.codebooks * d, backbone_hidden});
+    add("depth_linear.bias", {shape.codebooks * d});
+    for (int64_t layer = 0; layer < shape.layers; ++layer) {
+        const std::string p = "depthformer.layers." + std::to_string(layer) + ".";
+        add(p + "operator_norm.weight", {d});
+        add(p + "operator.qkv_proj.weight", {d + 2 * shape.kv_heads * hd, d});
+        add(p + "operator.out_proj.weight", {d, d});
+        add(p + "operator.attention.q_layernorm.weight", {hd});
+        add(p + "operator.attention.k_layernorm.weight", {hd});
+        add(p + "ffn_norm.weight", {d});
+        add(p + "feed_forward.w1.weight", {shape.intermediate, d});
+        add(p + "feed_forward.w3.weight", {shape.intermediate, d});
+        add(p + "feed_forward.w2.weight", {d, shape.intermediate});
+    }
+
+    for (int64_t codebook = 0; codebook < shape.codebooks; ++codebook) {
+        const std::string p = "depth_embeddings." + std::to_string(codebook) + ".";
+        add(p + "embedding.weight", {shape.audio_vocab, d});
+        add(p + "embedding_norm.weight", {d});
+        add(p + "to_logits.weight", {shape.audio_vocab, d});
+    }
+
+    add("emb.emb.weight", {shape.codebooks * (shape.audio_vocab - 1), detokenizer.lfm.hidden});
+    auto & window = out["istft.window"];
+    window.shape = {detokenizer.n_fft};
+    for (int64_t i = 0; i < detokenizer.n_fft; ++i) {
+        window.values.push_back(static_cast<float>(0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * static_cast<double>(i) /
+                                                                       static_cast<double>(detokenizer.n_fft))));
+    }
+
+    return out;
+}
+
+// Without interleaved block sizes the English defaults, 6 and 12, apply.
+inline void write_vocoder(
+    const std::filesystem::path & path,
+    const DepthformerShape & shape,
+    const TensorMap & tensors,
+    int64_t interleaved_text = 0,
+    int64_t interleaved_audio = 0) {
+    GgufWriter gguf;
+    gguf.set_u32("depthformer_n_layer", static_cast<uint32_t>(shape.layers));
+    gguf.set_u32("depthformer_n_embd", static_cast<uint32_t>(shape.hidden));
+    if (interleaved_text > 0) {
+        gguf.set_u32("interleaved_n_text", static_cast<uint32_t>(interleaved_text));
+    }
+
+    if (interleaved_audio > 0) {
+        gguf.set_u32("interleaved_n_audio", static_cast<uint32_t>(interleaved_audio));
+    }
+
+    gguf.add(tensors);
+    gguf.write(path);
+}
+
+// The detokenizer's LFM2 layers, its unused text embedding and the head to
+// log-magnitude and phase.
+inline TensorMap detokenizer_tensors(const DetokenizerShape & shape, const Fill & fill) {
+    auto out = backbone_tensors(shape.lfm, 16, fill);
+    const int64_t bins = shape.n_fft + 2;
+    out["dense_2.weight"] = make_tensor("dense_2.weight", {bins, shape.lfm.hidden}, fill);
+    out["dense_2.bias"] = make_tensor("dense_2.bias", {bins}, fill);
+    return out;
+}
+
+inline void write_detokenizer(const std::filesystem::path & path, const DetokenizerShape & shape, const TensorMap & tensors) {
+    const auto & lfm = shape.lfm;
+    GgufWriter gguf;
+    gguf.set("general.architecture", "lfm2");
+    gguf.set_u32("lfm2.block_count", static_cast<uint32_t>(lfm.kv_heads.size()));
+    gguf.set_u32("lfm2.embedding_length", static_cast<uint32_t>(lfm.hidden));
+    gguf.set_u32("lfm2.feed_forward_length", static_cast<uint32_t>(lfm.intermediate));
+    gguf.set_u32("lfm2.attention.head_count", static_cast<uint32_t>(lfm.heads));
+    gguf.set_u32("lfm2.context_length", static_cast<uint32_t>(lfm.context));
+    gguf.set_u32("lfm2.shortconv.l_cache", static_cast<uint32_t>(lfm.kernel));
+    gguf.set_f32("lfm2.attention.layer_norm_rms_epsilon", lfm.rms_eps);
+    gguf.set_f32("lfm2.rope.freq_base", lfm.rope_theta);
+    gguf.set_i32_array("lfm2.attention.head_count_kv", lfm.kv_heads);
+    gguf.set_u32("lfm2.attention.sliding_window", static_cast<uint32_t>(shape.sliding_window));
+    gguf.set_u32("lfm2.embedding_length_out", static_cast<uint32_t>(shape.n_fft + 2));
     gguf.add(tensors);
     gguf.write(path);
 }
