@@ -153,7 +153,7 @@ std::shared_ptr<const Lfm2AudioComponents> select_components(
 void reject_options(const runtime::TaskRequest & request, std::initializer_list<const char *> names, const char * task) {
     for (const char * name : names) {
         if (request.options.count(name) != 0) {
-            throw std::runtime_error(std::string("LFM2-Audio ") + task + " does not take request option " + name);
+            throw runtime::InvalidRequestError(std::string("LFM2-Audio ") + task + " does not take request option " + name);
         }
     }
 }
@@ -162,7 +162,8 @@ void reject_options(const runtime::TaskRequest & request, std::initializer_list<
 void reject_history(const runtime::TaskRequest & request, const char * task) {
     for (const auto & artifact : request.input_artifacts) {
         if (artifact.id.rfind("lfm2_audio.", 0) == 0) {
-            throw std::runtime_error(std::string("LFM2-Audio ") + task + " takes no conversation history, so no " + artifact.id + " artifact");
+            throw runtime::InvalidRequestError(std::string("LFM2-Audio ") + task + " takes no conversation history, so no " + artifact.id +
+                                               " artifact");
         }
     }
 }
@@ -853,7 +854,12 @@ Lfm2AudioChatSession::RequestOptions Lfm2AudioChatSession::parse_request(const r
     out.stream_frames_per_event =
         runtime::parse_positive_i64_option(request.options, {"stream_frames_per_event"}, kDefaultStreamFramesPerEvent);
     if (const auto value = runtime::find_option(request.options, {"return_codes"})) {
-        out.return_codes = runtime::parse_bool_option(*value, "return_codes");
+        // The parser's only runtime_error is a value it does not read.
+        try {
+            out.return_codes = runtime::parse_bool_option(*value, "return_codes");
+        } catch (const std::runtime_error & error) {
+            throw runtime::InvalidRequestError(error.what());
+        }
     }
 
     // Read here, so that a stream turns away bad history before its audio

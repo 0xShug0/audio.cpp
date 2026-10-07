@@ -84,10 +84,10 @@ struct Lfm2ReplyCheckpoint {
 runtime::VoiceArtifact make_lfm2_reply_artifact(
     const std::vector<Lfm2ReplyStep> & reply, bool ended, const Lfm2ReplyCheckpoint & checkpoint);
 
-// The steps of a reply artifact. Throws unless its kind, format and meta are
-// the ones make_lfm2_reply_artifact writes for `checkpoint`, with no other
-// meta, and its payload holds `steps` whole steps of tokens and codes in
-// range.
+// The steps of a reply artifact. Throws InvalidRequestError unless its kind,
+// format and meta are the ones make_lfm2_reply_artifact writes for
+// `checkpoint`, with no other meta, and its payload holds `steps` whole steps
+// of tokens and codes in range.
 std::vector<Lfm2ReplyStep> read_lfm2_reply_artifact(const runtime::VoiceArtifact & artifact, const Lfm2ReplyCheckpoint & checkpoint);
 
 // An earlier turn as a request carries it.
@@ -97,11 +97,12 @@ struct Lfm2ConversationTurn {
 };
 
 // The earlier turns in a request's input artifacts: a question and then a
-// reply for each turn, in order. Throws on any other artifact, on one out of
-// turn, on a question without its reply, and on a question or reply that does
-// not read. The replies are counted from their meta before their payloads
-// are read, and once they leave no room for max_tokens this throws, as
-// require_lfm2_conversation_room, without reading further.
+// reply for each turn, in order. Throws InvalidRequestError on any other
+// artifact, on one out of turn, on a question without its reply, and on a
+// question or reply that does not read. The replies are counted from their
+// meta before their payloads are read, and once they leave no room for
+// max_tokens this throws CapacityError, as require_lfm2_conversation_room,
+// without reading further.
 std::vector<Lfm2ConversationTurn> read_lfm2_conversation(
     const std::vector<runtime::VoiceArtifact> & artifacts, const Lfm2ReplyCheckpoint & checkpoint, int64_t max_tokens);
 

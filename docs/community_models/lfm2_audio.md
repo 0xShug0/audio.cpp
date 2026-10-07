@@ -319,6 +319,9 @@ artifact holds ids and codes only, so it replays on any quantization of the
 same checkpoint. A reply from the other checkpoint or in another format
 version is rejected, and so are artifacts out of turn, artifacts with other
 ids, meta the format does not have and a question that does not read as WAV.
+These are errors in the request, as are a `return_codes` that is neither true
+nor false and history or `return_codes` sent to ASR or TTS: the server answers
+each with 400 (`invalid_request_error`).
 
 The system prompt, `text_input` or the default, applies to the whole
 conversation, so send the same one every turn. A turn's reply depends only on

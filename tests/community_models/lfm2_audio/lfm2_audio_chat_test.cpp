@@ -32,7 +32,6 @@ namespace lfm2 = engine::community_models::lfm2_audio;
 namespace runtime = engine::runtime;
 using engine::test::require;
 using engine::test::require_eq;
-using lfm2_audio_test::require_throws_with;
 
 // `fn` throws CapacityError, with `needle` in its message.
 template <typename Fn>
@@ -46,6 +45,38 @@ void require_capacity_error(Fn && fn, const std::string & needle, const std::str
     }
 
     require(false, label + " must throw CapacityError");
+}
+
+// `fn` throws InvalidRequestError, which a server answers with 400, with
+// `needle` in its message: a request the caller has to fix.
+template <typename Fn>
+void require_request_error(Fn && fn, const std::string & needle, const std::string & label) {
+    try {
+        fn();
+    } catch (const runtime::InvalidRequestError & error) {
+        const std::string message = error.what();
+        require(message.find(needle) != std::string::npos, label + " threw \"" + message + "\", expected \"" + needle + "\"");
+        return;
+    }
+
+    require(false, label + " must throw InvalidRequestError");
+}
+
+// `fn` throws, with `needle` in its message, but not InvalidRequestError: a
+// fault of the code that called it, not of a request.
+template <typename Fn>
+void require_internal_error(Fn && fn, const std::string & needle, const std::string & label) {
+    try {
+        fn();
+    } catch (const runtime::InvalidRequestError & error) {
+        require(false, label + " threw InvalidRequestError: " + error.what());
+    } catch (const std::exception & error) {
+        const std::string message = error.what();
+        require(message.find(needle) != std::string::npos, label + " threw \"" + message + "\", expected \"" + needle + "\"");
+        return;
+    }
+
+    require(false, label + " must throw");
 }
 
 lfm2::Lfm2TextVocabulary text_vocabulary() {
@@ -159,12 +190,13 @@ void test_later_turns() {
     require_eq(spell(vocab, lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {{1, {}}}, 1)),
         kOpening + " <audio> " + kAnswer + " " + kNextUser + " <audio> " + kAnswer, "an empty reply");
 
-    require_throws_with([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {}, 0); }, "needs its question's audio", "a question without audio");
-    require_throws_with([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {{0, first}}, 1); }, "needs its question's audio",
+    require_internal_error([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {}, 0); }, "needs its question's audio",
+        "a question without audio");
+    require_internal_error([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {{0, first}}, 1); }, "needs its question's audio",
         "an earlier question without audio");
-    require_throws_with([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {{1, {frame({1, 2}), frame({1, 2, 3})}}}, 1); },
+    require_internal_error([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {{1, {frame({1, 2}), frame({1, 2, 3})}}}, 1); },
         "one code per codebook", "frames of different sizes");
-    require_throws_with([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {{1, {lfm2::Lfm2ReplyStep{}}}}, 1); },
+    require_internal_error([&] { (void)lfm2::make_lfm2_chat_prompt(tokenizer, kSystem, {{1, {lfm2::Lfm2ReplyStep{}}}}, 1); },
         "neither a token nor codes", "a step with nothing in it");
 }
 
@@ -212,18 +244,19 @@ void test_reply_artifact() {
     require_eq(lfm2::make_lfm2_reply_artifact(reply, false, kCheckpoint).meta.at("ended"), std::string("false"), "a cut reply");
     require(lfm2::read_lfm2_reply_artifact(lfm2::make_lfm2_reply_artifact({}, false, kCheckpoint), kCheckpoint).empty(), "an empty reply");
 
-    // Only replies the checkpoint could have written.
-    require_throws_with([&] { (void)lfm2::make_lfm2_reply_artifact({frame({1, 2, 3})}, true, kCheckpoint); }, "one code per codebook",
+    // Only replies the checkpoint could have written. Writing one it could
+    // not is the model's fault; reading one is the request's.
+    require_internal_error([&] { (void)lfm2::make_lfm2_reply_artifact({frame({1, 2, 3})}, true, kCheckpoint); }, "one code per codebook",
         "writing a frame of three codes");
-    require_throws_with([&] { (void)lfm2::make_lfm2_reply_artifact({frame({1, 9})}, true, kCheckpoint); }, "audio code 9",
+    require_internal_error([&] { (void)lfm2::make_lfm2_reply_artifact({frame({1, 9})}, true, kCheckpoint); }, "audio code 9",
         "writing a code outside the codebook");
-    require_throws_with([&] { (void)lfm2::make_lfm2_reply_artifact({text(265)}, true, kCheckpoint); }, "token id 265",
+    require_internal_error([&] { (void)lfm2::make_lfm2_reply_artifact({text(265)}, true, kCheckpoint); }, "token id 265",
         "writing a token outside the vocabulary");
 
     const auto rejects = [&](const std::function<void(runtime::VoiceArtifact &)> & edit, const std::string & needle, const std::string & label) {
         auto changed = artifact;
         edit(changed);
-        require_throws_with([&] { (void)lfm2::read_lfm2_reply_artifact(changed, kCheckpoint); }, needle, label);
+        require_request_error([&] { (void)lfm2::read_lfm2_reply_artifact(changed, kCheckpoint); }, needle, label);
     };
     rejects([](auto & a) { a.id = "lfm2_audio.question"; }, "not an lfm2_audio.reply artifact", "another id");
     rejects([](auto & a) { a.kind = runtime::ArtifactKind::Custom; }, "kind acoustic_tokens", "another kind");
@@ -326,7 +359,7 @@ void test_conversation() {
     require(same_steps(turns[0].reply, sample_reply()) && same_steps(turns[1].reply, {text(77), frame({1, 1})}), "the replies");
 
     const auto rejects = [&](const std::vector<runtime::VoiceArtifact> & artifacts, const std::string & needle, const std::string & label) {
-        require_throws_with([&] { (void)lfm2::read_lfm2_conversation(artifacts, kCheckpoint, kMaxTokens); }, needle, label);
+        require_request_error([&] { (void)lfm2::read_lfm2_conversation(artifacts, kCheckpoint, kMaxTokens); }, needle, label);
     };
     const auto q = question({1, 2});
     rejects({reply}, "input artifact 1 (lfm2_audio.reply) has no question before it", "a reply first");
@@ -362,7 +395,7 @@ void test_conversation() {
     long_reply.meta["steps"] = "8000";
     long_reply.payload.resize(2);
     capacity({q, long_reply}, kMaxTokens, "needs at least 8000 prompt steps plus max_tokens=1024, more than the 8192", "a reply too long to read");
-    require_throws_with([&] { (void)lfm2::read_lfm2_conversation({q, long_reply}, kCheckpoint, 1); }, "payload is 2 bytes, not whole int32 values",
+    require_request_error([&] { (void)lfm2::read_lfm2_conversation({q, long_reply}, kCheckpoint, 1); }, "payload is 2 bytes, not whole int32 values",
         "the same reply with room for it");
     // The replies add up: 5 steps each, with room for 9.
     require_eq(lfm2::read_lfm2_conversation({q, reply}, kCheckpoint, 8192 - 9).size(), size_t{1}, "one reply in the room");
@@ -879,7 +912,7 @@ void test_streamed_turns(const Package & package, const Turns & turns) {
 
     auto unknown = ask(turns.q2, "9", turns.after_first());
     unknown.input_artifacts.push_back(runtime::make_text_artifact(runtime::ArtifactKind::Custom, "voice.state", "x"));
-    require_throws_with([&] { s2s.start_stream(unknown); }, "not input artifact 3 (voice.state)", "a stream with an unknown artifact");
+    require_request_error([&] { s2s.start_stream(unknown); }, "not input artifact 3 (voice.state)", "a stream with an unknown artifact");
 
     // So does a conversation whose replies and markup alone pass the limit.
     const auto text_steps = text_steps_after(turns.first);
@@ -893,7 +926,7 @@ void test_rejects(const Package & package, const Turns & turns) {
     auto session = open(package);
     auto & s2s = offline(*session);
     const auto rejects = [&](runtime::TaskRequest request, const std::string & needle, const std::string & label) {
-        require_throws_with([&] { (void)s2s.run(request); }, needle, label);
+        require_request_error([&] { (void)s2s.run(request); }, needle, label);
     };
 
     auto unknown = ask(turns.q2, "9", turns.after_first());
@@ -968,20 +1001,20 @@ void test_rejects(const Package & package, const Turns & turns) {
     auto heard = ask(turns.q1, "7", {}, false);
     heard.options.erase("seed");
     heard.options["return_codes"] = "true";
-    require_throws_with([&] { (void)offline(*asr).run(heard); }, "ASR does not take request option return_codes", "ASR with return_codes");
+    require_request_error([&] { (void)offline(*asr).run(heard); }, "ASR does not take request option return_codes", "ASR with return_codes");
     heard.options.erase("return_codes");
     heard.input_artifacts = turns.after_first();
-    require_throws_with([&] { (void)offline(*asr).run(heard); }, "ASR takes no conversation history, so no lfm2_audio.question artifact",
+    require_request_error([&] { (void)offline(*asr).run(heard); }, "ASR takes no conversation history, so no lfm2_audio.question artifact",
         "ASR with history");
 
     auto tts = open(package, runtime::VoiceTaskKind::Tts);
     runtime::TaskRequest spoken;
     spoken.text_input = runtime::Transcript{"hi", "en"};
     spoken.options["return_codes"] = "true";
-    require_throws_with([&] { (void)offline(*tts).run(spoken); }, "TTS does not take request option return_codes", "TTS with return_codes");
+    require_request_error([&] { (void)offline(*tts).run(spoken); }, "TTS does not take request option return_codes", "TTS with return_codes");
     spoken.options.clear();
     spoken.input_artifacts = {turns.first.artifact()};
-    require_throws_with([&] { (void)offline(*tts).run(spoken); }, "TTS takes no conversation history, so no lfm2_audio.reply artifact",
+    require_request_error([&] { (void)offline(*tts).run(spoken); }, "TTS takes no conversation history, so no lfm2_audio.reply artifact",
         "TTS with history");
 }
 
