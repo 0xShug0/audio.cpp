@@ -1935,6 +1935,18 @@ audiocpp_add_model(niagara_asr
         engine::models::niagara_asr::make_niagara_asr_loader
 )
 
+audiocpp_add_model(whistle_asr
+    SOURCES
+        src/community_models/whistle_asr/assets.cpp
+        src/community_models/whistle_asr/frontend.cpp
+        src/community_models/whistle_asr/runtime.cpp
+        src/community_models/whistle_asr/session.cpp
+    INCLUDES
+        engine/community_models/whistle_asr/session.h
+    LOADERS
+        engine::community_models::whistle_asr::make_whistle_asr_loader
+)
+
 audiocpp_add_model(audio8_asr
     SOURCES
         src/community_models/audio8_asr/assets.cpp
@@ -3003,6 +3015,39 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_executable(${target} ${source})
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
+
+    if (whistle_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(whistle_frontend_test
+            tests/whistle_asr/test_frontend.cpp
+            src/community_models/whistle_asr/frontend.cpp)
+        target_link_libraries(whistle_frontend_test PRIVATE engine_runtime ggml)
+        add_test(NAME whistle_frontend_test COMMAND whistle_frontend_test)
+
+        add_executable(whistle_tokenizer_test
+            tests/whistle_asr/test_tokenizer.cpp
+            src/community_models/whistle_asr/assets.cpp)
+        target_link_libraries(whistle_tokenizer_test PRIVATE engine_runtime ggml)
+        add_test(NAME whistle_tokenizer_test COMMAND whistle_tokenizer_test)
+
+        add_executable(whistle_assets_test
+            tests/whistle_asr/test_assets.cpp
+            src/community_models/whistle_asr/assets.cpp
+            src/community_models/whistle_asr/frontend.cpp
+            src/community_models/whistle_asr/runtime.cpp)
+        target_link_libraries(whistle_assets_test PRIVATE engine_runtime ggml)
+        set(AUDIOCPP_WHISTLE_TEST_MODEL "" CACHE FILEPATH "Locally converted Whistle GGUF for integration tests")
+        if (AUDIOCPP_WHISTLE_TEST_MODEL)
+            add_test(NAME whistle_asr_integration COMMAND whistle_assets_test
+                "${AUDIOCPP_WHISTLE_TEST_MODEL}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
+                "Some call me Nature.")
+            add_test(NAME whistle_asr_full_integration COMMAND whistle_assets_test
+                "${AUDIOCPP_WHISTLE_TEST_MODEL}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
+                "Some call me Nature. Others call me Mother Nature. I've been here for over 4.5 billion years, twenty two thousand five hundred times longer than you."
+                --full)
+        endif()
+    endif()
 
     add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
