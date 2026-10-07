@@ -8,14 +8,16 @@
 namespace engine::community_models::whistle_asr {
 namespace {
 
-runtime::SessionOptions require_cpu_offline(
+runtime::SessionOptions require_supported_session(
     const runtime::TaskSpec & task, runtime::SessionOptions options,
     const std::shared_ptr<const engine::model_spec::ModelContract> & contract) {
     if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
         throw std::invalid_argument("Whistle currently supports offline ASR only");
     }
-    if (options.backend.type != engine::core::BackendType::Cpu) {
-        throw std::invalid_argument("Whistle currently supports CPU inference only");
+    // The encoder graph is validated against the host reference on these backends only.
+    if (options.backend.type != engine::core::BackendType::Cpu &&
+        options.backend.type != engine::core::BackendType::Metal) {
+        throw std::invalid_argument("Whistle currently supports the CPU and Metal backends only");
     }
     if (!contract) {
         throw std::invalid_argument("Whistle needs a model specification");
@@ -31,10 +33,10 @@ WhistleAsrSession::WhistleAsrSession(
     runtime::SessionOptions options,
     std::shared_ptr<const WhistleAssets> assets,
     std::shared_ptr<const engine::model_spec::ModelContract> contract)
-    : RuntimeSessionBase(require_cpu_offline(task, options, contract)),
+    : RuntimeSessionBase(require_supported_session(task, options, contract)),
       task_(task),
       contract_(std::move(contract)),
-      runtime_(std::move(assets), options.backend.threads) {}
+      runtime_(std::move(assets), execution_context()) {}
 
 std::string WhistleAsrSession::family() const { return "whistle_asr"; }
 runtime::VoiceTaskKind WhistleAsrSession::task_kind() const { return task_.task; }

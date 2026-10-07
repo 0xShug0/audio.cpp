@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/audio/nemo_mel_frontend.h"
+
 #include <cstddef>
 #include <vector>
 
@@ -10,6 +12,8 @@ struct MelFeatures {
     size_t frames = 0;
 };
 
+// Whistle log-mel features: the shared NemoMelFrontend STFT/mel/normalization
+// path with Whistle's percentile gain normalization applied locally first.
 class WhistleFrontend {
 public:
     explicit WhistleFrontend(std::vector<float> filterbank);
@@ -18,7 +22,7 @@ public:
     [[nodiscard]] MelFeatures extract(const std::vector<float> & samples) const;
 
 private:
-    std::vector<float> filterbank_;
+    audio::NemoMelFrontend frontend_;
 };
 
 }  // namespace engine::community_models::whistle_asr

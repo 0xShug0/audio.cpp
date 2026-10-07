@@ -2,14 +2,14 @@
   "schema_version": 1,
   "family": "whistle_asr",
   "display_name": "Whistle ASR",
-  "description": "Whistle offline speech recognition with locally converted FP32 GGUF weights on CPU.",
+  "description": "Whistle offline speech recognition with locally converted FP32 GGUF weights on CPU or Metal.",
   "category": "asr",
   "status": "experimental",
   "tasks": ["asr"],
   "modes": ["offline"],
   "languages": ["en", "de", "fr", "es", "it", "nl", "pl"],
   "runtime": {
-    "tags": ["gguf", "cpu"]
+    "tags": ["gguf", "cpu", "metal"]
   },
   "capabilities": {},
   "options": {

@@ -1,5 +1,6 @@
 #include "engine/community_models/whistle_asr/runtime.h"
 
+#include "engine/community_models/whistle_asr/encoder.h"
 #include "engine/community_models/whistle_asr/frontend.h"
 
 #include <algorithm>
@@ -19,6 +20,8 @@
 
 namespace engine::community_models::whistle_asr {
 
+// Decoder weights stay on the host: the autoregressive decoder runs one token at a
+// time on the CPU, while the encoder weights live in the backend weight store.
 class WhistleWeights {
 public:
     explicit WhistleWeights(const assets::TensorSource & source) {
@@ -26,6 +29,9 @@ public:
             if (metadata.dtype != "f32" && metadata.dtype != "F32" &&
                 metadata.dtype != "float32") {
                 throw std::runtime_error("Whistle currently requires FP32 checkpoint tensors");
+            }
+            if (!is_decoder_tensor(metadata.name)) {
+                continue;
             }
             auto values = source.require_f32(metadata.name, metadata.shape);
             tensors_.emplace(metadata.name, Tensor{metadata.shape, std::move(values)});
@@ -55,6 +61,19 @@ public:
     }
 
 private:
+    static bool is_decoder_tensor(const std::string & name) {
+        static constexpr std::array<const char *, 3> kEncoderOwned = {
+            "stack/layers/block/cross_attn/k_proj/kernel",
+            "stack/layers/block/cross_attn/k_norm/scale",
+            "stack/layers/block/cross_attn/v_proj/kernel",
+        };
+        if (std::find(kEncoderOwned.begin(), kEncoderOwned.end(), name) != kEncoderOwned.end()) {
+            return false;
+        }
+        return name.rfind("stack/", 0) == 0 || name.rfind("embedding/", 0) == 0 ||
+            name.rfind("engrams_", 0) == 0;
+    }
+
     struct Tensor {
         std::vector<int64_t> shape;
         std::vector<float> values;
@@ -356,90 +375,6 @@ Rows mhc(const Rows & state, size_t frames, const WhistleWeights & weights,
     return next;
 }
 
-struct Grid {
-    size_t height;
-    size_t width;
-    size_t channels;
-    Rows values;
-};
-
-Grid stem_conv(const Grid & input, View kernel, size_t output_channels, bool depthwise) {
-    if (kernel.shape != std::vector<int64_t>({3, 3, 1, static_cast<int64_t>(output_channels)}) ||
-        (!depthwise && input.channels != 1) || (depthwise && input.channels != output_channels)) {
-        throw std::runtime_error("Whistle convolution shape mismatch");
-    }
-    Grid result{(input.height + 1) / 2, (input.width + 1) / 2,
-        output_channels, Rows((input.height + 1) / 2 * ((input.width + 1) / 2) * output_channels)};
-#ifdef _OPENMP
-#pragma omp parallel for if(result.height > 8)
-#endif
-    for (int64_t row = 0; row < static_cast<int64_t>(result.height); ++row) {
-        for (size_t col = 0; col < result.width; ++col) {
-            for (size_t channel = 0; channel < output_channels; ++channel) {
-                float sum = 0.0f;
-                for (int dr = -1; dr <= 1; ++dr) {
-                    const auto source_row = row * 2 + dr;
-                    if (source_row < 0 || static_cast<size_t>(source_row) >= input.height) {
-                        continue;
-                    }
-                    for (int dc = -1; dc <= 1; ++dc) {
-                        const auto source_col = static_cast<int64_t>(col * 2) + dc;
-                        if (source_col < 0 || static_cast<size_t>(source_col) >= input.width) {
-                            continue;
-                        }
-                        sum += input.values[
-                            (static_cast<size_t>(source_row) * input.width +
-                            static_cast<size_t>(source_col)) * input.channels +
-                            (depthwise ? channel : 0)] *
-                            kernel.values[((dr + 1) * 3 + (dc + 1)) * output_channels + channel];
-                    }
-                }
-                result.values[(static_cast<size_t>(row) * result.width + col) *
-                    output_channels + channel] = sum;
-            }
-        }
-    }
-    return result;
-}
-
-Rows stem(const MelFeatures & mel, const WhistleWeights & weights) {
-    if (mel.values.size() != mel.frames * 80) {
-        throw std::runtime_error("Whistle mel features have the wrong shape");
-    }
-    Grid grid{mel.frames, 80, 1, mel.values};
-    grid = stem_conv(grid, require(weights, "stem/w", {3, 3, 1, 128}), 128, false);
-    for (float & value : grid.values) {
-        value *= sigmoid(value);
-    }
-    grid = stem_conv(grid, require(weights, "stem/dw_1", {3, 3, 1, 128}), 128, true);
-    grid.values = linear(grid.values, grid.height * grid.width, 128,
-        require(weights, "stem/pw_1/kernel", {128, 128}));
-    for (float & value : grid.values) {
-        value *= sigmoid(value);
-    }
-    grid = stem_conv(grid, require(weights, "stem/dw_2", {3, 3, 1, 128}), 128, true);
-    grid.values = linear(grid.values, grid.height * grid.width, 128,
-        require(weights, "stem/pw_2/kernel", {128, 128}));
-    for (float & value : grid.values) {
-        value *= sigmoid(value);
-    }
-    if (grid.width != 10) {
-        throw std::runtime_error("Whistle stem has an unexpected mel width");
-    }
-    Rows flattened(grid.height * 1280);
-    // The trained stem flattens channels before mel-width bins, not the convolution layout.
-    for (size_t frame = 0; frame < grid.height; ++frame) {
-        for (size_t channel = 0; channel < 128; ++channel) {
-            for (size_t column = 0; column < 10; ++column) {
-                flattened[frame * 1280 + channel * 10 + column] =
-                    grid.values[(frame * 10 + column) * 128 + channel];
-            }
-        }
-    }
-    return linear(flattened, grid.height, 1280,
-        require(weights, "stem/out/kernel", {1280, 512}));
-}
-
 void apply_rope(Rows & values, size_t frames, size_t heads, size_t offset = 0) {
     const float theta = static_cast<float>(-std::log(100000.0) / 48.0);
     for (size_t frame = 0; frame < frames; ++frame) {
@@ -456,178 +391,6 @@ void apply_rope(Rows & values, size_t frames, size_t heads, size_t offset = 0) {
             }
         }
     }
-}
-
-Rows encoder_attention(const Rows & input, size_t frames,
-                       const WhistleWeights & weights, int layer) {
-    const std::string prefix = "encoder/layers/block/self_attn/";
-    Rows q = linear(input, frames, 512,
-        require(weights, prefix + "q_proj/kernel", {512, 384}, layer));
-    Rows k = linear(input, frames, 512,
-        require(weights, prefix + "k_proj/kernel", {512, 96}, layer));
-    Rows v = linear(input, frames, 512,
-        require(weights, prefix + "v_proj/kernel", {512, 128}, layer));
-    normalize(q, frames * 8, 48,
-        require(weights, prefix + "q_norm/scale", {48}, layer).values);
-    normalize(k, frames * 2, 48,
-        require(weights, prefix + "k_norm/scale", {48}, layer).values);
-    apply_rope(q, frames, 8);
-    apply_rope(k, frames, 2);
-    Rows context(frames * 512);
-#ifdef _OPENMP
-#pragma omp parallel for if(frames > 8)
-#endif
-    for (int64_t work = 0; work < static_cast<int64_t>(frames * 8); ++work) {
-        const size_t time = static_cast<size_t>(work) / 8;
-        const size_t head = static_cast<size_t>(work) % 8;
-        const size_t kv = head / 4;
-        std::vector<float> scores(frames);
-        const float * query = q.data() + (time * 8 + head) * 48;
-        for (size_t frame = 0; frame < frames; ++frame) {
-            const float * key = k.data() + (frame * 2 + kv) * 48;
-            float score = 0.0f;
-            for (size_t col = 0; col < 48; ++col) {
-                score += query[col] * key[col];
-            }
-            scores[frame] = score * (1.0f / std::sqrt(48.0f));
-        }
-        softmax(scores.data(), frames);
-        float * out = context.data() + time * 512 + head * 64;
-        for (size_t frame = 0; frame < frames; ++frame) {
-            const float * value = v.data() + (frame * 2 + kv) * 64;
-            for (size_t col = 0; col < 64; ++col) {
-                out[col] += scores[frame] * value[col];
-            }
-        }
-    }
-    const Rows gates = linear(input, frames, 512,
-        require(weights, prefix + "gate_proj/kernel", {512, 512}, layer));
-    for (size_t index = 0; index < context.size(); ++index) {
-        context[index] *= sigmoid(gates[index]);
-    }
-    return linear(context, frames, 512,
-        require(weights, prefix + "out_proj/kernel", {512, 512}, layer));
-}
-
-Rows encoder_convolution(const Rows & input, size_t frames,
-                         const WhistleWeights & weights, int layer) {
-    const std::string prefix = "encoder/layers/block/";
-    Rows c = input;
-    normalize(c, frames, 512,
-        require(weights, prefix + "conv_norm/scale", {512}, layer).values);
-    c = linear(c, frames, 512,
-        require(weights, prefix + "pw1/kernel", {512, 1024}, layer));
-    Rows gated(frames * 512);
-    for (size_t frame = 0; frame < frames; ++frame) {
-        for (size_t col = 0; col < 512; ++col) {
-            gated[frame * 512 + col] = c[frame * 1024 + col] *
-                sigmoid(c[frame * 1024 + 512 + col]);
-        }
-    }
-    const auto kernel = require(weights, prefix + "dw", {9, 1, 512}, layer);
-    c.assign(frames * 512, 0.0f);
-#ifdef _OPENMP
-#pragma omp parallel for if(frames > 8)
-#endif
-    for (int64_t frame = 0; frame < static_cast<int64_t>(frames); ++frame) {
-        for (int tap = 0; tap < 9; ++tap) {
-            const auto source = frame + tap - 4;
-            if (source < 0 || static_cast<size_t>(source) >= frames) {
-                continue;
-            }
-            for (size_t col = 0; col < 512; ++col) {
-                c[static_cast<size_t>(frame) * 512 + col] +=
-                    gated[static_cast<size_t>(source) * 512 + col] *
-                    kernel.values[tap * 512 + col];
-            }
-        }
-    }
-    normalize(c, frames, 512,
-        require(weights, prefix + "conv_out_norm/scale", {512}, layer).values);
-    for (float & value : c) {
-        value *= sigmoid(value);
-    }
-    return linear(c, frames, 512,
-        require(weights, prefix + "pw2/kernel", {512, 512}, layer));
-}
-
-Rows encoder_block(const Rows & input, size_t frames,
-                   const WhistleWeights & weights, const WhistleAssets & assets, int layer) {
-    const std::string prefix = "encoder/layers/block/";
-    Rows pre = input;
-    normalize(pre, frames, 512,
-        require(weights, prefix + "pre_hada_norm_0/scale", {512}, layer).values);
-    Rows h = input;
-    add(h, hadamard(pre, frames, weights, assets,
-        prefix + "hadamard_mlp_0/", layer), 0.5f);
-    Rows attention_input = h;
-    normalize(attention_input, frames, 512,
-        require(weights, prefix + "ZCRMSNorm_0/scale", {512}, layer).values);
-    Rows attention = encoder_attention(attention_input, frames, weights, layer);
-    normalize(attention, frames, 512,
-        require(weights, prefix + "post_attn_norm/scale", {512}, layer).values);
-    add(h, attention, sigmoid(require(weights, prefix + "attn_gate", {}, layer).values[0]));
-    add(h, encoder_convolution(h, frames, weights, layer));
-    pre = h;
-    normalize(pre, frames, 512,
-        require(weights, prefix + "pre_hada_norm/scale", {512}, layer).values);
-    add(h, hadamard(pre, frames, weights, assets,
-        prefix + "hadamard_mlp/", layer), 0.5f);
-    return h;
-}
-
-struct EncoderOutput {
-    size_t frames = 0;
-    std::array<Rows, 8> cross_k;
-    std::array<Rows, 8> cross_v;
-};
-
-EncoderOutput encode(const MelFeatures & mel, const WhistleWeights & weights,
-                     const WhistleAssets & assets) {
-    const Rows projected = stem(mel, weights);
-    const size_t frames = projected.size() / 512;
-    Rows state(frames * 4 * 512);
-    for (size_t frame = 0; frame < frames; ++frame) {
-        for (size_t lane = 0; lane < 4; ++lane) {
-            std::copy_n(projected.begin() + frame * 512, 512,
-                state.begin() + (frame * 4 + lane) * 512);
-        }
-    }
-    for (int layer = 0; layer < kLayers; ++layer) {
-        state = mhc(state, frames, weights, "encoder/mhc_", layer,
-            [&](const Rows & mixed) { return encoder_block(mixed, frames, weights, assets, layer); });
-    }
-    Rows memory(frames * 512, 0.0f);
-    for (size_t frame = 0; frame < frames; ++frame) {
-        for (size_t lane = 0; lane < 4; ++lane) {
-            for (size_t col = 0; col < 512; ++col) {
-                memory[frame * 512 + col] += state[(frame * 4 + lane) * 512 + col] / 4.0f;
-            }
-        }
-    }
-    normalize(memory, frames, 512,
-        require(weights, "encoder/final_norm/scale", {512}).values);
-    const float gate = sigmoid(weights.get("pe_gate").values[0]);
-    for (size_t frame = 0; frame < frames; ++frame) {
-        for (size_t index = 0; index < 256; ++index) {
-            const float angle = static_cast<float>(frame) *
-                std::exp(static_cast<float>(index) * (-std::log(10000.0f) / 255.0f));
-            memory[frame * 512 + index] += gate * std::sin(angle);
-            memory[frame * 512 + 256 + index] += gate * std::cos(angle);
-        }
-    }
-    EncoderOutput output;
-    output.frames = frames;
-    const std::string prefix = "stack/layers/block/cross_attn/";
-    for (int layer = 0; layer < kLayers; ++layer) {
-        output.cross_k[layer] = linear(memory, frames, 512,
-            require(weights, prefix + "k_proj/kernel", {512, 384}, layer));
-        normalize(output.cross_k[layer], frames * 8, 48,
-            require(weights, prefix + "k_norm/scale", {48}, layer).values);
-        output.cross_v[layer] = linear(memory, frames, 512,
-            require(weights, prefix + "v_proj/kernel", {512, 512}, layer));
-    }
-    return output;
 }
 
 struct DecoderLayerState {
@@ -757,7 +520,7 @@ Rows decoder_self_attention(const Rows & input, const WhistleWeights & weights,
 }
 
 Rows decoder_cross_attention(const Rows & input, const WhistleWeights & weights,
-                             const EncoderOutput & encoder, int layer) {
+                             const WhistleEncoderOutput & encoder, int layer) {
     const std::string prefix = "stack/layers/block/cross_attn/";
     Rows query = linear(input, 1, 512,
         require(weights, prefix + "q_proj/kernel", {512, 384}, layer));
@@ -793,7 +556,7 @@ Rows decoder_cross_attention(const Rows & input, const WhistleWeights & weights,
 }
 
 Rows decoder_block(const Rows & input, const WhistleWeights & weights,
-                   const WhistleAssets & assets, const EncoderOutput & encoder,
+                   const WhistleAssets & assets, const WhistleEncoderOutput & encoder,
                    const std::array<EngramOutput, 2> & engram, int layer,
                    size_t position, DecoderLayerState & state) {
     const std::string prefix = "stack/layers/block/";
@@ -833,7 +596,7 @@ Rows decoder_block(const Rows & input, const WhistleWeights & weights,
 }
 
 Rows decoder_step(int32_t token, size_t position, const WhistleWeights & weights,
-                  const WhistleAssets & assets, const EncoderOutput & encoder,
+                  const WhistleAssets & assets, const WhistleEncoderOutput & encoder,
                   const std::array<EngramOutput, 2> & engram,
                   std::array<DecoderLayerState, 8> & cache) {
     const auto embedding = require(weights, "embedding/embedding", {8199, 512});
@@ -877,11 +640,12 @@ Rows decoder_step(int32_t token, size_t position, const WhistleWeights & weights
 
 }  // namespace
 
-WhistleRuntime::WhistleRuntime(std::shared_ptr<const WhistleAssets> assets, int threads)
-    : assets_(std::move(assets)), threads_(threads) {
-    if (!assets_ || !assets_->weights) {
-        throw std::invalid_argument("Whistle runtime needs verified model assets");
-    }
+WhistleRuntime::WhistleRuntime(
+    std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context)
+    : assets_(std::move(assets)),
+      encoder_(assets_, execution_context),
+      frontend_(assets_->mel_filterbank),
+      threads_(execution_context.config().threads) {
     if (threads_ < 1 || threads_ > 64) {
         throw std::invalid_argument("Whistle CPU thread count must be between 1 and 64");
     }
@@ -891,7 +655,7 @@ WhistleRuntime::WhistleRuntime(std::shared_ptr<const WhistleAssets> assets, int 
 WhistleRuntime::~WhistleRuntime() = default;
 
 WhistleTranscript WhistleRuntime::transcribe(
-    const runtime::AudioBuffer & audio, const std::string & language) const {
+    const runtime::AudioBuffer & audio, const std::string & language) {
     if (audio.sample_rate != 16000 || audio.channels != 1) {
         throw std::invalid_argument("Whistle requires 16 kHz mono audio");
     }
@@ -917,14 +681,11 @@ WhistleTranscript WhistleRuntime::transcribe(
         return {"", ""};
     }
 #ifdef _OPENMP
+    // The backend thread count also bounds the host decoder's OpenMP workers.
     ScopedThreadCount thread_count(threads_);
-#else
-    if (threads_ != 1) {
-        throw std::invalid_argument("Whistle was built without OpenMP; use one CPU thread");
-    }
 #endif
-    const auto mel = WhistleFrontend(assets_->mel_filterbank).extract(audio.samples);
-    const EncoderOutput encoder = encode(mel, *weights_, *assets_);
+    const auto mel = frontend_.extract(audio.samples);
+    const WhistleEncoderOutput encoder = encoder_.encode(mel);
     std::array<DecoderLayerState, 8> cache;
     std::vector<int32_t> tokens{2};
     std::vector<int32_t> text;

@@ -1,8 +1,9 @@
 # Whistle ASR (experimental)
 
 The `whistle_asr` family runs [Cactus Compute Whistle](https://huggingface.co/Cactus-Compute/whistle)
-locally through audio.cpp. The current implementation supports **offline CPU**
-transcription of 16 kHz mono WAV files up to 30 seconds. It detects one of the
+locally through audio.cpp. The current implementation supports **offline**
+transcription of 16 kHz mono WAV files up to 30 seconds on the CPU and Metal
+backends. It detects one of the
 model's seven languages (English, German, French, Spanish, Italian, Dutch, or
 Polish); `--language en`, `de`, `fr`, `es`, `it`, `nl`, or `pl` forces a language.
 These are supported language codes, not seven-language validation evidence.
@@ -43,8 +44,9 @@ are insufficient. Other GGUF precisions are rejected.
 Conversion and inference do not require the Cactus engine, ONNX Runtime, or
 Python at recognition time.
 
-Streaming, keyword biasing, word timestamps, speech embeddings, GPU inference,
-resampling, and longer recordings are not supported by this family.
+Streaming, keyword biasing, word timestamps, speech embeddings, resampling, and
+longer recordings are not supported by this family. CUDA, HIP, and Vulkan are
+not validated and are rejected at session creation.
 The runtime rejects unsupported sample rates, channel counts, and durations
 rather than silently changing the input.
 Decoding uses the checkpoint's 320-token ceiling; a non-terminating decode
@@ -57,10 +59,32 @@ Inputs shorter than 40 milliseconds also return an empty transcript.
 This family has no speech activity detector, so noise-only recordings may
 produce words.
 
+## Runtime structure
+
+The mel frontend reuses the shared `NemoMelFrontend` (512-point FFT, 400-sample
+symmetric Hann window, 160-sample hop, constant padding, natural-log mel energies,
+per-bin mean and unbiased-variance normalization). Whistle's 99th-percentile block
+RMS gain normalization is applied locally before it.
+
+The encoder runs as one GGML graph on the selected backend. It is built from the
+framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
+`LinearModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`, and `GLUModule`.
+Whistle-specific math stays model-local in `encoder.cpp`: the four-lane manifold
+hyper-connection mixing with its Sinkhorn normalization, the conditioned
+Kronecker-factored Hadamard MLP with its two fixed permutations, and grouped-query
+attention with 48-wide queries/keys and 64-wide values, which the shared attention
+modules cannot express because they assume one head size. Checkpoint tensors are
+JAX `[in, out]` kernels; the loader transposes them once into the backend weight store.
+
+The autoregressive decoder (one token per step, n-gram engram lookups, three-tap
+query/key/value mixing, cross-attention over the encoder output) still runs on the
+host CPU with its own FP32 math. Its encoder-side cross-attention key/value
+projections are computed inside the encoder graph.
+
 ## Build and request options
 
 Follow the platform [build instructions](../build/windows.md) on Windows.
-For a focused CPU build, select `AUDIOCPP_MODEL_SET=custom` and
+For a focused build, select `AUDIOCPP_MODEL_SET=custom` and
 `AUDIOCPP_MODELS=whistle_asr`. A Windows helper example is:
 
 ```powershell
@@ -68,13 +92,20 @@ For a focused CPU build, select `AUDIOCPP_MODEL_SET=custom` and
 cmake --build build/windows-cpu-release --target audiocpp_gguf
 ```
 
-Use `--backend cpu --threads 1` for a portable inference baseline. The runtime
-accepts 1 to 64 threads. Builds without OpenMP require one thread. The spec
-exposes only the optional `language` request option, no model-specific session
-or load options. Use `--language de` or `--request-option language=de` to force
-German. Omit the language option for model language selection. Decoding is
-greedy, with at most 320 text tokens. The model manager has no Whistle package
-entry because `packages` is empty.
+On macOS the Metal helper configures the same model set:
+
+```bash
+scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp auto --with-tests --deployment-build --model-set custom --models whistle_asr --target audiocpp_cli --target audiocpp_gguf
+```
+
+Use `--backend cpu` or `--backend metal`. `--threads` sets the ggml CPU backend
+thread count and, when the build has OpenMP, the host decoder's worker count; the
+runtime accepts 1 to 64. Use `--backend cpu --threads 1` for a portable inference
+baseline. The spec exposes only the optional `language` request option, no
+model-specific session or load options. Use `--language de` or
+`--request-option language=de` to force German. Omit the language option for model
+language selection. Decoding is greedy, with at most 320 text tokens. The model
+manager has no Whistle package entry because `packages` is empty.
 
 ## Provenance and licensing
 
@@ -93,7 +124,14 @@ unresolved questions. No weights or extracted assets are included in this port.
 - `whistle_tokenizer_test` checks byte-fallback UTF-8 replacement and metaspace decoding without model weights.
 - `whistle_assets_test <gguf> assets/resources/sample_16k.wav
   "Some call me Nature."` checks a converted GGUF against the public
-  sample's first three seconds.
+  sample's first three seconds. `--backend cpu|metal` and `--threads n` select
+  the backend; `--full` uses the whole recording.
+- `whistle_assets_test <gguf> <wav> --reference <dir> [--tolerance f]` compares
+  the mel features, encoder memory, and cross-attention keys/values against
+  `.f32` reference dumps in `<dir>` and reports the largest difference as a
+  fraction of each reference tensor's largest magnitude (default tolerance 2e-3).
+  The dumps used in [the validation report](../../tests/whistle_asr/VALIDATION.md)
+  came from the earlier host-only implementation at commit `6e0a40c4`.
 
 To run the native tests through CTest, configure with
 `-DENGINE_BUILD_TESTS=ON` and

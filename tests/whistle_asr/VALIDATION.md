@@ -198,7 +198,8 @@ The contributor confirms that no code was copied or adapted from reference imple
 Independent extracted-asset provenance remains unverified in the upstream release.
 No independently audited redistribution rights or maintainer approval is claimed.
 
-Backend coverage is offline CPU only with FP32 weights. Supported language codes are
+Backend coverage is offline CPU and Metal with FP32 weights; see the
+[GGML encoder section](#ggml-encoder-rewrite-2026-10-07) below. Supported language codes are
 `en`, `de`, `fr`, `es`, `it`, `nl`, `pl`. English and German inputs above were checked.
 The other five codes each have one [synthetic CLI spot check](MULTILINGUAL_VALIDATION.md),
 with ten successful automatic/forced-language runs and zero normalized prompt word edits.
@@ -245,11 +246,130 @@ It exits 0 with the expected English transcript, 786.915 ms inference wall time,
 and peak process working set 447 MiB. This is an additional load-route check,
 not a before/after performance comparison.
 
+## GGML encoder rewrite (2026-10-07)
+
+Maintainer review asked for framework-module reuse and GGML graphs. This revision moves
+the mel frontend onto `NemoMelFrontend` and the whole encoder (stem, eight mHC layers,
+final norm, positional table, cross-attention key/value projections) into one GGML graph
+built from `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
+`LinearModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`, and `GLUModule`.
+Whistle-specific math (mHC lane mixing with Sinkhorn normalization, the conditioned
+Kronecker-factored Hadamard MLP with fixed permutations, and 48/64-wide grouped-query
+attention) stays in `src/community_models/whistle_asr/encoder.cpp`. The autoregressive
+decoder still runs on the host. The converter and GGUF layout are unchanged; the loader
+transposes the JAX `[in, out]` kernels into the backend weight store.
+
+Measured on macOS 27.0.1, Apple M3 Ultra, Apple clang, CMake 4.4.4, Ninja, Release,
+`ENGINE_ENABLE_METAL=ON`, `GGML_METAL=ON`, OpenMP on, deployment build, custom model set
+`whistle_asr`, `ENGINE_BUILD_TESTS=ON`. Exact commands from the repository root:
+
+```bash
+scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp auto --with-tests --deployment-build --model-set custom --models whistle_asr --target audiocpp_cli --target audiocpp_gguf --target whistle_frontend_test --target whistle_tokenizer_test --target whistle_assets_test
+python3 tools/community_models/whistle_asr/convert.py --source build/whistle/pr-prep/source --cact /private/tmp/whistle-src/whistle.cact --converter build/bin/audiocpp_gguf --output build/whistle/pr-prep/model/whistle-f32.gguf
+cmake -S . -B build/whistle -DAUDIOCPP_WHISTLE_TEST_MODEL=$PWD/build/whistle/pr-prep/model/whistle-f32.gguf
+ctest --test-dir build/whistle -R whistle_ --output-on-failure
+build/whistle/bin/whistle_frontend_test build/whistle/pr-prep/source/mel_filterbank_80.f32 build/whistle/pr-prep/oracle/sample_16k.f32
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --reference build/whistle/pr-prep/oracle --backend cpu --threads 4
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --reference build/whistle/pr-prep/oracle --backend metal
+build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend metal --threads 4 --model build/whistle/pr-prep/model/whistle-f32.gguf --audio assets/resources/sample_16k.wav --metrics
+python3 tools/check_loader_catalog_sync.py --self-test && python3 tools/check_loader_catalog_sync.py
+```
+
+The locally converted GGUF has SHA-256
+`80c42e88a1ad07203634b60d50e0763e0478bb6830544434b70f52ab53c9ab42` (220831648 bytes).
+The hosted `bumpyclock/whistle-GGUF` file, SHA-256
+`1167c811abad2fc539a1116e1b7031ba4a07c8f5b2e75ab3a389ae370efede8b`, was converted from an
+earlier spec revision; it loads and produces the same English transcript on CPU and Metal.
+
+### Numerical comparison against the host implementation
+
+Reference tensors were dumped from the previous host-only implementation at commit
+`6e0a40c4` through a temporary hook on the full 14.0719-second repository sample
+(1407 mel frames, 176 encoder frames). That hook is not committed, so the dumps are
+reproducible only by checking out that commit; they stay in ignored
+`build/whistle/pr-prep/oracle/`. `whistle_assets_test --reference` reports the largest
+absolute difference as a fraction of each reference tensor's largest magnitude:
+
+| Tensor | Reference max | CPU fraction | Metal fraction |
+|---|---:|---:|---:|
+| mel features (1407 x 80) | 3.42311 | 6.37e-06 | 6.37e-06 |
+| encoder memory (176 x 512) | 5.55704 | 6.01e-07 | 3.03e-04 |
+| cross-attention keys, layer 0 | 7.92314 | 1.66e-06 | 1.20e-03 |
+| cross-attention values, layer 0 | 86.5275 | 1.32e-06 | 5.06e-04 |
+| cross-attention keys, layer 7 | 9.34248 | 1.35e-06 | 1.08e-03 |
+| cross-attention values, layer 7 | 197.274 | 8.99e-07 | 3.51e-04 |
+
+Per-layer probes during bring-up showed the Metal drift appears already after the stem
+(2.5e-04 of scale) and stays between 1e-04 and 4e-04 of scale through the eight layers;
+setting `GGML_PREC_F32` on every matmul did not change the Metal result, so it is not
+matmul accumulation precision. The CPU graph tracks the host implementation to about
+1e-06 of scale. `whistle_frontend_test` passes both its fixed vectors and the official
+filterbank check on the real sample (tolerance 0.02). The default `--reference`
+tolerance is 2e-3, which Metal passes with a 1.7x margin on the worst tensor.
+
+Whistle's mHC residual logits reach gaps above 200 nats inside one 4x4 Sinkhorn block
+(layer 1), so a float softmax underflows to exact zeros. The graph clamps the softmax to
+`FLT_MIN` before the log; a float64 Sinkhorn with and without that clamp differs by at
+most 9e-07 on all eight layers of the sample.
+
+### Transcripts and tests
+
+CTest passed 4/4 (`whistle_frontend_test`, `whistle_tokenizer_test`,
+`whistle_asr_integration`, `whistle_asr_full_integration`). The full-sample integration
+checks (expected transcript, decoder reuse, quiet and constant-RMS speech, silence,
+30-second rejection, non-finite rejection) also pass with `--backend metal`. The English
+sample transcript is unchanged on CPU with 1 and 4 threads and on Metal:
+
+```text
+Some call me Nature. Others call me Mother Nature. I've been here for over 4.5 billion years, twenty two thousand five hundred times longer than you.
+```
+
+Seven longer synthetic clips (20 to 26 seconds, one per supported language) produce
+byte-identical transcripts across CPU 1 thread, CPU 4 threads, Metal, automatic and
+forced language; see [the multilingual report](MULTILINGUAL_VALIDATION.md#longer-seven-language-clips-2026-10-07).
+
+### Performance and process memory
+
+CLI `metrics.wall_ms` covers preparation plus inference per request and excludes model
+loading. Encoder-only times come from `whistle_assets_test --reference` (graph build,
+allocation, upload, compute, readback) for the 176-frame sample; "first" includes
+backend warm-up, "warm" is the second call. Single local observations, not guarantees.
+
+| Measurement | Previous host code (same machine, 2026-10-07 baseline) | GGML encoder revision |
+|---|---:|---:|
+| Sample, CLI wall, CPU 1 thread | 579.7 ms (RTF 0.0412) | 479 ms (RTF 0.0341) |
+| Sample, CLI wall, CPU 4 threads | 280.7 ms (RTF 0.0199) | 224 ms (RTF 0.0160) |
+| Sample, CLI wall, Metal | not supported | 145 to 148 ms (RTF 0.0105) |
+| Encoder only, CPU 1 thread | not measured separately | 313 ms first, 291 ms warm |
+| Encoder only, CPU 4 threads | not measured separately | 103 ms first, 89 ms warm |
+| Encoder only, Metal | not supported | 65 to 110 ms first, 29 ms warm |
+| Sample, peak RSS | 615 to 619 MiB | 749 MiB Metal, 757 MiB CPU |
+
+On Metal the encoder is now about 29 ms of a 145 ms sample request, so the host decoder
+is the dominant remaining cost. Peak RSS grew because encoder weights now live in the
+backend weight store while the decoder keeps its host copies.
+
+Five identical English requests (20.43 s clip) in one loaded CLI session:
+
+| Backend | Wall per request | Peak RSS | Peak footprint |
+|---|---|---|---|
+| CPU 4 threads | 392.6, 385.5, 385.0, 379.3, 379.9 ms | 770 to 774 MiB | 537 to 541 MiB |
+| Metal | 275.6, 252.5, 262.2, 261.7, 261.0 ms | 746 to 748 MiB | 802 to 803 MiB |
+
+```bash
+build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend metal --threads 4 --model build/whistle/pr-prep/model/whistle-f32.gguf --request-sequence build/whistle/pr-prep/longform/batch5.json --metrics
+```
+
+Catalog self-tests passed 2/2; synchronization passed. No framework, GGML, converter, or
+GGUF-format changes are included. CUDA, HIP, and Vulkan remain unvalidated and are
+rejected at session creation.
+
 ## Readiness checklist
 
 - [x] Community layout, namespace, registration, build paths, and discoverability updated.
 - [x] Fresh self-contained GGUF embeds the updated specification and license/assets.
 - [x] Catalog checks, CPU builds, frontend, and opt-in integration tests passed.
+- [x] GGML encoder matches the host implementation on CPU (about 1e-06 of scale) and Metal (at most 1.2e-03 of scale); macOS CTest 4/4 and Metal integration checks pass.
 - [x] Actual CLI English/German, silence, duration rejection, streaming rejection, and session reuse checked.
 - [x] Local latency, RTF, and CPU process memory recorded without excluding slow requests.
 - [x] Final diff and untracked-file list inspected. No generated model/log/audio artifacts enter source changes.

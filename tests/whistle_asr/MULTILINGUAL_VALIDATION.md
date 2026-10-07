@@ -178,3 +178,57 @@ added to source changes.
 After the byte-fallback decoder fix, the rebuilt CLI repeated all ten requests.
 All exit 0 and preserve the exact earlier transcripts. The successful command and
 artifact paths are recorded in [the validation report](VALIDATION.md).
+
+## Longer seven-language clips (2026-10-07)
+
+Measured on macOS 27.0.1, Apple M3 Ultra, with the GGML encoder revision and the
+locally converted FP32 GGUF (SHA-256 `80c42e88...`). ElevenLabs CLI 1.4.0 generated
+`wav_16000` directly (16 kHz, mono, signed 16-bit) with voice `JBFqnCBsd6RMkjVDRZzb`,
+model `eleven_multilingual_v2`, seed 42, and stored voice settings:
+
+```bash
+elevenlabs text-to-speech convert --voice-id JBFqnCBsd6RMkjVDRZzb --model-id eleven_multilingual_v2 --output-format wav_16000 --seed 42 --text "<prompt>" -o build/whistle/pr-prep/longform/<lang>.wav -q
+```
+
+Each clip ran through `audiocpp_cli` with automatic and forced language on CPU with 1
+thread, CPU with 4 threads, and Metal with 4 threads: 43 invocations including the
+repository sample, all exit 0. For every clip the six transcripts are byte-identical.
+Word error rate uses NFKC normalization, case folding, and punctuation removal, against
+the synthesis prompt; accents remain significant. These are synthetic single-voice
+prompt-agreement checks, not an accuracy benchmark. Wall times are `metrics.wall_ms`
+(preparation plus inference) with RTF; "auto" and "forced" refer to language selection.
+
+| Clip | Seconds | Prompt chars | WER | CPU 1 thread, auto (ms / RTF) | CPU 4 threads, auto | Metal, auto | Metal, forced |
+|---|---:|---:|---:|---|---|---|---|
+| `en` | 20.434 | 369 | 0.0% | 816 / 0.0399 | 391 / 0.0191 | 383 / 0.0188 | 271 / 0.0133 |
+| `de` | 23.917 | 409 | 6.6% | 1287 / 0.0538 | 625 / 0.0262 | 568 / 0.0238 | 499 / 0.0209 |
+| `fr` | 21.362 | 389 | 6.1% | 1113 / 0.0521 | 555 / 0.0260 | 520 / 0.0243 | 455 / 0.0213 |
+| `es` | 26.239 | 417 | 0.0% | 1327 / 0.0506 | 662 / 0.0252 | 621 / 0.0237 | 516 / 0.0197 |
+| `it` | 24.381 | 400 | 0.0% | 1250 / 0.0513 | 606 / 0.0248 | 548 / 0.0225 | 467 / 0.0191 |
+| `nl` | 22.616 | 415 | 11.8% | 990 / 0.0438 | 461 / 0.0204 | 405 / 0.0179 | 328 / 0.0145 |
+| `pl` | 22.941 | 369 | 5.8% | 1447 / 0.0631 | 709 / 0.0309 | 670 / 0.0292 | 588 / 0.0256 |
+
+Peak RSS was 743 to 791 MiB across these runs. The Metal "auto" column is consistently
+slower than "forced" by 70 to 110 ms; the CPU columns show no such gap. The cause was
+not investigated.
+
+Word-level differences (prompt versus transcript, normalized) are the same on every
+backend, so they are model behavior, not conversion or backend drift:
+
+- `de`: `kommende` -> `komende`; `bitte` -> `witte`; `fenster während` -> `fensterwähren`.
+- `fr`: `aux projets` -> `au projet`; `doux` -> `d où`.
+- `nl`: `goedemorgen` -> `goede morgen`; `bewaar jullie vragen alsjeblieft` -> `bevario lievragen als je blijft`; `ongewoon` -> `ongebone`.
+- `pl`: `tę porę` -> `te pore`; `okna` -> `ochna`.
+
+Prompts, with WAV SHA-256:
+
+- `en` (`6bdd5211db28b7d4481773651019b850d34d4b856381bee153927c36195838ee`): Good morning everyone, and thank you for joining today's session. We will begin with a short summary of last week's results, then move on to the plans for the coming quarter. Please keep your questions until the end, because we have a lot of material to cover. The weather has been unusually warm for this time of year, so the windows will stay open during the meeting.
+- `de` (`48c8a1c173cda31e50854037d73c303d8775d7d241116b05faf3ad83f75c101d`): Guten Morgen und herzlich willkommen zu unserer heutigen Besprechung. Wir beginnen mit einer kurzen Zusammenfassung der Ergebnisse der letzten Woche und sprechen danach über die Pläne für das kommende Quartal. Bitte stellen Sie Ihre Fragen erst am Ende, denn wir haben viel Material zu behandeln. Das Wetter ist für diese Jahreszeit ungewöhnlich warm, deshalb bleiben die Fenster während der Sitzung geöffnet.
+- `fr` (`6ea0320089d52aa1d32ff86b59f344e9e2431e2fb1dc3a4a4f05df49bd4e3c77`): Bonjour à tous et merci de participer à la réunion de ce matin. Nous commencerons par un bref résumé des résultats de la semaine dernière, puis nous passerons aux projets pour le prochain trimestre. Merci de garder vos questions pour la fin, car nous avons beaucoup de sujets à traiter. Le temps est anormalement doux pour la saison, les fenêtres resteront donc ouvertes pendant la séance.
+- `es` (`13a8fb01c15fc9b547aba68c67118f54afdeebcc26654cf19454ecc2a4663c21`): Buenos días a todos y gracias por acompañarnos en la reunión de hoy. Empezaremos con un breve resumen de los resultados de la semana pasada y después hablaremos de los planes para el próximo trimestre. Por favor, guarden sus preguntas para el final, porque tenemos mucho material que revisar. El tiempo ha sido inusualmente cálido para esta época del año, así que las ventanas permanecerán abiertas durante la sesión.
+- `it` (`895dd794984b481806711fde2569081092a868dfcdd76ff7b1dff5c87807d15d`): Buongiorno a tutti e grazie per aver partecipato alla riunione di oggi. Inizieremo con un breve riepilogo dei risultati della settimana scorsa, poi passeremo ai piani per il prossimo trimestre. Vi chiedo di tenere le domande per la fine, perché abbiamo molto materiale da esaminare. Il tempo è insolitamente caldo per questo periodo dell'anno, quindi le finestre resteranno aperte durante l'incontro.
+- `nl` (`2231149210543b1084a51722598898de8c5b31a1013938116ae0011c4379bd1a`): Goedemorgen allemaal en bedankt dat jullie bij de vergadering van vandaag zijn. We beginnen met een korte samenvatting van de resultaten van vorige week en gaan daarna verder met de plannen voor het komende kwartaal. Bewaar jullie vragen alsjeblieft tot het einde, want we hebben veel onderwerpen te bespreken. Het weer is ongewoon warm voor deze tijd van het jaar, dus de ramen blijven tijdens de bijeenkomst open.
+- `pl` (`82087183a46396c1050ec2ca323ffb62c691dc403cc30c4a9371ce6818f96f65`): Dzień dobry wszystkim i dziękuję za udział w dzisiejszym spotkaniu. Zaczniemy od krótkiego podsumowania wyników z ubiegłego tygodnia, a następnie przejdziemy do planów na nadchodzący kwartał. Proszę zachować pytania na koniec, ponieważ mamy dużo materiału do omówienia. Pogoda jest wyjątkowo ciepła jak na tę porę roku, dlatego okna pozostaną otwarte podczas spotkania.
+
+Audio, the generation manifest, and `results.json` stay in ignored
+`build/whistle/pr-prep/longform/`. No recordings enter source changes.

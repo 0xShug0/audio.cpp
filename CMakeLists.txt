@@ -1938,6 +1938,7 @@ audiocpp_add_model(niagara_asr
 audiocpp_add_model(whistle_asr
     SOURCES
         src/community_models/whistle_asr/assets.cpp
+        src/community_models/whistle_asr/encoder.cpp
         src/community_models/whistle_asr/frontend.cpp
         src/community_models/whistle_asr/runtime.cpp
         src/community_models/whistle_asr/session.cpp
@@ -3031,7 +3032,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_executable(whistle_assets_test
             tests/whistle_asr/test_assets.cpp
+            src/community_models/whistle_asr/encoder.cpp
             src/community_models/whistle_asr/assets.cpp
+            src/community_models/whistle_asr/encoder.cpp
             src/community_models/whistle_asr/frontend.cpp
             src/community_models/whistle_asr/runtime.cpp)
         target_link_libraries(whistle_assets_test PRIVATE engine_runtime ggml)
