@@ -96,6 +96,9 @@
   let outputArtifacts: Array<{ id: string; url: string; extension: string; mime: string }> = [];
   let outputText = '';
   let outputJson = '';
+  let outputSettings: { url: string; filename: string } | null = null;
+  let generationElapsedSeconds = 0;
+  let generationTimer: number | null = null;
   let logs: string[] = [];
   let aborter: AbortController | null = null;
   let longText = true;
@@ -1445,10 +1448,12 @@
   function clearOutput() {
     for (const output of outputAudio) URL.revokeObjectURL(output.url);
     for (const artifact of outputArtifacts) URL.revokeObjectURL(artifact.url);
+    if (outputSettings) URL.revokeObjectURL(outputSettings.url);
     outputAudio = [];
     outputArtifacts = [];
     outputText = '';
     outputJson = '';
+    outputSettings = null;
   }
 
   async function ensureLoaded() {
@@ -1707,10 +1712,19 @@
       errorStatus = '';
       return;
     }
-    clearOutput();
     running = true;
     aborter = new AbortController();
     const started = performance.now();
+    generationElapsedSeconds = 0;
+    generationTimer = window.setInterval(() => {
+      generationElapsedSeconds = (performance.now() - started) / 1000;
+    }, 250);
+    let nextAudio: AudioOutput[] = [];
+    let nextArtifacts: typeof outputArtifacts = [];
+    let nextText = '';
+    let nextJson = '';
+    let outputCommitted = false;
+    const submittedRequests: Array<{ endpoint: string; body: Record<string, unknown> }> = [];
     warningStatus = '';
     errorStatus = '';
     status = tr('status.runningTask', { task: localizedTaskLabel(selected.task) });
@@ -1735,6 +1749,30 @@
         }
       }
       await ensureLoaded();
+      const resident = loadedModels.find((model) => model.id === selected.id);
+      const submittedSettings = {
+        schema_version: 1,
+        created_at: new Date().toISOString(),
+        backend: server?.backend,
+        resolved_seed: resolvedSeed,
+        model: {
+          id: selected.id,
+          family: selected.family,
+          task: selected.task,
+          mode: resident?.mode || selected.mode || 'offline',
+          path: resident?.path || modelPath,
+          package_id: selectedPackageChoice(selected)?.id,
+          load_options: selected.load_options || {},
+          session_options: resident?.session_options || mergedSessionOptions(selected)
+        },
+        input_files: {
+          source: sourceFile?.name,
+          voice_reference: voiceFile?.name,
+          video: videoFile?.name,
+          speaker_references: vibeVoiceSpeakerFiles.map((file) => file?.name || null)
+        },
+        requests: submittedRequests
+      };
         const options = requestOptions();
         if (usesVibeVoiceSpeakerFiles) {
           const samples = await vibeVoiceSamplePaths();
@@ -1774,6 +1812,7 @@
             body.reference_text = referenceText;
           }
           if (selected.task === 'vdes' && instructions.trim()) body.instructions = instructions;
+          submittedRequests.push({ endpoint: '/v1/audio/speech', body: JSON.parse(JSON.stringify(body)) });
           const result = await speech(body, aborter.signal);
           audioChunks.push(result.blob);
           timings.push({
@@ -1784,8 +1823,8 @@
           });
         }
         const merged = await concatenateAudioBlobs(audioChunks);
-        outputAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged) }];
-        outputJson = JSON.stringify({
+        nextAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged) }];
+        nextJson = JSON.stringify({
           seed: resolvedSeed,
           chunks: chunks.length,
           characters: text.length,
@@ -1795,15 +1834,21 @@
       } else if (selected.task === 'asr') {
         if (!audio) throw new StatusWarning('Choose an audio file.');
         if (selected.family in asrTokenDefaults) options.max_tokens = asrMaxTokens;
-        const result = await transcription({
+        const body = {
           model: selected.id,
           audio,
           language,
           text: context,
           options
-        }, aborter.signal, ['owsm', 'crisperwhisper'].includes(selected.family) && options.return_timestamps === true);
-        outputText = String(result.text || '');
-        outputJson = JSON.stringify(result, null, 2);
+        };
+        const detail = ['owsm', 'crisperwhisper'].includes(selected.family) && options.return_timestamps === true;
+        submittedRequests.push({
+          endpoint: detail ? '/v1/audio/transcriptions/details' : '/v1/audio/transcriptions',
+          body: JSON.parse(JSON.stringify(body))
+        });
+        const result = await transcription(body, aborter.signal, detail);
+        nextText = String(result.text || '');
+        nextJson = JSON.stringify(result, null, 2);
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
@@ -1832,16 +1877,19 @@
         if (referenceText.trim() && supportsRequestOption(selected, 'reference_text')) {
           request.reference_text = referenceText;
         }
-        const result = await runTask({ model: selected.id, request }, aborter.signal);
-        outputText = typeof result.text === 'string' ? result.text : '';
-        outputJson = JSON.stringify(result, (key, value) =>
+        const body = { model: selected.id, request };
+        submittedRequests.push({ endpoint: '/v1/tasks/run', body: JSON.parse(JSON.stringify(body)) });
+        const result = await runTask(body, aborter.signal);
+        nextText = typeof result.text === 'string' ? result.text : '';
+        nextJson = JSON.stringify(result, (key, value) =>
           (key === 'audio' || key === 'payload') && typeof value === 'string'
             ? `<base64 data: ${value.length} chars>` : value, 2);
         if (typeof result.audio === 'string') {
-          outputAudio = [{ id: 'output', url: base64AudioUrl(result.audio) }];
+          nextAudio = [{ id: 'output', url: base64AudioUrl(result.audio) }];
         }
         if (Array.isArray(result.named_audio_outputs)) {
-          outputAudio = result.named_audio_outputs
+          for (const output of nextAudio) URL.revokeObjectURL(output.url);
+          nextAudio = result.named_audio_outputs
             .filter((entry): entry is { id: string; audio: string } =>
               typeof entry?.id === 'string' && typeof entry?.audio === 'string')
             .map((entry) => ({ id: entry.id, url: base64AudioUrl(entry.audio) }));
@@ -1850,10 +1898,10 @@
           if (selected.family === 'liveavatar') {
             status = 'Encoding LiveAvatar MP4 in browser…';
             const prepared = await prepareLiveAvatarOutput(result, liveAvatarDrivingAudio);
-            outputArtifacts = prepared.artifacts;
+            nextArtifacts = prepared.artifacts;
             if (prepared.warning) log(prepared.warning);
           } else {
-            outputArtifacts = result.artifacts
+            nextArtifacts = result.artifacts
               .filter((entry): entry is { id: string; payload: string; meta?: Record<string, string> } =>
                 typeof entry?.id === 'string' && typeof entry?.payload === 'string')
               .map((entry) => ({
@@ -1865,6 +1913,16 @@
           }
         }
       }
+      const settingsUrl = URL.createObjectURL(new Blob([JSON.stringify(submittedSettings, null, 2)], {
+        type: 'application/json'
+      }));
+      clearOutput();
+      outputAudio = nextAudio;
+      outputArtifacts = nextArtifacts;
+      outputText = nextText;
+      outputJson = nextJson;
+      outputSettings = { url: settingsUrl, filename: `${submittedSettings.model.id}-${Date.now()}.settings.json` };
+      outputCommitted = true;
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       warningStatus = '';
       errorStatus = '';
@@ -1882,6 +1940,12 @@
         log(`Request failed: ${status}`);
       }
     } finally {
+      if (generationTimer !== null) window.clearInterval(generationTimer);
+      generationTimer = null;
+      if (!outputCommitted) {
+        for (const output of nextAudio) URL.revokeObjectURL(output.url);
+        for (const artifact of nextArtifacts) URL.revokeObjectURL(artifact.url);
+      }
       running = false;
       aborter = null;
     }
@@ -2194,6 +2258,8 @@
   });
 
   onDestroy(() => {
+    if (generationTimer !== null) window.clearInterval(generationTimer);
+    if (outputSettings) URL.revokeObjectURL(outputSettings.url);
     aborter?.abort();
     recorder?.state === 'recording' && recorder.stop();
     liveStopRequested = true;
@@ -2210,7 +2276,7 @@
   });
 </script>
 
-<svelte:head><title>audio.cpp · Native Studio</title></svelte:head>
+<svelte:head><title>{running ? `${generationElapsedSeconds.toFixed(1)} s · audio.cpp · Native Studio` : 'audio.cpp · Native Studio'}</title></svelte:head>
 <svelte:window on:keydown={handleShortcut} />
 
 <header class="topbar">
@@ -2692,7 +2758,10 @@
           <button disabled={!running} on:click={cancel}>{tr('run.cancel')}</button>
           <div class="status" class:busy={running}
             class:warning={!running && status === warningStatus}
-            class:error={!running && status === errorStatus}>{localizedStatus(status, tr)}</div>
+            class:error={!running && status === errorStatus}>
+            {#if running}<strong style="font-variant-numeric: tabular-nums" aria-label="Elapsed generation time">{generationElapsedSeconds.toFixed(1)} s · </strong>{/if}
+            {localizedStatus(status, tr)}
+          </div>
         </div>
         {:else}
           <div class="section-title">
@@ -2707,6 +2776,7 @@
       <section class="panel output">
         <div class="section-title">
           <div><span>{tr('result.label')}</span><h2>{tr('result.title')}</h2></div>
+          {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>Save settings JSON</a>{/if}
           {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
         {#if outputAudio.length}
