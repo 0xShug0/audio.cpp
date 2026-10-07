@@ -99,6 +99,10 @@
   let outputSettings: { url: string; filename: string } | null = null;
   let generationElapsedSeconds = 0;
   let generationTimer: number | null = null;
+  let settingsInput: HTMLInputElement | null = null;
+  let importedSessionOptions: Record<string, string> = {};
+  let importedLoadOptions: Record<string, string> = {};
+  let settingsReloadRequired = false;
   let logs: string[] = [];
   let aborter: AbortController | null = null;
   let longText = true;
@@ -567,7 +571,8 @@
   function mergedSessionOptions(entry: CatalogEntry) {
     const packageChoice = selectedPackageChoice(entry);
     const sessionParams = entry.id === selectedId ? sessionParameterOptions() : {};
-    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}), ...sessionParams };
+    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}),
+      ...(entry.id === selectedId ? importedSessionOptions : {}), ...sessionParams };
   }
 
   function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
@@ -1074,6 +1079,9 @@
   }
 
   function resetParams() {
+    importedSessionOptions = {};
+    importedLoadOptions = {};
+    settingsReloadRequired = false;
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
     const hidesDurationSec = selected?.family === 'controlfoley' || selected?.family === 'midashenglm_gen';
     paramSpecs = byId.filter((spec) =>
@@ -1250,7 +1258,7 @@
         family: selected.family,
         task: selected.task,
         mode: modeOverride || selected.mode || 'offline',
-        load_options: selected.load_options || {},
+        load_options: { ...(selected.load_options || {}), ...importedLoadOptions },
         session_options: mergedSessionOptions(selected)
       });
       await refresh();
@@ -1458,18 +1466,139 @@
 
   async function ensureLoaded() {
     if (!server?.ui_management) {
+      if (settingsReloadRequired) {
+        throw new Error('The imported model settings require a reload through the server configuration.');
+      }
       if (!loadedModels.some((model) => model.id === selectedId)) {
         throw new Error('Configured model is not registered by this server.');
       }
       return;
     }
-    if (!isLoaded) {
+    if (!isLoaded || settingsReloadRequired) {
+      if (settingsReloadRequired && loadedModels.some((model) => model.id === selectedId && model.loaded)) {
+        await unloadModel(selectedId);
+        await refresh();
+      }
       await doLoad();
       await refresh();
       if (!loadedModels.some((model) => model.id === selectedId && model.loaded &&
         modelMatchesSelectedPackage(model, selected))) {
         throw new Error('Model did not load.');
       }
+      settingsReloadRequired = false;
+    }
+  }
+
+  async function loadSettingsFile(file: File | null) {
+    if (!file || running || loadingModel) return;
+    try {
+      const settings = JSON.parse(await file.text());
+      if (settings.schema_version !== 1 || typeof settings.model?.id !== 'string' ||
+          !Array.isArray(settings.requests) || !settings.requests.length ||
+          !settings.requests.every((request: { body?: unknown }) =>
+            request && request.body && typeof request.body === 'object' && !Array.isArray(request.body))) {
+        throw new Error('Choose an audio.cpp settings JSON exported with Save settings JSON.');
+      }
+      const entry = activeCatalog.find((candidate) => candidate.id === settings.model.id);
+      if (!entry || entry.family !== settings.model.family || entry.task !== settings.model.task) {
+        throw new Error(`The exported model is not available in this UI: ${settings.model.id}`);
+      }
+      if (!entrySelectable(entry)) throw new Error(`Install ${entry.display_name} before importing its settings.`);
+      const choice = settings.model.package_id
+        ? entry.install_packages?.find((candidate) => candidate.id === settings.model.package_id)
+        : undefined;
+      if (settings.model.package_id && !choice) {
+        throw new Error(`The exported package is not available: ${settings.model.package_id}`);
+      }
+      if (choice && !packageIsAvailable(entry, choice, loadedModels, packageSizes)) {
+        throw new Error(`Install ${choice.label} before importing its settings.`);
+      }
+      const body = settings.requests[0].body;
+      const request = body.request || body;
+      const ui = settings.ui;
+      const importedSeed = settings.resolved_seed;
+      if (!Number.isInteger(importedSeed) || importedSeed < 0 || importedSeed > 0xffffffff) {
+        throw new Error('The settings JSON has an invalid resolved seed.');
+      }
+      const previousLoadOptions = { ...(entry.load_options || {}),
+        ...(entry.id === selectedId ? importedLoadOptions : {}) };
+      chooseModel(entry.id);
+      if (choice) {
+        selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
+        localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
+      }
+      modelPath = choice ? selectedModelPath(entry) : settings.model.path;
+      importedSessionOptions = { ...(settings.model.session_options || {}) };
+      importedLoadOptions = { ...(settings.model.load_options || {}) };
+      advancedValues = { ...advancedValues, ...(ui?.advanced_values || Object.fromEntries(
+        Object.entries(request.options || {}).filter(([name]) => paramSpecs.some((spec) => spec.name === name)))) };
+      for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
+        const value = importedSessionOptions[spec.session_option || spec.name];
+        if (value === undefined) continue;
+        if (spec.type === 'bool' && !['true', 'false'].includes(value)) {
+          throw new Error(`Invalid boolean setting: ${spec.name}`);
+        }
+        if (['number', 'slider'].includes(spec.type) && !Number.isFinite(Number(value))) {
+          throw new Error(`Invalid numeric setting: ${spec.name}`);
+        }
+        advancedValues[spec.name] = spec.type === 'bool' ? value === 'true'
+          : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
+      }
+      text = ui?.text ?? (settings.requests[0].endpoint === '/v1/audio/speech'
+        ? settings.requests.map((item: { body: { input: string } }) => item.body.input).join('\n\n')
+        : request.text || '');
+      lyrics = ui?.lyrics ?? request.lyrics ?? '';
+      language = ui?.language ?? request.language ?? '';
+      mossLanguage = ui?.moss_language ?? request.language ?? 'English';
+      context = ui?.context ?? (entry.task === 'asr' ? request.text || '' : '');
+      referenceText = ui?.reference_text ?? request.reference_text ?? '';
+      instructions = ui?.instructions ?? request.instructions ?? '';
+      duration = ui?.duration ?? request.duration_seconds ?? request.options?.duration_sec ?? duration;
+      maxTokens = ui?.max_tokens ?? request.max_tokens ?? maxTokens;
+      asrMaxTokens = ui?.asr_max_tokens ?? request.options?.max_tokens ?? asrMaxTokens;
+      longText = ui?.long_text ?? settings.requests.length > 1;
+      chunkBudget = ui?.text_chunk_size ?? chunkBudget;
+      quickStartVoice = ui?.voice ?? request.voice ?? '';
+      advancedJson = ui?.advanced_json ?? JSON.stringify(Object.fromEntries(
+        Object.entries(request.options || {}).filter(([name]) => !paramSpecs.some((spec) => spec.name === name))), null, 2);
+      seed = importedSeed;
+      sourceFile = null;
+      voiceFile = null;
+      videoFile = null;
+      vibeVoiceSpeakerFiles = [null, null, null, null];
+      savedVoiceId = '';
+      referenceTextFile = null;
+      if (sourceInput) sourceInput.value = '';
+      if (voiceInput) voiceInput.value = '';
+      if (videoInput) videoInput.value = '';
+      if (referenceTextInput) referenceTextInput.value = '';
+      for (const input of vibeVoiceSpeakerInputs) if (input) input.value = '';
+      const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
+      settingsReloadRequired = Boolean(resident && (
+        !catalogPathMatches(modelPath, resident.path) ||
+        Object.entries(mergedSessionOptions(entry)).some(([key, value]) => resident.session_options?.[key] !== value) ||
+        JSON.stringify(previousLoadOptions) !== JSON.stringify(importedLoadOptions)));
+      await inspectPath();
+      const files = Object.values(settings.input_files || {}).flat().filter((name) => typeof name === 'string' && name);
+      status = `Imported settings for ${entry.display_name}.`;
+      if (files.length) status += ` Reselect the referenced files: ${files.join(', ')}.`;
+      if (settings.backend && settings.backend !== server?.backend) {
+        status += ` Exported backend: ${settings.backend}; current backend: ${server?.backend}.`;
+      }
+      warningStatus = files.length ? status : '';
+      errorStatus = '';
+      log(status);
+      if (settingsReloadRequired && server?.ui_management &&
+          window.confirm('The imported model settings differ from the loaded model. Reload now?')) {
+        await ensureLoaded();
+      }
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      errorStatus = status;
+      warningStatus = '';
+      log(`Settings import failed: ${status}`);
+    } finally {
+      if (settingsInput) settingsInput.value = '';
     }
   }
 
@@ -1762,8 +1891,14 @@
           mode: resident?.mode || selected.mode || 'offline',
           path: resident?.path || modelPath,
           package_id: selectedPackageChoice(selected)?.id,
-          load_options: selected.load_options || {},
+          load_options: { ...(selected.load_options || {}), ...importedLoadOptions },
           session_options: resident?.session_options || mergedSessionOptions(selected)
+        },
+        ui: {
+          text, lyrics, language, moss_language: mossLanguage, context,
+          reference_text: referenceText, instructions, duration, max_tokens: maxTokens,
+          asr_max_tokens: asrMaxTokens, long_text: longText, text_chunk_size: chunkBudget,
+          voice: quickStartVoice, advanced_values: { ...advancedValues }, advanced_json: advancedJson
         },
         input_files: {
           source: sourceFile?.name,
@@ -2413,6 +2548,10 @@
           <div><span>{tr('request.label')}</span><h2>{tr('request.title')}</h2></div>
           <span class="task-chip">{selected?.task}</span>
         </div>
+        <input type="file" accept=".json,application/json" bind:this={settingsInput} hidden
+          on:change={(event) => loadSettingsFile(event.currentTarget.files?.[0] || null)} />
+        <button type="button" class="settings-import" disabled={running || loadingModel}
+          on:click={() => settingsInput?.click()}>Load settings JSON</button>
 
         {#if showsText}
           <label for="text">{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>

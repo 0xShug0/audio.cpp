@@ -214,6 +214,7 @@ kbd { font: 9px ui-monospace, monospace; padding: 2px 4px; border: 1px solid rgb
 .audio-list article > div { display: flex; justify-content: space-between; margin-bottom: 9px; font-size: 12px; }
 .audio-list a { color: var(--cyan); text-decoration: none; }
 .settings-download { color: var(--cyan); font-size: 12px; white-space: nowrap; }
+.settings-import { display: block; margin: 0 0 12px auto; }
 .utility-weights-link { display: block; margin: 8px 0; color: var(--cyan); font-size: 12px; overflow-wrap: anywhere; }
 audio { width: 100%; height: 38px; }
 .transcript { margin-top: 14px; }
