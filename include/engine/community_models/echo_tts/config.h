@@ -161,11 +161,19 @@ struct EchoPcaState {
     float latent_scale = 1.0F;
 };
 
+// Which CFG method to use when sampling (may be expanded in the future)
+enum class EchoCfgMode {
+    Independent,    // Reference independent 2-CFG (speaker, text) method
+    Joint,          // Single CFG (speaker+text) method
+};
+
 // Request-level sampler configuration, parsed from spec options.
 struct EchoSamplerOptions {
     int num_steps = 40;
-    float cfg_scale_text = 3.0F;
-    float cfg_scale_speaker = 8.0F;
+    EchoCfgMode cfg_mode = EchoCfgMode::Independent;
+    float cfg_scale_text = 3.0F;        // Independent-CFG only
+    float cfg_scale_speaker = 8.0F;     // Independent-CFG only
+    float cfg_scale = 8.0F;             // Joint-CFG only
     float cfg_min_t = 0.5F;
     float cfg_max_t = 1.0F;
     // Evaluate the two unconditional lanes only every Nth step inside the CFG
