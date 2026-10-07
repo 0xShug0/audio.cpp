@@ -5,7 +5,13 @@ facade over `engine::runtime` and adds no behaviour of its own: every call maps
 onto `ModelRegistry` → `ILoadedVoiceModel` → `IVoiceTaskSession`, the same
 surfaces `audiocpp_cli` uses.
 
-It is off by default.
+It is off by default in source builds. Releases provide separate
+`audio-<tag>-lib-<platform>-<backend>` archives, alongside the existing binary
+archives. Each library archive contains `include/audiocpp.h`, `libs/`, and the
+license. Windows archives include `audiocpp.lib` for linking. Choose the archive
+for your platform and backend: CPU, CUDA, Vulkan, or Metal. Keep bundled shared
+dependencies beside the library in `libs/`; GPU drivers and the Vulkan loader
+must be installed on the host. The server-only Colab bundle is unchanged.
 
 ```bash
 cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON

@@ -2725,12 +2725,20 @@ if (AUDIOCPP_BUILD_C_API)
             AUDIOCPP_USE_DLL
     )
     set_target_properties(audiocpp PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         VERSION 0.1.0
         SOVERSION 0
         C_VISIBILITY_PRESET hidden
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON
     )
+    if (APPLE)
+        set_target_properties(audiocpp PROPERTIES
+            INSTALL_RPATH "@loader_path" BUILD_WITH_INSTALL_RPATH ON)
+    elseif (UNIX)
+        set_target_properties(audiocpp PROPERTIES
+            INSTALL_RPATH "$ORIGIN" BUILD_WITH_INSTALL_RPATH ON)
+    endif()
     # The visibility presets above only reach this target's own sources. The
     # static libraries linked in (ggml, cJSON, sentencepiece, ...) are built
     # without -fvisibility=hidden, so without an explicit export list they are

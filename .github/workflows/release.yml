@@ -112,6 +112,20 @@ jobs:
             ${{ matrix.defines }} ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(sysctl -n hw.logicalcpu)" --target ${{ env.BUILD_TARGETS }}
+      - name: Build and stage C API library
+        run: |
+          cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
+          cmake --build build --parallel "$(sysctl -n hw.logicalcpu)" --target audiocpp
+          mkdir -p dist-lib/libs dist-lib/include
+          cp include/audiocpp.h dist-lib/include/
+          cp LICENSE dist-lib/
+          find build/bin -maxdepth 1 \( -name '*.so*' -o -name '*.dylib' \) -exec cp -P {} dist-lib/libs/ \;
+          mv build/bin/libaudiocpp* dist-lib/libs/
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-lib-macos-${{ matrix.arch }}-metal.tar.gz -C dist-lib .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-macos-${{ matrix.arch }}-metal
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-macos-${{ matrix.arch }}-metal.tar.gz
       - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
@@ -141,6 +155,20 @@ jobs:
             ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Build and stage C API library
+        run: |
+          cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
+          cmake --build build --parallel "$(nproc)" --target audiocpp
+          mkdir -p dist-lib/libs dist-lib/include
+          cp include/audiocpp.h dist-lib/include/
+          cp LICENSE dist-lib/
+          find build/bin -maxdepth 1 \( -name '*.so*' -o -name '*.dylib' \) -exec cp -P {} dist-lib/libs/ \;
+          mv build/bin/libaudiocpp* dist-lib/libs/
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cpu.tar.gz -C dist-lib .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cpu
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cpu.tar.gz
       - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
@@ -172,6 +200,20 @@ jobs:
             ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Build and stage C API library
+        run: |
+          cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
+          cmake --build build --parallel "$(nproc)" --target audiocpp
+          mkdir -p dist-lib/libs dist-lib/include
+          cp include/audiocpp.h dist-lib/include/
+          cp LICENSE dist-lib/
+          find build/bin -maxdepth 1 \( -name '*.so*' -o -name '*.dylib' \) -exec cp -P {} dist-lib/libs/ \;
+          mv build/bin/libaudiocpp* dist-lib/libs/
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cpu-portable.tar.gz -C dist-lib .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cpu-portable
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cpu-portable.tar.gz
       - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
@@ -201,6 +243,20 @@ jobs:
             ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Build and stage C API library
+        run: |
+          cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
+          cmake --build build --parallel "$(nproc)" --target audiocpp
+          mkdir -p dist-lib/libs dist-lib/include
+          cp include/audiocpp.h dist-lib/include/
+          cp LICENSE dist-lib/
+          find build/bin -maxdepth 1 \( -name '*.so*' -o -name '*.dylib' \) -exec cp -P {} dist-lib/libs/ \;
+          mv build/bin/libaudiocpp* dist-lib/libs/
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-vulkan.tar.gz -C dist-lib .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-vulkan
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-vulkan.tar.gz
       - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
@@ -232,6 +288,20 @@ jobs:
             ${{ env.CMAKE_ARGS }}
       - name: Build
         run: cmake --build build --config Release --parallel "$(nproc)" --target ${{ env.BUILD_TARGETS }}
+      - name: Build and stage C API library
+        run: |
+          cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
+          cmake --build build --parallel "$(nproc)" --target audiocpp
+          mkdir -p dist-lib/libs dist-lib/include
+          cp include/audiocpp.h dist-lib/include/
+          cp LICENSE dist-lib/
+          find build/bin -maxdepth 1 \( -name '*.so*' -o -name '*.dylib' \) -exec cp -P {} dist-lib/libs/ \;
+          mv build/bin/libaudiocpp* dist-lib/libs/
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-vulkan-portable.tar.gz -C dist-lib .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-vulkan-portable
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-vulkan-portable.tar.gz
       - name: Stage bundle
         run: |
           cp LICENSE build/bin/ 2>/dev/null || true
@@ -241,6 +311,60 @@ jobs:
         with:
           name: audio-${{ needs.get-version.outputs.tag }}-bin-ubuntu-x64-vulkan-portable
           path: build/bin/*
+
+  linux-cuda-library:
+    name: 'Ubuntu x64 library (CUDA ${{ matrix.label }})'
+    needs: [check-release, get-version]
+    if: ${{ needs.check-release.outputs.should_release == 'true' }}
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cuda: '12.8.1'
+            label: '12.8'
+            archs: '75;80;86;89;90'
+          - cuda: '13.3.0'
+            label: '13.3'
+            archs: '75;80;86;89;90;120'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-13 g++-13 cmake ninja-build
+      - name: Build library
+        env:
+          CC: gcc-13
+          CXX: g++-13
+          CUDAHOSTCXX: g++-13
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_CUDA_ARCHITECTURES=${{ matrix.archs }}" \
+            -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=OFF \
+            -DENGINE_ENABLE_NATIVE_CPU=OFF -DENGINE_BUILD_TESTS=OFF \
+            -DAUDIOCPP_BUILD_C_API=ON -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
+            -DENGINE_ENABLE_LLAMAFILE=ON -DENGINE_ENABLE_CUDA_GRAPHS=ON \
+            -DAUDIOCPP_VERSION=${{ needs.get-version.outputs.version }}
+          cmake --build build --parallel "$(nproc)" --target audiocpp
+      - name: Stage library
+        run: |
+          mkdir -p dist-lib/libs dist-lib/include
+          cp include/audiocpp.h dist-lib/include/
+          cp LICENSE dist-lib/
+          cp -P build/bin/libaudiocpp.so* dist-lib/libs/
+          ldd build/bin/libaudiocpp.so > build/library-dependencies.txt
+          awk '$3 ~ /^\/usr\/local\/cuda/ {print $1, $3}' build/library-dependencies.txt |
+            while read -r name path; do cp -L "$path" "dist-lib/libs/$name"; done
+          tar -czf audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cuda${{ matrix.label }}.tar.gz -C dist-lib .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cuda${{ matrix.label }}
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-ubuntu-x64-cuda${{ matrix.label }}.tar.gz
 
   linux-cuda-colab:
     name: Ubuntu x64 (CUDA 12.8, Colab T4)
@@ -348,6 +472,27 @@ jobs:
             }
           }
           Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Build and stage C API library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          cmake -S . -B build/windows-cpu-release -DAUDIOCPP_BUILD_C_API=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/windows-cpu-release --config Release --parallel $env:NUMBER_OF_PROCESSORS --target audiocpp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist-lib/libs, dist-lib/include | Out-Null
+          Copy-Item include/audiocpp.h dist-lib/include/
+          Copy-Item LICENSE dist-lib/
+          Copy-Item build/windows-cpu-release/bin/*.dll dist-lib/libs/
+          Move-Item build/windows-cpu-release/bin/audiocpp.* dist-lib/libs/ -Force
+          Compress-Archive -Path dist-lib/* -DestinationPath audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cpu.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cpu
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cpu.zip
       - name: Stage bundle
         shell: pwsh
         working-directory: build/windows-cpu-release/bin
@@ -397,6 +542,27 @@ jobs:
             }
           }
           Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Build and stage C API library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          cmake -S . -B build/windows-cpu-release -DAUDIOCPP_BUILD_C_API=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/windows-cpu-release --config Release --parallel $env:NUMBER_OF_PROCESSORS --target audiocpp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist-lib/libs, dist-lib/include | Out-Null
+          Copy-Item include/audiocpp.h dist-lib/include/
+          Copy-Item LICENSE dist-lib/
+          Copy-Item build/windows-cpu-release/bin/*.dll dist-lib/libs/
+          Move-Item build/windows-cpu-release/bin/audiocpp.* dist-lib/libs/ -Force
+          Compress-Archive -Path dist-lib/* -DestinationPath audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cpu-portable.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cpu-portable
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cpu-portable.zip
       - name: Stage bundle
         shell: pwsh
         working-directory: build/windows-cpu-release/bin
@@ -450,6 +616,27 @@ jobs:
             }
           }
           Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Build and stage C API library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          cmake -S . -B build/windows-vulkan-release -DAUDIOCPP_BUILD_C_API=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/windows-vulkan-release --config Release --parallel $env:NUMBER_OF_PROCESSORS --target audiocpp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist-lib/libs, dist-lib/include | Out-Null
+          Copy-Item include/audiocpp.h dist-lib/include/
+          Copy-Item LICENSE dist-lib/
+          Copy-Item build/windows-vulkan-release/bin/*.dll dist-lib/libs/
+          Move-Item build/windows-vulkan-release/bin/audiocpp.* dist-lib/libs/ -Force
+          Compress-Archive -Path dist-lib/* -DestinationPath audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-vulkan.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-vulkan
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-vulkan.zip
       - name: Stage bundle
         shell: pwsh
         working-directory: build/windows-vulkan-release/bin
@@ -559,6 +746,28 @@ jobs:
             } | Copy-Item -Destination . -ErrorAction SilentlyContinue
           }
           Get-ChildItem *.dll | Select-Object Name | Out-String | Write-Host
+      - name: Build and stage C API library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build --config Release --parallel $env:NUMBER_OF_PROCESSORS --target audiocpp
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist-lib/libs, dist-lib/include | Out-Null
+          Copy-Item include/audiocpp.h dist-lib/include/
+          Copy-Item LICENSE dist-lib/
+          Copy-Item build/bin/*.dll dist-lib/libs/
+          Move-Item build/bin/audiocpp.* dist-lib/libs/ -Force
+          Copy-Item build/cudart/*.dll dist-lib/libs/
+          Compress-Archive -Path dist-lib/* -DestinationPath audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cuda${{ matrix.label }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cuda${{ matrix.label }}
+          path: audio-${{ needs.get-version.outputs.tag }}-lib-windows-x64-cuda${{ matrix.label }}.zip
       - name: Stage bundle
         shell: pwsh
         working-directory: build/bin
@@ -597,6 +806,7 @@ jobs:
       - windows-vulkan
       - windows-cuda
       - linux-cuda-colab
+      - linux-cuda-library
     if: >-
       ${{
         always() &&
@@ -611,7 +821,8 @@ jobs:
         needs.windows-cpu.result == 'success' &&
         needs.windows-cpu-portable.result == 'success' &&
         needs.windows-vulkan.result == 'success' &&
-        needs.windows-cuda.result == 'success'
+        needs.windows-cuda.result == 'success' &&
+        needs.linux-cuda-library.result == 'success'
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -640,12 +851,17 @@ jobs:
             name="${d%/}"
             echo "Packing ${name}"
             case "$name" in
+              *-lib-*)
+                mv "$d"* .
+                ;;
               *windows*)
                 (cd "$d" && zip -qqr "../${name}.zip" .)
                 ;;
               *)
                 # upload-artifact drops file modes; restore the executable bit
-                chmod +x "$d"audiocpp_*
+                if [[ "$name" == *-bin-* ]]; then
+                  chmod +x "$d"audiocpp_*
+                fi
                 (cd "$d" && tar -czf "../${name}.tar.gz" .)
                 ;;
             esac
