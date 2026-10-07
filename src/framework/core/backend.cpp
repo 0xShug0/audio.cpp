@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -277,6 +278,45 @@ bool is_host_backend(ggml_backend_t backend) {
     return device != nullptr && ggml_backend_dev_type(device) == GGML_BACKEND_DEVICE_TYPE_CPU;
 }
 
+std::vector<ggml_backend_buffer_type_t> cpu_extra_buffer_types(ggml_backend_t backend) {
+    std::vector<ggml_backend_buffer_type_t> out;
+    if (!is_host_backend(backend)) {
+        return out;
+    }
+    // Through the proc address, like the thread count (works with GGML_BACKEND_DL)
+    ggml_backend_dev_t device = ggml_backend_get_device(backend);
+    auto fn = (ggml_backend_dev_get_extra_bufts_t)ggml_backend_reg_get_proc_address(
+        ggml_backend_dev_backend_reg(device), "ggml_backend_dev_get_extra_bufts");
+    if (fn == nullptr) {
+        return out;
+    }
+    for (ggml_backend_buffer_type_t * buffer_type = fn(device); buffer_type != nullptr && *buffer_type != nullptr; ++buffer_type) {
+        out.push_back(*buffer_type);
+    }
+    return out;
+}
+
+bool buffer_type_supports_matmul_weight(
+    ggml_backend_t backend, ggml_backend_buffer_type_t buffer_type, ggml_type type, int64_t ne0, int64_t ne1) {
+    ggml_backend_dev_t device = backend != nullptr ? ggml_backend_get_device(backend) : nullptr;
+    if (device == nullptr || buffer_type == nullptr || ne0 <= 0 || ne1 <= 0 || ne0 % ggml_blck_size(type) != 0) {
+        return false;
+    }
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({4 * ggml_tensor_overhead(), nullptr, true}), ggml_free);
+    if (ctx == nullptr) {
+        throw std::runtime_error("failed to initialize the weight buffer probe context");
+    }
+    ggml_tensor * weight = ggml_new_tensor_2d(ctx.get(), type, ne0, ne1);
+    ggml_tensor * op = ggml_mul_mat(ctx.get(), weight, ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, ne0, 512));
+    // supports_op looks at the buffer type of the weight's buffer, so an
+    // empty buffer of the candidate type stands in for the real one.
+    weight->buffer = ggml_backend_buft_alloc_buffer(buffer_type, 0);
+    const bool supported = ggml_backend_dev_supports_op(device, op);
+    ggml_backend_buffer_free(weight->buffer);
+    weight->buffer = nullptr;
+    return supported;
+}
+
 BackendType backend_type(ggml_backend_t backend) {
     if (is_host_backend(backend)) {
         return BackendType::Cpu;
@@ -379,13 +419,50 @@ void release_backend_graph_resources(BackendType backend_type, ggml_backend_t ba
     if (backend_type == BackendType::Cuda || backend_type == BackendType::Hip) cuda_clear_graph(backend, graph);
 }
 
+// Whether `tensor` is held in a buffer of one of `buffer_types`.
+static bool held_in(const ggml_tensor * tensor, const std::vector<ggml_backend_buffer_type_t> & buffer_types) {
+    if (tensor == nullptr || tensor->buffer == nullptr) {
+        return false;
+    }
+    const ggml_backend_buffer_type_t buffer_type = ggml_backend_buffer_get_type(tensor->buffer);
+    return std::find(buffer_types.begin(), buffer_types.end(), buffer_type) != buffer_types.end();
+}
+
+static std::string tensor_name_of(const ggml_tensor * tensor) {
+    return tensor->name[0] != '\0' ? tensor->name : "<unnamed>";
+}
+
 void validate_backend_graph_supported(ggml_backend_t backend, ggml_cgraph * graph, const char * label) {
     if (backend == nullptr || graph == nullptr) {
         throw std::runtime_error("Cannot validate backend graph support for null backend or graph");
     }
+    // A weight in a CPU extra buffer is laid out for that buffer type's own
+    // matmul kernels, which read it whole. The CPU backend accepts views, and
+    // a matmul on a view before the view has a buffer, so a view of such a
+    // weight would read misplaced rows without failing. CPU_REPACK's kernels
+    // also read the input's rows as if each followed the last, whatever its
+    // strides, and its supports_op does not check them.
+    const auto extra_buffer_types = cpu_extra_buffer_types(backend);
     const int nodes = ggml_graph_n_nodes(graph);
     for (int i = 0; i < nodes; ++i) {
         ggml_tensor * node = ggml_graph_node(graph, i);
+        const auto misuse = [&](const ggml_tensor * weight, const std::string & what) {
+            throw std::runtime_error(
+                std::string(label != nullptr ? label : "graph") + " " + what + " weight '" + tensor_name_of(weight) + "', held in a " +
+                ggml_backend_buffer_name(weight->buffer) + " buffer, at node " + std::to_string(i) + " tensor '" + tensor_name_of(node) +
+                "'");
+        };
+        // The node itself, or a source that is a view but no node (ggml_view_tensor).
+        for (int src = -1; node != nullptr && !extra_buffer_types.empty() && src < GGML_MAX_SRC; ++src) {
+            const ggml_tensor * tensor = src < 0 ? node : node->src[src];
+            if (tensor != nullptr && held_in(tensor->view_src, extra_buffer_types)) {
+                misuse(tensor->view_src, "views");
+            }
+        }
+        if (node != nullptr && node->op == GGML_OP_MUL_MAT && held_in(node->src[0], extra_buffer_types) &&
+            !ggml_is_contiguous(node->src[1])) {
+            misuse(node->src[0], "multiplies a non-contiguous input by");
+        }
         if (node != nullptr && !ggml_backend_supports_op(backend, node)) {
             const char * graph_label = label != nullptr ? label : "graph";
             std::string op_name = ggml_op_name(node->op);

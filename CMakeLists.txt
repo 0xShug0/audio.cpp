@@ -3006,6 +3006,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
     add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
+    add_engine_unittest(backend_weight_store_extra_buffers_test tests/unittests/test_backend_weight_store_extra_buffers.cpp)
+    add_test(NAME backend_weight_store_extra_buffers_test COMMAND backend_weight_store_extra_buffers_test)
     if (ENGINE_ENABLE_VULKAN)
         add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
         add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
