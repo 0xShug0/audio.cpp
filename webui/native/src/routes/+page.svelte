@@ -111,9 +111,11 @@
     text: string;
     json: string;
     settings: { url: string; filename: string };
+    settingsJson: string;
   };
   let generationHistory: GenerationHistoryEntry[] = [];
   let historyError = '';
+  let restoringHistory = false;
   let nextGenerationId = 1;
   let selectedGenerationId: number | null = null;
   let outputModelId = '';
@@ -1495,11 +1497,28 @@
     URL.revokeObjectURL(entry.settings.url);
   }
 
-  function selectGeneration(entry: GenerationHistoryEntry) {
+  async function selectGeneration(entry: GenerationHistoryEntry, restoreParameters = false): Promise<void> {
     if (entry.modelId !== selectedId || entry.task !== selected.task) {
       historyError = `Cannot open history for ${entry.label}: the current model is ${selected.display_name}.`;
       log(historyError);
       return;
+    }
+    if (restoreParameters) {
+      if (running || loadingModel || restoringHistory) {
+        historyError = 'Wait for the current request or settings restore to finish.';
+        return;
+      }
+      restoringHistory = true;
+      try {
+        await restoreSettingsJson(entry.settingsJson);
+      } catch (error) {
+        historyError = error instanceof Error ? error.message : String(error);
+        log(`History settings restore failed: ${historyError}`);
+        return;
+      } finally {
+        restoringHistory = false;
+      }
+      return selectGeneration(entry);
     }
     historyError = '';
     clearOutput();
@@ -1572,109 +1591,113 @@
     }
   }
 
+  async function restoreSettingsJson(json: string) {
+    const settings = JSON.parse(json);
+    if (settings.schema_version !== 1 || typeof settings.model?.id !== 'string' ||
+        !Array.isArray(settings.requests) || !settings.requests.length ||
+        !settings.requests.every((request: { body?: unknown }) =>
+          request && request.body && typeof request.body === 'object' && !Array.isArray(request.body))) {
+      throw new Error('Choose an audio.cpp settings JSON exported with Save settings JSON.');
+    }
+    const entry = activeCatalog.find((candidate) => candidate.id === settings.model.id);
+    if (!entry || entry.family !== settings.model.family || entry.task !== settings.model.task) {
+      throw new Error(`The exported model is not available in this UI: ${settings.model.id}`);
+    }
+    if (!entrySelectable(entry)) throw new Error(`Install ${entry.display_name} before importing its settings.`);
+    const choice = settings.model.package_id
+      ? entry.install_packages?.find((candidate) => candidate.id === settings.model.package_id)
+      : undefined;
+    if (settings.model.package_id && !choice) {
+      throw new Error(`The exported package is not available: ${settings.model.package_id}`);
+    }
+    if (choice && !packageIsAvailable(entry, choice, loadedModels, packageSizes)) {
+      throw new Error(`Install ${choice.label} before importing its settings.`);
+    }
+    const body = settings.requests[0].body;
+    const request = body.request || body;
+    const ui = settings.ui;
+    const importedSeed = settings.resolved_seed;
+    if (!Number.isInteger(importedSeed) || importedSeed < 0 || importedSeed > 0xffffffff) {
+      throw new Error('The settings JSON has an invalid resolved seed.');
+    }
+    const previousLoadOptions = { ...(entry.load_options || {}),
+      ...(entry.id === selectedId ? importedLoadOptions : {}) };
+    chooseModel(entry.id);
+    if (choice) {
+      selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
+      localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
+    }
+    modelPath = choice ? selectedModelPath(entry) : settings.model.path;
+    importedSessionOptions = { ...(settings.model.session_options || {}) };
+    importedLoadOptions = { ...(settings.model.load_options || {}) };
+    advancedValues = { ...advancedValues, ...(ui?.advanced_values || Object.fromEntries(
+      Object.entries(request.options || {}).filter(([name]) => paramSpecs.some((spec) => spec.name === name)))) };
+    for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
+      const value = importedSessionOptions[spec.session_option || spec.name];
+      if (value === undefined) continue;
+      if (spec.type === 'bool' && !['true', 'false'].includes(value)) {
+        throw new Error(`Invalid boolean setting: ${spec.name}`);
+      }
+      if (['number', 'slider'].includes(spec.type) && !Number.isFinite(Number(value))) {
+        throw new Error(`Invalid numeric setting: ${spec.name}`);
+      }
+      advancedValues[spec.name] = spec.type === 'bool' ? value === 'true'
+        : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
+    }
+    text = ui?.text ?? (settings.requests[0].endpoint === '/v1/audio/speech'
+      ? settings.requests.map((item: { body: { input: string } }) => item.body.input).join('\n\n')
+      : request.text || '');
+    lyrics = ui?.lyrics ?? request.lyrics ?? '';
+    language = ui?.language ?? request.language ?? '';
+    mossLanguage = ui?.moss_language ?? request.language ?? 'English';
+    context = ui?.context ?? (entry.task === 'asr' ? request.text || '' : '');
+    referenceText = ui?.reference_text ?? request.reference_text ?? '';
+    instructions = ui?.instructions ?? request.instructions ?? '';
+    duration = ui?.duration ?? request.duration_seconds ?? request.options?.duration_sec ?? duration;
+    maxTokens = ui?.max_tokens ?? request.max_tokens ?? maxTokens;
+    asrMaxTokens = ui?.asr_max_tokens ?? request.options?.max_tokens ?? asrMaxTokens;
+    longText = ui?.long_text ?? settings.requests.length > 1;
+    chunkBudget = ui?.text_chunk_size ?? chunkBudget;
+    quickStartVoice = ui?.voice ?? request.voice ?? '';
+    advancedJson = ui?.advanced_json ?? JSON.stringify(Object.fromEntries(
+      Object.entries(request.options || {}).filter(([name]) => !paramSpecs.some((spec) => spec.name === name))), null, 2);
+    seed = importedSeed;
+    sourceFile = null;
+    voiceFile = null;
+    videoFile = null;
+    vibeVoiceSpeakerFiles = [null, null, null, null];
+    savedVoiceId = '';
+    referenceTextFile = null;
+    if (sourceInput) sourceInput.value = '';
+    if (voiceInput) voiceInput.value = '';
+    if (videoInput) videoInput.value = '';
+    if (referenceTextInput) referenceTextInput.value = '';
+    for (const input of vibeVoiceSpeakerInputs) if (input) input.value = '';
+    const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
+    settingsReloadRequired = Boolean(resident && (
+      !catalogPathMatches(modelPath, resident.path) ||
+      Object.entries(mergedSessionOptions(entry)).some(([key, value]) => resident.session_options?.[key] !== value) ||
+      JSON.stringify(previousLoadOptions) !== JSON.stringify(importedLoadOptions)));
+    await inspectPath();
+    const files = Object.values(settings.input_files || {}).flat().filter((name) => typeof name === 'string' && name);
+    status = `Imported settings for ${entry.display_name}.`;
+    if (files.length) status += ` Reselect the referenced files: ${files.join(', ')}.`;
+    if (settings.backend && settings.backend !== server?.backend) {
+      status += ` Exported backend: ${settings.backend}; current backend: ${server?.backend}.`;
+    }
+    warningStatus = files.length ? status : '';
+    errorStatus = '';
+    log(status);
+    if (settingsReloadRequired && server?.ui_management &&
+        window.confirm('The imported model settings differ from the loaded model. Reload now?')) {
+      await ensureLoaded();
+    }
+  }
+
   async function loadSettingsFile(file: File | null) {
-    if (!file || running || loadingModel) return;
+    if (!file || running || loadingModel || restoringHistory) return;
     try {
-      const settings = JSON.parse(await file.text());
-      if (settings.schema_version !== 1 || typeof settings.model?.id !== 'string' ||
-          !Array.isArray(settings.requests) || !settings.requests.length ||
-          !settings.requests.every((request: { body?: unknown }) =>
-            request && request.body && typeof request.body === 'object' && !Array.isArray(request.body))) {
-        throw new Error('Choose an audio.cpp settings JSON exported with Save settings JSON.');
-      }
-      const entry = activeCatalog.find((candidate) => candidate.id === settings.model.id);
-      if (!entry || entry.family !== settings.model.family || entry.task !== settings.model.task) {
-        throw new Error(`The exported model is not available in this UI: ${settings.model.id}`);
-      }
-      if (!entrySelectable(entry)) throw new Error(`Install ${entry.display_name} before importing its settings.`);
-      const choice = settings.model.package_id
-        ? entry.install_packages?.find((candidate) => candidate.id === settings.model.package_id)
-        : undefined;
-      if (settings.model.package_id && !choice) {
-        throw new Error(`The exported package is not available: ${settings.model.package_id}`);
-      }
-      if (choice && !packageIsAvailable(entry, choice, loadedModels, packageSizes)) {
-        throw new Error(`Install ${choice.label} before importing its settings.`);
-      }
-      const body = settings.requests[0].body;
-      const request = body.request || body;
-      const ui = settings.ui;
-      const importedSeed = settings.resolved_seed;
-      if (!Number.isInteger(importedSeed) || importedSeed < 0 || importedSeed > 0xffffffff) {
-        throw new Error('The settings JSON has an invalid resolved seed.');
-      }
-      const previousLoadOptions = { ...(entry.load_options || {}),
-        ...(entry.id === selectedId ? importedLoadOptions : {}) };
-      chooseModel(entry.id);
-      if (choice) {
-        selectedPackageIds = { ...selectedPackageIds, [entry.id]: choice.id };
-        localStorage.setItem('audiocpp.ui.packageIds', JSON.stringify(selectedPackageIds));
-      }
-      modelPath = choice ? selectedModelPath(entry) : settings.model.path;
-      importedSessionOptions = { ...(settings.model.session_options || {}) };
-      importedLoadOptions = { ...(settings.model.load_options || {}) };
-      advancedValues = { ...advancedValues, ...(ui?.advanced_values || Object.fromEntries(
-        Object.entries(request.options || {}).filter(([name]) => paramSpecs.some((spec) => spec.name === name)))) };
-      for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
-        const value = importedSessionOptions[spec.session_option || spec.name];
-        if (value === undefined) continue;
-        if (spec.type === 'bool' && !['true', 'false'].includes(value)) {
-          throw new Error(`Invalid boolean setting: ${spec.name}`);
-        }
-        if (['number', 'slider'].includes(spec.type) && !Number.isFinite(Number(value))) {
-          throw new Error(`Invalid numeric setting: ${spec.name}`);
-        }
-        advancedValues[spec.name] = spec.type === 'bool' ? value === 'true'
-          : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
-      }
-      text = ui?.text ?? (settings.requests[0].endpoint === '/v1/audio/speech'
-        ? settings.requests.map((item: { body: { input: string } }) => item.body.input).join('\n\n')
-        : request.text || '');
-      lyrics = ui?.lyrics ?? request.lyrics ?? '';
-      language = ui?.language ?? request.language ?? '';
-      mossLanguage = ui?.moss_language ?? request.language ?? 'English';
-      context = ui?.context ?? (entry.task === 'asr' ? request.text || '' : '');
-      referenceText = ui?.reference_text ?? request.reference_text ?? '';
-      instructions = ui?.instructions ?? request.instructions ?? '';
-      duration = ui?.duration ?? request.duration_seconds ?? request.options?.duration_sec ?? duration;
-      maxTokens = ui?.max_tokens ?? request.max_tokens ?? maxTokens;
-      asrMaxTokens = ui?.asr_max_tokens ?? request.options?.max_tokens ?? asrMaxTokens;
-      longText = ui?.long_text ?? settings.requests.length > 1;
-      chunkBudget = ui?.text_chunk_size ?? chunkBudget;
-      quickStartVoice = ui?.voice ?? request.voice ?? '';
-      advancedJson = ui?.advanced_json ?? JSON.stringify(Object.fromEntries(
-        Object.entries(request.options || {}).filter(([name]) => !paramSpecs.some((spec) => spec.name === name))), null, 2);
-      seed = importedSeed;
-      sourceFile = null;
-      voiceFile = null;
-      videoFile = null;
-      vibeVoiceSpeakerFiles = [null, null, null, null];
-      savedVoiceId = '';
-      referenceTextFile = null;
-      if (sourceInput) sourceInput.value = '';
-      if (voiceInput) voiceInput.value = '';
-      if (videoInput) videoInput.value = '';
-      if (referenceTextInput) referenceTextInput.value = '';
-      for (const input of vibeVoiceSpeakerInputs) if (input) input.value = '';
-      const resident = loadedModels.find((model) => model.id === entry.id && model.loaded);
-      settingsReloadRequired = Boolean(resident && (
-        !catalogPathMatches(modelPath, resident.path) ||
-        Object.entries(mergedSessionOptions(entry)).some(([key, value]) => resident.session_options?.[key] !== value) ||
-        JSON.stringify(previousLoadOptions) !== JSON.stringify(importedLoadOptions)));
-      await inspectPath();
-      const files = Object.values(settings.input_files || {}).flat().filter((name) => typeof name === 'string' && name);
-      status = `Imported settings for ${entry.display_name}.`;
-      if (files.length) status += ` Reselect the referenced files: ${files.join(', ')}.`;
-      if (settings.backend && settings.backend !== server?.backend) {
-        status += ` Exported backend: ${settings.backend}; current backend: ${server?.backend}.`;
-      }
-      warningStatus = files.length ? status : '';
-      errorStatus = '';
-      log(status);
-      if (settingsReloadRequired && server?.ui_management &&
-          window.confirm('The imported model settings differ from the loaded model. Reload now?')) {
-        await ensureLoaded();
-      }
+      await restoreSettingsJson(await file.text());
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
       errorStatus = status;
@@ -1911,7 +1934,7 @@
   }
 
   async function run() {
-    if (running || modelPanelUploading) return;
+    if (running || modelPanelUploading || restoringHistory) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -2132,7 +2155,8 @@
           }
         }
       }
-      const settingsUrl = URL.createObjectURL(new Blob([JSON.stringify(submittedSettings, null, 2)], {
+      const settingsJson = JSON.stringify(submittedSettings, null, 2);
+      const settingsUrl = URL.createObjectURL(new Blob([settingsJson], {
         type: 'application/json'
       }));
       clearOutput();
@@ -2154,7 +2178,8 @@
           artifacts: nextArtifacts,
           text: nextText,
           json: nextJson,
-          settings: outputSettings
+          settings: outputSettings,
+          settingsJson
         };
         generationHistory = [entry, ...generationHistory];
         selectedGenerationId = entry.id;
@@ -2538,7 +2563,8 @@
       <button class:active={tab === 'models'} on:click={openModelsPage}>{tr('nav.models')}</button>
     {/if}
     <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>{tr('nav.runtime')}</button>
-    <button class:active={tab === 'configuration'} on:click={() => tab = 'configuration'}>Configuration</button>
+    <button class:active={tab === 'configuration'} disabled={restoringHistory}
+      on:click={() => tab = 'configuration'}>Configuration</button>
   </nav>
   <label class="language-picker">
     <span>{tr('language.label')}</span>
@@ -2568,6 +2594,7 @@
     <nav class="workflow-tabs" aria-label={tr('nav.workflows')}>
       {#each workflowTabs as workflow}
         <button class:active={activeWorkflow === workflow.id}
+          disabled={restoringHistory}
           on:click={() => chooseWorkflow(workflow.id)}>
           {workflowLabel(workflow.id, workflow.label, tr)}
           <small>{activeCatalog.filter((entry) => workflowForEntry(entry) === workflow.id).length}</small>
@@ -2591,7 +2618,7 @@
     <div class="studio-grid">
       <aside class="panel model-rail">
         <label for="model">{tr('studio.model')}</label>
-        <select id="model" bind:value={selectedId} disabled={modelInventoryLoading}
+        <select id="model" bind:value={selectedId} disabled={modelInventoryLoading || restoringHistory}
           on:change={(event) => chooseModel(event.currentTarget.value)}>
           <option value="">{tr('studio.noModel')}</option>
           {#each activeWorkflowSpec.tasks as task}
@@ -2660,7 +2687,7 @@
         </div>
         <input type="file" accept=".json,application/json" bind:this={settingsInput} hidden
           on:change={(event) => loadSettingsFile(event.currentTarget.files?.[0] || null)} />
-        <button type="button" class="settings-import" disabled={running || loadingModel}
+        <button type="button" class="settings-import" disabled={running || loadingModel || restoringHistory}
           on:click={() => settingsInput?.click()}>Load settings JSON</button>
 
         {#if showsText}
@@ -2999,7 +3026,7 @@
         {/if}
 
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
+          <button class="run" disabled={!selectedId || running || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
             title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
             <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
@@ -3032,16 +3059,17 @@
           <details class="generation-history">
             <summary>Run history (Experimental) <span>{generationHistory.length}/{$uiConfiguration.historyLimit}</span></summary>
             {#if historyError}<div class="history-error" role="alert">{historyError}</div>{/if}
-            <div class="history-actions"><button type="button" on:click={clearGenerationHistory}>Clear history</button></div>
+            <div class="history-actions"><button type="button" disabled={restoringHistory} on:click={clearGenerationHistory}>Clear history</button></div>
             <ul>
               {#each generationHistory as entry (entry.id)}
                 <li class:active={selectedGenerationId === entry.id}>
                   <button type="button" class="history-select" aria-pressed={selectedGenerationId === entry.id}
-                    on:click={() => selectGeneration(entry)}>
+                    disabled={restoringHistory} on:click={() => selectGeneration(entry, true)}>
                     <strong>{entry.label}</strong>
                     <small>{new Date(entry.createdAt).toLocaleTimeString()} · {localizedTaskLabel(entry.task)}{#if ['gen', 'tts', 'clon', 'vdes'].includes(entry.task)} · Seed {entry.seed}{/if}</small>
                   </button>
                   <button type="button" title={`Delete generation ${entry.id}`}
+                    disabled={restoringHistory}
                     aria-label={`Delete generation ${entry.id}`} on:click={() => deleteGeneration(entry.id)}>Delete</button>
                 </li>
               {/each}
