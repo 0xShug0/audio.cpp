@@ -2,6 +2,7 @@
 
 #include "audited_model_slots.h"
 #include "base64.h"
+#include "live_speech_input.h"
 #include "model_memory.h"
 #include "multipart.h"
 #include "speech_option_exceptions.h"
@@ -2634,9 +2635,6 @@ HttpResponse ParallelServerState::handle_speech_live(const HttpRequest & request
             throw std::runtime_error("live speech requires a 'model' query parameter");
         }
         const std::string input = decoded_query_param(request.query, "input");
-        if (input.empty()) {
-            throw std::runtime_error("live speech requires an 'input' query parameter");
-        }
 
         engine::io::json::Value::Object fields;
         fields.emplace("model", engine::io::json::Value::make_string(model_id));
@@ -2690,6 +2688,9 @@ HttpResponse ParallelServerState::handle_speech_live(const HttpRequest & request
                 "live speech requires a model configured with mode=streaming: " +
                 model.config.id);
         }
+        if (input.empty() && live_speech_requires_input(model.task.task)) {
+            throw std::runtime_error("live speech requires an 'input' query parameter");
+        }
         const std::string sample_format_name = query_param(request.query, "sample_format");
         sample_format = minitts::app::parse_pcm_sample_format(
             sample_format_name.empty() ? "s16le" : sample_format_name);
@@ -2719,6 +2720,11 @@ HttpResponse ParallelServerState::handle_speech_live(const HttpRequest & request
         }
 
         task_request = build_speech_request(model, body);
+        // Neither input nor language leaves text_input unset, as /v1/tasks/run
+        // does without them, so the model uses its default prompt.
+        if (input.empty() && language.empty()) {
+            task_request.text_input.reset();
+        }
         engine::runtime::AudioBuffer audio_contract;
         audio_contract.sample_rate = sample_rate;
         audio_contract.channels = channels;

@@ -234,13 +234,13 @@ finished before its reply is over returns the text its events carried.
 A question longer than `lfm2_audio.max_pass_seconds` fails as soon as that
 much of it has come, without waiting for the rest.
 The server's live route, `/v1/audio/speech/live`, takes the question as
-chunked raw PCM and requires an `input` query parameter, which becomes the
-system prompt, so pass liquid-audio's:
+chunked raw PCM. Without `input` the reply uses liquid-audio's system prompt;
+an `input` replaces it, as `--text` does.
 
 ```bash
 ffmpeg -i question.wav -ar 16000 -ac 1 -f s16le - \
   | curl -N -X POST -H 'Expect:' -T - \
-      'http://127.0.0.1:8080/v1/audio/speech/live?model=lfm2-audio-s2s-stream&sample_rate=16000&channels=1&sample_format=s16le&return_text=true&input=Respond%20with%20interleaved%20text%20and%20audio.'
+      'http://127.0.0.1:8080/v1/audio/speech/live?model=lfm2-audio-s2s-stream&sample_rate=16000&channels=1&sample_format=s16le&return_text=true'
 ```
 
 It returns the reply's audio as server-sent events and, with `return_text=true`,
