@@ -6,6 +6,8 @@ Use `audiocpp_cli` for direct model inference.
 audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <backend> [inputs] [outputs]
 ```
 
+> **Always specify `--family` for model commands, including model-specific help.** Treat it as required; omission is supported only for backward compatibility. Automatic loader discovery without it can substantially slow startup and `--model ... --help`.
+
 ## Common Options
 
 | Option | Values | Default | Meaning |

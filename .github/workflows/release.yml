@@ -623,8 +623,8 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          path: assets
-      # Each artifact downloads into assets/<artifact-name>/ holding the raw
+          path: release-assets
+      # Each artifact downloads into release-assets/<artifact-name>/ holding the raw
       # bundle (binaries + tools/ + model_specs/). Archive per platform here so
       # the release ships the same zip/tar.gz layout as before; artifact names
       # already match the final asset basenames.
@@ -635,7 +635,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y zip
           fi
-          cd assets
+          cd release-assets
           for d in */; do
             name="${d%/}"
             echo "Packing ${name}"
@@ -676,9 +676,9 @@ jobs:
       - name: Upload binaries to existing release
         if: ${{ steps.relstate.outputs.exists == 'true' }}
         run: |
-          gh release upload "${{ needs.get-version.outputs.tag }}" assets/*.zip assets/*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "${{ needs.get-version.outputs.tag }}" release-assets/*.zip release-assets/*.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
       # Newly-created tag with no release yet: create the release w/ notes.
       - name: Create release
         if: ${{ steps.relstate.outputs.exists != 'true' }}
         run: |
-          gh release create "${{ needs.get-version.outputs.tag }}" assets/*.zip assets/*.tar.gz --title "${{ needs.get-version.outputs.tag }}" --generate-notes --repo "$GITHUB_REPOSITORY"
+          gh release create "${{ needs.get-version.outputs.tag }}" release-assets/*.zip release-assets/*.tar.gz --title "${{ needs.get-version.outputs.tag }}" --generate-notes --repo "$GITHUB_REPOSITORY"

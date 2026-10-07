@@ -37,6 +37,42 @@
   --footer-text: #607a9d;
 }
 
+:root:not([data-theme]),
+:root[data-theme="mocha"] {
+  --bg: #1e1e2e;
+  --panel: #181825;
+  --panel-2: #313244;
+  --line: #45475a;
+  --muted: #a6adc8;
+  --text: #cdd6f4;
+  --text-strong: #cdd6f4;
+  --text-label: #bac2de;
+  --text-subtle: #a6adc8;
+  --text-invert: #11111b;
+  --cyan: #94e2d5;
+  --blue: #89b4fa;
+  --danger: #f38ba8;
+  --body-glow: transparent;
+  --topbar-bg: #181825;
+  --panel-bg: #181825;
+  --control-bg: #1e1e2e;
+  --control-border: #585b70;
+  --control-disabled: #6c7086;
+  --button-bg: #313244;
+  --button-hover-bg: #45475a;
+  --button-hover-border: #89b4fa;
+  --active-bg: #313244;
+  --active-border: #94e2d5;
+  --card-bg: #1e1e2e;
+  --code-bg: #11111b;
+  --icon-bg: #313244;
+  --file-button-bg: #b4befe;
+  --chip-bg: #313244;
+  --panel-shadow: rgba(17, 17, 27, .2);
+  --folder-backdrop: rgba(17, 17, 27, .78);
+  --footer-text: #a6adc8;
+}
+
 :root[data-theme="light"] {
   --bg: #f6f8fb;
   --panel: #ffffff;

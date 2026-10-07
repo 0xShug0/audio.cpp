@@ -163,7 +163,7 @@
   let bundledVoices: string[] = [];
   let quickStartVoice = '';
   let uiLanguage = 'en';
-  let uiTheme: UiTheme = 'system';
+  let uiTheme: UiTheme = 'mocha';
   let systemPrefersDark = true;
   let themePreferenceQuery: MediaQueryList | null = null;
   let themePreferenceListener: ((event: MediaQueryListEvent) => void) | null = null;
@@ -213,7 +213,7 @@
     document.documentElement.dataset.theme = nextTheme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute(
       'content',
-      nextTheme === 'dark' ? '#07101f' : '#f6f8fb'
+      getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()
     );
   }
 
@@ -316,7 +316,7 @@
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
     { id: 'music', label: 'Music / video generation', filterLabel: 'Music / video generation', tasks: ['gen'] },
-    { id: 'conversion', label: 'Voice conversion', filterLabel: 'Voice conversion', tasks: ['vc', 'svc', 's2s'] },
+    { id: 'conversion', label: 'Voice Conversion / S2S', filterLabel: 'Voice Conversion / S2S', tasks: ['vc', 'svc', 's2s'] },
     { id: 'enhancement', label: 'Enhancement / denoising', filterLabel: 'Enhancement / denoising', tasks: ['s2s'] },
     { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep', 's2s'] },
     { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi', 'asr', 'turn'] },
@@ -603,6 +603,9 @@
 
   function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
     const expected = mergedSessionOptions(entry);
+    if (entry.family === 'lfm2_audio') {
+      expected['lfm2_audio.model_gguf'] = choice.session_options?.['lfm2_audio.model_gguf'];
+    }
     const keys = Array.from(new Set((entry.install_packages || [])
       .flatMap((candidate) => Object.keys(candidate.session_options || {}))));
     if (entry.id === selectedId) {
