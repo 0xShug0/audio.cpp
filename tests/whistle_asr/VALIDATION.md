@@ -271,7 +271,7 @@ cmake -S . -B build/whistle -DAUDIOCPP_WHISTLE_TEST_MODEL=$PWD/build/whistle/pr-
 ctest --test-dir build/whistle -R whistle_ --output-on-failure
 build/whistle/bin/whistle_frontend_test build/whistle/pr-prep/source/mel_filterbank_80.f32 build/whistle/pr-prep/oracle/sample_16k.f32
 build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --reference build/whistle/pr-prep/oracle --backend cpu --threads 4
-build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --reference build/whistle/pr-prep/oracle --backend metal
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --reference build/whistle/pr-prep/oracle --backend metal --tolerance 5e-3
 build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend metal --threads 4 --model build/whistle/pr-prep/model/whistle-f32.gguf --audio assets/resources/sample_16k.wav --metrics
 python3 tools/check_loader_catalog_sync.py --self-test && python3 tools/check_loader_catalog_sync.py
 ```

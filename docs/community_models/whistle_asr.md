@@ -135,7 +135,8 @@ unresolved questions. No weights or extracted assets are included in this port.
 - `whistle_assets_test <gguf> <wav> --reference <dir> [--tolerance f]` compares
   the mel features, encoder memory, and cross-attention keys/values against
   `.f32` reference dumps in `<dir>` and reports the largest difference as a
-  fraction of each reference tensor's largest magnitude (default tolerance 2e-3).
+  fraction of each reference tensor's largest magnitude (default tolerance 2e-3;
+  Metal's half-precision matmul operand staging needs `--tolerance 5e-3`).
   The dumps used in [the validation report](../../tests/whistle_asr/VALIDATION.md)
   came from the earlier host-only implementation at commit `6e0a40c4`.
 
