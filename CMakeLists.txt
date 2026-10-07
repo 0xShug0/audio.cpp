@@ -919,6 +919,19 @@ audiocpp_add_model(outetts
         qwen3_forced_aligner
 )
 
+audiocpp_add_model(voxtral_tts
+    SOURCES
+        src/models/voxtral_tts/assets.cpp
+        src/models/voxtral_tts/ar.cpp
+        src/models/voxtral_tts/acoustic.cpp
+        src/models/voxtral_tts/codec.cpp
+        src/models/voxtral_tts/session.cpp
+    INCLUDES
+        engine/models/voxtral_tts/session.h
+    LOADERS
+        engine::models::voxtral_tts::make_voxtral_tts_loader
+)
+
 audiocpp_add_model(kugelaudio
     SOURCES
         src/models/kugelaudio/ar.cpp

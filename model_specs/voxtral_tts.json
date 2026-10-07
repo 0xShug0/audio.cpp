@@ -1,0 +1,224 @@
+{
+    "schema_version": 1,
+    "family": "voxtral_tts",
+    "display_name": "Voxtral 4B TTS",
+    "description": "Mistral's Ministral-based autoregressive and flow-matching TTS model with 20 embedded preset voices.",
+    "category": "tts",
+    "status": "supported",
+    "tasks": [
+        "tts"
+    ],
+    "modes": [
+        "offline",
+        "streaming"
+    ],
+    "languages": [
+        "en",
+        "fr",
+        "es",
+        "de",
+        "it",
+        "pt",
+        "nl",
+        "ar",
+        "hi"
+    ],
+    "runtime": {
+        "tags": [
+            "gguf"
+        ]
+    },
+    "capabilities": {
+        "tts": [
+            "built_in_voices",
+            "long_form"
+        ]
+    },
+    "options": {
+        "request": [
+            {
+                "name": "voice_id",
+                "type": "enum",
+                "description": "Embedded preset voice; the released checkpoint does not contain the encoder needed for reference-audio cloning.",
+                "values": [
+                    "casual_female",
+                    "casual_male",
+                    "cheerful_female",
+                    "neutral_female",
+                    "neutral_male",
+                    "pt_male",
+                    "pt_female",
+                    "nl_male",
+                    "nl_female",
+                    "it_male",
+                    "it_female",
+                    "fr_male",
+                    "fr_female",
+                    "es_male",
+                    "es_female",
+                    "de_male",
+                    "de_female",
+                    "ar_male",
+                    "hi_male",
+                    "hi_female"
+                ],
+                "required": false,
+                "default": "casual_male"
+            },
+            {
+                "name": "max_tokens",
+                "type": "int",
+                "description": "Maximum generated audio frames per text chunk; each frame represents 80 ms.",
+                "required": false,
+                "min": 1,
+                "default": 2048
+            },
+            {
+                "name": "num_inference_steps",
+                "type": "int",
+                "description": "Euler integration steps for the per-frame acoustic flow model.",
+                "required": false,
+                "min": 1,
+                "default": 7
+            },
+            {
+                "name": "guidance_scale",
+                "type": "float",
+                "description": "Acoustic classifier-free guidance scale; the AR backbone does not use CFG.",
+                "required": false,
+                "min": 0,
+                "default": 1.2
+            },
+            {
+                "name": "seed",
+                "type": "int",
+                "description": "Acoustic noise seed; omitted requests select a random seed.",
+                "required": false,
+                "min": 0
+            },
+            {
+                "name": "text_chunk_size",
+                "type": "int",
+                "description": "Maximum Unicode codepoints per framework long-form text chunk.",
+                "required": false,
+                "min": 1,
+                "default": 300
+            },
+            {
+                "name": "text_chunk_mode",
+                "type": "enum",
+                "description": "Framework text chunking mode.",
+                "values": [
+                    "default",
+                    "tag_aware",
+                    "japanese",
+                    "endline"
+                ],
+                "required": false,
+                "default": "default"
+            }
+        ],
+        "session": [
+            {
+                "name": "weight_type",
+                "type": "enum",
+                "description": "Weight storage type; native preserves the package's tensor types.",
+                "values": [
+                    "native",
+                    "f32",
+                    "f16",
+                    "bf16",
+                    "q4_0",
+                    "q4_1",
+                    "q5_0",
+                    "q5_1",
+                    "q2_k",
+                    "q3_k",
+                    "q4_k",
+                    "q5_k",
+                    "q6_k",
+                    "q8_0",
+                    "nvfp4"
+                ],
+                "required": false,
+                "default": "native"
+            },
+            {
+                "name": "kv_cache_type",
+                "type": "enum",
+                "description": "AR key/value cache storage type.",
+                "values": [
+                    "f32",
+                    "f16",
+                    "bf16"
+                ],
+                "required": false,
+                "default": "f16"
+            }
+        ],
+        "load": []
+    },
+    "package_defaults": {
+        "download": {
+            "kind": "huggingface_snapshot",
+            "repo": "audio-cpp/audio.cpp-gguf",
+            "revision": "main",
+            "gated": false
+        }
+    },
+    "packages": [
+        {
+            "id": "voxtral_4b_tts_2603_bf16",
+            "display_name": "Voxtral 4B TTS 2603 BF16 GGUF",
+            "default": true,
+            "format": "gguf",
+            "precision": "bf16",
+            "target_directory": "Voxtral-4B-TTS-2603-GGUF",
+            "files": [
+                "Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-bf16.gguf"
+            ],
+            "strip_prefix": "Voxtral-4B-TTS-2603-GGUF"
+        },
+        {
+            "id": "voxtral_4b_tts_2603_q8_0",
+            "display_name": "Voxtral 4B TTS 2603 Q8_0 GGUF",
+            "default": false,
+            "format": "gguf",
+            "precision": "q8_0",
+            "target_directory": "Voxtral-4B-TTS-2603-GGUF",
+            "files": [
+                "Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-q8_0.gguf"
+            ],
+            "strip_prefix": "Voxtral-4B-TTS-2603-GGUF"
+        }
+    ],
+    "dependencies": [],
+    "ui": {
+        "recommended_package": "voxtral_4b_tts_2603_bf16",
+        "tags": [
+            "TTS",
+            "GGUF"
+        ],
+        "docs": [
+            "docs/models/voxtral_tts.md",
+            "docs/gguf.md"
+        ]
+    },
+    "sources": [
+        {
+            "format": "gguf",
+            "roots": {
+                "model": ".",
+                "weights": "$gguf"
+            },
+            "files": {
+                "config": "model:params.json",
+                "tokenizer_json": "model:tokenizer.json",
+                "tokenizer_config": "model:tokenizer_config.json"
+            },
+            "tensors": {
+                "model_weights": "weights:"
+            }
+        }
+    ]
+}

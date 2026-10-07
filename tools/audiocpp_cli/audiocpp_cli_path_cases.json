@@ -149,6 +149,46 @@
       ]
     },
     {
+      "id": "voxtral_tts_presets_reuse",
+      "coverage": "Voxtral TTS embedded preset changes, variable text lengths, seeds, and repeated requests in one session",
+      "family": "voxtral_tts",
+      "model": "models/Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-bf16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "male", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_male"}},
+        {"id": "female", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_female"}},
+        {"id": "longer", "text": "The morning train follows the river through the valley. Please check your ticket, keep your luggage nearby, and listen for the platform announcement before boarding.", "seed": 7, "options": {"voice_id": "casual_male"}},
+        {"id": "male_repeat", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_male"}}
+      ]
+    },
+    {
+      "id": "voxtral_tts_streaming",
+      "coverage": "Voxtral TTS incremental audio across the initial and steady-state codec graphs",
+      "family": "voxtral_tts",
+      "model": "models/Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-bf16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "stream", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_male"}}
+      ]
+    },
+    {
+      "id": "voxtral_tts_multilingual",
+      "coverage": "Voxtral TTS Tekken tokenization and embedded presets for Latin and non-Latin languages",
+      "family": "voxtral_tts",
+      "model": "models/Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-bf16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "french", "text": "Bonjour, le prochain train part dans dix minutes. Merci de patienter sur le quai.", "seed": 42, "options": {"voice_id": "fr_female"}},
+        {"id": "hindi", "text": "नमस्ते, अगली ट्रेन दस मिनट में रवाना होगी। कृपया अपना टिकट तैयार रखें।", "seed": 42, "options": {"voice_id": "hi_female"}}
+      ]
+    },
+    {
       "id": "owsm_v4_streaming",
       "coverage": "OWSM v4 committed long-form text deltas",
       "family": "owsm",
