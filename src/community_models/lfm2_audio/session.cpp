@@ -329,7 +329,9 @@ void Lfm2AudioSession::prepare(const runtime::SessionPreparationRequest & reques
 
 Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const runtime::TaskRequest & request) const {
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
-    reject_options(request, {"temperature", "top_k", "seed", "text_chunk_mode", "text_chunk_size", "stream_frames_per_event"}, "ASR");
+    reject_options(request,
+        {"temperature", "top_k", "seed", "text_temperature", "text_top_k", "text_chunk_mode", "text_chunk_size", "stream_frames_per_event"},
+        "ASR");
 
     RequestOptions out;
     out.max_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"}, out.max_tokens);
@@ -527,7 +529,7 @@ Lfm2AudioTtsSession::RequestOptions Lfm2AudioTtsSession::parse_request(const run
     }
 
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
-    reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds"}, "TTS");
+    reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds", "text_temperature", "text_top_k"}, "TTS");
 
     std::string language = request.text_input->language;
     if (const auto option = runtime::find_option(request.options, {"language"})) {
@@ -826,6 +828,13 @@ Lfm2AudioChatSession::RequestOptions Lfm2AudioChatSession::parse_request(const r
     sampling.top_k = runtime::parse_int_option(request.options, {"top_k"}).value_or(static_cast<int>(sampling.top_k));
     if (sampling.temperature < 0.0f || sampling.top_k < 0) {
         throw std::runtime_error("LFM2-Audio temperature and top_k must not be negative");
+    }
+
+    auto & text_sampling = out.reply.text_sampling;
+    text_sampling.temperature = runtime::parse_finite_float_option(request.options, {"text_temperature"}).value_or(text_sampling.temperature);
+    text_sampling.top_k = runtime::parse_int_option(request.options, {"text_top_k"}).value_or(static_cast<int>(text_sampling.top_k));
+    if (text_sampling.temperature < 0.0f || text_sampling.top_k < 0) {
+        throw std::runtime_error("LFM2-Audio text_temperature and text_top_k must not be negative");
     }
 
     sampling.seed = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());

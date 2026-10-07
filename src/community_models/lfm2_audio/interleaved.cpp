@@ -24,7 +24,8 @@ struct Lfm2InterleavedGenerator::Impl {
           end_of_turn(tokenizer.require_token_id("<|im_end|>")),
           text_end(tokenizer.require_token_id("<|text_end|>")),
           options(options_in),
-          sampler(options.sampling) {
+          sampler(options.sampling),
+          text_sampler(options.text_sampling, options.sampling.seed) {
         if (options.text_steps <= 0 || options.audio_steps <= 0) {
             throw std::runtime_error("LFM2-Audio interleaved generation needs positive text and audio block sizes");
         }
@@ -49,6 +50,7 @@ struct Lfm2InterleavedGenerator::Impl {
     int32_t text_end;
     Lfm2InterleavedOptions options;
     Lfm2CodeSampler sampler;
+    Lfm2CodeSampler text_sampler;
 
     Modality modality = Modality::Text;
     int64_t left = 0;  // steps left in the current block
@@ -98,7 +100,7 @@ std::optional<Lfm2ReplyStep> Lfm2InterleavedGenerator::next() {
 
     Lfm2ReplyStep step;
     if (s.modality == Impl::Modality::Text) {
-        step.token = lfm2_greedy(s.output);
+        step.token = s.text_sampler.pick(s.output);
         if (step.token == s.end_of_turn) {
             s.finished = true;
             s.ended = true;

@@ -204,8 +204,8 @@ export async function speech(body: Record<string, unknown>, signal?: AbortSignal
   };
 }
 
-export async function transcription(body: Record<string, unknown>, signal?: AbortSignal) {
-  return jsonRequest<Record<string, unknown>>('/v1/audio/transcriptions', {
+export async function transcription(body: Record<string, unknown>, signal?: AbortSignal, detail = false) {
+  return jsonRequest<Record<string, unknown>>(detail ? '/v1/audio/transcriptions/details' : '/v1/audio/transcriptions', {
     method: 'POST',
     body: JSON.stringify(body)
   }, signal);

@@ -16,6 +16,7 @@
 
 #include "engine/framework/core/constant_tensor_cache.h"
 
+#include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
@@ -955,13 +956,31 @@ public:
         }
         hidden_output_ = decoder_out.hidden.tensor;
         logits_output_ = decoder_out.logits.tensor;
+        ggml_set_input(input_);
+        ggml_set_input(positions_);
+        ggml_set_output(positions_);
+        if (attention_mask_ != nullptr) {
+            ggml_set_input(attention_mask_);
+            ggml_set_output(attention_mask_);
+        }
+        ggml_set_output(hidden_output_);
+        if (hidden_output_->view_src != nullptr) ggml_set_output(hidden_output_->view_src);
         ggml_set_output(logits_output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, logits_output_);
+        // The CPU exports every layer's K/V after execution, not just logits.
+        for (size_t layer = 0; layer < keys_.size(); ++layer) {
+            for (auto * output : {keys_[layer], values_[layer]}) {
+                ggml_set_output(output);
+                if (output->view_src != nullptr) ggml_set_output(output->view_src);
+                ggml_build_forward_expand(graph_, output);
+            }
+        }
         constants.finish_graph();
         constants.ensure_uploaded();
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
-        if (buffer_ == nullptr) {
+        graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->backend())));
+        if (!graph_allocator_ || !ggml_gallocr_reserve(graph_allocator_.get(), graph_) ||
+            !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Qwen3 talker prefill graph");
         }
         std::vector<int32_t> positions(static_cast<size_t>(prompt_capacity_), 0);
@@ -977,9 +996,7 @@ public:
 
     ~TalkerPrefillGraph() {
         engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        graph_allocator_.reset();
     }
 
     bool matches(const Qwen3TalkerWeightsRuntime & weights, int64_t prompt_capacity) const {
@@ -1038,7 +1055,7 @@ private:
     std::vector<ggml_tensor *> keys_;
     std::vector<ggml_tensor *> values_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
 };
 
 class TalkerCachedStepGraph {
@@ -1086,12 +1103,23 @@ public:
         step_cache_ = std::move(decoder_out.cache);
         hidden_output_ = decoder_out.hidden.tensor;
         logits_output_ = decoder_out.logits.tensor;
+        for (auto * input : {input_, positions_, cache_slot_, attention_mask_}) ggml_set_input(input);
+        ggml_set_output(hidden_output_);
+        if (hidden_output_->view_src != nullptr) ggml_set_output(hidden_output_->view_src);
+        // Persistent state must not be recycled between autoregressive steps.
+        for (int64_t layer = 0; layer < config.num_hidden_layers; ++layer) {
+            for (const auto & state : {step_cache_.key_tensor(layer), step_cache_.value_tensor(layer)}) {
+                ggml_set_input(state.tensor);
+                ggml_set_output(state.tensor);
+            }
+        }
         ggml_set_output(logits_output_);
         ggml_build_forward_expand(graph_, logits_output_);
         constants.finish_graph();
         constants.ensure_uploaded();
-        buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), weights_->backend());
-        if (buffer_ == nullptr) {
+        graph_allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->backend())));
+        if (!graph_allocator_ || !ggml_gallocr_reserve(graph_allocator_.get(), graph_) ||
+            !ggml_gallocr_alloc_graph(graph_allocator_.get(), graph_)) {
             throw std::runtime_error("failed to allocate Qwen3 talker cached step graph");
         }
         attention_mask_buffer_.assign(static_cast<size_t>(cache_steps_), ggml_fp32_to_fp16(-INFINITY));
@@ -1099,9 +1127,7 @@ public:
 
     ~TalkerCachedStepGraph() {
         engine::core::release_backend_graph_resources(weights_->backend(), graph_);
-        if (buffer_ != nullptr) {
-            ggml_backend_buffer_free(buffer_);
-        }
+        graph_allocator_.reset();
     }
 
     bool can_run(const Qwen3TalkerWeightsRuntime & weights, int64_t required_capacity) const {
@@ -1185,7 +1211,7 @@ private:
     std::vector<ggml_fp16_t> attention_mask_buffer_;
     runtime::TransformerKVCache step_cache_;
     ggml_cgraph * graph_ = nullptr;
-    ggml_backend_buffer_t buffer_ = nullptr;
+    std::unique_ptr<ggml_gallocr, decltype(&ggml_gallocr_free)> graph_allocator_{nullptr, ggml_gallocr_free};
     CachedStepTiming last_timing_;
 };
 

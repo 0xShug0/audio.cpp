@@ -1,4 +1,60 @@
 {
+  "kugelaudio": [
+    {"name":"num_inference_steps","type":"number","label":"Diffusion steps","default":20,"minimum":1,"maximum":1000,"step":1},
+    {"name":"guidance_scale","type":"number","label":"Guidance scale","default":3,"minimum":0,"step":0.1},
+    {"name":"max_tokens","type":"number","label":"Maximum tokens","default":2048,"minimum":1,"step":1},
+    {"name":"do_sample","type":"bool","label":"Sample AR tokens","default":false},
+    {"name":"temperature","type":"number","label":"Temperature","default":1,"minimum":0,"step":0.1},
+    {"name":"text_chunk_size","type":"number","label":"Text chunk size","default":300,"minimum":1,"step":1},
+    {"name":"text_chunk_mode","type":"choice","label":"Text chunk mode","default":"default","choices":["default","tag_aware","japanese","endline"]}
+  ],
+  "crisperwhisper": [
+    {"name":"transcription_mode","type":"choice","label":"Transcription mode","default":"verbatim","choices":["verbatim","intended","verbatimize"]},
+    {"name":"return_timestamps","type":"bool","label":"Word timestamps","default":false},
+    {"name":"max_tokens","type":"number","label":"Maximum tokens","default":256,"minimum":1,"maximum":439,"step":1},
+    {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","fixed","none"]},
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s)","default":30,"minimum":0.02,"maximum":30,"step":0.1},
+    {"name":"audio_chunk_overlap_sec","type":"number","label":"Chunk overlap (s)","default":4,"minimum":0,"step":0.1}
+  ],
+  "index_echo": [
+    {"name":"target_language","type":"choice","label":"Translation language","default":"en","choices":["en","es","ja"]},
+    {"name":"max_text_tokens","type":"number","label":"Maximum text tokens","default":2000,"minimum":1,"step":1},
+    {"name":"temperature","type":"number","label":"Temperature","default":0,"minimum":0,"maximum":2,"step":0.1},
+    {"name":"glossary","type":"text","label":"Glossary","default":""},
+    {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","quiet_energy","fixed","none"]},
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s)","default":60,"minimum":1,"maximum":60,"step":1}
+  ],
+  "audio_flamingo": [
+    {"name":"instruct","type":"text","label":"Question or instruction","default":"Transcribe the input speech.","lines":3},
+    {"name":"max_tokens","type":"number","label":"Maximum tokens","default":2048,"minimum":1,"step":1},
+    {"name":"do_sample","type":"bool","label":"Sample tokens","default":false},
+    {"name":"temperature","type":"number","label":"Temperature","default":1,"minimum":0.01,"step":0.1},
+    {"name":"top_k","type":"number","label":"Top K","default":50,"minimum":0,"step":1},
+    {"name":"top_p","type":"number","label":"Top P","default":1,"minimum":0.01,"maximum":1,"step":0.05},
+    {"name":"repetition_penalty","type":"number","label":"Repetition penalty","default":1,"minimum":0.01,"step":0.05}
+  ],
+  "owsm": [
+    {"name":"language","type":"text","label":"Input language (ISO 639-3)","default":"eng","placeholder":"eng, jpn, zho, auto"},
+    {"name":"target_language","type":"text","label":"Translation language (ISO 639-3)","default":""},
+    {"name":"return_timestamps","type":"bool","label":"Timestamp segments","default":false},
+    {"name":"condition_on_previous_text","type":"bool","label":"Condition on previous text","default":false},
+    {"name":"beam_size","type":"number","label":"Beam size","default":1,"minimum":1,"maximum":50002,"step":1},
+    {"name":"max_tokens","type":"number","label":"Maximum tokens (0 = model limit)","default":0,"minimum":0,"maximum":374,"step":1},
+    {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","fixed","none"]},
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s)","default":30,"minimum":0.2,"maximum":30,"step":0.1}
+  ],
+  "owsm_ctc": [
+    {"name":"language","type":"text","label":"Input language (ISO 639-3)","default":"eng","placeholder":"eng, jpn, zho, auto"},
+    {"name":"target_language","type":"text","label":"Translation language (ISO 639-3)","default":""},
+    {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","fixed","none"]}
+  ],
+  "reuse": [
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s, 0 = whole recording)","default":0,"minimum":0,"step":1},
+    {"name":"audio_chunk_overlap_sec","type":"number","label":"Chunk overlap (s)","default":1,"minimum":0,"step":0.1}
+  ],
+  "smart_turn": [
+    {"name":"threshold","type":"number","label":"Completion threshold","default":0.5,"minimum":0,"maximum":1,"step":0.05}
+  ],
   "maya1": [
     {"name":"instruct","type":"text","label":"Voice description","default":"Warm female voice with an American accent and conversational pacing.","lines":3},
     {"name":"temperature","type":"number","label":"Temperature","default":0.4,"minimum":0.01,"step":0.05},

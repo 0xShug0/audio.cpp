@@ -28,8 +28,10 @@ struct Lfm2InterleavedOptions {
     int64_t audio_steps = 0;  // audio frames per block
     // Text tokens and audio frames together, the reference's max_new_tokens.
     int64_t max_steps = 512;
-    // The README samples audio at temperature 1.0 with top-k 4; text is greedy.
+    // The README samples audio at temperature 1.0 with top-k 4 and leaves
+    // text greedy. Sampled text draws from its own stream of the same seed.
     Lfm2AudioSampling sampling{1.0f, 4, 0};
+    Lfm2TextSampling text_sampling;
 };
 
 // One step of a reply: a text token, or the codes of an audio frame.

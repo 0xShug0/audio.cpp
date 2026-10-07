@@ -659,7 +659,7 @@ public:
         x = modules::LinearModule({128, kContentDim, true}).build(ctx, x, weights_->gpt_layer.linear2);
         output_ = core::ensure_backend_addressable_layout(ctx, x).tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(8192, frames_ * 128)), false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 8192, false);
         ggml_build_forward_expand(graph_, output_);
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
         if (input_buffer_ == nullptr) {
@@ -795,7 +795,7 @@ public:
         auto out = modules::MulModule{}.build(ctx, x, mask);
         output_ = core::ensure_backend_addressable_layout(ctx, out).tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(32768, output_frames_ * 512)), false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
         ggml_build_forward_expand(graph_, output_);
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
         if (input_buffer_ == nullptr) {
@@ -937,7 +937,7 @@ public:
             weights_->cfm);
         output_ = core::ensure_backend_addressable_layout(ctx, output).tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), static_cast<size_t>(std::max<int64_t>(131072, frames_ * 4096)), false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), execution_.backend());
         if (input_buffer_ == nullptr) {

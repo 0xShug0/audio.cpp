@@ -212,6 +212,9 @@ void test_request_options(const Package & package) {
     rejects({{"audio_chunk_seconds", "0.5"}}, "audio_chunk_seconds");
 
     rejects({{"temperature", "0.7"}}, "temperature");
+    // S2S options the spec lists, which ASR turns away.
+    rejects({{"text_temperature", "0.7"}}, "ASR does not take request option text_temperature");
+    rejects({{"text_top_k", "50"}}, "ASR does not take request option text_top_k");
 }
 
 // What the session writes to std::cerr while it lives.

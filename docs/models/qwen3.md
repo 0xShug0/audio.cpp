@@ -126,13 +126,13 @@ constant-context sizes are in MiB.
 | `qwen3_tts.speech_encoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Reference speech encoder matmul weight storage. |
 | `qwen3_tts.speech_decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Speech decoder matmul weight storage. |
 | `qwen3_tts.conv_weight_type` | `native`, `f32`, `f16` | `f32` | Speech tokenizer and speaker encoder convolution weight storage. |
-| `qwen3_tts.talker_graph_arena_mb` | positive integer | `256` | Talker graph arena. |
+| `qwen3_tts.talker_graph_arena_mb` | positive integer | `32` | Talker graph arena. |
 | `qwen3_tts.speech_encoder_graph_arena_mb` | positive integer | `32` | Reference speech encoder graph arena. |
 | `qwen3_tts.speech_decoder_graph_arena_mb` | positive integer | `32` | Speech decoder graph arena. |
 | `qwen3_tts.speaker_encoder_graph_arena_mb` | positive integer | `32` | Speaker encoder graph arena. |
-| `qwen3_tts.talker_constant_context_mb` | positive integer | `4096` | Talker constant tensor context. |
-| `qwen3_tts.code_predictor_constant_context_mb` | positive integer | `1536` | Code predictor constant tensor context. |
-| `qwen3_tts.speech_decoder_constant_context_mb` | positive integer | `1536` | Speech decoder constant tensor context. |
+| `qwen3_tts.talker_constant_context_mb` | positive integer | `4` | Talker constant tensor context. |
+| `qwen3_tts.code_predictor_constant_context_mb` | positive integer | `4` | Code predictor constant tensor context. |
+| `qwen3_tts.speech_decoder_constant_context_mb` | positive integer | `4` | Speech decoder constant tensor context. |
 
 ## Qwen3 ASR
 

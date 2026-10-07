@@ -793,7 +793,7 @@ private:
         }
         release_graph();
         ggml_init_params params{
-            1024ull * 1024ull * 1024ull,
+            32ull * 1024ull * 1024ull,
             nullptr,
             true,
         };
@@ -1055,7 +1055,7 @@ BigVganVocoderComponent BigVganVocoderComponent::load_from_tensor_source(
         weights->execution_context->backend(),
         weights->execution_context->backend_type(),
         "framework.bigvgan.weights",
-        1024ull * 1024ull * 1024ull);
+        4ull * 1024ull * 1024ull);
 
     for (const auto & tensor : source->tensors()) {
         weights->parameter_count += tensor_elements(tensor.shape);
