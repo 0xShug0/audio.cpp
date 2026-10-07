@@ -213,6 +213,17 @@ kbd { font: 9px ui-monospace, monospace; padding: 2px 4px; border: 1px solid rgb
 .audio-list article { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card-bg); }
 .audio-list article > div { display: flex; justify-content: space-between; margin-bottom: 9px; font-size: 12px; }
 .audio-list a { color: var(--cyan); text-decoration: none; }
+.settings-download { color: var(--cyan); font-size: 12px; white-space: nowrap; }
+.settings-import { display: block; margin: 0 0 12px auto; }
+.generation-history { margin-bottom: 14px; }
+.history-actions { display: flex; justify-content: flex-end; margin: 8px 0; }
+.history-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; margin-top: 8px; }
+.generation-history ul { list-style: none; padding: 0; margin: 0; max-height: 220px; overflow: auto; }
+.generation-history li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+.history-select { display: grid; gap: 4px; text-align: left; border: 0; background: transparent; min-width: 0; }
+.history-select strong { font-size: 12px; overflow-wrap: anywhere; }
+.history-select small { color: var(--muted); font-size: 11px; }
+.generation-history li.active .history-select { color: var(--cyan); }
 .utility-weights-link { display: block; margin: 8px 0; color: var(--cyan); font-size: 12px; overflow-wrap: anywhere; }
 audio { width: 100%; height: 38px; }
 .transcript { margin-top: 14px; }
