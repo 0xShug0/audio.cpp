@@ -2611,6 +2611,7 @@ function(audiocpp_use_utf8_codepage target)
 endfunction()
 
 add_executable(audiocpp_cli
+    app/common/base64.cpp
     app/common/build_info.cpp
     app/cli/main.cpp
     app/cli/args.cpp
@@ -2890,6 +2891,7 @@ add_executable(model_perf
     tests/perf/model_perf.cpp
     app/cli/args.cpp
     app/cli/request.cpp
+    app/common/base64.cpp
 )
 target_link_libraries(model_perf PRIVATE engine_runtime ggml)
 audiocpp_use_utf8_codepage(model_perf)
@@ -3526,6 +3528,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             tests/unittests/test_cli_request_options.cpp
             app/cli/args.cpp
             app/cli/request.cpp
+            app/common/base64.cpp
         )
         target_link_libraries(cli_request_options_test PRIVATE engine_runtime ggml)
         if (ENGINE_ENABLE_OPENMP)
@@ -3566,6 +3569,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             app/server/model_memory.cpp
             app/cli/args.cpp
             app/cli/request.cpp
+            app/common/base64.cpp
         )
         target_include_directories(server_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         target_link_libraries(server_config_test PRIVATE engine_runtime ggml)

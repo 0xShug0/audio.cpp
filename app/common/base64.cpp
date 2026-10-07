@@ -53,7 +53,10 @@ std::string base64_encode(const std::vector<std::byte> & bytes) {
     return base64_encode(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
 }
 
-std::vector<uint8_t> base64_decode(std::string_view input) {
+namespace {
+
+template <typename Byte>
+std::vector<Byte> decode(std::string_view input) {
     if (input.rfind("data:", 0) == 0) {
         const auto comma = input.find(',');
         if (comma == std::string_view::npos || input.find(";base64") == std::string_view::npos) {
@@ -62,7 +65,7 @@ std::vector<uint8_t> base64_decode(std::string_view input) {
         input = input.substr(comma + 1);
     }
 
-    std::vector<uint8_t> out;
+    std::vector<Byte> out;
     out.reserve((input.size() / 4) * 3);
     uint32_t buffer = 0;
     int bits = 0;
@@ -89,13 +92,23 @@ std::vector<uint8_t> base64_decode(std::string_view input) {
         bits += 6;
         if (bits >= 8) {
             bits -= 8;
-            out.push_back(static_cast<uint8_t>((buffer >> bits) & 0xff));
+            out.push_back(static_cast<Byte>((buffer >> bits) & 0xff));
         }
     }
     if (bits >= 6) {
         throw std::runtime_error("malformed base64 payload: truncated quartet");
     }
     return out;
+}
+
+}  // namespace
+
+std::vector<uint8_t> base64_decode(std::string_view input) {
+    return decode<uint8_t>(input);
+}
+
+std::vector<std::byte> base64_decode_bytes(std::string_view input) {
+    return decode<std::byte>(input);
 }
 
 }  // namespace minitts::app
