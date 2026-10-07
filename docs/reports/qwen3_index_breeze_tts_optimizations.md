@@ -1,4 +1,4 @@
-# Qwen3-TTS, IndexTTS, and BreezeTTS Optimization Results
+# Qwen3-TTS and IndexTTS Optimization Results
 
 RTX 5090, CUDA Debug build, Q8 weights, 8 CPU threads, fixed seed. Each build/model ran sequentially in a fresh server with the same mixed-length request sequence and logging enabled. Peak VRAM was sampled continuously across the sequence (5 ms target interval); warm RTF is the median of four identical long-request repeats. Positive RTF changes mean slower.
 
@@ -9,8 +9,6 @@ RTX 5090, CUDA Debug build, Q8 weights, 8 CPU threads, fixed seed. Each build/mo
 | Qwen3-TTS VoiceDesign | 6,180 | 5,110 | -1,070 | 0.10334 | 0.10347 | +0.12% |
 | IndexTTS2, including emotion request | 6,288 | 6,290 | +2 | 0.14590 | 0.14676 | +0.60% |
 | IndexTTS2.5, including emotion request | 5,918 | 5,908 | -10 | 0.08688 | 0.08623 | -0.75% |
-| BreezeTTS clone | 6,914 | 6,716 | -198 | 0.22636 | 0.22632 | -0.02% |
-| BreezeTTS voice design | 6,696 | 6,702 | +6 | 0.27655 | 0.27631 | -0.09% |
 
 Index warm RTF above measures ordinary synthesis, not the emotion request. Before the first emotion request, the measured ordinary-only peaks were:
 
@@ -40,4 +38,4 @@ Measured component medians in the reversed run:
 
 The initial slowdown did not reproduce consistently: Base reversed direction, CustomVoice narrowed to 0.17%, and VoiceDesign's changed cached-step compute differed by only 0.054 ms. Its total slowdown was mainly in the unchanged code predictor. These results support run-to-run timing variation rather than a demonstrated cached-step regression; a specific clock/thermal/scheduling cause was not established. They do not prove that every sub-percent effect is noise.
 
-**Parity-safe in the tested coverage:** all 82 mixed-length A/B output WAV pairs and all 18 reversed-order Qwen3 pairs were byte-identical. This is before/current C++ parity, not a new Python parity claim.
+**Parity-safe in the tested coverage:** all tested Qwen3-TTS and IndexTTS mixed-length A/B output WAV pairs and all 18 reversed-order Qwen3 pairs were byte-identical. This is before/current C++ parity, not a new Python parity claim.

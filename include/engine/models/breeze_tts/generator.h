@@ -58,7 +58,7 @@ public:
     ~BreezeGeneratorRuntime();
 
     engine::runtime::AudioBuffer generate(const BreezeGenerationRequest & request);
-    BreezeSpeechCodes encode_reference(const engine::runtime::AudioBuffer & audio, bool retain_graphs = true) const;
+    BreezeSpeechCodes encode_reference(const engine::runtime::AudioBuffer & audio) const;
     void begin_stream(const BreezeGenerationRequest & request);
     BreezeStreamEvent next_stream_audio(size_t max_new_frames, int64_t lookahead_margin);
     void end_stream();

@@ -1489,12 +1489,8 @@ engine::runtime::AudioBuffer BreezeGeneratorRuntime::generate(const BreezeGenera
     return audio;
 }
 
-BreezeSpeechCodes BreezeGeneratorRuntime::encode_reference(const engine::runtime::AudioBuffer & audio, bool retain_graphs) const {
-    auto codes = impl_->speech_encoder->encode(audio);
-    if (!retain_graphs) {
-        impl_->speech_encoder->release_runtime_graphs();
-    }
-    return codes;
+BreezeSpeechCodes BreezeGeneratorRuntime::encode_reference(const engine::runtime::AudioBuffer & audio) const {
+    return impl_->speech_encoder->encode(audio);
 }
 
 void BreezeGeneratorRuntime::begin_stream(const BreezeGenerationRequest & request) {

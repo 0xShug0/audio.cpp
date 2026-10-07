@@ -236,7 +236,7 @@ BreezeSpeechCodes BreezeTTSSession::resolve_reference_codes(const runtime::Audio
     }
     const auto start = std::chrono::steady_clock::now();
     ReferenceCacheEntry entry;
-    entry.codes = generator_->encode_reference(audio, reference_cache_.capacity() == 0);
+    entry.codes = generator_->encode_reference(audio);
     engine::debug::trace_log_scalar("breeze_tts.reference.frames", entry.codes.frames);
     engine::debug::trace_log_scalar("breeze_tts.reference.codebooks", entry.codes.code_groups);
     if (reference_cache_.capacity() == 0) {
