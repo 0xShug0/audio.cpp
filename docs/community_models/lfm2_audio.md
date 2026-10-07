@@ -45,8 +45,10 @@ reference implementation: [liquid-audio](https://github.com/Liquid4All/liquid-au
   interleaved text and audio.` and the user's audio as the user turn; the reply
   alternates 6 text tokens and 12 audio frames (9 for the JP checkpoint, whose
   vocoder GGUF records its blocks) until `<|text_end|>`, continues with audio
-  until end-of-audio, and ends at `<|im_end|>`. Text is greedy; audio is sampled
-  at temperature 1.0 with top-k 4, as in liquid-audio's README and chat demo.
+  until end-of-audio, and ends at `<|im_end|>`. Text is greedy and audio is
+  sampled at temperature 1.0 with top-k 4, as in liquid-audio's README and chat
+  demo; `text_temperature` and `text_top_k` sample the text as
+  `generate_interleaved`'s arguments of the same names do.
 - An LFM2 detokenizer (8 layers, causal sliding-window attention over 30 steps)
   turns the mean of each frame's code embeddings, repeated 6 times, into
   log-magnitude and phase, and an ISTFT (n_fft 1280, hop 320) gives 24 kHz
@@ -126,15 +128,18 @@ conversation under liquid-audio's chat system prompt, `Respond with interleaved
 text and audio.`; `--text` replaces that prompt, which the checkpoints were
 trained with, so leave it out unless experimenting. The reply is sampled like
 liquid-audio's README and demo (temperature 1.0, top-k 4) and may run to 1024
-steps, text tokens and audio frames together, about a minute of speech. A reply
-that reaches `max_tokens` is cut off there, its text and speech kept, as
-liquid-audio keeps what it generated, and a warning goes to stderr. Greedy
-audio (`--temperature 0`) can go on speaking after the text until
-`max_tokens`, as liquid-audio's greedy decoding does: to one Japanese
-question both gave the same text and 972 audio frames, all 1024 steps. Text
-tokens stand for bytes, not characters. Bytes that make no whole character,
-which replies in scripts such as Thai can have, come out as U+FFFD, as the
-Hugging Face tokenizer decodes them, in replies and transcripts alike; a
+steps, text tokens and audio frames together, about a minute of speech. Use the
+Q8_0 package, the default, or F16 for S2S: with Q4_0, 2 of 30 replies to one
+English question on CUDA and 2 of 30 on the M3 Ultra CPU (2 of 60 on the x86
+CPU, none on Metal) repeated a sentence until `max_tokens`; with Q8_0 and F16
+none did (see [Validation](#s2s)). A reply that reaches `max_tokens` is cut off
+there, its text and speech kept, as liquid-audio keeps what it generated, and a
+warning goes to stderr. Greedy audio (`--temperature 0`) can go on speaking
+after the text until `max_tokens`, as liquid-audio's greedy decoding does: to
+one Japanese question both gave the same text and 972 audio frames, all 1024
+steps. Text tokens stand for bytes, not characters. Bytes that make no whole
+character, which replies in scripts such as Thai can have, come out as U+FFFD,
+as the Hugging Face tokenizer decodes them, in replies and transcripts alike; a
 character left open at the end of the text is dropped, as in a transcript cut
 at `max_tokens`.
 
@@ -246,8 +251,10 @@ ffmpeg -i question.wav -ar 16000 -ac 1 -f s16le - \
 It returns the reply's audio as server-sent events and, with `return_text=true`,
 its text: `speech.text.delta` events carry what the reply wrote since the
 previous event, ahead of the audio that speaks it, and `speech.text.done` the
-whole text. Time from the end of a 7.5 s English question, streamed in real
-time, to the first audio of the reply:
+whole text. The query also takes the request options `seed`, `temperature`,
+`top_k`, `text_temperature`, `text_top_k` and `max_tokens`. Time from the end
+of a 7.5 s English question, streamed in real time, to the first audio of the
+reply:
 
 | Backend | F16 | Q8_0 | Q4_0 |
 |---|---|---|---|
@@ -270,7 +277,9 @@ English reply in 2.1 s on CUDA (F16).
 | `audio_chunk_seconds` | ASR | `30`, or `lfm2_audio.max_pass_seconds` if lower | Longest chunk in seconds, at least 1. |
 | `temperature` | TTS, S2S | `0.8`; S2S `1.0` | Audio code sampling temperature; 0 is greedy. |
 | `top_k` | TTS, S2S | `64`; S2S `4` | Sample from the k most likely codes; 0 keeps all, 1 is greedy. |
-| `seed` | TTS, S2S | Random | Sampling seed; TTS text chunk i uses seed + i. |
+| `text_temperature` | S2S | `0` | Text token sampling temperature; 0 is greedy, as in liquid-audio's README and demo. |
+| `text_top_k` | S2S | `0` | With `text_temperature` above 0, sample from the k most likely text tokens; 0 keeps all, 1 is greedy. With 0, any token can be drawn, control tokens included, so keep a top-k with a high temperature. |
+| `seed` | TTS, S2S | Random | Sampling seed; TTS text chunk i uses seed + i. S2S text sampling draws from a stream of its own, so with the same seed a reply follows the greedy-text reply until a text token differs. |
 | `text_chunk_mode` | TTS | `japanese` for JP, else `default` | How long text is split; see [Long text](#long-text). |
 | `text_chunk_size` | TTS | `200` | Unicode codepoints per text chunk. |
 | `stream_frames_per_event` | TTS, S2S streaming | `1` | Audio frames (80 ms) per streaming event. |
@@ -558,9 +567,11 @@ threads) finished its text but not its audio within `max_tokens`.
 round trip of three replies through ASR (their median, a reply that fails or is
 cut off at `max_tokens` counting as a miss), well-formed text, streaming
 against offline, a stream finished early, a reply cut off at `max_tokens`,
-offline and streamed, and that the first request, sent again after the others,
+offline and streamed, that the first request, sent again after the others,
 gets the same reply (S2S sizes its decode cache from the request alone, as TTS
-does); it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
+does), and that a reply with `text_temperature` is step for step the
+greedy-text reply of the same seed until a text token differs; it runs when
+`lfm2_audio_1_5b_f16` is installed in `models/`.
 
 ### Memory
 

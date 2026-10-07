@@ -9,6 +9,7 @@
 #include <complex>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -130,6 +131,92 @@ void test_speaking_frames() {
     require(!lfm2::lfm2_speaks({1, 2, 3, end, 5, 6, 7, 8}, end), "end-of-audio for another codebook");
 }
 
+std::vector<int32_t> picks(lfm2::Lfm2CodeSampler & sampler, const std::vector<float> & logits, size_t count) {
+    std::vector<int32_t> out;
+    for (size_t i = 0; i < count; ++i) {
+        auto values = logits;
+        out.push_back(sampler.pick(values));
+    }
+
+    return out;
+}
+
+// S2S text tokens follow liquid-audio's _sample_text_token: greedy by
+// default, at temperature 0 and at top-k 1; otherwise the logits are divided
+// by the temperature, those below the k-th are dropped (ties with it kept, as
+// torch.topk's threshold keeps them) and a token is drawn.
+void test_text_sampling() {
+    lfm2_audio_test::Random random(11);
+    for (const auto & sampling : {lfm2::Lfm2TextSampling{}, lfm2::Lfm2TextSampling{0.0f, 50}, lfm2::Lfm2TextSampling{0.7f, 1}}) {
+        lfm2::Lfm2CodeSampler sampler(sampling, 7);
+        const std::string label = "temperature " + std::to_string(sampling.temperature) + ", top-k " + std::to_string(sampling.top_k);
+        for (int i = 0; i < 200; ++i) {
+            auto logits = random.uniform(65536, 10.0f);
+            const int32_t expected = lfm2::lfm2_greedy(logits);
+            require(sampler.pick(logits) == expected, label + " is greedy");
+        }
+
+        std::vector<float> broken = {1.0f, std::nanf(""), 0.0f};
+        require_throws_with([&] { (void)sampler.pick(broken); }, "non-finite logits", label + " with a NaN logit");
+    }
+
+    // Sampled text rejects them too, where HfSampler would draw from the
+    // finite rest.
+    for (const auto & sampling : {lfm2::Lfm2TextSampling{0.7f, 50}, lfm2::Lfm2TextSampling{1.0f, 0}}) {
+        lfm2::Lfm2CodeSampler sampler(sampling, 7);
+        const std::string label = "temperature " + std::to_string(sampling.temperature) + ", top-k " + std::to_string(sampling.top_k);
+        for (const float value : {std::nanf(""), std::numeric_limits<float>::infinity()}) {
+            std::vector<float> broken = {1.0f, value, 0.0f};
+            require_throws_with([&] { (void)sampler.pick(broken); }, "non-finite logits", label + " with a logit of " + std::to_string(value));
+        }
+    }
+
+    constexpr size_t kDraws = 20000;
+    std::vector<size_t> counts(4, 0);
+    lfm2::Lfm2CodeSampler top_2(lfm2::Lfm2TextSampling{1.0f, 2}, 7);
+    for (const int32_t token : picks(top_2, {5.0f, 4.0f, 4.0f, 1.0f}, kDraws)) {
+        ++counts.at(static_cast<size_t>(token));
+    }
+
+    require(counts[0] > 0 && counts[1] > 0 && counts[2] > 0 && counts[3] == 0, "top-k 2 keeps the tie with the second logit and drops the rest");
+
+    // p(1) = 3 / (1 + 3) at temperature 1, and sqrt(3) / (1 + sqrt(3)) at 2;
+    // within 4 standard deviations.
+    for (const float temperature : {1.0f, 2.0f}) {
+        lfm2::Lfm2CodeSampler sampler(lfm2::Lfm2TextSampling{temperature, 0}, 7);
+        const auto drawn = picks(sampler, {0.0f, static_cast<float>(std::log(3.0))}, kDraws);
+        const double share = static_cast<double>(std::count(drawn.begin(), drawn.end(), 1)) / kDraws;
+        const double expected = std::pow(3.0, 1.0 / temperature) / (1.0 + std::pow(3.0, 1.0 / temperature));
+        require(std::fabs(share - expected) < 4.0 * std::sqrt(expected * (1.0 - expected) / kDraws),
+            "temperature " + std::to_string(temperature) + " draws token 1 with p " + std::to_string(share) + ", expected " +
+                std::to_string(expected));
+    }
+
+    // Text draws come from a stream of their own: they leave the audio codes'
+    // draws of the same seed as they were, and differ from them.
+    const std::vector<float> flat(64, 0.0f);
+    for (const uint64_t seed : {uint64_t{0}, uint64_t{1}, uint64_t{1234}}) {
+        lfm2::Lfm2CodeSampler alone(lfm2::Lfm2AudioSampling{1.0f, 0, seed});
+        lfm2::Lfm2CodeSampler audio(lfm2::Lfm2AudioSampling{1.0f, 0, seed});
+        lfm2::Lfm2CodeSampler text(lfm2::Lfm2TextSampling{1.0f, 0}, seed);
+        lfm2::Lfm2CodeSampler text_again(lfm2::Lfm2TextSampling{1.0f, 0}, seed);
+        lfm2::Lfm2CodeSampler text_next(lfm2::Lfm2TextSampling{1.0f, 0}, seed + 1);
+        std::vector<int32_t> interleaved;
+        std::vector<int32_t> text_picks;
+        for (int i = 0; i < 1000; ++i) {
+            text_picks.push_back(picks(text, flat, 1).front());
+            interleaved.push_back(picks(audio, flat, 1).front());
+        }
+
+        const std::string label = "seed " + std::to_string(seed);
+        const auto audio_alone = picks(alone, flat, 1000);
+        require(interleaved == audio_alone, label + ": text draws in between leave the audio draws as they were");
+        require(text_picks != audio_alone, label + ": text draws differ from the audio draws");
+        require(picks(text_again, flat, 1000) == text_picks, label + ": text draws repeat");
+        require(picks(text_next, flat, 1000) != text_picks, label + ": the next seed draws other text");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -137,6 +224,7 @@ int main() {
         test_voices();
         test_istft_inverts_stft();
         test_speaking_frames();
+        test_text_sampling();
         std::cout << "lfm2_audio_tts_test: PASS\n";
         return 0;
     } catch (const std::exception & error) {

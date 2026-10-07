@@ -34,6 +34,21 @@ void append(std::vector<int32_t> & out, const std::vector<int32_t> & ids) {
     out.insert(out.end(), ids.begin(), ids.end());
 }
 
+// The text stream's seed: splitmix64 of the request seed with "text" in its
+// top bytes, so text and audio draws of one seed come from different streams.
+uint64_t text_seed(uint64_t seed) {
+    uint64_t z = (seed ^ 0x7465787400000000ull) + 0x9e3779b97f4a7c15ull;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+    return z ^ (z >> 31);
+}
+
+void require_finite(const std::vector<float> & logits) {
+    if (!std::all_of(logits.begin(), logits.end(), [](float value) { return std::isfinite(value); })) {
+        throw std::runtime_error("LFM2-Audio backbone produced non-finite logits");
+    }
+}
+
 }  // namespace
 
 bool lfm2_speaks(const std::vector<int32_t> & codes, int32_t end_of_audio) {
@@ -41,18 +56,22 @@ bool lfm2_speaks(const std::vector<int32_t> & codes, int32_t end_of_audio) {
 }
 
 int32_t lfm2_greedy(const std::vector<float> & logits) {
-    if (!std::all_of(logits.begin(), logits.end(), [](float value) { return std::isfinite(value); })) {
-        throw std::runtime_error("LFM2-Audio backbone produced non-finite logits");
-    }
-
+    require_finite(logits);
     return static_cast<int32_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
 }
 
 Lfm2CodeSampler::Lfm2CodeSampler(const Lfm2AudioSampling & sampling)
-    : greedy_(sampling.temperature <= 0.0f || sampling.top_k == 1), rng_(static_cast<uint32_t>(sampling.seed)) {
+    : Lfm2CodeSampler(sampling.temperature, sampling.top_k, sampling.seed, "lfm2_audio audio code") {}
+
+Lfm2CodeSampler::Lfm2CodeSampler(const Lfm2TextSampling & sampling, uint64_t seed)
+    : Lfm2CodeSampler(sampling.temperature, sampling.top_k, text_seed(seed), "lfm2_audio text token") {}
+
+// liquid-audio's rule for both: greedy when temperature <= 0 or top_k == 1.
+Lfm2CodeSampler::Lfm2CodeSampler(float temperature, int64_t top_k, uint64_t seed, const char * context)
+    : greedy_(temperature <= 0.0f || top_k == 1), context_(context), rng_(static_cast<uint32_t>(seed)) {
     options_.do_sample = !greedy_;
-    options_.temperature = sampling.temperature;
-    options_.top_k = sampling.top_k;
+    options_.temperature = temperature;
+    options_.top_k = top_k;
 }
 
 int32_t Lfm2CodeSampler::pick(std::vector<float> & logits) {
@@ -60,8 +79,10 @@ int32_t Lfm2CodeSampler::pick(std::vector<float> & logits) {
         return lfm2_greedy(logits);
     }
 
+    // HfSampler would leave non-finite logits out and draw from the rest.
+    require_finite(logits);
     scratch_.reserve_vocab(logits.size());
-    return sampler_.sample(logits, {}, options_, scratch_, rng_, nullptr, "lfm2_audio audio code");
+    return sampler_.sample(logits, {}, options_, scratch_, rng_, nullptr, context_);
 }
 
 std::vector<std::string> lfm2_tts_voices(const std::string & language) {
