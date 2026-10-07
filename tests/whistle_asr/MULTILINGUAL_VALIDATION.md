@@ -191,7 +191,7 @@ elevenlabs text-to-speech convert --voice-id JBFqnCBsd6RMkjVDRZzb --model-id ele
 ```
 
 Each clip ran through `audiocpp_cli` with automatic and forced language on CPU with 1
-thread, CPU with 4 threads, and Metal with 4 threads: 43 invocations including the
+thread, CPU with 4 threads, and Metal with 4 threads: 45 invocations including the
 repository sample, all exit 0. For every clip the six transcripts are byte-identical.
 Word error rate uses NFKC normalization, case folding, and punctuation removal, against
 the synthesis prompt; accents remain significant. These are synthetic single-voice
@@ -200,17 +200,17 @@ prompt-agreement checks, not an accuracy benchmark. Wall times are `metrics.wall
 
 | Clip | Seconds | Prompt chars | WER | CPU 1 thread, auto (ms / RTF) | CPU 4 threads, auto | Metal, auto | Metal, forced |
 |---|---:|---:|---:|---|---|---|---|
-| `en` | 20.434 | 369 | 0.0% | 816 / 0.0399 | 391 / 0.0191 | 383 / 0.0188 | 271 / 0.0133 |
-| `de` | 23.917 | 409 | 6.6% | 1287 / 0.0538 | 625 / 0.0262 | 568 / 0.0238 | 499 / 0.0209 |
-| `fr` | 21.362 | 389 | 6.1% | 1113 / 0.0521 | 555 / 0.0260 | 520 / 0.0243 | 455 / 0.0213 |
-| `es` | 26.239 | 417 | 0.0% | 1327 / 0.0506 | 662 / 0.0252 | 621 / 0.0237 | 516 / 0.0197 |
-| `it` | 24.381 | 400 | 0.0% | 1250 / 0.0513 | 606 / 0.0248 | 548 / 0.0225 | 467 / 0.0191 |
-| `nl` | 22.616 | 415 | 11.8% | 990 / 0.0438 | 461 / 0.0204 | 405 / 0.0179 | 328 / 0.0145 |
-| `pl` | 22.941 | 369 | 5.8% | 1447 / 0.0631 | 709 / 0.0309 | 670 / 0.0292 | 588 / 0.0256 |
+| `en` | 20.434 | 369 | 0.0% | 817 / 0.0400 | 413 / 0.0202 | 286 / 0.0140 | 285 / 0.0140 |
+| `de` | 23.917 | 409 | 6.6% | 1274 / 0.0533 | 643 / 0.0269 | 512 / 0.0214 | 514 / 0.0215 |
+| `fr` | 21.362 | 389 | 6.1% | 1111 / 0.0520 | 566 / 0.0265 | 474 / 0.0222 | 490 / 0.0229 |
+| `es` | 26.239 | 417 | 0.0% | 1325 / 0.0505 | 694 / 0.0265 | 565 / 0.0215 | 569 / 0.0217 |
+| `it` | 24.381 | 400 | 0.0% | 1303 / 0.0534 | 631 / 0.0259 | 525 / 0.0215 | 524 / 0.0215 |
+| `nl` | 22.616 | 415 | 11.8% | 947 / 0.0419 | 472 / 0.0209 | 352 / 0.0156 | 378 / 0.0167 |
+| `pl` | 22.941 | 369 | 5.8% | 1376 / 0.0600 | 742 / 0.0323 | 650 / 0.0283 | 689 / 0.0300 |
 
-Peak RSS was 743 to 791 MiB across these runs. The Metal "auto" column is consistently
-slower than "forced" by 70 to 110 ms; the CPU columns show no such gap. The cause was
-not investigated.
+Peak RSS was 752 to 781 MiB across these runs. An earlier pass with a pre-review build
+of the graph showed Metal automatic-language runs 70 to 110 ms slower than forced runs;
+the final build shows no such gap. All 45 final transcripts equal the earlier pass.
 
 Word-level differences (prompt versus transcript, normalized) are the same on every
 backend, so they are model behavior, not conversion or backend drift:

@@ -68,18 +68,24 @@ RMS gain normalization is applied locally before it.
 
 The encoder runs as one GGML graph on the selected backend. It is built from the
 framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
-`LinearModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`, and `GLUModule`.
-Whistle-specific math stays model-local in `encoder.cpp`: the four-lane manifold
-hyper-connection mixing with its Sinkhorn normalization, the conditioned
-Kronecker-factored Hadamard MLP with its two fixed permutations, and grouped-query
-attention with 48-wide queries/keys and 64-wide values, which the shared attention
-modules cannot express because they assume one head size. Checkpoint tensors are
-JAX `[in, out]` kernels; the loader transposes them once into the backend weight store.
+`LinearModule`, `RMSNormModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`,
+`SigmoidModule`, `SoftmaxModule`, and `GLUModule`. The stem does not use the shared
+`DepthwiseConvSubsamplingModule` because that module hardcodes ReLU and Whistle's
+stem uses SiLU. Whistle-specific math stays model-local in `encoder.cpp`: the
+four-lane manifold hyper-connection mixing with its Sinkhorn normalization, the
+conditioned Kronecker-factored Hadamard MLP with its two fixed permutations, and
+grouped-query attention with 48-wide queries/keys and 64-wide values, which the
+shared attention modules cannot express because they assume one head size.
+Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them once into
+the backend weight store.
 
 The autoregressive decoder (one token per step, n-gram engram lookups, three-tap
 query/key/value mixing, cross-attention over the encoder output) still runs on the
-host CPU with its own FP32 math. Its encoder-side cross-attention key/value
-projections are computed inside the encoder graph.
+host CPU with its own FP32 math in `runtime.cpp`. That host code keeps its own
+implementations of the linear, RMS norm, Hadamard, Sinkhorn, mHC, and RoPE math that
+the encoder graph now also expresses; the duplication goes away when the decoder
+moves onto a GGML step graph. Its encoder-side cross-attention key/value projections
+are already computed inside the encoder graph.
 
 ## Build and request options
 

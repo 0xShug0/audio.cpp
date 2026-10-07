@@ -3032,7 +3032,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_executable(whistle_assets_test
             tests/whistle_asr/test_assets.cpp
-            src/community_models/whistle_asr/encoder.cpp
             src/community_models/whistle_asr/assets.cpp
             src/community_models/whistle_asr/encoder.cpp
             src/community_models/whistle_asr/frontend.cpp

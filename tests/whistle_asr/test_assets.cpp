@@ -27,6 +27,7 @@ struct Options {
     std::string expected;
     bool full = false;
     std::string reference_dir;
+    std::string dump_dir;
     // Allowed max |difference| as a fraction of the reference tensor's largest magnitude.
     double tolerance = 2.0e-3;
     engine::core::BackendConfig backend{engine::core::BackendType::Cpu, 0, 4};
@@ -47,6 +48,8 @@ Options parse(int argc, char ** argv) {
             options.full = true;
         } else if (argument == "--reference") {
             options.reference_dir = value();
+        } else if (argument == "--dump") {
+            options.dump_dir = value();
         } else if (argument == "--backend") {
             const std::string backend = value();
             if (backend == "cpu") {
@@ -67,7 +70,7 @@ Options parse(int argc, char ** argv) {
     if (positional.empty() || positional.size() > 3) {
         throw std::invalid_argument(
             "Pass <GGUF> [16k-mono.wav] [expected transcript] [--full] "
-            "[--reference <dump-dir>] [--tolerance <fraction>] [--backend cpu|metal] [--threads n]");
+            "[--reference <dump-dir>] [--tolerance <fraction>] [--dump <dir>] [--backend cpu|metal] [--threads n]");
     }
     options.gguf = positional[0];
     if (positional.size() > 1) options.wav = positional[1];
@@ -116,8 +119,8 @@ void compare(const std::string & name, const std::vector<float> & actual, const 
     double max_abs = 0.0;
     double scale = 0.0;
     for (size_t index = 0; index < actual.size(); ++index) {
-        if (!std::isfinite(actual[index])) {
-            throw std::runtime_error(name + " contains a non-finite value at index " + std::to_string(index));
+        if (!std::isfinite(actual[index]) || !std::isfinite(expected[index])) {
+            throw std::runtime_error(name + " has a non-finite value at index " + std::to_string(index));
         }
         max_abs = std::max(max_abs, std::abs(static_cast<double>(actual[index]) - expected[index]));
         scale = std::max(scale, std::abs(static_cast<double>(expected[index])));
@@ -130,13 +133,21 @@ void compare(const std::string & name, const std::vector<float> & actual, const 
     }
 }
 
-void check_reference(const Options & options, const std::shared_ptr<const whistle::WhistleAssets> & assets,
-                     engine::core::ExecutionContext & execution_context) {
+void write_f32(const std::string & path, const std::vector<float> & values) {
+    std::ofstream stream(path, std::ios::binary);
+    if (!stream.write(reinterpret_cast<const char *>(values.data()),
+            static_cast<std::streamsize>(values.size() * sizeof(float)))) {
+        throw std::runtime_error("Cannot write float dump: " + path);
+    }
+}
+
+// Frontend and encoder tensors of the full recording, either written as raw
+// little-endian f32 dumps (--dump) or compared against such dumps (--reference).
+void check_encoder_tensors(const Options & options, const std::shared_ptr<const whistle::WhistleAssets> & assets,
+                           engine::core::ExecutionContext & execution_context) {
     const auto audio = read_audio(options.wav, true);
     const whistle::WhistleFrontend frontend(assets->mel_filterbank);
     const auto mel = frontend.extract(audio.samples);
-    const std::string dir = options.reference_dir + "/";
-    compare("mel", mel.values, dir + "mel.f32", options.tolerance);
     whistle::WhistleEncoderRuntime encoder(assets, execution_context);
     auto start = std::chrono::steady_clock::now();
     const auto output = encoder.encode(mel);
@@ -145,11 +156,25 @@ void check_reference(const Options & options, const std::shared_ptr<const whistl
     (void)encoder.encode(mel);
     const double warm_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     std::cout << "encoder: " << output.frames << " frames, first " << first_ms << " ms, warm " << warm_ms << " ms\n";
-    compare("memory", output.memory, dir + "memory.f32", options.tolerance);
-    compare("cross_k_0", output.cross_k[0], dir + "cross_k_0.f32", options.tolerance);
-    compare("cross_v_0", output.cross_v[0], dir + "cross_v_0.f32", options.tolerance);
-    compare("cross_k_7", output.cross_k[7], dir + "cross_k_7.f32", options.tolerance);
-    compare("cross_v_7", output.cross_v[7], dir + "cross_v_7.f32", options.tolerance);
+    const std::vector<std::pair<std::string, const std::vector<float> *>> tensors = {
+        {"mel", &mel.values},
+        {"memory", &output.memory},
+        {"cross_k_0", &output.cross_k[0]},
+        {"cross_v_0", &output.cross_v[0]},
+        {"cross_k_7", &output.cross_k[7]},
+        {"cross_v_7", &output.cross_v[7]},
+    };
+    if (!options.dump_dir.empty()) {
+        for (const auto & [name, values] : tensors) {
+            write_f32(options.dump_dir + "/" + name + ".f32", *values);
+        }
+        std::cout << "Wrote " << tensors.size() << " reference dumps to " << options.dump_dir << "\n";
+    }
+    if (!options.reference_dir.empty()) {
+        for (const auto & [name, values] : tensors) {
+            compare(name, *values, options.reference_dir + "/" + name + ".f32", options.tolerance);
+        }
+    }
 }
 
 void check_transcription(const Options & options, const std::shared_ptr<const whistle::WhistleAssets> & assets,
@@ -243,8 +268,8 @@ int main(int argc, char ** argv) {
             return 0;
         }
         engine::core::ExecutionContext execution_context(options.backend);
-        if (!options.reference_dir.empty()) {
-            check_reference(options, assets, execution_context);
+        if (!options.reference_dir.empty() || !options.dump_dir.empty()) {
+            check_encoder_tensors(options, assets, execution_context);
             return 0;
         }
         check_transcription(options, assets, execution_context);

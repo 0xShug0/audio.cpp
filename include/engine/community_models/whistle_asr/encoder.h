@@ -84,9 +84,9 @@ struct WhistleCrossProjectionWeights {
 struct WhistleEncoderWeights {
     modules::Conv2dWeights stem_conv;
     modules::Conv2dWeights stem_dw_1;
-    modules::LinearWeights stem_pw_1;
+    modules::Conv2dWeights stem_pw_1;
     modules::Conv2dWeights stem_dw_2;
-    modules::LinearWeights stem_pw_2;
+    modules::Conv2dWeights stem_pw_2;
     modules::LinearWeights stem_out;
     std::array<WhistleEncoderLayerWeights, kWhistleLayers> layers;
     modules::NormWeights final_norm;

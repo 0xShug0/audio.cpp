@@ -208,7 +208,8 @@ The quantized reference matches four clips; Polish differs by `niebo` versus
 Their measured four-thread inference RTF ranges from 0.0392522 to 0.0570413;
 peak process working set ranges from 432 to 434 MiB. These are not a broad accuracy corpus.
 Inputs must be 16 kHz mono, at most 30 seconds. There is no streaming, resampling,
-long-form recognition, GPU inference, quantization, keyword biasing, or word timestamps.
+long-form recognition, quantization, keyword biasing, or word timestamps. Metal
+accelerates the encoder graph; decoding stays on the CPU.
 Noise-only audio may produce words. This family is not a speech-activity detector.
 No downloadable package is advertised.
 
@@ -284,33 +285,46 @@ earlier spec revision; it loads and produces the same English transcript on CPU 
 ### Numerical comparison against the host implementation
 
 Reference tensors were dumped from the previous host-only implementation at commit
-`6e0a40c4` through a temporary hook on the full 14.0719-second repository sample
-(1407 mel frames, 176 encoder frames). That hook is not committed, so the dumps are
-reproducible only by checking out that commit; they stay in ignored
-`build/whistle/pr-prep/oracle/`. `whistle_assets_test --reference` reports the largest
-absolute difference as a fraction of each reference tensor's largest magnitude:
+`6e0a40c4` on the full 14.0719-second repository sample (1407 mel frames, 176 encoder
+frames). That commit has no exporter: the dumps came from a temporary hook that wrote
+`mel.values`, `memory`, `output.cross_k[0]`, `output.cross_v[0]`, `output.cross_k[7]`,
+and `output.cross_v[7]` from `encode()` in its `runtime.cpp` as raw little-endian f32 in
+the layouts those vectors already have (frame-major: `[frames, 80]`, `[frames, 512]`,
+`[frames, 384]`, `[frames, 512]`). Regenerating them means checking out `6e0a40c4`,
+adding such a hook, and running the CLI once on `assets/resources/sample_16k.wav` with
+one thread. The dumps stay in ignored `build/whistle/pr-prep/oracle/`. The current test
+writes the same six tensors from the current implementation with
+`whistle_assets_test <gguf> <wav> --dump <dir>`, so later refactors have a committed
+oracle recipe. `whistle_assets_test --reference` reports the largest absolute difference
+as a fraction of each reference tensor's largest magnitude:
 
 | Tensor | Reference max | CPU fraction | Metal fraction |
 |---|---:|---:|---:|
 | mel features (1407 x 80) | 3.42311 | 6.37e-06 | 6.37e-06 |
-| encoder memory (176 x 512) | 5.55704 | 6.01e-07 | 3.03e-04 |
-| cross-attention keys, layer 0 | 7.92314 | 1.66e-06 | 1.20e-03 |
-| cross-attention values, layer 0 | 86.5275 | 1.32e-06 | 5.06e-04 |
-| cross-attention keys, layer 7 | 9.34248 | 1.35e-06 | 1.08e-03 |
-| cross-attention values, layer 7 | 197.274 | 8.99e-07 | 3.51e-04 |
+| encoder memory (176 x 512) | 5.55704 | 1.24e-06 | 6.79e-04 |
+| cross-attention keys, layer 0 | 7.92314 | 4.46e-06 | 2.57e-03 |
+| cross-attention values, layer 0 | 86.5275 | 1.15e-06 | 5.21e-04 |
+| cross-attention keys, layer 7 | 9.34248 | 1.17e-06 | 1.10e-03 |
+| cross-attention values, layer 7 | 197.274 | 9.57e-07 | 4.25e-04 |
 
 Per-layer probes during bring-up showed the Metal drift appears already after the stem
-(2.5e-04 of scale) and stays between 1e-04 and 4e-04 of scale through the eight layers;
-setting `GGML_PREC_F32` on every matmul did not change the Metal result, so it is not
-matmul accumulation precision. The CPU graph tracks the host implementation to about
-1e-06 of scale. `whistle_frontend_test` passes both its fixed vectors and the official
-filterbank check on the real sample (tolerance 0.02). The default `--reference`
-tolerance is 2e-3, which Metal passes with a 1.7x margin on the worst tensor.
+(2.5e-04 of scale) and stays between 1e-04 and 4e-04 of scale through the eight layers.
+This is consistent with ggml's Metal F32 matrix kernel, `kernel_mul_mm_f32_f32`, which
+stages both operands in half precision before accumulating in float; the Metal backend
+does not read the `ggml_mul_mat_set_prec` flag, so requesting F32 precision changes
+nothing there. The CPU graph tracks the host implementation to about 1e-06 of scale.
+`whistle_frontend_test` passes both its fixed vectors and the official filterbank check
+on the real sample (tolerance 0.02). The default `--reference` tolerance is 2e-3, which
+the CPU graph passes by three orders of magnitude; Metal needs `--tolerance 5e-3`.
 
 Whistle's mHC residual logits reach gaps above 200 nats inside one 4x4 Sinkhorn block
-(layer 1), so a float softmax underflows to exact zeros. The graph clamps the softmax to
-`FLT_MIN` before the log; a float64 Sinkhorn with and without that clamp differs by at
-most 9e-07 on all eight layers of the sample.
+(layer 1), so a float softmax underflows to exact zeros. ggml has no max reduction, so
+the graph recovers each row's log-sum-exp as `sum(p * (x - log p))` from the clamped
+softmax and subtracts it from `x`, which keeps the host implementation's exact
+`x - logsumexp(x)` values for entries far below the row maximum. An earlier bring-up
+variant used `log(clamp(softmax))` instead; that discards differences between
+underflowed entries, which a later column pass can amplify, and was replaced before
+this revision was finalized.
 
 ### Transcripts and tests
 
@@ -327,27 +341,37 @@ Some call me Nature. Others call me Mother Nature. I've been here for over 4.5 b
 Seven longer synthetic clips (20 to 26 seconds, one per supported language) produce
 byte-identical transcripts across CPU 1 thread, CPU 4 threads, Metal, automatic and
 forced language; see [the multilingual report](MULTILINGUAL_VALIDATION.md#longer-seven-language-clips-2026-10-07).
+The previous host implementation was not run on those clips; they compare the new
+backends against each other, not against the old code.
 
 ### Performance and process memory
 
 CLI `metrics.wall_ms` covers preparation plus inference per request and excludes model
 loading. Encoder-only times come from `whistle_assets_test --reference` (graph build,
 allocation, upload, compute, readback) for the 176-frame sample; "first" includes
-backend warm-up, "warm" is the second call. Single local observations, not guarantees.
+backend warm-up, "warm" is the second call. The previous host code was rebuilt from
+commit `6e0a40c4` in a worktree with the same build script and run three times per
+configuration on the same binary model; both logs are in ignored
+`build/whistle/pr-prep/baseline/` (`cli-sample-6e0a40c4.log`, `cli-sample-final.log`).
+Single local observations, not guarantees.
 
-| Measurement | Previous host code (same machine, 2026-10-07 baseline) | GGML encoder revision |
+| Measurement | Previous host code (commit `6e0a40c4`) | GGML encoder revision |
 |---|---:|---:|
-| Sample, CLI wall, CPU 1 thread | 579.7 ms (RTF 0.0412) | 479 ms (RTF 0.0341) |
-| Sample, CLI wall, CPU 4 threads | 280.7 ms (RTF 0.0199) | 224 ms (RTF 0.0160) |
-| Sample, CLI wall, Metal | not supported | 145 to 148 ms (RTF 0.0105) |
-| Encoder only, CPU 1 thread | not measured separately | 313 ms first, 291 ms warm |
-| Encoder only, CPU 4 threads | not measured separately | 103 ms first, 89 ms warm |
-| Encoder only, Metal | not supported | 65 to 110 ms first, 29 ms warm |
-| Sample, peak RSS | 615 to 619 MiB | 749 MiB Metal, 757 MiB CPU |
+| Sample, CLI wall, CPU 1 thread, 3 runs | 505 to 517 ms | 482 to 516 ms |
+| Sample, CLI wall, CPU 4 threads, 3 runs | 253 to 259 ms | 237 to 238 ms |
+| Sample, CLI wall, Metal, 3 runs | not supported | 157 to 164 ms |
+| Encoder only, CPU 1 thread | not measured separately | 302 ms first, 295 ms warm |
+| Encoder only, CPU 4 threads | not measured separately | 105 ms first, 90 ms warm |
+| Encoder only, Metal | not supported | 143 ms first, 37 ms warm |
+| Sample, peak RSS | 605 to 609 MiB | 758 to 767 MiB |
 
-On Metal the encoder is now about 29 ms of a 145 ms sample request, so the host decoder
-is the dominant remaining cost. Peak RSS grew because encoder weights now live in the
-backend weight store while the decoder keeps its host copies.
+At one CPU thread the end-to-end time is unchanged within run-to-run noise: the GGML
+encoder is not faster than the hand-written loops single-threaded, and the exact
+Sinkhorn normalization adds about 1300 small graph nodes. Four threads are about 7%
+faster, and Metal is about 1.6x faster than four CPU threads. On Metal the encoder is
+about 37 ms of a 160 ms sample request, so the host decoder is the dominant remaining
+cost. Peak RSS grew by about 150 MiB because encoder weights now live in the backend
+weight store while the decoder keeps its host copies of the decoder tensors.
 
 Five identical English requests (20.43 s clip) in one loaded CLI session:
 
