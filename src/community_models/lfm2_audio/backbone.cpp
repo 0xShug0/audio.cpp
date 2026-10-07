@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -125,6 +126,38 @@ TensorValue text_logits(core::ModuleBuildContext & ctx, const TensorValue & hidd
         .build(ctx, hidden, {weights.token_embedding, std::nullopt});
 }
 
+// The rows of audio frames' codes in the stacked audio embedding, which holds
+// one table of audio_vocab_size rows per codebook. `codes` holds the frames
+// one after another, one code per codebook each.
+std::vector<int32_t> frame_rows(const BackboneWeights & weights, const std::vector<int32_t> & codes) {
+    std::vector<int32_t> rows;
+    rows.reserve(codes.size());
+    for (size_t i = 0; i < codes.size(); ++i) {
+        if (codes[i] < 0 || codes[i] >= weights.audio_vocab_size) {
+            throw std::runtime_error("LFM2-Audio audio code " + std::to_string(codes[i]) + " is outside the codebook");
+        }
+
+        const auto codebook = static_cast<int64_t>(i) % weights.codebooks;
+        rows.push_back(static_cast<int32_t>(codebook * weights.audio_vocab_size + codes[i]));
+    }
+
+    return rows;
+}
+
+// Audio frames as the backbone takes them in, [hidden, frames]: each the sum
+// of its codes' embeddings, codebook 0 first (LFM2AudioModel sums
+// audio_embedding(codes + offsets) over the codebooks). `rows` are
+// frame_rows(). Decode steps and prompts both build it here, so a frame
+// replayed in a prompt sums exactly as step_audio summed it.
+ggml_tensor * frame_embeddings(ggml_context * g, const BackboneWeights & weights, ggml_tensor * rows) {
+    auto * table = weights.audio_embedding->tensor;
+    const int64_t d = table->ne[0];
+    const int64_t frames = ggml_nelements(rows) / weights.codebooks;
+    auto * gathered = ggml_reshape_3d(g, ggml_get_rows(g, table, rows), d, weights.codebooks, frames);
+    auto * sums = ggml_sum_rows(g, ggml_cont(g, ggml_transpose(g, gathered)));  // [1, hidden, frames]
+    return ggml_reshape_2d(g, sums, d, frames);
+}
+
 struct PrefillState {
     std::vector<float> logits;
     runtime::TransformerKVState kv;
@@ -134,8 +167,8 @@ struct PrefillState {
 class PrefillGraph {
 public:
     PrefillGraph(const BackboneWeights & weights, const Lfm2BackboneConfig & config, core::ExecutionContext & execution,
-                 int64_t steps, int64_t audio_tokens)
-        : config_(config), execution_(execution), steps_(steps), audio_tokens_(audio_tokens) {
+                 int64_t steps, int64_t audio_tokens, int64_t frames)
+        : config_(config), execution_(execution), steps_(steps), audio_tokens_(audio_tokens), frames_(frames) {
         ctx_.reset(ggml_init({kPrefillArenaBytes, nullptr, true}));
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize the LFM2-Audio prefill graph context");
@@ -156,6 +189,15 @@ public:
             ggml_set_input(audio_embeddings_);
             ggml_set_input(audio_positions_);
             x = core::wrap_tensor(ggml_set_rows(g, x.tensor, audio_embeddings_, audio_positions_), x.shape, GGML_TYPE_F32);
+        }
+
+        if (frames > 0) {
+            frame_rows_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, frames * weights.codebooks);
+            frame_positions_ = ggml_new_tensor_1d(g, GGML_TYPE_I64, frames);
+            ggml_set_input(frame_rows_);
+            ggml_set_input(frame_positions_);
+            auto * embedded = frame_embeddings(g, weights, frame_rows_);
+            x = core::wrap_tensor(ggml_set_rows(g, x.tensor, embedded, frame_positions_), x.shape, GGML_TYPE_F32);
         }
 
         x = core::reshape_tensor(ctx, x, TensorShape::from_dims({1, steps, d}));
@@ -189,11 +231,12 @@ public:
 
     ~PrefillGraph() { core::release_backend_graph_resources(execution_.backend(), graph_, true); }
 
-    [[nodiscard]] bool matches(int64_t steps, int64_t audio_tokens) const {
-        return steps_ == steps && audio_tokens_ == audio_tokens;
+    [[nodiscard]] bool matches(int64_t steps, int64_t audio_tokens, int64_t frames) const {
+        return steps_ == steps && audio_tokens_ == audio_tokens && frames_ == frames;
     }
 
-    PrefillState run(const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio) {
+    // `frame_rows` are the prompt's frame_rows().
+    PrefillState run(const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, const std::vector<int32_t> & frame_rows) {
         const auto positions = modules::decoder_position_ids(steps_);
         ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
         ggml_backend_tensor_set(token_ids_, prompt.input_ids.data(), 0, prompt.input_ids.size() * sizeof(int32_t));
@@ -202,6 +245,12 @@ public:
             const std::vector<int64_t> rows(prompt.audio_positions.begin(), prompt.audio_positions.end());
             ggml_backend_tensor_set(audio_embeddings_, audio.values.data(), 0, audio.values.size() * sizeof(float));
             ggml_backend_tensor_set(audio_positions_, rows.data(), 0, rows.size() * sizeof(int64_t));
+        }
+
+        if (frames_ > 0) {
+            const std::vector<int64_t> rows(prompt.frame_positions.begin(), prompt.frame_positions.end());
+            ggml_backend_tensor_set(frame_rows_, frame_rows.data(), 0, frame_rows.size() * sizeof(int32_t));
+            ggml_backend_tensor_set(frame_positions_, rows.data(), 0, rows.size() * sizeof(int64_t));
         }
 
         core::set_backend_threads(execution_.backend(), std::max(1, execution_.config().threads));
@@ -247,10 +296,13 @@ private:
     core::ExecutionContext & execution_;
     int64_t steps_ = 0;
     int64_t audio_tokens_ = 0;
+    int64_t frames_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * token_ids_ = nullptr;
     ggml_tensor * audio_embeddings_ = nullptr;
     ggml_tensor * audio_positions_ = nullptr;
+    ggml_tensor * frame_rows_ = nullptr;
+    ggml_tensor * frame_positions_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     std::vector<ggml_tensor *> keys_;
@@ -290,14 +342,11 @@ public:
                      .build(ctx, core::wrap_tensor(token_, TensorShape::from_dims({1}), GGML_TYPE_I32), weights.token_lookup);
         if (weights.audio_embedding.has_value()) {
             // Both inputs are always built; the step picks one by weighting
-            // the other with zero. A frame goes in as the sum of its codes'
-            // embeddings (LFM2AudioModel.generate_sequential).
+            // the other with zero.
             audio_rows_ = ggml_new_tensor_1d(g, GGML_TYPE_I32, codebooks_);
             text_weight_ = ggml_new_tensor_1d(g, GGML_TYPE_F32, 1);
             audio_weight_ = ggml_new_tensor_1d(g, GGML_TYPE_F32, 1);
-            auto * rows = ggml_get_rows(g, weights.audio_embedding->tensor, audio_rows_);
-            auto * frame = ggml_sum_rows(g, ggml_cont(g, ggml_transpose(g, rows)));
-            frame = ggml_reshape_2d(g, frame, d, 1);
+            auto * frame = frame_embeddings(g, weights, audio_rows_);
             auto * mixed = ggml_add(g, ggml_mul(g, x.tensor, text_weight_), ggml_mul(g, frame, audio_weight_));
             x = core::wrap_tensor(mixed, x.shape, GGML_TYPE_F32);
         }
@@ -474,7 +523,19 @@ int32_t greedy_token(const std::vector<float> & logits) {
     return static_cast<int32_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
 }
 
-void validate_prompt(const Lfm2Prompt & prompt, const Lfm2BackboneConfig & config) {
+// Whether `positions` increase and stay inside a prompt of `steps`.
+bool valid_positions(const std::vector<int32_t> & positions, int32_t steps) {
+    for (size_t i = 0; i < positions.size(); ++i) {
+        if (positions[i] < 0 || positions[i] >= steps || (i > 0 && positions[i] <= positions[i - 1])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Checks all but the frame codes, which frame_rows() checks.
+void validate_prompt(const Lfm2Prompt & prompt, const Lfm2BackboneConfig & config, const BackboneWeights & weights) {
     for (const int32_t id : prompt.input_ids) {
         if (id < 0 || id >= config.vocab_size) {
             throw std::runtime_error("LFM2-Audio prompt token id " + std::to_string(id) + " is outside the vocabulary");
@@ -482,11 +543,31 @@ void validate_prompt(const Lfm2Prompt & prompt, const Lfm2BackboneConfig & confi
     }
 
     const auto steps = static_cast<int32_t>(prompt.input_ids.size());
-    for (size_t i = 0; i < prompt.audio_positions.size(); ++i) {
-        const int32_t position = prompt.audio_positions[i];
-        if (position < 0 || position >= steps || (i > 0 && position <= prompt.audio_positions[i - 1])) {
-            throw std::runtime_error("LFM2-Audio audio positions must increase and stay inside the prompt");
-        }
+    if (!valid_positions(prompt.audio_positions, steps)) {
+        throw std::runtime_error("LFM2-Audio audio positions must increase and stay inside the prompt");
+    }
+
+    if (prompt.frame_positions.empty() && prompt.frame_codes.empty()) {
+        return;
+    }
+
+    if (!weights.audio_embedding.has_value()) {
+        throw std::runtime_error("LFM2-Audio backbone was loaded without the audio embedding");
+    }
+
+    if (prompt.frame_codes.size() != prompt.frame_positions.size() * static_cast<size_t>(weights.codebooks)) {
+        throw std::runtime_error("LFM2-Audio prompt frames need one code per codebook");
+    }
+
+    if (!valid_positions(prompt.frame_positions, steps)) {
+        throw std::runtime_error("LFM2-Audio frame positions must increase and stay inside the prompt");
+    }
+
+    std::vector<int32_t> shared;
+    std::set_intersection(prompt.audio_positions.begin(), prompt.audio_positions.end(), prompt.frame_positions.begin(),
+                          prompt.frame_positions.end(), std::back_inserter(shared));
+    if (!shared.empty()) {
+        throw std::runtime_error("LFM2-Audio prompt position " + std::to_string(shared.front()) + " holds both audio and a frame");
     }
 }
 
@@ -562,15 +643,17 @@ std::vector<float> Lfm2BackboneRuntime::start(
             " more, more than the " + std::to_string(config.context_length) + "-token context");
     }
 
-    validate_prompt(prompt, config);
+    validate_prompt(prompt, config, impl_->weights);
+    const auto frames = static_cast<int64_t>(prompt.frame_positions.size());
+    const auto rows = frame_rows(impl_->weights, prompt.frame_codes);
 
     const auto prefill_start = std::chrono::steady_clock::now();
-    if (impl_->prefill == nullptr || !impl_->prefill->matches(steps, audio_tokens)) {
+    if (impl_->prefill == nullptr || !impl_->prefill->matches(steps, audio_tokens, frames)) {
         impl_->prefill.reset();
-        impl_->prefill = std::make_unique<PrefillGraph>(impl_->weights, config, impl_->execution, steps, audio_tokens);
+        impl_->prefill = std::make_unique<PrefillGraph>(impl_->weights, config, impl_->execution, steps, audio_tokens, frames);
     }
 
-    auto state = impl_->prefill->run(prompt, audio);
+    auto state = impl_->prefill->run(prompt, audio, rows);
     // The graph holds steps^2 attention scores per head. Only graphs the size
     // of a default 30 s chunk are worth keeping for the next request.
     if (steps > kMaxRetainedPrefillSteps) {
@@ -614,16 +697,7 @@ std::vector<float> Lfm2BackboneRuntime::step_audio(const std::vector<int32_t> & 
         throw std::runtime_error("LFM2-Audio audio frame needs one code per codebook");
     }
 
-    StepInput input;
-    for (size_t codebook = 0; codebook < codes.size(); ++codebook) {
-        if (codes[codebook] < 0 || codes[codebook] >= weights.audio_vocab_size) {
-            throw std::runtime_error("LFM2-Audio audio code " + std::to_string(codes[codebook]) + " is outside the codebook");
-        }
-
-        input.audio_rows.push_back(static_cast<int32_t>(static_cast<int64_t>(codebook) * weights.audio_vocab_size + codes[codebook]));
-    }
-
-    return impl_->require_started().run_step(input, output);
+    return impl_->require_started().run_step({0, frame_rows(weights, codes)}, output);
 }
 
 int64_t Lfm2BackboneRuntime::decode_cache_steps() const noexcept {

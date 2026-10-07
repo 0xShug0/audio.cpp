@@ -23,6 +23,13 @@ struct Lfm2Prompt {
     // Positions in input_ids taken by audio embeddings, in order. Their ids
     // are placeholders and never looked up.
     std::vector<int32_t> audio_positions;
+    // Positions in input_ids taken by audio frames generated earlier, in
+    // order, and their codes: one per codebook for each frame, frame after
+    // frame. A frame goes in as step_audio feeds it (an earlier reply in a
+    // conversation's history). Their ids are placeholders too, and they need
+    // the backbone loaded with the audio embedding.
+    std::vector<int32_t> frame_positions;
+    std::vector<int32_t> frame_codes;
 };
 
 struct Lfm2GenerationOptions {
@@ -89,7 +96,8 @@ public:
         const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, Lfm2DecodeCache cache);
 
     // One step after start(): a text token, or the codes of an audio frame
-    // (the sum of their audio embeddings goes in).
+    // (the sum of their audio embeddings goes in, summed as a prompt's frames
+    // are).
     std::vector<float> step_text(int32_t token, Lfm2StepOutput output);
     std::vector<float> step_audio(const std::vector<int32_t> & codes, Lfm2StepOutput output);
 
