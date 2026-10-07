@@ -12,6 +12,8 @@ license. Windows archives include `audiocpp.lib` for linking. Choose the archive
 for your platform and backend: CPU, CUDA, Vulkan, or Metal. Keep bundled shared
 dependencies beside the library in `libs/`; GPU drivers and the Vulkan loader
 must be installed on the host. The server-only Colab bundle is unchanged.
+Dynamic backend plugins are discovered beside the C API library on Linux,
+macOS, and Windows, independently of the application's working directory.
 
 ```bash
 cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON

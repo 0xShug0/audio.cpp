@@ -2784,6 +2784,29 @@ if (AUDIOCPP_BUILD_C_API)
         COMMAND audiocpp_c_api_path_test
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/framework/models/silero_vad"
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav")
+    if (GGML_BACKEND_DL)
+        set(AUDIOCPP_C_API_LAYOUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/capi-library-layout")
+        set(AUDIOCPP_C_API_LAYOUT_ENV
+            "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:audiocpp>:$ENV{LD_LIBRARY_PATH}")
+        if (WIN32)
+            set(AUDIOCPP_C_API_LAYOUT_ENV "PATH=$<TARGET_FILE_DIR:audiocpp>;$ENV{PATH}")
+        elseif (APPLE)
+            set(AUDIOCPP_C_API_LAYOUT_ENV
+                "DYLD_LIBRARY_PATH=$<TARGET_FILE_DIR:audiocpp>:$ENV{DYLD_LIBRARY_PATH}")
+        endif()
+        add_custom_command(TARGET audiocpp_c_api_path_test POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${AUDIOCPP_C_API_LAYOUT_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:audiocpp_c_api_path_test>"
+                "${AUDIOCPP_C_API_LAYOUT_DIR}/$<TARGET_FILE_NAME:audiocpp_c_api_path_test>")
+        add_test(NAME audiocpp_c_api_library_layout
+            COMMAND ${CMAKE_COMMAND} -E env
+                "${AUDIOCPP_C_API_LAYOUT_ENV}"
+                "${AUDIOCPP_C_API_LAYOUT_DIR}/$<TARGET_FILE_NAME:audiocpp_c_api_path_test>"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/framework/models/silero_vad"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav")
+        set_tests_properties(audiocpp_c_api_library_layout PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
 
     # Real families across task types. Needs downloaded models, so it reports
     # SKIP rather than failure when AUDIOCPP_C_API_MODEL_ROOT is unset or a

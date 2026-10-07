@@ -1,10 +1,11 @@
 /*
  * C ABI facade over engine::runtime.
  *
- * This file adds no behaviour. It owns three things and nothing else:
+ * This file adds no model behaviour. It handles:
  *   1. translating C types to and from the framework's own types,
  *   2. stopping every exception at the boundary,
  *   3. keeping parent handles alive so callers can free in any order.
+ *   4. locating bundled backend plugins beside the shared library.
  *
  * It deliberately depends only on the framework (the same headers
  * audiocpp_cli uses) and never on app/, so the CLI and the C API stay
@@ -27,12 +28,24 @@
 #include <filesystem>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#ifdef GGML_BACKEND_DL
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+#endif
 
 namespace rt = engine::runtime;
 
@@ -41,6 +54,44 @@ namespace {
 thread_local std::string g_last_error;
 
 const char * const kEmptyString = "";
+
+#ifdef GGML_BACKEND_DL
+std::once_flag g_backend_load_once;
+
+void load_library_backends() {
+    std::call_once(g_backend_load_once, [] {
+        std::filesystem::path library_path;
+#ifdef _WIN32
+        HMODULE module = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCWSTR>(&g_backend_load_once), &module)) {
+            throw std::runtime_error("Could not locate the audio.cpp DLL");
+        }
+        std::vector<wchar_t> path(512);
+        while (true) {
+            const DWORD length = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
+            if (length == 0) {
+                throw std::runtime_error("Could not resolve the audio.cpp DLL path");
+            }
+            if (length < path.size()) {
+                library_path = std::wstring(path.data(), length);
+                break;
+            }
+            path.resize(path.size() * 2);
+        }
+#else
+        Dl_info info{};
+        if (dladdr(&g_backend_load_once, &info) == 0 || info.dli_fname == nullptr) {
+            throw std::runtime_error("Could not locate the audio.cpp shared library");
+        }
+        library_path = info.dli_fname;
+#endif
+        const auto directory = std::filesystem::canonical(library_path).parent_path().u8string();
+        ggml_backend_load_all_from_path(directory.c_str());
+    });
+}
+#endif
 
 /* Every entry point funnels through here: the framework throws, the ABI
  * returns codes. `runtime_status` lets a caller classify its own failures
@@ -309,6 +360,9 @@ audiocpp_status audiocpp_registry_create(const char * config_path, audiocpp_regi
     }
     *out_registry = nullptr;
     return guard([&] {
+#ifdef GGML_BACKEND_DL
+        load_library_backends();
+#endif
         auto handle = std::make_unique<audiocpp_registry>();
         auto config = config_path != nullptr
             ? std::optional<std::filesystem::path>(std::filesystem::path(config_path))
