@@ -58,6 +58,21 @@ enum class Lfm2DecodeCache {
     Speech,
 };
 
+// How start() runs the prompt. The two give the same logits up to float
+// rounding, not bit for bit.
+enum class Lfm2Prefill {
+    // One graph over the whole prompt, whose keys and values then go into
+    // the decode cache: ASR, TTS and the first turn of a conversation. Its
+    // attention holds prompt^2 scores per head.
+    OneShot,
+    // Blocks of 256 positions, at multiples of 256 from the start, written
+    // straight into the decode cache, each attending over the cache up to
+    // its own end only: a conversation's history. What a block computes
+    // depends on the prompt up to its end, never on the cache's length, and
+    // attention holds 256 x prompt scores at most.
+    Chunked,
+};
+
 struct Lfm2GenerationResult {
     std::vector<int32_t> tokens;  // without the stop token
     // False when max_new_tokens ran out before a stop token.
@@ -92,8 +107,13 @@ public:
     // Prefills the prompt, leaving room for `max_steps` more steps, and
     // returns the text logits after it. `cache` is the task's sizing policy:
     // Transcript for a text decoder that transcribes, Speech for TTS and S2S.
+    // `prefill` is how the prompt runs.
     std::vector<float> start(
-        const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, Lfm2DecodeCache cache);
+        const Lfm2Prompt & prompt,
+        const Lfm2AudioEmbeddings & audio,
+        int64_t max_steps,
+        Lfm2DecodeCache cache,
+        Lfm2Prefill prefill = Lfm2Prefill::OneShot);
 
     // One step after start(): a text token, or the codes of an audio frame
     // (the sum of their audio embeddings goes in, summed as a prompt's frames
