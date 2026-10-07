@@ -345,6 +345,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             "-DCMAKE_CUDA_ARCHITECTURES=${{ matrix.archs }}" \
+            ${{ matrix.label == '12.8' && '-DGGML_CUDA_NCCL=OFF' || '' }} \
             -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=OFF \
             -DENGINE_ENABLE_NATIVE_CPU=OFF -DENGINE_BUILD_TESTS=OFF \
             -DAUDIOCPP_BUILD_C_API=ON -DAUDIOCPP_DEPLOYMENT_BUILD=ON \
