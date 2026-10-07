@@ -1,6 +1,36 @@
 {
   "cases": [
     {
+      "id": "hviske_v6_longform",
+      "coverage": "Silence-split Danish longform and short request after long input",
+      "family": "hviske_asr_v6",
+      "model": "models/Hviske-v6-GGUF/hviske-v6-bf16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "warmup", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "longform", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "short_after_long", "audio": "resources/hviske_asr/danish_unified_00.wav"}
+      ]
+    },
+    {
+      "id": "hviske_v6_asr",
+      "coverage": "Danish ASR, formatting controls, greedy decoding, varying input length and repeated requests",
+      "family": "hviske_asr_v6",
+      "model": "models/Hviske-v6-GGUF/hviske-v6-bf16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "first", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "different", "audio": "resources/hviske_asr/danish_unified_01.wav"},
+        {"id": "third", "audio": "resources/hviske_asr/danish_unified_02.wav"},
+        {"id": "formatted", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"cased": true, "punctuated": true}},
+        {"id": "unformatted", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"cased": false, "punctuated": false}},
+        {"id": "greedy", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"num_beams": 1}},
+        {"id": "repeat_first", "audio": "resources/hviske_asr/danish_unified_00.wav"}
+      ]
+    },
+    {
       "id": "owsm_v4_streaming",
       "coverage": "OWSM v4 committed long-form text deltas",
       "family": "owsm",

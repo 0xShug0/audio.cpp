@@ -1511,6 +1511,19 @@ audiocpp_add_model(hviske_asr
         engine::models::hviske_asr::make_hviske_asr_loader
 )
 
+audiocpp_add_model(hviske_asr_v6
+    SOURCES
+        src/models/hviske_asr_v6/assets.cpp
+        src/models/hviske_asr_v6/frontend.cpp
+        src/models/hviske_asr_v6/encoder.cpp
+        src/models/hviske_asr_v6/decoder.cpp
+        src/models/hviske_asr_v6/session.cpp
+    INCLUDES
+        engine/models/hviske_asr_v6/session.h
+    LOADERS
+        engine::models::hviske_asr_v6::make_hviske_asr_v6_loader
+)
+
 audiocpp_add_model(irodori_tts
     SOURCES
         src/models/irodori_tts/assets.cpp
