@@ -228,10 +228,10 @@
       {
         "name": "talker_graph_arena_mb",
         "type": "int",
-        "description": "Talker graph arena size in MiB; default 256.",
+        "description": "Talker graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 32
       },
       {
         "name": "speech_encoder_graph_arena_mb",
@@ -260,26 +260,26 @@
       {
         "name": "talker_constant_context_mb",
         "type": "int",
-        "description": "Talker constant tensor context size in MiB; default 4096.",
+        "description": "Talker constant tensor context size in MiB; default 4.",
         "required": false,
         "min": 1,
-        "default": 4096
+        "default": 4
       },
       {
         "name": "code_predictor_constant_context_mb",
         "type": "int",
-        "description": "Code predictor constant tensor context size in MiB; default 1536.",
+        "description": "Code predictor constant tensor context size in MiB; default 4.",
         "required": false,
         "min": 1,
-        "default": 1536
+        "default": 4
       },
       {
         "name": "speech_decoder_constant_context_mb",
         "type": "int",
-        "description": "Speech decoder constant tensor context size in MiB; default 1536.",
+        "description": "Speech decoder constant tensor context size in MiB; default 4.",
         "required": false,
         "min": 1,
-        "default": 1536
+        "default": 4
       }
     ],
     "load": []

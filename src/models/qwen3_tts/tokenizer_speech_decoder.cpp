@@ -1226,6 +1226,7 @@ runtime::AudioBuffer Qwen3SpeechTokenizerDecoderRuntime::decode(const Qwen3Speec
             graph == nullptr || !graph->matches(*weights_, chunk_frames, execution_context_->backend(), threads);
         if (graph_rebuilt) {
             const auto build_start = Clock::now();
+            graph.reset();
             auto replacement = std::make_unique<Qwen3SpeechTokenizerDecoderGraph>(
                 weights_,
                 chunk_frames,

@@ -222,7 +222,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 2048
+        "default": 32
       },
       {
         "name": "s2mel_graph_arena_mb",
@@ -230,7 +230,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 2048
+        "default": 32
       },
       {
         "name": "reference_graph_arena_mb",

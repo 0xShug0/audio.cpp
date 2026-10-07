@@ -88,8 +88,8 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const IndexTTS2Assets> assets_;
-    size_t gpt_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
-    size_t s2mel_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
+    size_t gpt_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t s2mel_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
     size_t reference_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t emotion_text_prefill_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
     size_t emotion_text_decode_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
