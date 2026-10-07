@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace minitts::server {
+namespace minitts::app {
 
 std::string base64_encode(const uint8_t * data, size_t size);
 std::string base64_encode(const std::vector<uint8_t> & bytes);
@@ -16,4 +16,4 @@ std::string base64_encode(const std::vector<std::byte> & bytes);
 // clients can send data URIs verbatim. Throws std::runtime_error on malformed input.
 std::vector<uint8_t> base64_decode(std::string_view input);
 
-}  // namespace minitts::server
+}  // namespace minitts::app

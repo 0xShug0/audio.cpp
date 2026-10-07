@@ -2832,9 +2832,9 @@ configure_file(
 )
 
 add_executable(audiocpp_server
+    app/common/base64.cpp
     app/common/build_info.cpp
     app/server/main.cpp
-    app/server/base64.cpp
     app/server/config.cpp
     app/server/frontend.cpp
     app/server/http.cpp
@@ -3544,12 +3544,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(server_multipart_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         add_test(NAME server_multipart_test COMMAND server_multipart_test)
 
-        add_executable(server_base64_test
-            tests/unittests/test_server_base64.cpp
-            app/server/base64.cpp
+        add_executable(base64_test
+            tests/unittests/test_base64.cpp
+            app/common/base64.cpp
         )
-        target_include_directories(server_base64_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-        add_test(NAME server_base64_test COMMAND server_base64_test)
+        add_test(NAME base64_test COMMAND base64_test)
 
         add_executable(server_busy_guard_test
             tests/unittests/test_server_busy_guard.cpp

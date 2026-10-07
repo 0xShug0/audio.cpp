@@ -1,4 +1,4 @@
-#include "base64.h"
+#include "../../app/common/base64.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -7,8 +7,8 @@
 
 namespace {
 
-using minitts::server::base64_decode;
-using minitts::server::base64_encode;
+using minitts::app::base64_decode;
+using minitts::app::base64_encode;
 
 void require(bool condition, const std::string & message) {
     if (!condition) {
@@ -69,6 +69,6 @@ int main() {
     test_known_vectors();
     test_whitespace_and_data_uri();
     test_malformed_inputs();
-    std::cout << "server_base64_test passed\n";
+    std::cout << "base64_test passed\n";
     return 0;
 }

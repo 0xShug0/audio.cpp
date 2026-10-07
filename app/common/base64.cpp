@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace minitts::server {
+namespace minitts::app {
 
 namespace {
 
@@ -98,4 +98,4 @@ std::vector<uint8_t> base64_decode(std::string_view input) {
     return out;
 }
 
-}  // namespace minitts::server
+}  // namespace minitts::app
