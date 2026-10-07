@@ -3137,6 +3137,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME nemotron_3_diar_streaming_test COMMAND nemotron_3_diar_streaming_test)
     endif()
 
+    if(yue2 IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(yue2_request_test tests/yue2/request_test.cpp)
+        add_test(NAME yue2_request_test COMMAND yue2_request_test)
+    endif()
+
     # Registered here rather than in the extended block below so it runs in the
     # linux/mac build workflows (they only set ENGINE_BUILD_TESTS). It is
     # platform-safe: the Metal timing section skips itself when Metal is absent.

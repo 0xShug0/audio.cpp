@@ -747,7 +747,9 @@ same shape, so a client can send what one result returned in a later request:
 | `meta` | optional object of strings; a number or boolean value becomes text as in `options` (`12`, `true`; `1.0` becomes `1`) |
 
 The model gets the artifacts in array order. Which ids and kinds it reads is up
-to its family; see the model's docs. The same field works in `/v1/tasks/stream`
+to its family; see the model's docs. Most families that read none ignore them,
+while AuK, HeartMuLa, VibeVoice, VoxCPM1, VoxCPM2 and YuE2 turn away a request
+that carries any with HTTP 400. The same field works in `/v1/tasks/stream`
 requests and in each `/v1/tasks/batch` entry. A malformed entry returns HTTP 400
 naming it, for example `artifacts[1] (example.tokens): unknown kind 'tokens'`.
 `max_request_body_bytes` bounds inline payloads, as it does `audio_base64`; a

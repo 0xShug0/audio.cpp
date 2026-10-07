@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/text.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 
@@ -708,7 +709,7 @@ void VoxCPM2SessionBase::validate_request(
     }
   }
   if (!request.input_artifacts.empty()) {
-    throw std::runtime_error(
+    throw runtime::InvalidRequestError(
         "VoxCPM2 C++ session does not consume input artifacts");
   }
 }

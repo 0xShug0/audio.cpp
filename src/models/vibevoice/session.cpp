@@ -4,6 +4,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/models/vibevoice/lora.h"
 
@@ -298,7 +299,7 @@ VibeVoiceRequest VibeVoiceSession::make_request(const runtime::TaskRequest & req
         throw std::runtime_error("VibeVoice C++ session does not consume style conditions");
     }
     if (!request.input_artifacts.empty()) {
-        throw std::runtime_error("VibeVoice C++ session does not consume input artifacts");
+        throw runtime::InvalidRequestError("VibeVoice C++ session does not consume input artifacts");
     }
     VibeVoiceRequest out;
     out.text = request.text_input->text;
