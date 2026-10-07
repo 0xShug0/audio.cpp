@@ -1,5 +1,6 @@
 #include "engine/community_models/lfm2_audio/backbone.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/runtime/errors.h"
 #include "lfm2_audio_test_package.h"
 #include "test_assert.h"
@@ -15,6 +16,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -315,8 +317,9 @@ struct Fixture {
 
     ~Fixture() { std::filesystem::remove_all(path.parent_path()); }
 
-    [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> runtime() {
-        return std::make_unique<lfm2::Lfm2BackboneRuntime>(engine::assets::open_tensor_source(path), config, execution);
+    [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> runtime(bool cpu_repack = true) {
+        return std::make_unique<lfm2::Lfm2BackboneRuntime>(
+            engine::assets::open_tensor_source(path), config, execution, nullptr, 0, 0, cpu_repack);
     }
 
     [[nodiscard]] ReferenceLfm2 reference() const { return ReferenceLfm2(shape, weights); }
@@ -588,37 +591,38 @@ void test_rejects_bad_requests(Fixture & fixture) {
 
 // Liquid's quantized packages store the matrices as Q8_0 or Q4_0, and the
 // Q4_0 ones keep the token embedding, which is also the output head, as Q6_K.
-// The reference runs on the dequantized weights, so what is left is ggml
-// quantizing the activations inside its quantized matmuls.
-// Liquid's quantized packages store the matrices as Q8_0 or Q4_0, and the
-// Q4_0 ones keep the token embedding, which is also the output head, as Q6_K.
-// The reference runs on the dequantized weights, so what is left is ggml
-// quantizing the activations inside its quantized matmuls: about 2% of the
-// largest logit here, against order 100% for a transposed or misread tensor.
-void test_quantized_weights() {
+BackboneShape quantized_shape() {
     BackboneShape shape;
     shape.hidden = 256;  // Q6_K rows are 256 wide
     shape.intermediate = 512;
     shape.heads = 4;
-    for (const ggml_type matrix_type : {GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
-        std::map<std::string, ggml_type> types = {{"token_embd.weight", GGML_TYPE_Q6_K}};
-        for (const auto & [name, tensor] : lfm2_audio_test::backbone_tensors(shape, kVocab, lfm2_audio_test::random_fill(1))) {
-            if (tensor.shape.size() == 2 && name != "token_embd.weight" && name.find("shortconv.conv") == std::string::npos) {
-                types[name] = matrix_type;
-            }
-        }
+    return shape;
+}
 
+std::map<std::string, ggml_type> quantized_types(const BackboneShape & shape, ggml_type matrix_type) {
+    std::map<std::string, ggml_type> types = {{"token_embd.weight", GGML_TYPE_Q6_K}};
+    for (const auto & [name, tensor] : lfm2_audio_test::backbone_tensors(shape, kVocab, lfm2_audio_test::random_fill(1))) {
+        if (tensor.shape.size() == 2 && name != "token_embd.weight" && name.find("shortconv.conv") == std::string::npos) {
+            types[name] = matrix_type;
+        }
+    }
+
+    return types;
+}
+
+// The reference runs on the dequantized weights, so what is left is ggml
+// quantizing the activations inside its quantized matmuls: about 2% of the
+// largest logit here, against order 100% for a transposed or misread tensor.
+// The same holds with ggml's repacked CPU kernels (lfm2_audio.cpu_repack) and
+// without them.
+void test_quantized_weights() {
+    const auto shape = quantized_shape();
+    for (const ggml_type matrix_type : {GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
         // Weights scaled for width 256, so small errors do not grow layer by layer.
-        Fixture fixture("audiocpp_lfm2_audio_backbone_quant_test", shape, 21, types, 0.075f);
-        auto runtime = fixture.runtime();
+        Fixture fixture("audiocpp_lfm2_audio_backbone_quant_test", shape, 21, quantized_types(shape, matrix_type), 0.075f);
         const auto reference = fixture.reference();
         const auto c = audio_prompt(12, 4, 32, shape.hidden);
-        const auto result = runtime->generate(c.prompt, c.audio, {8, {}});
         const auto expected = reference.logits(reference.embed(c.prompt, c.audio));
-
-        const std::string label = ggml_type_name(matrix_type);
-        require_logits_close(result.prefill_logits, expected, label + " prefill", 6e-2);
-
         double scale = 1.0;
         for (const double value : expected) {
             scale = std::max(scale, std::fabs(value));
@@ -627,9 +631,105 @@ void test_quantized_weights() {
         // Tokens up to the reference's first near tie, where the activation
         // rounding could legitimately go either way.
         const auto clear = reference.greedy(c.prompt, c.audio, 8, {}, 0.1 * scale, true);
-        require(clear.size() >= 3, label + ": the reference ties within 3 tokens; pick another seed");
-        const std::vector<int32_t> ours(result.tokens.begin(), result.tokens.begin() + static_cast<std::ptrdiff_t>(clear.size()));
-        require_eq(ids(ours), ids(clear), label + " greedy tokens");
+        require(clear.size() >= 3, std::string(ggml_type_name(matrix_type)) + ": the reference ties within 3 tokens; pick another seed");
+        for (const bool cpu_repack : {false, true}) {
+            const std::string label = std::string(ggml_type_name(matrix_type)) + (cpu_repack ? " repacked" : "");
+            const auto result = fixture.runtime(cpu_repack)->generate(c.prompt, c.audio, {8, {}});
+            require_logits_close(result.prefill_logits, expected, label + " prefill", 6e-2);
+            const std::vector<int32_t> ours(result.tokens.begin(), result.tokens.begin() + static_cast<std::ptrdiff_t>(clear.size()));
+            require_eq(ids(ours), ids(clear), label + " greedy tokens");
+        }
+    }
+}
+
+// The CPU extra buffer type ggml multiplies a [rows, cols] `type` weight in,
+// or "CPU" for none.
+std::string matmul_buffer(ggml_backend_t backend, ggml_type type, int64_t rows, int64_t cols) {
+    for (auto * buffer_type : engine::core::cpu_extra_buffer_types(backend)) {
+        if (engine::core::buffer_type_supports_matmul_weight(backend, buffer_type, type, cols, rows)) {
+            return ggml_backend_buft_name(buffer_type);
+        }
+    }
+
+    return "CPU";
+}
+
+// The weight buffers as "CPU 16, CPU_REPACK 25", the extra ones by name:
+// the store lists those in the order of their first weights.
+std::string buffers(std::vector<std::pair<std::string, size_t>> values) {
+    if (values.size() > 2) {
+        std::sort(values.begin() + 1, values.end());
+    }
+
+    std::ostringstream out;
+    for (size_t i = 0; i < values.size(); ++i) {
+        out << (i == 0 ? "" : ", ") << values[i].first << ' ' << values[i].second;
+    }
+
+    return out.str();
+}
+
+// lfm2_audio.cpu_repack moves each quantized matrix into the first CPU extra
+// buffer whose kernels take its type and shape (CPU_REPACK: Q4_0 with AVX2 or
+// on Arm, Q8_0 and Q6_K on Arm; AMX, where built, more). The lookup keeps
+// gathering from the token embedding, so the tied head gets a copy of it
+// where its Q6_K moves. Off, every weight stays in the plain CPU buffer. The
+// repacked kernels sum in another order, and the activations they quantize
+// then round differently here and there.
+void test_cpu_repack() {
+    const auto shape = quantized_shape();
+    for (const ggml_type matrix_type : {GGML_TYPE_Q8_0, GGML_TYPE_Q4_0}) {
+        const auto types = quantized_types(shape, matrix_type);
+        Fixture fixture("audiocpp_lfm2_audio_backbone_repack_test", shape, 21, types, 0.075f);
+        const std::string label = ggml_type_name(matrix_type);
+        ggml_backend_t backend = fixture.execution.backend();
+
+        // Weights by extra buffer: the head's copy and the layers' matrices.
+        std::map<std::string, size_t> moved;
+        std::vector<std::string> order;
+        const auto place = [&](const std::string & buffer) {
+            if (buffer != "CPU" && moved[buffer]++ == 0) {
+                order.push_back(buffer);
+            }
+        };
+        place(matmul_buffer(backend, GGML_TYPE_Q6_K, kVocab, shape.hidden));
+        for (const auto & [name, type] : types) {
+            if (name != "token_embd.weight") {
+                const auto & dims = fixture.weights.at(name).shape;
+                place(matmul_buffer(backend, type, dims[0], dims[1]));
+            }
+        }
+
+        // The head's copy is a weight more; the matrices leave the CPU buffer.
+        const bool head_copy = matmul_buffer(backend, GGML_TYPE_Q6_K, kVocab, shape.hidden) != "CPU";
+        std::vector<std::pair<std::string, size_t>> expected = {{"CPU", fixture.weights.size() + (head_copy ? 1 : 0)}};
+        for (const auto & buffer : order) {
+            expected.emplace_back(buffer, moved[buffer]);
+            expected[0].second -= moved[buffer];
+        }
+
+        std::cout << label << " repacked: " << buffers(expected) << '\n';
+
+        auto plain = fixture.runtime(false);
+        auto repacked = fixture.runtime(true);
+        require_eq(buffers(plain->weight_buffers()), "CPU " + std::to_string(fixture.weights.size()), label + " buffers, repacking off");
+        require_eq(buffers(repacked->weight_buffers()), buffers(expected), label + " buffers, repacking on");
+
+        const auto c = audio_prompt(12, 4, 32, shape.hidden);
+        const auto off = plain->generate(c.prompt, c.audio, {8, {}});
+        const auto on = repacked->generate(c.prompt, c.audio, {8, {}});
+        double scale = 1.0;
+        double diff = 0.0;
+        for (size_t i = 0; i < off.prefill_logits.size(); ++i) {
+            scale = std::max(scale, std::fabs(static_cast<double>(off.prefill_logits[i])));
+            diff = std::max(diff, std::fabs(static_cast<double>(on.prefill_logits[i]) - off.prefill_logits[i]));
+        }
+
+        std::cout << label << " prefill logits, repacked against plain: max difference " << diff / scale << " of the largest\n";
+        require_logits_close(on.prefill_logits, Vector(off.prefill_logits.begin(), off.prefill_logits.end()), label + " repacked prefill", 1e-3);
+        if (order.empty()) {
+            require(on.prefill_logits == off.prefill_logits && on.tokens == off.tokens, label + ": nothing repacked, so nothing may change");
+        }
     }
 }
 
@@ -645,6 +745,7 @@ int main() {
         test_decode_cache_length();
         test_rejects_bad_requests(fixture);
         test_quantized_weights();
+        test_cpu_repack();
         std::cout << "lfm2_audio_backbone_test: PASS\n";
         return 0;
     } catch (const std::exception & error) {

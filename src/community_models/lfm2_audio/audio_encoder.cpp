@@ -165,15 +165,23 @@ modules::Conv2dWeights load_conv2d(
 }
 
 EncoderWeights load_encoder_weights(
-    const assets::TensorSource & source, const Lfm2FastConformerEncoderConfig & config, core::ExecutionContext & execution) {
+    const assets::TensorSource & source, const Lfm2FastConformerEncoderConfig & config, core::ExecutionContext & execution, bool cpu_repack) {
     EncoderWeights out;
+    core::BackendWeightStoreOptions options;
+    options.cpu_extra_buffers = cpu_repack;
     out.store = std::make_unique<core::BackendWeightStore>(
-        execution.backend(), execution.backend_type(), "lfm2_audio.encoder.weights", kWeightContextBytes);
+        execution.backend(), execution.backend_type(), "lfm2_audio.encoder.weights", kWeightContextBytes, options);
     auto & store = *out.store;
     const auto native = assets::TensorStorageType::Native;
+    // The linears' weights, linear_pos included, are only ever src0 of
+    // LinearModule's ggml_mul_mat.
+    const auto matmul = core::WeightUse::MatMulOnly;
 
     const auto linear = [&](const std::string & name) {
-        return binding::linear_from_named_source(store, source, name + ".weight", name + ".bias", native);
+        modules::LinearWeights weights;
+        weights.weight = store.load_tensor(source, name + ".weight", native, binding::tensor_shape_from_source(source, name + ".weight"), matmul);
+        weights.bias = binding::f32_tensor_from_named_source(store, source, name + ".bias");
+        return weights;
     };
     const auto norm = [&](const std::string & name) {
         return binding::norm_from_named_source(store, source, name + ".weight", name + ".bias");
@@ -216,7 +224,7 @@ EncoderWeights load_encoder_weights(
         w.self_attention.attention.out_weight = o.weight;
         w.self_attention.attention.out_bias = o.bias;
 
-        w.self_attention.pos_weight = store.load_tensor(source, p + ".linear_pos.weight", native, {d, d});
+        w.self_attention.pos_weight = store.load_tensor(source, p + ".linear_pos.weight", native, {d, d}, matmul);
         w.self_attention.pos_bias_u = store.load_f32_tensor(source, p + ".pos_bias_u", {config.num_heads, head_dim});
         w.self_attention.pos_bias_v = store.load_f32_tensor(source, p + ".pos_bias_v", {config.num_heads, head_dim});
 
@@ -412,11 +420,12 @@ private:
 struct Lfm2FastConformerEncoderRuntime::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source_in,
          const Lfm2FastConformerEncoderConfig & config_in,
-         core::ExecutionContext & execution_in)
+         core::ExecutionContext & execution_in,
+         bool cpu_repack)
         : source(std::move(source_in)),
           config(config_in),
           execution(execution_in),
-          weights(load_encoder_weights(*source, config_in, execution_in)),
+          weights(load_encoder_weights(*source, config_in, execution_in, cpu_repack)),
           positions(config_in.hidden_size) {}
 
     // Chunks of the same length reuse the graph. A new length builds a new
@@ -497,8 +506,9 @@ Lfm2AudioFeatures Lfm2AudioFeatureExtractor::extract(const std::vector<float> & 
 Lfm2FastConformerEncoderRuntime::Lfm2FastConformerEncoderRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     const Lfm2FastConformerEncoderConfig & config,
-    core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(std::move(source), config, execution)) {}
+    core::ExecutionContext & execution,
+    bool cpu_repack)
+    : impl_(std::make_unique<Impl>(std::move(source), config, execution, cpu_repack)) {}
 
 Lfm2FastConformerEncoderRuntime::~Lfm2FastConformerEncoderRuntime() = default;
 

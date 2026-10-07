@@ -53,6 +53,7 @@ constexpr int kExitSkip = 125;
 
 constexpr const char * kText = "What is this obsession people have with books?";
 constexpr const char * kVoice = "uk_male";
+constexpr const char * kSampledSeeds[] = {"1234", "1235", "1236"};
 
 const std::vector<int32_t> kPromptIds = {1, 6, 24131, 708, 8173, 1199, 837, 10255, 523, 8146, 779, 6729, 6541, 8403, 523, 7, 708, 6,
                                          6423, 708, 3493, 856, 1033, 18619, 1746, 1519, 1052, 916, 5936, 540, 7, 708, 6, 64015, 708};
@@ -438,44 +439,70 @@ void check_round_trip(
     auto asr = open_session(*model, engine::runtime::VoiceTaskKind::Asr, model_gguf, backend);
     const auto & tts_session = dynamic_cast<const lfm2::Lfm2AudioTtsSession &>(*tts);
 
-    struct Sampling {
-        const char * label;
-        const char * temperature;
-    };
-
-    const auto speech_request = [](const char * temperature) {
+    const auto speech_request = [](const char * temperature, const char * seed = kSampledSeeds[0]) {
         engine::runtime::TaskRequest request;
         request.text_input = engine::runtime::Transcript{kText, "en"};
         request.voice = engine::runtime::VoiceCondition{engine::runtime::VoiceReference{std::nullopt, std::string(kVoice)}, std::nullopt};
         request.options["temperature"] = temperature;
-        request.options["seed"] = "1234";
+        request.options["seed"] = seed;
         return request;
     };
 
-    std::vector<float> greedy_speech;
-    for (const auto & sampling : {Sampling{"greedy", "0"}, Sampling{"sampled", "0.8"}}) {
-        const auto speech = run(*tts, speech_request(sampling.temperature));
+    // The speech's length, whether it ended before max_tokens, and what the
+    // ASR task hears in it.
+    struct Take {
+        double seconds = 0.0;
+        bool ended = false;
+        std::string heard;
+    };
+
+    const auto speak = [&](const engine::runtime::TaskRequest & request, const std::string & label, std::vector<float> * samples) {
+        Take take;
+        const auto speech = run(*tts, request);
         const bool has_audio = speech.audio_output.has_value() && speech.audio_output->sample_rate == 24000 && !speech.audio_output->samples.empty();
-        checks.expect(has_audio, std::string(sampling.label) + " speech is 24 kHz audio");
+        checks.expect(has_audio, label + " speech is 24 kHz audio");
         if (!has_audio) {
-            continue;
+            return take;
         }
 
-        if (std::string(sampling.label) == "greedy") {
-            greedy_speech = speech.audio_output->samples;
+        if (samples != nullptr) {
+            *samples = speech.audio_output->samples;
         }
 
-        const double seconds = static_cast<double>(speech.audio_output->samples.size()) / 24000.0;
-        std::cout << sampling.label << " speech: " << seconds << " s\n";
-        checks.expect(seconds > 1.5 && seconds < 6.0, std::string(sampling.label) + " speech length", std::to_string(seconds));
-
+        take.seconds = static_cast<double>(speech.audio_output->samples.size()) / 24000.0;
+        take.ended = !tts_session.reached_max_tokens();
         engine::runtime::TaskRequest transcribe;
         transcribe.audio_input = speech.audio_output;
         const auto text = run(*asr, transcribe);
-        const std::string actual = text.text_output.has_value() ? text.text_output->text : "<no transcript>";
-        checks.expect(actual == kText, std::string(sampling.label) + " speech transcribes back", "got \"" + actual + "\"");
-        checks.expect(!tts_session.reached_max_tokens(), std::string(sampling.label) + " speech ends before max_tokens");
+        take.heard = text.text_output.has_value() ? text.text_output->text : "<no transcript>";
+        std::cout << label << " speech: " << take.seconds << " s, heard \"" << take.heard << "\"\n";
+        return take;
+    };
+
+    std::vector<float> greedy_speech;
+    const auto greedy = speak(speech_request("0"), "greedy", &greedy_speech);
+    checks.expect(greedy.seconds > 1.5 && greedy.seconds < 6.0, "greedy speech length", std::to_string(greedy.seconds));
+    checks.expect(greedy.heard == kText, "greedy speech transcribes back", "got \"" + greedy.heard + "\"");
+    checks.expect(greedy.ended, "greedy speech ends before max_tokens");
+
+    // A sampled take says the text, but not always word for word: of seeds 1
+    // to 40, 35 to 40 came back exactly with each quantized package and CPU
+    // measured, with ggml's repacked kernels and without, and kernels that sum
+    // in another order sample other takes. So two of three seeds have to come
+    // back exactly, ending before max_tokens at a length of 1.5 to 6 s.
+    size_t sampled_exact = 0;
+    std::string sampled_heard;
+    for (const char * seed : kSampledSeeds) {
+        const auto take = speak(speech_request("0.8", seed), std::string("sampled (seed ") + seed + ")", nullptr);
+        if (take.seconds > 1.5 && take.seconds < 6.0 && take.ended && take.heard == kText) {
+            ++sampled_exact;
+        }
+
+        sampled_heard += std::string(sampled_heard.empty() ? "" : " | ") + seed + ": " + std::to_string(take.seconds) + " s" +
+            (take.ended ? "" : ", cut at max_tokens") + ", \"" + take.heard + "\"";
     }
+
+    checks.expect(sampled_exact >= 2, "sampled speech transcribes back, " + std::to_string(sampled_exact) + " of 3 seeds", sampled_heard);
 
     // A turn that reaches max_tokens keeps the speech it has, as liquid-audio
     // keeps what it generated at max_new_tokens, with a warning, and the next

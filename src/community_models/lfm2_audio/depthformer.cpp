@@ -52,12 +52,18 @@ struct DepthformerWeights {
     std::vector<CodebookWeights> codebooks;
 };
 
-DepthformerWeights load_weights(const assets::TensorSource & source, const Lfm2DepthformerConfig & config, core::ExecutionContext & execution) {
+DepthformerWeights load_weights(
+    const assets::TensorSource & source, const Lfm2DepthformerConfig & config, core::ExecutionContext & execution, bool cpu_repack) {
     DepthformerWeights out;
+    core::BackendWeightStoreOptions options;
+    options.cpu_extra_buffers = cpu_repack;
     out.store = std::make_unique<core::BackendWeightStore>(
-        execution.backend(), execution.backend_type(), "lfm2_audio.depthformer.weights", kWeightContextBytes);
+        execution.backend(), execution.backend_type(), "lfm2_audio.depthformer.weights", kWeightContextBytes, options);
     auto & store = *out.store;
     const auto native = assets::TensorStorageType::Native;
+    // Only ever src0 of LinearModule's ggml_mul_mat; depth_linear, whose
+    // rows each step views, and the embedding tables, gathered, are not.
+    const auto matmul = core::WeightUse::MatMulOnly;
     const int64_t d = config.hidden_size;
     const int64_t ff = config.intermediate_size;
     const int64_t hd = config.head_dim;
@@ -70,15 +76,15 @@ DepthformerWeights load_weights(const assets::TensorSource & source, const Lfm2D
         modules::DecoderLayerWeights w;
         w.input_norm = {store.load_f32_tensor(source, p + "operator_norm.weight", {d}), std::nullopt};
         w.self_attention.qkv_weight =
-            store.load_tensor(source, p + "operator.qkv_proj.weight", native, {d + 2 * config.num_kv_heads * hd, d});
-        w.self_attention.out_weight = store.load_tensor(source, p + "operator.out_proj.weight", native, {d, d});
+            store.load_tensor(source, p + "operator.qkv_proj.weight", native, {d + 2 * config.num_kv_heads * hd, d}, matmul);
+        w.self_attention.out_weight = store.load_tensor(source, p + "operator.out_proj.weight", native, {d, d}, matmul);
         w.q_norm = {store.load_f32_tensor(source, p + "operator.attention.q_layernorm.weight", {hd}), std::nullopt};
         w.k_norm = {store.load_f32_tensor(source, p + "operator.attention.k_layernorm.weight", {hd}), std::nullopt};
         w.post_norm = {store.load_f32_tensor(source, p + "ffn_norm.weight", {d}), std::nullopt};
         // GLU: w2(silu(w1(x)) * w3(x)).
-        w.mlp.gate_proj = {store.load_tensor(source, p + "feed_forward.w1.weight", native, {ff, d}), std::nullopt};
-        w.mlp.up_proj = {store.load_tensor(source, p + "feed_forward.w3.weight", native, {ff, d}), std::nullopt};
-        w.mlp.down_proj = {store.load_tensor(source, p + "feed_forward.w2.weight", native, {d, ff}), std::nullopt};
+        w.mlp.gate_proj = {store.load_tensor(source, p + "feed_forward.w1.weight", native, {ff, d}, matmul), std::nullopt};
+        w.mlp.up_proj = {store.load_tensor(source, p + "feed_forward.w3.weight", native, {ff, d}, matmul), std::nullopt};
+        w.mlp.down_proj = {store.load_tensor(source, p + "feed_forward.w2.weight", native, {d, ff}, matmul), std::nullopt};
         out.layers.push_back(std::move(w));
     }
 
@@ -87,7 +93,7 @@ DepthformerWeights load_weights(const assets::TensorSource & source, const Lfm2D
         CodebookWeights w;
         w.embedding = store.load_tensor(source, p + "embedding.weight", native, {config.audio_vocab_size, d});
         w.norm = {store.load_f32_tensor(source, p + "embedding_norm.weight", {d}), std::nullopt};
-        w.to_logits = store.load_tensor(source, p + "to_logits.weight", native, {config.audio_vocab_size, d});
+        w.to_logits = store.load_tensor(source, p + "to_logits.weight", native, {config.audio_vocab_size, d}, matmul);
         out.codebooks.push_back(std::move(w));
     }
 
@@ -280,10 +286,13 @@ private:
 }  // namespace
 
 struct Lfm2DepthformerRuntime::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm2DepthformerConfig & config_in, core::ExecutionContext & execution)
+    Impl(std::shared_ptr<const assets::TensorSource> source_in,
+         const Lfm2DepthformerConfig & config_in,
+         core::ExecutionContext & execution,
+         bool cpu_repack)
         : source(std::move(source_in)),
           config(config_in),
-          weights(load_weights(*source, config, execution)),
+          weights(load_weights(*source, config, execution, cpu_repack)),
           graphs(weights, config, execution) {}
 
     std::shared_ptr<const assets::TensorSource> source;
@@ -295,8 +304,9 @@ struct Lfm2DepthformerRuntime::Impl {
 Lfm2DepthformerRuntime::Lfm2DepthformerRuntime(
     std::shared_ptr<const assets::TensorSource> vocoder,
     const Lfm2DepthformerConfig & config,
-    core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(std::move(vocoder), config, execution)) {}
+    core::ExecutionContext & execution,
+    bool cpu_repack)
+    : impl_(std::make_unique<Impl>(std::move(vocoder), config, execution, cpu_repack)) {}
 
 Lfm2DepthformerRuntime::~Lfm2DepthformerRuntime() = default;
 

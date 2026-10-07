@@ -101,6 +101,13 @@ double parse_max_pass_seconds(const runtime::SessionOptions & options) {
     return value;
 }
 
+// lfm2_audio.cpu_repack: on the CPU, the kernels of ggml's CPU extra buffer
+// types (repacked, or AMX) for the matmul weights they take.
+bool parse_cpu_repack(const runtime::SessionOptions & options) {
+    const auto value = runtime::find_option(options.options, {"lfm2_audio.cpu_repack"});
+    return !value.has_value() || runtime::parse_bool_option(*value, "lfm2_audio.cpu_repack");
+}
+
 // Checked before the audio reaches the encoder, whose graph grows with the
 // audio; nothing else stops a long pass before its allocation. The check is in
 // samples, so audio exactly at a limit like 45.3 s passes, and the length is
@@ -294,11 +301,12 @@ Lfm2AudioSession::Lfm2AudioSession(
       task_(std::move(task)),
       assets_(std::move(assets)),
       contract_(std::move(contract)),
+      cpu_repack_(parse_cpu_repack(RuntimeSessionBase::options())),
       components_(select_components(assets_, RuntimeSessionBase::options())),
       tokenizer_(components_->vocabulary),
       features_(components_->encoder.n_mels, execution_context().config().threads),
-      encoder_(components_->mmproj, components_->encoder, execution_context()),
-      backbone_(components_->model, components_->backbone, execution_context()),
+      encoder_(components_->mmproj, components_->encoder, execution_context(), cpu_repack_),
+      backbone_(components_->model, components_->backbone, execution_context(), nullptr, 0, 0, cpu_repack_),
       language_(model_language(*components_)),
       prompt_(make_lfm2_asr_prompt(tokenizer_, language_)),
       vad_model_path_(runtime::find_option(RuntimeSessionBase::options().options, {"lfm2_audio.vad_model_path"})
@@ -485,6 +493,7 @@ Lfm2AudioTtsSession::Lfm2AudioTtsSession(
       task_(std::move(task)),
       assets_(std::move(assets)),
       contract_(std::move(contract)),
+      cpu_repack_(parse_cpu_repack(RuntimeSessionBase::options())),
       components_(select_components(assets_, RuntimeSessionBase::options())),
       output_(select_output_components(assets_, components_, RuntimeSessionBase::options())),
       tokenizer_(components_->vocabulary),
@@ -494,9 +503,16 @@ Lfm2AudioTtsSession::Lfm2AudioTtsSession(
           execution_context(),
           components_->mmproj,
           output_->depthformer.codebooks,
-          output_->depthformer.audio_vocab_size),
-      depthformer_(output_->vocoder, output_->depthformer, execution_context()),
-      detokenizer_(output_->detokenizer, output_->vocoder, output_->detokenizer_config, execution_context()),
+          output_->depthformer.audio_vocab_size,
+          cpu_repack_),
+      depthformer_(output_->vocoder, output_->depthformer, execution_context(), cpu_repack_),
+      detokenizer_(
+          output_->detokenizer,
+          output_->vocoder,
+          output_->detokenizer_config,
+          execution_context(),
+          Lfm2DetokenizerRuntime::kDefaultChunkFrames,
+          cpu_repack_),
       language_(model_language(*components_)) {
     components_->model->release_storage();
     components_->mmproj->release_storage();
@@ -759,20 +775,28 @@ Lfm2AudioChatSession::Lfm2AudioChatSession(
       task_(std::move(task)),
       assets_(std::move(assets)),
       contract_(std::move(contract)),
+      cpu_repack_(parse_cpu_repack(RuntimeSessionBase::options())),
       components_(select_components(assets_, RuntimeSessionBase::options())),
       output_(select_output_components(assets_, components_, RuntimeSessionBase::options())),
       tokenizer_(components_->vocabulary),
       features_(components_->encoder.n_mels, execution_context().config().threads),
-      encoder_(components_->mmproj, components_->encoder, execution_context()),
+      encoder_(components_->mmproj, components_->encoder, execution_context(), cpu_repack_),
       backbone_(
           components_->model,
           components_->backbone,
           execution_context(),
           components_->mmproj,
           output_->depthformer.codebooks,
-          output_->depthformer.audio_vocab_size),
-      depthformer_(output_->vocoder, output_->depthformer, execution_context()),
-      detokenizer_(output_->detokenizer, output_->vocoder, output_->detokenizer_config, execution_context()),
+          output_->depthformer.audio_vocab_size,
+          cpu_repack_),
+      depthformer_(output_->vocoder, output_->depthformer, execution_context(), cpu_repack_),
+      detokenizer_(
+          output_->detokenizer,
+          output_->vocoder,
+          output_->detokenizer_config,
+          execution_context(),
+          Lfm2DetokenizerRuntime::kDefaultChunkFrames,
+          cpu_repack_),
       language_(model_language(*components_)),
       max_pass_seconds_(parse_max_pass_seconds(RuntimeSessionBase::options())) {
     components_->model->release_storage();

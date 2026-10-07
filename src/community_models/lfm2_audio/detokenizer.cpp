@@ -61,10 +61,13 @@ DetokenizerWeights load_weights(
     const assets::TensorSource & detokenizer,
     const assets::TensorSource & vocoder,
     const Lfm2DetokenizerConfig & config,
-    core::ExecutionContext & execution) {
+    core::ExecutionContext & execution,
+    bool cpu_repack) {
     DetokenizerWeights out;
+    core::BackendWeightStoreOptions options;
+    options.cpu_extra_buffers = cpu_repack;
     out.store = std::make_unique<core::BackendWeightStore>(
-        execution.backend(), execution.backend_type(), "lfm2_audio.detokenizer.weights", kWeightContextBytes);
+        execution.backend(), execution.backend_type(), "lfm2_audio.detokenizer.weights", kWeightContextBytes, options);
     auto & store = *out.store;
     const auto native = assets::TensorStorageType::Native;
     const int64_t d = config.lfm.hidden_size;
@@ -79,7 +82,7 @@ DetokenizerWeights load_weights(
 
     out.layers = lfm2_blocks::load_layers(store, detokenizer, config.lfm);
     out.final_norm = {store.load_f32_tensor(detokenizer, "token_embd_norm.weight", {d}), std::nullopt};
-    out.head_weight = store.load_tensor(detokenizer, "dense_2.weight", native, {config.output_size, d});
+    out.head_weight = store.load_tensor(detokenizer, "dense_2.weight", native, {config.output_size, d}, core::WeightUse::MatMulOnly);
     out.head_bias = store.load_f32_tensor(detokenizer, "dense_2.bias", {config.output_size});
     out.window = vocoder.require_f32_tensor("istft.window", {config.n_fft}).values;
     store.upload();
@@ -381,12 +384,13 @@ struct Lfm2DetokenizerRuntime::Impl {
          std::shared_ptr<const assets::TensorSource> vocoder_in,
          const Lfm2DetokenizerConfig & config_in,
          core::ExecutionContext & execution_in,
-         int64_t chunk_frames_in)
+         int64_t chunk_frames_in,
+         bool cpu_repack)
         : detokenizer(std::move(detokenizer_in)),
           vocoder(std::move(vocoder_in)),
           config(config_in),
           execution(execution_in),
-          weights(load_weights(*detokenizer, *vocoder, config, execution_in)),
+          weights(load_weights(*detokenizer, *vocoder, config, execution_in, cpu_repack)),
           context_frames((receptive_field(config) + config.upsample - 1) / config.upsample),
           chunk_frames(chunk_frames_in) {
         if (chunk_frames <= 0) {
@@ -434,8 +438,9 @@ Lfm2DetokenizerRuntime::Lfm2DetokenizerRuntime(
     std::shared_ptr<const assets::TensorSource> vocoder,
     const Lfm2DetokenizerConfig & config,
     core::ExecutionContext & execution,
-    int64_t chunk_frames)
-    : impl_(std::make_unique<Impl>(std::move(detokenizer), std::move(vocoder), config, execution, chunk_frames)) {}
+    int64_t chunk_frames,
+    bool cpu_repack)
+    : impl_(std::make_unique<Impl>(std::move(detokenizer), std::move(vocoder), config, execution, chunk_frames, cpu_repack)) {}
 
 Lfm2DetokenizerRuntime::~Lfm2DetokenizerRuntime() = default;
 
