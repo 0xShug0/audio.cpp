@@ -4071,7 +4071,7 @@ void ParallelServerState::unload_registered_models(
     {
         std::lock_guard<std::mutex> admission_lock(bulk_admission_mutex_);
         for (const auto & [id, model] : registered) {
-            if (std::any_of(parallel.begin(), parallel.end(), [model](const Drain & d) { return d.model == model; })) {
+            if (std::any_of(parallel.begin(), parallel.end(), [model=model](const Drain & d) { return d.model == model; })) {
                 continue;
             }
             parallel.push_back({id, model, model->busy.queue_management(0, id)});
