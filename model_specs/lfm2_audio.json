@@ -128,6 +128,13 @@
         "required": false,
         "min": 1,
         "default": 1
+      },
+      {
+        "name": "return_codes",
+        "type": "bool",
+        "description": "S2S: also return the reply's text tokens and audio codes as an lfm2_audio.reply artifact, to send back as history with the conversation's next turn.",
+        "required": false,
+        "default": false
       }
     ],
     "session": [
