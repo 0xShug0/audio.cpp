@@ -68,24 +68,31 @@ RMS gain normalization is applied locally before it.
 
 The encoder runs as one GGML graph on the selected backend. It is built from the
 framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
-`LinearModule`, `RMSNormModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`,
-`SigmoidModule`, `SoftmaxModule`, and `GLUModule`. The stem does not use the shared
+`LinearModule`, `RMSNormModule`, `RoPEModule`, `SiluModule`, `SigmoidModule`,
+`SoftmaxModule`, and `GLUModule`. The stem does not use the shared
 `DepthwiseConvSubsamplingModule` because that module hardcodes ReLU and Whistle's
-stem uses SiLU. Whistle-specific math stays model-local in `encoder.cpp`: the
-four-lane manifold hyper-connection mixing with its Sinkhorn normalization, the
-conditioned Kronecker-factored Hadamard MLP with its two fixed permutations, and
-grouped-query attention with 48-wide queries/keys and 64-wide values, which the
-shared attention modules cannot express because they assume one head size.
-Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them once into
-the backend weight store.
+stem uses SiLU. Whistle-specific math stays model-local in `graph.cpp`, shared by
+the encoder and decoder graphs: the four-lane manifold hyper-connection mixing with
+its Sinkhorn normalization, the conditioned Kronecker-factored Hadamard MLP with its
+two fixed permutations, and the per-head RMS norm and rotary embedding over 48-wide
+heads. Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them
+once into the backend weight store. Norms that multiply by `1 + scale` store
+`1 + scale` at load time. The Sinkhorn normalization carries column potentials:
+each of its 20 rounds is a row softmax of the logits plus the potentials, followed
+by a column log-sum update, which is the same row-then-column log normalization
+with fewer graph nodes.
 
-The autoregressive decoder (one token per step, n-gram engram lookups, three-tap
-query/key/value mixing, cross-attention over the encoder output) still runs on the
-host CPU with its own FP32 math in `runtime.cpp`. That host code keeps its own
-implementations of the linear, RMS norm, Hadamard, Sinkhorn, mHC, and RoPE math that
-the encoder graph now also expresses; the duplication goes away when the decoder
-moves onto a GGML step graph. Its encoder-side cross-attention key/value projections
-are already computed inside the encoder graph.
+The autoregressive decoder runs as one persistent GGML step graph on the same
+backend. Each step feeds one token. Self-attention keys and values stay on the
+backend in a `TransformerKVCache` written with `FastKVSetRowsModule`, and a
+per-layer history of raw query/key/value projections feeds the three-tap mixing
+with the previous two steps. Grouped-query and cross-attention use 48-wide
+queries/keys and 64-wide values, which the shared attention modules cannot express
+because they assume one head size. The encoder graph computes the cross-attention
+keys and values; the decoder copies them to its own backend tensors once per
+request. The n-gram engram tables stay on the host because their lookup hashes the
+token history; each step uploads the gathered rows, and the graph applies the
+engram projections and gates.
 
 ## Build and request options
 
@@ -105,8 +112,10 @@ scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp a
 ```
 
 Use `--backend cpu` or `--backend metal`. `--threads` sets the ggml CPU backend
-thread count and, when the build has OpenMP, the host decoder's worker count; the
-runtime accepts 1 to 64. Use `--backend cpu --threads 1` for a portable inference
+thread count for the encoder graph; the runtime accepts 1 to 64. On the CPU backend
+the decoder step graph always runs on one thread, because a one-token step is
+thousands of small operations and per-operation thread synchronization costs more
+than it saves. Use `--backend cpu --threads 1` for a portable inference
 baseline. The spec exposes only the optional `language` request option, no
 model-specific session or load options. Use `--language de` or
 `--request-option language=de` to force German. Omit the language option for model

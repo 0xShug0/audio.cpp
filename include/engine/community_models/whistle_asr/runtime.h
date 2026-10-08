@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/whistle_asr/assets.h"
+#include "engine/community_models/whistle_asr/decoder.h"
 #include "engine/community_models/whistle_asr/encoder.h"
 #include "engine/community_models/whistle_asr/frontend.h"
 #include "engine/framework/core/execution_context.h"
@@ -29,8 +30,6 @@ struct WhistleDecodeStep {
 
 using WhistleDecodeObserver = std::function<void(const WhistleDecodeStep &)>;
 
-class WhistleWeights;
-
 class WhistleRuntime {
 public:
     WhistleRuntime(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context);
@@ -45,9 +44,8 @@ public:
 private:
     std::shared_ptr<const WhistleAssets> assets_;
     WhistleEncoderRuntime encoder_;
+    WhistleDecoderRuntime decoder_;
     WhistleFrontend frontend_;
-    std::unique_ptr<WhistleWeights> weights_;
-    int threads_;
 };
 
 }  // namespace engine::community_models::whistle_asr

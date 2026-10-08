@@ -65,9 +65,10 @@ struct WhistleGraphConstants {
     core::TensorValue permutation_1;
     core::TensorValue permutation_2;
     core::TensorValue lane_mean;
+    // Column sums of a flattened 4x4 lane-mixing matrix, [16] -> [4].
+    core::TensorValue column_sum;
     // Structural constants: ggml_mul_mat against these transposes small per-row
     // matrices exactly, which the generic strided copy behind ggml_cont does slowly.
-    core::TensorValue transpose_4x4;
     core::TensorValue identity_16;
     core::TensorValue identity_32;
 };
@@ -81,6 +82,8 @@ public:
     [[nodiscard]] std::vector<float> values(const std::string & name, std::vector<int64_t> shape, int layer = -1) const;
     [[nodiscard]] float scalar(const std::string & name, int layer = -1) const;
     core::TensorValue vector(const std::string & name, int64_t size, int layer = -1);
+    // Gemma-style RMS norm weights. The checkpoint stores scale and the norm
+    // multiplies by 1 + scale, so the stored weight already holds 1 + scale.
     modules::NormWeights norm(const std::string & name, int64_t size, int layer = -1);
     // JAX kernels are [in, out]; LinearModule and ggml_mul_mat take [out, in].
     core::TensorValue transposed(const std::string & name, int64_t in, int64_t out, int layer = -1);
@@ -112,6 +115,7 @@ public:
     ggml_tensor * sigmoid(ggml_tensor * input);
     ggml_tensor * softmax(ggml_tensor * input);
     ggml_tensor * rms_norm(ggml_tensor * input, int64_t size);
+    // RMS norm times 1 + scale; weights come from WhistleWeightLoader::norm.
     ggml_tensor * gemma_norm(ggml_tensor * input, const modules::NormWeights & weights, int64_t size);
     // Per-head Gemma RMS norm over [heads * 48, rows], returned flat again.
     ggml_tensor * head_norm(ggml_tensor * input, int64_t heads, const modules::NormWeights & weights);
@@ -128,7 +132,6 @@ public:
     [[nodiscard]] core::ModuleBuildContext & context() const noexcept { return ctx_; }
 
 private:
-    ggml_tensor * log_normalize_rows(ggml_tensor * x);
     ggml_tensor * sinkhorn(ggml_tensor * logits);
     ggml_tensor * identity_view(const core::TensorValue & identity, int64_t rows);
     ggml_tensor * kronecker(ggml_tensor * input, const core::TensorValue & a, const core::TensorValue & b);
