@@ -449,25 +449,9 @@ private:
         if (!galloc_ || !ggml_gallocr_reserve(galloc_.get(), graph_) || !ggml_gallocr_alloc_graph(galloc_.get(), graph_)) {
             throw std::runtime_error("Failed to allocate the Whistle decoder step graph");
         }
-        // One-token steps are thousands of tiny ops, where per-op thread
-        // synchronization costs more than the work, so the CPU step plan runs on one
-        // thread. The encoder keeps the session thread count.
-        core::set_backend_threads(backend_, 1);
-        try {
-            core::prepare_host_graph_plan(*execution_context_, graph_, plan_);
-        } catch (...) {
-            restore_threads();
-            throw;
-        }
-        restore_threads();
+        core::prepare_host_graph_plan(*execution_context_, graph_, plan_);
         graph_nodes_ = ggml_graph_n_nodes(graph_);
         logits_values_.reserve(static_cast<size_t>(kWhistleVocabulary));
-    }
-
-    void restore_threads() const {
-        if (execution_context_->config().threads > 0) {
-            core::set_backend_threads(backend_, execution_context_->config().threads);
-        }
     }
 
     struct Engram {

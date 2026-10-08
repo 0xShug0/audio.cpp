@@ -45,7 +45,8 @@ WhistleRuntime::WhistleRuntime(
     std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context)
     : assets_(checked(std::move(assets), execution_context)),
       encoder_(assets_, execution_context),
-      decoder_(assets_, execution_context),
+      decoder_context_(std::make_unique<core::ExecutionContext>(core::BackendConfig{core::BackendType::Cpu, 0, 1})),
+      decoder_(assets_, *decoder_context_),
       frontend_(assets_->mel_filterbank) {}
 
 WhistleRuntime::~WhistleRuntime() = default;

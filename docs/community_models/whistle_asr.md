@@ -82,8 +82,12 @@ each of its 20 rounds is a row softmax of the logits plus the potentials, follow
 by a column log-sum update, which is the same row-then-column log normalization
 with fewer graph nodes.
 
-The autoregressive decoder runs as one persistent GGML step graph on the same
-backend. Each step feeds one token. Self-attention keys and values stay on the
+The autoregressive decoder runs as one persistent GGML step graph on a CPU
+backend of its own, with one thread, whatever backend the session uses. A step
+is about 2600 small graph nodes for one token, so its cost is per-node overhead
+rather than arithmetic: on Metal a step took about 6.5 ms against 3.3 ms on one
+CPU thread, and a second CPU thread roughly tripled the step time. Each step
+feeds one token. Self-attention keys and values stay on the
 backend in a `TransformerKVCache` written with `FastKVSetRowsModule`, and a
 per-layer history of raw query/key/value projections feeds the three-tap mixing
 with the previous two steps. Grouped-query and cross-attention use 48-wide
@@ -112,11 +116,9 @@ scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp a
 ```
 
 Use `--backend cpu` or `--backend metal`. `--threads` sets the ggml CPU backend
-thread count for the encoder graph; the runtime accepts 1 to 64. On the CPU backend
-the decoder step graph always runs on one thread, because a one-token step is
-thousands of small operations and per-operation thread synchronization costs more
-than it saves. Use `--backend cpu --threads 1` for a portable inference
-baseline. The spec exposes only the optional `language` request option, no
+thread count for the encoder graph; the runtime accepts 1 to 64. The decoder step
+graph always runs on one CPU thread (see above). Use `--backend cpu --threads 1`
+for a portable inference baseline. The spec exposes only the optional `language` request option, no
 model-specific session or load options. Use `--language de` or
 `--request-option language=de` to force German. Omit the language option for model
 language selection. Decoding is greedy, with at most 320 text tokens. The model
