@@ -654,12 +654,10 @@ std::string matmul_buffer(ggml_backend_t backend, ggml_type type, int64_t rows, 
     return "CPU";
 }
 
-// The weight buffers as "CPU 16, CPU_REPACK 25", the extra ones by name:
-// the store lists those in the order of their first weights.
+// The extra weight buffers as "AMX 9, CPU_REPACK 16", by name: the runtime
+// lists them in the order of their first weights.
 std::string buffers(std::vector<std::pair<std::string, size_t>> values) {
-    if (values.size() > 2) {
-        std::sort(values.begin() + 1, values.end());
-    }
+    std::sort(values.begin(), values.end());
 
     std::ostringstream out;
     for (size_t i = 0; i < values.size(); ++i) {
@@ -673,7 +671,7 @@ std::string buffers(std::vector<std::pair<std::string, size_t>> values) {
 // buffer whose kernels take its type and shape (CPU_REPACK: Q4_0 with AVX2 or
 // on Arm, Q8_0 and Q6_K on Arm; AMX, where built, more). The lookup keeps
 // gathering from the token embedding, so the tied head gets a copy of it
-// where its Q6_K moves. Off, every weight stays in the plain CPU buffer. The
+// where its Q6_K moves. Off, no weight goes into an extra buffer. The
 // repacked kernels sum in another order, and the activations they quantize
 // then round differently here and there.
 void test_cpu_repack() {
@@ -700,20 +698,17 @@ void test_cpu_repack() {
             }
         }
 
-        // The head's copy is a weight more; the matrices leave the CPU buffer.
-        const bool head_copy = matmul_buffer(backend, GGML_TYPE_Q6_K, kVocab, shape.hidden) != "CPU";
-        std::vector<std::pair<std::string, size_t>> expected = {{"CPU", fixture.weights.size() + (head_copy ? 1 : 0)}};
+        std::vector<std::pair<std::string, size_t>> expected;
         for (const auto & buffer : order) {
             expected.emplace_back(buffer, moved[buffer]);
-            expected[0].second -= moved[buffer];
         }
 
         std::cout << label << " repacked: " << buffers(expected) << '\n';
 
         auto plain = fixture.runtime(false);
         auto repacked = fixture.runtime(true);
-        require_eq(buffers(plain->weight_buffers()), "CPU " + std::to_string(fixture.weights.size()), label + " buffers, repacking off");
-        require_eq(buffers(repacked->weight_buffers()), buffers(expected), label + " buffers, repacking on");
+        require_eq(buffers(plain->extra_weight_buffers()), std::string(), label + " buffers, repacking off");
+        require_eq(buffers(repacked->extra_weight_buffers()), buffers(expected), label + " buffers, repacking on");
 
         const auto c = audio_prompt(12, 4, 32, shape.hidden);
         const auto off = plain->generate(c.prompt, c.audio, {8, {}});

@@ -26,10 +26,8 @@ bool backend_gathers(ggml_backend_t backend, ggml_type type) {
     return ggml_backend_supports_op(backend, ggml_get_rows(ctx.get(), table, ids));
 }
 
-std::vector<LayerWeights> load_layers(core::BackendWeightStore & store, const assets::TensorSource & source, const Lfm2BackboneConfig & config) {
-    const auto native = assets::TensorStorageType::Native;
-    // The projections are only ever src0 of LinearModule's ggml_mul_mat.
-    const auto matmul = core::WeightUse::MatMulOnly;
+std::vector<LayerWeights> load_layers(WeightStores & stores, const assets::TensorSource & source, const Lfm2BackboneConfig & config) {
+    auto & store = stores.plain();
     const int64_t d = config.hidden_size;
     const int64_t ff = config.intermediate_size;
     const int64_t hd = config.head_dim;
@@ -42,21 +40,21 @@ std::vector<LayerWeights> load_layers(core::BackendWeightStore & store, const as
 
         w.decoder.input_norm = {store.load_f32_tensor(source, p + "attn_norm.weight", {d}), std::nullopt};
         w.decoder.post_norm = {store.load_f32_tensor(source, p + "ffn_norm.weight", {d}), std::nullopt};
-        w.decoder.mlp.gate_proj = {store.load_tensor(source, p + "ffn_gate.weight", native, {ff, d}, matmul), std::nullopt};
-        w.decoder.mlp.up_proj = {store.load_tensor(source, p + "ffn_up.weight", native, {ff, d}, matmul), std::nullopt};
-        w.decoder.mlp.down_proj = {store.load_tensor(source, p + "ffn_down.weight", native, {d, ff}, matmul), std::nullopt};
+        w.decoder.mlp.gate_proj = {stores.load_matmul(source, p + "ffn_gate.weight", {ff, d}), std::nullopt};
+        w.decoder.mlp.up_proj = {stores.load_matmul(source, p + "ffn_up.weight", {ff, d}), std::nullopt};
+        w.decoder.mlp.down_proj = {stores.load_matmul(source, p + "ffn_down.weight", {d, ff}), std::nullopt};
 
         if (w.attention) {
             const int64_t kv = config.kv_heads[static_cast<size_t>(layer)] * hd;
-            w.decoder.self_attention.q_weight = store.load_tensor(source, p + "attn_q.weight", native, {config.num_attention_heads * hd, d}, matmul);
-            w.decoder.self_attention.k_weight = store.load_tensor(source, p + "attn_k.weight", native, {kv, d}, matmul);
-            w.decoder.self_attention.v_weight = store.load_tensor(source, p + "attn_v.weight", native, {kv, d}, matmul);
-            w.decoder.self_attention.out_weight = store.load_tensor(source, p + "attn_output.weight", native, {d, config.num_attention_heads * hd}, matmul);
+            w.decoder.self_attention.q_weight = stores.load_matmul(source, p + "attn_q.weight", {config.num_attention_heads * hd, d});
+            w.decoder.self_attention.k_weight = stores.load_matmul(source, p + "attn_k.weight", {kv, d});
+            w.decoder.self_attention.v_weight = stores.load_matmul(source, p + "attn_v.weight", {kv, d});
+            w.decoder.self_attention.out_weight = stores.load_matmul(source, p + "attn_output.weight", {d, config.num_attention_heads * hd});
             w.decoder.q_norm = {store.load_f32_tensor(source, p + "attn_q_norm.weight", {hd}), std::nullopt};
             w.decoder.k_norm = {store.load_f32_tensor(source, p + "attn_k_norm.weight", {hd}), std::nullopt};
         } else {
-            w.conv.in_proj = store.load_tensor(source, p + "shortconv.in_proj.weight", native, {3 * d, d}, matmul);
-            w.conv.out_proj = store.load_tensor(source, p + "shortconv.out_proj.weight", native, {d, d}, matmul);
+            w.conv.in_proj = stores.load_matmul(source, p + "shortconv.in_proj.weight", {3 * d, d});
+            w.conv.out_proj = stores.load_matmul(source, p + "shortconv.out_proj.weight", {d, d});
             w.conv.kernel = store.load_f32_tensor(source, p + "shortconv.conv.weight", {d, config.conv_kernel_size});
         }
 

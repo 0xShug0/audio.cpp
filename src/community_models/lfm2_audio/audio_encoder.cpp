@@ -1,5 +1,7 @@
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
 
+#include "weight_stores.h"
+
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -137,7 +139,7 @@ audio::NemoMelFrontend make_frontend(int64_t n_mels) {
 }
 
 struct EncoderWeights {
-    std::unique_ptr<core::BackendWeightStore> store;
+    std::unique_ptr<WeightStores> stores;
     modules::DepthwiseConvSubsamplingWeights subsampling;
     std::vector<modules::RelativeConformerBlockWeights> blocks;
     modules::NormWeights adapter_norm;
@@ -167,19 +169,14 @@ modules::Conv2dWeights load_conv2d(
 EncoderWeights load_encoder_weights(
     const assets::TensorSource & source, const Lfm2FastConformerEncoderConfig & config, core::ExecutionContext & execution, bool cpu_repack) {
     EncoderWeights out;
-    core::BackendWeightStoreOptions options;
-    options.cpu_extra_buffers = cpu_repack;
-    out.store = std::make_unique<core::BackendWeightStore>(
-        execution.backend(), execution.backend_type(), "lfm2_audio.encoder.weights", kWeightContextBytes, options);
-    auto & store = *out.store;
-    const auto native = assets::TensorStorageType::Native;
-    // The linears' weights, linear_pos included, are only ever src0 of
-    // LinearModule's ggml_mul_mat.
-    const auto matmul = core::WeightUse::MatMulOnly;
+    out.stores = std::make_unique<WeightStores>(execution, "lfm2_audio.encoder.weights", kWeightContextBytes, cpu_repack);
+    auto & store = out.stores->plain();
 
+    // The linears' weights, linear_pos included, go through load_matmul,
+    // being only ever src0 of LinearModule's ggml_mul_mat.
     const auto linear = [&](const std::string & name) {
         modules::LinearWeights weights;
-        weights.weight = store.load_tensor(source, name + ".weight", native, binding::tensor_shape_from_source(source, name + ".weight"), matmul);
+        weights.weight = out.stores->load_matmul(source, name + ".weight", binding::tensor_shape_from_source(source, name + ".weight"));
         weights.bias = binding::f32_tensor_from_named_source(store, source, name + ".bias");
         return weights;
     };
@@ -224,7 +221,7 @@ EncoderWeights load_encoder_weights(
         w.self_attention.attention.out_weight = o.weight;
         w.self_attention.attention.out_bias = o.bias;
 
-        w.self_attention.pos_weight = store.load_tensor(source, p + ".linear_pos.weight", native, {d, d}, matmul);
+        w.self_attention.pos_weight = out.stores->load_matmul(source, p + ".linear_pos.weight", {d, d});
         w.self_attention.pos_bias_u = store.load_f32_tensor(source, p + ".pos_bias_u", {config.num_heads, head_dim});
         w.self_attention.pos_bias_v = store.load_f32_tensor(source, p + ".pos_bias_v", {config.num_heads, head_dim});
 
@@ -255,7 +252,7 @@ EncoderWeights load_encoder_weights(
     out.adapter_fc1 = linear("mm.a.mlp.1");
     out.adapter_fc2 = linear("mm.a.mlp.3");
 
-    store.upload();
+    out.stores->upload();
     return out;
 }
 
@@ -359,7 +356,7 @@ public:
 
         graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
         ggml_build_forward_expand(graph_, output_);
-        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio encoder graph");
+        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph_, "LFM2-Audio encoder graph");
 
         // The buffer is only reallocated when this graph needs more than it has.
         if (!ggml_gallocr_alloc_graph(allocator, graph_)) {

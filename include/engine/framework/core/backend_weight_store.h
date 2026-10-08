@@ -20,53 +20,18 @@
 
 namespace engine::core {
 
-// How a loaded weight is used, which decides the buffers it may go into.
-enum class WeightUse {
-    Any,  // any op, views and readback
-    // Only ever src0 of a 2-D ggml_mul_mat whose src1 is a contiguous F32
-    // tensor (as LinearModule's input is): never viewed, reshaped, gathered,
-    // copied or read back. Such a weight may go into a CPU extra buffer
-    // (BackendWeightStoreOptions::cpu_extra_buffers), whose layout only that
-    // buffer type's own matmul kernels read.
-    MatMulOnly,
-};
-
-struct BackendWeightStoreOptions {
-    // The buffer type for every weight; nullptr is the backend's default.
-    ggml_backend_buffer_type_t buffer_type = nullptr;
-    // On the CPU backend, put each MatMulOnly weight into the first of ggml's
-    // CPU extra buffer types (cpu_extra_buffer_types) that runs its matmul, as
-    // llama.cpp does. Ignored with a buffer_type.
-    bool cpu_extra_buffers = false;
-};
-
 class BackendWeightStore {
 public:
-    struct BufferInfo {
-        std::string buffer_type;
-        size_t bytes = 0;
-        size_t tensors = 0;
-    };
-
     BackendWeightStore(
         ggml_backend_t backend,
         BackendType backend_type,
         std::string name,
         size_t context_bytes,
         ggml_backend_buffer_type_t buffer_type = nullptr)
-        : BackendWeightStore(backend, backend_type, std::move(name), context_bytes, BackendWeightStoreOptions{buffer_type, false}) {}
-
-    BackendWeightStore(
-        ggml_backend_t backend,
-        BackendType backend_type,
-        std::string name,
-        size_t context_bytes,
-        const BackendWeightStoreOptions & options)
         : backend_(backend),
           backend_type_(backend_type),
           name_(std::move(name)),
-          buffer_type_(options.buffer_type),
-          context_bytes_(context_bytes) {
+          buffer_type_(buffer_type) {
         if (backend_ == nullptr) {
             throw std::runtime_error(name_ + " backend is not initialized");
         }
@@ -78,20 +43,12 @@ public:
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize " + name_ + " weight context");
         }
-        if (options.cpu_extra_buffers && buffer_type_ == nullptr) {
-            extra_buffer_types_ = cpu_extra_buffer_types(backend_);
-        }
     }
 
     BackendWeightStore(const BackendWeightStore &) = delete;
     BackendWeightStore & operator=(const BackendWeightStore &) = delete;
 
     ~BackendWeightStore() {
-        for (auto & extra : extra_buffers_) {
-            if (extra.buffer != nullptr) {
-                ggml_backend_buffer_free(extra.buffer);
-            }
-        }
         if (buffer_ != nullptr) {
             ggml_backend_buffer_free(buffer_);
         }
@@ -101,26 +58,18 @@ public:
         const assets::TensorSource & source,
         std::string_view tensor_name,
         assets::TensorStorageType storage_type,
-        std::initializer_list<int64_t> expected_shape,
-        WeightUse use = WeightUse::Any) {
-        return load_tensor(source, tensor_name, storage_type, std::vector<int64_t>(expected_shape), use);
+        std::initializer_list<int64_t> expected_shape) {
+        return load_tensor(source, tensor_name, storage_type, std::vector<int64_t>(expected_shape));
     }
 
     TensorValue load_tensor(
         const assets::TensorSource & source,
         std::string_view tensor_name,
         assets::TensorStorageType storage_type,
-        const std::vector<int64_t> & expected_shape,
-        WeightUse use = WeightUse::Any) {
+        const std::vector<int64_t> & expected_shape) {
         const auto shape = shape_from_dims(expected_shape);
         const auto resolved_type = type_for_storable_loaded_tensor(source, tensor_name, storage_type, shape);
-        const ggml_type type = assets::ggml_type_for_tensor_storage(resolved_type);
-        auto * extra_buffer_type = use == WeightUse::MatMulOnly ? matmul_buffer_type(type, shape) : nullptr;
-        auto value = make_backend_tensor(shape, type, extra_buffer_type);
-        if (extra_buffer_type != nullptr) {
-            // Named for ggml's log of the weights it repacks, and for errors.
-            ggml_set_name(value.tensor, std::string(tensor_name).c_str());
-        }
+        auto value = make_backend_tensor(shape, assets::ggml_type_for_tensor_storage(resolved_type));
         PendingUpload upload;
         upload.tensor = value.tensor;
         upload.source = &source;
@@ -205,56 +154,24 @@ public:
         return value;
     }
 
-    // The buffer type a MatMulOnly weight of this type and shape goes into:
-    // the first CPU extra buffer type that runs its matmul, or nullptr for
-    // the store's own buffer.
-    ggml_backend_buffer_type_t matmul_buffer_type(ggml_type type, const TensorShape & shape) const {
-        if (shape.rank != 2) {
-            return nullptr;
-        }
-        for (auto * extra_buffer_type : extra_buffer_types_) {
-            if (buffer_type_supports_matmul_weight(backend_, extra_buffer_type, type, shape.dims[1], shape.dims[0])) {
-                return extra_buffer_type;
-            }
-        }
-        return nullptr;
-    }
-
     void upload() {
-        if (uploaded()) {
+        if (buffer_ != nullptr) {
             throw std::runtime_error(name_ + " weights were already uploaded");
         }
-        // Skipped only when every weight went into an extra buffer, so an
-        // empty store still fails here.
-        if (extra_buffers_.empty() || ggml_get_first_tensor(ctx_.get()) != nullptr) {
-            buffer_ = buffer_type_ != nullptr
-                ? ggml_backend_alloc_ctx_tensors_from_buft(ctx_.get(), buffer_type_)
-                : ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
-            if (buffer_ == nullptr) {
-                throw std::runtime_error("failed to allocate " + name_ + " backend weight buffer");
-            }
-            ggml_backend_buffer_set_usage(buffer_, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-            // The header context is host RAM by construction; the buffer is where
-            // the weights actually landed (device, or a host fallback), by name.
-            debug::timing_log_context_reservation(name_, ctx_.get());
-            debug::timing_log_scalar(
-                name_ + ".buffer_mb",
-                static_cast<double>(ggml_backend_buffer_get_size(buffer_)) / (1024.0 * 1024.0));
-            debug::timing_log_scalar(name_ + ".buffer_name", std::string_view(ggml_backend_buffer_name(buffer_)));
+        buffer_ = buffer_type_ != nullptr
+            ? ggml_backend_alloc_ctx_tensors_from_buft(ctx_.get(), buffer_type_)
+            : ggml_backend_alloc_ctx_tensors(ctx_.get(), backend_);
+        if (buffer_ == nullptr) {
+            throw std::runtime_error("failed to allocate " + name_ + " backend weight buffer");
         }
-        for (auto & extra : extra_buffers_) {
-            const std::string type_name = ggml_backend_buft_name(extra.buffer_type);
-            extra.buffer = ggml_backend_alloc_ctx_tensors_from_buft(extra.ctx.get(), extra.buffer_type);
-            if (extra.buffer == nullptr) {
-                throw std::runtime_error("failed to allocate " + name_ + " " + type_name + " weight buffer");
-            }
-            ggml_backend_buffer_set_usage(extra.buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-            debug::timing_log_scalar(
-                name_ + "." + type_name + ".buffer_mb",
-                static_cast<double>(ggml_backend_buffer_get_size(extra.buffer)) / (1024.0 * 1024.0));
-        }
-        // An extra buffer's set_tensor converts the layout, and takes each
-        // weight in one whole write, as these are.
+        ggml_backend_buffer_set_usage(buffer_, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        // The header context is host RAM by construction; the buffer is where
+        // the weights actually landed (device, or a host fallback), by name.
+        debug::timing_log_context_reservation(name_, ctx_.get());
+        debug::timing_log_scalar(
+            name_ + ".buffer_mb",
+            static_cast<double>(ggml_backend_buffer_get_size(buffer_)) / (1024.0 * 1024.0));
+        debug::timing_log_scalar(name_ + ".buffer_name", std::string_view(ggml_backend_buffer_name(buffer_)));
         for (auto & upload : pending_) {
             if (upload.kind == PendingUploadKind::Tensor) {
                 upload.source->set_backend_tensor(
@@ -274,27 +191,6 @@ public:
         pending_.shrink_to_fit();
     }
 
-    // The buffers upload() allocated: the store's own, then one per extra
-    // buffer type, in the order their first weights were loaded.
-    std::vector<BufferInfo> buffers() const {
-        std::vector<BufferInfo> out;
-        const auto add = [&](ggml_backend_buffer_t buffer, ggml_context * ctx) {
-            if (buffer == nullptr) {
-                return;
-            }
-            BufferInfo info{ggml_backend_buffer_name(buffer), ggml_backend_buffer_get_size(buffer), 0};
-            for (auto * tensor = ggml_get_first_tensor(ctx); tensor != nullptr; tensor = ggml_get_next_tensor(ctx, tensor)) {
-                ++info.tensors;
-            }
-            out.push_back(std::move(info));
-        };
-        add(buffer_, ctx_.get());
-        for (const auto & extra : extra_buffers_) {
-            add(extra.buffer, extra.ctx.get());
-        }
-        return out;
-    }
-
 private:
     struct GgmlContextDeleter {
         void operator()(ggml_context * ctx) const noexcept {
@@ -308,12 +204,6 @@ private:
         Tensor,
         F32,
         Bytes,
-    };
-
-    struct ExtraBuffer {
-        ggml_backend_buffer_type_t buffer_type = nullptr;
-        std::unique_ptr<ggml_context, GgmlContextDeleter> ctx;
-        ggml_backend_buffer_t buffer = nullptr;
     };
 
     struct PendingUpload {
@@ -518,45 +408,12 @@ private:
         return bytes;
     }
 
-    bool uploaded() const {
+    TensorValue make_backend_tensor(const TensorShape & shape, ggml_type type) {
         if (buffer_ != nullptr) {
-            return true;
-        }
-        for (const auto & extra : extra_buffers_) {
-            if (extra.buffer != nullptr) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // The store's own context, or the one for an extra buffer type, made on
-    // its first weight.
-    ggml_context * context_for(ggml_backend_buffer_type_t extra_buffer_type) {
-        if (extra_buffer_type == nullptr) {
-            return ctx_.get();
-        }
-        for (auto & extra : extra_buffers_) {
-            if (extra.buffer_type == extra_buffer_type) {
-                return extra.ctx.get();
-            }
-        }
-        ExtraBuffer extra;
-        extra.buffer_type = extra_buffer_type;
-        extra.ctx.reset(ggml_init({context_bytes_, nullptr, true}));
-        if (extra.ctx == nullptr) {
-            throw std::runtime_error("failed to initialize " + name_ + " " + ggml_backend_buft_name(extra_buffer_type) + " weight context");
-        }
-        extra_buffers_.push_back(std::move(extra));
-        return extra_buffers_.back().ctx.get();
-    }
-
-    TensorValue make_backend_tensor(const TensorShape & shape, ggml_type type, ggml_backend_buffer_type_t extra_buffer_type = nullptr) {
-        if (uploaded()) {
             throw std::runtime_error(name_ + " cannot add weights after upload");
         }
         const auto dims = to_ggml_dims(shape);
-        auto * tensor = ggml_new_tensor(context_for(extra_buffer_type), type, static_cast<int>(shape.rank), dims.data());
+        auto * tensor = ggml_new_tensor(ctx_.get(), type, static_cast<int>(shape.rank), dims.data());
         if (tensor == nullptr) {
             throw std::runtime_error("failed to create " + name_ + " weight tensor");
         }
@@ -591,11 +448,8 @@ private:
     BackendType backend_type_ = BackendType::Cpu;
     std::string name_;
     ggml_backend_buffer_type_t buffer_type_ = nullptr;
-    size_t context_bytes_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_backend_buffer_t buffer_ = nullptr;
-    std::vector<ggml_backend_buffer_type_t> extra_buffer_types_;
-    std::vector<ExtraBuffer> extra_buffers_;
     std::vector<PendingUpload> pending_;
 };
 

@@ -74,10 +74,11 @@ void * backend_cuda_stream(ggml_backend_t backend);
 // cache) for this cgraph at destruction — opt in per family.
 void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache = false);
 void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache = false);
-// Throws for a node the backend has no kernel for, one that views a weight
-// held in a CPU extra buffer, or a matmul of such a weight with a
-// non-contiguous input.
 void validate_backend_graph_supported(ggml_backend_t backend, ggml_cgraph * graph, const char * label);
+// validate_backend_graph_supported for a graph whose weights may be held in
+// CPU extra buffers: first throws for a node that views such a weight, or a
+// matmul of one with a non-contiguous input.
+void validate_backend_graph_with_cpu_extra_buffers(ggml_backend_t backend, ggml_cgraph * graph, const char * label);
 BackendMemorySnapshot query_backend_memory(ggml_backend_t backend, int device_hint);
 BackendMemorySnapshot query_backend_memory(const BackendConfig & config);
 ggml_backend_graph_plan_t create_backend_graph_plan_if_host(ggml_backend_t backend, ggml_cgraph * graph);

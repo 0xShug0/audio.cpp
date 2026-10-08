@@ -105,9 +105,9 @@ public:
     // their last bits with its length.
     [[nodiscard]] int64_t decode_cache_steps() const noexcept;
 
-    // The weight buffers, by buffer type ("CPU", "CPU_REPACK", ...), and how
-    // many tensors each holds.
-    [[nodiscard]] std::vector<std::pair<std::string, size_t>> weight_buffers() const;
+    // The CPU extra buffer types its weights went into ("CPU_REPACK", ...),
+    // in the order of their first weights, and how many each holds.
+    [[nodiscard]] std::vector<std::pair<std::string, size_t>> extra_weight_buffers() const;
 
 private:
     struct Impl;
