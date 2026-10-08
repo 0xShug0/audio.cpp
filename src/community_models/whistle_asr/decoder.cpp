@@ -404,8 +404,9 @@ private:
         // Masked attention entries get probability zero, which only stays zero when
         // the rows behind them are finite; the two leading history slots must be zero.
         ggml_backend_buffer_clear(state_buffer_.get(), 0);
-        // Key rows are 96 wide and value rows 128 wide, so the cache is only cleared
-        // and advanced here; its host import and export paths assume one row width.
+        // Key rows are 96 wide and value rows 128 wide. The cache's host import and
+        // export paths assume one row width, so the graph writes the rows itself and
+        // the cache only tracks the position and clears the backend buffers.
         runtime::TransformerKVCacheOptions options;
         options.lazy_import_scratch = true;
         kv_cache_ = runtime::TransformerKVCache(kCacheSteps, kKeyWidth, std::move(keys), std::move(values), options);

@@ -15,16 +15,18 @@ constexpr size_t kWhistleMaximumTextTokens = 320;
 constexpr int64_t kWhistleVocabulary = 8199;
 
 // Autoregressive decoder as one persistent GGML step graph. Each step feeds one
-// token; self-attention keys/values and the raw projection history for the
-// three-tap query/key/value mixing stay on the backend between steps. The n-gram
-// engram tables stay on the host because their lookup is integer hashing over the
-// token history.
+// token. Self-attention keys and values, and the history of raw projections for the
+// three-tap query/key/value mixing, stay on the backend between steps. The n-gram
+// engram tables stay on the host because their lookup hashes the token history.
+// The host gathers the rows and uploads them each step.
 //
-// The runtime gives the decoder its own single-thread CPU execution context. A step
-// is about 2600 small graph nodes for one token, so it is bound by per-node cost:
-// on Metal each step took about 6.5 ms against 3.3 ms on one CPU thread, and
-// extra CPU threads only add per-node synchronization (2 threads roughly tripled
-// the step time). The encoder keeps the session backend and thread count.
+// The runtime gives the decoder its own single-thread CPU execution context.
+// A step is thousands of small graph nodes, so its cost is per-node overhead.
+// With an earlier, smaller graph of 2585 nodes, a step took about 6.5 ms on Metal
+// against 3.3 ms on one CPU thread. Extra CPU threads only add per-node
+// synchronization: with 2 threads the 14 s sample took 622-661 ms instead of
+// 465-472 ms, and with 4 threads 965-1012 ms. The encoder keeps the session
+// backend and thread count.
 class WhistleDecoderRuntime {
 public:
     WhistleDecoderRuntime(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context);

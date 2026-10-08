@@ -200,10 +200,10 @@ TensorValue WhistleGraphOps::rope(ggml_tensor * input, int64_t heads, ggml_tenso
 }
 
 // Subtracts each row's log-sum-exp. ggml has no max reduction, so the log-sum-exp
-// is recovered from the softmax as sum(p * (x - log p)): every term with a
-// non-underflowed p equals the log-sum-exp, and the clamp keeps underflowed terms
-// at zero instead of 0 * -inf. Entries far below the row maximum keep their exact
-// x - lse value, as in the host implementation.
+// is recovered from the softmax as sum(p * (x - log p)). Every term whose p has not
+// underflowed equals the log-sum-exp. The clamp keeps the other terms at zero
+// instead of 0 * -inf. Entries far below the row maximum keep their exact
+// x - lse value.
 ggml_tensor * WhistleGraphOps::log_normalize_rows(ggml_tensor * x) {
     const auto rows = core::wrap_tensor(x, TensorShape::from_dims({x->ne[2], x->ne[1], x->ne[0]}), GGML_TYPE_F32);
     ggml_tensor * p = ggml_clamp(ctx_.ggml, modules::SoftmaxModule().build(ctx_, rows).tensor,
@@ -214,8 +214,10 @@ ggml_tensor * WhistleGraphOps::log_normalize_rows(ggml_tensor * x) {
 }
 
 // Twenty rounds of row then column log-normalization of the 4x4 lane-mixing
-// logits, followed by exp. Each pass normalizes the rows and transposes, so the
-// row and column passes use the same code and no pass can underflow as a whole.
+// logits, followed by exp. Each pass normalizes the rows and then transposes with
+// the transpose_4x4 constant, so the row pass and the column pass share one code
+// path. Each pass subtracts a per-row log-sum-exp in log space, so no whole row
+// or column can underflow.
 ggml_tensor * WhistleGraphOps::sinkhorn(ggml_tensor * logits) {
     const int64_t rows = logits->ne[1];
     const int64_t size = kWhistleLanes * kWhistleLanes;
