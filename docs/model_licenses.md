@@ -135,6 +135,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `voxcpm1` | [openbmb/VoxCPM-0.5B](https://huggingface.co/openbmb/VoxCPM-0.5B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxcpm2` | [openbmb/VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxtral_realtime` | [mistralai/Voxtral-Mini-4B-Realtime-2602](https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602) | Apache-2.0 | Yes | | 2026-09-21 |
+| `whistle_asr` | [Cactus-Compute/whistle](https://huggingface.co/Cactus-Compute/whistle/tree/b358ddadd89b7a713b5aa131f23032d3cca1b251) | Apache-2.0 | Yes | Pinned release includes the tokenizer, mel filterbank, and Hadamard permutations; the converter embeds its LICENSE. Independent asset provenance remains unverified. No reference code is bundled; see [provenance](../tools/community_models/whistle_asr/PROVENANCE.md). | 2026-10-06 |
 | `yue2` | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `zipvoice` | [k2-fsa/ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | Not stated | Unclear | The model card states no license; the [code](https://github.com/k2-fsa/ZipVoice) is Apache-2.0. | 2026-09-21 |
 
