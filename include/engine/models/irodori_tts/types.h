@@ -3,6 +3,8 @@
 #include "engine/framework/runtime/session.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <string>
 
 namespace engine::models::irodori_tts {
@@ -35,6 +37,9 @@ struct IrodoriRequest {
   bool no_ref = true;
   runtime::AudioBuffer reference_audio;
   bool has_reference_audio = false;
+  // Speaker Inversion embedding used as the speaker condition instead of
+  // reference audio.
+  std::optional<std::filesystem::path> speaker_embedding_path;
   IrodoriGenerationOptions generation;
 };
 

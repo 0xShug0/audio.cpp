@@ -87,6 +87,10 @@ struct IrodoriCodecConfig {
 };
 
 struct IrodoriTTSAssets {
+    // The model directory as given (or the directory of the given file). Unlike
+    // resources.model_root(), it is not replaced by the extracted sidecars of a
+    // standalone GGUF, so it is where user files such as embeddings/ live.
+    std::filesystem::path model_dir;
     assets::ResourceBundle resources;
     IrodoriModelConfig config;
     IrodoriCodecConfig codec;
