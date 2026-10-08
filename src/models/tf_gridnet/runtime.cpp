@@ -91,8 +91,13 @@ private:
             core::reshape_tensor(ctx, weights_.at(prefix + "_norm.gamma"), TensorShape::from_dims({channels})),
             core::reshape_tensor(ctx, weights_.at(prefix + "_norm.beta"), TensorShape::from_dims({channels}))});
         // Canonical recurrent layout is [sequence, batch, channels*kernel].
-        norm = modules::TransposeModule({temporal ? std::array<int, 4>{1, 2, 3, 0}
-                                                 : std::array<int, 4>{2, 1, 3, 0}, 4}).build(ctx, norm);
+        auto axes = temporal ? std::array<int, 4>{1, 2, 3, 0} : std::array<int, 4>{2, 1, 3, 0};
+        if (ctx.backend_type == core::BackendType::Metal) {
+            // Metal-only copy workaround; remove this gate and rewrite once
+            // https://github.com/0xShug0/audio.cpp/pull/831 is merged.
+            axes = temporal ? std::array<int, 4>{0, 1, 2, 3} : std::array<int, 4>{0, 2, 1, 3};
+        }
+        norm = modules::TransposeModule({axes, 4}).build(ctx, norm);
         const int64_t length = temporal ? frames : bins;
         const int64_t batch = temporal ? bins : frames;
         const int64_t steps = (length - config_.embedding_kernel) / config_.embedding_stride + 1;
