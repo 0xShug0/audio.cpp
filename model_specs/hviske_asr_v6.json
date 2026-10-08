@@ -23,6 +23,28 @@
   "options": {
     "request": [
       {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "auto preserves silence splitting above 30 seconds; silence splits above the configured duration at silence boundaries; fixed splits at the configured duration; none disables splitting and accepts at most 30 seconds.",
+        "required": false,
+        "default": "auto",
+        "values": [
+          "auto",
+          "silence",
+          "fixed",
+          "none"
+        ]
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum chunk duration when splitting. In auto mode the 30-second trigger remains unchanged.",
+        "required": false,
+        "default": 28.0,
+        "min": 0.001,
+        "max": 30.0
+      },
+      {
         "name": "max_tokens",
         "type": "int",
         "description": "Maximum generated tokens per chunk, also capped to eight tokens per audio second plus twelve.",

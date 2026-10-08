@@ -2,7 +2,7 @@
   "cases": [
     {
       "id": "hviske_v6_longform",
-      "coverage": "Silence-split Danish longform and short request after long input",
+      "coverage": "Danish longform, auto versus explicit silence splitting, fixed and unsplit modes, and repeated requests",
       "family": "hviske_asr_v6",
       "model": "models/Hviske-v6-GGUF/hviske-v6-bf16.gguf",
       "task": "asr",
@@ -10,6 +10,13 @@
       "requests": [
         {"id": "warmup", "audio": "resources/hviske_asr/danish_unified_00.wav"},
         {"id": "longform", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "auto_20", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "auto", "audio_chunk_duration_sec": 20}},
+        {"id": "fixed_28", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "fixed", "audio_chunk_duration_sec": 28}},
+        {"id": "none_short", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "none"}},
+        {"id": "silence_short", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "silence", "audio_chunk_duration_sec": 8}},
+        {"id": "auto_short_8", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "auto", "audio_chunk_duration_sec": 8}},
+        {"id": "silence_long", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "silence"}},
+        {"id": "repeat_default", "audio": "resources/hviske_asr/da_solen_180s.wav"},
         {"id": "short_after_long", "audio": "resources/hviske_asr/danish_unified_00.wav"}
       ]
     },

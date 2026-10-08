@@ -25,6 +25,8 @@ longer than 30 seconds are split at silence boundaries into chunks of at most
 
 | Option | Default | Meaning |
 |---|---|---|
+| `audio_chunk_mode` | `auto` | `auto`: silence splitting above 30 seconds; `silence`: silence splitting above the configured duration; `fixed`: fixed-duration cuts; `none`: no splitting, input must be at most 30 seconds. |
+| `audio_chunk_duration_sec` | `28` | Maximum chunk duration (0.001-30 seconds). Does not change the 30-second trigger in `auto` mode. |
 | `max_tokens` | `440` | Per-chunk generation limit, further capped to eight tokens per second plus twelve. |
 | `num_beams` | `2` | Beam-search width; `1` selects greedy decoding. |
 | `length_penalty` | `1.0` | Beam-score length-normalization exponent. |

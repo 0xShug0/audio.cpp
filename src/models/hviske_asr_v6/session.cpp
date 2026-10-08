@@ -1,5 +1,6 @@
 #include "engine/models/hviske_asr_v6/session.h"
 
+#include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/runtime/options.h"
@@ -18,52 +19,6 @@
 namespace engine::models::hviske_asr_v6 {
 namespace {
 constexpr const char * kFamily = "hviske_asr_v6";
-
-std::vector<std::pair<int64_t, int64_t>> plan_chunks(const std::vector<float> & samples) {
-    const auto n = static_cast<int64_t>(samples.size());
-    if (n <= 30 * 16000) return {{0, n}};
-    // librosa.effects.split defaults: centered 2048-sample RMS, 512-sample hop, top_db=30.
-    std::vector<double> energy(static_cast<size_t>(1 + n / 512));
-    double sum = 0;
-    for (int64_t j = 0; j < std::min<int64_t>(n, 1024); ++j) sum += samples[j] * samples[j];
-    for (size_t i = 0; i < energy.size(); ++i) {
-        energy[i] = sum / 2048;
-        const auto center = static_cast<int64_t>(i) * 512;
-        for (int64_t j = center - 1024; j < center - 512; ++j) {
-            if (j >= 0 && j < n) sum -= samples[j] * samples[j];
-        }
-        for (int64_t j = center + 1024; j < center + 1536; ++j) {
-            if (j < n) sum += samples[j] * samples[j];
-        }
-    }
-    const auto threshold = std::max(1.0e-10, *std::max_element(energy.begin(), energy.end())) * 0.001;
-    std::vector<std::pair<int64_t, int64_t>> voiced;
-    int64_t start = -1;
-    for (size_t i = 0; i <= energy.size(); ++i) {
-        const bool active = i < energy.size() && std::max(1.0e-10, energy[i]) > threshold;
-        if (active && start < 0) start = i * 512;
-        if (!active && start >= 0) {
-            voiced.emplace_back(start, std::min<int64_t>(n, i * 512));
-            start = -1;
-        }
-    }
-    std::vector<int64_t> cuts{0};
-    for (size_t i = 1; i < voiced.size(); ++i) cuts.push_back((voiced[i - 1].second + voiced[i].first) / 2);
-    cuts.push_back(n);
-    std::vector<std::pair<int64_t, int64_t>> spans;
-    start = 0;
-    for (size_t i = 1; i < cuts.size(); ++i) {
-        while (cuts[i] - start > 28 * 16000) {
-            const auto limit = start + 28 * 16000;
-            const auto upper = std::upper_bound(cuts.begin(), cuts.end(), limit);
-            const auto cut = upper != cuts.begin() && *std::prev(upper) > start ? *std::prev(upper) : limit;
-            spans.emplace_back(start, cut);
-            start = cut;
-        }
-    }
-    if (start < n) spans.emplace_back(start, n);
-    return spans;
-}
 
 std::string collapse_repeats(const std::string & text) {
     std::istringstream stream(text);
@@ -147,7 +102,30 @@ public:
         }
         std::string text;
         const auto maximum = options.max_tokens;
-        for (const auto & [begin, end] : plan_chunks(mono)) {
+        const auto chunk_mode = audio::parse_audio_chunk_mode(request.options);
+        const double chunk_seconds = runtime::parse_finite_float_option(
+            request.options, {"audio_chunk_duration_sec"}).value_or(28.0F);
+        if (chunk_seconds < 0.001 || chunk_seconds > 30.0) {
+            throw std::runtime_error("Hviske v6 audio_chunk_duration_sec must be between 0.001 and 30 seconds");
+        }
+        const auto chunk_samples = static_cast<int64_t>(std::llround(chunk_seconds * 16000));
+        std::vector<runtime::TimeSpan> spans;
+        if (chunk_mode == audio::AudioChunkMode::Auto || chunk_mode == audio::AudioChunkMode::Silence) {
+            const auto trigger = chunk_mode == audio::AudioChunkMode::Auto ? 30 * 16000 : chunk_samples;
+            spans = audio::plan_silence_audio_chunks(mono, {chunk_samples, trigger});
+        } else if (chunk_mode == audio::AudioChunkMode::Fixed) {
+            for (const auto & span : audio::plan_audio_chunks(mono.size(), {chunk_samples, chunk_samples})) {
+                spans.push_back({span.output_start_sample, span.output_start_sample + span.valid_samples});
+            }
+        } else if (chunk_mode == audio::AudioChunkMode::None) {
+            if (mono.size() > 30 * 16000) {
+                throw std::runtime_error("Hviske v6 audio_chunk_mode=none requires audio of at most 30 seconds; use auto or fixed for longform");
+            }
+            spans.push_back({0, static_cast<int64_t>(mono.size())});
+        } else {
+            throw std::runtime_error("Hviske v6 audio_chunk_mode must be auto, silence, fixed, or none");
+        }
+        for (const auto & [begin, end] : spans) {
             std::vector<float> chunk(mono.begin() + begin, mono.begin() + end);
             options.max_tokens = std::min<int64_t>(maximum, (chunk.size() + 1999) / 2000 + 12);
             const auto features = frontend_.extract(chunk, execution_context().config().threads);
