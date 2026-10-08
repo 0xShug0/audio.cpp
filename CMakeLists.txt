@@ -1975,6 +1975,7 @@ audiocpp_add_model(whistle_asr
         src/community_models/whistle_asr/assets.cpp
         src/community_models/whistle_asr/encoder.cpp
         src/community_models/whistle_asr/frontend.cpp
+        src/community_models/whistle_asr/graph.cpp
         src/community_models/whistle_asr/runtime.cpp
         src/community_models/whistle_asr/session.cpp
     INCLUDES
@@ -3070,6 +3071,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             src/community_models/whistle_asr/assets.cpp
             src/community_models/whistle_asr/encoder.cpp
             src/community_models/whistle_asr/frontend.cpp
+            src/community_models/whistle_asr/graph.cpp
             src/community_models/whistle_asr/runtime.cpp)
         target_link_libraries(whistle_assets_test PRIVATE engine_runtime ggml)
         set(AUDIOCPP_WHISTLE_TEST_MODEL "" CACHE FILEPATH "Locally converted Whistle GGUF for integration tests")

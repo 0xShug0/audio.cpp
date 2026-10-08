@@ -2,14 +2,12 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/positional_modules.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
 #include <cmath>
-#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -22,19 +20,15 @@ namespace engine::community_models::whistle_asr {
 namespace {
 
 constexpr size_t kGraphNodes = 16384;
-// 30 s of 10 ms mel frames through three stride-2 stem stages.
-constexpr int64_t kMaximumFrames = 375;
-constexpr float kNormEpsilon = 1.0e-6f;
+constexpr int64_t kMaximumFrames = kWhistleMaximumFrames;
 constexpr int64_t kMels = 80;
 constexpr int64_t kStemChannels = 128;
 constexpr int64_t kStemWidth = 10;
-constexpr int64_t kHeads = 8;
-constexpr int64_t kKvHeads = 2;
-constexpr int64_t kQkDim = 48;
-constexpr int64_t kVDim = 64;
+constexpr int64_t kHeads = kWhistleHeads;
+constexpr int64_t kKvHeads = kWhistleKvHeads;
+constexpr int64_t kQkDim = kWhistleQkDim;
+constexpr int64_t kVDim = kWhistleVDim;
 constexpr int64_t kConvTaps = 9;
-constexpr int kSinkhornIterations = 20;
-constexpr float kRopeTheta = 100000.0f;
 constexpr const char * kEncoderLayer = "encoder/layers/block/";
 
 using core::TensorShape;
@@ -44,51 +38,11 @@ TensorValue rows_2d(ggml_tensor * tensor) {
     return core::wrap_tensor(tensor, TensorShape::from_dims({tensor->ne[1], tensor->ne[0]}), GGML_TYPE_F32);
 }
 
-// Reads checkpoint tensors in their JAX layouts and uploads them in the shapes the
-// framework modules expect. Layer-stacked tensors carry a leading [8] dimension.
-class WeightLoader {
+// Adds the encoder-only stem, depthwise convolution and positional tables to the
+// shared loader.
+class EncoderWeightLoader : public WhistleWeightLoader {
 public:
-    WeightLoader(core::BackendWeightStore & store, const assets::TensorSource & source)
-        : store_(store), source_(source) {}
-
-    std::vector<float> values(const std::string & name, std::vector<int64_t> shape, int layer = -1) const {
-        if (layer < 0) {
-            return source_.require_f32(name, shape);
-        }
-        shape.insert(shape.begin(), kWhistleLayers);
-        const auto stacked = source_.require_f32(name, shape);
-        const size_t stride = stacked.size() / kWhistleLayers;
-        return {stacked.begin() + static_cast<std::ptrdiff_t>(layer * stride),
-            stacked.begin() + static_cast<std::ptrdiff_t>((layer + 1) * stride)};
-    }
-
-    float scalar(const std::string & name, int layer = -1) const {
-        return values(name, {}, layer).front();
-    }
-
-    TensorValue vector(const std::string & name, int64_t size, int layer = -1) {
-        return store_.make_f32(TensorShape::from_dims({size}), values(name, {size}, layer));
-    }
-
-    modules::NormWeights norm(const std::string & name, int64_t size, int layer = -1) {
-        return {vector(name + "/scale", size, layer), std::nullopt};
-    }
-
-    // JAX kernels are [in, out]; LinearModule and ggml_mul_mat take [out, in].
-    TensorValue transposed(const std::string & name, int64_t in, int64_t out, int layer = -1) {
-        const auto source = values(name, {in, out}, layer);
-        std::vector<float> weight(source.size());
-        for (int64_t row = 0; row < in; ++row) {
-            for (int64_t col = 0; col < out; ++col) {
-                weight[static_cast<size_t>(col * in + row)] = source[static_cast<size_t>(row * out + col)];
-            }
-        }
-        return store_.make_f32(TensorShape::from_dims({out, in}), std::move(weight));
-    }
-
-    modules::LinearWeights linear(const std::string & name, int64_t in, int64_t out, int layer = -1) {
-        return {transposed(name + "/kernel", in, out, layer), std::nullopt};
-    }
+    using WhistleWeightLoader::WhistleWeightLoader;
 
     // Pointwise stem projections as 1x1 convolutions, [out, in, 1, 1].
     modules::Conv2dWeights pointwise(const std::string & name) {
@@ -99,7 +53,7 @@ public:
                 weight[static_cast<size_t>(out * kStemChannels + in)] = source[static_cast<size_t>(in * kStemChannels + out)];
             }
         }
-        return {store_.make_f32(TensorShape::from_dims({kStemChannels, kStemChannels, 1, 1}), std::move(weight)), std::nullopt};
+        return {store().make_f32(TensorShape::from_dims({kStemChannels, kStemChannels, 1, 1}), std::move(weight)), std::nullopt};
     }
 
     // JAX HWIO [3, 3, 1, channels] to the module's [channels, 1, 3, 3].
@@ -114,7 +68,7 @@ public:
                 }
             }
         }
-        return {store_.make_f32(TensorShape::from_dims({kStemChannels, 1, 3, 3}), std::move(weight)), std::nullopt};
+        return {store().make_f32(TensorShape::from_dims({kStemChannels, 1, 3, 3}), std::move(weight)), std::nullopt};
     }
 
     // JAX [taps, 1, channels] to the module's [channels, 1, taps].
@@ -127,65 +81,8 @@ public:
                     source[static_cast<size_t>(tap * kWhistleDimension + channel)];
             }
         }
-        return {store_.make_f32(TensorShape::from_dims({kWhistleDimension, 1, kConvTaps}), std::move(weight)),
+        return {store().make_f32(TensorShape::from_dims({kWhistleDimension, 1, kConvTaps}), std::move(weight)),
             std::nullopt};
-    }
-
-    WhistleHadamardWeights hadamard(const std::string & prefix, int layer) {
-        WhistleHadamardWeights weights;
-        weights.d1 = vector(prefix + "d1", kWhistleDimension, layer);
-        weights.d2 = vector(prefix + "d2", kWhistleDimension, layer);
-        weights.d3 = vector(prefix + "d3", kWhistleDimension, layer);
-        weights.d4 = vector(prefix + "d4", kWhistleDimension, layer);
-        weights.b2 = vector(prefix + "b2", kWhistleDimension, layer);
-        weights.cond_v = {transposed(prefix + "cond_v", kWhistleDimension, 8, layer), std::nullopt};
-        weights.cond_u = {transposed(prefix + "cond_u", 8, kWhistleDimension, layer), std::nullopt};
-        weights.w1a = transposed(prefix + "w1a", 16, 16, layer);
-        weights.w1b = transposed(prefix + "w1b", 32, 32, layer);
-        weights.w2a = transposed(prefix + "w2a", 16, 16, layer);
-        weights.w2b = transposed(prefix + "w2b", 32, 32, layer);
-        weights.w3a = transposed(prefix + "w3a", 16, 16, layer);
-        weights.w3b = transposed(prefix + "w3b", 32, 32, layer);
-        return weights;
-    }
-
-    WhistleMhcWeights mhc(const std::string & prefix, int layer) {
-        WhistleMhcWeights weights;
-        const int64_t width = kWhistleLanes * kWhistleDimension;
-        weights.phi_pre = {transposed(prefix + "phi_pre", width, kWhistleLanes, layer), std::nullopt};
-        weights.phi_post = {transposed(prefix + "phi_post", width, kWhistleLanes, layer), std::nullopt};
-        weights.phi_res = {transposed(prefix + "phi_res", width, kWhistleLanes * kWhistleLanes, layer), std::nullopt};
-        weights.a_pre = scalar(prefix + "a_pre", layer);
-        weights.a_post = scalar(prefix + "a_post", layer);
-        weights.a_res = scalar(prefix + "a_res", layer);
-        // The lane matching the layer index is the active lane; the others are
-        // pushed towards the sigmoid floor by a fixed logit offset.
-        auto pre_bias = values(prefix + "b_pre", {kWhistleLanes}, layer);
-        auto post_bias = values(prefix + "b_post", {kWhistleLanes}, layer);
-        for (int64_t lane = 0; lane < kWhistleLanes; ++lane) {
-            const bool active = lane == layer % kWhistleLanes;
-            pre_bias[static_cast<size_t>(lane)] += active ? 4.0f : -4.0f;
-            post_bias[static_cast<size_t>(lane)] += active ? 0.0f : -4.0f;
-        }
-        weights.pre_bias = store_.make_f32(TensorShape::from_dims({kWhistleLanes}), std::move(pre_bias));
-        weights.post_bias = store_.make_f32(TensorShape::from_dims({kWhistleLanes}), std::move(post_bias));
-        weights.res_bias = store_.make_f32(
-            TensorShape::from_dims({kWhistleLanes * kWhistleLanes}),
-            values(prefix + "b_res", {kWhistleLanes, kWhistleLanes}, layer));
-        return weights;
-    }
-
-    // Gather indices repeated per frame, consumed through a leading-frame view.
-    TensorValue permutation(const std::array<uint16_t, 512> & permutation) {
-        std::vector<int32_t> indices(static_cast<size_t>(kMaximumFrames * kWhistleDimension));
-        for (int64_t frame = 0; frame < kMaximumFrames; ++frame) {
-            for (int64_t index = 0; index < kWhistleDimension; ++index) {
-                indices[static_cast<size_t>(frame * kWhistleDimension + index)] = permutation[static_cast<size_t>(index)];
-            }
-        }
-        return store_.make_tensor(
-            TensorShape::from_dims({kMaximumFrames, kWhistleDimension}), GGML_TYPE_I32,
-            indices.data(), indices.size() * sizeof(int32_t));
     }
 
     TensorValue positional(float gate) {
@@ -199,40 +96,8 @@ public:
                 table[static_cast<size_t>(frame * kWhistleDimension + half + index)] = gate * std::cos(angle);
             }
         }
-        return store_.make_f32(TensorShape::from_dims({kMaximumFrames, kWhistleDimension}), std::move(table));
+        return store().make_f32(TensorShape::from_dims({kMaximumFrames, kWhistleDimension}), std::move(table));
     }
-
-    // Flattened 4x4 transpose as a 16x16 permutation: out[c * 4 + r] = in[r * 4 + c].
-    TensorValue transpose_4x4() {
-        constexpr int64_t n = kWhistleLanes;
-        std::vector<float> matrix(static_cast<size_t>(n * n * n * n), 0.0f);
-        for (int64_t out = 0; out < n * n; ++out) {
-            const int64_t source = (out % n) * n + out / n;
-            matrix[static_cast<size_t>(out * n * n + source)] = 1.0f;
-        }
-        return store_.make_f32(TensorShape::from_dims({n * n, n * n}), std::move(matrix));
-    }
-
-    // Identity repeated across frames, consumed through a leading-frame view.
-    TensorValue identity(int64_t size) {
-        std::vector<float> values(static_cast<size_t>(kMaximumFrames * size * size), 0.0f);
-        for (int64_t frame = 0; frame < kMaximumFrames; ++frame) {
-            for (int64_t index = 0; index < size; ++index) {
-                values[static_cast<size_t>((frame * size + index) * size + index)] = 1.0f;
-            }
-        }
-        return store_.make_f32(TensorShape::from_dims({kMaximumFrames, size, size}), std::move(values));
-    }
-
-    TensorValue lane_mean() {
-        return store_.make_f32(
-            TensorShape::from_dims({1, kWhistleLanes}),
-            std::vector<float>(static_cast<size_t>(kWhistleLanes), 1.0f / static_cast<float>(kWhistleLanes)));
-    }
-
-private:
-    core::BackendWeightStore & store_;
-    const assets::TensorSource & source_;
 };
 
 float sigmoid(float value) {
@@ -240,7 +105,7 @@ float sigmoid(float value) {
 }
 
 WhistleEncoderWeights load_weights(core::BackendWeightStore & store, const WhistleAssets & assets) {
-    WeightLoader loader(store, *assets.weights);
+    EncoderWeightLoader loader(store, *assets.weights);
     WhistleEncoderWeights weights;
     weights.stem_conv = loader.stem_conv("stem/w");
     weights.stem_dw_1 = loader.stem_conv("stem/dw_1");
@@ -280,12 +145,7 @@ WhistleEncoderWeights load_weights(core::BackendWeightStore & store, const Whist
     }
     weights.final_norm = loader.norm("encoder/final_norm", kWhistleDimension);
     weights.positional = loader.positional(sigmoid(loader.scalar("pe_gate")));
-    weights.permutation_1 = loader.permutation(assets.hadamard_permutations[0]);
-    weights.permutation_2 = loader.permutation(assets.hadamard_permutations[1]);
-    weights.lane_mean = loader.lane_mean();
-    weights.transpose_4x4 = loader.transpose_4x4();
-    weights.identity_16 = loader.identity(16);
-    weights.identity_32 = loader.identity(32);
+    weights.constants = loader.constants(assets, kMaximumFrames);
     store.upload();
     return weights;
 }
@@ -294,7 +154,7 @@ WhistleEncoderWeights load_weights(core::BackendWeightStore & store, const Whist
 class GraphBuilder {
 public:
     GraphBuilder(core::ModuleBuildContext & ctx, const WhistleEncoderWeights & weights, ggml_tensor * positions)
-        : ctx_(ctx), weights_(weights), positions_(positions) {}
+        : ctx_(ctx), ops_(ctx, weights.constants), weights_(weights), positions_(positions) {}
 
     ggml_tensor * stem(ggml_tensor * mel) {
         const int64_t mel_frames = mel->ne[1];
@@ -315,58 +175,27 @@ public:
         ggml_tensor * flattened = ggml_reshape_2d(
             ctx_.ggml, ggml_cont(ctx_.ggml, ggml_permute(ctx_.ggml, grid_3d, 0, 2, 1, 3)),
             kStemChannels * kStemWidth, frames);
-        return linear(flattened, weights_.stem_out, kStemChannels * kStemWidth, kWhistleDimension);
+        return ops_.linear(flattened, weights_.stem_out, kStemChannels * kStemWidth, kWhistleDimension);
     }
 
-    ggml_tensor * mhc(ggml_tensor * state, const WhistleEncoderLayerWeights & layer) {
-        const int64_t frames = state->ne[1];
-        const int64_t width = kWhistleLanes * kWhistleDimension;
-        const auto & w = layer.mhc;
-        ggml_tensor * normalized = rms_norm(state, width);
-        ggml_tensor * pre = linear(normalized, w.phi_pre, width, kWhistleLanes);
-        ggml_tensor * post = linear(normalized, w.phi_post, width, kWhistleLanes);
-        ggml_tensor * res = linear(normalized, w.phi_res, width, kWhistleLanes * kWhistleLanes);
-        ggml_tensor * h_pre = sigmoid(ggml_add(ctx_.ggml, ggml_scale(ctx_.ggml, pre, w.a_pre), w.pre_bias.tensor));
-        ggml_tensor * h_post = ggml_scale(ctx_.ggml,
-            sigmoid(ggml_add(ctx_.ggml, ggml_scale(ctx_.ggml, post, w.a_post), w.post_bias.tensor)), 2.0f);
-        ggml_tensor * h_res = sinkhorn(
-            ggml_add(ctx_.ggml, ggml_scale(ctx_.ggml, res, w.a_res), w.res_bias.tensor));
-
-        // [lanes, features, frames] so the lane axis is the contraction axis.
-        ggml_tensor * lanes = ggml_cont(ctx_.ggml, ggml_permute(ctx_.ggml,
-            ggml_reshape_3d(ctx_.ggml, state, kWhistleDimension, kWhistleLanes, frames), 1, 0, 2, 3));
-        ggml_tensor * mixed = ggml_reshape_2d(ctx_.ggml,
-            ggml_mul_mat(ctx_.ggml, lanes, ggml_reshape_3d(ctx_.ggml, h_pre, kWhistleLanes, 1, frames)),
-            kWhistleDimension, frames);
-        ggml_tensor * delta = block(mixed, layer);
-        ggml_tensor * difference = ggml_reshape_3d(ctx_.ggml,
-            ggml_sub(ctx_.ggml, delta, mixed), kWhistleDimension, 1, frames);
-        ggml_tensor * update = ggml_mul(ctx_.ggml,
-            ggml_repeat_4d(ctx_.ggml, difference, kWhistleDimension, kWhistleLanes, frames, 1),
-            ggml_reshape_3d(ctx_.ggml, h_post, 1, kWhistleLanes, frames));
-        ggml_tensor * residual = ggml_mul_mat(ctx_.ggml, lanes,
-            ggml_reshape_3d(ctx_.ggml, h_res, kWhistleLanes, kWhistleLanes, frames));
-        return ggml_reshape_2d(ctx_.ggml, ggml_add(ctx_.ggml, update, residual), width, frames);
+    ggml_tensor * layer(ggml_tensor * state, const WhistleEncoderLayerWeights & layer) {
+        return ops_.mhc(state, layer.mhc, [&](ggml_tensor * mixed) { return block(mixed, layer); });
     }
 
     ggml_tensor * finish(ggml_tensor * state) {
         const int64_t frames = state->ne[1];
-        ggml_tensor * lanes = ggml_cont(ctx_.ggml, ggml_permute(ctx_.ggml,
-            ggml_reshape_3d(ctx_.ggml, state, kWhistleDimension, kWhistleLanes, frames), 1, 0, 2, 3));
-        ggml_tensor * memory = ggml_reshape_2d(ctx_.ggml,
-            ggml_mul_mat(ctx_.ggml, weights_.lane_mean.tensor, lanes), kWhistleDimension, frames);
-        memory = gemma_norm(memory, weights_.final_norm, kWhistleDimension);
+        ggml_tensor * memory = ops_.gemma_norm(ops_.lane_mean(state), weights_.final_norm, kWhistleDimension);
         ggml_tensor * positional = ggml_view_2d(ctx_.ggml, weights_.positional.tensor,
             kWhistleDimension, frames, weights_.positional.tensor->nb[1], 0);
         return ggml_add(ctx_.ggml, memory, positional);
     }
 
     ggml_tensor * cross_keys(ggml_tensor * memory, const WhistleCrossProjectionWeights & w) {
-        return head_norm(linear(memory, w.k_proj, kWhistleDimension, kHeads * kQkDim), kHeads, w.k_norm);
+        return ops_.head_norm(ops_.linear(memory, w.k_proj, kWhistleDimension, kHeads * kQkDim), kHeads, w.k_norm);
     }
 
     ggml_tensor * cross_values(ggml_tensor * memory, const WhistleCrossProjectionWeights & w) {
-        return linear(memory, w.v_proj, kWhistleDimension, kHeads * kVDim);
+        return ops_.linear(memory, w.v_proj, kWhistleDimension, kHeads * kVDim);
     }
 
 private:
@@ -379,125 +208,16 @@ private:
         return modules::SiluModule().build(ctx_, conv);
     }
 
-    ggml_tensor * linear(ggml_tensor * input, const modules::LinearWeights & weights, int64_t in, int64_t out) {
-        return modules::LinearModule({in, out, false}).build(ctx_, rows_2d(input), weights).tensor;
-    }
-
-    ggml_tensor * silu(ggml_tensor * input) {
-        return modules::SiluModule().build(ctx_, rows_2d(input)).tensor;
-    }
-
-    ggml_tensor * sigmoid(ggml_tensor * input) {
-        return modules::SigmoidModule().build(ctx_, rows_2d(input)).tensor;
-    }
-
-    ggml_tensor * softmax(ggml_tensor * input) {
-        return modules::SoftmaxModule().build(ctx_, rows_2d(input)).tensor;
-    }
-
-    ggml_tensor * rms_norm(ggml_tensor * input, int64_t size) {
-        return modules::RMSNormModule({size, kNormEpsilon, false, false}).build(ctx_, rows_2d(input), {}).tensor;
-    }
-
-    ggml_tensor * gemma_norm(ggml_tensor * input, const modules::NormWeights & weights, int64_t size) {
-        return modules::GemmaRMSNormModule({size, kNormEpsilon, true, false}).build(ctx_, rows_2d(input), weights).tensor;
-    }
-
-    // Per-head Gemma RMS norm over [heads * dim, frames], returned flat again.
-    ggml_tensor * head_norm(ggml_tensor * input, int64_t heads, const modules::NormWeights & weights) {
-        const int64_t frames = input->ne[1];
-        auto split = core::wrap_tensor(
-            ggml_reshape_4d(ctx_.ggml, input, kQkDim, heads, frames, 1),
-            TensorShape::from_dims({1, frames, heads, kQkDim}), GGML_TYPE_F32);
-        auto normalized = modules::GemmaRMSNormModule({kQkDim, kNormEpsilon, true, false}).build(ctx_, split, weights);
-        return ggml_reshape_2d(ctx_.ggml, normalized.tensor, heads * kQkDim, frames);
-    }
-
-    TensorValue rope(ggml_tensor * input, int64_t heads) {
-        const int64_t frames = input->ne[1];
-        auto split = core::wrap_tensor(
-            ggml_reshape_4d(ctx_.ggml, input, kQkDim, heads, frames, 1),
-            TensorShape::from_dims({1, frames, heads, kQkDim}), GGML_TYPE_F32);
-        const auto positions = core::wrap_tensor(positions_, TensorShape::from_dims({frames}), GGML_TYPE_I32);
-        return modules::RoPEModule({kQkDim, GGML_ROPE_TYPE_NEOX, kRopeTheta, 1.0f}).build(ctx_, split, positions);
-    }
-
-    // Subtracts each row's log-sum-exp. ggml has no max reduction, so the log-sum-exp
-    // is recovered from the softmax as sum(p * (x - log p)): every term with a
-    // non-underflowed p equals the log-sum-exp, and the clamp keeps underflowed terms
-    // at zero instead of 0 * -inf. Entries far below the row maximum keep their exact
-    // x - lse value, as in the host implementation.
-    ggml_tensor * log_normalize_rows(ggml_tensor * x) {
-        const auto rows = core::wrap_tensor(x, TensorShape::from_dims({x->ne[2], x->ne[1], x->ne[0]}), GGML_TYPE_F32);
-        ggml_tensor * p = ggml_clamp(ctx_.ggml, modules::SoftmaxModule().build(ctx_, rows).tensor,
-            std::numeric_limits<float>::min(), 1.0f);
-        ggml_tensor * lse = ggml_sum_rows(ctx_.ggml,
-            ggml_mul(ctx_.ggml, p, ggml_sub(ctx_.ggml, x, ggml_log(ctx_.ggml, p))));
-        return ggml_sub(ctx_.ggml, x, lse);
-    }
-
-    // Iterative row/column log-normalization of the 4x4 lane-mixing logits.
-    ggml_tensor * sinkhorn(ggml_tensor * logits) {
-        const int64_t frames = logits->ne[1];
-        const int64_t size = kWhistleLanes * kWhistleLanes;
-        ggml_tensor * x = logits;
-        for (int iteration = 0; iteration < kSinkhornIterations; ++iteration) {
-            for (int pass = 0; pass < 2; ++pass) {
-                x = log_normalize_rows(ggml_reshape_3d(ctx_.ggml, x, kWhistleLanes, kWhistleLanes, frames));
-                x = ggml_mul_mat(ctx_.ggml, weights_.transpose_4x4.tensor, ggml_reshape_2d(ctx_.ggml, x, size, frames));
-            }
-        }
-        return ggml_exp(ctx_.ggml, x);
-    }
-
-    ggml_tensor * identity_view(const TensorValue & identity, int64_t frames) {
-        ggml_tensor * tensor = identity.tensor;
-        return ggml_view_3d(ctx_.ggml, tensor, tensor->ne[0], tensor->ne[1], frames, tensor->nb[1], tensor->nb[2], 0);
-    }
-
-    // (A kron B) applied to each 512-vector viewed as a 16x32 matrix: A mixes rows,
-    // B mixes columns. ggml_mul_mat contracts over the leading axis, so the matrix is
-    // transposed between the two products by multiplying with a batched identity.
-    ggml_tensor * kronecker(ggml_tensor * input, const TensorValue & a, const TensorValue & b) {
-        const int64_t frames = input->ne[1];
-        ggml_tensor * columns_mixed = ggml_mul_mat(ctx_.ggml, b.tensor, ggml_reshape_3d(ctx_.ggml, input, 32, 16, frames));
-        ggml_tensor * by_row = ggml_mul_mat(ctx_.ggml, columns_mixed, identity_view(weights_.identity_32, frames));
-        ggml_tensor * rows_mixed = ggml_mul_mat(ctx_.ggml, a.tensor, by_row);
-        ggml_tensor * by_column = ggml_mul_mat(ctx_.ggml, rows_mixed, identity_view(weights_.identity_16, frames));
-        return ggml_reshape_2d(ctx_.ggml, by_column, kWhistleDimension, frames);
-    }
-
-    // Permutes the feature axis of a [features, frames] activation: each feature is a
-    // one-element row, gathered per frame with a batched index tensor.
-    ggml_tensor * permute_features(ggml_tensor * input, const TensorValue & indices) {
-        const int64_t frames = input->ne[1];
-        ggml_tensor * index_view = ggml_view_2d(
-            ctx_.ggml, indices.tensor, kWhistleDimension, frames, indices.tensor->nb[1], 0);
-        ggml_tensor * gathered = ggml_get_rows(
-            ctx_.ggml, ggml_reshape_3d(ctx_.ggml, input, 1, kWhistleDimension, frames), index_view);
-        return ggml_reshape_2d(ctx_.ggml, gathered, kWhistleDimension, frames);
-    }
-
-    ggml_tensor * hadamard(ggml_tensor * input, const WhistleHadamardWeights & w) {
-        ggml_tensor * condition = softmax(linear(input, w.cond_v, kWhistleDimension, 8));
-        condition = ggml_scale_bias(ctx_.ggml, linear(condition, w.cond_u, 8, kWhistleDimension), 1.0f, 1.0f);
-        ggml_tensor * z = ggml_mul(ctx_.ggml, input, w.d1.tensor);
-        z = permute_features(kronecker(z, w.w1a, w.w1b), weights_.permutation_1);
-        z = ggml_add(ctx_.ggml, ggml_mul(ctx_.ggml, ggml_mul(ctx_.ggml, z, condition), w.d2.tensor), w.b2.tensor);
-        z = silu(z);
-        z = permute_features(kronecker(z, w.w2a, w.w2b), weights_.permutation_2);
-        z = ggml_mul(ctx_.ggml, z, w.d3.tensor);
-        return ggml_mul(ctx_.ggml, kronecker(z, w.w3a, w.w3b), w.d4.tensor);
-    }
-
     // Grouped-query attention with 48-wide queries/keys and 64-wide values, so the
     // shared attention modules (which require one head size) do not apply.
     ggml_tensor * attention(ggml_tensor * input, const WhistleEncoderLayerWeights & w) {
         const int64_t frames = input->ne[1];
         const int64_t group = kHeads / kKvHeads;
-        auto q = rope(head_norm(linear(input, w.q_proj, kWhistleDimension, kHeads * kQkDim), kHeads, w.q_norm), kHeads);
-        auto k = rope(head_norm(linear(input, w.k_proj, kWhistleDimension, kKvHeads * kQkDim), kKvHeads, w.k_norm), kKvHeads);
-        ggml_tensor * v = linear(input, w.v_proj, kWhistleDimension, kKvHeads * kVDim);
+        auto q = ops_.rope(ops_.head_norm(
+            ops_.linear(input, w.q_proj, kWhistleDimension, kHeads * kQkDim), kHeads, w.q_norm), kHeads, positions_);
+        auto k = ops_.rope(ops_.head_norm(
+            ops_.linear(input, w.k_proj, kWhistleDimension, kKvHeads * kQkDim), kKvHeads, w.k_norm), kKvHeads, positions_);
+        ggml_tensor * v = ops_.linear(input, w.v_proj, kWhistleDimension, kKvHeads * kVDim);
 
         ggml_tensor * queries = ggml_cont(ctx_.ggml, ggml_permute(ctx_.ggml,
             ggml_reshape_4d(ctx_.ggml, q.tensor, kQkDim, group, kKvHeads, frames), 0, 2, 3, 1));
@@ -511,14 +231,14 @@ private:
         ggml_tensor * context = ggml_mul_mat(ctx_.ggml, values, probabilities);
         context = ggml_reshape_2d(ctx_.ggml,
             ggml_cont(ctx_.ggml, ggml_permute(ctx_.ggml, context, 0, 3, 1, 2)), kHeads * kVDim, frames);
-        ggml_tensor * gate = sigmoid(linear(input, w.gate_proj, kWhistleDimension, kWhistleDimension));
-        return linear(ggml_mul(ctx_.ggml, context, gate), w.out_proj, kWhistleDimension, kWhistleDimension);
+        ggml_tensor * gate = ops_.sigmoid(ops_.linear(input, w.gate_proj, kWhistleDimension, kWhistleDimension));
+        return ops_.linear(ggml_mul(ctx_.ggml, context, gate), w.out_proj, kWhistleDimension, kWhistleDimension);
     }
 
     ggml_tensor * convolution(ggml_tensor * input, const WhistleEncoderLayerWeights & w) {
         const int64_t frames = input->ne[1];
-        ggml_tensor * c = gemma_norm(input, w.conv_norm, kWhistleDimension);
-        c = linear(c, w.pw1, kWhistleDimension, 2 * kWhistleDimension);
+        ggml_tensor * c = ops_.gemma_norm(input, w.conv_norm, kWhistleDimension);
+        c = ops_.linear(c, w.pw1, kWhistleDimension, 2 * kWhistleDimension);
         c = modules::GLUModule().build(ctx_, rows_2d(c)).tensor;
         auto time_major = core::wrap_tensor(
             ggml_cont(ctx_.ggml, ggml_transpose(ctx_.ggml, c)),
@@ -527,23 +247,24 @@ private:
             .build(ctx_, time_major, w.dw);
         c = ggml_cont(ctx_.ggml, ggml_transpose(ctx_.ggml,
             ggml_reshape_2d(ctx_.ggml, conv.tensor, frames, kWhistleDimension)));
-        c = silu(gemma_norm(c, w.conv_out_norm, kWhistleDimension));
-        return linear(c, w.pw2, kWhistleDimension, kWhistleDimension);
+        c = ops_.silu(ops_.gemma_norm(c, w.conv_out_norm, kWhistleDimension));
+        return ops_.linear(c, w.pw2, kWhistleDimension, kWhistleDimension);
     }
 
     ggml_tensor * block(ggml_tensor * input, const WhistleEncoderLayerWeights & w) {
         ggml_tensor * h = input;
         h = ggml_add(ctx_.ggml, h, ggml_scale(ctx_.ggml,
-            hadamard(gemma_norm(h, w.pre_hada_norm_0, kWhistleDimension), w.hadamard_0), 0.5f));
-        ggml_tensor * attended = attention(gemma_norm(h, w.attn_norm, kWhistleDimension), w);
-        attended = gemma_norm(attended, w.post_attn_norm, kWhistleDimension);
+            ops_.hadamard(ops_.gemma_norm(h, w.pre_hada_norm_0, kWhistleDimension), w.hadamard_0), 0.5f));
+        ggml_tensor * attended = attention(ops_.gemma_norm(h, w.attn_norm, kWhistleDimension), w);
+        attended = ops_.gemma_norm(attended, w.post_attn_norm, kWhistleDimension);
         h = ggml_add(ctx_.ggml, h, ggml_scale(ctx_.ggml, attended, w.attn_gate));
         h = ggml_add(ctx_.ggml, h, convolution(h, w));
         return ggml_add(ctx_.ggml, h, ggml_scale(ctx_.ggml,
-            hadamard(gemma_norm(h, w.pre_hada_norm, kWhistleDimension), w.hadamard), 0.5f));
+            ops_.hadamard(ops_.gemma_norm(h, w.pre_hada_norm, kWhistleDimension), w.hadamard), 0.5f));
     }
 
     core::ModuleBuildContext & ctx_;
+    WhistleGraphOps ops_;
     const WhistleEncoderWeights & weights_;
     ggml_tensor * positions_;
 };
@@ -622,7 +343,7 @@ WhistleEncoderOutput WhistleEncoderRuntime::encode(const MelFeatures & mel) {
             kWhistleDimension, kWhistleLanes, frames, 1),
         kWhistleLanes * kWhistleDimension, frames);
     for (int layer = 0; layer < kWhistleLayers; ++layer) {
-        state = builder.mhc(state, weights_.layers[static_cast<size_t>(layer)]);
+        state = builder.layer(state, weights_.layers[static_cast<size_t>(layer)]);
     }
     ggml_tensor * memory = mark_output(builder.finish(state));
     std::array<ggml_tensor *, kWhistleLayers> cross_k{};
