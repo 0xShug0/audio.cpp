@@ -51,7 +51,9 @@ struct IrodoriModelConfig {
     int64_t timestep_embed_dim = 512;
     int64_t adaln_rank = 192;
     float norm_eps = 1.0e-5F;
-    bool use_duration_predictor = true;
+    // Python's ModelConfig default. Checkpoints with a duration predictor set it
+    // explicitly; older ones (500M v2) omit it and carry no duration weights.
+    bool use_duration_predictor = false;
     int64_t duration_aux_dim = 14;
     int64_t duration_hidden_dim = 1024;
     int64_t duration_layers = 3;
