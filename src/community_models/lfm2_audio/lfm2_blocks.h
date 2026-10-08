@@ -6,6 +6,8 @@
 // Reference: Lfm2DecoderLayer / Lfm2ShortConv in transformers 4.56
 // models/lfm2/modeling_lfm2.py.
 
+#include "weight_stores.h"
+
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -53,7 +55,9 @@ struct LayerWeights {
 // embeddings.
 bool backend_gathers(ggml_backend_t backend, ggml_type type);
 
-std::vector<LayerWeights> load_layers(core::BackendWeightStore & store, const assets::TensorSource & source, const Lfm2BackboneConfig & config);
+// The projections go through stores.load_matmul, being only ever src0 of
+// LinearModule's ggml_mul_mat.
+std::vector<LayerWeights> load_layers(WeightStores & stores, const assets::TensorSource & source, const Lfm2BackboneConfig & config);
 
 modules::DecoderLayerConfig attention_layer_config(const Lfm2BackboneConfig & config, int64_t layer);
 

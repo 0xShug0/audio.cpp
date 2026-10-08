@@ -1,5 +1,7 @@
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
 
+#include "weight_stores.h"
+
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -137,7 +139,7 @@ audio::NemoMelFrontend make_frontend(int64_t n_mels) {
 }
 
 struct EncoderWeights {
-    std::unique_ptr<core::BackendWeightStore> store;
+    std::unique_ptr<WeightStores> stores;
     modules::DepthwiseConvSubsamplingWeights subsampling;
     std::vector<modules::RelativeConformerBlockWeights> blocks;
     modules::NormWeights adapter_norm;
@@ -165,15 +167,18 @@ modules::Conv2dWeights load_conv2d(
 }
 
 EncoderWeights load_encoder_weights(
-    const assets::TensorSource & source, const Lfm2FastConformerEncoderConfig & config, core::ExecutionContext & execution) {
+    const assets::TensorSource & source, const Lfm2FastConformerEncoderConfig & config, core::ExecutionContext & execution, bool cpu_repack) {
     EncoderWeights out;
-    out.store = std::make_unique<core::BackendWeightStore>(
-        execution.backend(), execution.backend_type(), "lfm2_audio.encoder.weights", kWeightContextBytes);
-    auto & store = *out.store;
-    const auto native = assets::TensorStorageType::Native;
+    out.stores = std::make_unique<WeightStores>(execution, "lfm2_audio.encoder.weights", kWeightContextBytes, cpu_repack);
+    auto & store = out.stores->plain();
 
+    // The linears' weights, linear_pos included, go through load_matmul,
+    // being only ever src0 of LinearModule's ggml_mul_mat.
     const auto linear = [&](const std::string & name) {
-        return binding::linear_from_named_source(store, source, name + ".weight", name + ".bias", native);
+        modules::LinearWeights weights;
+        weights.weight = out.stores->load_matmul(source, name + ".weight", binding::tensor_shape_from_source(source, name + ".weight"));
+        weights.bias = binding::f32_tensor_from_named_source(store, source, name + ".bias");
+        return weights;
     };
     const auto norm = [&](const std::string & name) {
         return binding::norm_from_named_source(store, source, name + ".weight", name + ".bias");
@@ -216,7 +221,7 @@ EncoderWeights load_encoder_weights(
         w.self_attention.attention.out_weight = o.weight;
         w.self_attention.attention.out_bias = o.bias;
 
-        w.self_attention.pos_weight = store.load_tensor(source, p + ".linear_pos.weight", native, {d, d});
+        w.self_attention.pos_weight = out.stores->load_matmul(source, p + ".linear_pos.weight", {d, d});
         w.self_attention.pos_bias_u = store.load_f32_tensor(source, p + ".pos_bias_u", {config.num_heads, head_dim});
         w.self_attention.pos_bias_v = store.load_f32_tensor(source, p + ".pos_bias_v", {config.num_heads, head_dim});
 
@@ -247,7 +252,7 @@ EncoderWeights load_encoder_weights(
     out.adapter_fc1 = linear("mm.a.mlp.1");
     out.adapter_fc2 = linear("mm.a.mlp.3");
 
-    store.upload();
+    out.stores->upload();
     return out;
 }
 
@@ -351,7 +356,7 @@ public:
 
         graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
         ggml_build_forward_expand(graph_, output_);
-        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio encoder graph");
+        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph_, "LFM2-Audio encoder graph");
 
         // The buffer is only reallocated when this graph needs more than it has.
         if (!ggml_gallocr_alloc_graph(allocator, graph_)) {
@@ -412,11 +417,12 @@ private:
 struct Lfm2FastConformerEncoderRuntime::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source_in,
          const Lfm2FastConformerEncoderConfig & config_in,
-         core::ExecutionContext & execution_in)
+         core::ExecutionContext & execution_in,
+         bool cpu_repack)
         : source(std::move(source_in)),
           config(config_in),
           execution(execution_in),
-          weights(load_encoder_weights(*source, config_in, execution_in)),
+          weights(load_encoder_weights(*source, config_in, execution_in, cpu_repack)),
           positions(config_in.hidden_size) {}
 
     // Chunks of the same length reuse the graph. A new length builds a new
@@ -497,8 +503,9 @@ Lfm2AudioFeatures Lfm2AudioFeatureExtractor::extract(const std::vector<float> & 
 Lfm2FastConformerEncoderRuntime::Lfm2FastConformerEncoderRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     const Lfm2FastConformerEncoderConfig & config,
-    core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(std::move(source), config, execution)) {}
+    core::ExecutionContext & execution,
+    bool cpu_repack)
+    : impl_(std::make_unique<Impl>(std::move(source), config, execution, cpu_repack)) {}
 
 Lfm2FastConformerEncoderRuntime::~Lfm2FastConformerEncoderRuntime() = default;
 

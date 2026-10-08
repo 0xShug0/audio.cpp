@@ -2388,6 +2388,7 @@ audiocpp_add_model(lfm2_audio
         src/community_models/lfm2_audio/tts.cpp
         src/community_models/lfm2_audio/interleaved.cpp
         src/community_models/lfm2_audio/session.cpp
+        src/community_models/lfm2_audio/weight_stores.cpp
     INCLUDES
         engine/community_models/lfm2_audio/session.h
     LOADERS
@@ -3088,6 +3089,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
     add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
+    add_engine_unittest(cpu_extra_buffers_test tests/unittests/test_cpu_extra_buffers.cpp)
+    add_test(NAME cpu_extra_buffers_test COMMAND cpu_extra_buffers_test)
     if (ENGINE_ENABLE_VULKAN)
         add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
         add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
