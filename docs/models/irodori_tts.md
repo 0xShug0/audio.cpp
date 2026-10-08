@@ -65,6 +65,26 @@ audiocpp_cli --task clon --family irodori_tts \
   --out out.wav
 ```
 
+v4 with a Speaker Inversion embedding:
+
+```bash
+audiocpp_cli --task tts --family irodori_tts \
+  --model models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf \
+  --backend cuda --language ja \
+  --text "こんにちは、これは学習した話者埋め込みを使った推論です。" \
+  --request-option speaker_embedding_path=path/to/name.speaker.safetensors \
+  --out out.wav
+```
+
+## Speaker Inversion Embeddings
+
+[Irodori-TTS](https://github.com/Aratako/Irodori-TTS)'s Speaker Inversion training learns a few speaker tokens for one voice while the base model stays frozen, and saves them as `*.speaker.safetensors`. audio.cpp uses such a file as the speaker condition in place of reference audio, like `--ref-embed` in the Python `infer.py`: the tokens go to the model as they are, without the speaker encoder.
+
+- **By path:** request option `speaker_embedding_path` (CLI `--request-option`, or `"options"` in a server request).
+- **By name:** put the file in an `embeddings` directory next to the model weights as `<name>.safetensors` and pass `<name>` as the voice id (CLI `--voice-id`, server `"voice"`). With the model path set to that directory, the server's `GET /v1/audio/voices` lists the names. A voice id with no such file is ignored, as before.
+
+The file must hold a `speaker_embedding` tensor of shape `[tokens, speaker_dim]` (F32, F16 or BF16). An embedding cannot be combined with reference audio or `no_ref=true`. Use it with the base checkpoint it was trained on: an embedding from another checkpoint with the same `speaker_dim` loads, but the speaker match is not guaranteed.
+
 ## Request Options (use with `--request-option`)
 
 v4 uses the normalized schema-v1 option names directly. New requests should use these names:
@@ -74,6 +94,7 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `language` | `ja` | `ja` | Text language code; Irodori-TTS is Japanese-only. |
 | `instruction` | text | empty | Voice-design instruction; only useful on caption-conditioned checkpoints. Legacy `caption` is accepted as an alias. |
 | `no_ref` | bool | `true` unless a reference is provided | Use no-reference generation. Set `false` with `--voice-ref` for reference conditioning. |
+| `speaker_embedding_path` | path | unset | Speaker Inversion embedding (`*.speaker.safetensors`) used instead of reference audio. See [Speaker Inversion Embeddings](#speaker-inversion-embeddings). |
 | `num_inference_steps` | integer | `40` | RF diffusion steps. |
 | `duration_sec` | seconds | unset | Explicit output duration; omitted uses predicted duration. |
 | `duration_scale` | float | `1.0` | Multiplier for predicted duration. |

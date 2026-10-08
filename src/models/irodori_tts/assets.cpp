@@ -293,6 +293,7 @@ float IrodoriModelConfig::caption_mlp_ratio_resolved() const noexcept {
 
 std::shared_ptr<const IrodoriTTSAssets> load_irodori_tts_assets(const std::filesystem::path & model_path) {
     auto assets = std::make_shared<IrodoriTTSAssets>();
+    assets->model_dir = std::filesystem::is_directory(model_path) ? model_path : model_path.parent_path();
     assets->resources = engine::model_spec::load_resource_bundle(
         model_path,
         engine::model_spec::default_spec_path("irodori_tts"));

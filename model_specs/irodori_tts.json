@@ -47,6 +47,12 @@
         "default": true
       },
       {
+        "name": "speaker_embedding_path",
+        "type": "path",
+        "description": "Speaker Inversion embedding (*.speaker.safetensors written by Irodori-TTS training) used as the speaker condition instead of reference audio; use it with the base checkpoint it was trained on. Cannot be combined with reference audio or no_ref=true.",
+        "required": false
+      },
+      {
         "name": "num_inference_steps",
         "type": "int",
         "description": "RF diffusion steps; default 40.",
