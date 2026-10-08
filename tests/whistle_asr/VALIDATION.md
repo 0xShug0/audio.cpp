@@ -413,23 +413,23 @@ The report records preparation evidence before PR submission.
 
 ### What changed
 
-The autoregressive decoder now runs as one persistent GGML step graph on
-`TransformerKVCache`. The code is in `src/community_models/whistle_asr/decoder.cpp`.
-It uses framework modules and the Whistle graph pieces that the encoder also uses
-(`graph.cpp`, `graph.h`). The host decoder math, the host copies of the decoder weights,
-and the OpenMP handling are gone from `runtime.cpp`.
+The autoregressive decoder now runs as one persistent GGML step graph. Its
+self-attention keys and values live in a `TransformerKVCache`. The code is in
+`src/community_models/whistle_asr/decoder.cpp`. It uses framework modules and the
+Whistle graph pieces that the encoder also uses (`graph.cpp`, `graph.h`). The host
+decoder math, the host copies of the decoder weights, and the OpenMP handling are
+gone from `runtime.cpp`.
 
 Two things stay on the host: the engram table lookup (integer hashing over the token
 history) and the greedy argmax. The engram projections and gates run in the graph.
 
-The decoder step graph runs on its own single-thread CPU execution context. This is
-true whatever backend the session uses. The encoder stays on the session backend
-(CPU or Metal). No framework, GGML, converter, or GGUF changes are included.
+The decoder step graph runs on its own single-thread CPU execution context, whatever
+backend the session uses. The encoder stays on the session backend (CPU or Metal). No framework, GGML, converter, or GGUF changes are included.
 
 ### Reference dumps
 
 Before the port, `whistle_assets_test --dump` (new in this branch) recorded the host
-decoder's per-step logits, input tokens, and transcript. It did this for the sample
+decoder's per-step logits, input tokens, and transcript. It recorded them for the sample
 (`assets/resources/sample_16k.wav`, 42 steps) and for seven synthetic clips of 20 to 26
 seconds. The clips are the same local files as the long-form section of
 [the multilingual report](MULTILINGUAL_VALIDATION.md), in
@@ -467,7 +467,7 @@ build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend <cpu|me
 ### Results at the final commit
 
 Every comparison against the reference dumps passed. Tokens and transcripts are
-identical on every clip and every configuration. The encoder tensors are bit-identical
+identical on every clip and in every configuration. The encoder tensors are bit-identical
 to the dumps on CPU (largest fraction 0).
 
 The table gives the largest per-step difference in decoder logits, as a fraction of the
@@ -487,7 +487,7 @@ reference's largest value. CPU with 1 thread and CPU with 4 threads give the sam
 - The CPU difference of about 2e-6 comes from a different floating-point summation order.
 - The largest encoder fraction on Metal is 2.57e-3 on the sample and up to 1.47e-3 on
   the long clips. This Metal encoder drift existed before this branch. See the section
-  above. The decoder is the same graph on both backends, so the larger Metal logits
+  above. The decoder runs the same graph on both backends, so the larger Metal logits
   difference most likely comes from that drift.
 - `ctest -R whistle_` passed 4/4 (frontend, tokenizer, integration, full integration).
 - The Metal `--full` sample check passed.
@@ -518,6 +518,19 @@ build. `whistle_asr.decode_ms` covers the 42 steps.
 | CPU 1 thread | 330 to 336 | 134 to 140 |
 | CPU 4 threads | 146 to 148 | 134 to 136 |
 | Metal | 65 to 87 | 136 to 141 |
+
+To attribute the difference, `main` was built locally with the same two timing
+scalars added to `runtime.cpp` and measured on the same day, three runs each:
+
+| Configuration | Encoder before | Encoder this branch | Decoder before (host, OpenMP) | Decoder this branch (graph, 1 thread) |
+|---|---:|---:|---:|---:|
+| CPU 1 thread | 333 to 339 ms | 330 to 336 ms | 164 to 170 ms | 134 to 140 ms |
+| CPU 4 threads | 140 to 158 ms | 146 to 148 ms | 103 to 106 ms | 134 to 136 ms |
+| Metal | 59 to 70 ms | 65 to 87 ms | 97 to 102 ms | 136 to 141 ms |
+
+The encoder path is unchanged within run-to-run variation. The whole difference is
+the decoder: the host decoder spread its matrix-vector products over OpenMP threads,
+and the step graph runs on one thread.
 
 The decoder graph has 4738 nodes per step.
 

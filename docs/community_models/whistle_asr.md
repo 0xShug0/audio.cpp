@@ -68,8 +68,8 @@ RMS gain normalization is applied locally before it.
 
 The encoder runs as one GGML graph on the selected backend. It is built from the
 framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
-`LinearModule`, `RMSNormModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`, `SigmoidModule`,
-`SoftmaxModule`, and `GLUModule`. The stem does not use the shared
+`LinearModule`, `RMSNormModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`,
+`SigmoidModule`, `SoftmaxModule`, and `GLUModule`. The stem does not use the shared
 `DepthwiseConvSubsamplingModule` because that module hardcodes ReLU and Whistle's
 stem uses SiLU. Whistle-specific math stays model-local in `graph.cpp`, shared by
 the encoder and decoder graphs: the four-lane manifold hyper-connection mixing with
@@ -78,22 +78,24 @@ two fixed permutations, and the per-head RMS norm and rotary embedding over 48-w
 heads. Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them
 once into the backend weight store.
 
-The autoregressive decoder runs as one persistent GGML step graph on a CPU
-backend of its own, with one thread, whatever backend the session uses. A step
-is 4738 small graph nodes for one token, so its cost is per-node overhead
+The autoregressive decoder runs as one persistent GGML step graph. It has its own
+CPU backend with one thread, whatever backend the session uses. Each step feeds
+one token. A step is 4738 small graph nodes, so its cost is per-node overhead
 rather than arithmetic. With an earlier 2585-node version of the graph, a step took
-about 6.5 ms on Metal against 3.3 ms on one CPU thread, and extra CPU threads made
-whole requests slower because each node synchronizes the threads. Each step
-feeds one token. Self-attention keys and values stay on the
-backend in a `TransformerKVCache` written with `FastKVSetRowsModule`, and a
-per-layer history of raw query/key/value projections feeds the three-tap mixing
-with the previous two steps. Grouped-query and cross-attention use 48-wide
-queries/keys and 64-wide values, which the shared attention modules cannot express
-because they assume one head size. The encoder graph computes the cross-attention
-keys and values; the decoder copies them to its own backend tensors once per
-request. The n-gram engram tables stay on the host because their lookup hashes the
-token history; each step uploads the gathered rows, and the graph applies the
-engram projections and gates.
+about 6.5 ms on Metal against 3.3 ms on one CPU thread. Extra CPU threads made
+whole requests slower because each node synchronizes the threads.
+
+Self-attention keys and values stay on the decoder backend in a
+`TransformerKVCache` written with `FastKVSetRowsModule`. A per-layer history of
+raw query/key/value projections feeds the three-tap mixing with the previous two
+steps. Grouped-query and cross-attention use 48-wide queries/keys and 64-wide
+values. The shared attention modules cannot express this because they assume one
+head size. The encoder graph computes the cross-attention keys and values. The
+decoder copies them to its own backend tensors once per request.
+
+The n-gram engram tables stay on the host because their lookup hashes the token
+history. Each step uploads the gathered rows, and the graph applies the engram
+projections and gates. The argmax over the logits also runs on the host.
 
 ## Build and request options
 
@@ -115,8 +117,8 @@ scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp a
 Use `--backend cpu` or `--backend metal`. `--threads` sets the ggml CPU backend
 thread count for the encoder graph; the runtime accepts 1 to 64. The decoder step
 graph always runs on one CPU thread (see above). Use `--backend cpu --threads 1`
-for a portable inference baseline. The spec exposes only the optional `language` request option, no
-model-specific session or load options. Use `--language de` or
+for a portable inference baseline. The spec exposes only the optional `language`
+request option, no model-specific session or load options. Use `--language de` or
 `--request-option language=de` to force German. Omit the language option for model
 language selection. Decoding is greedy, with at most 320 text tokens. The model
 manager has no Whistle package entry because `packages` is empty.
@@ -145,14 +147,14 @@ unresolved questions. No weights or extracted assets are included in this port.
   `.f32` reference dumps in `<dir>` and reports the largest difference as a
   fraction of each reference tensor's largest magnitude (default tolerance 2e-3;
   Metal's half-precision matmul operand staging needs `--tolerance 5e-3`).
-  The same modes also run the decoder on the full recording. `--dump` writes
-  `decoder_logits_<position>.f32` (the full 8199-wide logits of each step),
-  `decoder_tokens.i32` (input tokens, BOS and language token first) and
-  `decoder_transcript.txt`. `--reference` compares every logits file with the
+  The same modes also run the decoder on the full recording.
+  `--dump` writes `decoder_logits_<position>.f32` (the full 8199-wide logits of
+  each step), `decoder_tokens.i32` (input tokens, BOS and language token first)
+  and `decoder_transcript.txt`. `--reference` compares every logits file with the
   same scaled metric and requires identical tokens and transcript.
   In [the validation report](../../tests/whistle_asr/VALIDATION.md), the encoder
   dumps came from the earlier host-only implementation at commit `6e0a40c4`. The
-  decoder dumps came from the host decoder before the step graph replaced it.
+  decoder dumps came from the host decoder, before the step graph replaced it.
 
 To run the native tests through CTest, configure with
 `-DENGINE_BUILD_TESTS=ON` and
