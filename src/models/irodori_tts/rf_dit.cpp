@@ -1290,6 +1290,13 @@ public:
       shape.target_samples = std::max<int64_t>(
           1, static_cast<int64_t>(seconds * assets_->codec.sample_rate));
       shape.latent_steps = (shape.target_samples + hop_length - 1) / hop_length;
+    } else if (!config.use_duration_predictor) {
+      // As the Python runtime does for checkpoints without a duration
+      // predictor: generate 30 s and let trim_tail cut the trailing silence.
+      constexpr float kFallbackSeconds = 30.0F;
+      shape.target_samples = static_cast<int64_t>(
+          kFallbackSeconds * static_cast<float>(assets_->codec.sample_rate));
+      shape.latent_steps = (shape.target_samples + hop_length - 1) / hop_length;
     } else {
       const float pred_frames =
           std::expm1(request.conditions->predicted_log_frames);

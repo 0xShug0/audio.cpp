@@ -230,16 +230,18 @@ void validate_model_weights(const IrodoriModelConfig & config, const assets::Ten
         }
         assets::require_tensor_shape(source, "blocks.0.attention.wk_caption.weight", {config.model_dim, config.caption_dim_resolved()});
         assets::require_tensor_shape(source, "blocks.0.attention.wv_caption.weight", {config.model_dim, config.caption_dim_resolved()});
-        assets::require_tensor_shape(source, "duration_predictor.null_caption", {config.caption_dim_resolved()});
-        assets::require_tensor_shape(
-            source,
-            "duration_predictor.token_blocks.0.caption_modulation.weight",
-            {3 * config.duration_hidden_dim, config.caption_dim_resolved()});
     }
     if (config.use_duration_predictor) {
         assets::require_tensor_shape(source, "duration_predictor.token_input_proj.weight", {config.duration_hidden_dim, config.text_dim});
         assets::require_tensor_shape(source, "duration_predictor.token_out_proj.weight", {1, config.duration_hidden_dim});
         assets::require_tensor_shape(source, "duration_predictor.token_out_proj.bias", {1});
+        if (config.use_caption_condition) {
+            assets::require_tensor_shape(source, "duration_predictor.null_caption", {config.caption_dim_resolved()});
+            assets::require_tensor_shape(
+                source,
+                "duration_predictor.token_blocks.0.caption_modulation.weight",
+                {3 * config.duration_hidden_dim, config.caption_dim_resolved()});
+        }
     }
 }
 
