@@ -394,6 +394,7 @@ rejected at session creation.
 - [x] Fresh self-contained GGUF embeds the updated specification and license/assets.
 - [x] Catalog checks, CPU builds, frontend, and opt-in integration tests passed.
 - [x] GGML encoder matches the host implementation on CPU (about 1e-06 of scale) and Metal (at most 1.2e-03 of scale); macOS CTest 4/4 and Metal integration checks pass.
+- [x] GGML decoder step graph matches the host decoder's per-step logits on CPU (about 2e-06 of scale) with identical transcripts on the sample and seven long clips; see the decoder section below.
 - [x] Actual CLI English/German, silence, duration rejection, streaming rejection, and session reuse checked.
 - [x] Local latency, RTF, and CPU process memory recorded without excluding slow requests.
 - [x] Final diff and untracked-file list inspected. No generated model/log/audio artifacts enter source changes.
@@ -407,3 +408,179 @@ rejected at session creation.
 
 These validation runs did not publish model files or download large dependencies.
 The report records preparation evidence before PR submission.
+
+## GGML decoder step graph (2026-10-08)
+
+### What changed
+
+The autoregressive decoder now runs as one persistent GGML step graph. Its
+self-attention keys and values live in a `TransformerKVCache`. The code is in
+`src/community_models/whistle_asr/decoder.cpp`. It uses framework modules and the
+Whistle graph pieces that the encoder also uses (`graph.cpp`, `graph.h`). The host
+decoder math, the host copies of the decoder weights, and the OpenMP handling are
+gone from `runtime.cpp`.
+
+Two things stay on the host: the engram table lookup (integer hashing over the token
+history) and the greedy argmax. The engram projections and gates run in the graph.
+
+The decoder step graph runs on its own single-thread CPU execution context, whatever
+backend the session uses. The encoder stays on the session backend (CPU or Metal). No framework, GGML, converter, or GGUF changes are included.
+
+### Reference dumps
+
+Before the port, `whistle_assets_test --dump` (new in this branch) recorded the host
+decoder's per-step logits, input tokens, and transcript. It recorded them for the sample
+(`assets/resources/sample_16k.wav`, 42 steps) and for seven synthetic clips of 20 to 26
+seconds. The clips are the same local files as the long-form section of
+[the multilingual report](MULTILINGUAL_VALIDATION.md), in
+`build/whistle/pr-prep/longform/`.
+
+| Clip | en | de | fr | es | it | nl | pl |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Steps | 89 | 172 | 156 | 177 | 162 | 107 | 212 |
+
+The dumps are in `build/whistle/pr-prep/decoder-reference/<clip>/`. They are local and
+git-ignored. The encoder tensors in them came from the merged encoder on `main`.
+
+Measured on the same machine as the section above: Apple M3 Ultra, macOS, Release,
+`GGML_METAL=ON`, OpenMP on, custom model set `whistle_asr`. Exact commands from the
+repository root:
+
+```bash
+cmake --build build/whistle --target whistle_assets_test audiocpp_cli -j 8
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --backend cpu --threads 1 --dump build/whistle/pr-prep/decoder-reference/sample
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend cpu --threads 1 --reference build/whistle/pr-prep/decoder-reference/<clip> --tolerance 1e-4
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend cpu --threads 4 --reference build/whistle/pr-prep/decoder-reference/<clip> --tolerance 1e-4
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend metal --threads 4 --reference build/whistle/pr-prep/decoder-reference/<clip> --tolerance 5e-3
+ctest --test-dir build/whistle -R whistle_ --output-on-failure
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav "<sample transcript>" --full --backend metal
+build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend cpu --threads 1 --model build/whistle/pr-prep/model/whistle-f32.gguf --audio assets/resources/sample_16k.wav --language en --metrics
+build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend cpu --threads 4 --model build/whistle/pr-prep/model/whistle-f32.gguf --audio assets/resources/sample_16k.wav --language en --metrics
+build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend metal --threads 4 --model build/whistle/pr-prep/model/whistle-f32.gguf --audio assets/resources/sample_16k.wav --language en --metrics
+build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend <cpu|metal> --threads 4 --model build/whistle/pr-prep/model/whistle-f32.gguf --request-sequence build/whistle/pr-prep/batch2.json --metrics
+/usr/bin/time -l build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend <cpu|metal> --threads 4 --model build/whistle/pr-prep/model/whistle-f32.gguf --audio assets/resources/sample_16k.wav --language en
+```
+
+`batch2.json` holds two requests, `cold` and `repeat`, with the same absolute path to
+`sample_16k.wav`.
+
+### Results at the final commit
+
+Every comparison against the reference dumps passed. Tokens and transcripts are
+identical on every clip and in every configuration. The encoder tensors are bit-identical
+to the dumps on CPU (largest fraction 0).
+
+The table gives the largest per-step difference in decoder logits, as a fraction of the
+reference's largest value. CPU with 1 thread and CPU with 4 threads give the same values.
+
+| Clip | Steps | CPU | Metal (encoder on Metal, decoder on CPU) |
+|---|---:|---:|---:|
+| sample | 42 | 1.86e-6 | 1.53e-4 |
+| en | 89 | 1.70e-6 | 1.66e-4 |
+| de | 172 | 1.71e-6 | 1.43e-4 |
+| fr | 156 | 1.75e-6 | 3.98e-4 |
+| es | 177 | 1.55e-6 | 1.03e-4 |
+| it | 162 | 1.75e-6 | 6.05e-4 |
+| nl | 107 | 1.75e-6 | 5.43e-4 |
+| pl | 212 | 1.60e-6 | 2.06e-4 |
+
+- The CPU difference of about 2e-6 comes from a different floating-point summation order.
+- The largest encoder fraction on Metal is 2.57e-3 on the sample and up to 1.47e-3 on
+  the long clips. This Metal encoder drift existed before this branch. See the section
+  above. The decoder runs the same graph on both backends, so the larger Metal logits
+  difference most likely comes from that drift.
+- `ctest -R whistle_` passed 4/4 (frontend, tokenizer, integration, full integration).
+- The Metal `--full` sample check passed.
+- A two-request session gave identical transcripts on CPU and on Metal.
+- The test now rejects `--dump` and `--reference` on the same directory. It also rejects
+  either option without a WAV file.
+
+### Timing
+
+Sample, 14.07 seconds. CLI `metrics.wall_ms` (preparation plus inference), three runs
+each. "Before" is the merged `main` with the host decoder, measured on this machine on
+2026-10-08 before the port. "Decoder on session backend" is this branch with one
+local change, the decoder built on the session context instead of its own; it is
+measured only for the comparison and is not shipped. In a CPU session with one thread
+it is the same configuration as the shipped build.
+
+| Configuration | Before (host decoder) | Decoder on session backend (not shipped) | This branch (decoder on 1 CPU thread) |
+|---|---:|---:|---:|
+| CPU 1 thread | 494 to 528 ms | same as this branch | 465 to 472 ms |
+| CPU 4 threads | 238 to 242 ms | 1933 to 2242 ms | 282 to 283 ms |
+| Metal | 157 to 163 ms | 618 to 629 ms | 204 to 226 ms |
+
+Encoder and decoder split in this branch, from the CLI `--log` timing output.
+`whistle_asr.encode_ms` includes the mel frontend and the per-request encoder graph
+build. `whistle_asr.decode_ms` covers the 42 steps.
+
+| Configuration | encode_ms | decode_ms |
+|---|---:|---:|
+| CPU 1 thread | 330 to 336 | 134 to 140 |
+| CPU 4 threads | 146 to 148 | 134 to 136 |
+| Metal | 65 to 87 | 136 to 141 |
+
+To attribute the difference, `main` was built locally with the same two timing
+scalars added to `runtime.cpp` and measured on the same day, three runs each:
+
+| Configuration | Encoder before | Encoder this branch | Decoder before (host, OpenMP) | Decoder this branch (graph, 1 thread) |
+|---|---:|---:|---:|---:|
+| CPU 1 thread | 333 to 339 ms | 330 to 336 ms | 164 to 170 ms | 134 to 140 ms |
+| CPU 4 threads | 140 to 158 ms | 146 to 148 ms | 103 to 106 ms | 134 to 136 ms |
+| Metal | 59 to 70 ms | 65 to 87 ms | 97 to 102 ms | 136 to 141 ms |
+
+The encoder path is unchanged within run-to-run variation. The whole difference is
+the decoder: the host decoder spread its matrix-vector products over OpenMP threads,
+and the step graph runs on one thread.
+
+The decoder graph has 4738 nodes per step.
+
+Why the decoder runs on one CPU thread: a one-token step is thousands of small nodes,
+so its cost is per-node overhead, not arithmetic. `whistle_asr.decode_ms` for the 42
+sample steps, three runs each: 134 to 140 ms on one CPU thread; 550 to 560 ms on Metal;
+1014 to 1111 ms on a private CPU context with 2 threads (Metal session); 1787 to 2098 ms
+on the CPU session backend with 4 threads. Each node synchronizes the threads, so more
+threads cost more.
+
+Longer clips on Metal, one run each:
+
+| Clip | Audio | Wall | RTF |
+|---|---:|---:|---:|
+| en | 20.43 s | 357 ms | 0.0175 |
+| pl | 22.94 s | 761 ms | 0.0332 |
+
+Two requests in one session: CPU with 4 threads took 293 ms, then 284 ms. Metal took
+198 ms, then 184 ms.
+
+### Process memory
+
+Maximum resident set size from `/usr/bin/time -l`, sample:
+
+| Backend | Before (host decoder) | This branch |
+|---|---:|---:|
+| CPU 4 threads | 758 MiB | 729 MiB |
+| Metal | 765 MiB | 720 MiB |
+
+The decoder weights no longer have host copies. The engram tables (two 37.7 MB f32
+tables) stay on the host.
+
+### Review fixes recorded
+
+- An intermediate Sinkhorn form (column potentials, fewer nodes) was replaced by the
+  original row-then-column log normalization. In a float check with logits spread far
+  wider than the model produces, a column whose entries all underflow gave NaN. With
+  the original form the encoder is bit-identical again. The decoder step time is
+  unchanged.
+- The decoder state buffer is now freed if construction fails after it was allocated.
+
+### Known limitations and follow-ups
+
+- Metal and 4-thread CPU requests are slower than with the host decoder (see the timing
+  table). One-thread CPU is slightly faster.
+- Cross-attention keys and values are read back from the encoder graph and uploaded to
+  the decoder tensors once per request.
+- The engram tables stay on the host.
+- The encoder graph is still built per request.
+- CUDA, Vulkan, and HIP are not validated. Sessions still reject them.
+- The input set is the same as before: the sample plus seven synthetic clips. It is not
+  a broad corpus.
