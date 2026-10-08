@@ -1506,13 +1506,13 @@
 
   async function selectGeneration(entry: GenerationHistoryEntry, restoreParameters = false): Promise<void> {
     if (entry.modelId !== selectedId || entry.task !== selected.task) {
-      historyError = `Cannot open history for ${entry.label}: the current model is ${selected.display_name}.`;
+      historyError = tr('history.wrongModel', { label: entry.label, model: selected.display_name });
       log(historyError);
       return;
     }
     if (restoreParameters) {
       if (running || loadingModel || restoringHistory) {
-        historyError = 'Wait for the current request or settings restore to finish.';
+        historyError = tr('history.wait');
         return;
       }
       restoringHistory = true;
@@ -2571,7 +2571,7 @@
     {/if}
     <button class:active={tab === 'logs'} on:click={() => tab = 'logs'}>{tr('nav.runtime')}</button>
     <button class:active={tab === 'configuration'} disabled={restoringHistory}
-      on:click={() => tab = 'configuration'}>Configuration</button>
+      on:click={() => tab = 'configuration'}>{tr('nav.configuration')}</button>
   </nav>
   <label class="language-picker">
     <span>{tr('language.label')}</span>
@@ -2650,13 +2650,13 @@
         </div>
 
         {#if selected.family === 'builtin_audio_utils' && server?.ui_management}
-          <label for="utility-weights">Weights path on server</label>
+          <label for="utility-weights">{tr('studio.weightsPath')}</label>
           <input id="utility-weights" bind:value={modelPath} on:change={inspectPath} disabled={isLoaded || loadingModel || running} />
-          <a class="utility-weights-link" href={selected.weights_url} target="_blank" rel="noreferrer">Download SafeTensors weights</a>
+          <a class="utility-weights-link" href={selected.weights_url} target="_blank" rel="noreferrer">{tr('studio.downloadWeights')}</a>
         {/if}
 
         {#if selectedId && (selected.install_packages || []).length && !replacesGenericControls.packageButtons}
-          <div class="studio-package-buttons" aria-label="Model format">
+          <div class="studio-package-buttons" aria-label={tr('studio.format')}>
             {#each studioPackageSlots(selected) as slot}
               {@const choice = slot.choice}
               {@const available = Boolean(choice && packageIsAvailable(selected, choice, loadedModels, packageSizes))}
@@ -2664,8 +2664,8 @@
               <button class:resident class:selected-package={Boolean(choice && available &&
                   packageIsSelected(selected, choice))}
                 disabled={loadingModel || !available}
-                title={resident ? `Unload ${choice?.label}` : available ? `Load ${choice?.label}` :
-                  `${choice?.label || slot.label} is not downloaded`}
+                title={tr(resident ? 'studio.unloadPackage' : available ? 'studio.loadPackage' :
+                  'studio.packageNotDownloaded', { package: choice?.label || slot.label })}
                 on:click={() => choice && toggleStudioPackage(choice)}>
                 {choice?.label || slot.label}
               </button>
@@ -2674,9 +2674,9 @@
         {:else}
           <button class="single-model-toggle" class:resident={isLoaded}
             disabled={!selectedId || loadingModel || modelPanelUploading || installed === false || !server?.ui_management}
-            title={!server?.ui_management ? 'Configured by server config' : isLoaded ? tr('studio.unload') : tr('studio.load')}
+            title={!server?.ui_management ? tr('studio.serverConfigured') : isLoaded ? tr('studio.unload') : tr('studio.load')}
             on:click={toggleSingleModel}>
-            {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : 'Configured') :
+            {!server?.ui_management ? (isLoaded ? tr('studio.bundledLoaded') : tr('studio.configured')) :
               loadingModel ? tr('studio.working') : isLoaded ? tr(selected.family === 'builtin_audio_utils' ? 'studio.unload' : 'studio.bundledLoaded') : tr('studio.load')}
           </button>
         {/if}
@@ -2695,7 +2695,7 @@
         <input type="file" accept=".json,application/json" bind:this={settingsInput} hidden
           on:change={(event) => loadSettingsFile(event.currentTarget.files?.[0] || null)} />
         <button type="button" class="settings-import" disabled={running || loadingModel || restoringHistory}
-          on:click={() => settingsInput?.click()}>Load settings JSON</button>
+          on:click={() => settingsInput?.click()}>{tr('settings.load')}</button>
 
         {#if showsText}
           <label for="text">{selected.task === 'gen' ? tr('request.prompt') : selected.task === 'align' ? tr('request.alignmentText') : tr('request.text')}</label>
@@ -2866,7 +2866,7 @@
 
             {#if (needsVoice || selected.family === 'kugelaudio') && !usesVibeVoiceSpeakerFiles}
           {#if allowsQuickStartVoice && quickStartVoices.length}
-            <label for="quick-start-voice">{selected.family === 'kugelaudio' ? 'Voice preset' : server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
+            <label for="quick-start-voice">{selected.family === 'kugelaudio' ? tr('voice.preset') : server?.ui_management === false ? tr('voice.configured') : tr('voice.quickStart')}</label>
             <select id="quick-start-voice" value={quickStartVoice}
               on:change={(event) => chooseQuickStartVoice(event.currentTarget.value)}>
               {#if selected.family !== 'kugelaudio'}<option value="">{tr('voice.useReference')}</option>{/if}
@@ -2911,7 +2911,7 @@
                   on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
                 <button type="button"
                   disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
-                  on:click={clearVoiceReference}>Clear reference</button>
+                  on:click={clearVoiceReference}>{tr('voice.clearReference')}</button>
                 {#if voiceFile}<span>{voiceFile.name}</span>{/if}
               {/if}
             </div>
@@ -2956,11 +2956,11 @@
 
         {#if usesVibeVoiceSpeakerFiles}
           <div class="vibevoice-speakers">
-            <div class="field-label">Speaker references <span>optional, up to 4</span></div>
+            <div class="field-label">{tr('voice.speakerReferences')} <span>{tr('voice.upToFour')}</span></div>
             <div class="reference-input-grid">
               {#each [0, 1, 2, 3] as speaker}
                 <div>
-                  <label for={'vibevoice-speaker-' + speaker}>Speaker {speaker + 1}</label>
+                  <label for={'vibevoice-speaker-' + speaker}>{tr('voice.speaker', { number: speaker + 1 })}</label>
                   <input id={'vibevoice-speaker-' + speaker} class="file file-native" type="file" accept="audio/*"
                     bind:this={vibeVoiceSpeakerInputs[speaker]}
                     on:change={(event) => chooseVibeVoiceSpeaker(speaker, event.currentTarget.files?.[0] || null)} />
@@ -2977,9 +2977,9 @@
               {/each}
             </div>
             {#if selected.family === 'moss_ttsd'}
-              <label for="dialogue-reference">Reference transcript</label>
+              <label for="dialogue-reference">{tr('voice.transcript')}</label>
               <textarea id="dialogue-reference" rows="2" bind:value={referenceText}
-                placeholder="[S1] Words spoken in Speaker 1's reference. [S2] Words spoken in Speaker 2's reference."></textarea>
+                placeholder={tr('voice.dialoguePlaceholder')}></textarea>
             {/if}
           </div>
         {/if}
@@ -3034,7 +3034,7 @@
 
         <div class="runbar">
           <button class="run" disabled={!selectedId || running || restoringHistory || modelPanelUploading || (!isLoaded && installed === false)} on:click={run}
-            title={!selectedId ? 'Choose an installed model first' : !isLoaded && installed === false ? 'Install this model from the Models tab first' : ''}>
+            title={!selectedId ? tr('run.chooseModel') : !isLoaded && installed === false ? tr('run.installModel') : ''}>
             <span>{running ? tr('run.working') : tr('run.run')}</span>
             <kbd>Ctrl ↵</kbd>
           </button>
@@ -3042,7 +3042,7 @@
           <div class="status" class:busy={running}
             class:warning={!running && status === warningStatus}
             class:error={!running && status === errorStatus}>
-            {#if running}<strong style="font-variant-numeric: tabular-nums" aria-label="Elapsed generation time">{generationElapsedSeconds.toFixed(1)} s · </strong>{/if}
+            {#if running}<strong style="font-variant-numeric: tabular-nums" aria-label={tr('run.elapsed')}>{generationElapsedSeconds.toFixed(1)} s · </strong>{/if}
             {localizedStatus(status, tr)}
           </div>
         </div>
@@ -3059,25 +3059,25 @@
       <section class="panel output">
         <div class="section-title">
           <div><span>{tr('result.label')}</span><h2>{tr('result.title')}</h2></div>
-          {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>Save settings JSON</a>{/if}
+          {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>{tr('settings.save')}</a>{/if}
           {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
         {#if generationHistory.length}
           <details class="generation-history">
-            <summary>Run history (Experimental) <span>{generationHistory.length}/{$uiConfiguration.historyLimit}</span></summary>
+            <summary>{tr('history.title')} <span>{generationHistory.length}/{$uiConfiguration.historyLimit}</span></summary>
             {#if historyError}<div class="history-error" role="alert">{historyError}</div>{/if}
-            <div class="history-actions"><button type="button" disabled={restoringHistory} on:click={clearGenerationHistory}>Clear history</button></div>
+            <div class="history-actions"><button type="button" disabled={restoringHistory} on:click={clearGenerationHistory}>{tr('history.clear')}</button></div>
             <ul>
               {#each generationHistory as entry (entry.id)}
                 <li class:active={selectedGenerationId === entry.id}>
                   <button type="button" class="history-select" aria-pressed={selectedGenerationId === entry.id}
                     disabled={restoringHistory} on:click={() => selectGeneration(entry, true)}>
                     <strong>{entry.label}</strong>
-                    <small>{new Date(entry.createdAt).toLocaleTimeString()} · {localizedTaskLabel(entry.task)}{#if ['gen', 'tts', 'clon', 'vdes'].includes(entry.task)} · Seed {entry.seed}{/if}</small>
+                    <small>{new Date(entry.createdAt).toLocaleTimeString(uiLanguage)} · {localizedTaskLabel(entry.task)}{#if ['gen', 'tts', 'clon', 'vdes'].includes(entry.task)} · {tr('request.seed')} {entry.seed}{/if}</small>
                   </button>
-                  <button type="button" title={`Delete generation ${entry.id}`}
+                  <button type="button" title={tr('history.deleteRun', { id: entry.id })}
                     disabled={restoringHistory}
-                    aria-label={`Delete generation ${entry.id}`} on:click={() => deleteGeneration(entry.id)}>Delete</button>
+                    aria-label={tr('history.deleteRun', { id: entry.id })} on:click={() => deleteGeneration(entry.id)}>{tr('common.delete')}</button>
                 </li>
               {/each}
             </ul>
@@ -3097,10 +3097,10 @@
           <div class="audio-list">
             {#each outputArtifacts as artifact}
               <article>
-                <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${outputModelId}-${selectedGenerationId || 'output'}-${artifact.id}.${artifact.extension}`}>Save {artifact.extension.toUpperCase()}</a></div>
+                <div><strong>{artifact.id}</strong><a href={artifact.url} download={`${outputModelId}-${selectedGenerationId || 'output'}-${artifact.id}.${artifact.extension}`}>{tr('result.saveArtifact', { format: artifact.extension.toUpperCase() })}</a></div>
                 {#if artifact.mime.startsWith('video/')}
                   <MediaPreview src={artifact.url} name={`${selected.id}-${artifact.id}.${artifact.extension}`}
-                    kind="video" label="Video preview" />
+                    kind="video" label={tr('result.videoPreview')} />
                 {/if}
               </article>
             {/each}
@@ -3209,8 +3209,8 @@
                           {#if packageSizes[choice.id]?.installed &&
                             packageSizes[choice.id]?.version_state === 'update_available'}
                             <button class="package-update"
-                              title={`Update ${choice.label}`}
-                              aria-label={`Update ${entry.display_name} ${choice.label}`}
+                              title={tr('models.updatePackage', { package: choice.label })}
+                              aria-label={tr('models.updatePackage', { package: `${entry.display_name} ${choice.label}` })}
                               disabled={groupInstallBusy(group, installJobs)}
                               on:click={() => installPackage(entry, choice, true)}>
                               {tr('models.update')}
@@ -3218,7 +3218,7 @@
                           {/if}
                           {#if packageSizes[choice.id]?.installed}
                             <button class="package-delete"
-                              title={`Delete ${choice.label}`} aria-label={`Delete ${entry.display_name} ${choice.label}`}
+                              title={tr('models.deletePackage', { package: choice.label })} aria-label={tr('models.deletePackage', { package: `${entry.display_name} ${choice.label}` })}
                               on:click={() => removePackage(entry, choice)}>
                               <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-1 11H8L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
@@ -3239,7 +3239,7 @@
                         </div>
                         <div class:indeterminate={['running', 'cancelling'].includes(installJob.state) && installJob.progress_percent < 0}
                           class="install-progress-track" role="progressbar"
-                          aria-label={`${entry.display_name} download progress`}
+                          aria-label={tr('models.downloadProgress', { model: entry.display_name })}
                           aria-valuemin="0" aria-valuemax="100" aria-valuenow={installPercent(installJob)}>
                           <span style={`width: ${installPercent(installJob)}%`}></span>
                         </div>
@@ -3255,7 +3255,7 @@
                       </div>
                     {/if}
                   {:else if entry.weights_url}
-                    <a class="utility-weights-link" href={entry.weights_url} target="_blank" rel="noreferrer">Download SafeTensors weights</a>
+                    <a class="utility-weights-link" href={entry.weights_url} target="_blank" rel="noreferrer">{tr('studio.downloadWeights')}</a>
                   {:else if (entry.install_packages || []).length}
                     <div class="shared-package-note">{tr('models.sharedPackage', { name: group.label })}</div>
                   {/if}
@@ -3270,7 +3270,7 @@
       {/each}
     </section>
   {:else if tab === 'configuration'}
-    <Configuration />
+    <Configuration {tr} />
   {:else}
     <section class="page-head"><p class="eyebrow">{tr('runtime.eyebrow')}</p><h1>{tr('runtime.title')}</h1><p>{tr('runtime.subtitle')}</p></section>
     <section class="panel log-panel">

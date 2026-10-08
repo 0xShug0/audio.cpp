@@ -2,6 +2,9 @@
 
 English is built into `src/lib/i18n.ts` and is always the fallback language.
 
+Vietnamese is available as **Tiếng Việt** in the interface language selector.
+Its translations are maintained in `lang_vi.json`.
+
 Add a UTF-8 JSON file named `lang_<code>.json` to this directory to add another
 language to the selector. The file is discovered automatically by Vite:
 
