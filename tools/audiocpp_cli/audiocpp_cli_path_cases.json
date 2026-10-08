@@ -38,6 +38,36 @@
       ]
     },
     {
+      "id": "mossformer2_separation",
+      "coverage": "MossFormer2 default windows, whole-file inference, changed window size and repeated requests",
+      "family": "mossformer2",
+      "model": "models/MossFormer2-GGUF/mossformer2-ss-16k-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "default", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "whole", "audio": "assets/resources/sample_16k.wav", "options": {"audio_chunk_duration_sec": 0}},
+        {"id": "shorter", "audio": "assets/resources/sample_16k.wav", "options": {"audio_chunk_duration_sec": 1}},
+        {"id": "unnormalized", "audio": "assets/resources/sample_16k.wav", "options": {"normalize_output": false}},
+        {"id": "repeat_default", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
+      "id": "tf_gridnet_separation",
+      "coverage": "TF-GridNet resampling, chunked speaker matching, whole-file inference, and repeated requests",
+      "family": "tf_gridnet",
+      "model": "models/TF-GridNet-GGUF/tf-gridnet-wsj0-2mix-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "chunked", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "whole", "audio": "assets/resources/sample_16k.wav", "options": {"audio_chunk_duration_sec": 0}},
+        {"id": "repeat_chunked", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
       "id": "owsm_v4_streaming",
       "coverage": "OWSM v4 committed long-form text deltas",
       "family": "owsm",

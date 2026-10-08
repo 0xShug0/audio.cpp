@@ -163,12 +163,14 @@ Model weights keep the license of their original release, which is separate from
 | **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
 | **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
 | **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |
+| **mossformer2** | Sep | lang agnostic | MossFormer2 SS 16K two-speaker separation | GGUF F32 |
 | **muscriptor** | MIDI | music | MuScriptor Small audio-to-symbolic transcription | GGUF F32, Stream |
 | **rvc** | VC | lang agnostic | RVC F16 GGUF with packaged v1/v2 voices and optional retrieval blending | GGUF 16 |
 | **sam_audio** | S2S | lang agnostic | SAM Audio Small<br>SAM Audio Base<br>SAM Audio Large | GGUF F32/BF16/Q8 |
 | **seed_vc** | VC | lang agnostic | SeedVC XLS-R + HiFT<br>SeedVC Whisper-small + BigVGAN | GGUF 16/Q8 |
 | **sheetsage2** | MIDI | music | SheetSage2 audio-to-ABC score transcription | GGUF orig |
 | **sidon** | S2S | lang agnostic | Sidon v0.1 single-speaker speech restoration | GGUF F32 |
+| **tf_gridnet** | Sep | lang agnostic | TF-GridNet WSJ0-2mix two-speaker separation | GGUF F32 |
 | **tone_color_vc** | VC | lang agnostic | Tone Color VC | GGUF F32/F16 |
 | **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 
