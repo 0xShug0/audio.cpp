@@ -8,10 +8,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -70,7 +72,7 @@ Options parse(int argc, char ** argv) {
     if (positional.empty() || positional.size() > 3) {
         throw std::invalid_argument(
             "Pass <GGUF> [16k-mono.wav] [expected transcript] [--full] "
-            "[--reference <dump-dir>] [--tolerance <fraction>] [--dump <dir>] [--backend cpu|metal] [--threads n]");
+            "[--reference <dump-dir>] [--tolerance <fraction>] [--dump <dir>] (encoder tensors and decoder logits/tokens/transcript) [--backend cpu|metal] [--threads n]");
     }
     options.gguf = positional[0];
     if (positional.size() > 1) options.wav = positional[1];
@@ -177,6 +179,78 @@ void check_encoder_tensors(const Options & options, const std::shared_ptr<const 
     }
 }
 
+std::vector<int32_t> read_i32(const std::string & path) {
+    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    const auto bytes = static_cast<std::streamoff>(stream.tellg());
+    if (!stream || bytes < 0 || bytes % sizeof(int32_t) != 0) {
+        throw std::runtime_error("Invalid token reference: " + path);
+    }
+    std::vector<int32_t> values(static_cast<size_t>(bytes) / sizeof(int32_t));
+    stream.seekg(0);
+    if (!stream.read(reinterpret_cast<char *>(values.data()),
+            static_cast<std::streamsize>(values.size() * sizeof(int32_t)))) {
+        throw std::runtime_error("Cannot read token reference: " + path);
+    }
+    return values;
+}
+
+std::string read_text(const std::string & path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+        throw std::runtime_error("Cannot read transcript reference: " + path);
+    }
+    std::ostringstream contents;
+    contents << stream.rdbuf();
+    return contents.str();
+}
+
+// Per-step decoder logits (decoder_logits_<position>.f32), the input token sequence
+// (decoder_tokens.i32, BOS and language token first) and the transcript of the full
+// recording, written by --dump or required to match by --reference.
+void check_decoder(const Options & options, const std::shared_ptr<const whistle::WhistleAssets> & assets,
+                   engine::core::ExecutionContext & execution_context) {
+    const auto audio = read_audio(options.wav, true);
+    whistle::WhistleRuntime runtime(assets, execution_context);
+    std::vector<whistle::WhistleDecodeStep> steps;
+    const auto transcript = runtime.transcribe(audio, "", [&](const whistle::WhistleDecodeStep & step) {
+        steps.push_back(step);
+    });
+    std::vector<int32_t> tokens;
+    for (const auto & step : steps) {
+        tokens.push_back(step.input_token);
+    }
+    const auto logits_path = [](const std::string & dir, size_t position) {
+        return dir + "/decoder_logits_" + std::to_string(position) + ".f32";
+    };
+    if (!options.dump_dir.empty()) {
+        for (const auto & step : steps) {
+            write_f32(logits_path(options.dump_dir, step.position), step.logits);
+        }
+        std::ofstream token_stream(options.dump_dir + "/decoder_tokens.i32", std::ios::binary);
+        if (!token_stream.write(reinterpret_cast<const char *>(tokens.data()),
+                static_cast<std::streamsize>(tokens.size() * sizeof(int32_t)))) {
+            throw std::runtime_error("Cannot write decoder tokens");
+        }
+        std::ofstream text_stream(options.dump_dir + "/decoder_transcript.txt", std::ios::binary);
+        if (!text_stream.write(transcript.text.data(), static_cast<std::streamsize>(transcript.text.size()))) {
+            throw std::runtime_error("Cannot write decoder transcript");
+        }
+    }
+    if (!options.reference_dir.empty()) {
+        if (read_i32(options.reference_dir + "/decoder_tokens.i32") != tokens) {
+            throw std::runtime_error("Decoder token sequence differs from the reference");
+        }
+        if (read_text(options.reference_dir + "/decoder_transcript.txt") != transcript.text) {
+            throw std::runtime_error("Decoder transcript differs from the reference");
+        }
+        for (const auto & step : steps) {
+            compare("decoder_logits_" + std::to_string(step.position), step.logits,
+                    logits_path(options.reference_dir, step.position), options.tolerance);
+        }
+    }
+    std::cout << "decoder: " << steps.size() << " steps, transcript: " << transcript.text << "\n";
+}
+
 void check_transcription(const Options & options, const std::shared_ptr<const whistle::WhistleAssets> & assets,
                          engine::core::ExecutionContext & execution_context) {
     const auto audio = read_audio(options.wav, options.full);
@@ -270,6 +344,7 @@ int main(int argc, char ** argv) {
         engine::core::ExecutionContext execution_context(options.backend);
         if (!options.reference_dir.empty() || !options.dump_dir.empty()) {
             check_encoder_tensors(options, assets, execution_context);
+            check_decoder(options, assets, execution_context);
             return 0;
         }
         check_transcription(options, assets, execution_context);

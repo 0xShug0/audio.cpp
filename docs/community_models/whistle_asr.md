@@ -137,6 +137,11 @@ unresolved questions. No weights or extracted assets are included in this port.
   `.f32` reference dumps in `<dir>` and reports the largest difference as a
   fraction of each reference tensor's largest magnitude (default tolerance 2e-3;
   Metal's half-precision matmul operand staging needs `--tolerance 5e-3`).
+  The same modes also run the decoder on the full recording. `--dump` writes
+  `decoder_logits_<position>.f32` (the full 8199-wide logits of each step),
+  `decoder_tokens.i32` (input tokens, BOS and language token first) and
+  `decoder_transcript.txt`. `--reference` compares every logits file with the
+  same scaled metric and requires identical tokens and transcript.
   The dumps used in [the validation report](../../tests/whistle_asr/VALIDATION.md)
   came from the earlier host-only implementation at commit `6e0a40c4`.
 

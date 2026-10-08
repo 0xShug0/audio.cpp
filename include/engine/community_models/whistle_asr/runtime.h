@@ -6,8 +6,12 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace engine::community_models::whistle_asr {
 
@@ -15,6 +19,15 @@ struct WhistleTranscript {
     std::string text;
     std::string language;
 };
+
+// One decoder position: the token fed in and the full logits row before argmax.
+struct WhistleDecodeStep {
+    size_t position = 0;
+    int32_t input_token = 0;
+    std::vector<float> logits;
+};
+
+using WhistleDecodeObserver = std::function<void(const WhistleDecodeStep &)>;
 
 class WhistleWeights;
 
@@ -26,7 +39,8 @@ public:
     WhistleRuntime & operator=(const WhistleRuntime &) = delete;
 
     [[nodiscard]] WhistleTranscript transcribe(
-        const runtime::AudioBuffer & audio, const std::string & language = "");
+        const runtime::AudioBuffer & audio, const std::string & language = "",
+        const WhistleDecodeObserver & observer = {});
 
 private:
     std::shared_ptr<const WhistleAssets> assets_;

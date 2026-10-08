@@ -655,7 +655,7 @@ WhistleRuntime::WhistleRuntime(
 WhistleRuntime::~WhistleRuntime() = default;
 
 WhistleTranscript WhistleRuntime::transcribe(
-    const runtime::AudioBuffer & audio, const std::string & language) {
+    const runtime::AudioBuffer & audio, const std::string & language, const WhistleDecodeObserver & observer) {
     if (audio.sample_rate != 16000 || audio.channels != 1) {
         throw std::invalid_argument("Whistle requires 16 kHz mono audio");
     }
@@ -694,6 +694,9 @@ WhistleTranscript WhistleRuntime::transcribe(
     for (size_t position = 0; position <= kMaximumTokens + 1; ++position) {
         const auto engram = lookup_engrams(tokens, *weights_);
         const Rows logits = decoder_step(tokens.back(), position, *weights_, *assets_, encoder, engram, cache);
+        if (observer) {
+            observer(WhistleDecodeStep{position, tokens.back(), std::vector<float>(logits.begin(), logits.end())});
+        }
         if (position == 0) {
             const size_t index = language.empty()
                 ? static_cast<size_t>(std::max_element(logits.begin() + 8192,
