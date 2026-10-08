@@ -22,11 +22,10 @@ constexpr int64_t kWhistleVocabulary = 8199;
 //
 // The runtime gives the decoder its own single-thread CPU execution context.
 // A step is thousands of small graph nodes, so its cost is per-node overhead.
-// With an earlier, smaller graph of 2585 nodes, a step took about 6.5 ms on Metal
-// against 3.3 ms on one CPU thread. Extra CPU threads only add per-node
-// synchronization: with 2 threads the 14 s sample took 622-661 ms instead of
-// 465-472 ms, and with 4 threads 965-1012 ms. The encoder keeps the session
-// backend and thread count.
+// Measured on the 14 s sample (42 steps): the decoder took 134-140 ms on one CPU
+// thread, 550-560 ms on Metal, and 1014-1111 ms with 2 CPU threads, because
+// each node synchronizes the threads. The encoder keeps the session backend and
+// thread count.
 class WhistleDecoderRuntime {
 public:
     WhistleDecoderRuntime(std::shared_ptr<const WhistleAssets> assets, core::ExecutionContext & execution_context);

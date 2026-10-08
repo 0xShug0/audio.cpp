@@ -499,17 +499,18 @@ reference's largest value. CPU with 1 thread and CPU with 4 threads give the sam
 
 Sample, 14.07 seconds. CLI `metrics.wall_ms` (preparation plus inference), three runs
 each. "Before" is the merged `main` with the host decoder, measured on this machine on
-2026-10-08 before the port. "Decoder on Metal" is an intermediate build of this branch
-that ran the step graph on the session backend. It is kept only for the comparison and
-is not shipped.
+2026-10-08 before the port. "Decoder on session backend" is this branch with one
+local change, the decoder built on the session context instead of its own; it is
+measured only for the comparison and is not shipped. In a CPU session with one thread
+it is the same configuration as the shipped build.
 
-| Configuration | Before (host decoder) | Decoder on Metal (not shipped) | This branch (decoder on 1 CPU thread) |
+| Configuration | Before (host decoder) | Decoder on session backend (not shipped) | This branch (decoder on 1 CPU thread) |
 |---|---:|---:|---:|
-| CPU 1 thread | 494 to 528 ms | 490 to 498 ms | 465 to 472 ms |
-| CPU 4 threads | 238 to 242 ms | 264 to 267 ms | 282 to 283 ms |
-| Metal | 157 to 163 ms | 336 to 361 ms | 204 to 226 ms |
+| CPU 1 thread | 494 to 528 ms | same as this branch | 465 to 472 ms |
+| CPU 4 threads | 238 to 242 ms | 1933 to 2242 ms | 282 to 283 ms |
+| Metal | 157 to 163 ms | 618 to 629 ms | 204 to 226 ms |
 
-Encoder and decoder split in this branch, from `AUDIOCPP_TIMING_LOG=1`.
+Encoder and decoder split in this branch, from the CLI `--log` timing output.
 `whistle_asr.encode_ms` includes the mel frontend and the per-request encoder graph
 build. `whistle_asr.decode_ms` covers the 42 steps.
 
@@ -535,10 +536,11 @@ and the step graph runs on one thread.
 The decoder graph has 4738 nodes per step.
 
 Why the decoder runs on one CPU thread: a one-token step is thousands of small nodes,
-so its cost is per-node overhead, not arithmetic. An earlier version of the graph had
-2585 nodes. With it, a step took about 6.5 ms on Metal and about 3.3 ms on one CPU
-thread. With 2 CPU threads the sample took 622 to 661 ms. With 4 threads it took 965 to
-1012 ms (Metal session). Each node synchronizes the threads, so more threads cost more.
+so its cost is per-node overhead, not arithmetic. `whistle_asr.decode_ms` for the 42
+sample steps, three runs each: 134 to 140 ms on one CPU thread; 550 to 560 ms on Metal;
+1014 to 1111 ms on a private CPU context with 2 threads (Metal session); 1787 to 2098 ms
+on the CPU session backend with 4 threads. Each node synchronizes the threads, so more
+threads cost more.
 
 Longer clips on Metal, one run each:
 

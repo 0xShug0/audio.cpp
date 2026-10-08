@@ -81,9 +81,9 @@ once into the backend weight store.
 The autoregressive decoder runs as one persistent GGML step graph. It has its own
 CPU backend with one thread, whatever backend the session uses. Each step feeds
 one token. A step is 4738 small graph nodes, so its cost is per-node overhead
-rather than arithmetic. With an earlier 2585-node version of the graph, a step took
-about 6.5 ms on Metal against 3.3 ms on one CPU thread. Extra CPU threads made
-whole requests slower because each node synchronizes the threads.
+rather than arithmetic. On the 14 s sample the 42 decoder steps took 134 to 140 ms
+on one CPU thread, 550 to 560 ms on Metal, and 1014 to 1111 ms with two CPU
+threads, because each node synchronizes the threads.
 
 Self-attention keys and values stay on the decoder backend in a
 `TransformerKVCache` written with `FastKVSetRowsModule`. A per-layer history of
