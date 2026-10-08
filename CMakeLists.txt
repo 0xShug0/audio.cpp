@@ -4363,6 +4363,21 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 endif()
 
+if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_CUDA)
+    add_executable(cuda_conv_transpose_1d_test tests/unittests/test_cuda_conv_transpose_1d.cu)
+    set_target_properties(cuda_conv_transpose_1d_test PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+    target_compile_options(cuda_conv_transpose_1d_test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-use_fast_math>)
+    if (GGML_STATIC)
+        set_target_properties(cuda_conv_transpose_1d_test PROPERTIES CUDA_RUNTIME_LIBRARY Static)
+        target_link_libraries(cuda_conv_transpose_1d_test PRIVATE ggml CUDA::cudart_static)
+    else()
+        set_target_properties(cuda_conv_transpose_1d_test PROPERTIES CUDA_RUNTIME_LIBRARY Shared)
+        target_link_libraries(cuda_conv_transpose_1d_test PRIVATE ggml CUDA::cudart)
+    endif()
+    add_test(NAME cuda_conv_transpose_1d_test COMMAND cuda_conv_transpose_1d_test)
+    set_tests_properties(cuda_conv_transpose_1d_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()
+
 if (ENGINE_BUILD_EXAMPLES)
     add_executable(ggml_simple_inference
         examples/ggml_simple_inference.cpp
