@@ -653,6 +653,28 @@ audiocpp_add_model(sam_audio
         engine::models::sam_audio::make_sam_audio_loader
 )
 
+audiocpp_add_model(mossformer2
+    SOURCES
+        src/models/mossformer2/assets.cpp
+        src/models/mossformer2/runtime.cpp
+        src/models/mossformer2/session.cpp
+    INCLUDES
+        engine/models/mossformer2/session.h
+    LOADERS
+        engine::models::mossformer2::make_mossformer2_loader
+)
+
+audiocpp_add_model(tf_gridnet
+    SOURCES
+        src/models/tf_gridnet/assets.cpp
+        src/models/tf_gridnet/runtime.cpp
+        src/models/tf_gridnet/session.cpp
+    INCLUDES
+        engine/models/tf_gridnet/session.h
+    LOADERS
+        engine::models::tf_gridnet::make_tf_gridnet_loader
+)
+
 audiocpp_add_model(apollo
     SOURCES
         src/models/apollo/assets.cpp
@@ -1511,6 +1533,19 @@ audiocpp_add_model(hviske_asr
         engine::models::hviske_asr::make_hviske_asr_loader
 )
 
+audiocpp_add_model(hviske_asr_v6
+    SOURCES
+        src/models/hviske_asr_v6/assets.cpp
+        src/models/hviske_asr_v6/frontend.cpp
+        src/models/hviske_asr_v6/encoder.cpp
+        src/models/hviske_asr_v6/decoder.cpp
+        src/models/hviske_asr_v6/session.cpp
+    INCLUDES
+        engine/models/hviske_asr_v6/session.h
+    LOADERS
+        engine::models::hviske_asr_v6::make_hviske_asr_v6_loader
+)
+
 audiocpp_add_model(irodori_tts
     SOURCES
         src/models/irodori_tts/assets.cpp
@@ -1935,6 +1970,19 @@ audiocpp_add_model(niagara_asr
         engine::models::niagara_asr::make_niagara_asr_loader
 )
 
+audiocpp_add_model(whistle_asr
+    SOURCES
+        src/community_models/whistle_asr/assets.cpp
+        src/community_models/whistle_asr/encoder.cpp
+        src/community_models/whistle_asr/frontend.cpp
+        src/community_models/whistle_asr/runtime.cpp
+        src/community_models/whistle_asr/session.cpp
+    INCLUDES
+        engine/community_models/whistle_asr/session.h
+    LOADERS
+        engine::community_models::whistle_asr::make_whistle_asr_loader
+)
+
 audiocpp_add_model(audio8_asr
     SOURCES
         src/community_models/audio8_asr/assets.cpp
@@ -2341,6 +2389,7 @@ audiocpp_add_model(lfm2_audio
         src/community_models/lfm2_audio/tts.cpp
         src/community_models/lfm2_audio/interleaved.cpp
         src/community_models/lfm2_audio/session.cpp
+        src/community_models/lfm2_audio/weight_stores.cpp
     INCLUDES
         engine/community_models/lfm2_audio/session.h
     LOADERS
@@ -3005,8 +3054,44 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
 
+    if (whistle_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(whistle_frontend_test
+            tests/whistle_asr/test_frontend.cpp
+            src/community_models/whistle_asr/frontend.cpp)
+        target_link_libraries(whistle_frontend_test PRIVATE engine_runtime ggml)
+        add_test(NAME whistle_frontend_test COMMAND whistle_frontend_test)
+
+        add_executable(whistle_tokenizer_test
+            tests/whistle_asr/test_tokenizer.cpp
+            src/community_models/whistle_asr/assets.cpp)
+        target_link_libraries(whistle_tokenizer_test PRIVATE engine_runtime ggml)
+        add_test(NAME whistle_tokenizer_test COMMAND whistle_tokenizer_test)
+
+        add_executable(whistle_assets_test
+            tests/whistle_asr/test_assets.cpp
+            src/community_models/whistle_asr/assets.cpp
+            src/community_models/whistle_asr/encoder.cpp
+            src/community_models/whistle_asr/frontend.cpp
+            src/community_models/whistle_asr/runtime.cpp)
+        target_link_libraries(whistle_assets_test PRIVATE engine_runtime ggml)
+        set(AUDIOCPP_WHISTLE_TEST_MODEL "" CACHE FILEPATH "Locally converted Whistle GGUF for integration tests")
+        if (AUDIOCPP_WHISTLE_TEST_MODEL)
+            add_test(NAME whistle_asr_integration COMMAND whistle_assets_test
+                "${AUDIOCPP_WHISTLE_TEST_MODEL}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
+                "Some call me Nature.")
+            add_test(NAME whistle_asr_full_integration COMMAND whistle_assets_test
+                "${AUDIOCPP_WHISTLE_TEST_MODEL}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
+                "Some call me Nature. Others call me Mother Nature. I've been here for over 4.5 billion years, twenty two thousand five hundred times longer than you."
+                --full)
+        endif()
+    endif()
+
     add_engine_unittest(shared_weight_cache_test tests/unittests/test_shared_weight_cache.cpp)
     add_test(NAME shared_weight_cache_test COMMAND shared_weight_cache_test)
+    add_engine_unittest(cpu_extra_buffers_test tests/unittests/test_cpu_extra_buffers.cpp)
+    add_test(NAME cpu_extra_buffers_test COMMAND cpu_extra_buffers_test)
     if (ENGINE_ENABLE_VULKAN)
         add_engine_unittest(vulkan_shared_weight_cache_test tests/unittests/test_vulkan_shared_weight_cache.cpp)
         add_test(NAME vulkan_shared_weight_cache_test COMMAND vulkan_shared_weight_cache_test)
@@ -4281,6 +4366,21 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             target_link_libraries(parakeet_parity_dump PRIVATE OpenMP::OpenMP_CXX)
         endif()
     endif()
+endif()
+
+if (ENGINE_BUILD_EXTENDED_TESTS AND ENGINE_ENABLE_CUDA)
+    add_executable(cuda_conv_transpose_1d_test tests/unittests/test_cuda_conv_transpose_1d.cu)
+    set_target_properties(cuda_conv_transpose_1d_test PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+    target_compile_options(cuda_conv_transpose_1d_test PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-use_fast_math>)
+    if (GGML_STATIC)
+        set_target_properties(cuda_conv_transpose_1d_test PROPERTIES CUDA_RUNTIME_LIBRARY Static)
+        target_link_libraries(cuda_conv_transpose_1d_test PRIVATE ggml CUDA::cudart_static)
+    else()
+        set_target_properties(cuda_conv_transpose_1d_test PROPERTIES CUDA_RUNTIME_LIBRARY Shared)
+        target_link_libraries(cuda_conv_transpose_1d_test PRIVATE ggml CUDA::cudart)
+    endif()
+    add_test(NAME cuda_conv_transpose_1d_test COMMAND cuda_conv_transpose_1d_test)
+    set_tests_properties(cuda_conv_transpose_1d_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 
 if (ENGINE_BUILD_EXAMPLES)

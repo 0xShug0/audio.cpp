@@ -12,8 +12,11 @@
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
 #include "engine/framework/core/execution_context.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::community_models::lfm2_audio {
@@ -84,14 +87,18 @@ class Lfm2BackboneRuntime {
 public:
     // With `audio_embedding` (the mmproj file, whose a.position_embd holds one
     // table of `audio_vocab_size` rows per codebook), steps can also feed
-    // generated audio frames back.
+    // generated audio frames back. With `cpu_repack` (lfm2_audio.cpu_repack),
+    // the CPU multiplies the matrices with the kernels of ggml's CPU extra
+    // buffer types (repacked, or AMX) where they take the weight's type and
+    // shape.
     Lfm2BackboneRuntime(
         std::shared_ptr<const assets::TensorSource> source,
         const Lfm2BackboneConfig & config,
         core::ExecutionContext & execution,
         std::shared_ptr<const assets::TensorSource> audio_embedding = nullptr,
         int64_t codebooks = 0,
-        int64_t audio_vocab_size = 0);
+        int64_t audio_vocab_size = 0,
+        bool cpu_repack = true);
     ~Lfm2BackboneRuntime();
 
     Lfm2BackboneRuntime(const Lfm2BackboneRuntime &) = delete;
@@ -125,6 +132,10 @@ public:
     // attend over the whole cache, and on some backends the logits change in
     // their last bits with its length.
     [[nodiscard]] int64_t decode_cache_steps() const noexcept;
+
+    // The CPU extra buffer types its weights went into ("CPU_REPACK", ...),
+    // in the order of their first weights, and how many each holds.
+    [[nodiscard]] std::vector<std::pair<std::string, size_t>> extra_weight_buffers() const;
 
 private:
     struct Impl;

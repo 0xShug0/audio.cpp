@@ -202,13 +202,15 @@ The response is server-sent events with base64 16-bit PCM deltas at 24 kHz;
 `"stream_format": "audio"` returns the raw PCM instead.
 
 Time to the first audio and real-time factor through the server, for a
-two-sentence English text (6.5 s of speech) and a Japanese one (8.5 s):
+two-sentence English text (6.5 s of speech) and a Japanese one (8.5 s); the
+M3 Ultra CPU's Q8_0 and Q4_0 figures are with ggml's repacked kernels, see
+[CPU](#cpu):
 
 | Backend | First audio, F16 / Q8_0 / Q4_0 / JP F32 | RTF, 1 frame per event | RTF, 4 frames per event |
 |---|---|---|---|
 | CUDA, NVIDIA A10 | 39 / 27 / 24 / 45 ms | 0.09-0.21 | 0.09-0.21 |
 | Metal, Apple M3 Ultra | 40 / 37 / 35 / 52 ms | 0.19-0.29 | 0.19-0.27 |
-| CPU, Apple M3 Ultra, 16 threads | 150 / 106 / 113 / 308 ms | 0.18-0.57 | 0.18-0.57 |
+| CPU, Apple M3 Ultra, 16 threads | 150 / 54 / 48 / 308 ms | 0.16-0.57 | 0.16-0.57 |
 
 A frame per event costs no more than four, and streaming about what offline
 speech does. The streamed audio differs from offline (relative RMS) by the
@@ -259,13 +261,14 @@ previous event, ahead of the audio that speaks it, and `speech.text.done` the
 whole text. The query also takes the request options `seed`, `temperature`,
 `top_k`, `text_temperature`, `text_top_k` and `max_tokens`. Time from the end
 of a 7.5 s English question, streamed in real time, to the first audio of the
-reply:
+reply (the M3 Ultra CPU's Q8_0 and Q4_0 figures with ggml's repacked kernels,
+see [CPU](#cpu)):
 
 | Backend | F16 | Q8_0 | Q4_0 |
 |---|---|---|---|
 | CUDA, NVIDIA A10 | 107 ms | 106 ms | 73 ms |
 | Metal, Apple M3 Ultra | 183 ms | 168 ms | 153 ms |
-| CPU, Apple M3 Ultra, 16 threads | 478 ms | 360 ms | 371 ms |
+| CPU, Apple M3 Ultra, 16 threads | 478 ms | 228 ms | 205 ms |
 
 That covers encoding the whole question, the prompt, the first text block and
 the first frame. With the JP F32 package on CUDA, the first audio came 113 ms
@@ -414,6 +417,7 @@ Each task rejects the options it does not take.
 | `lfm2_audio.detokenizer_gguf` | `tokenizer-<backbone file>`, else the only tokenizer | TTS audio detokenizer GGUF, relative to the model directory. |
 | `lfm2_audio.vad_model_path` | `assets/framework/models/silero_vad` | Silero VAD model used to split long audio. |
 | `lfm2_audio.max_pass_seconds` | `120` | Most audio, in seconds, the encoder takes in one pass: an ASR chunk (the whole input with `audio_chunk_mode=none`) or the S2S question; at least 1. Longer audio is rejected before it is encoded; see [Long audio](#long-audio). |
+| `lfm2_audio.cpu_repack` | `true` | On the CPU, multiply the matrices with the kernels of ggml's CPU extra buffer types where those take the weight's type and shape: the repacked ones take Q4_0 on x86 with AVX2 and Q4_0, Q8_0 and Q6_K on Arm; where ggml's AMX buffer is built, it comes first and also takes F16, Q8_0 and K-quants. Where the token embedding's type is taken, the text head gets a copy of it. `false` keeps every weight in the plain CPU buffer. Other backends ignore it; see [CPU](#cpu). |
 
 ## Long Audio
 
@@ -580,14 +584,16 @@ on the CPU, Metal and CUDA. It runs when `lfm2_audio_1_5b_f16` is installed in
 The `lfm2_audio_*_test` unit tests run on small synthetic GGUFs.
 
 Real-time factor over each 200-utterance set (processing time divided by audio
-length, with the model loaded; the CPU runs used 16 threads):
+length, with the model loaded; the CPU runs used 16 threads; the M3 Ultra's
+Q4_0 figure is with ggml's repacked kernels and the x86 row without them, see
+[CPU](#cpu)):
 
 | Backend | EN F16 | JP F32 | EN Q4_0 |
 |---|---|---|---|
 | CUDA, NVIDIA A10 | 0.027 | 0.037 | 0.017 |
 | Metal, Apple M3 Ultra | 0.034 | 0.042 | 0.021 |
 | CPU, Linux x86-64 | 0.11 | 0.14 | 0.077 |
-| CPU, Apple M3 Ultra | 0.10 | 0.17 | 0.059 |
+| CPU, Apple M3 Ultra | 0.10 | 0.17 | 0.032 |
 
 ### TTS
 
@@ -611,20 +617,23 @@ receptive field (97 steps); with F32 weights the chunked output matches one
 pass to 3e-5. A stream carries each layer's state instead, and with F32
 weights its waveform matches one pass to 1e-6 (relative RMS).
 `test_lfm2_audio_tts` checks the prompt, the stage numbers, the greedy frames,
-the chunking, the stream, a round trip through ASR, greedy and sampled, and
-speech cut off at `max_tokens`, offline and streamed; it runs when
+the chunking, the stream, a round trip through ASR, greedy and sampled (two of
+three seeds have to come back word for word), and speech cut off at
+`max_tokens`, offline and streamed; it runs when
 `lfm2_audio_1_5b_f16` is installed in `models/`.
 
 Real-time factor through `audiocpp_server` (processing time divided by audio
 length, model loaded; short = three sentences of 3-7 s, long = the 345 s
-long-form text; the CPU runs used 16 threads):
+long-form text; the CPU runs used 16 threads; the M3 Ultra's short Q8_0 and
+Q4_0 figures are with ggml's repacked kernels, from [CPU](#cpu), on its three
+sentences of 2.5 to 5 s, and the x86 row is without them):
 
 | Backend | EN F16 short / long | EN Q8_0 short / long | EN Q4_0 short / long | JP F32 short |
 |---|---|---|---|---|
 | CUDA, NVIDIA A10 | 0.19 / 0.15 | 0.16 / 0.13 | 0.16 / 0.086 | 0.21 |
 | Metal, Apple M3 Ultra | 0.21 / 0.21 | 0.18 / 0.18 | 0.15 / 0.15 | 0.26 |
 | CPU, Linux x86-64 | 0.42 / 0.41 | 0.29 / 0.30 | 0.22 | 0.65 |
-| CPU, Apple M3 Ultra | 0.32 | 0.22 | 0.17 | 0.56 |
+| CPU, Apple M3 Ultra | 0.32 | 0.20 | 0.16 | 0.56 |
 
 Each frame takes a backbone step and eight small depthformer steps. On GPUs
 per-step overhead dominates, so the weights' size matters little; on the CPU
@@ -697,6 +706,95 @@ it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
 and streamed, over three turns of a conversation, and up to the conversation
 limit.
 
+### CPU
+
+On the CPU, the quantized packages run the matmul kernels of ggml's CPU extra
+buffer types where those take the weight's type and shape, as llama.cpp does
+(`lfm2_audio.cpu_repack`, on by default). ggml's repacked kernels take Q4_0 on
+x86 with AVX2, and Q4_0, Q8_0 and Q6_K on Arm. They cover the LFM2 layers of the
+backbone and the detokenizer, the depthformer and the encoder's linears. The
+depthformer's input projection, whose rows each codebook step reads apart, the
+embedding tables, which rows are gathered from, and the few matrices whose shape
+the kernels do not take keep the plain layout. The text head is tied to the
+token embedding, so on Arm it gets a repacked copy of it: 105 MiB of Q6_K with
+the Q4_0 packages, 136 MiB of Q8_0 with Q8_0. F16 and F32 weights, and Q8_0 on
+x86, run the plain, non-repacked kernels, unless ggml has its AMX buffer
+(below). ggml logs each weight it repacks on stderr as the model loads.
+
+ggml builds its AMX buffer for x86 CPUs with AMX (Xeon Sapphire Rapids and
+later) in a native build, and in the CPU variant for them that the release
+builds carry. That buffer comes first and also takes the F16, Q8_0 and K-quant
+matrices whose rows come in multiples of 32, so the F16 and Q8_0 packages run
+other kernels there too, and the text head gets its copy with them as well,
+256 MiB with F16. No CPU with AMX was measured. On a Xeon 8358 server CPU
+(AVX-512, no AMX), a build like the portable release builds (`GGML_BACKEND_DL`
+with all CPU variants), which loaded the icelake variant there, repacked the
+same weights as a native build and gave its outputs byte for byte.
+
+Real-time factor with the repacked kernels / without them
+(`lfm2_audio.cpu_repack=false`) on an Apple M3 Ultra, the same binary at 16
+threads, median of three runs that alternate the two: ASR over the
+200-utterance sets as above, with the CLI, and TTS through `audiocpp_server` on
+three sentences of 2.5 to 5 s:
+
+| CPU | ASR EN Q4_0 | ASR EN Q8_0 | ASR JP Q4_0 | TTS EN Q4_0 | TTS EN Q8_0 |
+|---|---|---|---|---|---|
+| Apple M3 Ultra, 16 threads | 0.032 / 0.052 | 0.040 / 0.056 | 0.031 / 0.052 | 0.156 / 0.177 | 0.200 / 0.222 |
+
+On x86, an Intel Core i9-13900HK laptop CPU (AVX2, no AVX-512 or AMX; 6
+performance cores with two threads each and 8 efficiency cores) ran with the
+repacked kernels / without them (main's code, whose outputs `cpu_repack=false`
+reproduces byte for byte), median of four runs that alternate the two: with
+the CLI, ASR of a 60 s clip and of ten short clips and TTS of a
+three-sentence text with three seeds, and through `audiocpp_server` the first
+audio of a reply on the S2S live route, measured as in its table above:
+
+| Intel Core i9-13900HK | 8 threads | 4 threads |
+|---|---|---|
+| ASR EN Q4_0, 60 s clip | 0.121 / 0.187 | 0.132 / 0.183 |
+| ASR EN Q4_0, short clips | 0.127 / 0.229 | 0.141 / 0.203 |
+| ASR JP Q4_0, 60 s clip | 0.106 / 0.192 | 0.115 / 0.161 |
+| ASR JP Q4_0, short clips | 0.120 / 0.234 | 0.136 / 0.198 |
+| TTS EN Q4_0 | 0.359 / 0.437 | 0.356 / 0.427 |
+| S2S EN Q4_0, first audio on the live route | 694 / 1494 ms | 775 / 1171 ms |
+
+Q8_0 moves no weight there, and its ASR ran within about 2% of main's. With 12
+or 20 threads, which put a third to a half of the running threads on the
+efficiency cores (a fifth to a third at 8), each of these real-time
+factors was higher than at the better of 4 and 8 threads, with the repacked
+kernels and without.
+
+The encoder and the prefill multiply many steps at a time, where the kernels
+gain the most, so ASR gains more than speech, whose frames are a step each.
+On the M3 Ultra, measured as in the streaming tables above, the first audio of
+a TTS stream came after 48 ms with Q4_0 and 54 ms with Q8_0 (99 and 95 ms
+without), and that of a reply on the S2S live route after 205 and 228 ms (358
+and 342 ms). There llama.cpp's `llama-server`, on the CPU only at 16 threads,
+transcribed the EN Q4_0 set at RTF 0.033 through its HTTP API, and at 0.043
+with `--no-repack`, where audio.cpp's 0.032 is in process. Loading takes up to
+0.7 s longer with the repacked kernels on the M3 Ultra, and at most 0.05 s
+longer on the i9-13900HK.
+
+The repacked kernels add up the same products in another order, so results move
+a little and can change where two choices are close. With them, 195 of the 200
+EN Q4_0 transcripts were byte for byte the ones without them on the M3 Ultra
+and on the Xeon 8358 (both at 16 threads), and 193 on the i9-13900HK (at 8);
+with JP Q4_0, 196, 196 and 195; with EN Q8_0 on the M3 Ultra, 196. WER over the
+English set went from 1.48% to 1.51% (M3 Ultra), from 1.41% to 1.48% (Xeon)
+and from 1.43% to 1.53% (i9-13900HK) with Q4_0, and from 1.43% to 1.46% with
+Q8_0 (M3 Ultra); CER over the Japanese set went from 9.29% to 9.26%, from 9.21%
+to 9.36% and from 9.34% to 9.31%. Speech and replies part from those of the
+plain kernels within their first frames; a different thread count alone makes
+them part after 0.3 to 0.8 s (M3 Ultra). Transcribed back, 40 sampled takes of
+one sentence (seeds 1 to 40) came back exactly 40 times with them and 36 times
+without (Xeon, Q4_0), 37 and 39 times (M3 Ultra, Q4_0) and 39 and 40 times (M3
+Ultra, Q8_0). The first text token of the S2S reply to
+`assets/resources/c.wav` is a near-tie, its two best logits 0.036 apart on the
+M3 Ultra CPU with Q8_0 and 0.048 on Metal, and there the repacked kernels swap
+them, so the greedy reply differs from its first word. The other CPU figures on
+this page that count transcripts or replies were measured without the repacked
+kernels.
+
 ### Memory
 
 Memory is dominated by the weights, about the package size. Between chunks and
@@ -708,6 +806,9 @@ memory footprint on Metal, kept buffer included, was 1168 MB after a first 3.5 s
 request and 1267 to 1310 MB over the next 59, alternating 70 s and 3.5 s of
 audio. The Q4_0 files store the token embedding as Q6_K, which CUDA cannot
 gather rows from, so on CUDA the backbone also keeps a 256 MiB F16 copy of it.
+On the CPU, where ggml's extra buffers take the token embedding's type (Q6_K
+and Q8_0 on Arm; with ggml's AMX buffer also F16), the backbone also keeps a
+copy of it in their layout as the text head (see [CPU](#cpu)).
 
 ## Limitations
 
@@ -715,5 +816,7 @@ gather rows from, so on CUDA the backbone also keeps a 256 MiB F16 copy of it.
   request as a first turn; conversations run through the C API.
 - ASR is offline only; TTS and S2S also stream.
 - TTS speaks with the built-in voices only; there is no voice cloning.
-- On CPU, quantized weights run without repacked kernels. On Apple Silicon,
-  llama.cpp transcribes the same Q4_0 files up to 1.8x faster.
+- On the CPU, F16 and F32 weights, and Q8_0 on x86, run ggml's generic
+  matmul kernels, as it has no repacked ones for them. Only its AMX buffer,
+  where built, takes F16 and Q8_0, and no CPU with AMX was measured (see
+  [CPU](#cpu)).

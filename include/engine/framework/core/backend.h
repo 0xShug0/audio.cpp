@@ -46,6 +46,15 @@ struct BackendMemorySnapshot {
 
 ggml_backend_t init_backend(const BackendConfig & config);
 void set_backend_threads(ggml_backend_t backend, int threads);
+// The CPU backend's extra weight buffer types, in ggml's order of preference
+// (AMX and KleidiAI when built, then CPU_REPACK). Their weights are laid out
+// for their own matmul kernels. Empty for other backends.
+std::vector<ggml_backend_buffer_type_t> cpu_extra_buffer_types(ggml_backend_t backend);
+// Whether `backend` runs ggml_mul_mat(w, F32 x) for a 2-D `type` weight w of
+// [ne0, ne1] (ggml order) held in `buffer_type`; llama.cpp's
+// weight_buft_supported probe.
+bool buffer_type_supports_matmul_weight(
+    ggml_backend_t backend, ggml_backend_buffer_type_t buffer_type, ggml_type type, int64_t ne0, int64_t ne1);
 BackendType backend_type(ggml_backend_t backend);
 bool is_host_backend(ggml_backend_t backend);
 bool uses_host_graph_plan(BackendType type);
@@ -66,6 +75,10 @@ void * backend_cuda_stream(ggml_backend_t backend);
 void release_backend_graph_resources(ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache = false);
 void release_backend_graph_resources(BackendType backend_type, ggml_backend_t backend, ggml_cgraph * graph, bool evict_cuda_graph_cache = false);
 void validate_backend_graph_supported(ggml_backend_t backend, ggml_cgraph * graph, const char * label);
+// validate_backend_graph_supported for a graph whose weights may be held in
+// CPU extra buffers: first throws for a node that views such a weight, or a
+// matmul of one with a non-contiguous input.
+void validate_backend_graph_with_cpu_extra_buffers(ggml_backend_t backend, ggml_cgraph * graph, const char * label);
 BackendMemorySnapshot query_backend_memory(ggml_backend_t backend, int device_hint);
 BackendMemorySnapshot query_backend_memory(const BackendConfig & config);
 ggml_backend_graph_plan_t create_backend_graph_plan_if_host(ggml_backend_t backend, ggml_cgraph * graph);

@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "family": "mossformer2",
+  "display_name": "MossFormer2",
+  "description": "MossFormer2 overlapping speech separation at 16 kHz.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "sep"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "sep": [
+      "stems"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Separation window duration; zero selects whole-file inference.",
+        "min": 0,
+        "default": 2,
+        "required": false
+      },
+      {
+        "name": "audio_chunk_overlap_sec",
+        "type": "float",
+        "description": "Overlap between adjacent audio chunks, in seconds. Recommended: 25% of audio_chunk_duration_sec, matching the official Python settings. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference.",
+        "min": 0,
+        "default": 0.5,
+        "required": false
+      },
+      {
+        "name": "normalize_output",
+        "type": "bool",
+        "description": "Match each trimmed track RMS to the input as in ClearVoice's NumPy interface.",
+        "default": true,
+        "required": false
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "mossformer2_ss_16k_f32",
+      "display_name": "MossFormer2 SS 16K F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MossFormer2-GGUF",
+      "files": [
+        "MossFormer2-GGUF/mossformer2-ss-16k-f32.gguf"
+      ],
+      "strip_prefix": "MossFormer2-GGUF"
+    },
+    {
+      "id": "mossformer2_ss_16k_f16",
+      "display_name": "MossFormer2 SS 16K F16",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "MossFormer2-GGUF",
+      "files": [
+        "MossFormer2-GGUF/mossformer2-ss-16k-f16.gguf"
+      ],
+      "strip_prefix": "MossFormer2-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/mossformer2.md"
+    ],
+    "recommended_package": "mossformer2_ss_16k_f32"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}

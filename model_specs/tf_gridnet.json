@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "family": "tf_gridnet",
+  "display_name": "TF-GridNet",
+  "description": "Time-frequency GridNet overlapping speech separation.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "sep"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "sep": [
+      "stems"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Separation window duration; zero selects whole-file inference.",
+        "min": 0,
+        "default": 2.4,
+        "required": false
+      },
+      {
+        "name": "audio_chunk_overlap_sec",
+        "type": "float",
+        "description": "Overlap used to match speaker order and stitch adjacent windows.",
+        "min": 0,
+        "default": 1.6,
+        "required": false
+      },
+      {
+        "name": "normalize_output",
+        "type": "bool",
+        "description": "Normalize each separated waveform to a peak of 0.9, as in ESPnet's example.",
+        "default": true,
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage type.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "tf_gridnet_wsj0_2mix_f32",
+      "display_name": "TF-GridNet WSJ0-2mix F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "TF-GridNet-GGUF",
+      "files": [
+        "TF-GridNet-GGUF/tf-gridnet-wsj0-2mix-f32.gguf"
+      ],
+      "strip_prefix": "TF-GridNet-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/tf_gridnet.md"
+    ],
+    "recommended_package": "tf_gridnet_wsj0_2mix_f32"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "frontend": {
+          "source": "weights:",
+          "prefix": "frontend"
+        }
+      }
+    }
+  ]
+}

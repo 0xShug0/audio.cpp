@@ -1,6 +1,34 @@
 {
   "cases": [
     {
+      "id": "tf_gridnet_longform_speech",
+      "coverage": "TF-GridNet separation of a VibeVoice-generated two-speaker conversation followed by short-request reuse",
+      "family": "tf_gridnet",
+      "model": "models/TF-GridNet-GGUF/tf-gridnet-wsj0-2mix-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "warmup", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "longform", "audio": "assets/resources/vibevoice_two_speaker_longform.wav"},
+        {"id": "repeat_short", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
+      "id": "mossformer2_longform_speech",
+      "coverage": "MossFormer2 separation of a VibeVoice-generated two-speaker conversation followed by short-request reuse",
+      "family": "mossformer2",
+      "model": "models/MossFormer2-GGUF/mossformer2-ss-16k-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "warmup", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "longform", "audio": "assets/resources/vibevoice_two_speaker_longform.wav"},
+        {"id": "repeat_short", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
       "id": "htdemucs_pd_song_source_separation",
       "coverage": "HTDemucs source separation on a public-domain three-minute mixed music recording",
       "family": "htdemucs",

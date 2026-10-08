@@ -47,6 +47,12 @@
         "default": true
       },
       {
+        "name": "speaker_embedding_path",
+        "type": "path",
+        "description": "Speaker Inversion embedding (*.speaker.safetensors written by Irodori-TTS training) used as the speaker condition instead of reference audio; use it with the base checkpoint it was trained on. Cannot be combined with reference audio or no_ref=true.",
+        "required": false
+      },
+      {
         "name": "num_inference_steps",
         "type": "int",
         "description": "RF diffusion steps; default 40.",
@@ -228,6 +234,38 @@
         "required": false,
         "min": 0,
         "default": 512
+      },
+      {
+        "name": "codec_decode_chunk_steps",
+        "type": "int",
+        "description": "Decode the latent in windows of this many frames (25 per second) so the codec's activation memory stops growing with the output length; 0 decodes the whole sequence at once (default).",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "codec_decode_overlap_steps",
+        "type": "int",
+        "description": "Latent frames of context decoded on each side of a window and then discarded; default 16.",
+        "required": false,
+        "min": 0,
+        "default": 16
+      },
+      {
+        "name": "codec_encode_chunk_steps",
+        "type": "int",
+        "description": "Encode reference audio in windows of this many latent frames (25 per second) so the codec's activation memory stops growing with the reference length; 0 encodes the whole reference at once (default).",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "codec_encode_overlap_steps",
+        "type": "int",
+        "description": "Latent frames of reference audio encoded as context on each side of a window and then discarded; default 16.",
+        "required": false,
+        "min": 0,
+        "default": 16
       },
       {
         "name": "condition_weight_context_mb",

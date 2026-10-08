@@ -62,9 +62,10 @@ constexpr int64_t kCacheStepGranule = 256;
 constexpr int64_t kPrefillBlockSteps = 256;
 
 struct BackboneWeights {
-    std::unique_ptr<core::BackendWeightStore> store;
-    TensorValue token_embedding;  // [vocab, hidden], also the output head
+    std::unique_ptr<WeightStores> stores;
+    TensorValue token_embedding;  // [vocab, hidden]
     TensorValue token_lookup;     // token_embedding, or an F16 copy (see load_weights)
+    TensorValue text_head;        // token_embedding, or a repacked copy (see load_weights)
     modules::NormWeights final_norm;
     std::vector<LayerWeights> layers;
     // Audio frames fed back: [codebooks * audio_vocab_size, hidden], empty
@@ -84,11 +85,11 @@ BackboneWeights load_weights(
     const assets::TensorSource & source,
     const Lfm2BackboneConfig & config,
     core::ExecutionContext & execution,
-    const AudioEmbeddingSource & audio) {
+    const AudioEmbeddingSource & audio,
+    bool cpu_repack) {
     BackboneWeights out;
-    out.store = std::make_unique<core::BackendWeightStore>(
-        execution.backend(), execution.backend_type(), "lfm2_audio.backbone.weights", kWeightContextBytes);
-    auto & store = *out.store;
+    out.stores = std::make_unique<WeightStores>(execution, "lfm2_audio.backbone.weights", kWeightContextBytes, cpu_repack);
+    auto & store = out.stores->plain();
     const auto native = assets::TensorStorageType::Native;
     const int64_t d = config.hidden_size;
 
@@ -99,9 +100,16 @@ BackboneWeights load_weights(
     out.token_lookup = backend_gathers(execution.backend(), out.token_embedding.tensor->type)
         ? out.token_embedding
         : store.load_tensor(source, "token_embd.weight", assets::TensorStorageType::F16, {config.vocab_size, d});
+    // The text head is tied to the token embedding, which the lookup gathers
+    // from, so where a CPU extra buffer takes its type (Q6_K or Q8_0 on Arm,
+    // also F16 with AMX) the head gets a copy of its own there, as llama.cpp's
+    // output head does.
+    out.text_head = out.stores->matmul_buffer_type(out.token_embedding.tensor->type, config.vocab_size, d) != nullptr
+        ? out.stores->load_matmul(source, "token_embd.weight", {config.vocab_size, d})
+        : out.token_embedding;
     out.final_norm = {store.load_f32_tensor(source, "token_embd_norm.weight", {d}), std::nullopt};
 
-    out.layers = lfm2_blocks::load_layers(store, source, config);
+    out.layers = lfm2_blocks::load_layers(*out.stores, source, config);
 
     if (audio.source != nullptr) {
         // F32 in every published mmproj (the vocoder's copy is quantized with
@@ -111,7 +119,7 @@ BackboneWeights load_weights(
         out.audio_vocab_size = audio.vocab_size;
     }
 
-    store.upload();
+    out.stores->upload();
     return out;
 }
 
@@ -126,7 +134,7 @@ TensorValue hidden_of_last_step(
 
 TensorValue text_logits(core::ModuleBuildContext & ctx, const TensorValue & hidden, const BackboneWeights & weights, const Lfm2BackboneConfig & config) {
     return modules::LinearModule({config.hidden_size, config.vocab_size, false})
-        .build(ctx, hidden, {weights.token_embedding, std::nullopt});
+        .build(ctx, hidden, {weights.text_head, std::nullopt});
 }
 
 // The rows of audio frames' codes in the stacked audio embedding, which holds
@@ -294,7 +302,7 @@ public:
         for (auto * t : keys_) ggml_build_forward_expand(graph_, t);
         for (auto * t : values_) ggml_build_forward_expand(graph_, t);
         for (auto * t : conv_tails_) ggml_build_forward_expand(graph_, t);
-        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio prefill graph");
+        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph_, "LFM2-Audio prefill graph");
 
         allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
         if (allocator_ == nullptr || !ggml_gallocr_alloc_graph(allocator_.get(), graph_)) {
@@ -467,7 +475,7 @@ public:
         logits_graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
         ggml_graph_cpy(hidden_graph_, logits_graph_);
         ggml_build_forward_expand(logits_graph_, logits_);
-        core::validate_backend_graph_supported(execution.backend(), logits_graph_, "LFM2-Audio decode graph");
+        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), logits_graph_, "LFM2-Audio decode graph");
 
         buffer_.reset(ggml_backend_alloc_ctx_tensors(g, execution.backend()));
         if (buffer_ == nullptr) {
@@ -785,11 +793,12 @@ struct Lfm2BackboneRuntime::Impl {
     Impl(std::shared_ptr<const assets::TensorSource> source_in,
          const Lfm2BackboneConfig & config_in,
          core::ExecutionContext & execution_in,
-         const AudioEmbeddingSource & audio)
+         const AudioEmbeddingSource & audio,
+         bool cpu_repack)
         : source(std::move(source_in)),
           config(config_in),
           execution(execution_in),
-          weights(load_weights(*source, config, execution_in, audio)) {}
+          weights(load_weights(*source, config, execution_in, audio, cpu_repack)) {}
 
     DecodeGraph & require_started() {
         if (decode == nullptr || !started) {
@@ -863,12 +872,14 @@ Lfm2BackboneRuntime::Lfm2BackboneRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const assets::TensorSource> audio_embedding,
     int64_t codebooks,
-    int64_t audio_vocab_size) {
+    int64_t audio_vocab_size,
+    bool cpu_repack) {
     if (audio_embedding != nullptr && (codebooks <= 0 || audio_vocab_size <= 0)) {
         throw std::runtime_error("LFM2-Audio audio embedding needs its codebook count and size");
     }
 
-    impl_ = std::make_unique<Impl>(std::move(source), config, execution, AudioEmbeddingSource{std::move(audio_embedding), codebooks, audio_vocab_size});
+    impl_ = std::make_unique<Impl>(
+        std::move(source), config, execution, AudioEmbeddingSource{std::move(audio_embedding), codebooks, audio_vocab_size}, cpu_repack);
 }
 
 Lfm2BackboneRuntime::~Lfm2BackboneRuntime() = default;
@@ -956,6 +967,10 @@ std::vector<float> Lfm2BackboneRuntime::step_audio(const std::vector<int32_t> & 
 
 int64_t Lfm2BackboneRuntime::decode_cache_steps() const noexcept {
     return impl_->decode == nullptr ? 0 : impl_->decode->cache_steps();
+}
+
+std::vector<std::pair<std::string, size_t>> Lfm2BackboneRuntime::extra_weight_buffers() const {
+    return impl_->weights.stores->extra_buffers();
 }
 
 Lfm2GenerationResult Lfm2BackboneRuntime::generate(

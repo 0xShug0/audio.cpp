@@ -22,10 +22,12 @@ public:
     // modified) and returns the code to keep.
     using PickCode = std::function<int32_t(int64_t codebook, std::vector<float> & logits)>;
 
+    // `cpu_repack` as for Lfm2BackboneRuntime.
     Lfm2DepthformerRuntime(
         std::shared_ptr<const assets::TensorSource> vocoder,
         const Lfm2DepthformerConfig & config,
-        core::ExecutionContext & execution);
+        core::ExecutionContext & execution,
+        bool cpu_repack = true);
     ~Lfm2DepthformerRuntime();
 
     Lfm2DepthformerRuntime(const Lfm2DepthformerRuntime &) = delete;

@@ -60,6 +60,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `htdemucs` | [facebookresearch/demucs](https://github.com/facebookresearch/demucs) | MIT | Yes | | 2026-09-21 |
 | `htdemucs_6stems` | [facebookresearch/demucs `5c90dfd2`](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th) | MIT | Yes | | 2026-09-26 |
 | `hviske_asr` | [syvai/hviske-v5.3](https://huggingface.co/syvai/hviske-v5.3) | CC-BY-NC-4.0 | No | | 2026-09-21 |
+| `hviske_asr_v6` | [syvai/hviske-v6](https://huggingface.co/syvai/hviske-v6) | CC-BY-NC-4.0 | No | Retain upstream NOTICE and third-party license notices. | 2026-10-07 |
 | `index_echo` | [IndexTeam/Index-Echo-S2TT-2B](https://huggingface.co/IndexTeam/Index-Echo-S2TT-2B)<br>[IndexTeam/Index-Echo-S2TT-9B](https://huggingface.co/IndexTeam/Index-Echo-S2TT-9B) | Apache-2.0 | Yes | S2TT checkpoints only. | 2026-10-01 |
 | `index_tts2` | [IndexTeam/IndexTTS-2](https://huggingface.co/IndexTeam/IndexTTS-2)<br>[IndexTeam/IndexTTS-2.5](https://huggingface.co/IndexTeam/IndexTTS-2.5) | [bilibili Model Use License](https://huggingface.co/IndexTeam/IndexTTS-2.5/blob/main/LICENSE) | Conditional | A separate license is needed above RMB 1 billion yearly revenue or 100 million monthly users. The model and its outputs may not be used to improve other commercial AI models. | 2026-09-21 |
 | `inflect_v2` | [owensong/Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2)<br>[owensong/Inflect-Nano-v2](https://huggingface.co/owensong/Inflect-Nano-v2) | Apache-2.0 | Yes | | 2026-09-21 |
@@ -90,6 +91,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `moss_tts_nano` | [OpenMOSS-Team/MOSS-TTS-Nano-100M](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M) | Apache-2.0 | Yes | | 2026-09-21 |
 | `moss_tts_v15` | [OpenMOSS-Team/MOSS-TTS-v1.5](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5) | Apache-2.0 | Yes | | 2026-09-22 |
 | `moss_voicegen` | [OpenMOSS-Team/MOSS-VoiceGenerator](https://huggingface.co/OpenMOSS-Team/MOSS-VoiceGenerator) | Apache-2.0 | Yes | | 2026-09-21 |
+| `mossformer2` | [alibabasglab/MossFormer2_SS_16K](https://huggingface.co/alibabasglab/MossFormer2_SS_16K) | Apache-2.0 | Yes | Two-speaker separation checkpoint from ClearerVoice-Studio. | 2026-10-04 |
 | `muscriptor` | [MuScriptor/muscriptor-small](https://huggingface.co/MuScriptor/muscriptor-small) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `nemotron_3_diar` | [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) | Yes | | 2026-09-24 |
 | `nemotron_asr` | [nvidia/nemotron-3.5-asr-streaming-0.6b](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) | Yes | | 2026-09-21 |
@@ -125,6 +127,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `sortformer_diar_v2` | [nvidia/diar_streaming_sortformer_4spk-v2.1](https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1) | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes | | 2026-09-21 |
 | `stable_audio` | [stabilityai/stable-audio-3-small-sfx](https://huggingface.co/stabilityai/stable-audio-3-small-sfx)<br>[stabilityai/stable-audio-3-small-music](https://huggingface.co/stabilityai/stable-audio-3-small-music)<br>[stabilityai/stable-audio-3-medium](https://huggingface.co/stabilityai/stable-audio-3-medium) | [Stability AI Community License](https://huggingface.co/stabilityai/stable-audio-3-small-sfx/blob/main/LICENSE.md) | Conditional | Free while the yearly revenue of you and your affiliates stays under USD 1M; above that an enterprise license is needed. Register commercial use with Stability AI, and display "Powered by Stability AI". The Gemma text encoder falls under the Gemma Terms of Use. | 2026-09-21 |
 | `supertonic` | [Supertone/supertonic-3](https://huggingface.co/Supertone/supertonic-3) | [BigScience OpenRAIL-M](https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE) | Yes | Its use restrictions apply and must be passed on. | 2026-09-21 |
+| `tf_gridnet` | [ESPnet WSJ0-2mix checkpoint](https://drive.google.com/file/d/1TasZxZSnbSPsk_Wf7ZDhBAigS6zN8G9G/view) | Not stated | Unclear | The checkpoint archive does not specify a weight license; ESPnet code is Apache-2.0. | 2026-10-03 |
 | `universr` | [woongzip1/universr-audio](https://huggingface.co/woongzip1/universr-audio)<br>[woongzip1/universr-speech](https://huggingface.co/woongzip1/universr-speech) | CC-BY-4.0 | Yes | | 2026-09-21 |
 | `vevo2` | [RMSnow/Vevo2](https://huggingface.co/RMSnow/Vevo2) | CC-BY-NC-ND-4.0 | No | | 2026-09-21 |
 | `vibeasr` | [microsoft/VibeVoice-ASR-BitNet](https://huggingface.co/microsoft/VibeVoice-ASR-BitNet) | MIT | Yes | | 2026-09-21 |
@@ -135,6 +138,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `voxcpm1` | [openbmb/VoxCPM-0.5B](https://huggingface.co/openbmb/VoxCPM-0.5B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxcpm2` | [openbmb/VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxtral_realtime` | [mistralai/Voxtral-Mini-4B-Realtime-2602](https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602) | Apache-2.0 | Yes | | 2026-09-21 |
+| `whistle_asr` | [Cactus-Compute/whistle](https://huggingface.co/Cactus-Compute/whistle/tree/b358ddadd89b7a713b5aa131f23032d3cca1b251) | Apache-2.0 | Yes | Pinned release includes the tokenizer, mel filterbank, and Hadamard permutations; the converter embeds its LICENSE. Independent asset provenance remains unverified. No reference code is bundled; see [provenance](../tools/community_models/whistle_asr/PROVENANCE.md). | 2026-10-06 |
 | `yue2` | [m-a-p/YuE2-3B](https://huggingface.co/m-a-p/YuE2-3B) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `zipvoice` | [k2-fsa/ZipVoice](https://huggingface.co/k2-fsa/ZipVoice) | Not stated | Unclear | The model card states no license; the [code](https://github.com/k2-fsa/ZipVoice) is Apache-2.0. | 2026-09-21 |
 

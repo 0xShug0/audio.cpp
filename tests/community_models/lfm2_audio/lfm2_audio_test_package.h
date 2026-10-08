@@ -400,7 +400,8 @@ inline void write_mmproj(
     const std::filesystem::path & path,
     const EncoderShape & shape,
     const TensorMap & tensors,
-    const std::string & projector = "lfm2a") {
+    const std::string & projector = "lfm2a",
+    const std::map<std::string, ggml_type> & types = {}) {
     GgufWriter gguf;
     gguf.set("general.architecture", "clip");
     gguf.set("clip.projector_type", projector);
@@ -410,7 +411,7 @@ inline void write_mmproj(
     gguf.set_u32("clip.audio.attention.head_count", static_cast<uint32_t>(shape.heads));
     gguf.set_f32("clip.audio.attention.layer_norm_epsilon", 1e-5f);
 
-    gguf.add(tensors);
+    gguf.add(tensors, types);
     gguf.write(path);
 }
 

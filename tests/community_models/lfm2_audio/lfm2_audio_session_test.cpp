@@ -409,6 +409,18 @@ void test_one_pass_limit(const Package & package) {
         "a limit under a second");
 }
 
+// lfm2_audio.cpu_repack takes a bool. This package's F32 weights stay in the
+// plain CPU buffer either way.
+void test_cpu_repack_option(const Package & package) {
+    for (const char * value : {"false", "true", "0", "on"}) {
+        require_eq(transcribe(*open_session(package.root, {{"lfm2_audio.cpu_repack", value}}), request(tone(1.0))), std::string("hi"),
+            std::string("lfm2_audio.cpu_repack=") + value);
+    }
+
+    require_throws_with([&] { (void)open_session(package.root, {{"lfm2_audio.cpu_repack", "maybe"}}); }, "lfm2_audio.cpu_repack",
+        "lfm2_audio.cpu_repack=maybe");
+}
+
 // 3.5 s of LibriSpeech speech followed by `silence_seconds` of zeros, and the
 // same again when `twice`.
 runtime::AudioBuffer speech(double silence_seconds, bool twice = false) {
@@ -601,6 +613,7 @@ int main() {
         test_ends_inside_a_character();
         test_chunking(package);
         test_one_pass_limit(package);
+        test_cpu_repack_option(package);
         test_vad_chunking(package);
         test_selects_backbone();
         test_japanese_checkpoint();

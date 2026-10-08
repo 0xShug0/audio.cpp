@@ -65,6 +65,7 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const Lfm2AudioAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    bool cpu_repack_;  // lfm2_audio.cpu_repack, for the runtimes below
     std::shared_ptr<const Lfm2AudioComponents> components_;
     Lfm2TextTokenizer tokenizer_;
     Lfm2AudioFeatureExtractor features_;
@@ -132,6 +133,7 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const Lfm2AudioAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    bool cpu_repack_;  // lfm2_audio.cpu_repack, for the runtimes below
     std::shared_ptr<const Lfm2AudioComponents> components_;
     std::shared_ptr<const Lfm2AudioOutputComponents> output_;
     Lfm2TextTokenizer tokenizer_;
@@ -202,6 +204,7 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const Lfm2AudioAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    bool cpu_repack_;  // lfm2_audio.cpu_repack, for the runtimes below
     std::shared_ptr<const Lfm2AudioComponents> components_;
     std::shared_ptr<const Lfm2AudioOutputComponents> output_;
     Lfm2TextTokenizer tokenizer_;
