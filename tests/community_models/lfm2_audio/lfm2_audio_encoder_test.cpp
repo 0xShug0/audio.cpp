@@ -130,8 +130,15 @@ void test_quantized_cpu_repack(const std::filesystem::path & dir) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     try {
+        if (argc >= 2 && std::string(argv[1]) == "--cpu-repack-only") {
+            const auto dir = lfm2_audio_test::fresh_directory("audiocpp_lfm2_audio_encoder_cpu_repack_test");
+            test_quantized_cpu_repack(dir);
+            std::filesystem::remove_all(dir);
+            std::cout << "lfm2_audio_encoder_cpu_repack_test: PASS\n";
+            return 0;
+        }
         const auto dir = lfm2_audio_test::fresh_directory("audiocpp_lfm2_audio_encoder_test");
         lfm2_audio_test::EncoderShape shape;
         shape.layers = 2;
@@ -141,7 +148,6 @@ int main() {
 
         test_reuse_matches_fresh_runs(mmproj, config);
         test_same_input_same_output(mmproj, config);
-        test_quantized_cpu_repack(dir);
         std::filesystem::remove_all(dir);
         std::cout << "lfm2_audio_encoder_test: PASS\n";
         return 0;

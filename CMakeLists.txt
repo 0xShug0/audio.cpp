@@ -3272,6 +3272,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 add_test(NAME ${lfm2_audio_test} COMMAND ${lfm2_audio_test})
             endforeach()
 
+            if (ENGINE_BUILD_EXTENDED_TESTS)
+                # Keep AMX repacking coverage outside normal CI until its single-block bug is fixed.
+                add_test(NAME lfm2_audio_encoder_cpu_repack_test
+                    COMMAND lfm2_audio_encoder_test --cpu-repack-only)
+            endif()
+
             if (ENGINE_ENABLE_CUDA)
                 add_engine_unittest(lfm2_audio_cuda_test tests/community_models/lfm2_audio/lfm2_audio_cuda_test.cpp)
                 target_include_directories(lfm2_audio_cuda_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
