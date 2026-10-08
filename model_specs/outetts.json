@@ -84,7 +84,7 @@
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Positive windowed repetition penalty; default 1.1.",
+        "description": "Windowed repetition penalty; must be > 0, default 1.1.",
         "required": false,
         "min": 0.0,
         "default": 1.1
@@ -102,7 +102,8 @@
         "type": "int",
         "description": "Sampling seed; cloning defaults to 4099 for native weights and 42 for quantized weights.",
         "required": false,
-        "min": 0
+        "min": 0,
+        "max": 4294967295
       },
       {
         "name": "reference_text",
@@ -113,9 +114,8 @@
       {
         "name": "reference_language",
         "type": "string",
-        "description": "Language code used to align the reference transcript; default en.",
-        "required": false,
-        "default": "en"
+        "description": "Language code used to align the reference transcript; omitted inherits the request text language, then falls back to en.",
+        "required": false
       },
       {
         "name": "text_chunk_size",
@@ -139,9 +139,25 @@
         "name": "weight_type",
         "type": "enum",
         "description": "Language-model weight storage type. Quantized CUDA voice cloning is expanded to F32 in memory for generation correctness.",
-        "preset": "weight_type_full",
         "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_1",
+          "q5_0",
+          "q5_1",
+          "q2_k",
+          "q3_k",
+          "q4_k",
+          "q5_k",
+          "q6_k",
+          "nvfp4"
+        ]
       },
       {
         "name": "llama_weight_context_mb",
@@ -176,7 +192,7 @@
         "default": 1536
       },
       {
-        "name": "aligner_path",
+        "name": "forced_aligner_path",
         "type": "path",
         "description": "Optional Qwen3 Forced Aligner override. Cloning automatically uses the aligner embedded in a standalone OuteTTS GGUF when present.",
         "required": false
@@ -292,7 +308,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/outetts.md",
+      "docs/models/outetts.md",
       "docs/reports/outetts_validation.md",
       "docs/gguf.md"
     ]

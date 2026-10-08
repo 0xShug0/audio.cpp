@@ -180,7 +180,7 @@ AUDIOCPP_API const char * audiocpp_model_description(const audiocpp_model * mode
 
 /* Capability queries. `task` is one of the tokens audiocpp_task_name()
  * enumerates -- "vad", "asr", "diar", "sep", "gen", "tts", "clon", "vc",
- * "s2s", "align", "vdes", "spk", "svc", "midi" -- and `mode` is "offline" or
+ * "s2s", "align", "vdes", "spk", "svc", "midi", "wake", "cls" -- and `mode` is "offline" or
  * "streaming".
  *
  * Returns 1 when supported and 0 otherwise, which includes a task or mode this

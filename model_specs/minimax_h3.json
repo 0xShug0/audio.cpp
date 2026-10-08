@@ -44,7 +44,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/minimax_h3.md",
+      "docs/models/minimax_h3.md",
       "docs/reports/minimax_h3_performance.md"
     ]
   },
@@ -53,7 +53,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Joint DiT denoising steps.",
+        "description": "Positive joint DiT denoising step count; default 50.",
         "required": false,
         "min": 1,
         "default": 50
@@ -61,33 +61,31 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed for deterministic initial latents.",
+        "description": "Unsigned 32-bit generation seed in [0, 4294967295] for deterministic initial latents; default 42.",
         "required": false,
         "min": 0,
+        "max": 4294967295,
         "default": 42
       },
       {
         "name": "height",
         "type": "int",
-        "description": "Target video canvas height used by the joint T2VA latent layout.",
+        "description": "Target video canvas height used by the joint T2VA latent layout; omitted or nonpositive values use 768. Smaller positive sizes are rounded up to the supported geometry.",
         "required": false,
-        "min": 32,
         "default": 768
       },
       {
         "name": "width",
         "type": "int",
-        "description": "Target video canvas width used by the joint T2VA latent layout.",
+        "description": "Target video canvas width used by the joint T2VA latent layout; omitted or nonpositive values use 1344. Smaller positive sizes are rounded up to the supported geometry.",
         "required": false,
-        "min": 32,
         "default": 1344
       },
       {
         "name": "num_frames",
         "type": "int",
-        "description": "Target video frame count before H3 alignment. MiniMax-H3 video is 24 fps.",
+        "description": "Target video frame count before H3 alignment; omitted or nonpositive values use 124. MiniMax-H3 video is 24 fps; positive counts are rounded to the supported temporal geometry.",
         "required": false,
-        "min": 5,
         "default": 124
       },
       {
@@ -95,11 +93,10 @@
         "type": "float",
         "description": "Classifier-free guidance scale; 1.0 matches the baseline T2VA audio run.",
         "required": false,
-        "min": 0.0,
-        "default": 1.0
+        "default": 1
       },
       {
-        "name": "sampler",
+        "name": "sampler_mode",
         "type": "enum",
         "description": "Joint DiT sampler: euler, res_multistep, dpmpp_2m, or unipc.",
         "values": [
@@ -180,7 +177,7 @@
       {
         "name": "dit_acceleration",
         "type": "string",
-        "description": "Optional DiT acceleration mode: none, first_block_cache, or spectrum.",
+        "description": "Optional DiT acceleration mode: none, first_block_cache, or spectrum. Requires dit_layerwise=false and sampler_mode=euler; Spectrum additionally requires guidance_scale=1.",
         "required": false,
         "default": "none"
       },
@@ -193,18 +190,34 @@
         "default": 0.1
       },
       {
+        "name": "first_block_cache_start_percent",
+        "type": "float",
+        "description": "Denoising progress fraction where first-block caching begins; must be below end_percent. Used to derive the sigma window when explicit sigma endpoints are omitted.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 0.1
+      },
+      {
+        "name": "first_block_cache_end_percent",
+        "type": "float",
+        "description": "Denoising progress fraction where first-block caching ends; must exceed start_percent. Used to derive the sigma window when explicit sigma endpoints are omitted.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 0.95
+      },
+      {
         "name": "first_block_cache_start_sigma",
         "type": "float",
-        "description": "Largest video sigma where first-block cache may be used.",
-        "required": false,
-        "default": 0.95
+        "description": "Largest video sigma where first-block cache may be used. Supply together with first_block_cache_end_sigma; otherwise both endpoints are derived from the denoising progress fractions and schedule.",
+        "required": false
       },
       {
         "name": "first_block_cache_end_sigma",
         "type": "float",
-        "description": "Smallest video sigma where first-block cache may be used.",
-        "required": false,
-        "default": 0.1
+        "description": "Smallest video sigma where first-block cache may be used. Supply together with first_block_cache_start_sigma; otherwise both endpoints are derived from the denoising progress fractions and schedule.",
+        "required": false
       },
       {
         "name": "first_block_cache_max_consecutive",

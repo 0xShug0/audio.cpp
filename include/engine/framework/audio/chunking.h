@@ -31,6 +31,7 @@ enum class AudioChunkMode {
     QuietEnergy,
     Vad,
     None,
+    Silence,  // Recording-relative RMS threshold and silence-gap midpoints.
 };
 
 struct AudioChunkSpec {
@@ -60,6 +61,19 @@ struct QuietEnergyAudioChunkOptions {
     int64_t boundary_context_samples = 0;
     int64_t min_energy_window_samples = 0;
 };
+
+struct SilenceAudioChunkOptions {
+    int64_t max_chunk_samples = 0;
+    // Inputs at or below this length stay whole, even if above max_chunk_samples.
+    int64_t trigger_samples = 0;
+};
+
+// Librosa-style silence splitting: centered 2048-sample RMS, hop 512,
+// 30 dB below peak RMS. Preserve all audio and cut at silence-gap midpoints,
+// falling back to max_chunk_samples when no gap is available.
+std::vector<runtime::TimeSpan> plan_silence_audio_chunks(
+    const std::vector<float> & mono_samples,
+    const SilenceAudioChunkOptions & options);
 
 std::vector<AudioChunkSpan> plan_audio_chunks(int64_t input_samples, const AudioChunkSpec & spec);
 

@@ -51,12 +51,12 @@ path:
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `num_inference_steps` | integer > 0 | `50` | DDIM sampler steps. |
-| `guidance_scale` | float | `3.5` | Classifier-free guidance scale. |
-| `ddim_eta` | float >= 0 | `1.0` | DDIM eta. |
-| `audio_chunk_duration_sec` | seconds | `15` | Long-audio chunk size. |
-| `audio_chunk_overlap_sec` | seconds | `2` | Overlap between long-audio chunks. |
-| `seed` | integer, `-1` for random | `42` | Sampler seed. |
+| `num_inference_steps` | integer > 0 | `50` | DDIM inference steps. The uniform DDIM schedule must produce exactly this many timesteps; not every count is valid (e.g. 51 fails with 1000 diffusion timesteps). |
+| `guidance_scale` | float | `3.5` | Classifier-free guidance scale. Any finite value is accepted. |
+| `ddim_eta` | float >= 0 | `1.0` | DDIM eta; 1.0 matches the official AudioSR default. Must be nonnegative; there is no runtime upper bound. |
+| `audio_chunk_duration_sec` | seconds > 0 | `15` | Long-audio chunk size; must exceed the overlap. |
+| `audio_chunk_overlap_sec` | seconds >= 0 | `2` | Overlap must be smaller than `audio_chunk_duration_sec`, including after rounding to samples. |
+| `seed` | integer <= 2147483647 | `42` | Sampler seed. Omitted or negative values use fixed seed 42, not a random seed; zero is a fixed seed. |
 
 ## Session Options (use with `--session-option`)
 

@@ -81,7 +81,7 @@ FireRedAudioGenerationRequest make_generation_request(
         if (!request.text_input.has_value() || request.text_input->text.empty()) {
             throw std::runtime_error("FireRedAudio voice design requires text input");
         }
-        const auto instruction = runtime::find_option(request.options, {"instruction"}).value_or("");
+        const auto instruction = runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
         if (instruction.empty()) {
             throw std::runtime_error("FireRedAudio voice design requires instruction");
         }
@@ -93,7 +93,7 @@ FireRedAudioGenerationRequest make_generation_request(
         if (!request.audio_input.has_value()) {
             throw std::runtime_error("FireRedAudio edit requires input audio");
         }
-        const auto instruction = runtime::find_option(request.options, {"instruction"}).value_or("");
+        const auto instruction = runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
         if (instruction.empty()) {
             throw std::runtime_error("FireRedAudio edit requires instruction");
         }
@@ -123,15 +123,15 @@ FireRedAudioGenerationRequest make_generation_request(
     }
     out.max_new_audio_steps = runtime::parse_positive_i64_option(
         request.options,
-        {"max_new_audio_steps"},
+        {"max_audio_steps", "max_new_audio_steps"},
         out.max_new_audio_steps);
-    out.min_new_audio_steps = runtime::parse_i64_option(request.options, {"min_new_audio_steps"}).value_or(out.min_new_audio_steps);
+    out.min_new_audio_steps = runtime::parse_i64_option(request.options, {"min_audio_steps", "min_new_audio_steps"}).value_or(out.min_new_audio_steps);
     if (out.min_new_audio_steps < 0) {
-        throw std::runtime_error("FireRedAudio min_new_audio_steps must be non-negative");
+        throw std::runtime_error("FireRedAudio min_audio_steps must be non-negative");
     }
     out.max_new_text_tokens = runtime::parse_positive_i64_option(
         request.options,
-        {"max_new_text_tokens"},
+        {"max_text_tokens", "max_new_text_tokens"},
         out.max_new_text_tokens);
     return out;
 }
@@ -150,7 +150,7 @@ FireRedAudioUnderstandingRequest make_understanding_request(
     out.seed = runtime::parse_u32_option(request.options, {"seed"}).value_or(out.seed);
     out.max_new_tokens = runtime::parse_positive_i64_option(
         request.options,
-        {"max_new_tokens"},
+        {"max_tokens", "max_new_tokens"},
         out.max_new_tokens);
     out.enable_thinking = runtime::parse_bool_option(
         runtime::find_option(request.options, {"enable_thinking"}).value_or("false"),
@@ -159,7 +159,7 @@ FireRedAudioUnderstandingRequest make_understanding_request(
     if (mode == "understand") {
         out.do_sample = true;
         out.repetition_penalty = 1.0F;
-        if (out.enable_thinking && !runtime::find_option(request.options, {"max_new_tokens"}).has_value()) {
+        if (out.enable_thinking && !runtime::find_option(request.options, {"max_tokens", "max_new_tokens"}).has_value()) {
             out.max_new_tokens = 1024;
         }
     } else if (mode == "asr") {
@@ -207,7 +207,10 @@ FireRedAudioSession::FireRedAudioSession(
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<FireRedAudioTokenizer>(assets_)) {
-    runtime::validate_spec_backed_session_options(options, *contract_, kFamily, kModelName);
+    auto validation_options = options;
+    // Retain the previously advertised option, which never affected allocation.
+    validation_options.options.erase("firered_audio.helper_graph_arena_mb");
+    runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("FireRedAudio supports offline sessions");
     }
@@ -277,8 +280,14 @@ runtime::RunMode FireRedAudioSession::run_mode() const {
 }
 
 void FireRedAudioSession::prepare(const runtime::SessionPreparationRequest & request) {
+    auto validation_options = request.options;
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    for (const auto * key : {"instruct", "instruction", "max_tokens", "max_new_tokens", "max_text_tokens", "max_new_text_tokens",
+                            "max_audio_steps", "max_new_audio_steps", "min_audio_steps", "min_new_audio_steps"}) {
+        validation_options.erase(key);
+    }
     runtime::validate_spec_backed_request_options(
-        request.options,
+        validation_options,
         *contract_,
         kModelName);
     mark_prepared();
@@ -286,8 +295,14 @@ void FireRedAudioSession::prepare(const runtime::SessionPreparationRequest & req
 
 runtime::TaskResult FireRedAudioSession::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
+    auto validation_options = request.options;
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    for (const auto * key : {"instruct", "instruction", "max_tokens", "max_new_tokens", "max_text_tokens", "max_new_text_tokens",
+                            "max_audio_steps", "max_new_audio_steps", "min_audio_steps", "min_new_audio_steps"}) {
+        validation_options.erase(key);
+    }
     runtime::validate_spec_backed_request_options(
-        request.options,
+        validation_options,
         *contract_,
         kModelName);
     require_prepared("FireRedAudio run");

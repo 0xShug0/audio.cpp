@@ -15,6 +15,8 @@ struct Conv1dConfig {
     int padding = 0;
     int dilation = 1;
     bool use_bias = true;
+    // Preserve BF16 convolution and bias rounding, with F32 graph outputs.
+    bool bf16_compute = false;
 };
 
 struct Conv1dWeights {

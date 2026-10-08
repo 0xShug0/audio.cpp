@@ -4,6 +4,7 @@
 #include "config.h"
 #include "frontend.h"
 #include "http.h"
+#include "server_protocol.h"
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 #include "model_installer.h"
 #endif
@@ -51,13 +52,9 @@ public:
     LiveIngestLimits live_ingest_limits(const HttpRequest & request) const override;
 
 private:
-    struct LoadedModel {
-        struct RuntimeVoicePreset {
-            std::optional<std::string> voice_id;
-            std::optional<engine::runtime::AudioBuffer> audio;
-            std::optional<std::string> reference_text;
-        };
+    friend struct RequestDispatcher;
 
+    struct LoadedModel {
         ServerModelConfig config;
         // Stable registration identity, independent of configuration replacement.
         std::string registered_id;
@@ -139,6 +136,7 @@ private:
     // Under the existing exclusive lease; reject unsupported replacement slots
     // before unloading or committing configuration.
     void validate_replacement_slots(const LoadedModel & existing, LoadedModel & candidate);
+    HttpResponse handle_health() const;
     std::filesystem::path resolve_ui_model_path(const std::filesystem::path & path) const;
     HttpResponse handle_model_load(const std::string & body_text);
     HttpResponse handle_model_unload(const std::string & body_text);
@@ -157,7 +155,7 @@ private:
 #endif
     HttpResponse handle_ui_asset() const;
     HttpResponse handle_ui_voice_preview(const HttpRequest & request) const;
-    LoadedModel::RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
+    RuntimeVoicePreset load_runtime_voice_preset(const ServerModelConfig::VoicePreset & preset) const;
     void load_voice_presets(LoadedModel & model) const;
     void ensure_model_loaded_locked(LoadedModel & model);
     // With max_loaded_models set, unload least recently used idle models until
@@ -169,16 +167,9 @@ private:
     // memory and (for GPU backends) the backend device memory.
     void ensure_model_fits_memory(const ServerModelConfig & model);
     LoadedModel & require_model(const engine::io::json::Value & body);
-    const LoadedModel::RuntimeVoicePreset * select_voice_preset(
-        const LoadedModel & model,
-        const engine::io::json::Value & body,
-        bool & voice_field_is_preset) const;
     engine::runtime::TaskRequest build_speech_request(
         const LoadedModel & model,
         const engine::io::json::Value & body) const;
-    engine::runtime::TaskRequest apply_default_request_options(
-        const LoadedModel & model,
-        engine::runtime::TaskRequest request) const;
     struct TimedTaskResult;
     // `busy_timeout_ms` on each of these is the per-request override parsed from the
     // request body; nullopt means "use the model's configured ceiling".
@@ -262,6 +253,8 @@ private:
     std::filesystem::path request_base_;
     std::vector<std::unique_ptr<LoadedModel>> models_;
     std::unordered_map<std::string, size_t> model_index_;
+    // The server config's model definitions by id, kept for WebUI loads of those ids.
+    std::unordered_map<std::string, ServerModelConfig> configured_models_;
     mutable std::mutex models_mutex_;
     // Serializes framework loads while max_loaded_models or the memory guard
     // (min_free_memory_mb) is active, so two concurrent lazy loads cannot both

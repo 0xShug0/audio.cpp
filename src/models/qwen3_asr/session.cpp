@@ -197,7 +197,9 @@ Qwen3ASRSession::Qwen3ASRSession(
           option_weight_type(options, {"qwen3_asr.weight_type"}, engine::assets::TensorStorageType::Native))),
       tokenizer_(assets_),
       frontend_(assets_),
-      audio_encoder_(assets_, execution_context(), audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_),
+      audio_encoder_(assets_->model_weights, assets_->config.audio_encoder,
+          execution_context(), {audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_, "qwen3_asr.audio_encoder"},
+          assets_->config.audio_encoder_binding),
       thinker_(
           assets_,
           execution_context(),
@@ -207,7 +209,7 @@ Qwen3ASRSession::Qwen3ASRSession(
           thinker_weight_storage_type_),
       prompt_builder_(tokenizer_),
       postprocessor_(tokenizer_),
-      vad_model_path_(runtime::find_option(options.options, {"qwen3_asr.vad_path", "qwen3_asr.vad_model_path"}).value_or(default_vad_model_path().string())) {
+      vad_model_path_(runtime::find_option(options.options, {"qwen3_asr.vad_model_path", "qwen3_asr.vad_path"}).value_or(default_vad_model_path().string())) {
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Qwen3 ASR only supports VoiceTaskKind::Asr");
     }

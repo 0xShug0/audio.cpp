@@ -45,10 +45,10 @@ Use with `--request-option name=value`.
 | `target_language` | unset | Translation target. Omit for transcription. |
 | `return_timestamps` | `false` | Return utterance-level segments. |
 | `condition_on_previous_text` | `false` | Condition each window on its preceding transcript. |
-| `beam_size` | `1` | Decoder beam width. `1` is greedy; `5` matches the official Python default. |
+| `num_beams` | `1` | Decoder beam width. `1` is greedy; `5` matches the official Python default. Legacy `beam_size` remains accepted. |
 | `max_tokens` | `0` | Output token limit per window; `0` selects 374. |
 | `audio_chunk_mode` | `auto` | `auto`, `fixed`, or `none`. |
-| `audio_chunk_duration_sec` | `30` | Window duration, from 0.2 to 30 seconds. |
+| `audio_chunk_duration_sec` | `30` | Window duration, greater than 0 and at most 30 seconds. |
 
 Translation targets: `ara`, `cat`, `ces`, `cym`, `deu`, `eng`, `est`, `fas`,
 `fra`, `ind`, `ita`, `jpn`, `lav`, `mon`, `nld`, `por`, `ron`, `rus`, `slv`,

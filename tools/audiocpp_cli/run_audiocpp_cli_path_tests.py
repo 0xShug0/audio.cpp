@@ -379,6 +379,9 @@ def build_command(args: argparse.Namespace, case: dict[str, Any], case_dir: Path
         "--threads",
         str(args.threads),
     ]
+    if args.model_spec_override is not None:
+        override = args.model_spec_override
+        command.extend(["--model-spec-override", "embedded" if str(override) == "embedded" else str(Path(override).resolve())])
     append_key_values(command, "--load-option", case.get("load_options", {}))
     append_key_values(command, "--session-option", case.get("session_options", {}))
     for override in getattr(args, "session_option", []) or []:
@@ -528,6 +531,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audiocpp-cli-bin", type=Path, default=DEFAULT_AUDIOCPP_CLI_BIN)
     parser.add_argument("--models-root", type=Path, default=DEFAULT_MODELS_ROOT)
     parser.add_argument("--model-path", type=Path, help="Override the model path for every selected case")
+    parser.add_argument("--model-spec-override", help="Model spec file, directory, or embedded for the CLI")
     parser.add_argument("--backend", default="cuda", choices=["cpu", "cuda", "vulkan", "metal", "best"])
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)

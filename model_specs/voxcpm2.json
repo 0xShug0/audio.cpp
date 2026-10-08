@@ -59,7 +59,7 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated audio tokens.",
+        "description": "Maximum generated audio tokens. Zero resolves to model max_length; requires min_tokens <= resolved max_tokens <= model limit.",
         "required": false,
         "min": 0,
         "default": 4096
@@ -67,35 +67,35 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Flow sampling steps.",
+        "description": "Flow sampling steps. Must be positive.",
         "required": false,
         "default": 10
       },
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale.",
+        "description": "Classifier-free guidance scale. Must be nonnegative.",
         "required": false,
         "default": 2
       },
       {
         "name": "retry_badcase",
         "type": "bool",
-        "description": "Retry detected bad generations.",
+        "description": "Retry detected bad generations. Offline only; streaming requires false.",
         "required": false,
         "default": true
       },
       {
         "name": "retry_badcase_max_times",
         "type": "int",
-        "description": "Maximum bad-case retries.",
+        "description": "Total attempts including the initial attempt, not extra retries; must be positive.",
         "required": false,
         "default": 3
       },
       {
         "name": "retry_badcase_ratio_threshold",
         "type": "float",
-        "description": "Bad-case audio/text length ratio threshold.",
+        "description": "Bad-case audio/text length ratio threshold. Must be positive.",
         "required": false,
         "default": 6
       },
@@ -115,6 +115,25 @@
         "required": false
       },
       {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming decoder cadence: grow emits one patch first, then doubles toward stream_frames_per_event; fixed uses the configured size. Ignored offline.",
+        "required": false,
+        "values": [
+          "grow",
+          "fixed"
+        ],
+        "default": "grow"
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Maximum generated latent patches per streaming decoder event. Set to 1 for one-patch emission. Ignored offline.",
+        "required": false,
+        "min": 1,
+        "default": 4
+      },
+      {
         "name": "stream_left_context",
         "type": "int",
         "description": "Previous patches decoded as streaming left context.",
@@ -132,7 +151,7 @@
       {
         "name": "chunk_strategy",
         "type": "enum",
-        "description": "Long-form continuation or independent generation per chunk.",
+        "description": "Long-form continuation or independent generation per chunk. Offline only.",
         "required": false,
         "values": [
           "continuation",
@@ -143,14 +162,14 @@
       {
         "name": "text_chunk_size",
         "type": "int",
-        "description": "Framework long-form text chunk size.",
+        "description": "Framework long-form text chunk size. Offline only.",
         "required": false,
         "default": 2048
       },
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Framework text chunking mode.",
+        "description": "Framework text chunking mode. Offline only.",
         "required": false,
         "values": [
           "default",
@@ -165,14 +184,14 @@
       {
         "name": "weight_type",
         "type": "enum",
-        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "description": "Language-model weight storage; does not override AudioVAE storage.",
         "required": false,
         "preset": "weight_type_full"
       },
       {
         "name": "audiovae_weight_type",
         "type": "enum",
-        "description": "Weight storage type; component-specific settings inherit weight_type.",
+        "description": "AudioVAE weight storage; defaults independently to native, not the shared weight_type.",
         "required": false,
         "preset": "weight_type_full"
       },
@@ -200,41 +219,41 @@
         "default": 3072
       },
       {
-        "name": "text_embedding_graph_context_mb",
+        "name": "text_embedding_graph_arena_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "Text embedding host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
         "default": 64
       },
       {
-        "name": "lm_step_graph_context_mb",
+        "name": "lm_step_graph_arena_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "LM step host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
         "default": 1024
       },
       {
-        "name": "projection_graph_context_mb",
+        "name": "projection_graph_arena_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "Projection host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
         "default": 256
       },
       {
-        "name": "local_encoder_graph_context_mb",
+        "name": "local_encoder_graph_arena_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "Local encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
         "default": 512
       },
       {
-        "name": "dit_graph_context_mb",
+        "name": "dit_graph_arena_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "DiT estimator host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
         "default": 1024
@@ -248,17 +267,17 @@
         "default": 768
       },
       {
-        "name": "audiovae_graph_context_mb",
+        "name": "audiovae_graph_arena_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
         "default": 1024
       },
       {
-        "name": "audiovae_encoder_graph_context_mb",
+        "name": "audiovae_encoder_graph_arena_mb",
         "type": "int",
-        "description": "Context or graph arena size in MiB.",
+        "description": "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
         "default": 1024

@@ -1,6 +1,7 @@
 #include "engine/models/cosyvoice3/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -13,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace engine::models::cosyvoice3 {
 namespace {
@@ -46,11 +48,30 @@ std::string reference_text(const runtime::TaskRequest & request) {
 }
 
 std::string instruction_text(const runtime::TaskRequest & request) {
-    return runtime::find_option(request.options, {"instruction"}).value_or("");
+    return runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
 }
 
-std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & request) {
-    const int64_t text_chunk_size =
+// The NPU sidecar takes a ladder of compiled engines in one option, comma-separated: which lengths
+// get an engine is a deployment choice (each one is ~700 MB and covers one sequence length), and a
+// list-typed session option would be a schema feature for one consumer.
+std::vector<std::string> split_paths(const std::string & value) {
+    std::vector<std::string> out;
+    size_t start = 0;
+    while (start <= value.size()) {
+        const auto end = value.find(',', start);
+        const auto stop = end == std::string::npos ? value.size() : end;
+        if (stop > start) {
+            out.push_back(value.substr(start, stop - start));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return out;
+}
+
+std::vector<runtime::TaskRequest> split_request(const runtime::TaskRequest & request) {    const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     if (text_chunk_size <= 0) {
         throw std::runtime_error("CosyVoice3 text_chunk_size must be positive");
@@ -84,7 +105,14 @@ CosyVoice3Session::CosyVoice3Session(
       assets_(require_assets(std::move(assets))),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<CosyVoice3TextTokenizer>(assets_)) {
-    runtime::validate_spec_backed_session_options(options, *contract_, kFamily, kModelName);
+    auto validation_options = options;
+    // This previously advertised option never selected convolution storage.
+    validation_options.options.erase("cosyvoice3.conv_weight_type");
+    // Older embedded contracts omit exec_plan; parse_exec_plan validates its value.
+    if (contract_->session_option_keys.find("cosyvoice3.exec_plan") == contract_->session_option_keys.end()) {
+        validation_options.options.erase("cosyvoice3.exec_plan");
+    }
+    runtime::validate_spec_backed_session_options(validation_options, *contract_, kFamily, kModelName);
     if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("CosyVoice3 supports tts and clone tasks");
     }
@@ -129,12 +157,30 @@ CosyVoice3Session::CosyVoice3Session(
         graph_arena_bytes,
         weight_context_bytes,
         storage_type);
+    // The Rockchip NPU sidecar for the flow estimator: one compiled engine per sequence length,
+    // loaded up front because an engine takes seconds to init and the ODE loop needs it per step.
+    // The ladder travels as the component's main artifact, comma-separated, because the roles of
+    // an exec_plan artifact block are a closed vocabulary while the ladder is not.
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "cosyvoice3.exec_plan",
+        {{"flow", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}}}}});
+    const auto & flow_plan = exec_plan.at("flow");
+    std::vector<std::string> rknn_flow_engines = flow_plan.impl == "rknn"
+        ? split_paths(flow_plan.artifacts.at("main"))
+        : std::vector<std::string>{};
+    for (auto & engine_path : rknn_flow_engines) {
+        engine_path = engine::rknn::resolve_engine_path(engine_path, assets_->resources.model_directory());
+    }
     flow_ = std::make_unique<CosyVoice3DiTFlowRuntime>(
         assets_,
         execution_context(),
         graph_arena_bytes,
         weight_context_bytes,
-        storage_type);
+        storage_type,
+        rknn_flow_engines);
     hift_ = std::make_unique<CosyVoice3HiftRuntime>(
         assets_,
         execution_context(),
@@ -156,13 +202,21 @@ runtime::RunMode CosyVoice3Session::run_mode() const {
 }
 
 void CosyVoice3Session::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, kModelName);
     mark_prepared();
 }
 
 runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
-    runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, kModelName);
     require_prepared("CosyVoice3 run");
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("CosyVoice3 requires text input");

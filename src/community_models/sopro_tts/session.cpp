@@ -178,7 +178,7 @@ std::string SoproTTSSession::family() const {
 }
 
 runtime::VoiceTaskKind SoproTTSSession::task_kind() const {
-    return runtime::VoiceTaskKind::Tts;
+    return task_.task;
 }
 
 runtime::RunMode SoproTTSSession::run_mode() const {
@@ -186,7 +186,12 @@ runtime::RunMode SoproTTSSession::run_mode() const {
 }
 
 void SoproTTSSession::prepare(const runtime::SessionPreparationRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Sopro");
+    auto validation_options = request.options;
+    for (const auto * key : {"max_duration_sec", "max_seconds", "min_duration_sec", "min_seconds",
+                            "reference_duration_sec", "ref_seconds"}) {
+        validation_options.erase(key);
+    }
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "Sopro");
     // SoproTTS.prepare_reference: with the voice cache on, a voice handed to
     // prepare is prepared here, and for a streaming session its prompt solved,
     // so a caller can warm a voice without generating anything.
@@ -237,16 +242,16 @@ SoproRequestOptions SoproTTSSession::parse_options(const runtime::TaskRequest & 
     if (const auto value = runtime::parse_i64_option(request.options, {"num_inference_steps"})) {
         out.steps = *value;
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"max_seconds"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"max_duration_sec", "max_seconds"})) {
         out.max_seconds = *value;
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"min_seconds"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"min_duration_sec", "min_seconds"})) {
         out.min_seconds = *value;
     }
     if (const auto value = runtime::parse_i64_option(request.options, {"text_chunk_size"})) {
         out.max_segment_chars = *value;
     }
-    if (const auto value = runtime::parse_finite_float_option(request.options, {"ref_seconds"})) {
+    if (const auto value = runtime::parse_finite_float_option(request.options, {"reference_duration_sec", "ref_seconds"})) {
         out.ref_seconds = *value;
     }
     if (const auto value = runtime::parse_u64_option(request.options, {"seed"})) {
@@ -263,18 +268,18 @@ SoproRequestOptions SoproTTSSession::parse_options(const runtime::TaskRequest & 
         throw std::runtime_error("Sopro text_chunk_size must be positive");
     }
     if (out.max_seconds <= 0.0F) {
-        throw std::runtime_error("Sopro max_seconds must be positive");
+        throw std::runtime_error("Sopro max_duration_sec must be positive");
     }
     if (out.ref_seconds <= 0.0F) {
-        throw std::runtime_error("Sopro ref_seconds must be positive");
+        throw std::runtime_error("Sopro reference_duration_sec must be positive");
     }
     if (out.min_seconds < 0.0F) {
-        throw std::runtime_error("Sopro min_seconds must not be negative");
+        throw std::runtime_error("Sopro min_duration_sec must not be negative");
     }
     // A min above max leaves min_steps > max_steps, which never lets the LM
     // emit EOS: every segment would run the full budget and be cut mid-word.
     if (out.min_seconds > out.max_seconds) {
-        throw std::runtime_error("Sopro min_seconds must not exceed max_seconds");
+        throw std::runtime_error("Sopro min_duration_sec must not exceed max_duration_sec");
     }
     // language_tag() rejects anything outside the four supported languages, so
     // fail before any weights are touched.
@@ -323,7 +328,12 @@ struct SoproSynthesisState {
 
 std::unique_ptr<SoproSynthesisState> SoproTTSSession::begin_synthesis(
     const runtime::TaskRequest & request) {
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Sopro");
+    auto validation_options = request.options;
+    for (const auto * key : {"max_duration_sec", "max_seconds", "min_duration_sec", "min_seconds",
+                            "reference_duration_sec", "ref_seconds"}) {
+        validation_options.erase(key);
+    }
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "Sopro");
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("Sopro requires non-empty text input");
     }

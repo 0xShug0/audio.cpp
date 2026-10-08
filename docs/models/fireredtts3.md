@@ -54,7 +54,7 @@ audiocpp_cli \
   --language Chinese \
   --text "今天天气很好，我们一起去公园散步吧。" \
   --request-option template_name=voice_design \
-  --request-option instruction="一个年轻女性的温柔嗓音，语速稍慢，带一点俏皮。" \
+  --request-option instruct="一个年轻女性的温柔嗓音，语速稍慢，带一点俏皮。" \
   --out fireredtts3_design.wav
 ```
 
@@ -74,9 +74,9 @@ audiocpp_cli \
 | `template_name` | Task | Inputs |
 |---|---|---|
 | `instruct_tts` | `tts` or `clon` | `--text`, `--voice-ref`, `--reference-text` |
-| `voice_design` | `vdes` | `--text`, `--request-option instruction=<text>` |
-| `semantic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
-| `acoustic_edit` | `tts` | `--audio`, `--request-option instruction=<text>` |
+| `voice_design` | `vdes` | `--text`, `--request-option instruct=<text>` |
+| `semantic_edit` | `tts` | `--audio`, `--request-option instruct=<text>` |
+| `acoustic_edit` | `tts` | `--audio`, `--request-option instruct=<text>` |
 
 ## Common Options (use directly)
 
@@ -92,20 +92,20 @@ audiocpp_cli \
 |---|---|---:|---|
 | `language` | official FireRedTTS3 language or dialect tag | `Chinese` | Generation language tag. |
 | `reference_text` | text | empty | Transcript for the prompt audio. |
-| `template_name` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Instruct request template. |
-| `instruction` | text | required for design/edit | Voice design or edit instruction. |
+| `template_name` | `instruct_tts`, `voice_design`, `semantic_edit`, `acoustic_edit` | see description | Instruct template; defaults to acoustic_edit with input audio, otherwise instruct_tts. |
+| `instruct` | text | required for design/edit | Voice design or edit instruction. Legacy `instruction` remains accepted. |
 | `text_chunk_size` | integer > 0 | `600` | Long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunk mode. |
 | `num_inference_steps` | integer > 0 | `10` | FireRed DiT flow steps per latent patch. |
-| `guidance_scale` | float >= 0 | `2.0` | FireRed DiT CFG scale. |
+| `guidance_scale` | float > 0 | see description | Positive guidance scale; defaults to 1.2 for voice-design/semantic-edit/acoustic-edit templates and 2 otherwise. |
 | `stop_threshold` | `0..1` | `0.5` | AR stop probability threshold. |
-| `seed` | integer >= 0 | `1234` | Generation seed. |
+| `seed` | integer >= 0 | see description | uint32 sampling seed; defaults to 2 for voice design and 1234 otherwise. |
 
 ## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `fireredtts3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
+| `fireredtts3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots; set 0 to disable reuse. Applies only to Base; Instruct does not use this cache. |
 | `fireredtts3.mem_saver` | bool | `false` | Release runtime graphs after request phases. |
 | `fireredtts3.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
 

@@ -556,6 +556,21 @@ public:
         return run_prefill_into_decode_cache();
     }
 
+    CausalDecoderPrefillIntoDecodeResult prefill_embeddings_into_decode_cache(
+        const std::vector<float> & embeddings, int64_t steps, int64_t required_cache_steps) {
+        if (steps <= 0 || embeddings.size() != static_cast<size_t>(steps * config_.decoder.stack.hidden_size)) {
+            throw std::runtime_error("CausalDecoderRuntime prefill embedding size mismatch");
+        }
+        if (required_cache_steps < steps) {
+            throw std::runtime_error("CausalDecoderRuntime decode cache is smaller than the prompt");
+        }
+        ensure_decode_embedding_graph(required_cache_steps);
+        ensure_prefill_embedding_graph(steps, true);
+        decode_cache_.clear_on_backend();
+        ggml_backend_tensor_set(prefill_input_, embeddings.data(), 0, embeddings.size() * sizeof(float));
+        return run_prefill_into_decode_cache();
+    }
+
     CausalDecoderPrefillResult prefill_embeddings(const std::vector<float> & embeddings, int64_t steps) {
         if (steps <= 0) {
             throw std::runtime_error("QwenCausalDecodeRuntime prefill requires positive embedding steps");
@@ -837,13 +852,14 @@ private:
         build_prefill_graph(InputKind::Token, steps, populate_decode_cache);
     }
 
-    void ensure_prefill_embedding_graph(int64_t steps) {
-        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Embedding && prefill_steps_ == steps) {
+    void ensure_prefill_embedding_graph(int64_t steps, bool populate_decode_cache = false) {
+        if (prefill_graph_ != nullptr && prefill_input_kind_ == InputKind::Embedding && prefill_steps_ == steps &&
+            prefill_populates_decode_cache_ == populate_decode_cache) {
             debug::trace_log_scalar(config_.trace_name + ".prefill.steps", steps);
             return;
         }
         release_prefill_graph();
-        build_prefill_graph(InputKind::Embedding, steps, false);
+        build_prefill_graph(InputKind::Embedding, steps, populate_decode_cache);
     }
 
     void build_prefill_graph(InputKind input_kind, int64_t steps, bool populate_decode_cache) {
@@ -2028,6 +2044,11 @@ CausalDecoderPrefillIntoDecodeResult CausalDecoderRuntime::prefill_tokens_into_d
     const std::vector<int32_t> & token_ids,
     int64_t required_cache_steps) {
     return impl_->prefill_tokens_into_decode_cache(token_ids, required_cache_steps);
+}
+
+CausalDecoderPrefillIntoDecodeResult CausalDecoderRuntime::prefill_embeddings_into_decode_cache(
+    const std::vector<float> & embeddings, int64_t steps, int64_t required_cache_steps) {
+    return impl_->prefill_embeddings_into_decode_cache(embeddings, steps, required_cache_steps);
 }
 
 CausalDecoderBatchedPrefillResult CausalDecoderRuntime::prefill_tokens_batched(

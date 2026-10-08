@@ -36,11 +36,11 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
 | `--text` | text | empty string | Prompt/context text for the ASR request. |
-| `--language` | language code | model default (`en`) | Recognition language hint. |
+| `--language` | language code | model default (`en`) | Output transcript language label; does not condition recognition. |
 | `--mode` | `offline`, `streaming` | `offline` | Full-context or streaming session. |
-| `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
+| `--max-tokens` | integer | `1024` | Maximum generated transcript tokens. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
-| `--audio-chunk-seconds` | float seconds | `4` | Fixed audio chunk duration. Equivalent to request option `audio_chunk_duration_sec`. |
+| `--audio-chunk-seconds` | seconds > 0 | `4` | Fixed audio chunk duration. Equivalent to request option `audio_chunk_duration_sec`. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
 
 ## Request Options (use with `--request-option`)
@@ -48,7 +48,7 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `enable_thinking` | bool | `true` | Enable the model thinking prompt. |
-| `audio_chunk_duration_sec` | float seconds | `4` | Fixed audio chunk duration. |
+| `audio_chunk_duration_sec` | seconds > 0 | `4` | Fixed audio chunk duration. |
 
 ## Session Options (use with `--session-option`)
 
@@ -57,10 +57,10 @@ audiocpp_cli --task asr --family higgs_audio_stt --model models/higgs-audio-v3-s
 | `higgs_audio_stt.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared text decoder weight storage type. |
 | `higgs_audio_stt.audio_encoder_weight_type` | `native`, `f32`, `f16` | `native` | Audio encoder convolution weight storage type. |
 | `higgs_audio_stt.text_decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `higgs_audio_stt.weight_type` or `native` | Text decoder matmul weight storage type. |
-| `higgs_audio_stt.audio_encoder_graph_arena_mb` | integer MiB >= 0 | `512` | Audio encoder graph arena size. |
-| `higgs_audio_stt.text_decoder_prefill_graph_arena_mb` | integer MiB >= 0 | `512` | Text decoder prefill graph arena size. |
-| `higgs_audio_stt.text_decoder_decode_graph_arena_mb` | integer MiB >= 0 | `256` | Text decoder cached-step graph arena size. |
-| `higgs_audio_stt.text_decoder_weight_context_mb` | integer MiB >= 0 | `4096` | Text decoder weight context arena size. |
+| `higgs_audio_stt.audio_encoder_graph_arena_mb` | integer MiB >= 1 | `512` | Audio encoder graph arena size. |
+| `higgs_audio_stt.text_decoder_prefill_graph_arena_mb` | integer MiB >= 1 | `512` | Text decoder prefill graph arena size. |
+| `higgs_audio_stt.text_decoder_decode_graph_arena_mb` | integer MiB >= 1 | `256` | Text decoder cached-step graph arena size. |
+| `higgs_audio_stt.text_decoder_weight_context_mb` | integer MiB >= 1 | see description | Text decoder weight context in MiB; omitted uses 4096 on 64-bit builds or 1024 on 32-bit builds. |
 
 ## Compatibility
 

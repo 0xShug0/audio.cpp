@@ -1,7 +1,7 @@
 # Kokoro multilingual GGUF preparation and validation
 
 The Kokoro loader accepts the original extracted model directory or a standalone
-GGUF produced by `tools/prepare_kokoro_gguf.py`. Specify `--family kokoro_tts` for
+GGUF produced by `tools/models/prepare_kokoro_gguf.py`. Specify `--family kokoro_tts` for
 GGUF loading. This is a Kokoro-specific container; arbitrary third-party Kokoro
 GGUF layouts are not supported.
 
@@ -63,7 +63,7 @@ official hexgrad/Kokoro-82M source checkout containing `config.json`,
 `kokoro-v1_0.pth`, and `voices/*.pt`.
 
 ```powershell
-python tools/prepare_kokoro_gguf.py --source ../models_v3_test/Kokoro-82M --output-dir ../models_v3_test/Kokoro-GGUF
+python tools/models/prepare_kokoro_gguf.py --source ../models_v3_test/Kokoro-82M --output-dir ../models_v3_test/Kokoro-GGUF
 ```
 
 Outputs are `kokoro-82m-q8_0.gguf` and `kokoro-82m-bf16.gguf`. Q8 quantizes
@@ -75,7 +75,7 @@ offline deployment, also install misaki[ja,zh] (tested with 0.9.4),
 espeakng-loader, unidic, and Jieba, then run `python -m unidic download` first:
 
 ```powershell
-python tools/prepare_kokoro_gguf.py --source ../models_v3_test/Kokoro-82M --output-dir ../models_v3_test/Kokoro-GGUF --embed-multilingual-resources
+python tools/models/prepare_kokoro_gguf.py --source ../models_v3_test/Kokoro-82M --output-dir ../models_v3_test/Kokoro-GGUF --embed-multilingual-resources
 ```
 
 ## Synthesis

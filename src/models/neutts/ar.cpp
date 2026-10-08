@@ -165,7 +165,8 @@ struct NeuTTSQwen3ARRuntime::Impl {
         int32_t speech_token_start,
         int32_t speech_token_end,
         int32_t speech_generation_end,
-        const NeuTTSGenerationOptions & options) {
+        const NeuTTSGenerationOptions & options,
+        const std::function<void(int32_t)> & on_speech_code) {
         const auto & config = weights->assets().backbone;
         if (prompt_ids.empty()) {
             throw std::runtime_error("NeuTTS AR prompt is empty");
@@ -243,6 +244,7 @@ struct NeuTTSQwen3ARRuntime::Impl {
             out.token_ids.push_back(token);
             if (is_speech_token(token, speech_token_start, speech_token_end)) {
                 out.speech_codes.push_back(token - speech_token_start);
+                if (on_speech_code) on_speech_code(out.speech_codes.back());
             }
             logits = qwen3_runtime->decode_token(token).logits;
         }
@@ -281,8 +283,9 @@ NeuTTSGeneratedCodes NeuTTSQwen3ARRuntime::generate(
     int32_t speech_token_start,
     int32_t speech_token_end,
     int32_t speech_generation_end,
-    const NeuTTSGenerationOptions & options) {
-    return impl_->generate(prompt_ids, speech_token_start, speech_token_end, speech_generation_end, options);
+    const NeuTTSGenerationOptions & options,
+    const std::function<void(int32_t)> & on_speech_code) {
+    return impl_->generate(prompt_ids, speech_token_start, speech_token_end, speech_generation_end, options, on_speech_code);
 }
 
 void NeuTTSQwen3ARRuntime::release_runtime_graphs() {

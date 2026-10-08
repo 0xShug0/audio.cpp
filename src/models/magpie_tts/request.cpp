@@ -29,9 +29,13 @@ std::string request_language(
 
 int32_t parse_voice_id(
     const MagpieTTSAssets & assets,
+    const std::optional<runtime::VoiceCondition> & voice,
     const std::unordered_map<std::string, std::string> & options,
     int32_t fallback) {
-    const auto value = runtime::find_option(options, {"voice_id"});
+    auto value = runtime::find_option(options, {"voice_id", "speaker"});
+    if (voice.has_value() && voice->speaker.has_value() && voice->speaker->cached_voice_id.has_value()) {
+        value = voice->speaker->cached_voice_id;
+    }
     if (!value.has_value() || value->empty()) {
         return fallback;
     }
@@ -53,11 +57,12 @@ int32_t parse_voice_id(
 
 MagpieTTSGenerationOptions generation_options(
     const MagpieTTSAssets & assets,
+    const std::optional<runtime::VoiceCondition> & voice,
     const std::unordered_map<std::string, std::string> & options,
     MagpieTTSGenerationOptions defaults) {
     defaults.language = MagpieTextTokenizer::normalize_language(
         runtime::find_option(options, {"language"}).value_or(defaults.language));
-    defaults.speaker = parse_voice_id(assets, options, defaults.speaker);
+    defaults.speaker = parse_voice_id(assets, voice, options, defaults.speaker);
     defaults.temperature = runtime::parse_float_option(options, {"temperature"}).value_or(defaults.temperature);
     defaults.top_k = runtime::parse_int_option(options, {"top_k"}).value_or(defaults.top_k);
     defaults.guidance_scale =
@@ -100,7 +105,7 @@ std::optional<MagpieTTSRequest> make_magpie_tts_prepare_defaults(
             request_language(std::nullopt, request.options, defaults.generation.language);
         has_defaults = defaults.generation.language != "en";
     }
-    defaults.generation = generation_options(assets, request.options, defaults.generation);
+    defaults.generation = generation_options(assets, request.voice, request.options, defaults.generation);
     return has_defaults ? std::optional<MagpieTTSRequest>(std::move(defaults)) : std::nullopt;
 }
 
@@ -113,7 +118,7 @@ MagpieTTSRequest make_magpie_tts_request(
         out.text = request.text_input->text;
     }
     out.generation.language = request_language(request.text_input, request.options, out.generation.language);
-    out.generation = generation_options(assets, request.options, out.generation);
+    out.generation = generation_options(assets, request.voice, request.options, out.generation);
     if (out.text.empty()) {
         throw std::runtime_error("MagpieTTS request text must not be empty");
     }

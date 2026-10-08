@@ -98,9 +98,9 @@ packaged prompt.
 | `--audio` | WAV path | required | User speech input. |
 | `--text` | text | empty | Assistant persona/system prompt. |
 | `--voice-ref` | WAV path | not set | User reference voice prompt. Overrides packaged `voice_id` when present. |
-| `--temperature` | float >= 0 | `0.8` | Audio-token sampling temperature. |
+| `--temperature` | float >= 0 | `0.8` | Audio-token temperature; must be > 0 when `do_sample=true`, ignored when false. |
 | `--top-k` | integer >= 0 | `250` | Audio-token top-k sampling limit. |
-| `--seed` | integer >= 0 | `42424242` | Seed for text and audio token sampling. |
+| `--seed` | integer >= 0 | see description | uint32 seed. Session RNG starts at 42424242; explicit values reseed it, while omission on later conversations continues RNG state. |
 
 ## Request Options (use with `--request-option`)
 
@@ -108,12 +108,12 @@ packaged prompt.
 |---|---|---:|---|
 | `system_prompt` | text | empty | Assistant persona/system prompt. |
 | `voice_id` | packaged id | `NATF2` | Packaged PersonaPlex voice prompt id. |
-| `temperature` | float >= 0 | `0.8` | Audio-token sampling temperature. |
-| `text_temperature` | float >= 0 | follows `temperature` | Text-token sampling temperature. |
+| `temperature` | float >= 0 | `0.8` | Audio-token temperature; must be > 0 when `do_sample=true`, ignored when false. |
+| `text_temperature` | float >= 0 | follows `temperature` | Text-token temperature; must be > 0 when `do_sample=true`, ignored when false. |
 | `top_k` | integer >= 0 | `250` | Audio-token top-k sampling limit. |
 | `text_top_k` | integer >= 0 | follows `top_k` | Text-token top-k sampling limit. |
 | `do_sample` | bool | `true` | Enable stochastic sampling. Set false for greedy decoding. |
-| `seed` | integer >= 0 | `42424242` | Seed for text and audio token sampling. |
+| `seed` | integer >= 0 | see description | uint32 seed. Session RNG starts at 42424242; explicit values reseed it, while omission on later conversations continues RNG state. |
 
 ## Session Options (use with `--session-option`)
 

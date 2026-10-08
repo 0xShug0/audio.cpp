@@ -6,6 +6,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/attention/types.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/conformer_modules.h"
 #include "engine/framework/modules/ebranchformer_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -53,16 +54,9 @@ struct OWSMCTCV4Assets {
     std::string decode_visible(const std::vector<int32_t> & ids) const;
 };
 
-struct OWSMCTCV4SubsamplingWeights {
-    modules::Conv2dWeights conv0;
-    modules::Conv2dWeights conv1;
-    modules::Conv2dWeights conv2;
-    modules::LinearWeights projection;
-};
-
 struct OWSMCTCV4Weights {
     std::unique_ptr<core::BackendWeightStore> store;
-    OWSMCTCV4SubsamplingWeights subsampling;
+    modules::EspnetConv2dSubsampling8Weights subsampling;
     std::vector<modules::EBranchformerBlockWeights> encoder;
     modules::NormWeights encoder_norm;
     core::TensorValue embedding;

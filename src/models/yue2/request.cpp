@@ -3,6 +3,7 @@
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 
 #include <cmath>
@@ -231,7 +232,7 @@ Yue2Request parse_yue2_request(const runtime::TaskRequest & request, const Yue2G
         throw std::runtime_error("Yue2 does not consume audio_input");
     }
     if (!request.input_artifacts.empty()) {
-        throw std::runtime_error("Yue2 does not consume input artifacts");
+        throw runtime::InvalidRequestError("Yue2 does not consume input artifacts");
     }
     Yue2Request out;
     out.generation = defaults;

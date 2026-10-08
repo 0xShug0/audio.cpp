@@ -25,6 +25,264 @@
       "gguf"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "auto_frame_cap",
+        "type": "bool",
+        "description": "Cap the generation budget using the chunk's phoneme count. Legacy frame_cap remains accepted.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "text_chunk_min_size",
+        "type": "int",
+        "description": "Phoneme-string chunks shorter than this character count join a neighbour. Legacy text_chunk_min remains accepted.",
+        "required": false,
+        "default": 20
+      },
+      {
+        "name": "speaker_embedding_file",
+        "type": "path",
+        "description": "File containing a comma-separated 192-dimensional speaker embedding.",
+        "required": false
+      },
+      {
+        "name": "speaker_embedding",
+        "type": "string",
+        "description": "Inline comma-separated 192-dimensional speaker embedding.",
+        "required": false
+      },
+      {
+        "name": "reference_codes",
+        "type": "string",
+        "description": "Pre-encoded reference codes in row-major order, comma- or space-separated; codebooks per frame come from the checkpoint.",
+        "required": false
+      },
+      {
+        "name": "reference_codes_file",
+        "type": "path",
+        "description": "Pre-encoded reference codes, one frame per line. Replaces audio encoding and can be used with a speaker embedding instead of reference audio.",
+        "required": false
+      },
+      {
+        "name": "x_vector_only_mode",
+        "type": "bool",
+        "description": "Clone using only the speaker embedding. Defaults to true for embedding-only input, otherwise false.",
+        "required": false
+      },
+      {
+        "name": "encode_reference_only",
+        "type": "bool",
+        "description": "Encode reference audio and return an acoustic-tokens artifact without generating speech.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated frames per text chunk; uses the checkpoint max_new_tokens setting (300 fallback). Each frame represents 80 ms.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "do_sample",
+        "type": "bool",
+        "description": "Enable sampling for all codebooks unless subtalker_do_sample overrides later codebooks.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Sampling temperature for all codebooks unless overridden for the subtalker.",
+        "required": false,
+        "default": 0.8
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k sampling limit for all codebooks unless overridden for the subtalker.",
+        "required": false,
+        "default": 25
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Nucleus cutoff within top-k candidates, unless overridden for the subtalker.",
+        "required": false,
+        "default": 0.95
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Repetition penalty applied independently to each codebook.",
+        "required": false,
+        "default": 1.2
+      },
+      {
+        "name": "repetition_window",
+        "type": "int",
+        "description": "Recent frames remembered per codebook for repetition penalties; zero uses all history.",
+        "required": false,
+        "min": 0,
+        "default": 64
+      },
+      {
+        "name": "babble_retries",
+        "type": "int",
+        "description": "Regenerations for short chunks that exceed their text; zero disables the guard.",
+        "required": false,
+        "min": 0,
+        "default": 2
+      },
+      {
+        "name": "subtalker_temperature",
+        "type": "float",
+        "description": "Temperature override for later codebooks; omitted or negative inherits temperature.",
+        "required": false
+      },
+      {
+        "name": "subtalker_top_k",
+        "type": "int",
+        "description": "Top-k override for later codebooks; omitted or negative inherits top_k.",
+        "required": false
+      },
+      {
+        "name": "subtalker_top_p",
+        "type": "float",
+        "description": "Nucleus cutoff override for later codebooks; omitted or negative inherits top_p.",
+        "required": false
+      },
+      {
+        "name": "subtalker_do_sample",
+        "type": "bool",
+        "description": "Sampling override for later codebooks; inherits do_sample when omitted.",
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; omitted draws a random seed.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum character budget per phoneme-string chunk; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 200
+      }
+    ],
+    "session": [
+      {
+        "name": "g2p_dict_file",
+        "type": "path",
+        "description": "SEA-G2P dictionary file (sea_g2p.bin). When set, input is Vietnamese/English text rather than precomputed phonemes.",
+        "required": false
+      },
+      {
+        "name": "g2p_library",
+        "type": "path",
+        "description": "SEA-G2P shared library used with g2p_dict_file; searched by library name when omitted.",
+        "required": false
+      },
+      {
+        "name": "mem_saver",
+        "type": "bool",
+        "description": "Release the talker cached-step graph after each request.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "voice_prompt_cache_slots",
+        "type": "int",
+        "description": "Prepared voice-prompt cache slots; zero disables caching.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared talker matmul storage.",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native"
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Speaker encoder convolution weight storage.",
+        "required": false,
+        "values": [
+          "native",
+          "f32",
+          "f16"
+        ],
+        "default": "f32"
+      },
+      {
+        "name": "talker_weight_type",
+        "type": "enum",
+        "description": "Talker matmul storage; inherits weight_type when omitted.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "talker_graph_arena_mb",
+        "type": "int",
+        "description": "Talker graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 256
+      },
+      {
+        "name": "speech_decoder_graph_arena_mb",
+        "type": "int",
+        "description": "Codec decoder graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "speaker_encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Speaker encoder graph metadata arena. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "talker_constant_context_mb",
+        "type": "int",
+        "description": "Talker constant metadata context. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 4096
+      },
+      {
+        "name": "code_predictor_constant_context_mb",
+        "type": "int",
+        "description": "Code predictor constant metadata context. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      },
+      {
+        "name": "speech_decoder_constant_context_mb",
+        "type": "int",
+        "description": "Codec decoder constant metadata context. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 1536
+      }
+    ],
+    "load": []
+  },
   "ui": {
     "recommended_package": "vieneu_v3_turbo_q8_0",
     "tags": [
@@ -33,7 +291,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/vieneu_v3_turbo.md",
+      "docs/models/vieneu_v3_turbo.md",
       "docs/tts.md",
       "docs/gguf.md"
     ]

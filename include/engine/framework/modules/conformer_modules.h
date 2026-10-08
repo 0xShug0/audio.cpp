@@ -38,6 +38,32 @@ struct ConvSubsamplingOutputs {
     core::TensorValue lengths;
 };
 
+struct EspnetConv2dSubsampling8Config {
+    int64_t input_features = 0;
+    int64_t hidden_size = 0;
+    int64_t time_row_alignment = 1;
+};
+
+struct EspnetConv2dSubsampling8Weights {
+    Conv2dWeights conv0;
+    Conv2dWeights conv1;
+    Conv2dWeights conv2;
+    LinearWeights projection;
+};
+
+class EspnetConv2dSubsampling8Module {
+public:
+    explicit EspnetConv2dSubsampling8Module(EspnetConv2dSubsampling8Config config);
+    // Input/output are [batch, time, features]. Three unpadded stride-2 convolutions.
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const EspnetConv2dSubsampling8Weights & weights) const;
+
+private:
+    EspnetConv2dSubsampling8Config config_;
+};
+
 struct DepthwiseConvSubsamplingConfig {
     int64_t input_features = 0;
     int64_t output_features = 0;

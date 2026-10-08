@@ -151,7 +151,7 @@ Inline ABC can be passed with `--request-option abc=<abc text>`.
 ## Generated ABC Export
 
 When the model generates its own plan (`cot=melody` or `cot=full` with no
-external `abc` / `abc_file`), the decoded ABC score is attached to the result
+external `abc` / `abc_file`), a nonempty decoded ABC score is attached to the result
 as a `score` artifact (`text/vnd.abc`). The WebUI shows a Save ABC download in
 the result panel, and the CLI writes `score.abc` when `--out-dir` is set:
 
@@ -215,13 +215,14 @@ python3 -c "import json, numpy; numpy.save('semantic.npy', numpy.array(json.load
 | Value | Runs | Produces |
 |---|---|---|
 | `abc` | ABC planner | `score` artifact |
-| `semantic` | ABC planner, semantic AR | `score` and `semantic` artifacts |
-| `audio` | everything | audio, plus `score`; `semantic` with `export_semantic=true` |
+| `semantic` | ABC planner, semantic AR | `semantic` artifact; `score` only for generated nonempty ABC |
+| `audio` | everything | audio; `score` only for generated nonempty ABC; `semantic` with `export_semantic=true` |
 
 `stop_after=abc` requires `cot=melody` or `cot=full` and no external
 `abc` / `abc_file`, because there would be nothing to generate.
 `stop_after=semantic` implies `export_semantic=true`, since the token stream is
-all that stage produces.
+all that stage produces. No `score` is emitted with `cot=off` or externally
+supplied `abc` / `abc_file`.
 
 A result from `abc` or `semantic` carries **no audio**. Use `--out-dir` on the
 CLI to collect the artifacts (`--out` writes nothing), and `/v1/tasks/run` on
@@ -307,9 +308,9 @@ script for it.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--lyrics` | text | required | Song lyrics. |
+| `--lyrics` | text | empty | Song lyrics; optional for instrumental generation. |
 | `--text` | text | empty | Fallback lyrics source when `--lyrics` is not supplied. |
-| `--seed` | integer in `[0, 2^63)` | `1234` | Generation seed. |
+| `--seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Must be nonnegative and less than 2^63. |
 
 ## Request Options (use with `--request-option`)
 
@@ -324,28 +325,31 @@ script for it.
 | `export_semantic` | `true`, `false` | `false` | Attach the semantic token stream as a `semantic` artifact. |
 | `semantic_prefix` | JSON array of codec indices | empty | Inline semantic frames to force at the start of the music stream. |
 | `semantic_prefix_file` | path | empty | File holding the same JSON array; ignored when `semantic_prefix` is set. |
-| `guidance_scale` | `0..20` | `1.01` for `cot=off`, otherwise `1.0` | Semantic classifier-free guidance scale. Legacy alias: `cfg_scale`. |
+| `guidance_scale` | `0..20` | see description | Semantic classifier-free guidance scale. Default follows the upstream route defaults. Omitted defaults to 1.01 with cot=off, otherwise 1.0. |
 | `num_inference_steps` | integer > 0 | `8` | NAR midpoint ODE steps. |
-| `seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Equivalent to `--seed <n>`. |
+| `seed` | integer in `[0, 2^63)` | `1234` | Generation seed. Must be nonnegative and less than 2^63. |
 
 ## Sampling Options (use with `--request-option`)
+
+Defaults are checkpoint-configurable. The table shows fallback values when the
+checkpoint does not override them.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `abc_temperature` | `0..5` | `0.7` | ABC planner sampling temperature. |
-| `abc_top_p` | `0..1` | `0.9` | ABC planner nucleus sampling probability. |
+| `abc_top_p` | `0..1` | `0.9` | ABC planner nucleus sampling probability. Must be in (0, 1]. |
 | `abc_top_k` | integer >= 1 | `30` | ABC planner top-k limit. |
-| `abc_repetition_penalty` | float > 0 | `1.005` | ABC planner repetition penalty. |
+| `abc_repetition_penalty` | float > 0 | `1.005` | ABC planner repetition penalty. Must be positive. |
 | `abc_penalty_window` | integer >= 1 | `100` | ABC planner repetition penalty window. |
 | `abc_min_tokens` | integer >= 0 | `32` | Minimum ABC planner tokens before EOS is accepted. |
-| `abc_max_tokens` | integer >= `abc_min_tokens` | `4096` | Maximum ABC planner tokens. |
+| `abc_max_tokens` | integer >= `abc_min_tokens` | `4096` | Maximum ABC planner tokens. Zero is allowed when min_tokens is also zero. |
 | `semantic_temperature` | `0..5` | `1.0` | Semantic codec sampling temperature. |
-| `semantic_top_p` | `0..1` | `0.95` | Semantic codec nucleus sampling probability. |
+| `semantic_top_p` | `0..1` | `0.95` | Semantic codec nucleus sampling probability. Must be in (0, 1]. |
 | `semantic_top_k` | integer >= 1 | `100` | Semantic codec top-k limit. |
-| `semantic_repetition_penalty` | float > 0 | `1.2` | Semantic codec repetition penalty. |
+| `semantic_repetition_penalty` | float > 0 | `1.2` | Semantic codec repetition penalty. Must be positive. |
 | `semantic_penalty_window` | integer >= 1 | `50` | Semantic codec repetition penalty window. |
 | `semantic_min_tokens` | integer >= 0 | `200` | Minimum semantic tokens before EOS is accepted. |
-| `semantic_max_tokens` | integer >= `semantic_min_tokens` | `9000` | Maximum semantic codec tokens. |
+| `semantic_max_tokens` | integer >= `semantic_min_tokens` | `9000` | Maximum semantic codec tokens. Zero is allowed when min_tokens is also zero. |
 
 ## Session Options (use with `--session-option`)
 
@@ -358,8 +362,8 @@ script for it.
 | `yue2.nar_lora` | safetensors path | none | Unfused NAR adapter; relative paths use the model root. |
 | `yue2.nar_lora_scale` | finite float | `1.0` | NAR delta scale; replacements stay at full strength. `0` disables the entire adapter. |
 | `yue2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Shared weight storage fallback for the main model and VAE. |
-| `yue2.model_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | Main model weight storage override. |
-| `yue2.vae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | `native` | VAE weight storage override. |
+| `yue2.model_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | see description | YuE2 MoT weight storage type. Omitted inherits weight_type. |
+| `yue2.vae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_k` | see description | YuE2 VAE weight storage type. Omitted inherits weight_type. |
 | `yue2.model_weight_context_mb` | MiB integer >= 1 | `32` | Main model weight context size. |
 | `yue2.vae_weight_context_mb` | MiB integer >= 1 | `32` | VAE weight context size. |
 | `yue2.ar_prefill_graph_arena_mb` | MiB integer >= 1 | `32` | AR prefill graph arena size. |
@@ -367,7 +371,7 @@ script for it.
 | `yue2.nar_graph_arena_mb` | MiB integer >= 1 | `32` | NAR acoustic flow graph arena size. |
 | `yue2.vae_graph_arena_mb` | MiB integer >= 1 | `32` | VAE decode graph arena size. |
 | `yue2.attention` | `auto`, `flash`, `eager` | `auto` | NAR acoustic-flow attention kernel. `auto` uses flash, except on Volta/Turing CUDA GPUs (missing MMA kernels) and Intel Vulkan GPUs (eager measured 2.2x faster) where it uses eager; explicit `flash` / `eager` override the probe. The AR decode path always uses flash. |
-| `yue2.attention_tile_rows` | integer >= 0 | `0` | Query rows per tile in the eager NAR attention. The eager lowering holds the whole score matrix, which grows with the square of the song length; `0` splits the query rows into as few equal tiles as keep one tile's scores under 3 GiB, which is what long songs need on drivers that cap a single buffer at 4 GiB. A song whose scores already fit runs as one tile. Ignored by the flash kernel. |
+| `yue2.attention_tile_rows` | integer | `0` | Query rows per tile in eager NAR attention. Nonpositive values select automatic tiling to keep each tile's score matrix under 3 GiB. A song whose scores already fit runs as one tile. Positive values set the query-row budget per tile. Ignored by the flash kernel. |
 
 ## Parity Probes
 

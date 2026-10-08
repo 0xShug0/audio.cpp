@@ -25,8 +25,7 @@
   ],
   "capabilities": {
     "asr": [
-      "speaker_turns",
-      "vad_chunking"
+      "speaker_turns"
     ]
   },
   "options": {
@@ -34,9 +33,9 @@
       {
         "name": "language",
         "type": "string",
-        "description": "ASR language label.",
+        "description": "ASR language label; empty unless provided in the request.",
         "required": false,
-        "default": "auto"
+        "default": ""
       },
       {
         "name": "context",
@@ -73,15 +72,15 @@
       {
         "name": "top_k",
         "type": "int",
-        "description": "Top-k sampling limit; 0 disables top-k filtering.",
+        "description": "Top-k sampling limit; default 50. Zero disables top-k filtering.",
         "required": false,
         "min": 0,
-        "default": 0
+        "default": 50
       },
       {
         "name": "num_beams",
         "type": "int",
-        "description": "Beam count for deterministic beam search.",
+        "description": "Compatibility-only; this checkpoint ignores beam search and uses its incremental decoder.",
         "required": false,
         "min": 1,
         "default": 1
@@ -97,14 +96,14 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Acoustic latent sampling seed.",
+        "description": "Acoustic latent sampling seed; default 1234.",
         "required": false,
-        "default": 42
+        "default": 1234
       },
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Offline audio chunking mode: auto, fixed, vad, or none.",
+        "description": "Compatibility-only; ignored in offline and streaming modes. Processor chunk/lookahead settings determine segmentation.",
         "values": [
           "auto",
           "fixed",
@@ -117,12 +116,75 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Audio chunk duration in seconds for fixed and VAD chunking.",
+        "description": "Compatibility-only; ignored in offline and streaming modes. Processor settings determine segmentation.",
         "required": false,
         "min": 0.001,
         "default": 1200
       }
-    ]
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared component weight storage.",
+        "required": false,
+        "preset": "weight_type_full",
+        "default": "native"
+      },
+      {
+        "name": "tokenizer_weight_type",
+        "type": "enum",
+        "description": "Speech tokenizer weight storage; inherits weight_type when omitted.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "connector_weight_type",
+        "type": "enum",
+        "description": "Speech connector weight storage; inherits weight_type when omitted.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "decoder_weight_type",
+        "type": "enum",
+        "description": "Text decoder weight storage; inherits weight_type when omitted.",
+        "required": false,
+        "preset": "weight_type_full"
+      },
+      {
+        "name": "tokenizer_weight_context_mb",
+        "type": "int",
+        "description": "Speech tokenizer weight metadata context. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 512
+      },
+      {
+        "name": "connector_weight_context_mb",
+        "type": "int",
+        "description": "Speech connector weight metadata context. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "decoder_weight_context_mb",
+        "type": "int",
+        "description": "Text decoder weight metadata context. Default 4096 on 64-bit builds and 1024 on 32-bit builds. Size in MiB; must be positive.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "max_history_steps",
+        "type": "int",
+        "description": "Decoder history limit; zero uses the model position capacity. Must be nonnegative and not exceed that capacity.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      }
+    ],
+    "load": []
   },
   "runtime": {
     "tags": [

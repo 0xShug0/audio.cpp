@@ -22,6 +22,12 @@ public:
         return text;
     }
 
+    // Snapshots may revise earlier provisional words. Give each a separate
+    // labelled line; never append them into the committed transcript.
+    std::string render_snapshot(const std::string & text) {
+        return finish() + "partial_text_snapshot=" + text + "\n";
+    }
+
     // Terminates the transcript line so following output starts on a fresh row. Empty when no
     // line was left open, so a run that produced no partials does not print a stray blank line.
     std::string finish() {

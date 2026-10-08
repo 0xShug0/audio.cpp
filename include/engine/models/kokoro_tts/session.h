@@ -2,6 +2,7 @@
 
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/kokoro_tts/assets.h"
 
 #include <cstddef>
@@ -46,7 +47,8 @@ void append_kokoro_word_timings(
 struct KokoroSynthesisInput;
 class KokoroTTSSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     KokoroTTSSession(
         runtime::TaskSpec task,
@@ -62,6 +64,10 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override {}
+
     struct DecoderCapacityContract {
         int64_t decoder_frame_capacity = 0;
         int64_t conditioning_sample_capacity = 0;
@@ -79,6 +85,11 @@ private:
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::shared_ptr<const kokoro_ggml::KokoroWeights> weights_;
     runtime::GraphCapacityController graph_capacity_controller_;
+    // artifacts.main from kokoro_tts.exec_plan.generator when RKNN is selected.
+    std::string rknn_generator_path_;
+    // exec_plan.generator params: overlap-blend / per-window loudness correction.
+    int64_t rknn_generator_overlap_ = 0;
+    bool rknn_generator_gain_ = false;
     int64_t fixed_token_capacity_ = 0;
     int64_t pre_tail_token_capacity_ = 0;
     uint64_t rng_seed_ = 0;

@@ -47,7 +47,7 @@ void validate_heads(const core::TensorValue & q, const core::TensorValue & k, co
     if (k.shape.dims[2] != v.shape.dims[2]) {
         throw std::runtime_error("ScaledDotProductAttention key/value step mismatch");
     }
-    if (q.shape.dims[3] != dim || k.shape.dims[3] != dim || v.shape.dims[3] != dim) {
+    if (q.shape.dims[3] != dim || k.shape.dims[3] != dim || v.shape.dims[3] <= 0) {
         throw std::runtime_error("ScaledDotProductAttention head dimension mismatch");
     }
 }
@@ -60,19 +60,28 @@ core::TensorValue build_explicit(
     const std::optional<core::TensorValue> & attention_mask,
     float scale,
     ggml_prec precision,
-    AttentionCausality causality) {
+    AttentionCausality causality,
+    const std::optional<core::TensorValue> & score_scale) {
     const MatMulModule matmul;
     auto scores = matmul.build(ctx, q_heads, TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
     ggml_mul_mat_set_prec(scores.tensor, precision);
     scores = core::ensure_backend_addressable_layout(ctx, scores);
+    if (score_scale.has_value()) {
+        auto scalar_shape = scores.shape;
+        for (size_t axis = 0; axis < scalar_shape.rank; ++axis) scalar_shape.dims[axis] = 1;
+        auto multiplier = core::reshape_tensor(ctx, *score_scale, scalar_shape);
+        scores = MulModule().build(ctx, scores, RepeatModule({scores.shape}).build(ctx, multiplier));
+    }
     core::TensorValue attn;
     if (attention_mask.has_value()) {
         attn = core::wrap_tensor(
-            ggml_soft_max_ext(ctx.ggml, scores.tensor, attention_mask->tensor, scale, 0.0F),
+            ggml_soft_max_ext(ctx.ggml, scores.tensor, attention_mask->tensor, score_scale ? 1.0F : scale, 0.0F),
             scores.shape,
             GGML_TYPE_F32);
     } else {
-        scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
+        if (!score_scale) {
+            scores = core::wrap_tensor(ggml_scale(ctx.ggml, scores.tensor, scale), scores.shape, GGML_TYPE_F32);
+        }
         if (causality == AttentionCausality::Causal) {
             scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
         }
@@ -135,7 +144,7 @@ core::TensorValue build_explicit_cpu_per_head_one(
     auto v_2d = core::reshape_tensor(
         ctx,
         core::ensure_backend_addressable_layout(ctx, v),
-        core::TensorShape::from_dims({key_steps, head_dim}));
+        core::TensorShape::from_dims({key_steps, v.shape.dims[3]}));
     ggml_tensor * scores_raw = ggml_mul_mat(ctx.ggml, k_2d.tensor, q_2d.tensor);
     ggml_mul_mat_set_prec(scores_raw, precision);
     auto scores = core::wrap_tensor(
@@ -152,7 +161,7 @@ core::TensorValue build_explicit_cpu_per_head_one(
     return core::reshape_tensor(
         ctx,
         core::ensure_backend_addressable_layout(ctx, context),
-        core::TensorShape::from_dims({1, query_steps, 1, head_dim}));
+        core::TensorShape::from_dims({1, query_steps, 1, v.shape.dims[3]}));
 }
 
 core::TensorValue build_explicit_cpu_per_head(
@@ -272,12 +281,22 @@ core::TensorValue ScaledDotProductAttentionModule::build(
     const core::TensorValue & q_heads,
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
-    const std::optional<core::TensorValue> & attention_mask) const {
+    const std::optional<core::TensorValue> & attention_mask,
+    const std::optional<core::TensorValue> & score_scale) const {
     validate_heads(q_heads, k_heads, v_heads, config_.head_dim);
+    if (score_scale && (config_.lowering != ScaledDotProductAttentionLowering::Explicit ||
+                       score_scale->shape.num_elements() != 1)) {
+        throw std::runtime_error("ScaledDotProductAttention tensor score scale requires explicit lowering and one element");
+    }
+    if ((config_.lowering == ScaledDotProductAttentionLowering::Flash ||
+         config_.lowering == ScaledDotProductAttentionLowering::FlashPreserveViews) &&
+        v_heads.shape.dims[3] != config_.head_dim) {
+        throw std::runtime_error("ScaledDotProductAttention flash lowering requires equal Q/K/V widths");
+    }
     const float scale = 1.0F / std::sqrt(static_cast<float>(config_.head_dim));
     switch (config_.lowering) {
         case ScaledDotProductAttentionLowering::Explicit:
-            return build_explicit(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
+            return build_explicit(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality, score_scale);
         case ScaledDotProductAttentionLowering::ExplicitCpuPerHead:
             return build_explicit_cpu_per_head(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality);
         case ScaledDotProductAttentionLowering::Flash:

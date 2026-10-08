@@ -73,6 +73,7 @@ std::shared_ptr<const IndexEchoAssets> load_index_echo_assets(const std::filesys
 
     auto qwen3_audio = std::make_shared<qwen3_asr::Qwen3ASRAssets>();
     qwen3_audio->config.audio_encoder = audio;
+    qwen3_audio->config.audio_encoder_binding = {"thinker.audio_tower", "thinker.audio_tower"};
     qwen3_audio->config.frontend.sample_rate = 16000;
     qwen3_audio->config.frontend.feature_size = audio.num_mel_bins;
     qwen3_audio->config.frontend.hop_length = 160;

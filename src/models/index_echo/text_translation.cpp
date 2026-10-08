@@ -9,7 +9,7 @@
 #include "engine/framework/tokenizers/llama_bpe.h"
 #include "engine/framework/modules/transformers/qwen35_decoder_runtime.h"
 #include "engine/models/index_echo/connector.h"
-#include "engine/models/qwen3_asr/audio_encoder.h"
+#include "engine/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.h"
 
 #include <algorithm>
 #include <chrono>
@@ -103,7 +103,10 @@ public:
          assets::TensorStorageType storage_type)
         : assets_(std::move(assets)),
           frontend_({16000, 400, 160, 128, audio::STFTFamily::Default}),
-          audio_encoder_(assets_->qwen3_omni_audio, execution, 128ull * 1024ull * 1024ull, storage_type),
+          audio_encoder_(assets_->qwen3_omni_audio->model_weights,
+              assets_->qwen3_omni_audio->config.audio_encoder,
+              execution, {128ull * 1024ull * 1024ull, storage_type, "index_echo.audio_encoder"},
+              assets_->qwen3_omni_audio->config.audio_encoder_binding),
           connector_(assets_, execution, storage_type),
           decoder_config_([&] {
               auto config = assets_->qwen35_config;
@@ -148,7 +151,7 @@ public:
         features.frames = mel.frames;
         features.mel_bins = mel.mel_bins;
         features.attention_mask.assign(static_cast<size_t>(features.frames), 1);
-        features.encoder_tokens = qwen3_asr::qwen3_asr_audio_encoder_token_count(features.frames);
+        features.encoder_tokens = modules::qwen3_audio_encoder_token_count(features.frames);
         const auto encoded = audio_encoder_.encode(features);
         auto connected = connector_.connect(encoded);
         if (decoder_config_.round_bf16_activations) {
@@ -215,7 +218,7 @@ public:
 private:
     std::shared_ptr<const IndexEchoAssets> assets_;
     audio::WhisperLogMelExtractor frontend_;
-    qwen3_asr::Qwen3ASRAudioEncoderRuntime audio_encoder_;
+    modules::Qwen3AudioEncoderRuntime audio_encoder_;
     IndexEchoAudioConnectorRuntime connector_;
     modules::Qwen35DecoderConfig decoder_config_;
     modules::Qwen35DecoderRuntime qwen35_;

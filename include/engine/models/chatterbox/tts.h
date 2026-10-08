@@ -5,7 +5,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/chatterbox/conditionals.h"
-#include "engine/models/chatterbox/s3gen_inference.h"
+#include "engine/framework/codecs/s3gen_runtime.h"
 #include "engine/models/chatterbox/t3_component.h"
 #include "engine/models/chatterbox/text_tokenizer.h"
 
@@ -62,7 +62,7 @@ struct ChatterboxVoiceCloneOutputs {
     double s3gen_token2mel_encoder_ms = 0.0;
     double s3gen_token2mel_mu_ms = 0.0;
     double s3gen_token2mel_cfm_ms = 0.0;
-    S3FlowCFMTimingBreakdown s3gen_token2mel_cfm_timing;
+    engine::codecs::s3gen::S3FlowCFMTimingBreakdown s3gen_token2mel_cfm_timing;
     double s3gen_vocoder_ms = 0.0;
     int64_t s3gen_token2mel_cuda_memory_used_before_bytes = 0;
     int64_t s3gen_token2mel_cuda_memory_used_after_bytes = 0;
@@ -90,9 +90,7 @@ public:
         engine::models::chatterbox::VoiceEncoderComponent voice_encoder,
         engine::models::chatterbox::S3TokenizerComponent tokenizer_component,
         engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder,
-        std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights,
-        std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights,
-        engine::models::chatterbox::HiFTVocoderComponent vocoder,
+        std::unique_ptr<engine::codecs::s3gen::S3GenRuntime> s3gen,
         ChatterboxPromptPrepConfig prompt_prep_config,
         const engine::core::ExecutionContext & execution_context,
         bool mem_saver = false);
@@ -112,8 +110,6 @@ public:
         const ChatterboxVoiceCloneConfig & config = {}) const;
 
 private:
-    struct State;
-
     ChatterboxVoiceCloneOutputs synthesize_voice_clone_impl(
         const std::string & text,
         const ChatterboxConditionalsOutputs & conditionals,
@@ -122,12 +118,9 @@ private:
     T3InferenceComponent t3_;
     std::shared_ptr<const ChatterboxEnglishTokenizerModel> tokenizer_;
     ChatterboxConditionalsComponent conditionals_;
-    std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights_;
-    std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights_;
-    engine::models::chatterbox::HiFTVocoderComponent vocoder_;
+    std::unique_ptr<engine::codecs::s3gen::S3GenRuntime> s3gen_;
     const engine::core::ExecutionContext * execution_context_ = nullptr;
     bool mem_saver_ = false;
-    std::shared_ptr<State> state_;
 };
 
 }  // namespace engine::models::chatterbox

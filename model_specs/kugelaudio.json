@@ -65,7 +65,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Diffusion steps per generated acoustic frame.",
+        "description": "Diffusion steps per acoustic frame, from 1 to 1000; omitted uses the checkpoint's diffusion_head_config.ddpm_num_inference_steps.",
         "min": 1,
         "max": 1000,
         "default": 20,
@@ -74,8 +74,7 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Diffusion classifier-free guidance; 1 disables the unconditional pass.",
-        "min": 0,
+        "description": "Diffusion classifier-free guidance; 1 disables the unconditional pass. Any finite value is accepted; negative values enter CFG arithmetic.",
         "default": 3,
         "required": false
       },
@@ -97,8 +96,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Autoregressive sampling temperature when do_sample is enabled.",
-        "min": 0,
+        "description": "Autoregressive sampling temperature when do_sample is enabled. Any finite value is accepted; negative values disable sampling.",
         "default": 1,
         "required": false
       },

@@ -1,8 +1,11 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/attention_modules.h"
+#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conformer_modules.h"
+#include "engine/framework/modules/convnext_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/graph_optimizer.h"
 
@@ -1086,10 +1089,89 @@ void test_cached_cross_flash_masks() {
     require_allclose(runner.run_f32(per_head), runner.run_f32(expected), 1e-5f, "per-head cached flash mask");
 }
 
+void test_weighted_statistics_and_scale_bias() {
+    using namespace engine;
+    CpuModuleRunner runner;
+    const auto shape = core::TensorShape::from_dims({1, 2, 3});
+    const auto input = runner.make_f32(shape);
+    const auto weights = runner.make_f32(shape);
+    const auto moments = modules::WeightedStatisticsModule({2, 1e-4f, 1e4f}).build(runner.ctx, input, weights);
+    const auto affine = modules::ScaleBiasModule({2.0f, -1.0f}).build(runner.ctx, input);
+    runner.allocate_tensors();
+    core::write_tensor_f32(input, {1, 2, 3, 2, 2, 2});
+    core::write_tensor_f32(weights, {0.25f, 0.5f, 0.25f, 0.25f, 0.5f, 0.25f});
+    require_allclose(runner.run_f32(moments.mean), {2, 2}, 0, "weighted mean");
+    require_allclose(runner.run_f32(moments.stddev), {std::sqrt(0.5f), 0.01f}, 1e-7f, "weighted stddev and floor");
+    require_allclose(runner.run_f32(affine), {1, 3, 5, 3, 3, 3}, 0, "scalar affine");
+}
+
+void test_convnext_default_matches_composition() {
+    using namespace engine;
+    using core::TensorShape;
+    CpuModuleRunner runner;
+    std::vector<std::pair<core::TensorValue, std::vector<float>>> parameters;
+    const auto parameter = [&](const TensorShape & shape) {
+        const auto tensor = runner.make_f32(shape);
+        parameters.emplace_back(tensor, make_patterned_f32(shape.num_elements(), 0.4f, 0.2f));
+        return tensor;
+    };
+    const auto input = parameter(TensorShape::from_dims({1, 7, 4}));
+    modules::ConvNeXt1dWeights weights;
+    weights.depthwise = {parameter(TensorShape::from_dims({4, 1, 3})), parameter(TensorShape::from_dims({4}))};
+    weights.norm = {parameter(TensorShape::from_dims({4})), parameter(TensorShape::from_dims({4}))};
+    weights.expansion = {parameter(TensorShape::from_dims({8, 4})), parameter(TensorShape::from_dims({8}))};
+    weights.projection = {parameter(TensorShape::from_dims({4, 8})), parameter(TensorShape::from_dims({4}))};
+    weights.gamma = parameter(TensorShape::from_dims({4}));
+    const auto actual = modules::build_convnext1d(runner.ctx, input, weights);
+    auto expected = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(runner.ctx, input);
+    expected = modules::DepthwiseConv1dModule({4, 3, 1, 1, 1, true}).build(runner.ctx, expected, weights.depthwise);
+    expected = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(runner.ctx, expected);
+    expected = modules::LayerNormModule({4, 1e-6f, true, true}).build(runner.ctx, expected, weights.norm);
+    expected = modules::LinearModule({4, 8, true}).build(runner.ctx, expected, weights.expansion);
+    expected = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(runner.ctx, expected);
+    expected = modules::LinearModule({8, 4, true}).build(runner.ctx, expected, weights.projection);
+    const auto gamma = core::reshape_tensor(runner.ctx, weights.gamma, TensorShape::from_dims({1, 1, 4}));
+    expected = modules::MulModule().build(runner.ctx, expected, modules::RepeatModule({expected.shape}).build(runner.ctx, gamma));
+    expected = modules::AddModule().build(runner.ctx, input, expected);
+    runner.allocate_tensors();
+    for (const auto & parameter : parameters) core::write_tensor_f32(parameter.first, parameter.second);
+    require_allclose(runner.run_f32(actual), runner.run_f32(expected), 0, "ConvNeXt default composition");
+}
+
+void test_prelu_broadcasting() {
+    using namespace engine;
+    for (size_t axis = 0; axis < 3; ++axis) {
+        for (bool scalar : {false, true}) {
+            CpuModuleRunner runner;
+            const auto shape = core::TensorShape::from_dims({2, 3, 4});
+            const auto input = runner.make_f32(shape);
+            const auto count = scalar ? 1 : shape.dims[axis];
+            const auto slope = runner.make_f32(core::TensorShape::from_dims({count}));
+            const auto output = modules::PReluModule({axis}).build(runner.ctx, input, slope);
+            runner.allocate_tensors();
+            std::vector<float> values(24), slopes(count), expected(24);
+            for (int64_t c = 0; c < count; ++c) slopes[c] = (c - 1) * 0.25f;
+            int64_t stride = 1;
+            for (size_t dim = axis + 1; dim < 3; ++dim) stride *= shape.dims[dim];
+            for (size_t i = 0; i < values.size(); ++i) {
+                values[i] = static_cast<float>(i % 9) - 4.0f;
+                const auto channel = scalar ? 0 : (i / stride) % count;
+                expected[i] = values[i] < 0 ? values[i] * slopes[channel] : values[i];
+            }
+            core::write_tensor_f32(input, values);
+            core::write_tensor_f32(slope, slopes);
+            require_allclose(runner.run_f32(output), expected, 0.0f, "PReLU scalar/channel broadcasting");
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_weighted_statistics_and_scale_bias();
+        test_convnext_default_matches_composition();
+        test_prelu_broadcasting();
         test_glu_contiguous_gate_opt_in();
         test_depthwise_subsampling_stage_masks();
         test_batch_norm_eval_binding();

@@ -64,6 +64,18 @@ public:
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
         const auto assets = load_qwen3_forced_aligner_assets(request.model_path);
         runtime::ModelInspection inspection;
+        inspection.cli.request_options = {
+            {"clamp_timestamps_to_audio", "bool", "Opt-in guard for word timestamp output: keep repaired word spans inside the local audio input. Defaults to false to preserve existing timestamp repair behavior.", false, "false"},
+        };
+        inspection.cli.session_options = {
+            {"qwen3_forced_aligner.weight_type", "native|f32|f16|bf16|q8_0", "Shared thinker matmul storage; does not override audio encoder storage. Default: native.", false, "native"},
+            {"qwen3_forced_aligner.audio_encoder_weight_type", "native|f32|f16", "Audio encoder matmul storage. Default: native.", false, "native"},
+            {"qwen3_forced_aligner.thinker_weight_type", "native|f32|f16|bf16|q8_0", "Thinker matmul storage; inherits weight_type when omitted."},
+            {"qwen3_forced_aligner.audio_encoder_graph_arena_mb", "int", "Audio encoder graph metadata arena. Size in MiB; must be positive. Default: 128.", false, "128", "1"},
+            {"qwen3_forced_aligner.thinker_prefill_graph_arena_mb", "int", "Thinker prefill graph metadata arena. Size in MiB; must be positive. Default: 256.", false, "256", "1"},
+            {"qwen3_forced_aligner.thinker_decode_graph_arena_mb", "int", "Thinker cached-step graph metadata arena. Size in MiB; must be positive. Default: 256.", false, "256", "1"},
+            {"qwen3_forced_aligner.thinker_weight_context_mb", "int", "Thinker weight metadata context. Size in MiB; must be positive. Default: 64.", false, "64", "1"},
+        };
         inspection.model_root = assets->resources.model_root();
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);

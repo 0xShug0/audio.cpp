@@ -130,27 +130,27 @@ runtime::ModelCliInterface minimax_music3_cli_interface() {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"lyrics", "string", "Lyrics to sing.", true},
-        {"duration_sec", "float", "Maximum generated audio duration in seconds.", false, "20.0", "0.1"},
+        {"duration_sec", "float", "Positive AR frame budget expressed in seconds; not a hard final waveform duration limit.", false, "20.0", std::nullopt},
         {"num_inference_steps", "int", "Flow matching Euler steps per chunk.", false, "30", "1"},
-        {"guidance_scale", "float", "Flow transformer classifier-free guidance scale.", false, "1.7", "0.0"},
-        {"ar_guidance_scale", "float", "Autoregressive semantic and depth CFG scale.", false, "1.5", "0.0"},
+        {"guidance_scale", "float", "Flow transformer classifier-free guidance scale. Must be > 0.", false, "1.7", "0"},
+        {"ar_guidance_scale", "float", "Autoregressive semantic and depth CFG scale. Must be > 0.", false, "1.5", "0"},
         {"top_k", "int", "Top-k sampling for semantic and residual code sampling.", false, "50", "1"},
         {"seed", "int", "Generation seed.", false, "0", "0"},
-        {"flow_uncond_interval", "int", "Evaluate the flow unconditional CFG branch only every N-th step and reuse the cached guidance delta in between (measured flow -25..-40% at mel-L1 ~0.3 dB for 2-3). Default 1 keeps the exact reference trajectory.", false, "1", "1"},
-        {"flow_uncond_warmup", "int", "Number of initial flow steps that always evaluate both CFG branches when delta reuse is enabled.", false, "2", "0"},
-        {"ensemble_takes", "int", "Decode N independent takes of the same prompt in one batched AR pass (seeds seed..seed+N-1); flow and vocoder run per take. Outputs are returned as named audio (take_01..take_NN) for --out-dir.", false, "1", "1"},
+        {"flow_uncond_interval", "int", "Evaluate unconditional flow CFG every N-th step, reusing the guidance delta between evaluations. Values <= 1 disable reuse and evaluate both branches every step.", false, "1"},
+        {"flow_uncond_warmup", "int", "Initial flow steps that evaluate both CFG branches before guidance-delta reuse; nonpositive values add no warmup.", false, "2"},
+        {"ensemble_takes", "int", "Independent takes in a batched AR pass using consecutive seeds; flow/vocoder decode each take. Named outputs take_01 through take_NN are emitted only when ensemble_takes > 1; otherwise only primary audio is returned.", false, "1", "1", "16"},
         {"ensemble_prefix_frames", "int", "Intro-lock for ensembles: decode the first N frames once as a shared master trajectory (~25 frames per second), then fork the takes (take_01 continues the master exactly). 0 disables.", false, "0", "0"},
-        {"flow_chunk_hop_frames", "int", "Flow chunk hop in AR frames (~25/sec). Default 0 keeps the model config (100, 50% chunk overlap). 150 measures flow ~-35% with consistently rederived crops/carry.", false, "0", "0"},
+        {"flow_chunk_hop_frames", "int", "Flow chunk hop in AR frames, approximately 25 per second. Zero uses checkpoint configuration; positive values are capped at the configured chunk size.", false, "0", "0"},
     };
     out.session_options = {
         {"minimax_music3.weight_type", "native|bf16|f16|q8_0|q4_0|q4_k", "Shared weight storage type.", false, "native"},
         {"minimax_music3.language_model_gguf", "string", "Language model component GGUF file relative to the model root.", false, "language_model_q4_0.gguf"},
         {"minimax_music3.rvq_depth_decoder_gguf", "string", "RVQ depth decoder component GGUF file relative to the model root. q4_k measures ~-24% depth-stage time at instrument-panel-clean quality.", false, "rvq_depth_decoder_q8_0.gguf"},
         {"minimax_music3.flow_transformer_gguf", "string", "Flow transformer component GGUF file relative to the model root.", false, "transformer_q4_0.gguf"},
-        {"minimax_music3.graph_context_mb", "int", "Runtime graph arena size in MiB.", false, "32", "1"},
+        {"minimax_music3.graph_arena_mb", "int", "Host graph-metadata arena size in MiB, not device workspace.", false, "32", "1"},
         {"minimax_music3.weight_context_mb", "int", "Weight context size in MiB.", false, "32", "1"},
         {"minimax_music3.mem_saver", "bool", "Load large generation stages only while they are needed to reduce peak VRAM.", false, "true"},
-        {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; output is validated to stay identical to the sequential pipeline (automatic sequential fallback otherwise).", false, "false"},
+        {"minimax_music3.pipeline_overlap", "bool", "Overlap AR decoding with per-chunk condition/flow/vocoder work on a second backend stream. Requires mem_saver=false; combining with mem_saver=true is an error. Long requests and nondefault chunk hops use the sequential pipeline.", false, "false"},
     };
     return out;
 }
@@ -182,7 +182,7 @@ MiniMaxMusic3Session::MiniMaxMusic3Session(
     }
     const size_t graph_arena_bytes = runtime::parse_size_mb_option(
         this->options().options,
-        {"minimax_music3.graph_context_mb"},
+        {"minimax_music3.graph_arena_mb", "minimax_music3.graph_context_mb"},
         kDefaultGraphArenaBytes);
     const size_t weight_context_bytes = runtime::parse_size_mb_option(
         this->options().options,

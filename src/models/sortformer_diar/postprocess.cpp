@@ -219,10 +219,11 @@ std::vector<SecondSpan> merge_float_intervals_with_margin(
 
 }  // namespace
 
-SortformerPostprocessConfig parse_sortformer_postprocess_config(const runtime::SessionOptions & options) {
-    SortformerPostprocessConfig config;
+SortformerPostprocessConfig parse_sortformer_postprocess_config(
+    const std::unordered_map<std::string, std::string> & options,
+    SortformerPostprocessConfig config) {
     if (const auto value = runtime::parse_finite_float_option(
-            options.options,
+            options,
             {"sortformer_diar.speaker_threshold", "speaker_threshold"})) {
         if (*value < 0.0F || *value > 1.0F) {
             throw std::runtime_error("Sortformer diar speaker_threshold must be between 0 and 1");
@@ -230,7 +231,7 @@ SortformerPostprocessConfig parse_sortformer_postprocess_config(const runtime::S
         config.threshold = *value;
     }
     if (const auto value = runtime::parse_i64_option(
-            options.options,
+            options,
             {"sortformer_diar.speaker_min_frames", "speaker_min_frames"})) {
         if (*value < 0) {
             throw std::runtime_error("Sortformer diar speaker_min_frames must be non-negative");
@@ -238,7 +239,7 @@ SortformerPostprocessConfig parse_sortformer_postprocess_config(const runtime::S
         config.min_frames = *value;
     }
     if (const auto value = runtime::parse_i64_option(
-            options.options,
+            options,
             {"sortformer_diar.speaker_pad_frames", "speaker_pad_frames"})) {
         if (*value < 0) {
             throw std::runtime_error("Sortformer diar speaker_pad_frames must be non-negative");

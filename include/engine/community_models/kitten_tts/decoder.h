@@ -24,6 +24,7 @@ class KittenStyleTTS2DecoderRuntime {
     KittenStyleTTS2DecoderRuntime &operator=(const KittenStyleTTS2DecoderRuntime &) = delete;
 
     void prepare(KittenStyleTTS2DecoderCapacityContract contract);
+    void set_seed(uint64_t seed);
 
     std::vector<float> decode(const PredictorOutputs &predictor, const std::vector<float> &ref_s);
 

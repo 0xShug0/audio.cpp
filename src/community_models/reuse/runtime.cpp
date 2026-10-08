@@ -240,15 +240,8 @@ private:
             input, TensorShape::from_dims({input->ne[3], 64, input->ne[1], input->ne[0]}));
         const auto x = modules::GroupNormModule({64, 64, 1e-5f, true, true}).build(ctx, value,
             {weights_.at(prefix + ".1.weight"), weights_.at(prefix + ".1.bias")});
-        const auto alpha = core::reshape_tensor(ctx, weights_.at(prefix + ".2.weight"),
-            TensorShape::from_dims({1, 64, 1, 1}));
-        const auto positive = modules::ReluModule().build(ctx, x);
-        const auto negative = modules::ReluModule().build(ctx,
-            core::wrap_tensor(ggml_neg(ctx.ggml, x.tensor), x.shape));
-        const auto scaled = modules::MulModule().build(ctx, negative,
-            modules::RepeatModule({x.shape}).build(ctx, alpha));
-        // The framework has no channel-wise PReLU module.
-        return ggml_sub(ctx.ggml, positive.tensor, scaled.tensor);
+        return modules::PReluModule({1})
+            .build(ctx, x, weights_.at(prefix + ".2.weight")).tensor;
     }
 
     ggml_tensor * conv_norm(ggml_tensor * input, const std::string & prefix,

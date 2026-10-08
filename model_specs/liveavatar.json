@@ -30,7 +30,7 @@
   "options": {
     "request": [
       {
-        "name": "reference_image_path",
+        "name": "reference_image_file",
         "type": "string",
         "description": "Reference image path used as the identity/appearance condition.",
         "required": true
@@ -49,23 +49,23 @@
       {
         "name": "height",
         "type": "int",
-        "description": "Generated frame height.",
+        "description": "Generated frame height; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
-        "default": 704
+        "default": 480
       },
       {
         "name": "width",
         "type": "int",
-        "description": "Generated frame width.",
+        "description": "Generated frame width; must be a positive multiple of 16.",
         "required": false,
         "min": 16,
-        "default": 1024
+        "default": 832
       },
       {
         "name": "num_frames",
         "type": "int",
-        "description": "Frames generated per LiveAvatar segment.",
+        "description": "Frames generated per LiveAvatar segment; must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar).",
         "required": false,
         "min": 1,
         "default": 48
@@ -81,7 +81,7 @@
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Euler denoising steps; the LiveAvatar DMD adapter is designed for 4 steps.",
+        "description": "Denoising steps; offline generation uses UniPC, blockwise generation uses Euler. The LiveAvatar DMD adapter is designed for 4 steps.",
         "required": false,
         "min": 1,
         "default": 4
@@ -109,7 +109,7 @@
         "default": true
       },
       {
-        "name": "memory_saver",
+        "name": "mem_saver",
         "type": "bool",
         "description": "Reuse immutable condition data and temporary denoiser graph storage across sequential blocks.",
         "required": false,
@@ -118,7 +118,7 @@
       {
         "name": "denoiser_layerwise",
         "type": "bool",
-        "description": "Run the denoiser in layerwise mode.",
+        "description": "Run the denoiser in layerwise mode. Offline generation requires fused_cfg=true and guidance_scale > 1.",
         "required": false,
         "default": false
       },
@@ -141,7 +141,7 @@
       {
         "name": "vae_decoder_tile_size",
         "type": "int",
-        "description": "VAE decoder spatial tile size; 0 disables tiling.",
+        "description": "Opt-in VAE decoder spatial tile size for large outputs; 0 disables tiling. Enabled tile sizes must be multiples of 8 and larger than the 64-pixel overlap.",
         "required": false,
         "min": 0,
         "default": 0
@@ -164,7 +164,7 @@
       {
         "name": "shift",
         "type": "float",
-        "description": "Euler flow scheduler shift.",
+        "description": "Flow scheduler shift; must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 3.0
@@ -191,27 +191,6 @@
         "description": "Keep denoiser transformer blocks in host memory and stage layer groups on the accelerator.",
         "required": false,
         "default": false
-      },
-      {
-        "name": "support_gguf",
-        "type": "string",
-        "description": "Support GGUF containing text_encoder/audio_encoder tensors and the embedded tokenizer sidecar.",
-        "required": false,
-        "default": "Wan2.2-S2V-Support-Q4_K_S-F16.gguf"
-      },
-      {
-        "name": "vae_gguf",
-        "type": "string",
-        "description": "Wan video VAE component GGUF file relative to the model root.",
-        "required": false,
-        "default": "Wan2.2-S2V-VAE-F16.gguf"
-      },
-      {
-        "name": "denoiser_gguf",
-        "type": "string",
-        "description": "Denoiser DiT GGUF file relative to the model root.",
-        "required": false,
-        "default": "Wan2.2-S2V-14B-NVFP4-LORA.gguf"
       }
     ],
     "load": [
@@ -313,6 +292,8 @@
       "GGUF",
       "Stream"
     ],
-    "docs": []
+  "docs": [
+    "docs/models/liveavatar.md"
+  ]
   }
 }

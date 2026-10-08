@@ -32,6 +32,9 @@ struct Lfm2InterleavedOptions {
     // text greedy. Sampled text draws from its own stream of the same seed.
     Lfm2AudioSampling sampling{1.0f, 4, 0};
     Lfm2TextSampling text_sampling;
+    // How the prompt runs: Chunked for a turn after earlier ones, whose
+    // prompt holds the whole conversation.
+    Lfm2Prefill prefill = Lfm2Prefill::OneShot;
 };
 
 // One step of a reply: a text token, or the codes of an audio frame.

@@ -20,8 +20,8 @@ Caption:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Base Q8 | 2.367 | 0.846 | 64.3% | 0.990 | 0.918 | 7.3% |
 | Turbo Q8 | 2.367 | 0.846 | 64.3% | 0.985 | 0.915 | 7.1% |
-| XL Turbo Q8 DiT | 2.375 | 0.869 | 63.4% | 1.152 | 1.086 | 5.7% |
 | XL SFT Q8 DiT | 2.375 | 0.869 | 63.4% | 1.157 | 1.089 | 5.9% |
+| XL Turbo Q8 DiT | 2.375 | 0.869 | 63.4% | 1.152 | 1.086 | 5.7% |
 
 Extra VRAM is the sampled request peak minus the immediately preceding loaded-idle device reading. Idle includes weights, backend state, and retained caches: these are incremental generation peaks, not all non-weight memory or total GPU savings. NVML sampling interval: 10 ms. Times are HTTP wall-time medians of requests 2?8, excluding lazy model loading. All 32 response artifacts/WAVs matched exactly.
 
@@ -39,7 +39,7 @@ Warm cache savings apply to identical references, especially memory saver mode. 
 
 ## Standalone PR branch validation
 
-Ported only the three model changes onto upstream `ed96b730`, without the development branch's slot/server edits. CUDA CLI/server and all enabled test targets built. The standalone one-session server matched the development candidate for all 56 mixed-history responses across Base/Turbo/XL Turbo/XL SFT (14 each). Both fresh Turbo and XL Turbo conditioning probes passed ten histories each. Compact hashes/counts are in `ace_step_graph_memory_standalone.json`.
+Ported only the three model changes onto upstream `ed96b730`, without the development branch's slot/server edits. CUDA CLI/server and all enabled test targets built. The standalone one-session server matched the development candidate for all 56 mixed-history responses across Base/Turbo/XL Turbo/XL SFT (14 each). Both fresh Turbo and XL Turbo conditioning probes passed ten histories each. Compact hashes/counts are in [`ace_step_graph_memory_standalone.json`](../../tests/ace_step/ace_step_graph_memory_standalone.json).
 
 On Windows MSVC, configure `CMAKE_CXX_FLAGS="/utf-8 /EHsc"`: without `/utf-8`, two unrelated Unicode-literal unit tests fail; both pass with the setting. The remaining `http_live_body_test` process crash (0xc0000409) also reproduces on the unchanged upstream executable. It is not an ACE-Step inference test. Final CTest: 97 passed, four skipped (missing model assets), one failed out of 102. These targeted results do not claim a fully passing repository gate.
 
@@ -69,9 +69,9 @@ Both XL Turbo and XL SFT Q8-DiT passed **56/56 exact server comparisons** across
 
 | Model | Original warm time (s) | Optimized warm time (s) | Less time | Original extra warm VRAM (GiB) | Optimized extra warm VRAM (GiB) | Less extra VRAM |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| XL Turbo Q8 DiT | 0.744 | 0.618 | 16.9% | 2.373 | 0.820 | 65.4% |
 | XL SFT Q8 DiT | 0.721 | 0.620 | 14.1% | 2.373 | 0.820 | 65.4% |
+| XL Turbo Q8 DiT | 0.744 | 0.618 | 16.9% | 2.373 | 0.820 | 65.4% |
 
 Memory saver enabled, one session, RTX 3090, same supplied caption, seed 1234, five seconds, eight diffusion steps. Warm medians: requests 2-8. Extra VRAM is sampled request peak minus preceding loaded idle, not all non-weight bytes. No compilation/other GPU workload overlapped measurements. With memory saver disabled, measured warm latency fell by 3.1%/5.1%; incremental warm memory stayed unchanged, while full mixed-sequence device peaks (including weights) fell from 15.814/15.706 to 14.425 GiB. These measurements do not certify arbitrary requests or a particular smaller GPU capacity; optimized mixed-sequence peaks with memory saver on were 12.731/12.624 GiB.
 
-See [the XL Vulkan report](ace_step_xl_vulkan.md) and [compact results](ace_step_xl_vulkan.json) for the full matrix, executable hashes, probes and reproduction. Multi-slot Vulkan XL, editing routes and longer songs remain outside this validation.
+See [the XL Vulkan report](ace_step_xl_vulkan.md) and [compact results](../../tests/ace_step/ace_step_xl_vulkan.json) for the full matrix, executable hashes, probes and reproduction. Multi-slot Vulkan XL, editing routes and longer songs remain outside this validation.

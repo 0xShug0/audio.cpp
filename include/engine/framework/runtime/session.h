@@ -36,6 +36,8 @@ enum class VoiceTaskKind {
     Svc,
     Midi,
     TurnDetection,
+    WakeWord,
+    AudioClassification,
 };
 
 enum class RunMode {
@@ -137,6 +139,8 @@ enum class ArtifactKind {
     TranscriptAlignment,
     DiarizationState,
     VadState,
+    // Keep last: the request reader in app/cli/request.cpp checks at build
+    // time that it names every kind up to this one.
     Custom,
 };
 
@@ -226,6 +230,9 @@ struct StreamEvent {
     std::vector<WordTimestamp> word_timestamps;
     std::vector<VoiceArtifact> output_artifacts;
     bool is_final = false;
+    // Revisable whole-transcript hypothesis; clients replace their provisional
+    // display. partial_text remains append-only committed text. Opt-in only.
+    std::optional<Transcript> partial_text_snapshot = std::nullopt;
 };
 
 enum class StreamingInputKind {

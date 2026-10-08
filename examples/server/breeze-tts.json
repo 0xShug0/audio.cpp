@@ -1,0 +1,27 @@
+{
+  "_comment": "Replace the GGUF path and voice-library folder. One tts entry supports instruction-only speech and reference-audio conditioning. See README.md for both requests.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "ui": true,
+  "ui_management": false,
+  "_comment_voice_dir": "Replace /PATH/TO/voice-library with a folder you create. Put narrator.wav and a plain-text prompt_text file in it; see README.md.",
+  "voice_dir": "/PATH/TO/voice-library",
+  "models": [
+    {
+      "id": "breeze",
+      "family": "breeze_tts",
+      "path": "/PATH/TO/breeze-tts-2-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "default_request_options": {
+        "instruct": "Speak clearly and naturally.",
+        "seed": 123
+      }
+    }
+  ]
+}

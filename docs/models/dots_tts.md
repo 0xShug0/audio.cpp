@@ -21,7 +21,7 @@ audiocpp_cli --task tts --family dots_tts \
   --out out.wav
 ```
 
-MeanFlow uses the same runtime and request options with the MF package:
+MeanFlow uses the same runtime with the MF package, but ignores `guidance_scale` and always uses Euler integration regardless of `sampler_mode`:
 
 ```bash
 python3 tools/model_manager_v2.py install dots_tts_mf_q8_0
@@ -36,7 +36,7 @@ audiocpp_cli --task tts --family dots_tts \
   --out mf.wav
 ```
 
-DotTTS Edit uses a separate Edit GGUF package and `template_name=edit`. It
+DotTTS Edit is offline only and uses a separate Edit GGUF package with `template_name=edit`. It
 takes source audio plus a structured edit instruction. When `source_text` and
 `target_text` are omitted, the runtime derives them from the tagged instruction.
 
@@ -110,7 +110,7 @@ audiocpp_cli --task tts --family dots_tts \
 | `--reference-text` | text | empty | Transcript for prompt audio. |
 | `--language` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
 | `--guidance-scale` | float | `1.2` | Classifier-free guidance scale. |
-| `--max-tokens` | integer | `500` | Maximum generated audio patch count per segment. |
+| `--max-tokens` | integer | `500` | Maximum generated audio patch count per generated segment; default 500. In Edit mode source patches consume this budget; it must exceed the source-patch count. |
 | `--text-chunk-size` | chars | `320` | Long-form chunk size. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework chunking mode. |
 | `--seed` | integer | `42` | Prompt latent and flow noise seed. |
@@ -121,18 +121,18 @@ audiocpp_cli --task tts --family dots_tts \
 |---|---|---:|---|
 | `reference_text` | text | empty | Transcript for prompt audio. |
 | `reference_duration_sec` | seconds | not set | Trim prompt audio before reference conditioning. |
-| `template_name` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package. |
+| `template_name` | `tts`, `instruction_tts`, `text_to_audio`, `tts_interleave`, `edit` | `tts` | Synthesis template. Use `edit` with the DotTTS Edit package in offline mode. |
 | `source_audio` | WAV path | not set | Source audio for `template_name=edit`. |
-| `instruction` / `instruct` | text | request text | Structured DotTTS Edit instruction. |
+| `instruct` / `instruction` | text | request text | Structured DotTTS Edit instruction. |
 | `source_text` | text | derived | Optional source transcript override for DotTTS Edit. |
-| `target_text` | text | derived | Optional target transcript override for DotTTS Edit. |
+| `target_text` | text | derived | Edit target transcript override. When omitted, explicit instruction plus text input uses that text; otherwise the target is rendered from instruction tags. |
 | `use_xvector` | `auto`, `on`, `off` | `auto` | Speaker-guidance control for DotTTS Edit. |
 | `language` | language code or `none` | `none` | Optional language tag, such as `en` or `zh`. |
 | `num_inference_steps` | integer | `10` | Flow-matching inference steps. |
 | `guidance_scale` | float | `1.2` | Classifier-free guidance scale. |
 | `speaker_scale` | float | `1.5` | Prompt speaker embedding scale. |
 | `sampler_mode` | `euler`, `midpoint`, `rk4` | `euler` | Flow sampler mode. |
-| `max_tokens` | integer | `500` | Maximum generated audio patch count per segment. |
+| `max_tokens` | integer | `500` | Maximum generated audio patch count per generated segment; default 500. In Edit mode source patches consume this budget; it must exceed the source-patch count. |
 | `text_chunk_size` | chars | `320` | Long-form chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework chunking mode. |
 | `vocoder_merge_steps` | integer | `4` | Streaming vocoder latent merge size. |

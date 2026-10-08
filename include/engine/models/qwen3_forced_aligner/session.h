@@ -3,7 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/qwen3_asr/assets.h"
-#include "engine/models/qwen3_asr/audio_encoder.h"
+#include "engine/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.h"
 #include "engine/models/qwen3_asr/frontend_whisper.h"
 #include "engine/models/qwen3_asr/thinker.h"
 #include "engine/models/qwen3_asr/tokenizer_text.h"
@@ -42,7 +42,7 @@ private:
     engine::assets::TensorStorageType thinker_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::models::qwen3_asr::Qwen3ASRTextTokenizer tokenizer_;
     engine::models::qwen3_asr::Qwen3ASRWhisperFrontend frontend_;
-    engine::models::qwen3_asr::Qwen3ASRAudioEncoderRuntime audio_encoder_;
+    modules::Qwen3AudioEncoderRuntime audio_encoder_;
     engine::models::qwen3_asr::Qwen3ASRThinkerRuntime thinker_;
     Qwen3ForcedAlignProcessor processor_;
     int64_t run_index_ = 0;

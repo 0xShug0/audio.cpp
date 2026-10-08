@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -429,7 +430,7 @@ HeartMuLaPromptRequest HeartMuLaSession::make_request(const runtime::TaskRequest
         throw std::runtime_error("HeartMuLa does not consume speaker references");
     }
     if (!request.input_artifacts.empty()) {
-        throw std::runtime_error("HeartMuLa does not consume input artifacts");
+        throw runtime::InvalidRequestError("HeartMuLa does not consume input artifacts");
     }
     HeartMuLaPromptRequest out;
     out.tags = request_tags(request);

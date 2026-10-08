@@ -55,55 +55,46 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Classifier-free guidance scale; default 3.0 for ZipVoice-Distill (guidance-scale embedding), 1.0 for ZipVoice (batched CFG). 0 disables guidance.",
+        "description": "Guidance scale; inherits the session default (3.0 for both variants). ZipVoice-Distill uses a guidance-scale embedding; ZipVoice uses batched CFG. Zero disables guidance. Any finite nonnegative value is accepted.",
         "required": false,
-        "min": 0.0,
-        "max": 10.0,
-        "default": 3.0
+        "min": 0,
+        "default": 3
       },
       {
         "name": "num_inference_steps",
         "type": "int",
-        "description": "Euler ODE steps; default 8 for ZipVoice-Distill, 16 for ZipVoice.",
+        "description": "Euler ODE steps; inherits the session default (8 for both variants).",
         "required": false,
         "min": 1,
         "max": 64,
         "default": 8
       },
       {
-        "name": "t_shift",
+        "name": "shift",
         "type": "float",
-        "description": "Shift timesteps toward low SNR (smaller = stronger shift); default 0.5.",
+        "description": "Shift timesteps toward low SNR (smaller = stronger shift); default 0.5. Must be finite and positive.",
         "required": false,
-        "min": 0.05,
-        "max": 1.0,
         "default": 0.5
       },
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier applied through the prompt-duration ratio; default 1.0.",
+        "description": "Speech speed multiplier applied through the prompt-duration ratio; default 1.0. Must be finite and positive.",
         "required": false,
-        "min": 0.5,
-        "max": 2.0,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "feat_scale",
         "type": "float",
-        "description": "Feature scale applied to log-mel features; default 0.1 (reference default).",
+        "description": "Feature scale applied to log-mel features; default 0.1 (reference default). Must be finite and positive.",
         "required": false,
-        "min": 0.01,
-        "max": 1.0,
         "default": 0.1
       },
       {
         "name": "target_rms",
         "type": "float",
-        "description": "Target RMS for prompt loudness normalization; 0 disables. Default 0.1.",
+        "description": "Target RMS for prompt loudness normalization; 0 disables. Default 0.1. Negative values disable normalization; values above 1 are accepted.",
         "required": false,
-        "min": 0.0,
-        "max": 1.0,
         "default": 0.1
       },
       {
@@ -115,7 +106,7 @@
         "default": 666
       },
       {
-        "name": "lang",
+        "name": "language",
         "type": "string",
         "description": "espeak language for phonemization; default en-us.",
         "required": false,
@@ -132,10 +123,9 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Default guidance scale for requests that do not set it.",
+        "description": "Default guidance scale for requests that do not set it; must be finite and nonnegative.",
         "required": false,
         "min": 0.0,
-        "max": 10.0,
         "default": 3.0
       },
       {
@@ -148,12 +138,10 @@
         "default": 8
       },
       {
-        "name": "t_shift",
+        "name": "shift",
         "type": "float",
-        "description": "Default timestep shift for requests that do not set it.",
+        "description": "Default timestep shift for requests that do not set it; must be finite and positive.",
         "required": false,
-        "min": 0.05,
-        "max": 1.0,
         "default": 0.5
       },
       {
@@ -212,7 +200,7 @@
       "Clone"
     ],
     "docs": [
-      "docs/community_models/zipvoice.md"
+      "docs/models/zipvoice.md"
     ]
   },
   "sources": [

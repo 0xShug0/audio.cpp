@@ -23,12 +23,14 @@ public:
     // Frames each chunk adds past its context; about 10 s of audio by default.
     static constexpr int64_t kDefaultChunkFrames = 128;
 
+    // `cpu_repack` as for Lfm2BackboneRuntime.
     Lfm2DetokenizerRuntime(
         std::shared_ptr<const assets::TensorSource> detokenizer,
         std::shared_ptr<const assets::TensorSource> vocoder,
         const Lfm2DetokenizerConfig & config,
         core::ExecutionContext & execution,
-        int64_t chunk_frames = kDefaultChunkFrames);
+        int64_t chunk_frames = kDefaultChunkFrames,
+        bool cpu_repack = true);
     ~Lfm2DetokenizerRuntime();
 
     Lfm2DetokenizerRuntime(const Lfm2DetokenizerRuntime &) = delete;

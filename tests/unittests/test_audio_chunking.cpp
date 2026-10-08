@@ -640,6 +640,10 @@ void test_audio_chunk_mode_parser() {
     engine::test::require(
         engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::Vad,
         "vad audio chunk mode");
+    options["audio_chunk_mode"] = "silence";
+    engine::test::require(
+        engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::Silence,
+        "parse silence mode");
     options["audio_chunk_mode"] = "quiet_energy";
     engine::test::require(
         engine::audio::parse_audio_chunk_mode(options) == engine::audio::AudioChunkMode::QuietEnergy,
@@ -914,10 +918,54 @@ void test_chunk_speech_metadata_merge_drops_outside_spans() {
     require_span(merged.speaker_turns[0].span, 1050, 1080, "valid speaker turn span");
 }
 
+void test_silence_chunks() {
+    using engine::audio::plan_silence_audio_chunks;
+    const engine::audio::SilenceAudioChunkOptions options{28 * 16000, 30 * 16000};
+    require_throws([&]() {
+        (void) plan_silence_audio_chunks({}, options);
+    }, "empty silence planner input");
+    require_throws([]() {
+        (void) plan_silence_audio_chunks({1.0F}, {0, 1});
+    }, "zero silence max chunk size");
+    require_throws([]() {
+        (void) plan_silence_audio_chunks({1.0F}, {1, 0});
+    }, "zero silence trigger");
+    auto spans = plan_silence_audio_chunks(std::vector<float>(30 * 16000, 1.0F), options);
+    engine::test::require_eq(spans.size(), size_t{1}, "trigger includes exactly 30 seconds");
+    require_span(spans[0], 0, 30 * 16000, "short input unchanged");
+
+    // No gaps: both continuous sound and complete silence use hard cuts.
+    for (float value : {0.0F, 1.0F}) {
+        spans = plan_silence_audio_chunks(std::vector<float>(60 * 16000, value), options);
+        engine::test::require_eq(spans.size(), size_t{3}, "hard cut count");
+        require_span(spans[0], 0, 28 * 16000, "first hard cut");
+        require_span(spans[1], 28 * 16000, 56 * 16000, "second hard cut");
+        require_span(spans[2], 56 * 16000, 60 * 16000, "remaining audio");
+    }
+
+    std::vector<float> samples(8192, 0.0F);
+    std::fill(samples.begin(), samples.begin() + 2048, 1.0F);
+    std::fill(samples.begin() + 6144, samples.end(), 1.0F);
+    const auto below_trigger = plan_silence_audio_chunks(samples, {6000, 9000});
+    engine::test::require_eq(below_trigger.size(), size_t{1}, "auto policy can retain input above chunk limit");
+    require_span(below_trigger[0], 0, 8192, "auto policy trigger preserves whole input");
+    spans = plan_silence_audio_chunks(samples, {6000, 6000});
+    engine::test::require_eq(spans.size(), size_t{2}, "silence midpoint count");
+    require_span(spans[0], 0, 4352, "centered RMS silence midpoint");
+    require_span(spans[1], 4352, 8192, "silence retained without overlap");
+    for (auto & sample : samples) sample *= 0.125F;
+    const auto scaled = plan_silence_audio_chunks(samples, {6000, 6000});
+    engine::test::require_eq(scaled.size(), spans.size(), "relative threshold count");
+    for (size_t i = 0; i < spans.size(); ++i) {
+        require_span(scaled[i], spans[i].start_sample, spans[i].end_sample, "relative threshold boundaries");
+    }
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_silence_chunks();
         test_fixed_chunks_plan_start_aligned_tail();
         test_fixed_chunks_plan_overlapping_windows();
         test_fixed_chunks_plan_centered_tail_and_copy_zero_pad();

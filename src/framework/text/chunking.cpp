@@ -582,7 +582,11 @@ std::optional<int64_t> parse_text_chunk_size_override(
     if (!match.has_value()) {
         return std::nullopt;
     }
-    const int64_t value = std::stoll(match->value);
+    size_t consumed = 0;
+    const int64_t value = std::stoll(match->value, &consumed);
+    if (consumed != match->value.size()) {
+        throw std::runtime_error(std::string(match->key) + " must be an integer");
+    }
     if (value <= 0) {
         throw std::runtime_error(std::string(match->key) + " must be positive");
     }

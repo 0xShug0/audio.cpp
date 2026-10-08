@@ -106,7 +106,14 @@ bool raw_dtype_matches_ggml_type(std::string_view dtype, ggml_type type) {
            (normalized == "q5_k" && type == GGML_TYPE_Q5_K) ||
            (normalized == "q6_k" && type == GGML_TYPE_Q6_K) ||
            (normalized == "q8_0" && type == GGML_TYPE_Q8_0) ||
-           (normalized == "nvfp4" && type == GGML_TYPE_NVFP4);
+           (normalized == "nvfp4" && type == GGML_TYPE_NVFP4) ||
+           (normalized == "iq2_xxs" && type == GGML_TYPE_IQ2_XXS) ||
+           (normalized == "iq2_xs" && type == GGML_TYPE_IQ2_XS) ||
+           (normalized == "iq2_s" && type == GGML_TYPE_IQ2_S) ||
+           (normalized == "iq3_xxs" && type == GGML_TYPE_IQ3_XXS) ||
+           (normalized == "iq3_s" && type == GGML_TYPE_IQ3_S) ||
+           (normalized == "iq4_nl" && type == GGML_TYPE_IQ4_NL) ||
+           (normalized == "iq4_xs" && type == GGML_TYPE_IQ4_XS);
 }
 
 ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
@@ -130,6 +137,13 @@ ggml_type parse_ggml_type_for_tensor_dtype(std::string_view dtype) {
     if (normalized == "q5_k") return GGML_TYPE_Q5_K;
     if (normalized == "q6_k") return GGML_TYPE_Q6_K;
     if (normalized == "nvfp4") return GGML_TYPE_NVFP4;
+    if (normalized == "iq2_xxs") return GGML_TYPE_IQ2_XXS;
+    if (normalized == "iq2_xs") return GGML_TYPE_IQ2_XS;
+    if (normalized == "iq2_s") return GGML_TYPE_IQ2_S;
+    if (normalized == "iq3_xxs") return GGML_TYPE_IQ3_XXS;
+    if (normalized == "iq3_s") return GGML_TYPE_IQ3_S;
+    if (normalized == "iq4_nl") return GGML_TYPE_IQ4_NL;
+    if (normalized == "iq4_xs") return GGML_TYPE_IQ4_XS;
     throw std::runtime_error("unsupported tensor dtype for GGUF: " + std::string(dtype));
 }
 
@@ -1471,6 +1485,27 @@ TensorStorageType parse_tensor_storage_type(std::string_view value) {
     if (normalized == "nvfp4") {
         return TensorStorageType::NVFP4;
     }
+    if (normalized == "iq2_xxs") {
+        return TensorStorageType::IQ2_XXS;
+    }
+    if (normalized == "iq2_xs") {
+        return TensorStorageType::IQ2_XS;
+    }
+    if (normalized == "iq2_s") {
+        return TensorStorageType::IQ2_S;
+    }
+    if (normalized == "iq3_xxs") {
+        return TensorStorageType::IQ3_XXS;
+    }
+    if (normalized == "iq3_s") {
+        return TensorStorageType::IQ3_S;
+    }
+    if (normalized == "iq4_nl") {
+        return TensorStorageType::IQ4_NL;
+    }
+    if (normalized == "iq4_xs") {
+        return TensorStorageType::IQ4_XS;
+    }
     throw std::runtime_error("unsupported tensor storage type: " + std::string(value));
 }
 
@@ -1508,6 +1543,20 @@ ggml_type ggml_type_for_tensor_storage(TensorStorageType storage_type) {
             return GGML_TYPE_Q8_0;
         case TensorStorageType::NVFP4:
             return GGML_TYPE_NVFP4;
+        case TensorStorageType::IQ2_XXS:
+            return GGML_TYPE_IQ2_XXS;
+        case TensorStorageType::IQ2_XS:
+            return GGML_TYPE_IQ2_XS;
+        case TensorStorageType::IQ2_S:
+            return GGML_TYPE_IQ2_S;
+        case TensorStorageType::IQ3_XXS:
+            return GGML_TYPE_IQ3_XXS;
+        case TensorStorageType::IQ3_S:
+            return GGML_TYPE_IQ3_S;
+        case TensorStorageType::IQ4_NL:
+            return GGML_TYPE_IQ4_NL;
+        case TensorStorageType::IQ4_XS:
+            return GGML_TYPE_IQ4_XS;
     }
     throw std::runtime_error("unknown tensor storage type");
 }
@@ -1558,6 +1607,27 @@ TensorStorageType tensor_storage_type_for_dtype(std::string_view dtype) {
     }
     if (normalized == "nvfp4") {
         return TensorStorageType::NVFP4;
+    }
+    if (normalized == "iq2_xxs") {
+        return TensorStorageType::IQ2_XXS;
+    }
+    if (normalized == "iq2_xs") {
+        return TensorStorageType::IQ2_XS;
+    }
+    if (normalized == "iq2_s") {
+        return TensorStorageType::IQ2_S;
+    }
+    if (normalized == "iq3_xxs") {
+        return TensorStorageType::IQ3_XXS;
+    }
+    if (normalized == "iq3_s") {
+        return TensorStorageType::IQ3_S;
+    }
+    if (normalized == "iq4_nl") {
+        return TensorStorageType::IQ4_NL;
+    }
+    if (normalized == "iq4_xs") {
+        return TensorStorageType::IQ4_XS;
     }
     throw std::runtime_error("unsupported native tensor dtype: " + std::string(dtype));
 }
@@ -2115,8 +2185,13 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
             const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
             if (use_override && ggml_is_quantized(override_type)) {
+                // An explicit override may quantize [expert, output, input] banks.
+                // Keep the default policy and ordinary 3-D kernels unchanged.
+                const bool is_expert_bank = item.shape.size() == 3 && name_is_weight &&
+                    normalized_name.find(".mlp.experts.") != std::string::npos;
                 const bool can_quantize_override =
-                    source_is_float && item.shape.size() == 2 && item.shape.back() % ggml_blck_size(override_type) == 0;
+                    source_is_float && (item.shape.size() == 2 || is_expert_bank) &&
+                    item.shape.back() % ggml_blck_size(override_type) == 0;
                 if (!can_quantize_override) {
                     throw std::runtime_error("GGUF tensor type override cannot quantize tensor: " + item.name);
                 }

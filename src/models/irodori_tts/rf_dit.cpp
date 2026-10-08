@@ -1,4 +1,5 @@
 #include "engine/models/irodori_tts/rf_dit.h"
+#include "engine/models/irodori_tts/schedule.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -142,23 +143,6 @@ int find_flattening_point(const std::vector<float> &latent, int64_t frames,
     }
   }
   return static_cast<int>(frames);
-}
-
-std::vector<modules::FlowSamplerScheduleStep>
-make_irodori_rf_schedule(int64_t steps) {
-  if (steps <= 0) {
-    throw std::runtime_error("Irodori-TTS RF schedule requires positive steps");
-  }
-  std::vector<modules::FlowSamplerScheduleStep> schedule;
-  schedule.reserve(static_cast<size_t>(steps));
-  for (int64_t step = 0; step < steps; ++step) {
-    const float u = static_cast<float>(step) / static_cast<float>(steps);
-    const float u_next =
-        static_cast<float>(step + 1) / static_cast<float>(steps);
-    schedule.push_back(
-        {step, (1.0F - u) * 0.999F, (1.0F - u_next) * 0.999F, 0.0F, 0.0F});
-  }
-  return schedule;
 }
 
 modules::LinearWeights load_packed_qkvg(core::BackendWeightStore &store,
@@ -1290,6 +1274,13 @@ public:
       shape.target_samples = std::max<int64_t>(
           1, static_cast<int64_t>(seconds * assets_->codec.sample_rate));
       shape.latent_steps = (shape.target_samples + hop_length - 1) / hop_length;
+    } else if (!config.use_duration_predictor) {
+      // As the Python runtime does for checkpoints without a duration
+      // predictor: generate 30 s and let trim_tail cut the trailing silence.
+      constexpr float kFallbackSeconds = 30.0F;
+      shape.target_samples = static_cast<int64_t>(
+          kFallbackSeconds * static_cast<float>(assets_->codec.sample_rate));
+      shape.latent_steps = (shape.target_samples + hop_length - 1) / hop_length;
     } else {
       const float pred_frames =
           std::expm1(request.conditions->predicted_log_frames);
@@ -1559,7 +1550,8 @@ public:
     flow_config.label = "Irodori-TTS RF";
     flow_config.latent_shape = {shape.patched_steps, shape.patched_dim};
     flow_config.schedule = make_irodori_rf_schedule(
-        request.generation.num_inference_steps);
+        request.generation.num_inference_steps, request.generation.t_schedule_mode,
+        request.generation.sway_coeff);
     flow_config.branches = {{"velocity", 1.0F}};
     flow_config.prediction_type =
         modules::FlowSamplerPredictionType::Velocity;

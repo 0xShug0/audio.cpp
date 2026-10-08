@@ -45,23 +45,26 @@ struct CodebookWeights {
 };
 
 struct DepthformerWeights {
-    std::unique_ptr<core::BackendWeightStore> store;
+    std::unique_ptr<WeightStores> stores;
     TensorValue input_weight;  // depth_linear, [codebooks * hidden, input_size]
     TensorValue input_bias;    // [codebooks * hidden]
     std::vector<modules::DecoderLayerWeights> layers;
     std::vector<CodebookWeights> codebooks;
 };
 
-DepthformerWeights load_weights(const assets::TensorSource & source, const Lfm2DepthformerConfig & config, core::ExecutionContext & execution) {
+DepthformerWeights load_weights(
+    const assets::TensorSource & source, const Lfm2DepthformerConfig & config, core::ExecutionContext & execution, bool cpu_repack) {
     DepthformerWeights out;
-    out.store = std::make_unique<core::BackendWeightStore>(
-        execution.backend(), execution.backend_type(), "lfm2_audio.depthformer.weights", kWeightContextBytes);
-    auto & store = *out.store;
+    out.stores = std::make_unique<WeightStores>(execution, "lfm2_audio.depthformer.weights", kWeightContextBytes, cpu_repack);
+    auto & store = out.stores->plain();
     const auto native = assets::TensorStorageType::Native;
     const int64_t d = config.hidden_size;
     const int64_t ff = config.intermediate_size;
     const int64_t hd = config.head_dim;
 
+    // The matrices below go through load_matmul, being only ever src0 of
+    // LinearModule's ggml_mul_mat; depth_linear, whose rows each step views,
+    // and the embedding tables, gathered, are not.
     out.input_weight = store.load_tensor(source, "depth_linear.weight", native, {config.codebooks * d, config.input_size});
     out.input_bias = store.load_f32_tensor(source, "depth_linear.bias", {config.codebooks * d});
 
@@ -70,15 +73,15 @@ DepthformerWeights load_weights(const assets::TensorSource & source, const Lfm2D
         modules::DecoderLayerWeights w;
         w.input_norm = {store.load_f32_tensor(source, p + "operator_norm.weight", {d}), std::nullopt};
         w.self_attention.qkv_weight =
-            store.load_tensor(source, p + "operator.qkv_proj.weight", native, {d + 2 * config.num_kv_heads * hd, d});
-        w.self_attention.out_weight = store.load_tensor(source, p + "operator.out_proj.weight", native, {d, d});
+            out.stores->load_matmul(source, p + "operator.qkv_proj.weight", {d + 2 * config.num_kv_heads * hd, d});
+        w.self_attention.out_weight = out.stores->load_matmul(source, p + "operator.out_proj.weight", {d, d});
         w.q_norm = {store.load_f32_tensor(source, p + "operator.attention.q_layernorm.weight", {hd}), std::nullopt};
         w.k_norm = {store.load_f32_tensor(source, p + "operator.attention.k_layernorm.weight", {hd}), std::nullopt};
         w.post_norm = {store.load_f32_tensor(source, p + "ffn_norm.weight", {d}), std::nullopt};
         // GLU: w2(silu(w1(x)) * w3(x)).
-        w.mlp.gate_proj = {store.load_tensor(source, p + "feed_forward.w1.weight", native, {ff, d}), std::nullopt};
-        w.mlp.up_proj = {store.load_tensor(source, p + "feed_forward.w3.weight", native, {ff, d}), std::nullopt};
-        w.mlp.down_proj = {store.load_tensor(source, p + "feed_forward.w2.weight", native, {d, ff}), std::nullopt};
+        w.mlp.gate_proj = {out.stores->load_matmul(source, p + "feed_forward.w1.weight", {ff, d}), std::nullopt};
+        w.mlp.up_proj = {out.stores->load_matmul(source, p + "feed_forward.w3.weight", {ff, d}), std::nullopt};
+        w.mlp.down_proj = {out.stores->load_matmul(source, p + "feed_forward.w2.weight", {d, ff}), std::nullopt};
         out.layers.push_back(std::move(w));
     }
 
@@ -87,11 +90,11 @@ DepthformerWeights load_weights(const assets::TensorSource & source, const Lfm2D
         CodebookWeights w;
         w.embedding = store.load_tensor(source, p + "embedding.weight", native, {config.audio_vocab_size, d});
         w.norm = {store.load_f32_tensor(source, p + "embedding_norm.weight", {d}), std::nullopt};
-        w.to_logits = store.load_tensor(source, p + "to_logits.weight", native, {config.audio_vocab_size, d});
+        w.to_logits = out.stores->load_matmul(source, p + "to_logits.weight", {config.audio_vocab_size, d});
         out.codebooks.push_back(std::move(w));
     }
 
-    store.upload();
+    out.stores->upload();
     return out;
 }
 
@@ -187,7 +190,7 @@ public:
             s.logits = modules::LinearModule({d, config.audio_vocab_size, false}).build(ctx, x, {head.to_logits, std::nullopt}).tensor;
             ggml_set_output(s.logits);
             ggml_build_forward_expand(s.graph, s.logits);
-            core::validate_backend_graph_supported(execution.backend(), s.graph, "LFM2-Audio depthformer graph");
+            core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), s.graph, "LFM2-Audio depthformer graph");
             steps_.push_back(s);
         }
 
@@ -280,10 +283,13 @@ private:
 }  // namespace
 
 struct Lfm2DepthformerRuntime::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm2DepthformerConfig & config_in, core::ExecutionContext & execution)
+    Impl(std::shared_ptr<const assets::TensorSource> source_in,
+         const Lfm2DepthformerConfig & config_in,
+         core::ExecutionContext & execution,
+         bool cpu_repack)
         : source(std::move(source_in)),
           config(config_in),
-          weights(load_weights(*source, config, execution)),
+          weights(load_weights(*source, config, execution, cpu_repack)),
           graphs(weights, config, execution) {}
 
     std::shared_ptr<const assets::TensorSource> source;
@@ -295,8 +301,9 @@ struct Lfm2DepthformerRuntime::Impl {
 Lfm2DepthformerRuntime::Lfm2DepthformerRuntime(
     std::shared_ptr<const assets::TensorSource> vocoder,
     const Lfm2DepthformerConfig & config,
-    core::ExecutionContext & execution)
-    : impl_(std::make_unique<Impl>(std::move(vocoder), config, execution)) {}
+    core::ExecutionContext & execution,
+    bool cpu_repack)
+    : impl_(std::make_unique<Impl>(std::move(vocoder), config, execution, cpu_repack)) {}
 
 Lfm2DepthformerRuntime::~Lfm2DepthformerRuntime() = default;
 

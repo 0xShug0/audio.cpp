@@ -85,7 +85,7 @@ std::optional<Lfm2ReplyStep> Lfm2InterleavedGenerator::next() {
         s.left = s.options.text_steps;
         // A reply samples its audio, so it takes the speech sizing, as TTS
         // does: a seeded reply must not depend on the requests before.
-        s.output = s.backbone.start(s.prompt, s.audio, s.options.max_steps, Lfm2DecodeCache::Speech);
+        s.output = s.backbone.start(s.prompt, s.audio, s.options.max_steps, Lfm2DecodeCache::Speech, s.options.prefill);
     }
 
     if (s.steps == s.options.max_steps) {

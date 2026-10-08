@@ -255,8 +255,10 @@ OmniVoiceSession::OmniVoiceSession(
           mem_saver_,
           generator_perf_mode_) {
     engine::debug::trace_log_scalar("omnivoice.perf_mode", perf_mode_name(generator_perf_mode_));
-    if (task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("OmniVoice only supports VoiceTaskKind::Tts");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning &&
+        task_.task != runtime::VoiceTaskKind::VoiceDesign) {
+        throw std::runtime_error("OmniVoice supports TTS, voice cloning, and voice design");
     }
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("OmniVoice only supports offline and streaming sessions");

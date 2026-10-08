@@ -4,30 +4,32 @@
 |---|---|---|---|
 | Audio Flamingo 3 / Next | `audio_flamingo` | offline | [Audio Flamingo](models/audio_flamingo.md) |
 | Canary 180M Flash | `canary_asr` | offline | [Canary 180M Flash](models/canary_asr.md) |
-| Cohere Transcribe | `cohere_asr` | offline | [Cohere Transcribe](models/cohere_asr.md) |
-| CrisperWhisper 2.0 Large | `crisperwhisper` | offline, streaming | [CrisperWhisper 2.0](models/crisperwhisper.md) |
-| GigaAM v3 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |
-| Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
-| Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](community_models/granite5asr.md) |
-| LFM2.5-Audio | `lfm2_audio` | offline | [LFM2.5-Audio](community_models/lfm2_audio.md) |
-| Qwen3 ASR | `qwen3_asr` | offline, streaming | [Qwen3 ASR](#qwen3-asr) |
-| SAMSONE | `samsone` | offline | [SAMSONE](models/samsone.md) |
-| Confucius4-R2T2 | `confucius4_r2t2` | offline, streaming | [Confucius4-R2T2](community_models/r2t2.md) |
 | Citrinet ASR | `citrinet_asr` | offline | [Citrinet ASR](#citrinet-asr) |
-| Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
+| Cohere Transcribe | `cohere_asr` | offline | [Cohere Transcribe](models/cohere_asr.md) |
+| Confucius4-R2T2 | `confucius4_r2t2` | offline, streaming | [Confucius4-R2T2](models/r2t2.md) |
+| CrisperWhisper 2.0 Large | `crisperwhisper` | offline, streaming | [CrisperWhisper 2.0](models/crisperwhisper.md) |
+| Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
+| GigaAM v3 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |
+| Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](models/granite5asr.md) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](models/higgs_audio_stt.md) |
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
+| Hviske v6 | `hviske_asr_v6` | offline | [Hviske v6](models/hviske_asr_v6.md) |
+| Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
+| LFM2.5-Audio | `lfm2_audio` | offline | [LFM2.5-Audio](models/lfm2_audio.md) |
 | Moonshine Streaming ASR | `moonshine_asr` | offline, streaming | [Moonshine Streaming ASR](models/moonshine_asr.md) |
 | MOSS-Transcribe-Diarize | `moss_transcribe_diarize` | offline, text-output streaming | [MOSS-Transcribe-Diarize](models/moss_transcribe_diarize.md) |
 | Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |
 | Niagara ASR | `niagara_asr` | offline | [Niagara ASR](#niagara-asr) |
 | Parakeet-TDT | `parakeet_tdt` | offline, streaming | [Parakeet-TDT](#parakeet-tdt) |
+| Qwen3 ASR | `qwen3_asr` | offline, streaming | [Qwen3 ASR](#qwen3-asr) |
+| SAMSONE | `samsone` | offline | [SAMSONE](models/samsone.md) |
 | SenseVoice-Small | `sense_asr` | offline, streaming | [SenseVoice-Small](#sensevoice-small) |
 | VibeVoice ASR | `vibevoice_asr` | offline | [VibeVoice ASR](models/vibevoice_asr.md#vibevoice-asr) |
 | VibeVoice ASR Streaming 7B/1.5B | `vibevoice_asr_streaming` | offline, streaming | [VibeVoice ASR Streaming](models/vibevoice_asr.md#vibevoice-asr-streaming-7b) |
 | Voxtral Realtime | `voxtral_realtime` | offline, streaming | [Voxtral Realtime](models/voxtral_realtime.md) |
+| Whistle (experimental) | `whistle_asr` | offline | [Whistle ASR](models/whistle_asr.md) |
 
-This page covers ASR models. Detailed Qwen3 ASR and forced-alignment notes live in [Qwen3 models](models/qwen3.md).
+This page covers ASR models. Detailed Qwen3 transcription notes live in the [Qwen3 ASR guide](models/qwen3_asr.md); forced alignment has a [separate guide](models/qwen3_forced_aligner.md).
 
 Common CLI shape:
 
@@ -36,58 +38,6 @@ audiocpp_cli --task asr --family <family> --model <model-dir> --backend cuda --a
 ```
 
 When `--mode streaming` is used, the selected model provides its default streaming policy.
-
-## Fun-ASR-Nano
-
-Fun-ASR-Nano provides offline multilingual transcription for Chinese, English,
-and Japanese with automatic language selection. The recommended package is the
-standalone Q8_0 GGUF published by FunAudioLLM.
-
-```bash
-python3 tools/model_manager_v2.py install fun_asr_nano
-audiocpp_cli --task asr --family fun_asr_nano \
-  --model models/Fun-ASR-Nano-2512-GGUF/fun-asr-nano-2512-q8_0.gguf \
-  --backend cuda --audio speech_16k.wav --text-out transcript.txt
-```
-
-The runtime supports fixed offline chunking and inverse text normalization.
-Streaming and timestamp output are not exposed. See the
-[Fun-ASR-Nano model guide](models/fun_asr_nano.md) for package, option, GGUF,
-and server details.
-
-## Qwen3 ASR
-
-Qwen3 ASR transcribes speech and can be paired with Qwen3 Forced Aligner when timestamps are needed. Streaming mode accepts live audio chunks and emits buffered transcript deltas; timestamp output remains an offline path. See [Qwen3 models](models/qwen3.md) for the full ASR and alignment manual.
-
-```bash
-audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text-out transcript.txt
-```
-
-```bash
-audiocpp_cli --task asr --mode streaming --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --request-option audio_chunk_seconds=5 --text-out transcript.txt
-```
-
-## Confucius4-R2T2
-
-Confucius4-R2T2 is a low-latency append-only streaming ASR model: a Qwen3-ASR
-1.7B fine-tune with Longest Stable Prefix (LSP) decoding. Committed text is
-never revised, and chunk sizes from 80 ms to 2 s are supported. It runs the
-same audio tower as Qwen3 ASR, so only the streaming state machine differs.
-
-```bash
-audiocpp_cli --task asr --family confucius4_r2t2 --model models/Confucius4-R2T2 \
-  --backend metal --audio speech_16k.wav --text-out transcript.txt
-```
-
-```bash
-audiocpp_cli --task asr --mode streaming --family confucius4_r2t2 \
-  --model models/Confucius4-R2T2 --backend metal --audio speech_16k.wav \
-  --session-option confucius4_r2t2.chunk_size_ms=320 --text-out transcript.txt
-```
-
-Streaming emits append-only partial text; the final transcript is returned when
-the stream ends. See the [Confucius4-R2T2 model guide](community_models/r2t2.md) for the
-session options, the LSP state machine, and the MPS golden verification recipe.
 
 ## Citrinet ASR
 
@@ -128,34 +78,45 @@ completed `model.gguf` can be moved, renamed, and passed directly to `--model`.
 |---|---|---:|---|
 | `citrinet_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage type used by the encoder. |
 
+## Confucius4-R2T2
 
-## Kroko Community ASR
+Confucius4-R2T2 is a low-latency append-only streaming ASR model: a Qwen3-ASR
+1.7B fine-tune with Longest Stable Prefix (LSP) decoding. Committed text is
+never revised, and chunk sizes from 80 ms to 2 s are supported. It runs the
+same audio tower as Qwen3 ASR, so only the streaming state machine differs.
 
-Kroko Community ASR is a Zipformer2/RNN-T model port maintained in
-`community_models`. audio.cpp runs its feature frontend, encoder, predictor,
-joiner, greedy search, and modified beam search natively without ONNX Runtime.
-Blank penalty, natural-text hotwords, and opt-in endpoint segmentation are
-available as request options. Public free packages
-are available for German, English, Spanish, French, Italian, Hebrew, Dutch,
-Portuguese, Swedish, and Turkish. The model manager defaults to the standalone
-English Q8_0 GGUF package:
-
-```powershell
-python .\tools\model_manager_v2.py install kroko_asr_community_q8_0 --models-root .\models --overwrite
+```bash
+audiocpp_cli --task asr --family confucius4_r2t2 --model models/Confucius4-R2T2 \
+  --backend metal --audio speech_16k.wav --text-out transcript.txt
 ```
 
-```powershell
-.\build\windows-cuda-release\bin\audiocpp_cli.exe `
-  --task asr --mode streaming --family kroko_asr `
-  --model .\models\Kroko-ASR-GGUF\kroko-en-community-64-l-q8_0.gguf `
-  --backend cuda --audio .\speech.wav --language en `
-  --text-out .\transcript.txt --words-out .\words.json
+```bash
+audiocpp_cli --task asr --mode streaming --family confucius4_r2t2 \
+  --model models/Confucius4-R2T2 --backend metal --audio speech_16k.wav \
+  --session-option confucius4_r2t2.chunk_size_ms=320 --text-out transcript.txt
 ```
 
-Standalone Q8 GGUF is supported in offline and stateful streaming modes. Partial
-transcripts and word timestamps are exposed.
-See [Kroko Community ASR](community_models/kroko_asr.md) for package selection,
-conversion, GGUF, decoding options, parity, performance, and limitation details.
+Streaming emits append-only partial text; the final transcript is returned when
+the stream ends. See the [Confucius4-R2T2 model guide](models/r2t2.md) for the
+session options, the LSP state machine, and the MPS golden verification recipe.
+
+## Fun-ASR-Nano
+
+Fun-ASR-Nano provides offline multilingual transcription for Chinese, English,
+and Japanese with automatic language selection. The recommended package is the
+standalone Q8_0 GGUF published by FunAudioLLM.
+
+```bash
+python3 tools/model_manager_v2.py install fun_asr_nano
+audiocpp_cli --task asr --family fun_asr_nano \
+  --model models/Fun-ASR-Nano-2512-GGUF/fun-asr-nano-2512-q8_0.gguf \
+  --backend cuda --audio speech_16k.wav --text-out transcript.txt
+```
+
+The runtime supports fixed offline chunking and inverse text normalization.
+Streaming and timestamp output are not exposed. See the
+[Fun-ASR-Nano model guide](models/fun_asr_nano.md) for package, option, GGUF,
+and server details.
 
 ## Higgs Audio STT
 
@@ -163,6 +124,7 @@ Higgs Audio STT supports offline and streaming transcription with fixed audio
 chunking and configurable encoder/decoder storage. See the dedicated
 [Higgs Audio STT guide](models/higgs_audio_stt.md) for GGUF conversion,
 commands, options, and compatibility aliases.
+
 
 ## Hviske ASR
 
@@ -195,7 +157,7 @@ completed GGUF can therefore be moved, renamed, and passed directly to `--model`
 |---|---|---:|---|
 | `--audio` | WAV path | required | Speech input. |
 | `--language` | language code | `da` | Recognition language; can be omitted for the Danish model path. |
-| `--request-option punctuation=true\|false` | bool | model default | Enable punctuation tokens in the decoder prompt. |
+| `--request-option punc=true\|false` | bool | model default | Request punctuation and capitalization together. Legacy `punctuation` remains accepted. |
 | `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
 | `--num-beams` | integer | `1` | Beam-search beam count; `1` uses greedy or sampling decode. |
 | `--request-option length_penalty=<float>` | float | model default | Beam-search length penalty. |
@@ -203,7 +165,7 @@ completed GGUF can therefore be moved, renamed, and passed directly to `--model`
 | `--temperature` | float | model default | Sampling temperature. |
 | `--top-k` | integer | model default | Top-k sampling limit; `0` disables top-k. |
 | `--top-p` | float | model default | Nucleus sampling limit. |
-| `--seed` | integer | random if omitted | Sampling seed. |
+| `--seed` | integer | `0` | Sampling seed. |
 | `--audio-chunk-mode` | `auto`, `fixed`, `none` | `auto` | Long-audio chunking mode. `auto` uses the model clip limit and speech-energy boundaries when chunking is needed. |
 | `--request-option audio_chunk_duration_sec=<seconds>` | float seconds | model config | Fixed audio chunk duration. |
 | `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
@@ -216,20 +178,37 @@ Compatibility aliases for existing requests:
 | `audio_chunk_duration_seconds` | `audio_chunk_duration_sec` |
 | `audio_chunk_duration` | `audio_chunk_duration_sec` |
 
-## Niagara ASR
+When setting `hviske_asr.weight_type=bf16` or `q8_0`, also set
+`hviske_asr.conv_weight_type` to `native`, `f32`, or `f16`; convolution weights
+do not support BF16/Q8 storage overrides.
 
-Niagara provides English offline transcription with 19M and 38M Batch checkpoints
-under the same `niagara_asr` family. Select the checkpoint through `--model`.
+## Kroko Community ASR
 
-```bash
-audiocpp_cli --task asr --family niagara_asr \
-  --model models/Niagara-ASR-GGUF/niagara-19m-batch.en-f32.gguf \
-  --backend cpu --threads 8 --audio speech.wav \
-  --text-out transcript.txt --log
+Kroko Community ASR is a Zipformer2/RNN-T model port maintained in
+`community_models`. audio.cpp runs its feature frontend, encoder, predictor,
+joiner, greedy search, and modified beam search natively without ONNX Runtime.
+Blank penalty, natural-text hotwords, and opt-in endpoint segmentation are
+available as request options. Public free packages
+are available for German, English, Spanish, French, Italian, Hebrew, Dutch,
+Portuguese, Swedish, and Turkish. The model manager defaults to the standalone
+English Q8_0 GGUF package:
+
+```powershell
+python .\tools\model_manager_v2.py install kroko_asr_community_q8_0 --models-root .\models --overwrite
 ```
 
-Use `niagara-38m-batch.en-f32.gguf` for the 38M checkpoint. These are offline batch
-models; streaming and audio chunking are not supported.
+```powershell
+.\build\windows-cuda-release\bin\audiocpp_cli.exe `
+  --task asr --mode streaming --family kroko_asr `
+  --model .\models\Kroko-ASR-GGUF\kroko-en-community-64-l-q8_0.gguf `
+  --backend cuda --audio .\speech.wav --language en `
+  --text-out .\transcript.txt --words-out .\words.json
+```
+
+Standalone Q8 GGUF is supported in offline and stateful streaming modes. Partial
+transcripts and word timestamps are exposed.
+See [Kroko Community ASR](models/kroko_asr.md) for package selection,
+conversion, GGUF, decoding options, parity, performance, and limitation details.
 
 ## Nemotron ASR
 
@@ -364,6 +343,21 @@ Limitations:
   earlier segment; the streamed event and text were already sent without it.
   On a 1 h 48 min recording this affected 2% of the words.
 
+## Niagara ASR
+
+Niagara provides English offline transcription with 19M and 38M Batch checkpoints
+under the same `niagara_asr` family. Select the checkpoint through `--model`.
+
+```bash
+audiocpp_cli --task asr --family niagara_asr \
+  --model models/Niagara-ASR-GGUF/niagara-19m-batch.en-f32.gguf \
+  --backend cpu --threads 8 --audio speech.wav \
+  --text-out transcript.txt --log
+```
+
+Use `niagara-38m-batch.en-f32.gguf` for the 38M checkpoint. These are offline batch
+models; streaming and audio chunking are not supported.
+
 ## Parakeet-TDT
 
 Parakeet-TDT is a FastConformer-TDT ASR model for multilingual offline,
@@ -378,8 +372,20 @@ audiocpp_cli --task asr --family parakeet_tdt \
 ```
 
 Use `parakeet_tdt_f16` for the F16 GGUF variant. See
-[Parakeet-TDT 0.6B v3](community_models/parakeet_tdt.md) for long-form,
+[Parakeet-TDT 0.6B v3](models/parakeet_tdt.md) for long-form,
 streaming, conversion, options, validation, and performance details.
+
+## Qwen3 ASR
+
+Qwen3 ASR transcribes speech and can be paired with Qwen3 Forced Aligner when timestamps are needed. Streaming mode accepts live audio chunks and emits buffered transcript deltas; timestamp output remains an offline path. See the [Qwen3 ASR guide](models/qwen3_asr.md) and [forced-aligner guide](models/qwen3_forced_aligner.md).
+
+```bash
+audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text-out transcript.txt
+```
+
+```bash
+audiocpp_cli --task asr --mode streaming --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --request-option audio_chunk_seconds=5 --text-out transcript.txt
+```
 
 ## SenseVoice-Small
 
@@ -403,7 +409,7 @@ audiocpp_cli --task asr --mode streaming --family sense_asr \
   --request-option audio_chunk_duration_sec=5 --text-out transcript.txt
 ```
 
-See [SenseVoice-Small](community_models/sense_asr.md) for language tags,
+See [SenseVoice-Small](models/sense_asr.md) for language tags,
 chunking, server usage, and validation notes.
 
 ## VibeVoice ASR

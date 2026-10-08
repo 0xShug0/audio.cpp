@@ -37,7 +37,7 @@
       {
         "name": "duration_sec",
         "type": "float",
-        "description": "Maximum generated audio duration in seconds; must be positive when set; default 120.",
+        "description": "Maximum generated audio duration in seconds; must be > 0 when set; default 120.",
         "required": false,
         "min": 0.0,
         "default": 120.0
@@ -45,7 +45,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Audio-token sampling temperature; must be positive when set; default 1.0.",
+        "description": "Audio-token sampling temperature; must be > 0 when set; default 1.0.",
         "required": false,
         "min": 0.0,
         "default": 1.0
@@ -53,7 +53,7 @@
       {
         "name": "top_k",
         "type": "int",
-        "description": "Audio-token top-k sampling limit; default 50.",
+        "description": "Audio-token top-k sampling limit; default 50. Must not exceed the active audio vocabulary size.",
         "required": false,
         "min": 1,
         "default": 50
@@ -61,7 +61,7 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "MuLa classifier-free guidance scale; must be positive when set; default 1.5.",
+        "description": "MuLa classifier-free guidance scale; must be > 0 when set; default 1.5.",
         "required": false,
         "min": 0.0,
         "default": 1.5
@@ -69,7 +69,7 @@
       {
         "name": "codec_duration_sec",
         "type": "float",
-        "description": "Codec detokenization chunk duration in seconds; must be positive when set; default 29.76.",
+        "description": "Codec detokenization chunk duration in seconds; must be > 0 when set; default 29.76.",
         "required": false,
         "min": 0.0,
         "default": 29.76
@@ -85,7 +85,7 @@
       {
         "name": "codec_guidance_scale",
         "type": "float",
-        "description": "Codec classifier-free guidance scale; must be positive when set; default 1.25.",
+        "description": "Codec classifier-free guidance scale; must be > 0 when set; default 1.25.",
         "required": false,
         "min": 0.0,
         "default": 1.25

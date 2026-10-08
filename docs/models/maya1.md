@@ -24,6 +24,8 @@ audiocpp_cli --task tts --family maya1 \
   --out maya1.wav
 ```
 
+`--task vdes` is an alias to the same instruction-conditioned synthesis path.
+
 Emotion tags such as `<laugh>`, `<whisper>`, `<sigh>`, and `<gasp>` may be
 placed directly in the input text. See the upstream Maya1 model card for its
 full prompt and emotion-tag guidance.
@@ -36,7 +38,7 @@ full prompt and emotion-tag guidance.
 | `max_tokens` | positive integer | `2048` | Maximum generated audio-token count per text chunk. |
 | `min_tokens` | non-negative integer | `28` | Minimum token count before EOS may stop generation. |
 | `temperature` | positive float | `0.4` | Autoregressive sampling temperature. |
-| `top_p` | `0.0`-`1.0` | `0.9` | Nucleus sampling probability. |
+| `top_p` | `(0, 1]` | `0.9` | Nucleus sampling probability. |
 | `repetition_penalty` | positive float | `1.1` | Autoregressive repetition penalty. |
 | `seed` | non-negative integer | random | Sampling and codec-noise seed. |
 | `text_chunk_size` | positive integer | `300` | Maximum Unicode codepoints per long-form chunk. |
@@ -47,7 +49,7 @@ full prompt and emotion-tag guidance.
 |---|---|---:|---|
 | `weight_type` | framework-supported storage type | `native` | Shared AR and SNAC decoder storage type. |
 | `ar_weight_type` | same as above | `weight_type` | AR backbone storage override. |
-| `codec_weight_type` | same as above | `weight_type` | SNAC decoder storage override. |
+| `codec_weight_type` | `native`, `f32` | `weight_type` | SNAC decoder storage override. Set `maya1.codec_weight_type=f32` when the shared `weight_type` is neither `native` nor `f32`; AR storage remains independently configurable. |
 
 ## Convert
 

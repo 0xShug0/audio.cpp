@@ -1,0 +1,1108 @@
+{
+  "scope": "Parakeet TDT Vulkan resident decoder state and graph allocation lifetimes; independent of PRs #861 and #863",
+  "upstream_base": "86a51cab",
+  "platform": "Windows, Ryzen 7950X3D, 8 threads, RTX 3090; MSVC 14.43, CUDA 12.4, Vulkan SDK 1.4.350",
+  "source_sha256_utf8_lf": {
+    "src/community_models/parakeet_tdt/decoder.cpp": "a7f3a1ebe435eb9c35f42fb737ceb9068f23dabc3d7944828378ba9a6c9a7391",
+    "src/community_models/parakeet_tdt/encoder.cpp": "f3da2f1bc9dd3edc66523d24cc663c71c726106ed92cc6540da30b403a039b2d"
+  },
+  "models": {
+    "f32": {
+      "path": "models/Phonon-2-Parakeet-GGUF/phonon-2-f32.gguf",
+      "bytes": 2509771424,
+      "sha256": "488ea8f3642543705122072695b411b175d7b1a7fa4a2e72bcf2205613f9d7c7"
+    },
+    "bf16": {
+      "path": "models/Phonon-2-Parakeet-GGUF/phonon-2-bf16.gguf",
+      "bytes": 1263816128,
+      "sha256": "ca0825eb6fe5892ad608463955016824c91ee7b544e2ef99ff92b9ac3de941ae"
+    },
+    "q8_0": {
+      "path": "models/Phonon-2-Parakeet-GGUF/phonon-2-q8_0.gguf",
+      "bytes": 943508064,
+      "sha256": "fada3829021a98a39de8e3bde839a88e521f5b59c60146b9fb680e1beeb149dd"
+    },
+    "stock-q8_0": {
+      "path": "models/Parakeet-TDT-0.6B-v3-GGUF/parakeet-tdt-0.6b-v3-q8_0.gguf",
+      "bytes": 915733744,
+      "sha256": "074e61ac1abd3d3efcfc10798d17bf9a975b31768b466fc2578364d206dde64c"
+    }
+  },
+  "method": {
+    "timing": "Warm HTTP wall time, excluding loading; alternating before/after/before/after processes; 2 warmups then 9 measured requests per clip per process; medians over 18 samples per implementation/clip",
+    "memory": "NVML device-wide peak sampled at 20 ms minus pre-process desktop baseline; includes weights, activations, decoder state and driver allocations; ranges retain both trial peaks",
+    "composition": "Performance/120-case matrix compares minimal Phonon PR plus only this two-file optimization to the same minimal PR without it. Stock package routes retain their defaults. Independent upstream-based build separately validates stock Parakeet offline/streaming without either PR."
+  },
+  "summary": [
+    {
+      "model": "f32",
+      "backend": "vulkan",
+      "before": {
+        "median_ms": {
+          "movie_12s": 66.02165009826422,
+          "video_30s": 137.47305003926158
+        },
+        "peak_additional_vram_gib_trials": [
+          4.457576751708984,
+          2.7952842712402344
+        ],
+        "peak_process_rss_gib": 2.8824501037597656
+      },
+      "after": {
+        "median_ms": {
+          "movie_12s": 51.16304999683052,
+          "video_30s": 105.7038001017645
+        },
+        "peak_additional_vram_gib_trials": [
+          2.7002525329589844,
+          2.6277427673339844
+        ],
+        "peak_process_rss_gib": 2.8917312622070312
+      },
+      "less_processing_time_percent": {
+        "movie_12s": 22.50564788871332,
+        "video_30s": 23.109438488797586
+      }
+    },
+    {
+      "model": "bf16",
+      "backend": "vulkan",
+      "before": {
+        "median_ms": {
+          "movie_12s": 64.98599995393306,
+          "video_30s": 132.88500008638948
+        },
+        "peak_additional_vram_gib_trials": [
+          3.9041099548339844,
+          2.1782798767089844
+        ],
+        "peak_process_rss_gib": 2.0945396423339844
+      },
+      "after": {
+        "median_ms": {
+          "movie_12s": 49.667100072838366,
+          "video_30s": 99.62855000048876
+        },
+        "peak_additional_vram_gib_trials": [
+          3.2526206970214844,
+          1.9791221618652344
+        ],
+        "peak_process_rss_gib": 2.116558074951172
+      },
+      "less_processing_time_percent": {
+        "movie_12s": 23.572615474031146,
+        "video_30s": 25.02648911786919
+      }
+    },
+    {
+      "model": "q8_0",
+      "backend": "vulkan",
+      "before": {
+        "median_ms": {
+          "movie_12s": 63.7538000009954,
+          "video_30s": 135.29755000490695
+        },
+        "peak_additional_vram_gib_trials": [
+          2.1356773376464844,
+          2.1270713806152344
+        ],
+        "peak_process_rss_gib": 2.136524200439453
+      },
+      "after": {
+        "median_ms": {
+          "movie_12s": 49.12934999447316,
+          "video_30s": 98.73355005402118
+        },
+        "peak_additional_vram_gib_trials": [
+          2.0040855407714844,
+          1.9902915954589844
+        ],
+        "peak_process_rss_gib": 2.1313133239746094
+      },
+      "less_processing_time_percent": {
+        "movie_12s": 22.938946394244585,
+        "video_30s": 27.024879570664563
+      }
+    },
+    {
+      "model": "q8_0",
+      "backend": "cpu",
+      "before": {
+        "median_ms": {
+          "movie_12s": 479.2407500790432,
+          "video_30s": 1271.7482500011101
+        },
+        "peak_additional_vram_gib_trials": [
+          0.0,
+          0.00173187255859375
+        ],
+        "peak_process_rss_gib": 3.6645355224609375
+      },
+      "after": {
+        "median_ms": {
+          "movie_12s": 487.58634994737804,
+          "video_30s": 1282.0403500227258
+        },
+        "peak_additional_vram_gib_trials": [
+          0.0,
+          0.0
+        ],
+        "peak_process_rss_gib": 3.6945838928222656
+      },
+      "less_processing_time_percent": {
+        "movie_12s": -1.741421168162005,
+        "video_30s": -0.8092875316798365
+      }
+    },
+    {
+      "model": "q8_0",
+      "backend": "cuda",
+      "before": {
+        "median_ms": {
+          "movie_12s": 40.440149954520166,
+          "video_30s": 89.23194999806583
+        },
+        "peak_additional_vram_gib_trials": [
+          2.4388046264648438,
+          2.2806015014648438
+        ],
+        "peak_process_rss_gib": 2.1922836303710938
+      },
+      "after": {
+        "median_ms": {
+          "movie_12s": 41.142000001855195,
+          "video_30s": 90.68645001389086
+        },
+        "peak_additional_vram_gib_trials": [
+          2.3001327514648438,
+          2.2806015014648438
+        ],
+        "peak_process_rss_gib": 2.1920089721679688
+      },
+      "less_processing_time_percent": {
+        "movie_12s": -1.735527806213244,
+        "video_30s": -1.63002155153682
+      }
+    },
+    {
+      "model": "stock-q8_0",
+      "backend": "vulkan",
+      "before": {
+        "median_ms": {
+          "movie_12s": 59.43655001465231,
+          "video_30s": 123.94805008079857
+        },
+        "peak_additional_vram_gib_trials": [
+          2.5387535095214844,
+          2.0841636657714844
+        ],
+        "peak_process_rss_gib": 2.1137847900390625
+      },
+      "after": {
+        "median_ms": {
+          "movie_12s": 47.95699997339398,
+          "video_30s": 91.01934998761863
+        },
+        "peak_additional_vram_gib_trials": [
+          1.9897422790527344,
+          1.9759483337402344
+        ],
+        "peak_process_rss_gib": 2.1126174926757812
+      },
+      "less_processing_time_percent": {
+        "movie_12s": 19.31395755377523,
+        "video_30s": 26.56653337564775
+      }
+    }
+  ],
+  "trials": [
+    {
+      "model": "f32",
+      "backend": "vulkan",
+      "trial": 0,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          68.49509989842772,
+          72.13510014116764,
+          72.03689985908568,
+          65.96960010938346,
+          68.32319987006485,
+          65.12399995699525,
+          66.86579994857311,
+          66.47750013507903,
+          70.59550005942583
+        ],
+        "video_30s": [
+          140.9354000352323,
+          136.56500005163252,
+          130.60969999060035,
+          159.87229999154806,
+          181.9827000144869,
+          139.0372000169009,
+          141.39069989323616,
+          144.14099999703467,
+          146.37500001117587
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 4.457576751708984,
+      "peak_process_rss_gib": 2.882190704345703
+    },
+    {
+      "model": "f32",
+      "backend": "vulkan",
+      "trial": 1,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          50.05130008794367,
+          52.12640017271042,
+          53.24979987926781,
+          52.54390020854771,
+          57.31409997679293,
+          59.25519997254014,
+          50.42019998654723,
+          54.07219985499978,
+          51.97760020382702
+        ],
+        "video_30s": [
+          108.67250012233853,
+          110.08670018054545,
+          109.88390003331006,
+          108.99020009674132,
+          109.38859987072647,
+          109.26169995218515,
+          110.44459999538958,
+          110.75920006260276,
+          109.45879993960261
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 2.7002525329589844,
+      "peak_process_rss_gib": 2.8917312622070312
+    },
+    {
+      "model": "f32",
+      "backend": "vulkan",
+      "trial": 2,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          64.0105998609215,
+          69.47820005007088,
+          65.74629992246628,
+          66.07370008714497,
+          64.73449990153313,
+          61.839899979531765,
+          63.16259992308915,
+          64.40520007163286,
+          64.82549989596009
+        ],
+        "video_30s": [
+          127.5076000019908,
+          129.00640000589192,
+          130.33699989318848,
+          128.50899994373322,
+          132.49959982931614,
+          149.15519999340177,
+          138.38110002689064,
+          135.6097999960184,
+          134.78480000048876
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 2.7952842712402344,
+      "peak_process_rss_gib": 2.8824501037597656
+    },
+    {
+      "model": "f32",
+      "backend": "vulkan",
+      "trial": 3,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          49.9227000400424,
+          56.23499979265034,
+          51.905900007113814,
+          47.650800086557865,
+          47.43640008382499,
+          49.465599935501814,
+          49.30460010655224,
+          47.5362001452595,
+          49.22799998894334
+        ],
+        "video_30s": [
+          102.51050000078976,
+          98.34469994530082,
+          96.14509996026754,
+          100.61149997636676,
+          102.41340007632971,
+          102.73510008119047,
+          101.56859993003309,
+          101.15860006771982,
+          101.89509997144341
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 2.6277427673339844,
+      "peak_process_rss_gib": 2.881946563720703
+    },
+    {
+      "model": "bf16",
+      "backend": "vulkan",
+      "trial": 0,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          63.42200003564358,
+          61.506199883297086,
+          74.32759995572269,
+          65.32470020465553,
+          61.99129996821284,
+          64.35270002111793,
+          64.09390014596283,
+          62.53610015846789,
+          63.65079991519451
+        ],
+        "video_30s": [
+          136.33940019644797,
+          169.19849999248981,
+          132.68980011343956,
+          137.12400011718273,
+          137.21769978292286,
+          130.68420020863414,
+          131.1454998794943,
+          131.90619996748865,
+          133.0802000593394
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 3.9041099548339844,
+      "peak_process_rss_gib": 2.0945396423339844
+    },
+    {
+      "model": "bf16",
+      "backend": "vulkan",
+      "trial": 1,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          50.484499894082546,
+          46.88720009289682,
+          49.028299981728196,
+          48.37869992479682,
+          49.12340012378991,
+          47.32239991426468,
+          50.19679991528392,
+          47.72929986938834,
+          50.84059992805123
+        ],
+        "video_30s": [
+          101.22299985960126,
+          100.60989996418357,
+          99.99249991960824,
+          98.35160011425614,
+          103.0169001314789,
+          103.21710002608597,
+          106.14200006239116,
+          98.57149980962276,
+          97.53650007769465
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 3.2526206970214844,
+      "peak_process_rss_gib": 2.100513458251953
+    },
+    {
+      "model": "bf16",
+      "backend": "vulkan",
+      "trial": 2,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          89.40670010633767,
+          91.02469985373318,
+          74.32099990546703,
+          75.73179993778467,
+          65.17089996486902,
+          67.10959994234145,
+          69.40069980919361,
+          64.8010999429971,
+          63.521699979901314
+        ],
+        "video_30s": [
+          135.96810004673898,
+          128.12529993243515,
+          134.42800007760525,
+          132.14080012403429,
+          127.82050017267466,
+          129.69490000978112,
+          130.9246001765132,
+          133.5753002204001,
+          136.20919990353286
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 2.1782798767089844,
+      "peak_process_rss_gib": 2.0927734375
+    },
+    {
+      "model": "bf16",
+      "backend": "vulkan",
+      "trial": 3,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          74.72050003707409,
+          75.0114000402391,
+          51.31840007379651,
+          49.67550002038479,
+          48.12610009685159,
+          51.53160006739199,
+          48.77989995293319,
+          50.42640003375709,
+          49.65870012529194
+        ],
+        "video_30s": [
+          98.21950015611947,
+          103.94830000586808,
+          100.3276000265032,
+          97.00189996510744,
+          99.26460008136928,
+          106.60449997521937,
+          95.97889985889196,
+          95.51400016061962,
+          97.62779995799065
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 1.9791221618652344,
+      "peak_process_rss_gib": 2.116558074951172
+    },
+    {
+      "model": "q8_0",
+      "backend": "vulkan",
+      "trial": 0,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          64.42510010674596,
+          61.734599992632866,
+          63.20179998874664,
+          67.41970009170473,
+          64.6526999771595,
+          63.62070003524423,
+          65.9888000227511,
+          62.76930007152259,
+          65.65109989605844
+        ],
+        "video_30s": [
+          141.19430002756417,
+          130.38609991781414,
+          131.98950001969934,
+          133.5690999403596,
+          136.26749999821186,
+          144.88000003620982,
+          145.71799989789724,
+          139.3998998682946,
+          139.83570015989244
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 2.1356773376464844,
+      "peak_process_rss_gib": 2.136524200439453
+    },
+    {
+      "model": "q8_0",
+      "backend": "vulkan",
+      "trial": 1,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          49.36429997906089,
+          48.89440000988543,
+          51.64319998584688,
+          48.36949985474348,
+          51.60110001452267,
+          47.755799954757094,
+          50.3282998688519,
+          47.66010004095733,
+          52.49050003476441
+        ],
+        "video_30s": [
+          98.30700000748038,
+          99.91500014439225,
+          96.79900016635656,
+          96.44330013543367,
+          101.19149996899068,
+          100.4385999403894,
+          100.12620012275875,
+          104.72290008328855,
+          102.95330011285841
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 2.0040855407714844,
+      "peak_process_rss_gib": 2.123676300048828
+    },
+    {
+      "model": "q8_0",
+      "backend": "vulkan",
+      "trial": 2,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          63.78909992054105,
+          64.84779994934797,
+          64.2136000096798,
+          63.97869996726513,
+          62.509699957445264,
+          60.93099992722273,
+          63.5814000852406,
+          59.84550016000867,
+          63.71850008144975
+        ],
+        "video_30s": [
+          128.2349000684917,
+          128.78189980983734,
+          127.64359987340868,
+          137.3882000334561,
+          133.26549995690584,
+          133.51489999331534,
+          134.32760001160204,
+          137.14340003207326,
+          136.91699993796647
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 2.1270713806152344,
+      "peak_process_rss_gib": 2.1240501403808594
+    },
+    {
+      "model": "q8_0",
+      "backend": "vulkan",
+      "trial": 3,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          48.188900109380484,
+          50.182600039988756,
+          49.721899908035994,
+          47.72620019502938,
+          47.49730019830167,
+          46.11329990439117,
+          49.91499986499548,
+          45.81429995596409,
+          50.167600158602
+        ],
+        "video_30s": [
+          95.58899980038404,
+          98.48870011046529,
+          97.27809997275472,
+          98.97839999757707,
+          97.18599985353649,
+          96.93120000883937,
+          97.66560001298785,
+          99.53560004942119,
+          100.38389987312257
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 1.9902915954589844,
+      "peak_process_rss_gib": 2.1313133239746094
+    },
+    {
+      "model": "q8_0",
+      "backend": "cpu",
+      "trial": 0,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          478.65730011835694,
+          476.754599949345,
+          461.26799983903766,
+          459.24510015174747,
+          456.35230001062155,
+          476.8906000535935,
+          477.82000014558434,
+          474.05929979868233,
+          479.8242000397295
+        ],
+        "video_30s": [
+          1258.291200036183,
+          1240.514799952507,
+          1331.363799981773,
+          1222.319500055164,
+          1262.1307000517845,
+          1254.406000021845,
+          1260.5417999438941,
+          1220.3228999860585,
+          1266.0564000252634
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 0.0,
+      "peak_process_rss_gib": 3.6645355224609375
+    },
+    {
+      "model": "q8_0",
+      "backend": "cpu",
+      "trial": 1,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          482.7078999951482,
+          452.89860013872385,
+          486.2939000595361,
+          491.9024999253452,
+          478.8226999808103,
+          494.37659978866577,
+          476.3112999498844,
+          481.4361999742687,
+          488.8047000858933
+        ],
+        "video_30s": [
+          1291.0857000388205,
+          1326.9778999965638,
+          1246.5971000492573,
+          1254.85479994677,
+          1290.7763998955488,
+          1286.6883999668062,
+          1268.5801999177784,
+          1263.2104000076652,
+          1286.8991999421269
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 0.0,
+      "peak_process_rss_gib": 3.6945838928222656
+    },
+    {
+      "model": "q8_0",
+      "backend": "cpu",
+      "trial": 2,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          530.0451000221074,
+          447.24719994701445,
+          487.9022999666631,
+          490.6613000202924,
+          512.8448999021202,
+          536.3731000106782,
+          518.7768000178039,
+          498.57970001176,
+          493.87230002321303
+        ],
+        "video_30s": [
+          1287.0298000052571,
+          1301.5531999990344,
+          1305.9656999539584,
+          1278.4080000128597,
+          1266.6199000086635,
+          1276.8765999935567,
+          1291.8413998559117,
+          1295.9261999931186,
+          1292.2629001550376
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 0.00173187255859375,
+      "peak_process_rss_gib": 3.6563644409179688
+    },
+    {
+      "model": "q8_0",
+      "backend": "cpu",
+      "trial": 3,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          504.15169983170927,
+          480.3579000290483,
+          495.13900000602007,
+          492.34610004350543,
+          486.3679998088628,
+          513.519500149414,
+          497.3862001206726,
+          466.9526999350637,
+          509.4401000533253
+        ],
+        "video_30s": [
+          1310.5327999219298,
+          1277.3923000786453,
+          1272.1255000215024,
+          1342.1779999043792,
+          1314.2077000811696,
+          1256.1647999100387,
+          1315.2781000826508,
+          1234.9743000231683,
+          1255.077000008896
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 0.0,
+      "peak_process_rss_gib": 3.660266876220703
+    },
+    {
+      "model": "q8_0",
+      "backend": "cuda",
+      "trial": 0,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          39.66849995777011,
+          37.832299945876,
+          40.33340001478791,
+          38.85350003838539,
+          41.09179996885359,
+          37.7901999745518,
+          38.22059999220073,
+          42.73789981380105,
+          42.009999975562096
+        ],
+        "video_30s": [
+          85.59849997982383,
+          86.2836001906544,
+          89.196200016886,
+          84.21940007247031,
+          83.38469988666475,
+          86.56059997156262,
+          87.43169996887445,
+          88.90280011110008,
+          89.26769997924566
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 2.4388046264648438,
+      "peak_process_rss_gib": 2.1915130615234375
+    },
+    {
+      "model": "q8_0",
+      "backend": "cuda",
+      "trial": 1,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          42.80889988876879,
+          39.29960005916655,
+          42.827900033444166,
+          40.97609990276396,
+          40.48660001717508,
+          39.1436000354588,
+          41.044200072064996,
+          41.390599915757775,
+          40.62940017320216
+        ],
+        "video_30s": [
+          92.17530000023544,
+          91.3527999073267,
+          90.57070012204349,
+          91.224699979648,
+          90.94229992479086,
+          90.80219990573823,
+          87.53670006990433,
+          84.85550014302135,
+          85.58139996603131
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 2.3001327514648438,
+      "peak_process_rss_gib": 2.191509246826172
+    },
+    {
+      "model": "q8_0",
+      "backend": "cuda",
+      "trial": 2,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          42.649000184610486,
+          42.38180001266301,
+          41.180299827829,
+          38.96479983814061,
+          41.061499854549766,
+          39.89970008842647,
+          40.893300203606486,
+          40.54689989425242,
+          39.19220017269254
+        ],
+        "video_30s": [
+          90.16939997673035,
+          91.41979995183647,
+          90.55630001239479,
+          90.18790000118315,
+          90.16739996150136,
+          90.2579000685364,
+          90.23270010948181,
+          90.48240003176033,
+          88.60589982941747
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 2.2806015014648438,
+      "peak_process_rss_gib": 2.1922836303710938
+    },
+    {
+      "model": "q8_0",
+      "backend": "cuda",
+      "trial": 3,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          42.55919996649027,
+          68.21419997140765,
+          40.97570013254881,
+          40.10209999978542,
+          42.29860007762909,
+          43.36469992995262,
+          41.23979993164539,
+          39.774800185114145,
+          42.887100018560886
+        ],
+        "video_30s": [
+          88.24880002066493,
+          89.52179993502796,
+          91.21640003286302,
+          90.46240011230111,
+          93.72189990244806,
+          91.29719994962215,
+          92.82990009523928,
+          89.51119985431433,
+          89.8605000693351
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 2.2806015014648438,
+      "peak_process_rss_gib": 2.1920089721679688
+    },
+    {
+      "model": "stock-q8_0",
+      "backend": "vulkan",
+      "trial": 0,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          60.38419995456934,
+          63.93059995025396,
+          63.856600085273385,
+          59.48649998754263,
+          63.58049996197224,
+          60.078199952840805,
+          62.15619994327426,
+          61.38160009868443,
+          62.14289995841682
+        ],
+        "video_30s": [
+          125.22839987650514,
+          125.21390011534095,
+          122.18339997343719,
+          122.9103000368923,
+          131.99479994364083,
+          130.99870015867054,
+          127.7604999486357,
+          142.67070009373128,
+          156.42170002683997
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 2.5387535095214844,
+      "peak_process_rss_gib": 2.112163543701172
+    },
+    {
+      "model": "stock-q8_0",
+      "backend": "vulkan",
+      "trial": 1,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          48.354099970310926,
+          48.02000010386109,
+          48.456700053066015,
+          47.89399984292686,
+          48.73290006071329,
+          47.86179983057082,
+          45.69339985027909,
+          48.77900006249547,
+          47.002899926155806
+        ],
+        "video_30s": [
+          95.03949992358685,
+          93.86010002344847,
+          90.93069983646274,
+          90.36489995196462,
+          93.0178000126034,
+          90.285399928689,
+          91.7213000357151,
+          95.84169997833669,
+          91.9743999838829
+        ]
+      },
+      "checked_clips": 20,
+      "peak_additional_vram_gib": 1.9897422790527344,
+      "peak_process_rss_gib": 2.1126174926757812
+    },
+    {
+      "model": "stock-q8_0",
+      "backend": "vulkan",
+      "trial": 2,
+      "implementation": "before",
+      "times_ms": {
+        "movie_12s": [
+          59.386600041761994,
+          58.38369997218251,
+          58.71260003186762,
+          57.775599882006645,
+          57.15109989978373,
+          57.54499998874962,
+          59.26450015977025,
+          57.751200161874294,
+          56.074999971315265
+        ],
+        "video_30s": [
+          113.22090006433427,
+          114.97090011835098,
+          116.98859999887645,
+          117.05779982730746,
+          122.24350008182228,
+          119.65989996679127,
+          134.58399986848235,
+          121.22090021148324,
+          124.98580012470484
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 2.0841636657714844,
+      "peak_process_rss_gib": 2.1137847900390625
+    },
+    {
+      "model": "stock-q8_0",
+      "backend": "vulkan",
+      "trial": 3,
+      "implementation": "after",
+      "times_ms": {
+        "movie_12s": [
+          48.69730002246797,
+          47.448999946936965,
+          46.510100131854415,
+          50.91390013694763,
+          46.049100114032626,
+          49.22080016694963,
+          44.15620001964271,
+          48.13529993407428,
+          42.764600133523345
+        ],
+        "video_30s": [
+          86.43770008347929,
+          91.76990017294884,
+          89.99139978550375,
+          87.61909999884665,
+          87.18049991875887,
+          85.80950018949807,
+          89.28430010564625,
+          91.10800013877451,
+          91.92929998971522
+        ]
+      },
+      "checked_clips": 0,
+      "peak_additional_vram_gib": 1.9759483337402344,
+      "peak_process_rss_gib": 2.112499237060547
+    }
+  ],
+  "exact_before_after_text_and_word_timing_cases": 120,
+  "standalone_validation": [
+    {
+      "backend": "cpu",
+      "mode": "offline",
+      "fixture": "librispeech_3s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    },
+    {
+      "backend": "cpu",
+      "mode": "offline",
+      "fixture": "movie_12s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    },
+    {
+      "backend": "cpu",
+      "mode": "offline",
+      "fixture": "video_30s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    },
+    {
+      "backend": "cpu",
+      "mode": "streaming",
+      "fixture": "librispeech_3s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    },
+    {
+      "backend": "vulkan",
+      "mode": "offline",
+      "fixture": "librispeech_3s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    },
+    {
+      "backend": "vulkan",
+      "mode": "offline",
+      "fixture": "movie_12s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    },
+    {
+      "backend": "vulkan",
+      "mode": "offline",
+      "fixture": "video_30s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    },
+    {
+      "backend": "vulkan",
+      "mode": "streaming",
+      "fixture": "librispeech_3s",
+      "exact_before_after_text_and_timestamps": true,
+      "exact_repeat": true
+    }
+  ],
+  "combined_phonon_server_routes": [
+    {
+      "backend": "vulkan",
+      "mode": "offline",
+      "multipart": true,
+      "json": true,
+      "request_isolation": true,
+      "explicit_empty_overrides_prompt": true
+    },
+    {
+      "backend": "vulkan",
+      "mode": "streaming",
+      "snapshot_updates": true,
+      "committed_deltas_equal_final": true,
+      "reuse": true,
+      "unaligned_live_pcm": true
+    }
+  ],
+  "standalone_targeted_ctest": [
+    2,
+    2
+  ],
+  "combined_targeted_ctest": [
+    4,
+    4
+  ],
+  "benchmark_binary_sha256": {
+    "audiocpp_cli.exe": "5fe44813109ead7e424d0a3c10e2fcffa91ed64a05251a5bbf7daf0c3fa5c207",
+    "audiocpp_server.exe": "e229d790506dbdcec4194c0261196e2732cd96391f1a0daa191c5c642deba456"
+  },
+  "raw_artifacts": "outputs/phonon2-review-20261010/",
+  "limitations": [
+    "Sampled parity is not corpus-level WER validation",
+    "Memory samples may miss short peaks or include unrelated desktop/driver activity",
+    "CPU/CUDA controls use unchanged host-state path; observed timing differences do not establish a speedup or regression",
+    "No local Metal, HIP, MUSA or RTX 5090 runtime test; other backends are not optimized by this PR"
+  ]
+}

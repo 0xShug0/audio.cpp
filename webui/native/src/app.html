@@ -10,13 +10,13 @@
         try {
           const savedTheme = localStorage.getItem('audiocpp.ui.theme') || 'system';
           const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          const theme = savedTheme === 'dark' || savedTheme === 'light'
+          const theme = savedTheme === 'dark' || savedTheme === 'light' || savedTheme === 'mocha' || savedTheme === 'paper'
             ? savedTheme
             : systemDark ? 'dark' : 'light';
           document.documentElement.dataset.theme = theme;
           document.querySelector('meta[name="theme-color"]')?.setAttribute(
             'content',
-            theme === 'dark' ? '#07101f' : '#f6f8fb'
+            theme === 'dark' ? '#07101f' : theme === 'mocha' ? '#1e1e2e' : theme === 'paper' ? '#f7f7f8' : '#f6f8fb'
           );
         } catch {
           document.documentElement.dataset.theme = 'dark';

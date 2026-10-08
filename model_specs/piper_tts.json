@@ -59,7 +59,8 @@
         "description": "Non-negative generation seed.",
         "required": false,
         "min": 0,
-        "default": 1234
+        "default": 1234,
+        "max": 4294967295
       },
       {
         "name": "text_chunk_mode",
@@ -95,6 +96,13 @@
         "type": "path",
         "description": "Optional explicit path to espeak-ng-data.",
         "required": false
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Components: decoder, duration_encoder, duration_flows. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. Default keeps existing execution. The decoder's GGML impl supports the session backend; RKNN requires artifacts.main and ENGINE_ENABLE_RKNN, with no backend field. The two duration stages are GGML-only and accept the session backend (device) or cpu (host); with no backend field the text encoder runs on the host on CUDA and on the session backend elsewhere, and the flow graphs run on the session backend. No implementation takes params.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []
@@ -130,7 +138,7 @@
     ],
     "docs": [
       "docs/tts.md",
-      "docs/community_models/piper_tts.md",
+      "docs/models/piper_tts.md",
       "docs/gguf.md"
     ]
   },

@@ -45,7 +45,7 @@
       {
         "name": "template_name",
         "type": "enum",
-        "description": "FireRedAudio template: asr, understand, tts_clone, voice_design, semantic_edit, or acoustic_edit.",
+        "description": "Defaults to voice_design for design, acoustic_edit for generation with input audio, tts_clone for other generation, and asr for ASR.",
         "required": false,
         "values": [
           "tts_clone",
@@ -54,8 +54,7 @@
           "acoustic_edit",
           "asr",
           "understand"
-        ],
-        "default": "tts_clone"
+        ]
       },
       {
         "name": "reference_text",
@@ -64,9 +63,9 @@
         "required": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
-        "description": "Voice design instruction.",
+        "description": "Voice/delivery conditioning for generation. ASR/understanding uses the text input as its task prompt, not this option.",
         "required": false
       },
       {
@@ -87,13 +86,13 @@
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "FireRedAudio DiT classifier-free guidance scale.",
+        "description": "FireRedAudio DiT classifier-free guidance scale. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 2.0
       },
       {
-        "name": "max_new_audio_steps",
+        "name": "max_audio_steps",
         "type": "int",
         "description": "Maximum generated RedAE latent patches.",
         "required": false,
@@ -101,7 +100,7 @@
         "default": 750
       },
       {
-        "name": "min_new_audio_steps",
+        "name": "min_audio_steps",
         "type": "int",
         "description": "Minimum generated RedAE latent patches before eosp can stop generation.",
         "required": false,
@@ -109,7 +108,7 @@
         "default": 6
       },
       {
-        "name": "max_new_text_tokens",
+        "name": "max_text_tokens",
         "type": "int",
         "description": "Maximum text-mode tokens before audio mode.",
         "required": false,
@@ -117,12 +116,11 @@
         "default": 512
       },
       {
-        "name": "max_new_tokens",
+        "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated text tokens for ASR/understanding.",
+        "description": "Output token budget; defaults to 300, or 1024 for understand with enable_thinking=true.",
         "required": false,
-        "min": 1,
-        "default": 300
+        "min": 1
       },
       {
         "name": "enable_thinking",
@@ -151,17 +149,18 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Text sampling temperature for understanding.",
+        "description": "Text sampling temperature for understanding. Understanding-mode sampling requires a positive value; zero does not select greedy decoding.",
         "required": false,
-        "min": 0.0,
+        "min": 0,
         "default": 0.7
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed.",
+        "description": "Unsigned 32-bit generation seed in [0, 4294967295]; default 1234.",
         "required": false,
         "min": 0,
+        "max": 4294967295,
         "default": 1234
       }
     ],
@@ -181,14 +180,6 @@
         "required": false,
         "min": 1,
         "default": 1024
-      },
-      {
-        "name": "helper_graph_arena_mb",
-        "type": "int",
-        "description": "Helper graph arena size in MiB; default 256.",
-        "required": false,
-        "min": 1,
-        "default": 256
       },
       {
         "name": "weight_context_mb",

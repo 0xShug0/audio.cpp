@@ -35,7 +35,7 @@
         "default": "en"
       },
       {
-        "name": "max_text_tokens",
+        "name": "max_tokens",
         "type": "int",
         "description": "Maximum translated text tokens per window.",
         "required": false,

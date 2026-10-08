@@ -37,17 +37,23 @@ std::string request_cache_key(const runtime::Transcript &text, const KittenFront
            std::to_string(text.text.size()) + ":" + text.text;
 }
 
-std::optional<runtime::VoiceCondition> voice_with_request_rate(
+std::optional<runtime::VoiceCondition> voice_with_request_options(
     const std::optional<runtime::VoiceCondition> &voice,
     const std::unordered_map<std::string, std::string> &options) {
     const auto rate = runtime::parse_positive_finite_float_option(options, {"speed"});
-    if (!rate.has_value() || (voice.has_value() && voice->style.has_value() &&
-                              voice->style->speaking_rate.has_value())) {
+    const auto voice_id = runtime::find_option(options, {"voice_id"});
+    if (!rate.has_value() && !voice_id.has_value()) {
         return voice;
     }
     auto resolved = voice.value_or(runtime::VoiceCondition{});
-    if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
-    resolved.style->speaking_rate = *rate;
+    if (voice_id.has_value() && (!resolved.speaker.has_value() || !resolved.speaker->cached_voice_id.has_value())) {
+        if (!resolved.speaker.has_value()) resolved.speaker = runtime::VoiceReference{};
+        resolved.speaker->cached_voice_id = *voice_id;
+    }
+    if (rate.has_value() && (!resolved.style.has_value() || !resolved.style->speaking_rate.has_value())) {
+        if (!resolved.style.has_value()) resolved.style = runtime::StyleCondition{};
+        resolved.style->speaking_rate = *rate;
+    }
     return resolved;
 }
 
@@ -220,16 +226,11 @@ void KittenTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
 }
 
 void KittenTTSSession::prepare(const runtime::SessionPreparationRequest &request) {
-    runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, kModelName);
-    const auto voice = voice_with_request_rate(request.voice, request.options);
-    if (const auto seed = runtime::parse_u64_option(request.options, {"seed"})) {
-        if (rng_seed_ != *seed) {
-            rng_seed_ = *seed;
-            prepared_decoder_.reset();
-            prepared_decoder_capacity_ = 0;
-            prepared_decoder_context_ = {};
-        }
-    }
+    // Published GGUF contracts may predate the option-map voice selector.
+    auto validation_options = request.options;
+    validation_options.erase("voice_id");
+    runtime::validate_spec_backed_request_options(validation_options, request.option_arrays, *contract_, kModelName);
+    const auto voice = voice_with_request_options(request.voice, request.options);
     auto adapter = make_graph_capacity_adapter();
     int64_t request_size = 0;
     if (request.text.has_value()) {
@@ -258,8 +259,14 @@ runtime::TaskResult KittenTTSSession::run(const runtime::TaskRequest &request) {
     if (!request.text_input.has_value()) {
         throw std::runtime_error("Kitten TTS run requires text_input");
     }
-    runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, kModelName);
-    const auto voice = voice_with_request_rate(request.voice, request.options);
+    auto validation_options = request.options;
+    validation_options.erase("voice_id");
+    runtime::validate_spec_backed_request_options(validation_options, request.option_arrays, *contract_, kModelName);
+    const auto voice = voice_with_request_options(request.voice, request.options);
+
+    rng_seed_ = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
+    if (prepared_decoder_) prepared_decoder_->set_seed(rng_seed_);
+    engine::debug::trace_log_scalar("kitten.generation.seed", rng_seed_);
 
     const int64_t text_chunk_size =
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);

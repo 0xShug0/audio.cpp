@@ -38,12 +38,11 @@ runtime::ModelCliInterface cli() {
        "1"},
       {"audio_chunk_mode", "auto|fixed|none", "Audio chunking mode.", false,
        "auto"},
-      {"audio_chunk_seconds", "seconds", "Fixed audio chunk duration.", false,
-       "30", "0"},
+      {"audio_chunk_duration_sec", "seconds", "Fixed audio chunk duration; must be finite and positive, rounding to at least one input sample.", false,
+       "30"},
   };
   result.session_options = {
-      {"fun_asr_nano.weight_type", "native|f32|f16|bf16|q8_0",
-       "Shared model weight storage preference."},
+      {"fun_asr_nano.weight_type", "native|f32|f16|bf16|q8_0", "Shared model weight storage preference.", false, "native"},
       {"fun_asr_nano.encoder_weight_type", "native|f32|f16|bf16|q8_0",
        "Encoder matmul weight storage type."},
       {"fun_asr_nano.adaptor_weight_type", "native|f32|f16|bf16|q8_0",
@@ -51,16 +50,11 @@ runtime::ModelCliInterface cli() {
       {"fun_asr_nano.decoder_weight_type", "native|f32|f16|bf16|q8_0",
        "Decoder matmul weight storage type; CUDA promotes unsafe shared "
        "native/F16/Q8 requests to BF16 unless this option is explicit."},
-      {"fun_asr_nano.encoder_graph_arena_mb", "mb",
-       "Encoder graph arena size."},
-      {"fun_asr_nano.adaptor_graph_arena_mb", "mb",
-       "Adaptor graph arena size."},
-      {"fun_asr_nano.decoder_prefill_graph_arena_mb", "mb",
-       "Decoder prefill graph arena size."},
-      {"fun_asr_nano.decoder_decode_graph_arena_mb", "mb",
-       "Decoder cached-step graph arena size."},
-      {"fun_asr_nano.decoder_weight_context_mb", "mb",
-       "Decoder weight context arena size."},
+      {"fun_asr_nano.encoder_graph_arena_mb", "mb", "Encoder graph arena size.", false, "512", "1"},
+      {"fun_asr_nano.adaptor_graph_arena_mb", "mb", "Adaptor graph arena size.", false, "128", "1"},
+      {"fun_asr_nano.decoder_prefill_graph_arena_mb", "mb", "Decoder prefill graph arena size.", false, "256", "1"},
+      {"fun_asr_nano.decoder_decode_graph_arena_mb", "mb", "Decoder cached-step graph arena size.", false, "128", "1"},
+      {"fun_asr_nano.decoder_weight_context_mb", "mb", "Decoder weight context arena size.", false, "32", "1"},
   };
   return result;
 }

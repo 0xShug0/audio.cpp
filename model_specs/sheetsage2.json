@@ -30,20 +30,26 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum total decoder sequence length; default follows the embedded model context.",
+        "description": "Maximum total decoder sequence length; default follows the embedded model context. Omitted uses checkpoint max_output_seq_len.",
         "required": false,
-        "min": 1,
-        "default": 5120
+        "min": 1
       }
     ],
     "session": [
       {
         "name": "weight_type",
         "type": "enum",
-        "description": "Decoder weight storage type; default native.",
-        "preset": "weight_type_full",
+        "description": "Encoder and decoder weight storage override.",
         "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q4_0",
+          "q4_k"
+        ]
       },
       {
         "name": "weight_context_mb",

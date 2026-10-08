@@ -12,6 +12,12 @@
 #include <utility>
 
 namespace minitts::server {
+
+// The request reader caps the artifact payloads of one request at the default
+// body limit, so the two have to move together.
+static_assert(minitts::cli::kMaxRequestArtifactBytes == kDefaultMaxRequestBodyBytes,
+              "request artifact payload limit differs from the default request body limit");
+
 namespace {
 
 std::filesystem::path resolve_path(const std::filesystem::path & base, const std::filesystem::path & path) {
@@ -57,8 +63,15 @@ ServerModelConfig::VoicePreset parse_voice_preset(
     if (const auto * reference_text = value.find("reference_text")) {
         preset.reference_text = reference_text->as_string();
     }
-    if (!preset.voice_id.has_value() && !preset.voice_ref.has_value() && !preset.reference_text.has_value()) {
-        throw std::runtime_error(context + " must set voice_id, voice_ref, or reference_text");
+    if (const auto * options = value.find("options")) {
+        if (!options->is_object()) {
+            throw std::runtime_error(context + " options must be an object");
+        }
+        preset.options = options_from_object(options);
+    }
+    if (!preset.voice_id.has_value() && !preset.voice_ref.has_value() && !preset.reference_text.has_value() &&
+        preset.options.empty()) {
+        throw std::runtime_error(context + " must set voice_id, voice_ref, reference_text, or options");
     }
     return preset;
 }
@@ -228,6 +241,7 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     config.port = engine::io::json::optional_i32(root, "port", config.port);
     config.cors_origins = engine::io::json::optional_string(root, "cors_origins", config.cors_origins);
     config.ui_enabled = engine::io::json::optional_bool(root, "ui", config.ui_enabled);
+    config.ui_requested = engine::io::json::optional_bool(root, "ui", false);
     config.ui_management = engine::io::json::optional_bool(root, "ui_management", config.ui_management);
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.device = engine::io::json::optional_i32(root, "device", config.device);
@@ -245,7 +259,23 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         config.live_ingest = parse_live_ingest_limits(*value, config.live_ingest, "server live_ingest");
     }
     if (const auto * value = root.find("model_spec_override")) {
-        config.model_spec_override = resolve_path(base, value->as_string());
+        const auto & selection = value->as_string();
+        config.model_spec_override = selection == "embedded"
+            ? std::filesystem::path(selection) : resolve_path(base, selection);
+    }
+    if (const auto * value = root.find("default_session_options")) {
+        if (!value->is_object()) {
+            throw std::runtime_error("server default_session_options must be an object");
+        }
+        config.default_session_options = options_from_object(value);
+        for (const auto & [key, option] : config.default_session_options) {
+            (void) option;
+            const auto dot = key.find('.');
+            if (dot == std::string::npos || dot == 0 || dot + 1 == key.size()) {
+                throw std::runtime_error(
+                    "server default_session_options key must be <family>.<option>: " + key);
+            }
+        }
     }
     if (const auto * value = root.find("voice_dir")) {
         if (!value->is_string()) {
@@ -301,11 +331,20 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         const auto raw_path = engine::io::json::require_string(item, "path");
         model.path = resolve_path(base, raw_path);
         if (const auto * value = item.find("model_spec_override")) {
-            model.model_spec_override = resolve_path(base, value->as_string());
+            const auto & selection = value->as_string();
+            model.model_spec_override = selection == "embedded"
+                ? std::filesystem::path(selection) : resolve_path(base, selection);
         }
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
+        if (item.find("device") != nullptr) {
+            const int device = engine::io::json::optional_i32(item, "device", config.device);
+            if (device < 0) {
+                throw std::runtime_error("device for model " + model.id + " must be >= 0");
+            }
+            model.device = device;
+        }
         if (!parallel_jobs && item.find("slots") != nullptr) {
             throw std::runtime_error("slots requires --parallel-jobs at server startup");
         }
@@ -339,6 +378,15 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         model.load_options = options_from_object(item.find("load_options"));
         model.session_options = options_from_object(item.find("session_options"));
         model.default_request_options = options_from_object(item.find("default_request_options"));
+        if (const auto * value = item.find("instruct")) {
+            if (model.default_request_options.find("instruct") != model.default_request_options.end() ||
+                model.default_request_options.find("instruction") != model.default_request_options.end()) {
+                throw std::runtime_error(
+                    "instruct for model " + model.id
+                    + " conflicts with an instruction in default_request_options");
+            }
+            model.default_request_options.emplace("instruct", value->as_string());
+        }
         if (const auto * voice_presets = item.find("voice_presets")) {
             if (!voice_presets->is_object()) {
                 throw std::runtime_error("voice_presets for model " + model.id + " must be an object");
@@ -375,7 +423,31 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         }
         config.models.push_back(std::move(model));
     }
+    for (auto & model : config.models) {
+        apply_default_session_options(config, model);
+    }
     return config;
+}
+
+void apply_default_session_options(const ServerConfig & config, ServerModelConfig & model) {
+    const std::string prefix = model.family + ".";
+    for (const auto & [key, value] : config.default_session_options) {
+        if (key.rfind(prefix, 0) == 0) {
+            model.session_options.emplace(key, value);
+        }
+    }
+}
+
+void inherit_configured_model_fields(const ServerModelConfig & configured, ServerModelConfig & model) {
+    if (configured.family != model.family || configured.task != model.task) {
+        return;
+    }
+    model.busy_timeout_ms = configured.busy_timeout_ms;
+    model.live_ingest = configured.live_ingest;
+    model.default_request_options = configured.default_request_options;
+    model.voice_presets = configured.voice_presets;
+    model.default_voice_preset = configured.default_voice_preset;
+    model.default_voice_preset_id = configured.default_voice_preset_id;
 }
 
 }  // namespace minitts::server

@@ -27,7 +27,7 @@
   "options": {
     "request": [
       {
-        "name": "speaking_rate",
+        "name": "speed",
         "type": "float",
         "description": "Speech speed multiplier mapped directly to Inflect speed; default 1.0.",
         "required": false,
@@ -83,6 +83,13 @@
         "type": "path",
         "description": "Optional explicit path to the directory containing espeak-ng-data.",
         "required": false
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main and ENGINE_ENABLE_RKNN; omit backend. Neither implementation takes params.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []
@@ -118,7 +125,7 @@
     ],
     "docs": [
       "docs/tts.md",
-      "docs/community_models/inflect_v2.md",
+      "docs/models/inflect_v2.md",
       "docs/gguf.md"
     ]
   },

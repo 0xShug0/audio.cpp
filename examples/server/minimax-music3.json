@@ -1,0 +1,32 @@
+{
+  "_comment": "Replace the directory path. Keep all five component GGUFs, configs and tokenizer files together; see the exact layout in README.md. Component filenames are relative to this directory.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "device": 0,
+  "threads": 4,
+  "lazy_load": true,
+  "max_loaded_models": 1,
+  "ui": true,
+  "ui_management": false,
+  "models": [
+    {
+      "id": "music3",
+      "family": "minimax_music3",
+      "path": "/PATH/TO/MiniMax-Music3-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "session_options": {
+        "minimax_music3.language_model_gguf": "language_model_q4_0.gguf",
+        "minimax_music3.rvq_depth_decoder_gguf": "rvq_depth_decoder_q8_0.gguf",
+        "minimax_music3.flow_transformer_gguf": "transformer_q4_0.gguf",
+        "minimax_music3.mem_saver": true
+      },
+      "default_request_options": {
+        "duration_sec": 20,
+        "num_inference_steps": 30,
+        "seed": 123
+      }
+    }
+  ]
+}

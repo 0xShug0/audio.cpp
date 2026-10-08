@@ -173,6 +173,10 @@ public:
     }
 
     ~Impl() {
+        // Destruction may run after the serving thread handled a model assigned
+        // to another GPU. CUDA handles and allocations must be released while
+        // their owning device is current.
+        (void) cudaSetDevice(config_.device);
         if (plan_ != 0) {
             cufftDestroy(plan_);
         }

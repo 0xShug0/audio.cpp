@@ -1,5 +1,6 @@
 #include "engine/community_models/auk/session.h"
 
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/core/attention_fallback.h"
@@ -144,9 +145,11 @@ AukSession::AukSession(runtime::TaskSpec task, runtime::SessionOptions options,
     : RuntimeSessionBase(options), task_(task), assets_(select_component_assets(std::move(assets), options)),
       contract_(std::move(contract)) {
     runtime::validate_spec_backed_session_options(options, *contract_, "auk", "AuK");
-    if ((task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::AudioGeneration) ||
+    if ((task.task != runtime::VoiceTaskKind::Tts &&
+         task.task != runtime::VoiceTaskKind::VoiceCloning &&
+         task.task != runtime::VoiceTaskKind::AudioGeneration) ||
         task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("AuK currently implements offline TTS and audio editing");
+        throw std::runtime_error("AuK currently implements offline TTS, voice cloning, and audio editing");
     }
     if (!assets_ || !assets_->model || !assets_->qwen || !assets_->vae || !assets_->tokenizer) {
         throw std::runtime_error("AuK requires model, Qwen, VAE, and tokenizer assets");
@@ -180,11 +183,11 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
         throw std::runtime_error("AuK audio editing requires source audio");
     }
     if (!request.input_artifacts.empty()) {
-        throw std::runtime_error("AuK cached artifacts are not supported");
+        throw runtime::InvalidRequestError("AuK cached artifacts are not supported");
     }
     const runtime::AudioBuffer * reference_input = request.audio_input ? &*request.audio_input : nullptr;
     if (request.voice) {
-        if (task_.task != runtime::VoiceTaskKind::Tts) {
+        if (task_.task == runtime::VoiceTaskKind::AudioGeneration) {
             throw std::runtime_error("AuK audio editing takes its source in audio_input, not a voice reference");
         }
         if (request.voice->style || !request.voice->speaker || request.voice->speaker->cached_voice_id ||
@@ -219,7 +222,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
     std::string instruction = request.text_input->text;
     // Without a voice description, text carries the complete upstream instruction.
     if (const auto description = runtime::find_option(request.options, {"instruct"})) {
-        if (task_.task != runtime::VoiceTaskKind::Tts) {
+        if (task_.task == runtime::VoiceTaskKind::AudioGeneration) {
             throw std::runtime_error("AuK editing takes its instruction in text; instruct is for TTS");
         }
         instruction = "Generate speech based on the following description: \"" + *description +

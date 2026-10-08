@@ -114,7 +114,7 @@ Convert speech with explicit text/prosody/style conditioning. The source audio i
 | Task | `vc` |
 | Route | `style_converted_vc` |
 | Required source | `--source-audio` or `--audio` |
-| Required target voice | `--target-voice` or `--voice-ref` |
+| Target voice | See [reference precedence](#reference-precedence); use `--target-voice` to override |
 | Required text | `--target-text` or `--text` |
 | Prosody code default | `true` |
 | Pitch shift default | `false` |
@@ -132,7 +132,7 @@ Edit source speech into new target text while using the target voice. This is th
 | Task | `s2s` |
 | Route | `editing` |
 | Required source | `--source-audio` or `--audio` |
-| Required target voice | `--target-voice` or `--voice-ref` |
+| Target voice | See [reference precedence](#reference-precedence); use `--target-voice` to override |
 | Required text | `--target-text` or `--text` |
 | Prosody code default | `true` |
 | Pitch shift default | `false` |
@@ -168,7 +168,7 @@ Convert singing with explicit lyrics/prosody/style conditioning.
 | Task | `svc` |
 | Route | `style_converted_svc` |
 | Required source | `--source-audio` or `--audio` |
-| Required target voice | `--target-voice` or `--voice-ref` |
+| Target voice | See [reference precedence](#reference-precedence); use `--target-voice` to override |
 | Required text | `--target-text` or `--text` |
 | Prosody code default | `true` |
 | Pitch shift default | `true` |
@@ -186,7 +186,7 @@ Convert singing style with explicit conditioning. The source audio is also used 
 | Task | `svc` |
 | Route | `singing_style_conversion` |
 | Required source | `--source-audio` or `--audio` |
-| Required target voice | `--target-voice` or `--voice-ref` |
+| Target voice | See [reference precedence](#reference-precedence); use `--target-voice` to override |
 | Required text | `--target-text` or `--text` |
 | Prosody code default | `true` |
 | Pitch shift default | `true` |
@@ -217,6 +217,15 @@ audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --tas
 audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --task-route instrument_to_singing --prosody-ref melody.wav --target-voice target_singer.wav --target-text "Lyrics to sing from the instrumental melody." --out instrument_song.wav
 ```
 
+## Reference precedence
+
+An explicit `--target-voice` always selects the target timbre. For `editing`,
+`style_converted_vc`, `style_converted_svc`, and `singing_style_conversion`,
+source/prosody reference audio is the next choice, ahead of `--voice-ref`.
+Other routes use `--voice-ref` when
+`--target-voice` is absent. Use `--target-voice` to select a different speaker
+on those editing/style-converted routes.
+
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -225,7 +234,7 @@ audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --tas
 | `--text` | text | empty string | Target text for TTS-style routes. |
 | `--target-text` | text | `--text` value | Target text/lyrics when separate from main `--text`. |
 | `--source-audio` | WAV path | not set | Source speech, song, humming, or instrument. Required by conversion/edit routes. |
-| `--target-voice` / `--voice-ref` | WAV path | required | Target timbre reference. |
+| `--target-voice` / `--voice-ref` | WAV path | route-dependent | Target timbre reference; precedence differs by route (see [reference precedence](#reference-precedence)). |
 | `--prosody-ref` | WAV path | not set | Prosody/melody reference. Required when `--use-prosody-code=true` on text/prosody routes. |
 | `--style-ref` | WAV path | not set | Style reference audio. |
 | `--style-ref-text` / `--reference-text` | text | empty string | Transcript for style reference. |
@@ -234,12 +243,12 @@ audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --tas
 | `--source-shift-steps` | integer semitones | `0` | Manual source pitch shift. If `0` and pitch shift is enabled on source-audio routes, VeVo2 estimates it. |
 | `--prosody-shift-steps` | integer semitones | `0` | Manual prosody pitch shift. If `0` and pitch shift is enabled with a prosody reference, VeVo2 estimates it. |
 | `--style-shift-steps` | integer semitones | `0` | Manual style pitch shift. If `0` and pitch shift is enabled with a style reference, VeVo2 estimates it. |
-| `--target-duration-seconds` | float | not set | Flow-matching target duration hint. |
+| `--target-duration-seconds` | float | not set | Rescale prosody-code conditioning duration where the route uses it; not an output-length limit. |
 | `--reference-duration-seconds` | float | not set | Trim target voice reference before conditioning. |
-| `--temperature` | float | `1.0` | AR sampling temperature. |
-| `--top-k` | integer | `25` | AR top-k. |
-| `--top-p` | float | `0.8` | AR top-p. |
-| `--repetition-penalty` | float | `1.1` | AR repetition penalty. |
+| `--temperature` | float | checkpoint config | AR sampling temperature. |
+| `--top-k` | integer | checkpoint config | AR top-k. |
+| `--top-p` | float | checkpoint config | AR top-p. |
+| `--repetition-penalty` | float | checkpoint config | AR repetition penalty. |
 | `--max-tokens` | integer | `500` | Maximum AR tokens. |
 | `--num-inference-steps` | integer | `32` | Flow-matching steps. |
 | `--seed` | integer | random if omitted | Request seed. |
@@ -249,7 +258,32 @@ audiocpp_cli --task svc --family vevo2 --model models/Vevo2 --backend cuda --tas
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `duration_sec` | float | unset | Rescale prosody-code conditioning duration where used by the route; not a general output-length limit. Legacy `target_duration_seconds` remains accepted. |
+| `reference_duration_sec` | float | unset | Trim target voice reference before conditioning. Legacy `reference_duration_seconds` remains accepted. |
+| `fm_noise_file` | path | unset | Optional flow-matching noise tensor for reproducibility. |
 | `audio_chunk_duration_sec` | float | `0` | Opt-in source-audio chunking for `style_preserved_vc` and `style_preserved_svc`. `0` keeps the existing one-shot path. |
 | `cross_fade_duration_sec` | float | `1.0` with source-audio chunking | Source chunk overlap and output crossfade duration when source-audio chunking is enabled. Must be smaller than `audio_chunk_duration_sec`. |
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model models/VeVo2 --family vevo2`.
+
+## Session Graph Arenas
+
+The compact spec lists user-facing request controls, shared session storage
+overrides (`vevo2.weight_type`, `vevo2.conv_weight_type`), and the load option
+`vevo2.whisper_model_path`. Per-component storage and arena settings remain
+available through CLI help but are omitted from the spec to limit its size.
+The explicit `fm_noise_file` control is also omitted; `predict_target_prosody`
+is not implemented and is not advertised.
+
+These `--session-option` controls size host graph metadata in MiB, not device
+workspace. Each retains its former `*_graph_context_mb` alias with the same
+`vevo2.` prefix. Weight-context controls are separate and unchanged.
+
+| Option | Default MiB |
+|---|---:|
+| `vevo2.ar_prefill_graph_arena_mb` | `4` |
+| `vevo2.ar_decode_graph_arena_mb` | `4` |
+| `vevo2.tokenizer_graph_arena_mb` | `4` |
+| `vevo2.whisper_graph_arena_mb` | `4` |
+| `vevo2.fm_graph_arena_mb` | `32` |
+| `vevo2.vocoder_graph_arena_mb` | `4` |

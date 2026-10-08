@@ -148,21 +148,27 @@ void reject_unknown_options(const runtime::SessionOptions & options) {
             key != "vevo2.ar_weight_context_mb" &&
             key != "vevo2.ar_weight_type" &&
             key != "vevo2.ar_prefill_graph_context_mb" &&
+            key != "vevo2.ar_prefill_graph_arena_mb" &&
             key != "vevo2.ar_decode_graph_context_mb" &&
+            key != "vevo2.ar_decode_graph_arena_mb" &&
             key != "vevo2.conv_weight_type" &&
             key != "vevo2.tokenizer_weight_context_mb" &&
             key != "vevo2.tokenizer_graph_context_mb" &&
+            key != "vevo2.tokenizer_graph_arena_mb" &&
             key != "vevo2.tokenizer_weight_type" &&
             key != "vevo2.tokenizer_conv_weight_type" &&
             key != "vevo2.whisper_weight_context_mb" &&
             key != "vevo2.whisper_graph_context_mb" &&
+            key != "vevo2.whisper_graph_arena_mb" &&
             key != "vevo2.whisper_conv_weight_type" &&
             key != "vevo2.fm_weight_context_mb" &&
             key != "vevo2.fm_graph_context_mb" &&
+            key != "vevo2.fm_graph_arena_mb" &&
             key != "vevo2.fm_weight_type" &&
             key != "vevo2.fm_conv_weight_type" &&
             key != "vevo2.vocoder_weight_context_mb" &&
             key != "vevo2.vocoder_graph_context_mb" &&
+            key != "vevo2.vocoder_graph_arena_mb" &&
             key != "vevo2.vocoder_weight_type" &&
             key != "vevo2.vocoder_conv_weight_type" &&
             key != "vevo2.weight_type" &&
@@ -196,7 +202,7 @@ runtime::AudioBuffer load_audio_24k_mono(const std::filesystem::path & path) {
 
 void trim_audio_seconds(runtime::AudioBuffer & audio, float seconds) {
     if (seconds < 0.0F) {
-        throw std::runtime_error("Vevo2 reference_duration_seconds must be non-negative");
+        throw std::runtime_error("Vevo2 reference_duration_sec must be non-negative");
     }
     const size_t max_samples = static_cast<size_t>(seconds * static_cast<float>(audio.sample_rate)) *
         static_cast<size_t>(audio.channels);
@@ -629,31 +635,31 @@ Vevo2Session::Vevo2Session(
       task_(task),
       assets_(require_assets(std::move(assets))),
       ar_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_weight_context_mb"}, 2048ull * 1024ull * 1024ull)),
-      ar_prefill_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_prefill_graph_context_mb"}, 512ull * 1024ull * 1024ull)),
-      ar_decode_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_decode_graph_context_mb"}, 512ull * 1024ull * 1024ull)),
+      ar_prefill_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_prefill_graph_arena_mb", "vevo2.ar_prefill_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
+      ar_decode_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.ar_decode_graph_arena_mb", "vevo2.ar_decode_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
       ar_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.ar_weight_type", engine::assets::TensorStorageType::F32)),
       reference_execution_context_(options.backend),
       whisper_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.whisper_weight_context_mb"}, 256ull * 1024ull * 1024ull)),
-      whisper_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.whisper_graph_context_mb"}, 512ull * 1024ull * 1024ull)),
+      whisper_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.whisper_graph_arena_mb", "vevo2.whisper_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
       whisper_matmul_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.whisper_weight_type", engine::assets::TensorStorageType::Native)),
       whisper_conv_weight_storage_type_(
           resolve_conv_weight_type(options, "vevo2.whisper_conv_weight_type", engine::assets::TensorStorageType::Native)),
       tokenizer_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.tokenizer_weight_context_mb"}, 768ull * 1024ull * 1024ull)),
-      tokenizer_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.tokenizer_graph_context_mb"}, 768ull * 1024ull * 1024ull)),
+      tokenizer_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.tokenizer_graph_arena_mb", "vevo2.tokenizer_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
       tokenizer_matmul_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.tokenizer_weight_type", engine::assets::TensorStorageType::Native)),
       tokenizer_conv_weight_storage_type_(
           resolve_conv_weight_type(options, "vevo2.tokenizer_conv_weight_type", engine::assets::TensorStorageType::Native)),
       fm_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.fm_weight_context_mb"}, 2048ull * 1024ull * 1024ull)),
-      fm_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.fm_graph_context_mb"}, 1024ull * 1024ull * 1024ull)),
+      fm_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.fm_graph_arena_mb", "vevo2.fm_graph_context_mb"}, 32ull * 1024ull * 1024ull)),
       fm_matmul_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.fm_weight_type", engine::assets::TensorStorageType::Native)),
       fm_conv_weight_storage_type_(
           resolve_conv_weight_type(options, "vevo2.fm_conv_weight_type", engine::assets::TensorStorageType::Native)),
       vocoder_weight_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.vocoder_weight_context_mb"}, 1024ull * 1024ull * 1024ull)),
-      vocoder_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.vocoder_graph_context_mb"}, 768ull * 1024ull * 1024ull)),
+      vocoder_graph_context_bytes_(runtime::parse_size_mb_option(options.options, {"vevo2.vocoder_graph_arena_mb", "vevo2.vocoder_graph_context_mb"}, 4ull * 1024ull * 1024ull)),
       vocoder_matmul_weight_storage_type_(
           resolve_matmul_weight_type(options, "vevo2.vocoder_weight_type", engine::assets::TensorStorageType::Native)),
       vocoder_conv_weight_storage_type_(
@@ -1069,10 +1075,10 @@ Vevo2Request Vevo2Session::make_request(const runtime::TaskRequest & request) co
     if (const auto value = runtime::parse_int_option(request.options, {"style_shift_steps"})) {
         out.generation.style_shift_steps = *value;
     }
-    if (const auto value = runtime::parse_float_option(request.options, {"target_duration_seconds"})) {
+    if (const auto value = runtime::parse_float_option(request.options, {"duration_sec", "target_duration_seconds"})) {
         out.generation.target_duration_seconds = *value;
     }
-    if (const auto value = runtime::parse_float_option(request.options, {"reference_duration_seconds"})) {
+    if (const auto value = runtime::parse_float_option(request.options, {"reference_duration_sec", "reference_duration_seconds"})) {
         out.generation.reference_duration_seconds = *value;
     }
     if (const auto value = runtime::parse_int_option(request.options, {"num_inference_steps"})) {

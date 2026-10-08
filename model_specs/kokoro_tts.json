@@ -6,10 +6,10 @@
   "category": "tts",
   "status": "community",
   "tasks": ["tts"],
-  "modes": ["offline"],
+  "modes": ["offline", "streaming"],
   "languages": ["en-us", "en-gb", "es", "fr-fr", "hi", "it", "ja", "pt-br", "zh"],
   "runtime": {
-    "tags": ["gguf"]
+    "tags": ["gguf", "stream"]
   },
   "capabilities": {
     "tts": ["built_in_voices", "long_form"]
@@ -17,25 +17,32 @@
   "options": {
     "request": [
       {
+        "name": "voice_id",
+        "type": "enum",
+        "values": ["af_alloy","af_aoede","af_bella","af_heart","af_jessica","af_kore","af_nicole","af_nova","af_river","af_sarah","af_sky","am_adam","am_echo","am_eric","am_fenrir","am_liam","am_michael","am_onyx","am_puck","am_santa","bf_alice","bf_emma","bf_isabella","bf_lily","bm_daniel","bm_fable","bm_george","bm_lewis","ef_dora","em_alex","em_santa","ff_siwis","hf_alpha","hf_beta","hm_omega","hm_psi","if_sara","im_nicola","jf_alpha","jf_gongitsune","jf_nezumi","jf_tebukuro","jm_kumo","pf_dora","pm_alex","pm_santa","zf_xiaobei","zf_xiaoni","zf_xiaoxiao","zf_xiaoyi","zm_yunjian","zm_yunxi","zm_yunxia","zm_yunyang"],
+        "description": "Built-in voice ID; structured voice input (CLI --voice-id) takes precedence.",
+        "required": false,
+        "default": "af_heart"
+      },
+      {
         "name": "language",
         "type": "string",
-        "description": "Text language code; defaults to the selected voice prefix.",
+        "description": "Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice.",
         "required": false
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder noise seed; omitted requests choose a random seed.",
+        "description": "Decoder noise seed for the current request; omitted requests choose a fresh random seed.",
         "required": false,
         "min": 0
       },
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier; default 1.0.",
+        "description": "Speech speed multiplier; default 1.0. Must be finite and positive.",
         "required": false,
-        "min": 0.01,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "phonemes",
@@ -48,7 +55,7 @@
         "type": "int",
         "description": "Maximum codepoints per text chunk before synthesis. Default 240.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 240
       },
       {
@@ -85,25 +92,25 @@
         "default": 512
       },
       {
-        "name": "predictor_duration_graph_mb",
+        "name": "predictor_duration_graph_arena_mb",
         "type": "int",
-        "description": "Predictor duration graph arena size in MiB; default 384.",
+        "description": "Predictor duration host graph-metadata arena size in MiB, not device workspace; default 384.",
         "required": false,
         "min": 1,
         "default": 384
       },
       {
-        "name": "predictor_text_graph_mb",
+        "name": "predictor_text_graph_arena_mb",
         "type": "int",
-        "description": "Predictor text graph arena size in MiB; default 256.",
+        "description": "Predictor text host graph-metadata arena size in MiB, not device workspace; default 256.",
         "required": false,
         "min": 1,
         "default": 256
       },
       {
-        "name": "predictor_tail_graph_mb",
+        "name": "predictor_tail_graph_arena_mb",
         "type": "int",
-        "description": "Predictor tail graph arena size in MiB; default 640.",
+        "description": "Predictor tail host graph-metadata arena size in MiB, not device workspace; default 640.",
         "required": false,
         "min": 1,
         "default": 640
@@ -130,6 +137,13 @@
         "required": false,
         "min": 0,
         "default": 0
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main and ENGINE_ENABLE_RKNN; omit backend. RKNN params: overlap (nonnegative integer, default 0, smaller than the emitted window), gain (boolean, default false; keeps a GGML generator reference).",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []

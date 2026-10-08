@@ -131,7 +131,7 @@ FireRedTTS3InstructRequest make_instruct_request(const runtime::TaskRequest & re
         request.audio_input.has_value() ? "acoustic_edit" : "instruct_tts");
     FireRedTTS3InstructRequest out;
     out.text = request.text_input.has_value() ? request.text_input->text : "";
-    out.instruction = runtime::find_option(request.options, {"instruction"}).value_or("");
+    out.instruction = runtime::find_option(request.options, {"instruct", "instruction"}).value_or("");
     if (mode == "instruct_tts") {
         if (out.text.empty()) {
             throw std::runtime_error("FireRedTTS3 Instruct clone requires text input");
@@ -301,8 +301,12 @@ runtime::RunMode FireRedTTS3Session::run_mode() const {
 }
 
 void FireRedTTS3Session::prepare(const runtime::SessionPreparationRequest & request) {
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
     runtime::validate_spec_backed_request_options(
-        request.options,
+        validation_options,
         *contract_,
         variant_name(assets_->variant));
     mark_prepared();
@@ -311,8 +315,12 @@ void FireRedTTS3Session::prepare(const runtime::SessionPreparationRequest & requ
 runtime::TaskResult FireRedTTS3Session::run(const runtime::TaskRequest & request) {
     const auto wall_start = std::chrono::steady_clock::now();
     const bool is_instruct = is_instruct_variant(assets_->variant);
+    auto validation_options = request.options;
+    validation_options.erase("instruct");
+    validation_options.erase("instruction");
+    (void)runtime::find_option(request.options, {"instruct", "instruction"});
     runtime::validate_spec_backed_request_options(
-        request.options,
+        validation_options,
         *contract_,
         variant_name(assets_->variant));
     require_prepared(is_instruct ? "FireRedTTS3 Instruct run" : "FireRedTTS3 Base run");

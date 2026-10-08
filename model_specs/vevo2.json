@@ -42,6 +42,227 @@
       "gguf"
     ]
   },
+  "options": {
+    "request": [
+      {
+        "name": "route",
+        "type": "enum",
+        "description": "Generation route; omitted selects the task default.",
+        "required": false,
+        "values": [
+          "zero_shot_tts",
+          "text_to_singing",
+          "svs",
+          "style_preserved_vc",
+          "style_preserved_svc",
+          "style_converted_vc",
+          "style_converted_svc",
+          "editing",
+          "singing_style_conversion",
+          "humming_to_singing",
+          "instrument_to_singing"
+        ]
+      },
+      {
+        "name": "source_audio",
+        "type": "audio_path",
+        "description": "Source audio file for conversion or editing.",
+        "required": false
+      },
+      {
+        "name": "target_voice",
+        "type": "audio_path",
+        "description": "Target voice audio file; overrides structured speaker audio.",
+        "required": false
+      },
+      {
+        "name": "prosody_ref",
+        "type": "audio_path",
+        "description": "Prosody or melody reference audio file.",
+        "required": false
+      },
+      {
+        "name": "style_ref",
+        "type": "audio_path",
+        "description": "Style reference audio file.",
+        "required": false
+      },
+      {
+        "name": "target_text",
+        "type": "string",
+        "description": "Text or lyrics; overrides structured text input.",
+        "required": false
+      },
+      {
+        "name": "style_ref_text",
+        "type": "string",
+        "description": "Style-reference transcript; reference_text is also accepted.",
+        "required": false
+      },
+      {
+        "name": "use_prosody_code",
+        "type": "bool",
+        "description": "Use prosody codes; default depends on route and requires prosody audio when enabled.",
+        "required": false
+      },
+      {
+        "name": "use_pitch_shift",
+        "type": "bool",
+        "description": "Align reference pitch to the target voice; default depends on route.",
+        "required": false
+      },
+      {
+        "name": "source_shift_steps",
+        "type": "int",
+        "description": "Manual source reference pitch shift in semitones.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "prosody_shift_steps",
+        "type": "int",
+        "description": "Manual prosody reference pitch shift in semitones.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "style_shift_steps",
+        "type": "int",
+        "description": "Manual style reference pitch shift in semitones.",
+        "required": false,
+        "default": 0
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Rescale prosody-code conditioning to this duration; not a general output-length limit. Legacy target_duration_seconds is accepted.",
+        "required": false
+      },
+      {
+        "name": "reference_duration_sec",
+        "type": "float",
+        "description": "Trim target voice reference before conditioning. Legacy reference_duration_seconds is accepted.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Positive AR sampling temperature; default comes from the checkpoint.",
+        "required": false
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "AR top-k sampling; default comes from the checkpoint.",
+        "required": false
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "AR nucleus sampling; default comes from the checkpoint.",
+        "required": false
+      },
+      {
+        "name": "repetition_penalty",
+        "type": "float",
+        "description": "Positive AR repetition penalty; default comes from the checkpoint.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated AR tokens.",
+        "required": false,
+        "min": 1,
+        "default": 500
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Flow-matching denoising steps.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Sampling seed; random when omitted.",
+        "required": false,
+        "min": 0,
+        "max": 4294967295
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Character budget per text chunk.",
+        "required": false,
+        "min": 1,
+        "default": 128
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Source-audio chunking for style_preserved_vc/svc requires audio_chunk_duration_sec. Auto uses fixed chunks; none disables chunking.",
+        "required": false,
+        "values": [
+          "auto",
+          "fixed",
+          "none"
+        ],
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Source-audio chunk duration for style_preserved_vc/svc; zero or omitted keeps one-shot processing.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "cross_fade_duration_sec",
+        "type": "float",
+        "description": "Source chunk overlap and output crossfade; must be smaller than chunk duration.",
+        "required": false,
+        "default": 1
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared matmul storage override; omitted preserves component defaults.",
+        "required": false,
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0"
+        ]
+      },
+      {
+        "name": "conv_weight_type",
+        "type": "enum",
+        "description": "Shared convolution storage override; omitted preserves native storage.",
+        "required": false,
+        "values": [
+          "native",
+          "f32",
+          "f16"
+        ]
+      }
+    ],
+    "load": [
+      {
+        "name": "whisper_model_path",
+        "type": "path",
+        "description": "External Whisper model directory for feature extraction when not bundled.",
+        "required": false
+      }
+    ]
+  },
   "ui": {
     "recommended_package": "vevo2_q8_0",
     "tags": [

@@ -159,7 +159,7 @@ MiniMaxH3GenerateRequest MiniMaxH3Session::make_request(const runtime::TaskReque
     out.width = runtime::parse_int_option(request.options, {"width"}).value_or(assets_->config.width);
     out.num_frames = runtime::parse_int_option(request.options, {"num_frames"}).value_or(assets_->config.num_frames);
     out.guidance_scale = runtime::parse_float_option(request.options, {"guidance_scale"}).value_or(out.guidance_scale);
-    if (const auto value = runtime::find_option(request.options, {"sampler", "minimax_h3.sampler"})) {
+    if (const auto value = runtime::find_option(request.options, {"sampler_mode", "sampler", "minimax_h3.sampler"})) {
         out.sampler = parse_sampler_mode(*value);
     }
     out.flow_shift = runtime::parse_float_option(request.options, {"flow_shift"}).value_or(out.flow_shift);

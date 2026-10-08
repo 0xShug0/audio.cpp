@@ -4,6 +4,7 @@
 #include "engine/framework/io/json.h"
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -57,12 +58,41 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
 
     ParakeetConfig config;
     config.model_type = json::require_string(config_root, "model_type");
+    if (config_root.find("variant")) {
+        config.variant = json::require_string(config_root, "variant");
+    }
     config.vocab_size = json::require_i64(config_root, "vocab_size");
     config.blank_token_id = json::require_i64(config_root, "blank_token_id");
     config.pad_token_id = json::require_i64(config_root, "pad_token_id");
     config.decoder_hidden_size = json::require_i64(config_root, "decoder_hidden_size");
     config.decoder_layers = json::require_i64(config_root, "num_decoder_layers");
     config.max_symbols_per_step = json::require_i64(config_root, "max_symbols_per_step");
+
+    // Old development packages used unscaled projections and special runtime
+    // precision controls. Reject them instead of silently applying the normal
+    // loader's sqrt(hidden_size) fold to incompatible weights.
+    const auto & enc_config = config_root.require("encoder_config");
+    if (config_root.find("audiocpp_matmul_precision") ||
+        config_root.find("audiocpp_cpu_matmul_weight_type") ||
+        enc_config.find("subsampling_input_scale") || enc_config.find("batch_norm_variance_floor")) {
+        throw std::runtime_error("Phonon development package uses removed precision/scaling controls; reconvert with the current convert_phonon2.py");
+    }
+    if (config_root.find("word_timestamp_mode")) {
+        config.word_timestamp_mode = json::require_string(config_root, "word_timestamp_mode");
+        if (config.word_timestamp_mode != "default" && config.word_timestamp_mode != "token_duration")
+            throw std::runtime_error("Parakeet TDT word_timestamp_mode must be default or token_duration");
+    }
+    if (const auto * ids = config_root.find("audiocpp_punctuation_token_ids")) {
+        for (const auto & value : ids->as_array()) {
+            const auto number = value.as_number();
+            if (!std::isfinite(number) || number < 0 || number >= config.vocab_size || std::floor(number) != number)
+                throw std::runtime_error("Parakeet TDT punctuation token id out of range");
+            config.punctuation_token_ids.push_back(static_cast<int32_t>(number));
+        }
+        std::sort(config.punctuation_token_ids.begin(), config.punctuation_token_ids.end());
+    } else if (config.word_timestamp_mode == "token_duration") {
+        throw std::runtime_error("Parakeet TDT token_duration timestamps require punctuation token metadata");
+    }
 
     if (const auto * dur = config_root.find("durations"); dur != nullptr && dur->is_array()) {
         config.durations.clear();

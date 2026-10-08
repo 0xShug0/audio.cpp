@@ -33,34 +33,43 @@ runtime::ModelMetadata metadata(const VibeVoiceASRAssets & assets) {
     return out;
 }
 
-runtime::ModelCliInterface cli(const VibeVoiceASRAssets &) {
+runtime::ModelCliInterface cli(const VibeVoiceASRAssets & assets) {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"language", "code", "ASR language label."},
-        {"max_tokens", "n", "Maximum generated text tokens."},
-        {"temperature", "float", "Sampling temperature; 0 uses deterministic decoding."},
-        {"top_p", "float", "Nucleus sampling probability."},
-        {"top_k", "n", "Top-k sampling limit; 0 disables top-k filtering."},
-        {"num_beams", "n", "Beam count for deterministic beam search."},
-        {"repetition_penalty", "float", "Generation repetition penalty."},
-        {"seed", "n", "Acoustic latent sampling seed."},
-        {"audio_chunk_mode", "auto|fixed|vad|none", "Audio chunking mode; default auto uses fixed chunks."},
-        {"audio_chunk_duration_sec", "seconds", "Audio chunk duration; default 1200."},
+        {"max_tokens", "n", "Maximum generated text tokens.", false, assets.family == "vibevoice_asr_streaming" ? "256" : "32768", "1"},
+        {"temperature", "float", "Sampling temperature; 0 uses deterministic decoding.", false, "0", "0"},
+        {"top_p", "float", "Nucleus sampling probability in (0, 1].", false, "1", std::nullopt, "1"},
+        {"top_k", "n", "Top-k sampling limit; 0 disables top-k filtering.", false, "50", "0"},
+        {"num_beams", "n", "Beam count for the offline checkpoint; ignored by the streaming checkpoint.", false, "1", "1"},
+        {"repetition_penalty", "float", "Positive generation repetition penalty.", false, "1"},
+        {"seed", "n", "Acoustic latent sampling seed.", false, "1234", "0"},
+        {"audio_chunk_mode", "auto|fixed|vad|none", "Offline checkpoint chunk mode; default auto uses fixed chunks. Ignored by the streaming checkpoint in both task modes.", false, "auto"},
+        {"audio_chunk_duration_sec", "seconds", "Offline checkpoint chunk duration; default 1200. Ignored by the streaming checkpoint in both task modes.", false, "1200"},
+        {"context", "string", "Context hint; context_info is also accepted."},
     };
     out.session_options = {
-        {"vibevoice_asr.weight_type", "native|f32|f16|bf16|q8_0", "Tokenizer, connector, and decoder weight storage type."},
+        {"vibevoice_asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared weight storage type; both vibevoice_asr and vibevoice_asr_streaming prefixes are accepted aliases.", false, "native"},
         {"vibevoice_asr.tokenizer_weight_type", "native|f32|f16|bf16|q8_0", "Speech tokenizer weight storage type."},
         {"vibevoice_asr.connector_weight_type", "native|f32|f16|bf16|q8_0", "Acoustic and semantic connector weight storage type."},
         {"vibevoice_asr.decoder_weight_type", "native|f32|f16|bf16|q8_0", "Text decoder weight storage type."},
-        {"vibevoice_asr.tokenizer_weight_context_mb", "mb", "Speech tokenizer weight context arena size."},
-        {"vibevoice_asr.connector_weight_context_mb", "mb", "Acoustic and semantic connector weight context arena size."},
-        {"vibevoice_asr.decoder_weight_context_mb", "mb", "Text decoder weight context arena size."},
-        {"vibevoice_asr.vad_model_path", "path", "Silero VAD model path used by audio_chunk_mode=vad."},
-        {"vibevoice_asr_streaming.weight_type", "native|f32|f16|bf16|q8_0", "Tokenizer, connector, and decoder weight storage type."},
+        {"vibevoice_asr.tokenizer_weight_context_mb", "mb", "Speech tokenizer weight context arena size.", false, "512", "1"},
+        {"vibevoice_asr.connector_weight_context_mb", "mb", "Acoustic and semantic connector weight context arena size.", false, "128", "1"},
+        {"vibevoice_asr.decoder_weight_context_mb", "mb", "Text decoder weight context in MiB; default 4096 on 64-bit builds, 1024 on 32-bit builds. Both family prefixes are accepted aliases.", false, std::nullopt, "1"},
+        {"vibevoice_asr_streaming.weight_type", "native|f32|f16|bf16|q8_0", "Shared weight storage type; both vibevoice_asr and vibevoice_asr_streaming prefixes are accepted aliases.", false, "native"},
         {"vibevoice_asr_streaming.tokenizer_weight_type", "native|f32|f16|bf16|q8_0", "Speech tokenizer weight storage type."},
         {"vibevoice_asr_streaming.connector_weight_type", "native|f32|f16|bf16|q8_0", "Acoustic and semantic connector weight storage type."},
         {"vibevoice_asr_streaming.decoder_weight_type", "native|f32|f16|bf16|q8_0", "Text decoder weight storage type."},
+        {"vibevoice_asr_streaming.tokenizer_weight_context_mb", "int", "Speech tokenizer weight context in MiB; default 512; must be positive.", false, "512", "1"},
+        {"vibevoice_asr_streaming.connector_weight_context_mb", "int", "Connector weight context in MiB; default 128; must be positive.", false, "128", "1"},
+        {"vibevoice_asr_streaming.decoder_weight_context_mb", "int", "Text decoder weight context in MiB; default 4096 on 64-bit builds, 1024 on 32-bit builds. Both family prefixes are accepted aliases.", false, std::nullopt, "1"},
+        {"vibevoice_asr_streaming.max_history_steps", "int", "Retained decoder history; 0 uses checkpoint position capacity and positive values cannot exceed it.", false, "0", "0"},
+        {"vibevoice_asr.max_history_steps", "int", "Maximum retained decoder history; zero uses the model limit. Cannot exceed checkpoint position capacity; zero uses that capacity. Default: 0.", false, "0", "0"},
     };
+    if (assets.family != "vibevoice_asr_streaming") {
+        out.session_options.push_back(
+            {"vibevoice_asr.vad_model_path", "path", "Silero VAD model path used by audio_chunk_mode=vad.", false, "assets/framework/models/silero_vad"});
+    }
     return out;
 }
 

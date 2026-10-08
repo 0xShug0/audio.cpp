@@ -78,17 +78,30 @@
   "options": {
     "request": [
       {
+        "name": "min_frames",
+        "type": "int",
+        "required": false,
+        "default": 0,
+        "description": "Minimum generated audio frames per text chunk; nonpositive values derive a text-length-based floor. Separate from duration_frames conditioning."
+      },
+      {
+        "name": "max_frames",
+        "type": "int",
+        "required": false,
+        "default": 0,
+        "description": "Generated audio-frame ceiling per text chunk; nonpositive values derive a text-length-based ceiling. Runtime raises it to at least the effective min_frames plus the number of codebooks."
+      },
+      {
         "name": "instruct",
         "type": "string",
         "required": false,
         "description": "Voice description. Followed only loosely on this checkpoint; a reference recording is far more reliable."
       },
       {
-        "name": "tokens",
+        "name": "duration_frames",
         "type": "int",
-        "min": 1,
         "required": false,
-        "description": "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field."
+        "description": "Duration budget in codec frames at 12.5 a second, the model's own '- Tokens:' field. Nonpositive values disable duration conditioning."
       },
       {
         "name": "language",
@@ -100,31 +113,43 @@
         "name": "seed",
         "type": "int",
         "required": false,
-        "description": "Reproduces a take exactly."
+        "description": "Reproduces a take exactly; default 0. Parsed as signed 32-bit integer then converted to uint32; negative values wrap.",
+        "default": 0
+      },
+      {
+        "name": "text_temperature",
+        "type": "float",
+        "required": false,
+        "default": 1.5,
+        "description": "Text-token sampling temperature. Must be finite and positive when sampling."
       },
       {
         "name": "temperature",
         "type": "float",
         "required": false,
-        "description": "Audio sampling temperature."
+        "description": "Audio sampling temperature; default 1.5. Must be finite and positive when sampling.",
+        "default": 1.5
       },
       {
         "name": "top_p",
         "type": "float",
         "required": false,
-        "description": "Audio nucleus sampling cutoff."
+        "description": "Audio nucleus sampling cutoff; default 0.6.",
+        "default": 0.6
       },
       {
         "name": "top_k",
         "type": "int",
         "required": false,
-        "description": "Audio top-k."
+        "description": "Audio top-k; default 50.",
+        "default": 50
       },
       {
         "name": "repetition_penalty",
         "type": "float",
         "required": false,
-        "description": "Audio repetition penalty."
+        "description": "Audio repetition penalty; default 1.1. Must be finite and positive when history is nonempty.",
+        "default": 1.1
       },
       {
         "name": "text_chunk_size",
@@ -137,21 +162,27 @@
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Framework text chunking mode.",
+        "description": "Text chunking policy; word_budget also accepts default.",
         "values": [
-          "default",
+          "word_budget",
           "tag_aware",
+          "japanese",
           "endline"
         ],
         "required": false,
-        "default": "default"
+        "default": "word_budget"
       }
     ],
     "session": [
       {
         "name": "weight_type",
         "type": "enum",
-        "preset": "weight_type_full",
+        "values": [
+          "native",
+          "f32",
+          "bf16",
+          "q8_0"
+        ],
         "required": false,
         "default": "native",
         "description": "Backbone and head weight storage; default native, which keeps a GGUF package's own type. Forcing bf16 dequantises a quantised package and costs the VRAM the quantisation was meant to save. f16 is rejected: this backbone produces NaN in it."
@@ -166,7 +197,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/moss_tts_v15.md",
+      "docs/models/moss_tts_v15.md",
       "docs/tts.md",
       "docs/gguf.md"
     ],

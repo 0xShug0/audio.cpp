@@ -62,7 +62,7 @@
       "Stream"
     ],
     "docs": [
-      "docs/community_models/r2t2.md",
+      "docs/models/r2t2.md",
       "docs/asr.md"
     ]
   },
@@ -208,45 +208,48 @@
         "name": "max_tokens",
         "type": "int",
         "required": false,
-        "default": 512,
-        "description": "Offline decode budget."
+        "description": "Offline decode budget. Must be positive. Offline omission uses checkpoint configuration (512 fallback).",
+        "min": 1
       }
     ],
     "session": [
       {
         "name": "chunk_size_ms",
-        "type": "int",
+        "type": "float",
         "required": false,
         "default": 320,
-        "description": "Streaming decode chunk size in milliseconds (80-2000)."
+        "description": "Streaming chunk duration in milliseconds; must be positive."
       },
       {
         "name": "unfixed_chunk_num",
         "type": "int",
         "required": false,
         "default": 2,
-        "description": "Leading chunks decoded without a stable-prefix prompt."
+        "description": "Leading chunks decoded without a stable-prefix prompt.",
+        "min": 0
       },
       {
         "name": "unfixed_token_num",
         "type": "int",
         "required": false,
         "default": 5,
-        "description": "Tokens rolled back from the accumulated text before it becomes the prefix prompt."
+        "description": "Tokens rolled back from the accumulated text before it becomes the prefix prompt.",
+        "min": 0
       },
       {
         "name": "rollback_punctuation",
         "type": "bool",
         "required": false,
         "default": false,
-        "description": "Keep trailing text uncommitted when it ends with punctuation instead of rolling back tokens."
+        "description": "When punctuation is detected, set rollback to zero and retain the full decoded prefix."
       },
       {
         "name": "max_tokens",
         "type": "int",
         "required": false,
         "default": 32,
-        "description": "Greedy decode budget per streaming chunk and for the final flush (session-scoped; distinct from the offline request max_tokens)."
+        "description": "Greedy decode budget per streaming chunk and for the final flush (session-scoped; distinct from the offline request max_tokens).",
+        "min": 1
       },
       {
         "name": "audio_encoder_weight_type",
@@ -283,28 +286,32 @@
         "type": "int",
         "required": false,
         "default": 128,
-        "description": "Audio tower graph arena in MB."
+        "description": "Audio tower graph arena in MB.",
+        "min": 1
       },
       {
         "name": "thinker_prefill_graph_arena_mb",
         "type": "int",
         "required": false,
         "default": 256,
-        "description": "Thinker prefill graph arena in MB."
+        "description": "Thinker prefill graph arena in MB.",
+        "min": 1
       },
       {
         "name": "thinker_decode_graph_arena_mb",
         "type": "int",
         "required": false,
         "default": 256,
-        "description": "Thinker decode graph arena in MB."
+        "description": "Thinker decode graph arena in MB.",
+        "min": 1
       },
       {
         "name": "thinker_weight_context_mb",
         "type": "int",
         "required": false,
         "default": 64,
-        "description": "Thinker weight context in MB."
+        "description": "Thinker weight context in MB.",
+        "min": 1
       }
     ],
     "load": []

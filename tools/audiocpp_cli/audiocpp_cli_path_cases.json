@@ -1,6 +1,222 @@
 {
   "cases": [
     {
+      "id": "plapre_conditioning",
+      "coverage": "Danish voices, reference conditioning, speaker-only cloning, chunking, growing decode capacity and repeated requests",
+      "family": "plapre",
+      "model": "models/Plapre-3-GGUF/plapre-3-bf16.gguf",
+      "task": "tts",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "base", "text": "Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "max_tokens": 128}},
+        {"id": "base_repeat", "text": "Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "max_tokens": 128}},
+        {"id": "reference", "text": "I morgen kommer jeg igen.", "voice_ref": "resources/hviske_asr/danish_unified_00.wav", "seed": 42, "options": {"temperature": 0, "max_tokens": 1000}},
+        {"id": "speaker_only", "text": "I morgen kommer jeg igen.", "voice_ref": "resources/hviske_asr/danish_unified_00.wav", "seed": 42, "options": {"temperature": 0, "x_vector_only_mode": true}},
+        {"id": "chunked", "text": "Godmorgen. I dag skinner solen over byen. Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "voice_id": "ida", "text_chunk_size": 40}},
+        {"id": "repeat", "text": "Hej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "max_tokens": 128}}
+      ]
+    },
+    {
+      "id": "plapre_streaming",
+      "coverage": "Completed text-chunk audio deltas and streaming finalization",
+      "family": "plapre",
+      "model": "models/Plapre-3-GGUF/plapre-3-bf16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "sentences", "text": "Godmorgen. I dag skinner solen over byen.\nHej, hvordan har du det?", "seed": 42, "options": {"temperature": 0, "text_chunk_mode": "endline"}}
+      ]
+    },
+    {
+      "id": "ced_classification",
+      "coverage": "CED classification, changing graph shapes, long audio pooling, top-k selection and repeat requests",
+      "family": "ced",
+      "model": "models/CED-GGUF/ced-tiny-f32.gguf",
+      "task": "cls",
+      "outputs": [],
+      "requests": [
+        {"id": "snapping", "audio": "resources/ced/finger_snapping.wav", "options": {"top_k": 527}},
+        {"id": "speech", "audio": "resources/wakeword/micro/speech.wav", "options": {"top_k": 527}},
+        {"id": "music", "audio": "resources/wakeword/micro/music.wav", "options": {"top_k": 527}},
+        {"id": "silence", "audio": "resources/wakeword/micro/silence.wav", "options": {"top_k": 527}},
+        {"id": "long", "audio": "resources/vibevoice_asr/four_speaker_short.wav", "options": {"top_k": 527}},
+        {"id": "repeat", "audio": "resources/ced/finger_snapping.wav", "options": {"top_k": 527}},
+        {"id": "top_one", "audio": "resources/ced/finger_snapping.wav", "options": {"top_k": 1}}
+      ]
+    },
+    {
+      "id": "micro_wake_word_requests",
+      "coverage": "MixedNet recorded wake phrases, speech, music, silence, threshold overrides and repeated-request reset",
+      "family": "micro_wake_word",
+      "model": "models/MicroWakeWord-GGUF/micro-wake-word-okay-nabu-f32.gguf",
+      "task": "wake",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "positive1", "audio": "resources/wakeword/micro/okay_nabu_1.wav"},
+        {"id": "positive2", "audio": "resources/wakeword/micro/okay_nabu_2.wav"},
+        {"id": "positive3", "audio": "resources/wakeword/micro/okay_nabu_3.wav"},
+        {"id": "speech", "audio": "resources/wakeword/micro/speech.wav"},
+        {"id": "music", "audio": "resources/wakeword/micro/music.wav"},
+        {"id": "silence", "audio": "resources/wakeword/micro/silence.wav"},
+        {"id": "threshold", "audio": "resources/wakeword/micro/speech.wav", "options": {"threshold": 0.01, "sliding_window_size": 1}},
+        {"id": "repeat_speech", "audio": "resources/wakeword/micro/speech.wav"},
+        {"id": "repeat_positive1", "audio": "resources/wakeword/micro/okay_nabu_1.wav"}
+      ]
+    },
+    {
+      "id": "micro_wake_word_streaming",
+      "coverage": "MixedNet streaming feature and recurrent-state continuity",
+      "family": "micro_wake_word",
+      "model": "models/MicroWakeWord-GGUF/micro-wake-word-okay-nabu-f32.gguf",
+      "task": "wake",
+      "mode": "streaming",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "positive", "audio": "resources/wakeword/micro/okay_nabu_1.wav"}
+      ]
+    },
+    {
+      "id": "sherpa_kws_requests",
+      "coverage": "Zipformer English and Chinese keyword detection, beam settings and repeated-request reset",
+      "family": "sherpa_kws",
+      "model": "models/Sherpa-KWS-GGUF/sherpa-kws-zipformer-zh-en-3m-f32.gguf",
+      "task": "wake",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "english", "audio": "resources/wakeword/sherpa/en_0.wav"},
+        {"id": "english2", "audio": "resources/wakeword/sherpa/en_1.wav"},
+        {"id": "chinese", "audio": "resources/wakeword/sherpa/zh_0.wav"},
+        {"id": "chinese1", "audio": "resources/wakeword/sherpa/zh_1.wav"},
+        {"id": "chinese2", "audio": "resources/wakeword/sherpa/zh_2.wav"},
+        {"id": "chinese3", "audio": "resources/wakeword/sherpa/zh_3.wav"},
+        {"id": "chinese4", "audio": "resources/wakeword/sherpa/zh_4.wav"},
+        {"id": "chinese5", "audio": "resources/wakeword/sherpa/zh_5.wav"},
+        {"id": "chinese6", "audio": "resources/wakeword/sherpa/zh_6.wav"},
+        {"id": "beam", "audio": "resources/wakeword/sherpa/en_0.wav", "options": {"max_active_paths": 8}},
+        {"id": "repeat_english", "audio": "resources/wakeword/sherpa/en_0.wav"}
+      ]
+    },
+    {
+      "id": "sherpa_kws_streaming",
+      "coverage": "Zipformer streaming detections and finalization",
+      "family": "sherpa_kws",
+      "model": "models/Sherpa-KWS-GGUF/sherpa-kws-zipformer-zh-en-3m-f32.gguf",
+      "task": "wake",
+      "mode": "streaming",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "english", "audio": "resources/wakeword/sherpa/en_0.wav"}
+      ]
+    },
+    {
+      "id": "hviske_v6_longform",
+      "coverage": "Danish longform, auto versus explicit silence splitting, fixed and unsplit modes, and repeated requests",
+      "family": "hviske_asr_v6",
+      "model": "models/Hviske-v6-GGUF/hviske-v6-bf16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "warmup", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "longform", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "auto_20", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "auto", "audio_chunk_duration_sec": 20}},
+        {"id": "fixed_28", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "fixed", "audio_chunk_duration_sec": 28}},
+        {"id": "none_short", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "none"}},
+        {"id": "silence_short", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "silence", "audio_chunk_duration_sec": 8}},
+        {"id": "auto_short_8", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "auto", "audio_chunk_duration_sec": 8}},
+        {"id": "silence_long", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "silence"}},
+        {"id": "repeat_default", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "short_after_long", "audio": "resources/hviske_asr/danish_unified_00.wav"}
+      ]
+    },
+    {
+      "id": "hviske_v6_asr",
+      "coverage": "Danish ASR, formatting controls, greedy decoding, varying input length and repeated requests",
+      "family": "hviske_asr_v6",
+      "model": "models/Hviske-v6-GGUF/hviske-v6-bf16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "first", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "different", "audio": "resources/hviske_asr/danish_unified_01.wav"},
+        {"id": "third", "audio": "resources/hviske_asr/danish_unified_02.wav"},
+        {"id": "formatted", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"cased": true, "punctuated": true}},
+        {"id": "unformatted", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"cased": false, "punctuated": false}},
+        {"id": "greedy", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"num_beams": 1}},
+        {"id": "repeat_first", "audio": "resources/hviske_asr/danish_unified_00.wav"}
+      ]
+    },
+    {
+      "id": "mossformer2_separation",
+      "coverage": "MossFormer2 default windows, whole-file inference, changed window size and repeated requests",
+      "family": "mossformer2",
+      "model": "models/MossFormer2-GGUF/mossformer2-ss-16k-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "default", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "whole", "audio": "assets/resources/sample_16k.wav", "options": {"audio_chunk_duration_sec": 0}},
+        {"id": "shorter", "audio": "assets/resources/sample_16k.wav", "options": {"audio_chunk_duration_sec": 1}},
+        {"id": "unnormalized", "audio": "assets/resources/sample_16k.wav", "options": {"normalize_output": false}},
+        {"id": "repeat_default", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
+      "id": "tf_gridnet_separation",
+      "coverage": "TF-GridNet resampling, chunked speaker matching, whole-file inference, and repeated requests",
+      "family": "tf_gridnet",
+      "model": "models/TF-GridNet-GGUF/tf-gridnet-wsj0-2mix-f32.gguf",
+      "task": "sep",
+      "mode": "offline",
+      "outputs": ["named_audio"],
+      "requests": [
+        {"id": "chunked", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "whole", "audio": "assets/resources/sample_16k.wav", "options": {"audio_chunk_duration_sec": 0}},
+        {"id": "repeat_chunked", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
+      "id": "voxtral_tts_presets_reuse",
+      "coverage": "Voxtral TTS embedded preset changes, variable text lengths, seeds, and repeated requests in one session",
+      "family": "voxtral_tts",
+      "model": "models/Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-bf16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "male", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_male"}},
+        {"id": "female", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_female"}},
+        {"id": "longer", "text": "The morning train follows the river through the valley. Please check your ticket, keep your luggage nearby, and listen for the platform announcement before boarding.", "seed": 7, "options": {"voice_id": "casual_male"}},
+        {"id": "male_repeat", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_male"}}
+      ]
+    },
+    {
+      "id": "voxtral_tts_streaming",
+      "coverage": "Voxtral TTS incremental audio across the initial and steady-state codec graphs",
+      "family": "voxtral_tts",
+      "model": "models/Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-bf16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "stream", "text": "The next train leaves in ten minutes. Please wait by platform five.", "seed": 42, "options": {"voice_id": "casual_male"}}
+      ]
+    },
+    {
+      "id": "voxtral_tts_multilingual",
+      "coverage": "Voxtral TTS Tekken tokenization and embedded presets for Latin and non-Latin languages",
+      "family": "voxtral_tts",
+      "model": "models/Voxtral-4B-TTS-2603-GGUF/voxtral-4b-tts-2603-bf16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": ["audio"],
+      "requests": [
+        {"id": "french", "text": "Bonjour, le prochain train part dans dix minutes. Merci de patienter sur le quai.", "seed": 42, "options": {"voice_id": "fr_female"}},
+        {"id": "hindi", "text": "नमस्ते, अगली ट्रेन दस मिनट में रवाना होगी। कृपया अपना टिकट तैयार रखें।", "seed": 42, "options": {"voice_id": "hi_female"}}
+      ]
+    },
+    {
       "id": "owsm_v4_streaming",
       "coverage": "OWSM v4 committed long-form text deltas",
       "family": "owsm",
@@ -707,6 +923,61 @@
       ]
     },
     {
+      "id": "qwen3_tts_custom_voice_streaming",
+      "coverage": "Qwen3 CustomVoice incremental codec decoding during AR generation and final partial audio flush",
+      "family": "qwen3_tts",
+      "model": "models/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "custom_stream",
+        "text": "The lighthouse keeper records a detailed morning report about the tide, the lantern, and the ships crossing the horizon.",
+        "language": "English",
+        "speaker": "Ryan",
+        "seed": 1234,
+        "max_tokens": 256,
+        "options": {"stream_chunk_policy": "fixed"}
+      }]
+    },
+    {
+      "id": "qwen3_tts_base_voice_clone_streaming",
+      "coverage": "Qwen3 Base streaming with reference codec context and reference audio excluded from emitted chunks",
+      "family": "qwen3_tts",
+      "model": "models/Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "clone_stream",
+        "text": "The lighthouse keeper records a detailed morning report about the tide, the lantern, and the ships crossing the horizon.",
+        "language": "English",
+        "voice_ref": "resources/a.wav",
+        "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+        "seed": 1234,
+        "max_tokens": 256,
+        "options": {"stream_chunk_policy": "fixed"}
+      }]
+    },
+    {
+      "id": "qwen3_tts_voice_design_streaming",
+      "coverage": "Qwen3 VoiceDesign streaming instruction path with a smaller audio event size",
+      "family": "qwen3_tts",
+      "model": "models/Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf",
+      "task": "vdes",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "design_stream",
+        "text": "This designed voice should sound cheerful and clear while keeping every word easy to recognize.",
+        "language": "English",
+        "instruct": "A cheerful young woman with a bright studio voice.",
+        "seed": 1234,
+        "max_tokens": 192,
+        "options": {"stream_frames_per_event": 4, "stream_chunk_policy": "fixed"}
+      }]
+    },
+    {
       "id": "qwen3_tts_custom_voice",
       "coverage": "Qwen3 TTS custom voice variant speaker selection path",
       "family": "qwen3_tts",
@@ -961,14 +1232,13 @@
     },
     {
       "id": "neutts_streaming_longform_chunks",
-      "coverage": "NeuTTS-2E streaming pull-events path, long-form chunking, named segment audio, and final merged audio",
+      "coverage": "NeuTTS-2E incremental AR-code streaming, codec context windows, long-form chunking, and final merged audio",
       "family": "neutts",
       "model": "models/NeuTTS-2E-GGUF/neutts-2e-orig.gguf",
       "task": "tts",
       "mode": "streaming",
       "outputs": [
-        "audio",
-        "named_audio"
+        "audio"
       ],
       "requests": [
         {
@@ -1113,12 +1383,11 @@
     },
     {
       "id": "voxcpm2_streaming_voice_design",
-      "coverage": "VoxCPM2 streaming text-to-speech path with text-embedded voice design, MiniCPM streaming generation, diffusion feature generation, and AudioVAE chunk decode",
+      "coverage": "VoxCPM2 streaming voice design with growing AudioVAE windows and incremental audio emission",
       "family": "voxcpm2",
       "model": "models/VoxCPM2",
       "task": "tts",
       "mode": "streaming",
-      "chunk_size": 512,
       "outputs": [
         "audio"
       ],
@@ -1132,6 +1401,30 @@
           "num_inference_steps": 10,
           "options": {
             "retry_badcase": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "voxcpm2_streaming_clone_fixed",
+      "coverage": "VoxCPM2 reference voice streaming with fixed AudioVAE windows and left-context trimming",
+      "family": "voxcpm2",
+      "model": "models/VoxCPM2",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "streaming_clone_fixed",
+          "text": "This VoxCPM2 path test clones the reference speaker for a short review sentence.",
+          "voice_ref": "resources/sample.wav",
+          "seed": 1234,
+          "guidance_scale": 2.0,
+          "num_inference_steps": 10,
+          "options": {
+            "retry_badcase": false,
+            "stream_chunk_policy": "fixed",
+            "stream_frames_per_event": 4
           }
         }
       ]
@@ -1255,6 +1548,50 @@
       ]
     },
     {
+      "id": "higgs_audio_tts_voice_clone_streaming",
+      "coverage": "Higgs incremental delayed-codebook audio with growing chunks",
+      "family": "higgs_audio_tts",
+      "model": "models/higgs-audio-v3-tts-4b",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "grow",
+          "text": "A short warmup checks the cloned voice before the run.",
+          "voice_ref": "resources/sample.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "seed": 1234
+        }
+      ]
+    },
+    {
+      "id": "higgs_audio_tts_voice_clone_streaming_fixed",
+      "coverage": "Higgs incremental delayed-codebook audio with small fixed chunks",
+      "family": "higgs_audio_tts",
+      "model": "models/higgs-audio-v3-tts-4b",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "fixed",
+          "text": "The next sentence uses fixed audio chunks without changing the reference speaker.",
+          "voice_ref": "resources/sample.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "seed": 4321,
+          "options": {
+            "stream_chunk_policy": "fixed",
+            "stream_frames_per_event": "8"
+          }
+        }
+      ]
+    },
+    {
       "id": "higgs_audio_tts_voice_clone_cache_pollution",
       "coverage": "Higgs Audio v3 long-lived session cache pollution check with short, long, medium, and long requests",
       "family": "higgs_audio_tts",
@@ -1294,6 +1631,25 @@
           "seed": 1234
         }
       ]
+    },
+    {
+      "id": "fish_audio_s2_pro_streaming",
+      "coverage": "Fish Audio incremental AR code emission and stateful causal codec decoding",
+      "family": "fish_audio",
+      "model": "models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "reference_voice",
+        "text": "The studio engineer checked the short voice prompt, confirmed the take was clear, and started the final render.",
+        "voice_ref": "resources/sample.wav",
+        "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
+        "seed": 1234,
+        "temperature": 0.8,
+        "top_p": 0.8,
+        "repetition_penalty": 1.1
+      }]
     },
     {
       "id": "fish_audio_s2_pro_paths",
@@ -2436,6 +2792,24 @@
       ]
     },
     {
+      "id": "kokoro_streaming_text_chunks",
+      "coverage": "Kokoro text-chunk streaming and final merged audio",
+      "family": "kokoro_tts",
+      "model": "models/Kokoro-82M-GGUF/kokoro-82m-bf16.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [
+        {
+          "id": "first",
+          "text": "The station clock strikes nine as the first passengers arrive. A conductor checks the schedule and welcomes everyone aboard.",
+          "voice_id": "af_heart",
+          "text_chunk_size": 60,
+          "seed": 42
+        }
+      ]
+    },
+    {
       "id": "kokoro_near_cap_reuse",
       "coverage": "Kokoro long-short-long request sizes, frontend, predictor, decoder graph reuse",
       "family": "kokoro_tts",
@@ -2579,6 +2953,22 @@
           "max_tokens": 160
         }
       ]
+    },
+    {
+      "id": "moss_tts_nano_streaming",
+      "coverage": "MOSS-TTS-Nano incremental code frames and cached causal codec decoding",
+      "family": "moss_tts_nano",
+      "model": "models/MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf",
+      "task": "clon",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "reference_voice",
+        "text": "The studio lights clicked on before the first phrase began, and the cloned voice should stay steady through this medium length request.",
+        "voice_ref": "resources/a.wav",
+        "seed": 1234,
+        "max_tokens": 180
+      }]
     },
     {
       "id": "moss_tts_nano_voice_clone_long",
@@ -2771,6 +3161,23 @@
           "seed": 1234
         }
       ]
+    },
+    {
+      "id": "vibevoice_two_speaker_streaming",
+      "coverage": "VibeVoice native audio deltas across speaker turns",
+      "family": "vibevoice",
+      "model": "models/VibeVoice-1.5B-GGUF/vibevoice-1.5b-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "two_speaker_dialogue",
+        "text": "Speaker 1: The field recorder captured a clean reference take.\nSpeaker 2: The operator confirmed that every timestamp matched the written production notes.",
+        "seed": 1234,
+        "num_inference_steps": 8,
+        "guidance_scale": 1.3,
+        "options": {"voice_samples": "reference/VibeVoiceCommunity/demo/voices/en-Alice_woman.wav,reference/VibeVoiceCommunity/demo/voices/en-Frank_man.wav"}
+      }]
     },
     {
       "id": "vibevoice_two_speaker_long",
@@ -3468,6 +3875,46 @@
             "keep_language_tags": false
           }
         }
+      ]
+    },
+    {
+      "id": "firered_vad_offline",
+      "coverage": "FireRed VAD frontend, offline lookahead, segmentation options and repeated requests",
+      "family": "firered_vad",
+      "model": "models/FireRedVAD-GGUF/firered-vad-f32.gguf",
+      "task": "vad",
+      "mode": "offline",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "short", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"},
+        {"id": "different_audio", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "segment_options", "audio": "assets/resources/sample_16k.wav", "options": {"threshold": 0.6, "merge_silence_duration_ms": 150, "speech_pad_ms": 30}},
+        {"id": "timed_chunks", "audio": "assets/resources/sample_16k.wav", "options": {"smooth_window_ms": 35, "min_speech_duration_ms": 105, "max_speech_duration_sec": 0.405, "min_silence_duration_ms": 95, "audio_chunk_duration_sec": 0.645}},
+        {"id": "repeat_short", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"}
+      ]
+    },
+    {
+      "id": "firered_stream_vad_streaming",
+      "coverage": "FireRed Stream-VAD causal cache, overlapping feature frames and final segments",
+      "family": "firered_vad",
+      "model": "models/FireRedVAD-GGUF/firered-stream-vad-f32.gguf",
+      "task": "vad",
+      "mode": "streaming",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "first", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
+      "id": "firered_stream_vad_options",
+      "coverage": "FireRed Stream-VAD segmentation options",
+      "family": "firered_vad",
+      "model": "models/FireRedVAD-GGUF/firered-stream-vad-f32.gguf",
+      "task": "vad",
+      "mode": "streaming",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "segment_options", "audio": "assets/resources/sample_16k.wav", "options": {"smooth_window_ms": 30, "min_speech_duration_ms": 100, "max_speech_duration_sec": 0.4, "min_silence_duration_ms": 100, "speech_start_pad_ms": 30}}
       ]
     },
     {

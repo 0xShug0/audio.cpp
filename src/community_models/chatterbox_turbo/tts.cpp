@@ -64,7 +64,7 @@ ChatterboxTurboTTSComponent::ChatterboxTurboTTSComponent(
     builtin_ref_dict_.embedding_size = embedding_shape.at(0);
 }
 
-engine::models::chatterbox::S3GenInferenceOutputs ChatterboxTurboTTSComponent::generate(
+engine::codecs::s3gen::S3GenInferenceOutputs ChatterboxTurboTTSComponent::generate(
     const std::string & text,
     const ChatterboxTurboGenerateConfig & config) const {
     T3TurboGenerateRequest request;

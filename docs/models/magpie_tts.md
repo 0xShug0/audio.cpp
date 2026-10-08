@@ -24,7 +24,7 @@ audiocpp_cli --task tts --family magpie_tts \
   --backend cuda \
   --language en \
   --text "The production coordinator reviewed the overnight audio report and sent one clear update." \
-  --request-option voice_id=Sofia \
+  --voice-id Sofia \
   --out out.wav
 ```
 
@@ -61,7 +61,8 @@ That tokenizer path has not been ported to the native C++ frontend yet, so
 `ja` is intentionally not listed as supported here.
 
 `voice_id` accepts either a baked speaker name from the package speaker map or a
-numeric speaker index.
+numeric speaker index. `--voice-id` takes precedence over
+`--request-option voice_id=...`; both forms select the same baked voices.
 
 ## Common Options (use directly)
 
@@ -81,7 +82,7 @@ numeric speaker index.
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `language` | language code | `en` | Target synthesis language used by the Magpie text frontend. |
-| `voice_id` | `Aria`, `Jason`, `John`, `Leo`, `Sofia`, or numeric index | `0` | Baked speaker context prompt. |
+| `voice_id` | `Aria`, `Jason`, `John`, `Leo`, `Sofia`, or numeric index | `0` | Packaged MagpieTTS voice name; default Aria. Numeric speaker index strings are also accepted within the checkpoint speaker count. |
 | `temperature` | float >= 0 | `0.6` | Audio-token sampling temperature. |
 | `top_k` | integer > 0 | `80` | Audio-token top-k sampling limit. |
 | `guidance_scale` | float >= 0 | `2.5` | Classifier-free guidance scale for decoder logits. |

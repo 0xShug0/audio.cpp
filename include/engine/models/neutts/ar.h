@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -42,7 +43,8 @@ public:
         int32_t speech_token_start,
         int32_t speech_token_end,
         int32_t speech_generation_end,
-        const NeuTTSGenerationOptions & options);
+        const NeuTTSGenerationOptions & options,
+        const std::function<void(int32_t)> & on_speech_code = {});
     void release_runtime_graphs();
 
 private:

@@ -47,10 +47,12 @@ private:
 
 class Lfm2FastConformerEncoderRuntime {
 public:
+    // `cpu_repack` as for Lfm2BackboneRuntime.
     Lfm2FastConformerEncoderRuntime(
         std::shared_ptr<const assets::TensorSource> source,
         const Lfm2FastConformerEncoderConfig & config,
-        core::ExecutionContext & execution);
+        core::ExecutionContext & execution,
+        bool cpu_repack = true);
     ~Lfm2FastConformerEncoderRuntime();
 
     Lfm2FastConformerEncoderRuntime(const Lfm2FastConformerEncoderRuntime &) = delete;

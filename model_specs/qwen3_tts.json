@@ -1,7 +1,7 @@
 {
   "family": "qwen3_tts",
   "display_name": "Qwen3-TTS",
-  "description": "Qwen TTS family for controllable 10-language speech synthesis, including 3-second voice cloning, CustomVoice instruction control over preset timbres, and VoiceDesign from natural-language descriptions.",
+  "description": "Qwen3-TTS for controllable 10-language synthesis, 3-second voice cloning, CustomVoice, and VoiceDesign.",
   "category": "tts",
   "status": "supported",
   "tasks": [
@@ -10,7 +10,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "zh",
@@ -35,6 +36,25 @@
   "options": {
     "request": [
       {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming codec chunk schedule: grow starts with one frame and doubles to stream_frames_per_event; fixed uses that size throughout.",
+        "required": false,
+        "default": "grow",
+        "values": [
+          "grow",
+          "fixed"
+        ]
+      },
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Codec frames per fixed streaming event, or the maximum for growing events. Smaller values reduce chunk latency but increase decoding overhead.",
+        "required": false,
+        "default": 12,
+        "min": 1
+      },
+      {
         "name": "language",
         "type": "string",
         "description": "Target synthesis language code or label; default auto lets the model infer from text and voice settings.",
@@ -58,7 +78,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Main codec sampling temperature; must be positive when sampling, default 0.9.",
+        "description": "Main codec sampling temperature; must be > 0 when do_sample=true. Ignored when do_sample=false; default 0.9.",
         "required": false,
         "min": 0,
         "default": 0.9
@@ -83,7 +103,7 @@
       {
         "name": "repetition_penalty",
         "type": "float",
-        "description": "Positive repetition penalty for the main codec stream; default 1.05.",
+        "description": "Main codec repetition penalty; must be > 0, default 1.05.",
         "required": false,
         "min": 0,
         "default": 1.05
@@ -98,7 +118,7 @@
       {
         "name": "subtalker_temperature",
         "type": "float",
-        "description": "Subtalker sampling temperature; must be positive when sampling, default 0.9.",
+        "description": "Subtalker sampling temperature; must be > 0 when subtalker_do_sample=true. Ignored when subtalker_do_sample=false; default 0.9.",
         "required": false,
         "min": 0,
         "default": 0.9
@@ -131,26 +151,37 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Transcript matching the reference audio for Base voice cloning.",
+        "description": "Transcript matching the reference audio for voice cloning; required unless x_vector_only_mode=true.",
         "required": false
       },
       {
         "name": "x_vector_only_mode",
         "type": "bool",
-        "description": "Use only the speaker embedding for Base voice cloning instead of ICL reference codec prompting; default false.",
+        "description": "Use only the speaker embedding for voice cloning instead of ICL reference codec prompting; default false.",
         "required": false,
         "default": false
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
-        "description": "Natural-language voice or style instruction for VoiceDesign and CustomVoice variants.",
+        "description": "Optional natural-language voice or style instruction for VoiceDesign and CustomVoice variants; empty instructions are accepted.",
         "required": false
       },
       {
-        "name": "speaker",
-        "type": "string",
-        "description": "Named preset speaker from the CustomVoice checkpoint, such as Vivian or Ryan.",
+        "name": "voice_id",
+        "type": "enum",
+        "description": "Named preset speaker from the CustomVoice checkpoint. Legacy speaker remains accepted.",
+        "values": [
+          "aiden",
+          "dylan",
+          "eric",
+          "ono_anna",
+          "ryan",
+          "serena",
+          "sohee",
+          "uncle_fu",
+          "vivian"
+        ],
         "required": false
       },
       {
@@ -167,6 +198,13 @@
         "name": "mem_saver",
         "type": "bool",
         "description": "Release the talker cached-step graph after each request; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "stitch_decode",
+        "type": "bool",
+        "description": "Voice the concatenated speech codes of all text chunks in one decoder pass instead of voicing each chunk separately; default false. Per-chunk voicing re-voices the voice-clone reference once per chunk and restarts the stateful vocoder cache at every chunk boundary; the stitched pass costs device memory proportional to the utterance.",
         "required": false,
         "default": false
       },
@@ -224,6 +262,13 @@
         "required": false,
         "default": "f32",
         "preset": "weight_type_conv"
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "required": false,
+        "default": "{}",
+        "description": "JSON object of component execution plans. Component: speech_decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML supports the session backend. RKNN requires artifacts.main, optionally artifacts.first for the first streaming group, and ENGINE_ENABLE_RKNN; omit backend. RKNN skips GGML decoder weights. Neither implementation takes params."
       },
       {
         "name": "talker_graph_arena_mb",
@@ -298,7 +343,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/models/qwen3.md",
+      "docs/models/qwen3_tts.md",
       "docs/tts.md",
       "docs/gguf.md"
     ]

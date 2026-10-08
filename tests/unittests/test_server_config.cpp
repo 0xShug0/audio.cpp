@@ -68,6 +68,12 @@ void test_inline_default_and_named_presets() {
         },
         "builtin": {
           "voice_id": "alba"
+        },
+        "embedding": {
+          "options": {
+            "speaker_embedding_file": "voices/embedding.safetensors",
+            "num_steps": 8
+          }
         }
       }
     }
@@ -81,10 +87,63 @@ void test_inline_default_and_named_presets() {
     require(model.default_voice_preset.has_value(), "inline default preset parsed");
     require(model.default_voice_preset->voice_ref == root / "voices/default.wav", "default voice_ref path resolved");
     require(model.default_voice_preset->reference_text == "default transcript", "default reference_text parsed");
-    require(model.voice_presets.size() == 2, "named presets parsed");
+    require(model.voice_presets.size() == 3, "named presets parsed");
     require(model.voice_presets.at("assistant").voice_ref == root / "voices/assistant.wav", "named voice_ref path resolved");
     require(model.voice_presets.at("assistant").reference_text == "assistant transcript", "named reference_text parsed");
     require(model.voice_presets.at("builtin").voice_id == "alba", "named voice_id parsed");
+    const auto & options = model.voice_presets.at("embedding").options;
+    require(options.size() == 2, "preset options parsed");
+    require(options.at("speaker_embedding_file") == "voices/embedding.safetensors",
+            "preset option values are kept as given, not resolved as paths");
+    require(options.at("num_steps") == "8", "numeric preset option parsed");
+    require(model.voice_presets.at("assistant").options.empty(), "presets without options have none");
+}
+
+void test_bad_preset_options_are_rejected() {
+    const auto root = make_temp_root();
+    const auto not_object = write_config(root, "server_preset_options_type.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": "speaker.safetensors"}}}]
+})JSON");
+    bool rejected = false;
+    try {
+        (void) minitts::server::load_server_config(not_object);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("options must be an object") != std::string::npos;
+    }
+    require(rejected, "non-object preset options are rejected");
+
+    const auto empty = write_config(root, "server_preset_options_empty.json", R"JSON({
+  "models": [{"id": "tts", "family": "irodori_tts", "path": "models/irodori",
+              "voice_presets": {"narrator": {"options": {}}}}]
+})JSON");
+    rejected = false;
+    try {
+        (void) minitts::server::load_server_config(empty);
+    } catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("must set voice_id, voice_ref, reference_text, or options") !=
+            std::string::npos;
+    }
+    require(rejected, "a preset with only empty options is rejected");
+    std::filesystem::remove_all(root);
+}
+
+void test_model_spec_override_selection() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "spec-override.json", R"JSON({
+      "model_spec_override": "embedded",
+      "models": [
+        {"id": "embedded", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "embedded"},
+        {"id": "file", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "specs/kokoro_tts.json"},
+        {"id": "literal", "family": "kokoro_tts", "path": "model.gguf", "model_spec_override": "./embedded"}
+      ]
+    })JSON");
+    const auto config = minitts::server::load_server_config(path);
+    require(config.model_spec_override == std::filesystem::path("embedded"), "global embedded selector stays literal");
+    require(config.models[0].model_spec_override == std::filesystem::path("embedded"), "per-model embedded selector stays literal");
+    require(config.models[1].model_spec_override == root / "specs/kokoro_tts.json", "spec file still resolves relative to config");
+    require(config.models[2].model_spec_override == (root / "./embedded"), "literal embedded path stays a path");
+    std::filesystem::remove_all(root);
 }
 
 void test_builtin_utility_model_paths() {
@@ -159,6 +218,66 @@ void test_default_request_options() {
     require(options.at("num_inference_steps") == "8", "integer default request option parsed");
     require(options.at("temperature") == "0.6", "float default request option parsed");
     require(options.at("do_sample") == "false", "bool default request option parsed");
+}
+
+void test_default_session_options() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(
+        root,
+        "server_default_session_options.json",
+        R"JSON({
+  "default_session_options": {
+    "irodori_tts.mem_saver": true,
+    "irodori_tts.codec_decode_chunk_steps": 100,
+    "qwen3_asr.max_tokens": 256
+  },
+  "models": [
+    {
+      "id": "tts",
+      "family": "irodori_tts",
+      "path": "models/irodori.gguf",
+      "session_options": {
+        "irodori_tts.codec_decode_chunk_steps": "50"
+      }
+    },
+    {
+      "id": "other",
+      "family": "omnivoice",
+      "path": "models/OmniVoice"
+    }
+  ]
+})JSON");
+
+    const auto config = minitts::server::load_server_config(config_path);
+    require(config.default_session_options.size() == 3, "default session options parsed");
+    const auto & tts = config.models.at(0).session_options;
+    require(tts.at("irodori_tts.mem_saver") == "true", "default fills an unset session option");
+    require(tts.at("irodori_tts.codec_decode_chunk_steps") == "50", "the model's own session option wins");
+    require(tts.count("qwen3_asr.max_tokens") == 0, "defaults of another family are not applied");
+    require(config.models.at(1).session_options.empty(), "a family without defaults is unchanged");
+
+    // Models loaded later (POST /v1/models/load) get the same treatment.
+    minitts::server::ServerModelConfig loaded;
+    loaded.family = "irodori_tts";
+    loaded.session_options["irodori_tts.mem_saver"] = "false";
+    minitts::server::apply_default_session_options(config, loaded);
+    require(loaded.session_options.at("irodori_tts.mem_saver") == "false", "a loaded model's own value wins");
+    require(loaded.session_options.at("irodori_tts.codec_decode_chunk_steps") == "100",
+            "a loaded model gets the family default");
+
+    for (const std::string bad : {R"({"default_session_options": {"mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {".mem_saver": true}, "models": []})",
+                                  R"({"default_session_options": {"irodori_tts.": true}, "models": []})",
+                                  R"({"default_session_options": ["irodori_tts.mem_saver"], "models": []})"}) {
+        const auto bad_path = write_config(root, "server_bad_default_session_options.json", bad);
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(bad_path);
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()).find("default_session_options") != std::string::npos;
+        }
+        require(rejected, "malformed default_session_options is rejected: " + bad);
+    }
 }
 
 void test_missing_default_preset_name_is_rejected() {
@@ -406,8 +525,73 @@ void test_ui_configuration() {
 
     const auto config = minitts::server::load_server_config(config_path);
     require(!config.ui_enabled, "ui=false disables the embedded WebUI");
+    require(!config.ui_requested, "ui=false does not ask for the WebUI");
     require(config.ui_management, "ui_management=true enables dynamic model management");
     require(config.models.empty(), "management hosts may start without configured models");
+
+    const auto default_path = write_config(root, "ui_default.json", R"JSON({
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto by_default = minitts::server::load_server_config(default_path);
+    require(by_default.ui_enabled && !by_default.ui_requested, "the WebUI is on by default but not asked for");
+
+    const auto asked_path = write_config(root, "ui_asked.json", R"JSON({
+  "ui": true,
+  "models": [{"id": "tts", "family": "pocket_tts", "path": "models/pocket-tts"}]
+})JSON");
+    const auto asked = minitts::server::load_server_config(asked_path);
+    require(asked.ui_enabled && asked.ui_requested, "ui=true asks for the WebUI");
+}
+
+void test_configured_model_fields_are_inherited() {
+    const auto root = make_temp_root();
+    const auto config_path = write_config(root, "inherit.json", R"JSON({
+  "models": [
+    {
+      "id": "tts",
+      "family": "irodori_tts",
+      "path": "models/irodori",
+      "busy_timeout_ms": 90000,
+      "default_request_options": {"num_steps": "16"},
+      "voice_presets": {"narrator": {"voice_ref": "voices/narrator.wav"}},
+      "default_voice_preset": "narrator"
+    }
+  ]
+})JSON");
+    const auto config = minitts::server::load_server_config(config_path);
+    const auto & configured = config.models.front();
+
+    // What a WebUI load request carries: no request options or presets.
+    minitts::server::ServerModelConfig loaded;
+    loaded.id = "tts";
+    loaded.family = "irodori_tts";
+    loaded.path = "models/other-irodori";
+    loaded.session_options = {{"irodori_tts.mem_saver", "true"}};
+    minitts::server::inherit_configured_model_fields(configured, loaded);
+    require(loaded.default_request_options.at("num_steps") == "16", "request options come from the config");
+    require(loaded.voice_presets.count("narrator") == 1, "voice presets come from the config");
+    require(loaded.default_voice_preset_id.value_or("") == "narrator", "the default preset comes from the config");
+    require(loaded.busy_timeout_ms.value_or(0) == 90000, "the busy timeout comes from the config");
+    require(loaded.path == "models/other-irodori", "the load keeps its own path");
+    require(loaded.session_options.at("irodori_tts.mem_saver") == "true", "the load keeps its own session options");
+
+    minitts::server::ServerModelConfig other;
+    other.id = "tts";
+    other.family = "pocket_tts";
+    other.path = "models/pocket-tts";
+    minitts::server::inherit_configured_model_fields(configured, other);
+    require(other.default_request_options.empty() && other.voice_presets.empty() &&
+                !other.default_voice_preset_id.has_value() && !other.busy_timeout_ms.has_value(),
+            "a load of another family takes nothing from the config");
+
+    minitts::server::ServerModelConfig design;
+    design.id = "tts";
+    design.family = "irodori_tts";
+    design.task = "vdes";
+    design.path = "models/irodori";
+    minitts::server::inherit_configured_model_fields(configured, design);
+    require(design.voice_presets.empty(), "a load of another task takes nothing from the config");
+    std::filesystem::remove_all(root);
 }
 
 void test_empty_models_require_ui_management() {
@@ -623,6 +807,61 @@ void test_model_memory_estimator() {
         require(estimate.has_value(), "an aux-resolved directory has a determinate footprint");
         require(*estimate == expected_estimate(15000), "a relative aux path resolves against the model directory");
     }
+
+    // An exec_plan engine is counted by name: the option value is JSON, so the
+    // path scan above sees nothing, and a name relative to the model directory is
+    // how a deployment spells an engine installed with the weights.
+    {
+        const auto dir = root / "plan";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.gguf", 7000);
+        write_file(dir / "flow_seq110.rknn", 900);
+        write_file(dir / "flow_seq200.rknn", 1100);
+        const auto elsewhere = root / "plan-abs.rknn";
+        write_file(elsewhere, 500);
+        ServerModelConfig model;
+        model.path = dir;
+        // generic_string(), not string(): on Windows the native separators are
+        // backslashes, which are invalid escapes inside the JSON plan.
+        model.session_options["cosyvoice3.exec_plan"] =
+            R"({"flow":{"impl":"rknn","artifacts":{"main":"flow_seq110.rknn,flow_seq200.rknn,)" +
+            elsewhere.generic_string() + R"("}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(estimate.has_value(), "an exec_plan model has a determinate footprint");
+        require(
+            *estimate == expected_estimate(7000 + 900 + 1100 + 500),
+            "exec_plan engines resolve relative to the model directory, and an absolute path is used as given");
+    }
+
+    // An engine inside a summed checkpoint tree is counted once, not once by the
+    // tree scan and again by the plan.
+    {
+        const auto dir = root / "plan-tree";
+        std::filesystem::create_directories(dir);
+        write_file(dir / "model.safetensors", 5000);
+        write_file(dir / "vocoder.rknn", 600);
+        ServerModelConfig model;
+        model.path = dir;
+        model.session_options["qwen3_tts.exec_plan"] =
+            R"({"decoder":{"impl":"rknn","artifacts":{"main":"vocoder.rknn","first":"absent.rknn"}}})";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(
+            estimate.has_value() && *estimate == expected_estimate(5600),
+            "an engine already counted by the tree scan is not counted twice, and an absent engine adds nothing");
+    }
+
+    // A malformed plan is the session's error to report, not the guard's.
+    {
+        const auto path = root / "malformed.gguf";
+        write_file(path, 1000);
+        ServerModelConfig model;
+        model.path = path;
+        model.session_options["piper_tts.exec_plan"] = "{not json";
+        const auto estimate = estimate_model_memory_bytes(model);
+        require(
+            estimate.has_value() && *estimate == expected_estimate(1000),
+            "a malformed exec plan contributes nothing to the estimate");
+    }
 }
 
 void test_model_slots() {
@@ -652,15 +891,44 @@ void test_model_slots() {
     }
 }
 
+void test_per_model_devices() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "devices.json", R"JSON({
+      "device": 2,
+      "models": [
+        {"id":"inherited","family":"kokoro_tts","path":"a.gguf"},
+        {"id":"overridden","family":"kokoro_tts","path":"b.gguf","device":1}
+      ]
+    })JSON");
+    const auto config = minitts::server::load_server_config(path);
+    require(config.device == 2, "server device is preserved");
+    require(!config.models[0].device.has_value(), "model without device inherits at runtime");
+    require(config.models[1].device == 1, "per-model device is parsed");
+
+    const auto bad = write_config(root, "negative-device.json", R"JSON({
+      "models":[{"id":"bad","family":"kokoro_tts","path":"m.gguf","device":-1}]
+    })JSON");
+    bool rejected = false;
+    try { (void)minitts::server::load_server_config(bad); }
+    catch (const std::runtime_error & error) {
+        rejected = std::string(error.what()).find("device for model bad") != std::string::npos;
+    }
+    require(rejected, "negative per-model device is rejected with the model id");
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_per_model_devices();
         test_model_slots();
         test_inline_default_and_named_presets();
+        test_model_spec_override_selection();
         test_builtin_utility_model_paths();
         test_default_preset_name();
+        test_bad_preset_options_are_rejected();
         test_default_request_options();
+        test_default_session_options();
         test_missing_default_preset_name_is_rejected();
         test_duplicate_json_keys_are_rejected();
         test_busy_timeout_defaults_and_overrides();
@@ -677,6 +945,7 @@ int main() {
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();
+        test_configured_model_fields_are_inherited();
         test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();
         test_model_run_overrun_predicate();

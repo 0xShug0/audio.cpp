@@ -150,7 +150,7 @@ const std::unordered_set<std::string> & runtime_tags() {
 const std::unordered_set<std::string> & ui_tags() {
     static const std::unordered_set<std::string> values = {
         "ASR", "TTS", "Clone", "VC", "Align", "VAD", "Diar", "Codec", "Sep", "Music", "SFX",
-        "Edit", "Design", "MIDI", "GGUF", "Stream",
+        "Edit", "Design", "MIDI", "Wake Word", "Classify", "GGUF", "Stream",
     };
     return values;
 }
@@ -167,6 +167,8 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
         {"svc", {"speaker_reference", "singing"}},
         {"align", {"word_timestamps"}},
         {"vad", {"speech_segments", "chunk_planning"}},
+        {"wake_word", {"speech_segments", "stream_events"}},
+        {"classify", {"scores"}},
         {"turn", {"turn_decision"}},
         {"diar", {"speaker_turns"}},
         {"sep", {"stems"}},
@@ -259,6 +261,9 @@ void validate_option(
     }
     const auto type = require_spec_string(require_spec_field(value, "type", path), std::string(path) + ".type");
     validate_enum(type, option_types(), std::string(path) + ".type", "option type");
+    if (scope == "session" && name == "exec_plan" && type != "string") {
+        fail(std::string(path) + ".type", "exec_plan must be a JSON object encoded as a string");
+    }
     if (const auto it = shared_option_contracts().find(name); it != shared_option_contracts().end()) {
         if (it->second.find(type) == it->second.end()) {
             fail(std::string(path) + ".type", "shared option '" + name + "' must use its registered type");

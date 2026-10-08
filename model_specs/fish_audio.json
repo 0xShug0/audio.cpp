@@ -9,7 +9,8 @@
     "clone"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "80+ languages"
@@ -29,7 +30,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Reference transcript used with speaker reference audio.",
+        "description": "Reference transcript; required with inline reference audio.",
         "required": false
       },
       {
@@ -41,9 +42,9 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum Fish Audio semantic tokens to generate; default 1024.",
+        "description": "Maximum Fish Audio semantic tokens to generate; default 1024. Zero selects the default token budget.",
         "required": false,
-        "min": 1,
+        "min": 0,
         "default": 1024
       },
       {
@@ -129,11 +130,18 @@
         "default": "native"
       },
       {
+        "name": "codec_encoder_bf16_compute",
+        "type": "bool",
+        "description": "Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default false. Decoding is unchanged.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "ar_graph_arena_mb",
         "type": "int",
         "description": "AR runtime graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -141,7 +149,7 @@
         "type": "int",
         "description": "AR weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       },
       {
@@ -149,7 +157,7 @@
         "type": "int",
         "description": "Codec encode/decode graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -157,7 +165,7 @@
         "type": "int",
         "description": "Codec weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       }
     ],

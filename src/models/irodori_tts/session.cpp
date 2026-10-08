@@ -1,20 +1,27 @@
 #include "engine/models/irodori_tts/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/io/binary.h"
+#include "engine/framework/io/safetensors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/irodori_tts/codec.h"
+#include "engine/models/irodori_tts/schedule.h"
 #include "engine/models/irodori_tts/condition_encoder.h"
 #include "engine/models/irodori_tts/rf_dit.h"
+
+#include <ggml.h>
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -78,11 +85,17 @@ runtime::SessionOptions require_supported_session_options(
   options = normalize_session_options(std::move(options));
   const auto checked_contract = require_contract(contract);
   auto validation_options = options;
-  // Older standalone GGUF packages embed a v1 contract that predates this
-  // workaround option; keep them usable while still validating the value below.
-  if (checked_contract->session_option_keys.find("irodori_tts.codec_backend") ==
-      checked_contract->session_option_keys.end()) {
-    validation_options.options.erase("irodori_tts.codec_backend");
+  // Older standalone GGUF packages embed a v1 contract that predates these
+  // options; keep them usable while still validating the values below.
+  for (const char *key :
+       {"irodori_tts.codec_backend", "irodori_tts.codec_decode_chunk_steps",
+        "irodori_tts.codec_decode_overlap_steps",
+        "irodori_tts.codec_encode_chunk_steps",
+        "irodori_tts.codec_encode_overlap_steps"}) {
+    if (checked_contract->session_option_keys.find(key) ==
+        checked_contract->session_option_keys.end()) {
+      validation_options.options.erase(key);
+    }
   }
   runtime::validate_spec_backed_session_options(
       validation_options, *checked_contract, kFamily, "Irodori-TTS");
@@ -94,7 +107,8 @@ std::unordered_map<std::string, std::string> normalize_request_options(
   return runtime::apply_option_v1_compatibility(
       std::move(options),
       {
-          {"caption", "instruction"},
+          {"caption", "instruct"},
+          {"instruction", "instruct"},
           {"duration_seconds", "duration_sec"},
           {"min_seconds", "min_duration_sec"},
           {"max_seconds", "max_duration_sec"},
@@ -123,11 +137,24 @@ generation_options_from_request(const runtime::TaskRequest &request) {
   if (const auto value =
           runtime::parse_int_option(request.options, {"num_inference_steps"})) {
     if (*value <= 0) {
-      throw std::runtime_error(
+      throw runtime::InvalidRequestError(
           "Irodori-TTS num_inference_steps must be positive");
     }
     options.num_inference_steps = *value;
   }
+  if (const auto value = runtime::find_option(request.options, {"t_schedule_mode"})) {
+    options.t_schedule_mode = *value;
+  }
+  try {
+    if (const auto value = runtime::parse_float_option(request.options, {"sway_coeff"})) {
+      options.sway_coeff = *value;
+    }
+  } catch (const std::runtime_error &error) {
+    throw runtime::InvalidRequestError(error.what());
+  }
+  // Validate before expensive conditioning/codec work, including older GGUF contracts.
+  make_irodori_rf_schedule(options.num_inference_steps, options.t_schedule_mode,
+                           options.sway_coeff);
   if (const auto value = runtime::parse_float_option(request.options,
                                                      {"text_guidance_scale"})) {
     options.text_guidance_scale = *value;
@@ -258,6 +285,46 @@ std::size_t resolve_reference_cache_slots(const runtime::SessionOptions &options
   return static_cast<std::size_t>(slots);
 }
 
+// Python Irodori-TTS cuts a single reference WAV to its first
+// int(max_ref_sec * sample_rate) frames before encoding it, then the
+// latent to ceil(max_ref_sec * codec_sample_rate / hop_length) steps.
+std::optional<runtime::AudioBuffer>
+trim_reference_audio(const runtime::AudioBuffer &audio,
+                     float max_ref_sec) {
+  if (max_ref_sec <= 0.0F || audio.channels <= 0 ||
+      audio.sample_rate <= 0) {
+    return std::nullopt;
+  }
+  const auto channels = static_cast<std::size_t>(audio.channels);
+  const std::size_t max_frames = std::max<std::size_t>(
+      1, static_cast<std::size_t>(static_cast<double>(max_ref_sec) *
+                                  static_cast<double>(audio.sample_rate)));
+  if (audio.samples.size() / channels <= max_frames) {
+    return std::nullopt;
+  }
+  runtime::AudioBuffer trimmed;
+  trimmed.sample_rate = audio.sample_rate;
+  trimmed.channels = audio.channels;
+  trimmed.samples.assign(
+      audio.samples.begin(),
+      audio.samples.begin() +
+          static_cast<std::ptrdiff_t>(max_frames * channels));
+  return trimmed;
+}
+
+// Returns 0 when the reference is not capped.
+int64_t max_reference_latent_steps(float max_ref_sec,
+                                   const IrodoriCodecConfig &codec) {
+  if (max_ref_sec <= 0.0F) {
+    return 0;
+  }
+  return std::max<int64_t>(
+      1, static_cast<int64_t>(std::ceil(
+             static_cast<double>(max_ref_sec) *
+             static_cast<double>(codec.sample_rate) /
+             static_cast<double>(codec.hop_length))));
+}
+
 IrodoriSpeakerCondition
 no_reference_speaker_condition(const IrodoriModelConfig &config) {
   IrodoriSpeakerCondition out;
@@ -266,6 +333,108 @@ no_reference_speaker_condition(const IrodoriModelConfig &config) {
   out.mask.assign(static_cast<size_t>(out.tokens), 0);
   out.has_speaker = false;
   return out;
+}
+
+// Speaker Inversion embeddings are written by Irodori-TTS training as
+// `*.speaker.safetensors` holding one tensor, `speaker_embedding`, of shape
+// [tokens, speaker_dim] (or [1, tokens, speaker_dim]). Like the Python
+// runtime, the tokens become the speaker condition as they are: no speaker
+// encoder, no normalization and no prepended mean token.
+IrodoriSpeakerCondition
+load_speaker_embedding(const std::filesystem::path &path,
+                       const IrodoriModelConfig &config) {
+  constexpr const char *kTensorName = "speaker_embedding";
+  const auto index = io::load_safetensors_index(path);
+  const auto found = index.tensors.find(kTensorName);
+  if (found == index.tensors.end()) {
+    throw std::runtime_error(
+        "Irodori-TTS speaker embedding has no speaker_embedding tensor: " +
+        path.string());
+  }
+  const auto &info = found->second;
+  auto shape = info.shape;
+  if (shape.size() == 3 && shape.front() == 1) {
+    shape.erase(shape.begin());
+  }
+  if (shape.size() != 2 || shape[0] <= 0 || shape[1] != config.speaker_dim) {
+    throw std::runtime_error(
+        "Irodori-TTS speaker embedding must have shape [tokens, " +
+        std::to_string(config.speaker_dim) + "]: " + path.string());
+  }
+  size_t element_bytes = 0;
+  if (info.dtype == "F32") {
+    element_bytes = sizeof(float);
+  } else if (info.dtype == "F16" || info.dtype == "BF16") {
+    element_bytes = sizeof(uint16_t);
+  } else {
+    throw std::runtime_error(
+        "Irodori-TTS speaker embedding dtype must be F32, F16 or BF16, got " +
+        info.dtype + ": " + path.string());
+  }
+  // Compare by division so that a huge token count in the header cannot
+  // overflow into a matching byte size.
+  const size_t byte_size = info.data_end - info.data_begin;
+  const size_t row_bytes = static_cast<size_t>(shape[1]) * element_bytes;
+  const size_t count = byte_size / element_bytes;
+  const auto bytes = io::read_binary_file(path);
+  if (info.data_end < info.data_begin || byte_size % row_bytes != 0 ||
+      byte_size / row_bytes != static_cast<size_t>(shape[0]) ||
+      index.header_bytes > bytes.size() ||
+      info.data_end > bytes.size() - index.header_bytes) {
+    throw std::runtime_error(
+        "Irodori-TTS speaker embedding data does not match its header: " +
+        path.string());
+  }
+  const std::byte *data = bytes.data() + index.header_bytes + info.data_begin;
+
+  IrodoriSpeakerCondition out;
+  out.state.resize(count);
+  if (info.dtype == "F32") {
+    std::memcpy(out.state.data(), data, byte_size);
+  } else if (info.dtype == "F16") {
+    ggml_fp16_to_fp32_row(reinterpret_cast<const ggml_fp16_t *>(data),
+                          out.state.data(), static_cast<int64_t>(count));
+  } else {
+    ggml_bf16_to_fp32_row(reinterpret_cast<const ggml_bf16_t *>(data),
+                          out.state.data(), static_cast<int64_t>(count));
+  }
+  out.tokens = shape[0];
+  out.mask.assign(static_cast<size_t>(out.tokens), 1);
+  out.has_speaker = true;
+  return out;
+}
+
+// The request's Speaker Inversion embedding, if any: the speaker_embedding_file
+// option, or a cached voice id naming <model dir>/embeddings/<id>.safetensors
+// (the layout GET /v1/audio/voices lists). A voice id without such a file is
+// ignored, as before, so clients that always send an OpenAI voice name keep
+// working.
+std::optional<std::filesystem::path>
+resolve_speaker_embedding_path(const runtime::TaskRequest &request,
+                               const std::filesystem::path &model_dir) {
+  if (const auto value =
+          runtime::find_option(request.options, {"speaker_embedding_file", "speaker_embedding_path"})) {
+    const std::filesystem::path path(*value);
+    if (!std::filesystem::is_regular_file(path)) {
+      throw std::runtime_error(
+          "Irodori-TTS speaker_embedding_file does not exist: " + *value);
+    }
+    return path;
+  }
+  if (!request.voice.has_value() || !request.voice->speaker.has_value() ||
+      !request.voice->speaker->cached_voice_id.has_value()) {
+    return std::nullopt;
+  }
+  const std::string &voice_id = *request.voice->speaker->cached_voice_id;
+  if (voice_id.empty() || voice_id == "." || voice_id == ".." ||
+      voice_id.find_first_of("/\\:") != std::string::npos) {
+    return std::nullopt;
+  }
+  auto path = model_dir / "embeddings" / (voice_id + ".safetensors");
+  if (!std::filesystem::is_regular_file(path)) {
+    return std::nullopt;
+  }
+  return path;
 }
 
 std::string trim_ascii(std::string text) {
@@ -360,14 +529,15 @@ IrodoriTTSSession::IrodoriTTSSession(
           runtime::find_option(this->options().options, {"irodori_tts.mem_saver"})) {
     mem_saver_ = runtime::parse_bool_option(*value, "irodori_tts.mem_saver");
   }
-  if (task_.mode != runtime::RunMode::Offline) {
-    throw std::runtime_error("Irodori-TTS only supports offline sessions");
+  if (task_.mode != runtime::RunMode::Offline &&
+      task_.mode != runtime::RunMode::Streaming) {
+    throw std::runtime_error("Irodori-TTS supports offline and streaming sessions");
   }
   if (task_.task != runtime::VoiceTaskKind::Tts &&
       task_.task != runtime::VoiceTaskKind::VoiceCloning &&
       task_.task != runtime::VoiceTaskKind::VoiceDesign) {
     throw std::runtime_error(
-        "Irodori-TTS supports only TTS, voice-cloning, and voice-design offline tasks");
+        "Irodori-TTS supports only TTS, voice-cloning, and voice-design tasks");
   }
   const auto codec_backend = parse_codec_backend(this->options());
   engine::core::ExecutionContext * codec_execution = &execution_context();
@@ -388,6 +558,20 @@ IrodoriTTSSession::IrodoriTTSSession(
   codec_ = std::make_unique<IrodoriCodec>(
       assets_, *codec_execution, codec_graph_arena_bytes_,
       codec_weight_context_bytes_, codec_weight_storage_type_);
+  codec_->set_decode_chunking(
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_decode_chunk_steps"})
+          .value_or(0),
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_decode_overlap_steps"})
+          .value_or(16));
+  codec_->set_encode_chunking(
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_encode_chunk_steps"})
+          .value_or(0),
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_encode_overlap_steps"})
+          .value_or(16));
   assets_->model_weights->release_storage();
   assets_->codec_weights->release_storage();
   debug::trace_log_scalar("irodori_tts.model_root",
@@ -412,7 +596,9 @@ bool IrodoriTTSSession::ReferenceAudioCacheKeyEqual::operator()(
     const ReferenceAudioCacheKey &lhs,
     const ReferenceAudioCacheKey &rhs) const {
   return lhs.hash == rhs.hash && lhs.sample_rate == rhs.sample_rate &&
-         lhs.channels == rhs.channels && lhs.sample_count == rhs.sample_count;
+         lhs.channels == rhs.channels &&
+         lhs.sample_count == rhs.sample_count &&
+         lhs.max_latent_steps == rhs.max_latent_steps;
 }
 
 std::string IrodoriTTSSession::family() const { return kFamily; }
@@ -431,19 +617,56 @@ void IrodoriTTSSession::prepare(
 
 runtime::TaskResult
 IrodoriTTSSession::run(const runtime::TaskRequest &request) {
+  return synthesize(request, false);
+}
+
+runtime::TaskResult
+IrodoriTTSSession::generate_stream(const runtime::TaskRequest &request) {
+  return synthesize(request, true);
+}
+
+runtime::TaskResult
+IrodoriTTSSession::synthesize(const runtime::TaskRequest &request, bool streaming) {
   require_prepared("Irodori-TTS run");
   auto normalized_request = request;
   normalized_request.options = normalize_request_options(request.options);
   auto validation_options = normalized_request.options;
   // Older standalone GGUF packages may embed a v1 contract that still advertised
-  // caption. Generate with the normalized instruction key, but keep those
+  // caption or instruction. Generate with instruct, but keep those
   // packages usable while unknown request options remain rejected.
-  if (contract_->request_option_keys.find("instruction") ==
+  if (contract_->request_option_keys.find("instruct") ==
           contract_->request_option_keys.end() &&
-      contract_->request_option_keys.find("caption") !=
-          contract_->request_option_keys.end()) {
-    validation_options.erase("instruction");
+      (contract_->request_option_keys.find("caption") !=
+           contract_->request_option_keys.end() ||
+       contract_->request_option_keys.find("instruction") !=
+           contract_->request_option_keys.end())) {
+    validation_options.erase("instruct");
   }
+  // Likewise for packages whose embedded contract predates speaker embeddings.
+  validation_options.erase("speaker_embedding_file");
+  validation_options.erase("speaker_embedding_path");
+  validation_options.erase("reference_duration_sec");
+  validation_options.erase("max_ref_sec");
+  // Sampling options are validated by the runtime even for older embedded specs.
+  validation_options.erase("t_schedule_mode");
+  validation_options.erase("sway_coeff");
+  // Older embedded contracts predate codec streaming.
+  validation_options.erase("stream_frames_per_event");
+  const int64_t stream_frames = streaming
+      ? runtime::parse_int_option(normalized_request.options, {"stream_frames_per_event"}).value_or(12)
+      : 0;
+  if (streaming && stream_frames <= 0) {
+    throw runtime::InvalidRequestError("Irodori-TTS stream_frames_per_event must be positive");
+  }
+  const std::function<void(const runtime::AudioBuffer &)> publish = streaming
+      ? std::function<void(const runtime::AudioBuffer &)>([&](const runtime::AudioBuffer &audio) {
+          if (stream_event_sink()) {
+            runtime::StreamEvent event;
+            event.audio_output = audio;
+            stream_event_sink()(event);
+          }
+        })
+      : std::function<void(const runtime::AudioBuffer &)>{};
   runtime::validate_spec_backed_request_options(
       validation_options, *contract_, "Irodori-TTS");
   const auto wall_start = Clock::now();
@@ -463,16 +686,36 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
   IrodoriSpeakerCondition speaker =
       no_reference_speaker_condition(assets_->config);
   bool reference_cache_hit = false;
-  if (!first_request.no_ref) {
+  if (first_request.speaker_embedding_path.has_value()) {
+    speaker = load_speaker_embedding(*first_request.speaker_embedding_path,
+                                     assets_->config);
+    debug::trace_log_scalar("irodori_tts.speaker_embedding.tokens",
+                            speaker.tokens);
+  } else if (!first_request.no_ref) {
     if (!first_request.has_reference_audio) {
       throw std::runtime_error(
           "Irodori-TTS reference mode requires reference audio");
     }
+    const auto trimmed_reference = trim_reference_audio(
+        first_request.reference_audio, first_request.max_ref_sec);
+    const runtime::AudioBuffer &reference_audio =
+        trimmed_reference ? *trimmed_reference : first_request.reference_audio;
+    if (trimmed_reference) {
+      debug::trace_log_scalar(
+          "irodori_tts.reference.trimmed_from_seconds",
+          static_cast<double>(first_request.reference_audio.samples.size() /
+                              static_cast<std::size_t>(
+                                  first_request.reference_audio.channels)) /
+              first_request.reference_audio.sample_rate);
+    }
+    const int64_t max_latent_steps = max_reference_latent_steps(
+        first_request.max_ref_sec, assets_->codec);
     const ReferenceAudioCacheKey reference_key{
-        reference_audio_cache_key(first_request.reference_audio),
-        first_request.reference_audio.sample_rate,
-        first_request.reference_audio.channels,
-        first_request.reference_audio.samples.size(),
+        reference_audio_cache_key(reference_audio),
+        reference_audio.sample_rate,
+        reference_audio.channels,
+        reference_audio.samples.size(),
+        max_latent_steps,
     };
     if (const auto *cached = reference_speaker_cache_.find(reference_key)) {
       reference_cache_hit = true;
@@ -493,8 +736,14 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
                               reference_speaker_cache_.size() >=
                                   reference_speaker_cache_.capacity();
       int64_t ref_latent_steps = 0;
-      auto ref_latent = codec_->encode_reference(first_request.reference_audio,
-                                                 ref_latent_steps);
+      auto ref_latent =
+          codec_->encode_reference(reference_audio, ref_latent_steps);
+      if (max_latent_steps > 0 && ref_latent_steps > max_latent_steps) {
+        const auto dim =
+            ref_latent.size() / static_cast<std::size_t>(ref_latent_steps);
+        ref_latent.resize(static_cast<std::size_t>(max_latent_steps) * dim);
+        ref_latent_steps = max_latent_steps;
+      }
       speaker = condition_encoder_->encode_speaker_reference(ref_latent,
                                                              ref_latent_steps);
       ReferenceSpeakerCacheEntry entry;
@@ -590,7 +839,8 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
     runtime::append_audio_buffer(merged_audio,
                                  codec_->decode(sample.latent,
                                                 sample.latent_steps,
-                                                sample.target_samples));
+                                                sample.target_samples,
+                                                publish, stream_frames));
     decode_ms += debug::elapsed_ms(decode_start);
     if (mem_saver_) {
       codec_->release_graphs();
@@ -643,7 +893,7 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
     throw std::runtime_error(
         "Irodori-TTS text became empty after normalization");
   }
-  if (const auto caption = runtime::find_option(request.options, {"instruction"})) {
+  if (const auto caption = runtime::find_option(request.options, {"instruct"})) {
     out.caption = *caption;
   }
   out.no_ref = true;
@@ -659,6 +909,35 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
     out.reference_audio = *request.audio_input;
     out.has_reference_audio = true;
     out.no_ref = false;
+  }
+  if (auto embedding = resolve_speaker_embedding_path(
+          request, assets_->model_dir)) {
+    // One speaker source per request, as in the Python runtime (--ref-embed).
+    if (out.has_reference_audio) {
+      throw std::runtime_error(
+          "Irodori-TTS speaker embedding cannot be combined with reference audio");
+    }
+    if (runtime::find_option(request.options, {"no_ref"}).has_value() &&
+        out.no_ref) {
+      throw std::runtime_error(
+          "Irodori-TTS speaker embedding cannot be combined with no_ref=true");
+    }
+    if (!assets_->config.use_speaker_condition) {
+      throw std::runtime_error(
+          "Irodori-TTS checkpoint does not use speaker conditioning, so it "
+          "cannot take a speaker embedding");
+    }
+    out.speaker_embedding_path = std::move(embedding);
+    out.no_ref = false;
+  }
+  out.max_ref_sec = assets_->config.ref_max_seconds;
+  if (const auto value = runtime::parse_finite_float_option(
+          request.options, {"reference_duration_sec", "max_ref_sec"})) {
+    if (*value < 0.0F) {
+      throw std::runtime_error(
+          "Irodori-TTS reference_duration_sec must be non-negative");
+    }
+    out.max_ref_sec = *value;
   }
   out.generation = generation_options_from_request(request);
   if (out.generation.duration_scale <= 0.0F) {

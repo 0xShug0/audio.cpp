@@ -46,7 +46,7 @@
       {
         "name": "min_speech_duration_ms",
         "type": "int",
-        "description": "Minimum speech segment duration in milliseconds.",
+        "description": "Minimum speech segment duration in milliseconds. Not applied to the short-input path (<3200 samples), which classifies the whole clip by threshold.",
         "required": false,
         "default": 100,
         "min": 0

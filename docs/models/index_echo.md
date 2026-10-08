@@ -65,7 +65,7 @@ window boundaries and, consequently, some output may differ.
 | Option | Default | Meaning |
 |---|---|---|
 | `target_language` | `en` | `en`, `es`, or `ja`. |
-| `max_text_tokens` | `2000` | Maximum generated text tokens per window. |
+| `max_tokens` | `2000` | Maximum generated text tokens per window. Legacy `max_text_tokens` remains accepted. |
 | `temperature` | `0` | Zero uses greedy decoding; a positive value samples and can interrupt repetition. |
 | `seed` | `0` | Sampling seed when temperature is positive. |
 | `glossary` | empty | Translation terminology supplied in the prompt. |

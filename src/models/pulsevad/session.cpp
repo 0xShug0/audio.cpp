@@ -1,6 +1,7 @@
 #include "engine/models/pulsevad/session.h"
 
 #include "engine/models/pulsevad/runtime.h"
+#include "engine/framework/audio/probability_segmenter.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -71,8 +72,8 @@ public:
         const int64_t length = static_cast<int64_t>(audio.samples.size());
         runtime::TaskResult result;
         std::vector<float> window(3200);
-        int64_t start = -1;
-        int64_t last_speech = 0;
+        engine::audio::ProbabilitySegmenter segmenter(
+            {threshold, int64_t(min_speech_ms) * 16, int64_t(min_silence_ms) * 16});
         const auto append_segment = [&](int64_t begin, int64_t end) {
             runtime::SpeechSegment segment;
             segment.span.start_sample = begin;
@@ -90,21 +91,10 @@ public:
                 }
                 break;
             }
-            if (probability >= threshold) {
-                if (start < 0) {
-                    start = offset;
-                }
-                last_speech = offset + 3200;
-            } else if (start >= 0 && offset - last_speech >= int64_t(min_silence_ms) * 16) {
-                if (last_speech - start >= int64_t(min_speech_ms) * 16) {
-                    append_segment(start, last_speech);
-                }
-                start = -1;
-            }
+            if (const auto interval = segmenter.push(probability, offset, offset + 3200))
+                append_segment(interval->start, interval->end);
         }
-        if (start >= 0 && last_speech - start >= int64_t(min_speech_ms) * 16) {
-            append_segment(start, last_speech);
-        }
+        if (const auto interval = segmenter.finish()) append_segment(interval->start, interval->end);
         debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(started));
         return result;
     }

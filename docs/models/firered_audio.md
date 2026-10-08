@@ -48,7 +48,7 @@ audiocpp_cli \
   --text "What is happening in this audio?" \
   --request-option template_name=understand \
   --request-option enable_thinking=true \
-  --request-option max_new_tokens=1024 \
+  --request-option max_tokens=1024 \
   --text-out answer.txt
 ```
 
@@ -59,7 +59,7 @@ audiocpp_cli \
 | Family | `firered_audio` |
 | Tasks | `asr`, `tts`, `clon`, `vdes`, `gen` |
 | Mode | `offline` |
-| Default package | `models/FireRedAudio-GGUF/firered-audio-orig.gguf` |
+| Default package | `models/FireRedAudio-GGUF/firered-audio-q8_0.gguf` |
 | Generation paths | `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` |
 | Text paths | `asr`, `understand` |
 
@@ -70,9 +70,9 @@ audiocpp_cli \
 | `asr` | `asr` | `--audio`, optional prompt through `--text` |
 | `understand` | `asr` | `--audio`, question through `--text` |
 | `tts_clone` | `clon` | `--text`, `--voice-ref`, `--reference-text` |
-| `voice_design` | `vdes` | `--text`, `--request-option instruction=<text>` |
-| `semantic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
-| `acoustic_edit` | `gen` | `--audio`, `--request-option instruction=<text>` |
+| `voice_design` | `vdes` | `--text`, `--request-option instruct=<text>` |
+| `semantic_edit` | `gen` | `--audio`, `--request-option instruct=<text>` |
+| `acoustic_edit` | `gen` | `--audio`, `--request-option instruct=<text>` |
 
 ## Common Options (use directly)
 
@@ -86,20 +86,20 @@ audiocpp_cli \
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `template_name` | `asr`, `understand`, `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` | path-dependent | Request template. |
+| `template_name` | `asr`, `understand`, `tts_clone`, `voice_design`, `semantic_edit`, `acoustic_edit` | see description | Defaults to voice_design for design, acoustic_edit for generation with input audio, tts_clone for other generation, and asr for ASR. |
 | `language` | language tag | `zh` | Generation or text-path language tag. |
 | `reference_text` | text | empty | Transcript for the prompt audio. |
-| `instruction` | text | required for design/edit | Voice design or edit instruction. |
+| `instruct` | text | required for design/edit | Generation voice/delivery instruction. Legacy `instruction` remains accepted. ASR and understanding instead use the text input as their task prompt. |
 | `num_inference_steps` | integer > 0 | `10` | FireRedAudio DiT flow steps per latent patch. |
-| `guidance_scale` | float >= 0 | `2.0` | FireRedAudio DiT CFG scale. |
-| `max_new_audio_steps` | integer > 0 | `750` | Maximum generated RedAE latent patches. |
-| `min_new_audio_steps` | integer >= 0 | `6` | Minimum audio patches before stop may be accepted. |
-| `max_new_text_tokens` | integer > 0 | `512` | Text-mode token budget before audio mode. |
-| `max_new_tokens` | integer > 0 | `300` | ASR/understanding text token budget. |
+| `guidance_scale` | float > 0 | `2.0` | FireRedAudio DiT CFG scale. |
+| `max_audio_steps` | integer > 0 | `750` | Maximum generated RedAE latent patches. Legacy `max_new_audio_steps` remains accepted. |
+| `min_audio_steps` | integer >= 0 | `6` | Minimum audio patches before stop may be accepted. Legacy `min_new_audio_steps` remains accepted. |
+| `max_text_tokens` | integer > 0 | `512` | Text-mode token budget before audio mode. Legacy `max_new_text_tokens` remains accepted. |
+| `max_tokens` | integer > 0 | see description | Output token budget; defaults to 300, or 1024 for understand with enable_thinking=true. |
 | `enable_thinking` | bool | `false` | Enable open thinking block for `understand`; invalid for plain `asr`. |
 | `top_k` | integer >= 0 | `20` | Understanding top-k sampling. |
 | `top_p` | `0..1` | `0.8` | Understanding nucleus sampling. |
-| `temperature` | float >= 0 | `0.7` | Understanding sampling temperature. |
+| `temperature` | float >= 0 | `0.7` | Text sampling temperature for understanding. Understanding-mode sampling requires a positive value; zero does not select greedy decoding. |
 | `seed` | integer >= 0 | `1234` | Generation seed. |
 
 ## Session Options (use with `--session-option`)
@@ -109,3 +109,6 @@ audiocpp_cli \
 | `firered_audio.reference_cache_slots` | integer >= 0 | `2` | Prepared reference-audio cache slots. |
 | `firered_audio.mem_saver` | bool | `false` | Release runtime graphs after request phases. |
 | `firered_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage override for experiments. |
+
+Legacy `firered_audio.helper_graph_arena_mb` remains accepted but has no effect
+on allocation; it is not a memory control.

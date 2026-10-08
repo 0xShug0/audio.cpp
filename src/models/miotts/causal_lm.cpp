@@ -415,12 +415,28 @@ void apply_repetition_penalty(
     if (!(penalty > 0.0F)) {
         throw std::runtime_error("MioTTS repetition_penalty must be positive");
     }
+    // Hugging Face RepetitionPenaltyLogitsProcessor semantics: every token id that
+    // occurs in the history is penalized exactly once, however often it occurs
+    // (it gathers the logits at input_ids and scatters the penalized values back).
+    // Applying the penalty once per occurrence compounds it to penalty^count for
+    // frequent speech tokens and drifts away from the reference implementation.
+    std::vector<uint8_t> seen(static_cast<size_t>(config.speech_token_count), 0);
+    bool eos_seen = false;
     for (const int32_t token : history) {
         float * value = nullptr;
         const int64_t speech_index = static_cast<int64_t>(token) - config.speech_token_start_id;
         if (speech_index >= 0 && speech_index < config.speech_token_count) {
+            uint8_t & flag = seen[static_cast<size_t>(speech_index)];
+            if (flag != 0) {
+                continue;
+            }
+            flag = 1;
             value = &logits.speech[static_cast<size_t>(speech_index)];
         } else if (static_cast<int64_t>(token) == config.eos_token_id) {
+            if (eos_seen) {
+                continue;
+            }
+            eos_seen = true;
             value = &logits.eos;
         }
         if (value != nullptr) {

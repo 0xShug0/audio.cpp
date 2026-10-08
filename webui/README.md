@@ -51,7 +51,9 @@ generation, conversion, separation, VAD, diarization, alignment, and voice desig
 - sentence-aware long-text synthesis with browser-side WAV merging;
 - microphone capture and near-live input for streaming-capable ASR models;
 - embedded demo voices with matching transcripts;
-- a saved voice library stored in browser IndexedDB;
+- a Voices page for importing, previewing, editing, downloading, and deleting
+  reference recordings and transcripts stored in browser IndexedDB; select
+  **Use in Studio** or use Studio's saved-voice selector;
 - multilingual UI resources under `native/lang/`;
 - structured results, generated artifacts, and request timing.
 
@@ -83,6 +85,21 @@ Use their **Download SafeTensors weights** links, place the files on the server,
 and set **Weights path on server** before loading. Keep the original filenames;
 the default paths are under `Audio-Utilities/` in the selected models folder.
 Then choose an input recording and run it from the studio.
+
+### Drama 3
+
+Select **Fish Audio Drama 3** in the **Text to speech** Studio tab. Its
+model-specific panel separates **Single-voice clone** from
+**Multi-speaker** generation. Each reference recording needs its matching
+transcript; saved voices can also be selected from the Voices library.
+
+Multi-speaker mode supports up to 16 cast members, matching the
+[official speaker IDs](https://huggingface.co/fishaudio/drama-3).
+Assign a speaker to each dialogue turn; references and speaker tags are submitted
+together in one request. Multi-speaker generation is still under testing.
+Model parameters include text chunk size, sampling, expert-weight offload, and
+context capacity. The workspace uses offline generation and the shared Run,
+Cancel, and output controls.
 
 ## Frontend development
 

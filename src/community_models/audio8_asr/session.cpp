@@ -168,6 +168,14 @@ public:
             request.model_path,
             default_spec_path());
         runtime::ModelInspection inspection;
+        inspection.cli.session_options = {
+            {"audio8_asr.weight_type", "native|f32|f16|bf16|q8_0", "Decoder and adapter weight storage type. Default: native.", false, "native"},
+            {"audio8_asr.audio_encoder_weight_type", "native|f32|f16", "Audio encoder weight storage type (quantized storage is rejected for the encoder; already-quantized GGUF tensors load as native). Default: native.", false, "native"},
+            {"audio8_asr.encoder_graph_arena_mb", "int", "Audio encoder graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Default: 128.", false, "128", "1"},
+            {"audio8_asr.projector_graph_arena_mb", "int", "Adapter (MLP tower + pooling + projector) graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Default: 256.", false, "256", "1"},
+            {"audio8_asr.prefill_graph_arena_mb", "int", "Decoder prefill graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Default: 256.", false, "256", "1"},
+            {"audio8_asr.decode_graph_arena_mb", "int", "Decoder step decode graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Default: 256.", false, "256", "1"},
+        };
         inspection.model_root = resources.model_root();
         inspection.metadata.family = family();
         inspection.metadata.variant = "0.1b";
@@ -200,10 +208,12 @@ Audio8ASRSession::Audio8ASRSession(
       assets_(require_assets(std::move(assets))),
       frontend_(assets_->encoder_assets),
       audio_encoder_(
-          assets_->encoder_assets,
+          assets_->encoder_assets->model_weights,
+          assets_->encoder_assets->config.audio_encoder,
           execution_context(),
-          encoder_graph_arena_bytes(RuntimeSessionBase::options()),
-          parse_encoder_weight_storage(RuntimeSessionBase::options())),
+          {encoder_graph_arena_bytes(RuntimeSessionBase::options()),
+           parse_encoder_weight_storage(RuntimeSessionBase::options()), "audio8_asr.audio_encoder"},
+          assets_->encoder_assets->config.audio_encoder_binding),
       projector_(
           assets_->resources.open_tensor_source("weights"),
           assets_->config.tower,

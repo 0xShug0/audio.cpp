@@ -141,40 +141,9 @@ struct OWSMCTCV4EBranchformerRuntime::Graphs {
         memory = prompt_norm.build(ctx, memory, weights.prompt_norm);
         memory = modules::LinearModule({p, d, true}).build(ctx, memory, weights.prompt_projection);
 
-        auto x = core::reshape_tensor(ctx, features,
-            TensorShape::from_dims({1, 1, config.frontend_frames, 128}));
-        int64_t valid_frames = (config.frontend_frames - 3) / 2 + 1;
-        if (execution.backend_type() == core::BackendType::Cpu) {
-            // Align the next convolution by padding the small mel input, not its large activation.
-            const auto next_frames = (valid_frames - 3) / 2 + 1;
-            const auto aligned_next_frames = ((next_frames + 15) / 16) * 16;
-            const auto padded_input_frames = 2 * (2 * aligned_next_frames + 1) + 1;
-            x = modules::Pad2dModule({0, 0, 0, padded_input_frames - config.frontend_frames}).build(ctx, x);
-        }
-        x = modules::Conv2dModule({1, d, 3, 3, 2, 2, 0, 0, 1, 1, true})
-            .build(ctx, x, weights.subsampling.conv0);
-        x = modules::ReluModule().build(ctx, x);
-        for (const auto * conv : {&weights.subsampling.conv1, &weights.subsampling.conv2}) {
-            const auto output_frames = (valid_frames - 3) / 2 + 1;
-            const bool align_cpu = execution.backend_type() == core::BackendType::Cpu;
-            // Align the im2col row count for CPU GEMM; discard only added output rows.
-            const auto padded_frames = align_cpu ? ((output_frames + 15) / 16) * 16 : output_frames;
-            const auto pad_frames = std::max<int64_t>(0, 2 * padded_frames + 1 - x.shape.dims[2]);
-            if (pad_frames > 0) {
-                x = modules::Pad2dModule({0, 0, 0, pad_frames})
-                    .build(ctx, x);
-            }
-            x = modules::Conv2dModule({d, d, 3, 3, 2, 2, 0, 0, 1, 1, true}).build(ctx, x, *conv);
-            if (padded_frames != output_frames) {
-                x = modules::SliceModule({2, 0, output_frames}).build(ctx, x);
-            }
-            x = modules::ReluModule().build(ctx, x);
-            valid_frames = output_frames;
-        }
-        x = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
-        x = core::ensure_backend_addressable_layout(ctx, x);
-        x = core::reshape_tensor(ctx, x, TensorShape::from_dims({1, config.encoder_frames, d * 15}));
-        x = modules::LinearModule({d * 15, d, true}).build(ctx, x, weights.subsampling.projection);
+        auto x = modules::EspnetConv2dSubsampling8Module({128, d,
+            execution.backend_type() == core::BackendType::Cpu ? 16 : 1})
+            .build(ctx, features, weights.subsampling);
         auto prefix_embedding = embedding.build(ctx, prefix, {weights.embedding});
         prefix_embedding = modules::LinearModule({p, d, true})
             .build(ctx, prefix_embedding, weights.prefix_projection);

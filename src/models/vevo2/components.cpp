@@ -1,4 +1,5 @@
 #include "engine/models/vevo2/components.h"
+#include "engine/framework/debug/trace.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/dsp.h"
@@ -986,6 +987,7 @@ struct Vevo2CocoTokenizerGraph {
 
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
         ggml_build_forward_expand(graph, ids_output);
+        engine::debug::timing_log_context_reservation("vevo2.tokenizer.graph", ctx.get());
         gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 Coco tokenizer graph");

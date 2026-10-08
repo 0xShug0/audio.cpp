@@ -150,7 +150,10 @@ void VibeASRSession::prepare(const runtime::SessionPreparationRequest & request)
 }
 
 VibeASRSession::RequestOptions VibeASRSession::parse_request_options(const runtime::TaskRequest & request) const {
-    runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), "VibeASR");
+    auto validation_options = request.options;
+    validation_options.erase("max_tokens");
+    validation_options.erase("max_new_tokens");
+    runtime::validate_spec_backed_request_options(validation_options, require_contract(contract_), "VibeASR");
     RequestOptions out;
     if (const auto value = runtime::find_option(request.options, {"output_format"}); value.has_value()) {
         if (*value != "text" && *value != "json") {
@@ -161,7 +164,7 @@ VibeASRSession::RequestOptions VibeASRSession::parse_request_options(const runti
     if (const auto value = runtime::find_option(request.options, {"context"}); value.has_value()) {
         out.context = *value;
     }
-    out.max_new_tokens = runtime::parse_positive_i64_option(request.options, {"max_new_tokens"}, out.max_new_tokens);
+    out.max_new_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens", "max_new_tokens"}, out.max_new_tokens);
     return out;
 }
 

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "family": "whistle_asr",
+  "display_name": "Whistle ASR",
+  "description": "Whistle offline speech recognition with FP32 GGUF weights, a GGML encoder and a host decoder.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "de",
+    "fr",
+    "es",
+    "it",
+    "nl",
+    "pl"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Force one supported language; omit to detect the language.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plans. Component decoder accepts impl host/neon (default host), both on CPU independently of the encoder backend. The experimental neon implementation accelerates the vocabulary projection with the framework NEON library and requires ENGINE_ENABLE_NEON=ON and AArch64 NEON. No artifacts or params are used.",
+        "required": false,
+        "default": "{}"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "whistle_asr_f32",
+      "display_name": "Whistle ASR GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Whistle-GGUF",
+      "files": [
+        "Whistle-GGUF/whistle-f32.gguf"
+      ],
+      "strip_prefix": "Whistle-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/whistle_asr.md"
+    ],
+    "recommended_package": "whistle_asr_f32"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_blob": "model:tokenizer.blob",
+        "mel_filterbank": "model:mel_filterbank_80.f32",
+        "hadamard_perm1": "model:hadamard_perm1.f32",
+        "hadamard_perm2": "model:hadamard_perm2.f32"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_blob": "model:tokenizer.blob",
+        "mel_filterbank": "model:mel_filterbank_80.f32",
+        "hadamard_perm1": "model:hadamard_perm1.f32",
+        "hadamard_perm2": "model:hadamard_perm2.f32"
+      },
+      "tensors": {
+        "weights": "model:whistle.safetensors"
+      }
+    }
+  ]
+}

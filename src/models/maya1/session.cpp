@@ -139,24 +139,31 @@ Maya1Session::Maya1Session(
   }
   runtime::validate_spec_backed_session_options(options, *contract_, kFamily,
                                                 "Maya1");
-  if (task_.task != runtime::VoiceTaskKind::Tts ||
+  if ((task_.task != runtime::VoiceTaskKind::Tts &&
+       task_.task != runtime::VoiceTaskKind::VoiceDesign) ||
       task_.mode != runtime::RunMode::Offline) {
-    throw std::runtime_error("Maya1 currently implements offline TTS");
+    throw std::runtime_error("Maya1 currently implements offline TTS and voice design");
   }
   auto shared_storage = assets::TensorStorageType::Native;
   if (const auto value =
-          runtime::find_option(options.options, {"weight_type"})) {
+          runtime::find_option(options.options, {"maya1.weight_type", "weight_type"})) {
     shared_storage = assets::parse_tensor_storage_type(*value);
   }
   auto ar_storage = shared_storage;
   if (const auto value =
-          runtime::find_option(options.options, {"ar_weight_type"})) {
+          runtime::find_option(options.options, {"maya1.ar_weight_type", "ar_weight_type"})) {
     ar_storage = assets::parse_tensor_storage_type(*value);
   }
   auto codec_storage = shared_storage;
   if (const auto value =
-          runtime::find_option(options.options, {"codec_weight_type"})) {
+          runtime::find_option(options.options, {"maya1.codec_weight_type", "codec_weight_type"})) {
     codec_storage = assets::parse_tensor_storage_type(*value);
+  }
+  if (codec_storage != assets::TensorStorageType::Native &&
+      codec_storage != assets::TensorStorageType::F32) {
+    throw std::runtime_error(
+        "Maya1 codec_weight_type supports only native or f32; when setting "
+        "weight_type for the AR model, set maya1.codec_weight_type=f32 explicitly");
   }
   impl_ = std::make_unique<Impl>(assets_, execution_context(), ar_storage,
                                  codec_storage);
@@ -167,7 +174,7 @@ Maya1Session::~Maya1Session() = default;
 std::string Maya1Session::family() const { return std::string(kFamily); }
 
 runtime::VoiceTaskKind Maya1Session::task_kind() const {
-  return runtime::VoiceTaskKind::Tts;
+  return task_.task;
 }
 
 runtime::RunMode Maya1Session::run_mode() const { return task_.mode; }

@@ -42,11 +42,6 @@ struct F5ComputeDevice {
     bool use_cuda = false;
     int device = 0;      // CUDA device index
     int threads = 0;     // CPU threads; 0 = hardware concurrency
-    // FP16 linear weights: GEMMs get ~3x faster on tensor cores but each
-    // mul_mat converts the F32 activations to F16 first; at F5's GEMM sizes
-    // (K=1024/2048, N~1022) the conversion overhead outweighs the gain on an
-    // RTX 3090 (measured 4.0s -> 5.0s per clip). Off by default.
-    bool fp16_weights = false;
 };
 
 // Debug taps for parity testing: when non-null, intermediate stage outputs are

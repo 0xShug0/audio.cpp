@@ -1,4 +1,6 @@
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 
 #include <stdexcept>
 
@@ -62,6 +64,16 @@ const core::ModuleSchema kSqrtSchema = {
     kActivationOutputs,
     1,
     "Applies square root elementwise.",
+};
+
+const core::ModuleSchema kBf16RoundSchema = {
+    "Bf16Round",
+    "tensor.precision",
+    kActivationInputs,
+    1,
+    kActivationOutputs,
+    1,
+    "Rounds activations to BF16 values while retaining F32 storage.",
 };
 
 const core::ModuleSchema kGeluSchema = {
@@ -416,6 +428,18 @@ const core::ModuleSchema & SqrtModule::static_schema() noexcept {
     return kSqrtSchema;
 }
 
+const core::ModuleSchema & Bf16RoundModule::schema() const noexcept {
+    return static_schema();
+}
+
+core::TensorValue Bf16RoundModule::build(core::ModuleBuildContext & ctx, const core::TensorValue & input) const {
+    return build_unary(ctx, input, ggml_round_bf16);
+}
+
+const core::ModuleSchema & Bf16RoundModule::static_schema() noexcept {
+    return kBf16RoundSchema;
+}
+
 GeluModule::GeluModule(GeluConfig config) : config_(config) {
 }
 
@@ -627,6 +651,51 @@ core::TensorValue Snake1dModule::build(
     const auto s2 = core::wrap_tensor(ggml_mul(ctx.ggml, s.tensor, s.tensor), input_f32.shape, GGML_TYPE_F32);
     const auto frac = core::wrap_tensor(ggml_div(ctx.ggml, s2.tensor, alpha_broadcast.tensor), input_f32.shape, GGML_TYPE_F32);
     return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, frac.tensor), input_f32.shape, GGML_TYPE_F32);
+}
+
+PReluModule::PReluModule(PReluConfig config) : config_(config) {}
+
+const core::ModuleSchema & PReluModule::schema() const noexcept {
+    return static_schema();
+}
+
+const core::ModuleSchema & PReluModule::static_schema() noexcept {
+    static const core::ModulePortSpec inputs[] = {
+        {"input", core::PortKind::Activation, false},
+        {"slope", core::PortKind::Parameter, false},
+    };
+    static const core::ModuleSchema schema = {
+        "PReLU", "nn.activation", inputs, 2, kActivationOutputs, 1,
+        "Applies learned scalar or channel-wise negative slopes.",
+    };
+    return schema;
+}
+
+core::TensorValue PReluModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & slope) const {
+    core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
+    if (config_.channel_axis >= input.shape.rank) {
+        throw std::runtime_error("PReLU channel axis is outside input rank");
+    }
+    auto alpha = slope;
+    if (!same_shape(alpha.shape, input.shape)) {
+        const auto channels = alpha.shape.num_elements();
+        if (channels != 1 && channels != input.shape.dims[config_.channel_axis]) {
+            throw std::runtime_error("PReLU slope must be scalar or match the channel dimension");
+        }
+        auto shape = input.shape;
+        for (size_t axis = 0; axis < shape.rank; ++axis) shape.dims[axis] = 1;
+        shape.dims[config_.channel_axis] = channels;
+        alpha = core::reshape_tensor(ctx, alpha, shape);
+        alpha = RepeatModule({input.shape}).build(ctx, alpha);
+    }
+    const auto x = core::ensure_backend_addressable_layout(ctx, input);
+    const auto positive = ReluModule().build(ctx, x);
+    auto negative = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, positive.tensor), x.shape);
+    negative = MulModule().build(ctx, negative, alpha);
+    return AddModule().build(ctx, positive, negative);
 }
 
 const core::ModuleSchema & Snake1dModule::static_schema() noexcept {

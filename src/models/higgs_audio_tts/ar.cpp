@@ -42,7 +42,8 @@ struct GgmlContextDeleter {
 
 modules::DecoderStackConfig make_higgs_qwen3_stack_config(
     const HiggsTextConfig & config,
-    bool allow_flash_attention = true) {
+    bool allow_flash_attention = true,
+    bool exact_reference_prefill = false) {
     modules::DecoderStackConfig out;
     out.hidden_size = config.hidden_size;
     out.num_attention_heads = config.num_attention_heads;
@@ -61,7 +62,10 @@ modules::DecoderStackConfig make_higgs_qwen3_stack_config(
     if (allow_flash_attention) {
         out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
         out.runtime.attention.static_mode = modules::DecoderAttentionMode::FlashGroupedViewKV;
-        out.runtime.attention.prefix_mode = modules::DecoderPrefixAttentionMode::FlashWithPrefix;
+        // The session override affects only prefill over a retained reference prefix.
+        out.runtime.attention.prefix_mode = exact_reference_prefill
+            ? modules::DecoderPrefixAttentionMode::Exact
+            : modules::DecoderPrefixAttentionMode::FlashWithPrefix;
     } else {
         out.runtime.attention.prefill_mode = modules::DecoderAttentionMode::ManualRepeat;
         out.runtime.attention.static_mode = modules::DecoderAttentionMode::ManualRepeat;
@@ -75,8 +79,9 @@ modules::DecoderStackConfig make_higgs_qwen3_stack_config(
 
 class HiggsQwen3DecoderComponent {
 public:
-    HiggsQwen3DecoderComponent(const HiggsTextConfig & config, bool packed_qkv, bool allow_flash_attention = true)
-        : stack_config_(make_higgs_qwen3_stack_config(config, allow_flash_attention)),
+    HiggsQwen3DecoderComponent(const HiggsTextConfig & config, bool packed_qkv,
+                             bool allow_flash_attention = true, bool exact_reference_prefill = false)
+        : stack_config_(make_higgs_qwen3_stack_config(config, allow_flash_attention, exact_reference_prefill)),
           layer_config_(modules::decoder_layer_config_from_stack(stack_config_)),
           layer_module_([&] {
               layer_config_.qkv_layout = packed_qkv
@@ -388,7 +393,8 @@ HiggsQwen3ARRuntime::HiggsQwen3ARRuntime(
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type,
-    core::AttentionPreference attention_preference)
+    core::AttentionPreference attention_preference,
+    bool exact_reference_prefill)
     : assets_(std::move(assets)),
       backend_(execution.backend()),
       backend_type_(execution.backend_type()),
@@ -397,7 +403,8 @@ HiggsQwen3ARRuntime::HiggsQwen3ARRuntime(
       allow_flash_attention_(core::resolve_flash_attention(
           execution.backend(),
           this->assets_->config.text.head_dim,
-          attention_preference)) {
+          attention_preference)),
+      exact_reference_prefill_(exact_reference_prefill) {
     engine::debug::trace_log_scalar("higgs_audio_tts.attention.allow_flash", allow_flash_attention_);
     if (assets_ == nullptr) {
         throw std::runtime_error("Higgs TTS AR runtime requires assets");
@@ -915,7 +922,7 @@ struct HiggsQwen3PrefillGraph::Impl {
         keys.reserve(tensor_weights.decoder.layers.size());
         values.reserve(tensor_weights.decoder.layers.size());
         const HiggsQwen3DecoderComponent decoder(
-            config.text, tensor_weights.packed_qkv, runtime->allow_flash_attention());
+            config.text, tensor_weights.packed_qkv, runtime->allow_flash_attention(), runtime->exact_reference_prefill());
         for (size_t layer_index = 0; layer_index < tensor_weights.decoder.layers.size(); ++layer_index) {
             std::optional<core::TensorValue> prefix_key;
             std::optional<core::TensorValue> prefix_value;

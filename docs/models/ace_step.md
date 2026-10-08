@@ -1,6 +1,6 @@
 # ACE-Step
 
-ACE-Step is wired as `--family ace_step --task gen`. It generates and edits music from text, lyrics, and optional source audio. The route controls whether source audio is ignored, optional, or required.
+ACE-Step is wired as `--family ace_step --task gen`. It generates and edits music from text, lyrics, and optional source audio. The route controls whether source audio is ignored, optional, or required. Supplied `audio_codes` can also satisfy the source-input requirement for routes that require audio.
 
 Common CLI shape:
 
@@ -15,8 +15,8 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | Family | `ace_step` |
 | Model directory | `models/Ace-Step1.5` |
 | Task | `gen` |
-| Default DiT | `acestep-v15-turbo` |
-| Optional DiT | `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` |
+| Default DiT | Inferred from model filename (`base`, `sft`, `turbo`, and `xl`); otherwise `acestep-v15-turbo` |
+| Optional DiT | `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` |
 | Default LM | `acestep-5Hz-lm-1.7B` |
 | Prompt input | `--text` |
 | Lyrics input | `--lyrics` |
@@ -152,21 +152,21 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `--lyrics` | text | empty string | Vocal lyrics. |
 | `--audio` | WAV path | route-dependent | Source audio for complete/edit/extract/cover routes. |
 | `--duration-seconds` | float, `-1` for auto | `-1` | Target duration. Source-locked routes use source duration. |
-| `--language` | language code | `en` | Vocal language for lyrics. |
+| `--language` | language code | text input language, then `en` | Vocal language for lyrics; request-map `language` takes precedence. |
 | `--track-name` | text | empty string | Track name used by `lego` and `extract` instructions. |
 | `--repaint-start` | seconds | required for `repaint` | Start time for repaint. |
 | `--repaint-end` | seconds | required for `repaint` | End time for repaint. |
-| `--repaint-mode` | `balanced`, `conservative`, `aggressive` | `balanced` | Preset repaint blending policy. |
-| `--repaint-strength` | `0..1` | `0.5` | Repaint strength used by preset repaint mode. |
-| `--num-inference-steps` | integer | `8` | Diffusion denoising steps. |
-| `--guidance-scale` | float | `1.0`; `7.0` for `extract` unless overridden | Diffusion guidance scale. |
+| `--repaint-mode` | `balanced`, `conservative`, `aggressive` | unset | Preset repaint blending policy; supplying strength alone selects `balanced`. |
+| `--repaint-strength` | `0..1` | `0.5` when a preset is supplied | Strength for balanced mode; values are clamped to this range. |
+| `--num-inference-steps` | integer | `8` | Denoising steps; turbo checkpoints cap this at 8. |
+| `--guidance-scale` | float | `1.0`; `7.0` for `extract` unless overridden | Diffusion CFG; ignored by turbo checkpoints. |
 | `--seed` | integer | random if omitted | Generation seed. |
 
 ## Request Options (use with `--request-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `complete_track_classes` | comma-separated text | empty list | Track classes for `complete`. |
+| `complete_track_classes` | track class or JSON array | empty list | Track classes for `complete`, e.g. `'["vocals","guitar"]'`. A plain string is one class, not a comma-separated list. |
 | `bpm` | integer | not set | Force BPM metadata; otherwise the planner chooses it when used. |
 | `keyscale` | text | not set | Force key metadata; otherwise the planner chooses it when used. |
 | `timesignature` | text | not set | Force time signature metadata; otherwise the planner chooses it when used. |
@@ -175,11 +175,14 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | `audio_cover_strength` | float | `1.0` | Cover strength for cover/edit-style conditioning. |
 | `cover_noise_strength` | float | `0.0` | Noise strength for cover conditioning. |
 | `lm_temperature` | float | `0.85` | Planner sampling temperature. |
-| `lm_cfg_scale` | float | `2.0` | Planner CFG scale. |
+| `lm_guidance_scale` | float | `2.0` | Planner CFG scale. Legacy `lm_cfg_scale` remains accepted. |
+| `duration_sec` | float | `-1.0` | Target duration; non-positive leaves selection to the planner. Legacy `duration_seconds` remains accepted. |
+| `enable_thinking` | bool | `true` | Enable planner thinking when supported by the checkpoint. Legacy `thinking` remains accepted. |
 | `lm_top_k` | integer | `0` | Planner top-k; `0` disables top-k. |
 | `lm_top_p` | float | `0.9` | Planner top-p. |
 | `lm_repetition_penalty` | float | `1.0` | Planner repetition penalty. |
 | `sampler_mode` | `euler`, `heun` | `euler` | Diffusion sampler mode. |
+| `shift` | float | `1.0`; `3.0` for `extract` unless overridden | Diffusion timestep schedule shift. |
 | `retake_seed` | integer, `-1` to clear | not set | Optional retake noise seed. |
 | `retake_variance` | float | `0.0` | Retake noise mixing strength. |
 | `flow_edit_morph` | bool | `false` | Status: parsed for text2music, but not usable because the flow-edit diffusion overlay is not implemented. |
@@ -189,20 +192,53 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `ace_step.dit_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | DiT weight type. |
-| `ace_step.planner_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Planner LM weight type. |
+| `ace_step.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared weight storage type. |
+| `ace_step.dit_weight_type` | same as above | inherits `ace_step.weight_type` | DiT override; `f16` is promoted to `bf16`. |
+| `ace_step.planner_weight_type` | same as above | inherits `ace_step.weight_type` | Planner LM override. |
+| `ace_step.text_encoder_weight_type` | same as above | inherits `ace_step.weight_type` | Text encoder override. |
+| `ace_step.vae_weight_type` | same as above | inherits `ace_step.weight_type` | VAE override. |
 | `ace_step.mem_saver` | bool | `false` | Release staged graph/cache state after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
 
 ## Load Options (use with `--load-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `ace_step.dit_model_path` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | `acestep-v15-turbo` | Select DiT variant inside the model root. |
+| `ace_step.dit_model_path` | `acestep-v15-turbo`, `acestep-v15-base`, `acestep-v15-xl-turbo`, `acestep-v15-xl-sft` | filename-derived; otherwise `acestep-v15-turbo` | Override DiT variant selection inside the model root. |
 
-ACE-Step GGUF packages are variant-specific. Use the Turbo GGUF for the default
-`acestep-v15-turbo` path, and pass `--load-option ace_step.dit_model_path=acestep-v15-base`
-when loading a Base GGUF package, or
-`--load-option ace_step.dit_model_path=acestep-v15-xl-turbo` for the XL Turbo one.
+### Spec Scope And Compatibility
+
+The spec lists generation, musical metadata, planner, editing, retake, and
+semantic-code controls, plus weight storage, memory saving, and DiT selection.
+Request names are unprefixed; session and load names use `ace_step.` in CLI/server
+configuration. Prompt text and source audio remain structured inputs.
+
+The following legacy names remain accepted:
+
+| Scope | Canonical | Legacy |
+|---|---|---|
+| Request | `duration_sec` | `duration_seconds` |
+| Request | `lm_guidance_scale` | `lm_cfg_scale` |
+| Request | `enable_thinking` | `thinking` |
+| Request | `audio_codes` | `audio_code_string` |
+| Session | `ace_step.mem_saver` | `mem_saver` |
+
+The shared parser rejects conflicting values supplied under both spellings.
+`audio_codes` is the existing exception: it takes precedence over
+`audio_code_string`.
+
+Older standalone GGUFs do not need re-emission or a local spec override to use
+these controls: ACE-Step parses them directly, without an embedded-spec option
+whitelist. The spec expansion does not introduce stricter runtime validation.
+
+To keep the embedded spec compact, it omits debug noise inputs, graph arenas,
+individual planner CoT switches, low-level velocity/repaint tuning, experimental
+`dcw_*`, and the unimplemented `flow_edit_morph` path. Existing runtime support
+for omitted controls is unchanged. Repaint preset fields have no spec default
+because supplying a preset changes behavior compared with leaving both unset.
+
+ACE-Step GGUF packages are variant-specific. The model filename selects the DiT
+variant by default. Use `--load-option ace_step.dit_model_path=<variant>` when
+the filename does not identify the packaged variant.
 
 ### XL variants
 

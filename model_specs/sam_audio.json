@@ -23,13 +23,13 @@
   "options": {
     "request": [
       {
-        "name": "reference_video_path",
+        "name": "reference_video_file",
         "type": "path",
-        "description": "Masked video identifying the target source; frames are matched to audio by nearest timestamp. Requires libav runtime libraries. Mutually exclusive with reference_image_path.",
+        "description": "Masked video identifying the target source; frames are matched to audio by nearest timestamp. Requires libav runtime libraries. Mutually exclusive with reference_image_file.",
         "required": false
       },
       {
-        "name": "reference_image_path",
+        "name": "reference_image_file",
         "type": "path",
         "description": "Masked RGB image identifying the target sound source, used as a constant visual prompt throughout the recording. Mask unwanted regions before supplying the image.",
         "required": false

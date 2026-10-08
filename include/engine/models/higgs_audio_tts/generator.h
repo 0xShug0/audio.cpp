@@ -4,6 +4,7 @@
 #include "engine/models/higgs_audio_tts/codec.h"
 #include "engine/models/higgs_audio_tts/sampler.h"
 #include "engine/models/higgs_audio_tts/tokenizer_text.h"
+#include "engine/framework/runtime/streaming_audio.h"
 
 #include <cstdint>
 #include <memory>
@@ -47,7 +48,9 @@ public:
                    size_t ar_decode_graph_arena_bytes);
 
     void prepare(const HiggsGenerationRequest & request);
-    HiggsGenerationResult generate(const HiggsGenerationRequest & request);
+    HiggsGenerationResult generate(
+        const HiggsGenerationRequest & request,
+        runtime::StreamingAudioController<int32_t> * stream = nullptr);
 
 private:
     void replace_kv_cache(int64_t steps, bool preserve_state);

@@ -67,6 +67,9 @@ public:
             spec_path());
         const auto & weight_path = resources.require_file("weights");
         runtime::ModelInspection inspection;
+        inspection.cli.session_options = {
+            {"citrinet_asr.weight_type", "native|f32|f16|bf16|q8_0", "Weight storage type used by the encoder. Default: native.", false, "native"},
+        };
         inspection.model_root = resources.model_root();
         inspection.metadata.family = family();
         inspection.metadata.variant = weight_path.stem().string();

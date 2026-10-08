@@ -1,5 +1,5 @@
-export type UiTheme = 'system' | 'dark' | 'light' | 'mocha';
-export type ResolvedUiTheme = 'dark' | 'light' | 'mocha';
+export type UiTheme = 'system' | 'dark' | 'light' | 'mocha' | 'paper';
+export type ResolvedUiTheme = 'dark' | 'light' | 'mocha' | 'paper';
 
 export const UI_THEME_STORAGE_KEY = 'audiocpp.ui.theme';
 
@@ -7,11 +7,12 @@ export const uiThemes: Array<{ id: UiTheme; label: string }> = [
   { id: 'mocha', label: 'Catppuccin Mocha' },
   { id: 'system', label: 'System' },
   { id: 'dark', label: 'Dark' },
-  { id: 'light', label: 'Light' }
+  { id: 'light', label: 'Light' },
+  { id: 'paper', label: 'Paper' }
 ];
 
 export function resolveUiTheme(value: string | null | undefined): UiTheme {
-  return value === 'dark' || value === 'light' || value === 'system' || value === 'mocha' ? value : 'mocha';
+  return value === 'dark' || value === 'light' || value === 'system' || value === 'mocha' || value === 'paper' ? value : 'mocha';
 }
 
 export function resolvedTheme(theme: UiTheme, systemPrefersDark: boolean): ResolvedUiTheme {

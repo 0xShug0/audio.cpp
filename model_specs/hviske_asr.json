@@ -40,9 +40,9 @@
         "default": "da"
       },
       {
-        "name": "punctuation",
+        "name": "punc",
         "type": "bool",
-        "description": "Enable or disable punctuation tokens in the decoder prompt; default true.",
+        "description": "Request punctuation and capitalization together through decoder prompt tokens; default true.",
         "required": false,
         "default": true
       },
@@ -104,9 +104,10 @@
       {
         "name": "seed",
         "type": "int",
-        "description": "Decoder sampling seed; random if omitted.",
+        "description": "Decoder sampling seed; default 0.",
         "required": false,
-        "min": 0
+        "min": 0,
+        "default": 0
       },
       {
         "name": "audio_chunk_mode",

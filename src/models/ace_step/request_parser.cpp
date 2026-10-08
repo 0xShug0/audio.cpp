@@ -122,6 +122,9 @@ AceStepRequest ace_step_parse_request(const runtime::TaskRequest &request) {
     AceStepRequest out;
     out.prompt = request.text_input->text;
     out.vocal_language = request.text_input->language.empty() ? "en" : request.text_input->language;
+    if (const auto language = runtime::find_option(request.options, {"language"}); language.has_value()) {
+        out.vocal_language = *language;
+    }
     out.source_audio = request.audio_input;
     if (const auto lyrics = runtime::find_option(request.options, {"lyrics"}); lyrics.has_value()) {
         out.lyrics = *lyrics;
@@ -188,10 +191,10 @@ AceStepRequest ace_step_parse_request(const runtime::TaskRequest &request) {
         out.repainting_end_seconds = *repainting_end >= 0.0F ?
             std::optional<float>(*repainting_end) : std::optional<float>{};
     }
-    out.generation.duration_seconds = runtime::parse_float_option(request.options, {"duration_seconds"})
+    out.generation.duration_seconds = runtime::parse_float_option(request.options, {"duration_sec", "duration_seconds"})
         .value_or(out.generation.duration_seconds);
-    if (const auto thinking = runtime::find_option(request.options, {"thinking"}); thinking.has_value()) {
-        out.generation.thinking = runtime::parse_bool_option(*thinking, "thinking");
+    if (const auto thinking = runtime::find_option(request.options, {"enable_thinking", "thinking"}); thinking.has_value()) {
+        out.generation.thinking = runtime::parse_bool_option(*thinking, "enable_thinking");
     }
     if (const auto use_cot_metas = runtime::find_option(request.options, {"use_cot_metas"}); use_cot_metas.has_value()) {
         out.generation.use_cot_metas = runtime::parse_bool_option(*use_cot_metas, "use_cot_metas");
@@ -217,7 +220,7 @@ AceStepRequest ace_step_parse_request(const runtime::TaskRequest &request) {
         .value_or(out.generation.cfg_interval_end);
     out.generation.lm_temperature = runtime::parse_float_option(request.options, {"lm_temperature"})
         .value_or(out.generation.lm_temperature);
-    out.generation.lm_cfg_scale = runtime::parse_float_option(request.options, {"lm_cfg_scale"})
+    out.generation.lm_cfg_scale = runtime::parse_float_option(request.options, {"lm_guidance_scale", "lm_cfg_scale"})
         .value_or(out.generation.lm_cfg_scale);
     out.generation.lm_top_k = runtime::parse_i64_option(request.options, {"lm_top_k"})
         .value_or(out.generation.lm_top_k);

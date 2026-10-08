@@ -222,16 +222,6 @@ public:
         inspection.discovered_weights.push_back(runtime::NamedAsset{
             model_id,
             asset});
-        inspection.cli.request_options.push_back(runtime::CliOptionInfo{
-            "audio",
-            "wav",
-            "Input WAV audio to process.",
-            true});
-        inspection.cli.request_options.push_back(runtime::CliOptionInfo{
-            "out",
-            "wav",
-            "Output WAV path.",
-            true});
         inspection.cli.load_options.push_back(runtime::CliOptionInfo{
             "utility",
             "utility-id",

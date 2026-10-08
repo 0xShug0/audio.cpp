@@ -122,7 +122,7 @@ void apply_voice_condition(const std::optional<runtime::VoiceCondition> & voice,
 void apply_generation_options(
     const std::unordered_map<std::string, std::string> & options,
     GenerationRequest & generation_request) {
-    if (const auto embedding_path = runtime::find_option(options, {"voice_embedding_path", "pocket_tts.voice_embedding_path"})) {
+    if (const auto embedding_path = runtime::find_option(options, {"voice_embedding_file", "pocket_tts.voice_embedding_file", "voice_embedding_path", "pocket_tts.voice_embedding_path"})) {
         generation_request.voice.embedding_path = *embedding_path;
     }
     if (const auto clone_text = runtime::find_option(options, {"voice_clone_text", "pocket_tts.voice_clone_text"})) {
@@ -137,12 +137,12 @@ void apply_session_generation_options(
     const std::unordered_map<std::string, std::string> & options,
     GenerationRequest & generation_request) {
     apply_generation_options(options, generation_request);
-    if (const auto max_steps = runtime::parse_int_option(options, {"max_steps", "pocket_tts.max_steps"})) {
+    if (const auto max_steps = runtime::parse_int_option(options, {"max_frames", "max_steps", "pocket_tts.max_steps"})) {
         generation_request.max_steps = *max_steps;
     }
     if (const auto max_tokens = runtime::parse_int_option(
             options,
-            {"max_tokens", "pocket_tts.max_tokens"})) {
+            {"text_chunk_tokens", "max_tokens", "pocket_tts.max_tokens"})) {
         generation_request.max_tokens = *max_tokens;
     }
     generation_request.text_chunk_size = engine::text::parse_text_chunk_size_override(options);
@@ -172,7 +172,7 @@ void apply_request_generation_options(
     }
     if (const auto max_tokens = runtime::parse_int_option(
             options,
-            {"max_tokens", "pocket_tts.max_tokens"})) {
+            {"text_chunk_tokens", "max_tokens", "pocket_tts.max_tokens"})) {
         generation_request.max_tokens = *max_tokens;
     }
     generation_request.text_chunk_size = engine::text::parse_text_chunk_size_override(options);
@@ -236,10 +236,10 @@ void validate_generation_request(const GenerationRequest & request) {
         throw std::runtime_error("PocketTTS text prompt is required");
     }
     if (request.max_steps < 0) {
-        throw std::runtime_error("PocketTTS max_steps must be non-negative");
+        throw std::runtime_error("PocketTTS max_frames must be non-negative");
     }
     if (request.max_tokens <= 0) {
-        throw std::runtime_error("PocketTTS max_tokens must be positive");
+        throw std::runtime_error("PocketTTS text_chunk_tokens must be positive");
     }
     if (request.frames_after_eos < -1) {
         throw std::runtime_error("PocketTTS frames_after_eos must be -1 or non-negative");
@@ -493,8 +493,9 @@ PocketTTSSession::PocketTTSSession(
       cached_voice_states_(resolve_voice_state_cache_slots(this->options())),
       prompt_capacity_controller_(graph_capacity_.prompt_mode),
       generation_capacity_controller_(graph_capacity_.generation_mode) {
-    if (task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("PocketTTS only supports VoiceTaskKind::Tts");
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("PocketTTS supports TTS and voice cloning");
     }
     if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("PocketTTS only supports offline and streaming mode");
@@ -624,23 +625,23 @@ PocketTTSGraphCapacityConfig PocketTTSSession::resolve_graph_capacity_config() c
         256)) * 1024ull * 1024ull;
     config.flow_step_graph_context_bytes = static_cast<size_t>(runtime::parse_positive_i64_option(
         options().options,
-        {"pocket_tts.flow_step_graph_context_mb"},
+        {"pocket_tts.flow_step_graph_arena_mb", "pocket_tts.flow_step_graph_context_mb"},
         256)) * 1024ull * 1024ull;
     config.mimi_encoder_graph_context_bytes = static_cast<size_t>(runtime::parse_positive_i64_option(
         options().options,
-        {"pocket_tts.mimi_encoder_graph_context_mb"},
+        {"pocket_tts.mimi_encoder_graph_arena_mb", "pocket_tts.mimi_encoder_graph_context_mb"},
         512)) * 1024ull * 1024ull;
     config.mimi_conv_graph_context_bytes = static_cast<size_t>(runtime::parse_positive_i64_option(
         options().options,
-        {"pocket_tts.mimi_conv_graph_context_mb"},
+        {"pocket_tts.mimi_conv_graph_arena_mb", "pocket_tts.mimi_conv_graph_context_mb"},
         32)) * 1024ull * 1024ull;
     config.mimi_transformer_graph_context_bytes = static_cast<size_t>(runtime::parse_positive_i64_option(
         options().options,
-        {"pocket_tts.mimi_transformer_graph_context_mb"},
+        {"pocket_tts.mimi_transformer_graph_arena_mb", "pocket_tts.mimi_transformer_graph_context_mb"},
         96)) * 1024ull * 1024ull;
     config.mimi_tail_graph_context_bytes = static_cast<size_t>(runtime::parse_positive_i64_option(
         options().options,
-        {"pocket_tts.mimi_tail_graph_context_mb"},
+        {"pocket_tts.mimi_tail_graph_arena_mb", "pocket_tts.mimi_tail_graph_context_mb"},
         512)) * 1024ull * 1024ull;
     config.mimi_full_chunk_frames = runtime::parse_positive_i64_option(
         options().options,
@@ -775,7 +776,7 @@ void PocketTTSSession::prepare(const runtime::SessionPreparationRequest & reques
     }
     if (const auto export_path = runtime::find_option(
             request.options,
-            {"pocket_tts.export_voice_state_path", "export_voice_state_path"})) {
+            {"export_voice_state_file", "pocket_tts.export_voice_state_file", "pocket_tts.export_voice_state_path", "export_voice_state_path"})) {
         export_voice_state(prepared_session_request_.voice, *export_path);
     }
     prepare_generation(prepared_session_request_);

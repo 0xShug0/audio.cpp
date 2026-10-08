@@ -55,7 +55,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Fixed audio chunk duration in seconds; must be positive when set; default 4.",
+        "description": "Fixed audio chunk duration in seconds; must be > 0 when set; default 4.",
         "required": false,
         "min": 0.0,
         "default": 4.0
@@ -90,7 +90,7 @@
         "type": "int",
         "description": "Audio encoder graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -98,7 +98,7 @@
         "type": "int",
         "description": "Text decoder prefill graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
       },
       {
@@ -106,16 +106,15 @@
         "type": "int",
         "description": "Text decoder cached-step graph arena size in MiB; default 256.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 256
       },
       {
         "name": "text_decoder_weight_context_mb",
         "type": "int",
-        "description": "Text decoder weight context arena size in MiB; default 4096.",
+        "description": "Text decoder weight context in MiB; omitted uses 4096 on 64-bit builds or 1024 on 32-bit builds.",
         "required": false,
-        "min": 0,
-        "default": 4096
+        "min": 1
       }
     ],
     "load": []

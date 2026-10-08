@@ -54,7 +54,7 @@ shorter recordings are zero-padded, and partial trailing windows are omitted.
 |---|---|---:|---|
 | `threshold` | float in `[0, 1]` | `0.5` | Speech probability threshold. |
 | `hop_size_samples` | integer > 0 | `1600` | Window step in samples; the default is 100 ms. |
-| `min_speech_duration_ms` | integer >= 0 | `100` | Minimum speech segment duration. |
+| `min_speech_duration_ms` | integer >= 0 | `100` | Minimum speech segment duration in milliseconds. Not applied to the short-input path (<3200 samples), which classifies the whole clip by threshold. |
 | `min_silence_duration_ms` | integer >= 0 | `100` | Minimum silence before closing a speech segment. |
 
 ## Session Options (use with `--session-option`)

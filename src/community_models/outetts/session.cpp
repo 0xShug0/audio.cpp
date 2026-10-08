@@ -55,6 +55,8 @@ std::shared_ptr<const engine::model_spec::ModelContract> require_contract(
 
 bool is_legacy_session_option(std::string_view key) {
   return key == "outetts.dac_graph_context_mb" ||
+         key == "outetts.forced_aligner_path" ||
+         key == "outetts.aligner_path" ||
          key == "outetts.aligner_model_path" ||
          key == "outetts.forced_aligner_model_path";
 }
@@ -482,7 +484,7 @@ resolve_aligner_assets(const runtime::SessionOptions &options,
                        const OuteTTSAssets &model_assets) {
   const auto model_path = runtime::find_option(
       options.options,
-      {"outetts.aligner_path", "outetts.aligner_model_path",
+      {"outetts.forced_aligner_path", "outetts.aligner_path", "outetts.aligner_model_path",
        "outetts.forced_aligner_model_path"});
   if (model_path.has_value()) {
     return engine::models::qwen3_asr::load_qwen3_asr_assets(
@@ -631,7 +633,7 @@ OuteTTSVoiceProfile OuteTTSSession::prepare_voice_profile(
       throw std::runtime_error(
           "OuteTTS voice cloning requires a GGUF with an embedded Qwen3 "
           "Forced Aligner or --session-option "
-          "outetts.aligner_path=<path>");
+          "outetts.forced_aligner_path=<path>");
     }
     aligner_session_ = std::make_unique<
         engine::models::qwen3_forced_aligner::Qwen3ForcedAlignerSession>(

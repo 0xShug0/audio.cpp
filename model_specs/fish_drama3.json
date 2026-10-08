@@ -1,0 +1,313 @@
+{
+  "family": "fish_drama3",
+  "display_name": "Fish Audio Drama 3",
+  "description": "Fish Audio Drama 3 native MoE speech generation, voice cloning, and continuation.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "encode_reference_only",
+        "type": "bool",
+        "description": "Prepare reference VQ codes without generating speech. Use the task API to receive drama3_reference_v1 acoustic-token artifacts.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Transcript of inline reference audio.",
+        "required": false
+      },
+      {
+        "name": "multi_reference_cond",
+        "type": "string",
+        "description": "Ordered references as JSON: [{text, audio_path or vq_codes}]. Speaker tags 0..15 select voices.",
+        "required": false
+      },
+      {
+        "name": "references",
+        "type": "string",
+        "description": "Alias of multi_reference_cond.",
+        "required": false
+      },
+      {
+        "name": "previous_takes",
+        "type": "string",
+        "description": "Continuation/edit history as a JSON array of {text, vq_codes or audio_path}; a string generates that earlier take first.",
+        "required": false
+      },
+      {
+        "name": "previous_takes_file",
+        "type": "string",
+        "description": "JSON history file containing a take object or an ordered array of earlier takes. Avoids the Windows command-line length limit for VQ grids.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated acoustic frames per text chunk (about 21.5 frames/second).",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "max_new_tokens",
+        "type": "int",
+        "description": "Alias of max_tokens.",
+        "required": false,
+        "min": 1
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum characters per long-form chunk.",
+        "required": false,
+        "min": 1,
+        "default": 200
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking mode.",
+        "required": false,
+        "preset": "text_chunk_mode_full",
+        "default": "tag_aware"
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "description": "Main and residual sampling temperature. Zero makes the initial draws greedy; semantic repeat redraws retain the fixed Drama 3 RAS settings.",
+        "required": false,
+        "min": 0,
+        "default": 1.0
+      },
+      {
+        "name": "top_p",
+        "type": "float",
+        "description": "Inclusive nucleus cutoff before top-k filtering, matching Drama 3.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 0.9
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Top-k candidate count.",
+        "required": false,
+        "min": 1,
+        "default": 30
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Reproducible native sampling seed.",
+        "required": false,
+        "min": 0
+      }
+    ],
+    "session": [
+      {
+        "name": "backbone_prefill_cache_mb",
+        "type": "int",
+        "description": "Bounded cache of backbone prefill graphs, in MiB. Reuses exact shapes and their CUDA captures. One active graph is retained even if larger than this budget. Zero retains only the active graph.",
+        "required": false,
+        "min": 0,
+        "max": 4096,
+        "default": 256
+      },
+      {
+        "name": "tower_prefill_cache_mb",
+        "type": "int",
+        "description": "Bounded cache of audio-tower prefill graphs, in MiB. Reuses exact shapes and their CUDA captures. Zero disables it.",
+        "required": false,
+        "min": 0,
+        "max": 4096,
+        "default": 256
+      },
+      {
+        "name": "profile_first_audio",
+        "type": "bool",
+        "description": "Emit first-audio stage timings to stderr for performance diagnosis. Disabled by default.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "context_length",
+        "type": "int",
+        "description": "Cache capacity for prompt plus generated frames; includes references and history.",
+        "required": false,
+        "min": 1,
+        "default": 2048
+      },
+      {
+        "name": "cpu_expert_layers",
+        "type": "int",
+        "description": "Number of the 40 expert banks kept and evaluated on CPU; use 4 for a 24 GB profile or 24 for a 16 GB profile. Dense layers and the tower use the selected backend.",
+        "required": false,
+        "min": 0,
+        "max": 40,
+        "default": 4
+      },
+      {
+        "name": "disk_experts",
+        "type": "bool",
+        "description": "Read routed expert weights from GGUF on demand into a bounded cache instead of keeping full expert banks resident. Trades speed for memory; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "pin_experts",
+        "type": "bool",
+        "description": "Keep full expert banks in pinned host RAM for direct cache-miss uploads. Requires disk_experts and pinned host-buffer support; default false.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "expert_cache_size",
+        "type": "int",
+        "description": "Resident expert slots per layer in disk_experts mode; 8 to 256. Larger caches trade memory for fewer disk reads; ignored in resident mode.",
+        "required": false,
+        "min": 8,
+        "max": 256,
+        "default": 32
+      },
+      {
+        "name": "codec_encoder_f32_accumulation",
+        "type": "bool",
+        "description": "Use F32 accumulation for F16 reference-encoder GEMMs on Vulkan. Try this if voice cloning produces incomplete speech or reaches the token limit. Other backends and codec decoding are unchanged.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "codec_encoder_bf16_compute",
+        "type": "bool",
+        "description": "Use BF16 reference-encoder arithmetic on CUDA with F16/BF16 codec weights; default true. Decoding is unchanged.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "codec_backend",
+        "type": "enum",
+        "description": "Run the codec on the selected backend or on CPU.",
+        "required": false,
+        "values": [
+          "same",
+          "cpu"
+        ],
+        "default": "same"
+      }
+    ],
+    "load": []
+  },
+  "ui": {
+    "recommended_package": "fish_drama3_q4_experts_q8_backbone",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/fish_drama3.md",
+      "docs/gguf.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "Jmica/Drama-3-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "fish_drama3_q4_experts_q8_backbone",
+      "display_name": "Drama 3 Q4_K experts / Q8_0 backbone",
+      "description": "Mixed quantization with Q4_K routed experts, Q8_0 backbone matrices, and FP16 audio tower/codec.",
+      "default": true,
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "Drama-3-GGUF",
+      "files": ["drama-3-backbone-8bit-experts-Q4_K_S.gguf"]
+    },
+    {
+      "id": "fish_drama3_q3_experts_q8_backbone",
+      "display_name": "Drama 3 Q3_K experts / Q8_0 backbone",
+      "description": "Mixed quantization with Q3_K routed experts, Q8_0 backbone matrices, and FP16 audio tower/codec. Experimental delivery quality.",
+      "format": "gguf",
+      "precision": "q3_k_s",
+      "target_directory": "Drama-3-GGUF",
+      "files": ["drama-3-backbone-8bit-experts-Q3_K_S.gguf"]
+    },
+    {
+      "id": "fish_drama3_q2_experts_q8_backbone",
+      "display_name": "Drama 3 Q2_K experts / Q8_0 backbone",
+      "description": "Mixed quantization with Q2_K routed experts, Q8_0 backbone matrices, and FP16 audio tower/codec. Use the documented CPU offload settings for smaller GPUs.",
+      "format": "gguf",
+      "precision": "q2_k",
+      "target_directory": "Drama-3-GGUF",
+      "files": ["drama-3-backbone-8bit-experts-Q2_K.gguf"]
+    },
+    {
+      "id": "fish_drama3_q4_backbone",
+      "display_name": "Drama 3 Q4_K experts / Q4_K backbone",
+      "description": "Q4_K routed experts and backbone matrices, Q4_0 text embedding, and FP16 audio tower/codec. Experimental delivery quality.",
+      "format": "gguf",
+      "precision": "q4_k",
+      "target_directory": "Drama-3-GGUF",
+      "files": ["drama-3-backbone-4bit-experts-Q4_K_S.gguf"]
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec_weights"
+        }
+      }
+    }
+  ],
+  "schema_version": 1,
+  "dependencies": []
+}

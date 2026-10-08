@@ -16,22 +16,26 @@ static  __global__ void conv_transpose_1d_kernel(
     float accumulator = 0;
     const int idx = global_index % dst_ne0;
 
+    // A contributing tap must satisfy k == idx (mod stride). Establish the
+    // ascending valid tap range once per output, rather than checking/dividing
+    // every tap again for every input channel. Preserve the original FMA order.
+    int first_k = idx % s0;
+    int first_i = idx / s0;
+    if (first_i >= src1_ne0) {
+        const int skip = first_i - src1_ne0 + 1;
+        first_k += skip * s0;
+        first_i -= skip;
+    }
+    const int k_limit = min(src0_ne0, idx + 1);
+    const int n_taps = first_k < k_limit ? 1 + (k_limit - 1 - first_k) / s0 : 0;
+
     for (int c = 0; c < src0_ne2; c++) {
         int kernel_offset = (src0_ne0 * src0_ne1 * c) + (out_index * src0_ne0);
         int input_offset = src1_ne0 * c;
 
-        // For transpose conv, a contribution must satisfy idx = i * s0 + k.
-        // Iterating kernel taps first lets the kernel solve for the only valid
-        // input position per tap instead of scanning the full input row.
-        for (int k = 0; k < src0_ne0; k++) {
-            const int shifted = idx - k;
-            if (shifted < 0 || shifted % s0 != 0) {
-                continue;
-            }
-            const int i = shifted / s0;
-            if (i >= src1_ne0) {
-                continue;
-            }
+        for (int tap = 0; tap < n_taps; tap++) {
+            const int k = first_k + tap * s0;
+            const int i = first_i - tap;
 
             float kernel_weight = src0[kernel_offset + k];
             float input_value =  src1[input_offset+i];

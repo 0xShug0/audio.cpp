@@ -38,7 +38,7 @@
   "options": {
     "request": [
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
         "description": "BreezeTTS generation instruction.",
         "required": false,
@@ -47,7 +47,7 @@
       {
         "name": "reference_text",
         "type": "string",
-        "description": "Transcript for the prompt audio when cloning.",
+        "description": "Transcript for prompt/reference audio; required when reference audio codes are used, for either tts or clon.",
         "required": false
       },
       {
@@ -90,7 +90,7 @@
       {
         "name": "temperature",
         "type": "float",
-        "description": "Backbone first-codebook sampling temperature.",
+        "description": "Backbone first-codebook sampling temperature. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 0.9
@@ -98,7 +98,7 @@
       {
         "name": "depth_temperature",
         "type": "float",
-        "description": "Depth decoder codebook sampling temperature.",
+        "description": "Depth decoder codebook sampling temperature. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 0.9
@@ -106,19 +106,17 @@
       {
         "name": "top_k",
         "type": "int",
-        "description": "Top-k sampling limit; 0 disables top-k filtering.",
+        "description": "Top-k sampling limit; 0 disables top-k filtering. Nonpositive values disable top-k filtering.",
         "required": false,
-        "min": 0,
         "default": 50
       },
       {
         "name": "top_p",
         "type": "float",
-        "description": "Top-p sampling limit.",
+        "description": "Positive nucleus sampling cutoff; values >=1 disable nucleus filtering.",
         "required": false,
-        "min": 0.0,
-        "max": 1.0,
-        "default": 1.0
+        "min": 0,
+        "default": 1
       },
       {
         "name": "seed",
@@ -131,7 +129,7 @@
       {
         "name": "stream_frames_per_event",
         "type": "int",
-        "description": "Generated codec frames per streaming audio event.",
+        "description": "Maximum generated codec frames per streaming audio event; fixed size with stream_chunk_policy=fixed.",
         "required": false,
         "min": 1,
         "default": 16
@@ -139,10 +137,18 @@
       {
         "name": "stream_lookahead_margin",
         "type": "int",
-        "description": "Trailing codec frames held before emission to reduce streaming boundary artifacts.",
+        "description": "Additional trailing codec frames buffered before streaming emission. The decoder is causal; zero minimizes latency.",
         "required": false,
         "min": 0,
-        "default": 12
+        "default": 0
+      },
+      {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming chunk schedule: grow emits 1, 2, 4, ... frames up to stream_frames_per_event; fixed uses that size from the first event.",
+        "values": ["grow", "fixed"],
+        "required": false,
+        "default": "grow"
       }
     ],
     "session": [
@@ -150,9 +156,17 @@
         "name": "weight_type",
         "type": "enum",
         "description": "BreezeTTS matmul weight storage type; default native.",
-        "preset": "weight_type_full",
         "required": false,
-        "default": "native"
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0",
+          "q4_k"
+        ]
       },
       {
         "name": "graph_arena_mb",

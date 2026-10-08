@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_asr_session.h"
 #include "engine/models/higgs_audio_stt/assets.h"
 #include "engine/models/higgs_audio_stt/audio_encoder.h"
 #include "engine/models/higgs_audio_stt/frontend_whisper.h"
@@ -25,7 +26,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_higgs_audio_stt_loader();
 class HiggsAudioSTTSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession
-    , public runtime::IStreamingVoiceTaskSession {
+    , public runtime::StreamingAsrSessionBase {
 public:
     HiggsAudioSTTSession(
         runtime::TaskSpec task,
@@ -40,14 +41,12 @@ public:
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
     runtime::StreamingPolicy streaming_policy() const override;
-    void start_stream(const runtime::TaskRequest & request) override;
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-    void reset() override;
-    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
-    runtime::TaskResult finish_stream() override;
-    runtime::TaskResult finalize() override;
 
 private:
+    void begin_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+    void consume_audio(const runtime::AudioChunk & chunk) override;
+    void complete_stream(runtime::TaskResult & result) override;
     struct AudioChunkPlan {
         runtime::TimeSpan source_span;
     };
@@ -76,9 +75,6 @@ private:
     HiggsAudioSTTPromptBuilder prompt_builder_;
     HiggsAudioSTTPostprocessor postprocessor_;
     runtime::TaskRequest streaming_request_;
-    runtime::TaskResult streaming_result_;
-    runtime::StreamEventCallback stream_event_sink_;
-    bool stream_started_ = false;
     int64_t streaming_chunks_processed_ = 0;
 };
 

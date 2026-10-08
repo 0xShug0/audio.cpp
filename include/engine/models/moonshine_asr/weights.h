@@ -66,6 +66,7 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_asr_weights(
     engine::assets::TensorStorageType encoder_storage_type,
     engine::assets::TensorStorageType decoder_storage_type,
     engine::assets::TensorStorageType conv_storage_type,
-    size_t weight_context_bytes);
+    size_t weight_context_bytes,
+    bool include_decoder = true);
 
 }  // namespace engine::models::moonshine_asr

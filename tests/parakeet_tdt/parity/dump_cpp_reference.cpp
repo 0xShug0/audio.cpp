@@ -21,6 +21,7 @@
 //      pre_encode + pos_emb + real layer-0 weights, so the comparison is
 //      exactly apples-to-apples with NeMo's layer_0.npy.
 #include "engine/community_models/parakeet_tdt/assets.h"
+#include "engine/community_models/parakeet_tdt/decoder.h"
 #include "engine/community_models/parakeet_tdt/encoder.h"
 #include "engine/community_models/parakeet_tdt/frontend.h"
 #include "engine/community_models/parakeet_tdt/weights.h"
@@ -35,6 +36,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 
@@ -130,18 +132,21 @@ int main(int argc, char ** argv) {
     const auto matmul_weight_type = engine::assets::parse_tensor_storage_type(
         arg_value(argc, argv, "--matmul-weight-type", "native"));
     const bool use_flash_attention = arg_value(argc, argv, "--flash-attention", "0") == "1";
+    const bool encoder_only = arg_value(argc, argv, "--encoder-only", "0") == "1";
     // Dumping on a non-CPU backend lets the same activations be compared across
     // backends, not just against NeMo — which is how you catch a change that is
     // correct on CPU but silently wrong on an accelerator (a strided view a CPU
     // op materializes and a GPU kernel reads differently, say).
     const std::string backend_name = arg_value(argc, argv, "--backend", "cpu");
+    const auto decoder_input = arg_value(argc, argv, "--decoder-input", "");
 
-    if (audio_path.empty() || nemo_dir.empty() || output_dir.empty()) {
+    if (audio_path.empty() || (!encoder_only && decoder_input.empty() && nemo_dir.empty()) || output_dir.empty()) {
         std::fprintf(
             stderr,
             "usage: %s --model <path> --audio <wav> --nemo-dir <dir with dump_nemo_reference.py output> "
             "--output-dir <dir to write .npy dumps into> [--matmul-weight-type native|f16|bf16|q8_0] "
-            "[--flash-attention 1] [--backend cpu|cuda|vulkan]\n",
+            "[--flash-attention 1] [--backend cpu|cuda|vulkan] [--device index] "
+            "[--encoder-only 1 (no --nemo-dir required)] [--decoder-input <encoder.npy> (no --nemo-dir required)]\n",
             argv[0]);
         return 2;
     }
@@ -152,6 +157,7 @@ int main(int argc, char ** argv) {
         auto assets = load_parakeet_assets(model_path);
 
         engine::core::BackendConfig backend_config;
+        backend_config.device = std::stoi(arg_value(argc, argv, "--device", "0"));
         if (backend_name == "cpu") {
             backend_config.type = engine::core::BackendType::Cpu;
         } else if (backend_name == "cuda") {
@@ -172,6 +178,38 @@ int main(int argc, char ** argv) {
             matmul_weight_type,
             engine::assets::TensorStorageType::Native,
             3072ull * 1024ull * 1024ull);
+
+        // Replay a saved encoder output through the real decoder. This
+        // separates encoder rounding from predictor/duration-head rounding.
+        if (!decoder_input.empty()) {
+            std::vector<int64_t> shape;
+            auto values = read_npy_f32(decoder_input, &shape);
+            if (shape.size() != 2 || shape[0] <= 0 || shape[1] != assets->config.encoder.hidden_size) {
+                throw std::runtime_error("decoder input must be [frames, encoder_hidden_size]");
+            }
+            ParakeetEncodedAudio encoded;
+            encoded.frames = encoded.valid_frames = shape[0];
+            encoded.hidden_size = shape[1];
+            encoded.values = std::move(values);
+            ParakeetTDTDecoderRuntime decoder(assets, weights, exec, 64ull * 1024ull * 1024ull);
+            decoder.prepare();
+            const auto decoded = decoder.decode(encoded, {});
+            std::ofstream json(output_dir / "decoder_tokens.json");
+            if (!json) throw std::runtime_error("cannot write decoder token dump");
+            auto array = [&](const auto & items) {
+                json << '[';
+                for (size_t i = 0; i < items.size(); ++i) {
+                    if (i) json << ',';
+                    json << items[i];
+                }
+                json << ']';
+            };
+            json << "{\"ids\":"; array(decoded.token_ids);
+            json << ",\"frames\":"; array(decoded.token_frame_indices);
+            json << ",\"durations\":"; array(decoded.durations); json << "}\n";
+            if (!json) throw std::runtime_error("decoder token dump write failed");
+            return 0;
+        }
 
         // --- 1a. frontend: mel features, straight through the real entry point ---
         ParakeetFrontend frontend(assets);
@@ -200,6 +238,13 @@ int main(int argc, char ** argv) {
         std::printf(
             "enc_out: frames=%lld valid_frames=%lld hidden=%lld\n",
             (long long)encoded.frames, (long long)encoded.valid_frames, (long long)encoded.hidden_size);
+
+        // The published Phonon-2 Transformers reference can provide the full
+        // encoder output without NeMo's layer-0 pre_encode/pos_emb captures.
+        if (encoder_only) {
+            std::printf("Wrote mel_features.npy and enc_out.npy to %s\n", output_dir.string().c_str());
+            return 0;
+        }
 
         // --- 2. isolated layer 0, fed with NeMo's own pre_encode + pos_emb ---
         std::vector<int64_t> pre_encode_shape;

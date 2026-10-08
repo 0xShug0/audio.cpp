@@ -66,7 +66,7 @@ directory.
 | `enable_itn` | `true`, `false` | `true` | Enable inverse text normalization in the prompt. |
 | `max_tokens` | positive integer | `512` | Maximum transcript tokens generated per chunk. |
 | `audio_chunk_mode` | `auto`, `fixed`, `none` | `auto` | Offline audio chunking policy. |
-| `audio_chunk_seconds` | positive seconds | `30` | Chunk duration for fixed/automatic chunking. |
+| `audio_chunk_duration_sec` | positive seconds | `30` | Fixed chunk duration in seconds. Must be finite and positive, rounding to at least one input sample. |
 
 ## Session Options (use with `--session-option`)
 

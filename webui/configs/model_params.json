@@ -1,4 +1,59 @@
 {
+  "ast_audioset": [
+    {"name":"top_k","type":"number","label":"Top classes","default":10,"minimum":1,"maximum":527,"step":1}
+  ],
+  "ced": [
+    {"name":"top_k","type":"number","label":"Top classes","default":10,"minimum":1,"maximum":527,"step":1}
+  ],
+  "fish_drama3": [
+    {"name":"text_chunk_size","type":"number","label":"Characters per chunk","default":256,"minimum":1,"step":1,"info":"Smaller chunks reduce waveform-decoder peak memory; larger chunks reduce repeated prefills."},
+    {"name":"temperature","type":"slider","label":"Temperature","default":1,"minimum":0,"maximum":2,"step":0.05},
+    {"name":"top_p","type":"slider","label":"Top-p","default":0.9,"minimum":0.01,"maximum":1,"step":0.01},
+    {"name":"top_k","type":"number","label":"Top-k","default":30,"minimum":1,"step":1},
+    {"name":"disk_experts","type":"bool","scope":"session","session_option":"fish_drama3.disk_experts","label":"Offload expert weights","default":true,"info":"Keep only selected expert weights on the GPU. Expert computation stays on the selected backend; changing this reloads the model."},
+    {"name":"pin_experts","type":"bool","scope":"session","session_option":"fish_drama3.pin_experts","label":"Preload experts in pinned host RAM","default":true,"info":"Requires expert offload. Faster uploads, but holds the full expert banks in pinned host RAM."},
+    {"name":"expert_cache_size","type":"number","scope":"session","session_option":"fish_drama3.expert_cache_size","label":"GPU expert slots per layer","default":8,"minimum":8,"maximum":256,"step":1},
+    {"name":"context_length","type":"number","scope":"session","session_option":"fish_drama3.context_length","label":"Context capacity","default":4096,"minimum":1,"step":1,"info":"Prompt and generated frames share this capacity, including all voice references and dialogue history."}
+  ],
+  "firered_vad": [
+    {"name":"threshold","type":"number","label":"Speech threshold","minimum":0,"maximum":1,"step":0.05},
+    {"name":"min_silence_duration_ms","type":"number","label":"Minimum silence (ms)","default":200,"minimum":0,"step":10},
+    {"name":"speech_pad_ms","type":"number","label":"Speech padding (ms)","default":0,"minimum":0,"step":10}
+  ],
+  "hviske_asr_v6": [
+    {"name":"audio_chunk_mode","type":"choice","label":"Audio chunk mode","default":"auto","choices":["auto","silence","fixed","none"]},
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s)","default":28,"minimum":0.001,"maximum":30,"step":0.1},
+    {"name":"max_tokens","type":"number","label":"Maximum tokens","default":440,"minimum":1,"step":1},
+    {"name":"num_beams","type":"number","label":"Beam count","default":2,"minimum":1,"step":1},
+    {"name":"length_penalty","type":"number","label":"Length penalty","default":1,"minimum":0,"step":0.1}
+  ],
+  "micro_wake_word": [
+    {"name":"threshold","type":"number","label":"Detection threshold","minimum":0,"maximum":1,"step":0.05},
+    {"name":"sliding_window_size","type":"number","label":"Sliding window frames","minimum":1,"step":1}
+  ],
+  "mossformer2": [
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s, 0 = whole recording)","default":2,"minimum":0,"step":0.1},
+    {"name":"audio_chunk_overlap_sec","type":"number","label":"Chunk overlap (s)","default":0.5,"minimum":0,"step":0.1},
+    {"name":"normalize_output","type":"bool","label":"Normalize output","default":true}
+  ],
+  "sherpa_kws": [
+    {"name":"keywords","type":"text","label":"Keyword tokens (one phrase per line)","lines":3,"placeholder":"Leave empty to use embedded keywords"},
+    {"name":"max_active_paths","type":"number","label":"Active decoding paths","default":4,"minimum":1,"step":1},
+    {"name":"keywords_score","type":"number","label":"Keyword score","default":1,"minimum":0,"step":0.1},
+    {"name":"keywords_threshold","type":"number","label":"Keyword threshold","default":0.25,"minimum":0,"maximum":1,"step":0.05},
+    {"name":"num_trailing_blanks","type":"number","label":"Trailing blanks","default":1,"minimum":0,"step":1}
+  ],
+  "tf_gridnet": [
+    {"name":"audio_chunk_duration_sec","type":"number","label":"Chunk duration (s, 0 = whole recording)","default":2.4,"minimum":0,"step":0.1},
+    {"name":"audio_chunk_overlap_sec","type":"number","label":"Chunk overlap (s)","default":1.6,"minimum":0,"step":0.1},
+    {"name":"normalize_output","type":"bool","label":"Normalize output","default":true}
+  ],
+  "voxtral_tts": [
+    {"name":"voice_id","type":"choice","label":"Voice preset","default":"casual_male","choices":["casual_female","casual_male","cheerful_female","neutral_female","neutral_male","pt_male","pt_female","nl_male","nl_female","it_male","it_female","fr_male","fr_female","es_male","es_female","de_male","de_female","ar_male","hi_male","hi_female"]},
+    {"name":"num_inference_steps","type":"number","label":"Diffusion steps","default":7,"minimum":1,"step":1},
+    {"name":"guidance_scale","type":"number","label":"Guidance scale","default":1.2,"minimum":0,"step":0.1},
+    {"name":"max_tokens","type":"number","label":"Maximum tokens","default":2048,"minimum":1,"step":1}
+  ],
   "kugelaudio": [
     {"name":"num_inference_steps","type":"number","label":"Diffusion steps","default":20,"minimum":1,"maximum":1000,"step":1},
     {"name":"guidance_scale","type":"number","label":"Guidance scale","default":3,"minimum":0,"step":0.1},
@@ -257,12 +312,16 @@
 
   "lfm2-audio-s2s": [
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Audio code sampling temperature; 0 is greedy."},
-    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0}
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "text_temperature", "type": "slider", "label": "text_temperature", "default": 0.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Text token sampling temperature; 0 picks the most likely token, as liquid-audio does."},
+    {"name": "text_top_k", "type": "number", "label": "text_top_k", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info_en": "With text_temperature above 0, sample text tokens from the k most likely; 0 keeps all."}
   ],
 
   "lfm2-audio-jp-s2s": [
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Audio code sampling temperature; 0 is greedy."},
-    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0}
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 4, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "text_temperature", "type": "slider", "label": "text_temperature", "default": 0.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info_en": "Text token sampling temperature; 0 picks the most likely token, as liquid-audio does."},
+    {"name": "text_top_k", "type": "number", "label": "text_top_k", "default": 0, "minimum": 0, "step": 1, "precision": 0, "info_en": "With text_temperature above 0, sample text tokens from the k most likely; 0 keeps all."}
   ],
 
   "lfm2_audio": [

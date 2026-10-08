@@ -2,50 +2,53 @@
 
 | Model | Family | Task(s) | Quick Start |
 |---|---|---|---|
-| AuK (experimental) | `auk` | `tts`, `gen` editing | [AuK](community_models/auk.md) |
-| Qwen3 TTS | `qwen3_tts` | `tts`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
+| AuK (experimental) | `auk` | `tts`, `clon`, `gen` editing | [AuK](models/auk.md) |
 | BreezeTTS 2 | `breeze_tts` | `tts`, `clon` | [BreezeTTS 2](models/breeze_tts.md) |
-| Chatterbox | `chatterbox` | `clon`, `vc` | [Chatterbox](#chatterbox) |
-| Confucius4-TTS | `confucius4_tts` | `clon` | [Confucius4-TTS](#confucius4-tts) |
+| Chatterbox | `chatterbox` | `tts`, `clon`, `vc` | [Chatterbox](#chatterbox) |
+| Confucius4-TTS | `confucius4_tts` | `tts`, `clon` | [Confucius4-TTS](#confucius4-tts) |
 | CosyVoice3 | `cosyvoice3` | `tts`, `clon` | [CosyVoice3](models/cosyvoice3.md) |
-| DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
 | DotTTS | `dots_tts` | `tts`, `clon` | [DotTTS](#dottts) |
-| F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](community_models/f5_tts.md) |
-| MioTTS | `miotts` | `tts` | [MioTTS](models/miotts.md) |
-| MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
-| MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
-| MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](community_models/moss_tts_v15.md) |
-| MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](community_models/moss_voicegen.md) |
-| MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](community_models/minimax_h3.md) |
-| MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
-| Maya1 | `maya1` | `tts` | [Maya1](models/maya1.md) |
-| NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
-| OmniVoice | `omnivoice` | `tts` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
-| PocketTTS | `pocket_tts` | `tts` | [PocketTTS](#pockettts) |
-| VoxCPM1 | `voxcpm1` | `tts` | [VoxCPM1](#voxcpm1) |
-| VoxCPM2 | `voxcpm2` | `tts`, `vdes` | [VoxCPM2](#voxcpm2) |
-| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
-| Fish Audio S2 Pro | `fish_audio` | `tts` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
-| FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
+| DramaBox | `dramabox` | `tts`, `clon` | [DramaBox](#dramabox) |
+| Echo-TTS | `echo_tts` | `tts`, `clon` | [Echo-TTS](models/echo_tts.md) |
+| F5-TTS | `f5_tts` | `tts`, `clon` | [F5-TTS](models/f5_tts.md) |
 | FireRedAudio | `firered_audio` | `asr`, `tts`, `clon`, `vdes` | [FireRedAudio](models/firered_audio.md) |
-| IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts.md) |
-| IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts.md) |
+| FireRedTTS3 | `fireredtts3` | `tts`, `clon`, `vdes` | [FireRedTTS3](models/fireredtts3.md) |
+| Fish Audio S2 Pro | `fish_audio` | `tts`, `clon` | [Fish Audio S2 Pro](#fish-audio-s2-pro) |
+| GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
+| Higgs Audio v3 TTS | `higgs_audio_tts` | `tts`, `clon` | [Higgs Audio v3 TTS](models/higgs_audio_tts.md) |
+| IndexTTS2 | `index_tts2` | `tts` | [IndexTTS](models/index_tts2.md) |
+| IndexTTS2.5 | `index_tts2` (variant `2.5`) | `tts` | [IndexTTS](models/index_tts2.md) |
+| Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
+| Kitten TTS 2 | `kitten_tts2` | `tts`, `clon` | [Kitten TTS 2](models/kitten_tts2.md) |
+| KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](models/kitten_tts.md) |
 | Kokoro 82M | `kokoro_tts` | `tts` | [Kokoro 82M](models/kokoro_tts.md) |
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
-| KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](community_models/kitten_tts.md) |
-| Kitten TTS 2 | `kitten_tts2` | `tts`, `clon` | [Kitten TTS 2](community_models/kitten_tts2.md) |
-| LFM2.5-Audio | `lfm2_audio` | `asr`, `tts`, `s2s` | [LFM2.5-Audio](community_models/lfm2_audio.md) |
-| GLM-TTS | `glm_tts` | `tts`, `clon` | [GLM-TTS](#glm-tts) |
-| Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
+| LFM2.5-Audio | `lfm2_audio` | `asr`, `tts`, `s2s` | [LFM2.5-Audio](models/lfm2_audio.md) |
+| MagpieTTS | `magpie_tts` | `tts` | [MagpieTTS](#magpietts), [full guide](models/magpie_tts.md) |
+| Maya1 | `maya1` | `tts`, `vdes` | [Maya1](models/maya1.md) |
+| MiniMax-H3 | `minimax_h3` | `gen` dialogue audio | [MiniMax-H3](models/minimax_h3.md) |
+| MioTTS | `miotts` | `tts`, `clon` | [MioTTS](models/miotts.md) |
+| MOSS-TTS-Local | `moss_tts_local` | `tts`, `clon` | [MOSS-TTS-Local](#moss-tts-local) |
+| MOSS-TTS-Nano | `moss_tts_nano` | `tts`, `clon` | [MOSS-TTS-Nano](#moss-tts-nano) |
+| MOSS-TTS-v1.5 | `moss_tts_v15` | `tts`, `clon` | [MOSS-TTS-v1.5](models/moss_tts_v15.md) |
+| MOSS-VoiceGenerator | `moss_voicegen` | `vdes` | [MOSS-VoiceGenerator](models/moss_voicegen.md) |
+| NeuTTS | `neutts` | `tts` | [NeuTTS](#neutts) |
+| OmniVoice | `omnivoice` | `tts`, `clon`, `vdes` | [OmniVoice](#omnivoice), [full guide](models/omnivoice.md) |
 | OuteTTS | `outetts` | `tts`, `clon` | [OuteTTS](#outetts) |
-| Piper TTS | `piper_tts` | `tts` | [Piper TTS](community_models/piper_tts.md) |
+| Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
+| Plapre 3 | `plapre` | `tts`, `clon` | [Plapre 3](models/plapre.md) |
+| PocketTTS | `pocket_tts` | `tts`, `clon` | [PocketTTS](#pockettts) |
+| Qwen3 TTS | `qwen3_tts` | `tts`, `clon`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
-| VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](community_models/vieneu_v3_turbo.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
+| VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
+| VoxCPM1 | `voxcpm1` | `tts`, `clon` | [VoxCPM1](#voxcpm1) |
+| VoxCPM2 | `voxcpm2` | `tts`, `clon`, `vdes` | [VoxCPM2](#voxcpm2) |
+| Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
 
-This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/community_models/` when a model needs more space.
+This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/models/` when a model needs more space.
 
 Common CLI shape:
 
@@ -65,14 +68,6 @@ Common options:
 | `--text-chunk-size` | Long-form chunk budget in characters. Each model has its own default. |
 | `--seed` | Optional fixed seed. If omitted, models that sample use a random seed unless their upstream default is fixed. |
 
-## Qwen3 TTS
-
-Qwen3 TTS supports reference voice cloning, voice design, and packaged custom voices. See [Qwen3 models](models/qwen3.md) for the full Base, VoiceDesign, CustomVoice, ASR, and forced-alignment manual.
-
-```bash
-audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Base --backend cuda --text "Hello from Qwen3 TTS." --voice-ref assets/resources/b.wav --out out.wav
-```
-
 ## Chatterbox
 
 Chatterbox is a voice-clone TTS model with an audio-to-audio voice-conversion path. The upstream Chatterbox family also documents paralinguistic tag tokens in newer variants, but the current audio.cpp integration exposes voice cloning and voice conversion rather than a separate tag-control interface.
@@ -81,7 +76,7 @@ Chatterbox is a voice-clone TTS model with an audio-to-audio voice-conversion pa
 |---|---|
 | Family | `chatterbox` |
 | Model directory | `models/chatterbox` |
-| Tasks | `clon`, `vc` |
+| Tasks | `tts`, `clon`, `vc` |
 | Modes | `offline` |
 | Languages | `ar`, `da`, `de`, `el`, `en`, `es`, `fi`, `fr`, `hi`, `it`, `ko`, `ms`, `nl`, `no`, `pl`, `pt`, `sv`, `sw`, `tr` |
 | Voice input | Required reference WAV through `--voice-ref`; VC also requires source audio through `--audio` |
@@ -92,6 +87,8 @@ Voice clone:
 ```bash
 audiocpp_cli --task clon --family chatterbox --model models/chatterbox --backend cuda --text "Hello from Chatterbox." --voice-ref assets/resources/b.wav --out out.wav
 ```
+
+`tts` is an alias to the same voice-cloning synthesis path.
 
 Voice conversion:
 
@@ -124,16 +121,19 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `repetition_penalty` | float | `1.2` | T3 repetition penalty. |
 | `min_p` | float | `0.05` | Minimum sampling probability. |
 | `top_p` | float | `1` | Nucleus sampling probability. |
-| `s3gen_cfg_rate` | float | `0.7` | S3Gen flow guidance scale. |
+| `flow_guidance_scale` | float | `0.7` | S3Gen flow guidance scale; legacy `s3gen_cfg_rate` remains accepted. |
 | `max_tokens` | integer >= 1 | `384` | Maximum generated speech tokens. |
 | `do_sample` | bool | `true` | Enable sampling. |
-| `greedy` | bool | `false` | When true, override do_sample and use greedy decoding. |
+| `greedy` (legacy) | bool | `false` | When true, override `do_sample` and use greedy decoding. Use `do_sample` for new integrations. |
 | `stop_on_eos` | bool | `true` | Stop token generation on EOS. |
 | `num_inference_steps` | integer >= 1 | `10` | Voice conversion flow steps; max_steps is also accepted. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
 | `source_audio` | text | not set | Voice conversion source WAV path; overrides audio_input. |
 | `target_voice` | text | not set | Voice conversion target WAV path; overrides the speaker reference. |
 | `text_chunk_size` | integer | `128` | Framework long-form text chunk size. |
+
+For cloning, generation settings are fixed during preparation. Use the same
+settings for subsequent requests in that session.
 
 ### Session Options (use with `--session-option`)
 
@@ -144,14 +144,13 @@ audiocpp_cli --task vc --family chatterbox --model models/chatterbox --backend c
 | `chatterbox.multilingual_t3` | `v2`, `v3` | `v2` | Multilingual T3 checkpoint selection. |
 | `chatterbox.conditionals_cache_slots` | integer >= 0 | `1` | Cached speaker conditionals; zero disables reuse. |
 | `chatterbox.mem_saver` | bool | `false` | Release staged runtime components. |
-| `chatterbox.encoder_condition_samples` | integer | `96000` | Speaker/tokenizer reference sample limit at 16 kHz. |
+| `chatterbox.encoder_condition_samples` | integer | `96000` | Tokenizer reference sample limit at 16 kHz; the voice encoder uses the full reference. |
 | `chatterbox.decoder_condition_samples` | integer | `240000` | S3Gen reference sample limit at 24 kHz. |
 | `chatterbox.t3_speech_cond_prompt_len` | integer | `150` | T3 reference speech prompt token limit. |
 
-
 ## Chatterbox Turbo
 
-Chatterbox Turbo is a [community model](community_models/chatterbox_turbo.md): Resemble AI's
+Chatterbox Turbo is a [community model](models/chatterbox_turbo.md): Resemble AI's
 distilled 350M-parameter sibling of Chatterbox, with a GPT2-style T3 backbone (vs. the base
 model's 0.5B Llama-style backbone), a GPT2 BPE tokenizer with 19 built-in emotion/style tags
 (`[laugh]`, `[sigh]`, ...), and a 2-step meanflow-distilled S3Gen decoder (vs. the base model's
@@ -195,6 +194,7 @@ audiocpp_cli --task tts --family chatterbox_turbo --model models/Chatterbox-Turb
 
 `--guidance-scale`/exaggeration/min_p have no effect on Turbo (it was distilled without CFG) and are accepted but ignored, matching upstream's own behavior.
 
+
 ## Confucius4-TTS
 
 Confucius4-TTS is an experimental multilingual voice-cloning TTS model packaged as a standalone GGUF bundle. It supports offline generation and streaming text input, using reference speech, language-aware text normalization, T2S semantic generation, S2A flow matching, style encoding, semantic audio features, and BigVGAN vocoding.
@@ -203,7 +203,7 @@ Confucius4-TTS is an experimental multilingual voice-cloning TTS model packaged 
 |---|---|
 | Family | `confucius4_tts` |
 | GGUF model | `models/Confucius4-TTS-GGUF/confucius4-tts-orig.gguf` |
-| Task | `clon` |
+| Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
 | Languages | `zh`, `en`, `ja`, `ko`, `de`, `fr`, `es`, `id`, `it`, `th`, `pt`, `ru`, `ms`, `vi` |
 | Voice input | Required reference WAV through `--voice-ref` |
@@ -218,6 +218,9 @@ Voice clone:
 audiocpp_cli --task clon --family confucius4_tts --model models/Confucius4-TTS-GGUF/confucius4-tts-orig.gguf --backend cuda --language en --text "Hello from Confucius four TTS." --voice-ref assets/resources/b.wav --out out.wav
 ```
 
+`tts` remains available as an alias to the same synthesis path. Route selection
+does not change the model's existing input requirements.
+
 Streaming session:
 
 ```bash
@@ -228,21 +231,44 @@ audiocpp_cli --task clon --family confucius4_tts --model models/Confucius4-TTS-G
 |---|---|---:|---|
 | `--voice-ref` | WAV path | required | Reference speaker audio for cloning. |
 | `--language` | language code | `zh` | Target synthesis language code. |
-| `--temperature` | float | `0.8` | T2S sampling temperature. |
-| `--top-p` | float | `0.8` | T2S nucleus sampling probability. |
+| `--temperature` | float > 0 | `0.8` | T2S sampling temperature. |
+| `--top-p` | `(0, 1]` | `0.8` | T2S nucleus sampling probability. |
 | `--top-k` | integer | `30` | T2S top-k sampling limit. |
 | `--num-beams` | integer | `3` | T2S beam count; use `1` for single-beam sampling. |
-| `--repetition-penalty` | float | `10.0` | T2S repetition penalty. |
+| `--repetition-penalty` | float > 0 | `10.0` | T2S repetition penalty. |
 | `--max-tokens` | integer | `1520` | Maximum T2S semantic sequence length including prompt tokens. |
 | `--num-inference-steps` | integer | `25` | S2A flow-matching step count. |
 | `--guidance-scale` | float | `0.7` | S2A classifier-free guidance scale. |
 | `--text-chunk-size` | integer tokens | `80` | Maximum text tokens per generated segment. |
 | `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
 | `--request-option cross_fade_duration_sec=<seconds>` | seconds | `0.3` | Cross-fade duration between generated segments. |
-| `--request-option edge_fade_duration_sec=<seconds>` | seconds | `0.1` | Fade duration applied at segment edges. |
-| `--request-option edge_pad_duration_sec=<seconds>` | seconds | `0.1` | Silence padding applied at segment edges. |
+| `--request-option edge_fade_duration_sec=<seconds>` | seconds | `0.1` | Validated but currently not applied. |
+| `--request-option edge_pad_duration_sec=<seconds>` | seconds | `0.1` | Validated but currently not applied. |
 | `--seed` | integer | `1234` | Seed for T2S sampling and S2A noise initialization. |
 | `--session-option confucius4_tts.mem_saver=true\|false` | bool | `false` | Release staged graphs after request phases; default keeps them cached for reuse. |
+
+## DotTTS
+
+DotTTS is an experimental multilingual TTS and voice-cloning family with SOAR
+and MeanFlow GGUF packages. SOAR is the default download. See
+[DotTTS](models/dots_tts.md) for template, streaming, chunking, and full option
+details.
+
+```bash
+python3 tools/model_manager_v2.py install dots_tts_soar_q8_0
+
+audiocpp_cli --task tts --family dots_tts \
+  --model models/DotTTS-SOAR-GGUF/dots-tts-soar-q8_0.gguf \
+  --backend cuda \
+  --text "Our field team finished the morning inspection and prepared a concise update." \
+  --voice-ref assets/resources/a.wav \
+  --reference-text "This little work was finished in the year eighteen o three, and intended for immediate publication." \
+  --request-option reference_duration_sec=5 \
+  --out out.wav
+```
+
+For MeanFlow, install `dots_tts_mf_q8_0` and use
+`models/DotTTS-MF-GGUF/dots-tts-mf-q8_0.gguf` with the same runtime options.
 
 ## DramaBox
 
@@ -282,37 +308,175 @@ Older prebuilts that reject `--task clon` can use `--task tts --voice-ref ...`; 
 | `--guidance-scale` | float | `2.5` | Classifier-free guidance scale. Values greater than `1` enable CFG. |
 | `--request-option spatio_temporal_guidance_scale=<float>` | float | `1.5` | Spatio-temporal guidance scale. Values greater than `0` enable STG. |
 | `--request-option duration_scale=<float>` | float | `1.1` | Multiplier applied to the estimated prompt duration when `duration_sec` is `0`. |
-| `--request-option reference_duration_sec=<seconds>` | seconds | `10.0` | Reference voice crop/repeat duration. |
+| `--request-option reference_duration_sec=<seconds>` | seconds > 0 | `10.0` | Reference voice crop/repeat duration. |
 | `--request-option guidance_rescale=auto\|<number>` | string | `auto` | Guidance rescale mode or explicit numeric value. |
-| `--request-option audio_chunk_threshold_sec=<seconds>` | seconds | `45.0` | Estimated duration threshold that switches to long-form chunking. |
-| `--request-option audio_chunk_duration_sec=<seconds>` | seconds | `37.0` | Target estimated duration for each long-form chunk. |
+| `--request-option audio_chunk_threshold_sec=<seconds>` | seconds > 0 | `45.0` | Estimated duration threshold that switches to long-form chunking. |
+| `--request-option audio_chunk_duration_sec=<seconds>` | seconds > 0 | `37.0` | Target estimated duration for each long-form chunk. |
 | `--request-option cross_fade_duration_sec=<seconds>` | seconds | `0.05` | Equal-power cross-fade between long-form chunks. |
 | `--seed` | integer | `42` | Torch-compatible CUDA noise seed for diffusion sampling. |
 | `--session-option dramabox.perf_mode=off\|flash_attention` | enum | `off` | Attention implementation mode. `off` keeps the exact reference-query attention path; `flash_attention` enables the optimized path. |
 | `--session-option dramabox.mem_saver=true\|false` | bool | `false` | Release staged runtime graphs and weights immediately after each request phase to reduce peak and resident VRAM; default keeps components cached for reuse. |
 
-## DotTTS
+## Fish Audio S2 Pro
 
-DotTTS is an experimental multilingual TTS and voice-cloning family with SOAR
-and MeanFlow GGUF packages. SOAR is the default download. See
-[DotTTS](models/dots_tts.md) for template, streaming, chunking, and full option
-details.
+Fish Audio S2 Pro is a TTS and reference voice-clone model. See the dedicated
+[Fish Audio guide](models/fish_audio.md) for multi-reference conditioning,
+speaker-tagged turns, and the full option list.
+
+| Field | Value |
+|---|---|
+| Family | `fish_audio` |
+| Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` when installed through the model manager |
+| Tasks | `tts`, `clon` |
+| Modes | `offline`, `streaming` |
+| Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
+| Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
+| Built-in voices | Not exposed |
+
+Text-to-speech:
 
 ```bash
-python3 tools/model_manager_v2.py install dots_tts_soar_q8_0
+audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "Hello from Fish Audio." --out out.wav
+```
 
-audiocpp_cli --task tts --family dots_tts \
-  --model models/DotTTS-SOAR-GGUF/dots-tts-soar-q8_0.gguf \
+Reference voice clone:
+
+```bash
+audiocpp_cli --task clon --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
+```
+
+Multiple reference pairs:
+
+```bash
+audiocpp_cli --task clon --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The review is ready, and I will check the final numbers." --request-option 'multi_reference_cond=[{"audio":"assets/resources/a.wav","text":"First reference transcript."},{"audio":"assets/resources/b.wav","text":"Second reference transcript."}]' --out out.wav
+```
+
+The model manager installs the Q8_0 standalone GGUF package by default:
+
+```bash
+python3 tools/model_manager_v2.py install --models-root models fish_audio_s2_pro_q8_0
+```
+
+## GLM-TTS
+
+GLM-TTS is a community zero-shot Chinese and English speech-synthesis model.
+Both the `tts` and `clon` routes require a clean reference WAV and its exact
+transcript:
+
+```bash
+python tools/model_manager_v2.py install glm_tts --models-root models
+
+audiocpp_cli --task clon --family glm_tts \
+  --model models/GLM-TTS-Q8/GLM-TTS_Q8.gguf --backend cuda \
+  --voice-ref reference.wav \
+  --reference-text "The exact words spoken in reference.wav." \
+  --text "Hello from GLM-TTS." \
+  --seed 0 --out glm_tts.wav
+```
+
+See the [GLM-TTS community model guide](models/glm_tts.md) for
+standalone GGUF packaging, controls, and validation results.
+
+## Higgs Audio v3 TTS
+
+Higgs Audio v3 TTS supports voice cloning and long-form generation through the
+framework chunker. See the dedicated [Higgs Audio v3 TTS guide](models/higgs_audio_tts.md)
+for installation, usage, and options.
+
+## IndexTTS2
+
+IndexTTS2 is a Chinese and English TTS model with voice cloning and expressive
+emotion controls. See the dedicated [IndexTTS guide](models/index_tts2.md) for
+IndexTTS2, IndexTTS2.5, text normalization notes, conversion, and the full
+option list.
+
+| Field | Value |
+|---|---|
+| Family | `index_tts2` |
+| Model directory | `models/IndexTTS-2` |
+| Task | `tts`, `clon` |
+| Modes | `offline` |
+| Languages | `zh`, `en` |
+| Voice input | Required reference WAV through `--voice-ref` |
+| Built-in voices | Not exposed |
+
+Quick start:
+
+```bash
+audiocpp_cli --task clon --family index_tts2 --model /path/to/IndexTTS-2 --backend cuda --language en --text "Hello from IndexTTS2." --voice-ref /path/to/reference.wav --out out.wav
+```
+
+## IndexTTS2.5
+
+IndexTTS2.5 is the multilingual `index_tts2` variant selected from model
+config. It adds Japanese, Spanish, and Arabic on top of Chinese and English.
+See the dedicated [IndexTTS guide](models/index_tts2.md) for variant details,
+language notes, conversion, and the full option list.
+
+| Field | Value |
+|---|---|
+| Family | `index_tts2` (the `2.5` variant is selected from the model config `version` field; no separate family) |
+| Model directory | `models/IndexTTS2.5-GGUF` (default GGUF package `index_tts2_5_q8_0`; `index_tts2_5_f16` and `index_tts2_5_orig` also available) |
+| Task | `tts`, `clon` |
+| Modes | `offline` |
+| Languages | `zh`, `en`, `ja`, `es`, `ar` |
+| Voice input | Required reference WAV through `--voice-ref` |
+| Built-in voices | Not exposed |
+
+Quick start:
+
+```bash
+audiocpp_cli --task clon --family index_tts2 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "Hello from IndexTTS2.5." --voice-ref /path/to/reference.wav --out out.wav
+```
+
+## Inflect v2
+
+Inflect Micro v2 is a compact English offline TTS model with a native GGML
+runtime. The model manager defaults to the standalone GGUF package; the
+original source/conversion path remains documented in the community guide.
+Inflect requires an external eSpeak-ng installation:
+
+```bash
+python3 tools/model_manager_v2.py install inflect_micro_v2_orig --models-root models
+
+audiocpp_cli --task tts --family inflect_v2 \
+  --model models/Inflect-Micro-v2-GGUF/inflect-micro-v2-orig.gguf --backend cuda \
+  --text "Hello from Inflect Micro version two." \
+  --request-option speaking_rate=1.0 \
+  --request-option variation=0.667 \
+  --seed 0 --out inflect.wav
+```
+
+See the [Inflect v2 community model guide](models/inflect_v2.md) for
+eSpeak-ng paths, long-form behavior, source/conversion instructions, and
+limitations.
+
+## Irodori-TTS
+
+Irodori-TTS is Japanese TTS under `--family irodori_tts`. v4 Small is the preferred GGUF-first package and supports no-reference speech, reference-conditioned speech, and instruction-based voice design in one checkpoint. The older 500M v3 and 600M v3 VoiceDesign packages remain supported for existing users. See [Irodori-TTS](models/irodori_tts.md) for v3/v4 differences, GGUF variants, options, and compatibility aliases.
+
+## MagpieTTS
+
+MagpieTTS Multilingual 357M is a multilingual TTS model with baked speaker
+context prompts and a NanoCodec waveform decoder. The current package is a
+standalone GGUF directory.
+
+```bash
+python3 tools/model_manager_v2.py install magpie_tts_orig
+
+audiocpp_cli --task tts --family magpie_tts \
+  --model models/MagpieTTS-Multilingual-357M-GGUF \
   --backend cuda \
-  --text "Our field team finished the morning inspection and prepared a concise update." \
-  --voice-ref assets/resources/a.wav \
-  --reference-text "This little work was finished in the year eighteen o three, and intended for immediate publication." \
-  --request-option reference_duration_sec=5 \
+  --language en \
+  --text "The production coordinator reviewed the overnight audio report and sent one clear update." \
+  --request-option voice_id=Sofia \
   --out out.wav
 ```
 
-For MeanFlow, install `dots_tts_mf_q8_0` and use
-`models/DotTTS-MF-GGUF/dots-tts-mf-q8_0.gguf` with the same runtime options.
+Use `--request-option voice_id=<name-or-index>` to select one of the baked
+speaker prompts included with the package. See [MagpieTTS](models/magpie_tts.md)
+for supported languages, long-form controls, and sampling options.
+
 
 ## MioTTS
 
@@ -322,7 +486,7 @@ for dependencies, commands, and options.
 
 ## MOSS-TTS-Local
 
-MOSS-TTS-Local is the larger local-transformer MOSS TTS path. It supports text-only speech and optional zero-shot voice cloning through the framework speaker-reference interface. See [MOSS-TTS](models/moss_tts.md) for tokenizer layout, sampling options, cache options, and Nano details.
+MOSS-TTS-Local is the larger local-transformer MOSS TTS path. It supports text-only speech and optional zero-shot voice cloning through the framework speaker-reference interface. See [MOSS-TTS-Local](models/moss_tts_local.md) for tokenizer layout, sampling options, and cache options.
 
 | Field | Value |
 |---|---|
@@ -347,9 +511,10 @@ Voice clone:
 audiocpp_cli --task clon --family moss_tts_local --model /path/to/MOSS-TTS-Local-Transformer-v1.5 --backend cuda --text "Hello from MOSS-TTS-Local." --voice-ref /path/to/reference.wav --out out.wav
 ```
 
+
 ## MOSS-TTS-Nano
 
-MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation generation and voice cloning through the framework speaker-reference interface. See [MOSS-TTS](models/moss_tts.md) for tokenizer layout, sampling options, cache options, and Local details.
+MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation generation and voice cloning through the framework speaker-reference interface. See [MOSS-TTS-Nano](models/moss_tts_nano.md) for tokenizer layout, sampling options, streaming, and cache options.
 
 | Field | Value |
 |---|---|
@@ -357,7 +522,7 @@ MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation g
 | Model directory | `models/MOSS-TTS-Nano-100M` |
 | Required codec layout | `audio_tokenizer/` directory inside the model root |
 | Task | `tts`, `clon` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV through `--voice-ref` |
 | Built-in voices | Not exposed |
@@ -373,28 +538,6 @@ Voice clone:
 ```bash
 audiocpp_cli --task clon --family moss_tts_nano --model /path/to/MOSS-TTS-Nano-100M --backend cuda --text "Hello from MOSS-TTS-Nano." --voice-ref /path/to/reference.wav --reference-text "Reference transcript when available." --out out.wav
 ```
-
-## MagpieTTS
-
-MagpieTTS Multilingual 357M is a multilingual TTS model with baked speaker
-context prompts and a NanoCodec waveform decoder. The current package is a
-standalone GGUF directory.
-
-```bash
-python3 tools/model_manager_v2.py install magpie_tts_orig
-
-audiocpp_cli --task tts --family magpie_tts \
-  --model models/MagpieTTS-Multilingual-357M-GGUF \
-  --backend cuda \
-  --language en \
-  --text "The production coordinator reviewed the overnight audio report and sent one clear update." \
-  --request-option voice_id=Sofia \
-  --out out.wav
-```
-
-Use `--request-option voice_id=<name-or-index>` to select one of the baked
-speaker prompts included with the package. See [MagpieTTS](models/magpie_tts.md)
-for supported languages, long-form controls, and sampling options.
 
 ## NeuTTS
 
@@ -423,7 +566,7 @@ OmniVoice supports multilingual TTS, voice cloning, voice design, non-verbal tag
 |---|---|
 | Family | `omnivoice` |
 | Model directory | `models/OmniVoice` |
-| Task | `tts` |
+| Tasks | `tts`, `clon`, `vdes` |
 | Modes | `offline`, `streaming` |
 | Languages | 600+ languages handled by the model |
 | Voice input | `--voice-ref` plus optional `--reference-text`, or instruction text through `--instruct` |
@@ -448,347 +591,6 @@ audiocpp_cli --task tts --mode streaming --family omnivoice --model models/OmniV
 ```
 
 OmniVoice streaming is pseudo streaming: audio.cpp emits audio chunk events from text chunks and returns a merged final WAV. Upstream Python does not expose model-native streaming. For server SSE examples, options, and tag controls, see [OmniVoice](models/omnivoice.md).
-
-## PocketTTS
-
-PocketTTS supports built-in voices, voice cloning from reference WAVs, and exported voice states for fast reuse.
-
-PocketTTS language selection is a model-load option. When the model path points at the PocketTTS root, the loader uses `english` unless you pass `--load-option language=<name>`. Kyutai's normal non-English PocketTTS releases are smaller distilled language models intended for the fast PocketTTS path. The `_24l` variants are larger 24-layer, undistilled preview models that can sound better but are slower. Kyutai currently publishes French only as `french_24l`, not as a normal distilled `french` language directory, so French is not listed as a normal PocketTTS language here.
-
-| Field | Value |
-|---|---|
-| Family | `pocket_tts` |
-| Model directory | `models/pocket-tts` |
-| Task | `tts` |
-| Modes | `offline` |
-| Languages | `english`, `german`, `italian`, `portuguese`, `spanish`|
-| Voice input | Built-in voice id or reference WAV |
-| Built-in voices | Voice ids depend on the downloaded language package; `alba` is used by the examples |
-
-Preset voice:
-
-```bash
-audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-id alba --out out.wav
-```
-
-Voice clone:
-
-```bash
-audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-ref assets/resources/b.wav --out out.wav
-```
-
-To reuse a cloned voice across runs, export its prepared state once. This skips reference-audio encoding and voice-state preparation on subsequent runs:
-
-```bash
-audiocpp_cli --task tts --family pocket_tts \
-  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
-  --backend cuda --voice-ref assets/resources/b.wav \
-  --voice-state-out models/PocketTTS-GGUF/english/embeddings/my_voice.safetensors
-```
-
-The export command exits after saving the state; no text or output WAV is needed. Save it in the language package's `embeddings` directory, then use the filename without `.safetensors` as the voice id, just like a built-in voice:
-
-```bash
-audiocpp_cli --task tts --family pocket_tts \
-  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
-  --backend cuda --text "Hello from my saved voice." \
-  --voice-id my_voice --out out.wav
-```
-
-### Common Options (use directly)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--voice-id` | packaged or exported voice id | not set | Voice-state filename in `embeddings`, without `.safetensors`. |
-| `--voice-ref` | WAV path | not set | Reference speaker audio for cloning. |
-| `--voice-state-out` | `.safetensors` path | not set | Export prepared voice state from `--voice-ref` and exit. |
-| `--text-chunk-size` | integer chars | not set | Optional character chunk size; otherwise use sentence/token budgeting. |
-
-### Request Options (use with `--request-option`)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `frames_after_eos` | integer >= -1 | `-1` | Extra frames after EOS; -1 uses the model-derived value. |
-| `max_steps` | integer >= 0 | `0` | Maximum generated audio frames; zero estimates the cap from text length. Captured from the first request during session preparation. |
-| `max_tokens` | integer >= 1 | `50` | Tokenizer tokens per text chunk. Captured from the first request during session preparation. |
-| `temperature` | float | model default | Positive flow noise temperature; defaults to the model configuration. Captured from the first request during session preparation. |
-| `seed` | integer >= 0 | random | Noise seed; omitted chooses a random seed. Captured from the first request during session preparation. |
-| `noise_clamp` | float | `-1` | Noise clamp; a negative value disables clamping. Captured from the first request during session preparation. |
-| `eos_threshold` | float | `-4` | EOS detection threshold. Captured from the first request during session preparation. |
-| `noise_file` | path | not set | Precomputed noise schedule file. Captured from the first request during session preparation. |
-| `voice_embedding_path` | path | not set | Precomputed voice-state embedding path. Captured from the first request during session preparation. |
-| `voice_clone_text` | text | not set | Accepted clone transcript field; currently stored but not consumed by voice encoding. Requires clone audio. |
-| `truncate_clone_audio` | bool | `false` | Truncate voice clone audio. Captured from the first request during session preparation. |
-| `text_chunk_size` | integer | not set | Optional per-request character chunk size; otherwise use sentence/token budgeting. |
-| `export_voice_state_path` | path | not set | Export the prepared voice state during session preparation. |
-
-### Session Options (use with `--session-option`)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `pocket_tts.voice_state_cache_slots` | integer >= 0 | `4` | Cached prepared voice states; zero disables reuse. |
-| `pocket_tts.offline_graph_capacity_mode` | `fixed`, `double`, `tiered`, `grow` | not set | Offline graph capacity policy; CPU/Metal default tiered, other backends double. |
-| `pocket_tts.prompt_graph_capacity` | integer >= 1 | not set | Optional reserved prompt capacity. |
-| `pocket_tts.generation_graph_capacity` | integer >= 1 | not set | Optional reserved generation capacity. |
-| `pocket_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `pocket_tts.matmul_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `pocket_tts.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage. |
-| `pocket_tts.weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `pocket_tts.flow_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_encoder_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_decoder_weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `pocket_tts.flow_weights_view_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `pocket_tts.flow_step_graph_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_encoder_graph_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_conv_graph_context_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_transformer_graph_context_mb` | integer >= 1 | `96` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_tail_graph_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `pocket_tts.mimi_full_chunk_frames` | integer >= 1 | `90` | Full-sequence decoder chunk frames. |
-| `pocket_tts.mimi_stage2_chunk_frames` | integer >= 1 | `900` | Second-stage decoder chunk frames. |
-| `pocket_tts.use_full_mimi` | bool | `true` | Use full-sequence Mimi decoding. |
-
-### Load Options (use with `--load-option`)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `pocket_tts.language` | text | `english` | Model language selection. |
-
-The legacy load name `language` and session name `offline_graph_capacity_mode`
-remain accepted. Use only one name for each control. Preparation-only request
-controls are captured when `prepare()` is called. With CLI `--requests`, they
-come from the first request and are retained for later requests in that batch.
-
-
-## VoxCPM1
-
-VoxCPM1 supports offline and streaming TTS plus short-reference voice cloning. It reuses the VoxCPM2 runtime tree with a GGUF tensor-adaptation layer that understands the OpenBMB folded AudioVAE weights. The registered package is the 16 kHz 0.5B model; the runtime is size-agnostic, so a different VoxCPM1 GGUF can still be loaded via an explicit `--model <path>`.
-
-| Field | Value |
-|---|---|
-| Family | `voxcpm1` |
-| Model directory | `models/VoxCPM1-GGUF` (0.5B) |
-| Task | `tts` |
-| Modes | `offline`, `streaming` |
-| Languages | Model auto-handles supported languages |
-| Voice input | Optional reference WAV; optional transcript through `--reference-text` |
-| Built-in voices | Not exposed |
-
-Text to speech:
-
-```bash
-audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --out out.wav
-```
-
-Voice clone:
-
-```bash
-audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --voice-ref assets/resources/b.wav --out out.wav
-```
-
-Streaming output:
-
-```bash
-audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --mode streaming --text "Hello from VoxCPM1." --request-option retry_badcase=false --out out.wav
-```
-
-| Option | Values | Default | Meaning |
-|---|---:|---:|---|
-| `--voice-ref` | WAV path | not set | Reference speaker audio. |
-| `--reference-text` | text | empty string | Transcript for the reference audio (clone prompting). |
-| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming requires `retry_badcase=false`. |
-| `--session-option voxcpm1.mem_saver=true\|false` | bool | `false` | Use tighter graph workspaces and release MiniCPM/AudioVAE request graphs after completion to reduce resident VRAM. |
-| `--session-option voxcpm1.prompt_cache_slots=<n>` | integer | `1` | Prompt and prompt-audio embedding cache slots. Set to `0` to disable prompt caching. |
-| `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
-| `--num-inference-steps` | integer | `10` | Flow matching steps. |
-| `--guidance-scale` | float | `2.0` | CFG strength. |
-
-## VoxCPM2
-
-VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
-
-| Field | Value |
-|---|---|
-| Family | `voxcpm2` |
-| Model directory | `models/VoxCPM2` |
-| Task | `tts` |
-| Modes | `offline`, `streaming` |
-| Languages | Model auto-handles supported languages |
-| Voice input | Optional reference WAV; optional transcript through `--reference-text` |
-| Built-in voices | Not exposed |
-
-Voice design:
-
-```bash
-audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "(A young woman, gentle and clear voice)Hello from VoxCPM2." --out out.wav
-```
-
-Voice clone:
-
-```bash
-audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "Hello from VoxCPM2." --voice-ref assets/resources/b.wav --out out.wav
-```
-
-Ultimate clone:
-
-```bash
-audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "Hello from VoxCPM2." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
-```
-
-Streaming output:
-
-```bash
-audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --mode streaming --text "Hello from VoxCPM2." --out out.wav
-```
-
-### Common Options (use directly)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--text "(style)content"` | text | required | Voice design or style control. |
-| `--voice-ref` | WAV path | not set | Reference speaker audio. |
-| `--reference-text` | text | empty string | Transcript for ultimate-clone style prompting. |
-| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode. |
-| `--text-chunk-size` | integer chars | `2048` | Long-form chunk size. |
-| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Long-form chunking mode; keeps style/tag controls attached to chunks by default. |
-| `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
-| `--num-inference-steps` | integer | `10` | Flow matching steps. |
-| `--guidance-scale` | float | `2.0` | CFG strength. |
-
-### Request Options (use with `--request-option`)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `min_tokens` | integer >= 0 | `2` | Minimum generated audio tokens. |
-| `max_tokens` | integer >= 0 | `4096` | Maximum generated audio tokens. |
-| `num_inference_steps` | integer | `10` | Flow sampling steps. |
-| `guidance_scale` | float | `2` | Classifier-free guidance scale. |
-| `retry_badcase` | bool | `true` | Retry detected bad generations. |
-| `retry_badcase_max_times` | integer | `3` | Maximum bad-case retries. |
-| `retry_badcase_ratio_threshold` | float | `6` | Bad-case audio/text length ratio threshold. |
-| `seed` | integer >= 0 | `1234` | Sampling seed. |
-| `cfm_noise_file` | path | not set | Precomputed flow noise file. |
-| `stream_left_context` | integer >= 0 | `3` | Previous patches decoded as streaming left context. |
-| `prompt_text` | text | not set | Transcript for continuation prompt audio, distinct from the base voice reference. |
-| `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. |
-| `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. |
-| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. |
-
-### Session Options (use with `--session-option`)
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `voxcpm2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `voxcpm2.audiovae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `voxcpm2.prompt_cache_slots` | integer >= 0 | `1` | Cached encoded prompt slots; zero disables reuse. |
-| `voxcpm2.mem_saver` | bool | `true` | Release staged runtime graphs. |
-| `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |
-| `voxcpm2.text_embedding_graph_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
-| `voxcpm2.lm_step_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `voxcpm2.projection_graph_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `voxcpm2.local_encoder_graph_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `voxcpm2.dit_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `voxcpm2.audiovae_weight_context_mb` | integer >= 1 | `768` | Context or graph arena size in MiB. |
-| `voxcpm2.audiovae_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `voxcpm2.audiovae_encoder_graph_context_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional reserved latent frame capacity; omitted selects automatically. |
-| `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |
-
-
-## Higgs Audio v3 TTS
-
-Higgs Audio v3 TTS supports voice cloning and long-form generation through the
-framework chunker. See the dedicated [Higgs Audio v3 TTS guide](models/higgs_audio_tts.md)
-for installation, usage, and options.
-
-## Fish Audio S2 Pro
-
-Fish Audio S2 Pro is a TTS and reference voice-clone model. See the dedicated
-[Fish Audio guide](models/fish_audio.md) for multi-reference conditioning,
-speaker-tagged turns, and the full option list.
-
-| Field | Value |
-|---|---|
-| Family | `fish_audio` |
-| Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` when installed through the model manager |
-| Task | `tts` |
-| Modes | `offline` |
-| Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
-| Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
-| Built-in voices | Not exposed |
-
-Text-to-speech:
-
-```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "Hello from Fish Audio." --out out.wav
-```
-
-Reference voice clone:
-
-```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The final render is ready for review." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
-```
-
-Multiple reference pairs:
-
-```bash
-audiocpp_cli --task tts --family fish_audio --model models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf --backend cuda --text "The review is ready, and I will check the final numbers." --request-option 'multi_reference_cond=[{"audio":"assets/resources/a.wav","text":"First reference transcript."},{"audio":"assets/resources/b.wav","text":"Second reference transcript."}]' --out out.wav
-```
-
-The model manager installs the Q8_0 standalone GGUF package by default:
-
-```bash
-python3 tools/model_manager_v2.py install --models-root models fish_audio_s2_pro_q8_0
-```
-
-## IndexTTS2
-
-IndexTTS2 is a Chinese and English TTS model with voice cloning and expressive
-emotion controls. See the dedicated [IndexTTS guide](models/index_tts.md) for
-IndexTTS2, IndexTTS2.5, text normalization notes, conversion, and the full
-option list.
-
-| Field | Value |
-|---|---|
-| Family | `index_tts2` |
-| Model directory | `models/IndexTTS-2` |
-| Task | `tts`, `clon` |
-| Modes | `offline` |
-| Languages | `zh`, `en` |
-| Voice input | Required reference WAV through `--voice-ref` |
-| Built-in voices | Not exposed |
-
-Quick start:
-
-```bash
-audiocpp_cli --task clon --family index_tts2 --model /path/to/IndexTTS-2 --backend cuda --language en --text "Hello from IndexTTS2." --voice-ref /path/to/reference.wav --out out.wav
-```
-
-## IndexTTS2.5
-
-IndexTTS2.5 is the multilingual `index_tts2` variant selected from model
-config. It adds Japanese, Spanish, and Arabic on top of Chinese and English.
-See the dedicated [IndexTTS guide](models/index_tts.md) for variant details,
-language notes, conversion, and the full option list.
-
-| Field | Value |
-|---|---|
-| Family | `index_tts2` (the `2.5` variant is selected from the model config `version` field; no separate family) |
-| Model directory | `models/IndexTTS2.5-GGUF` (default GGUF package `index_tts2_5_q8_0`; `index_tts2_5_f16` and `index_tts2_5_orig` also available) |
-| Task | `tts`, `clon` |
-| Modes | `offline` |
-| Languages | `zh`, `en`, `ja`, `es`, `ar` |
-| Voice input | Required reference WAV through `--voice-ref` |
-| Built-in voices | Not exposed |
-
-Quick start:
-
-```bash
-audiocpp_cli --task clon --family index_tts2 --model /path/to/IndexTTS2.5-GGUF --backend cuda --text "Hello from IndexTTS2.5." --voice-ref /path/to/reference.wav --out out.wav
-```
-
-## Irodori-TTS
-
-Irodori-TTS is Japanese TTS under `--family irodori_tts`. v4 Small is the preferred GGUF-first package and supports no-reference speech, reference-conditioned speech, and instruction-based voice design in one checkpoint. The older 500M v3 and 600M v3 VoiceDesign packages remain supported for existing users. See [Irodori-TTS](models/irodori_tts.md) for v3/v4 differences, GGUF variants, options, and compatibility aliases.
 
 ## OuteTTS
 
@@ -820,49 +622,138 @@ audiocpp_cli --task clon --family outetts \
   --max-tokens 1024 --out cloned.wav
 ```
 
-See [OuteTTS community model usage](community_models/outetts.md) for cloning notes, GGUF packing, all options, and validation details.
+See [OuteTTS community model usage](models/outetts.md) for cloning notes, GGUF packing, all options, and validation details.
 
-## GLM-TTS
+## PocketTTS
 
-GLM-TTS is a community zero-shot Chinese and English speech-synthesis model.
-Both the `tts` and `clon` routes require a clean reference WAV and its exact
-transcript:
+PocketTTS supports built-in voices, voice cloning from reference WAVs, and exported voice states for fast reuse.
 
-```bash
-python tools/model_manager_v2.py install glm_tts --models-root models
+Use the GGUF package for the desired language. French is available as a distilled six-layer model in BF16 and Q8_0, with packaged voice states such as `cosette`. The `_24l` variants are larger 24-layer, undistilled preview models; French no longer requires the `french_24l` variant.
 
-audiocpp_cli --task clon --family glm_tts \
-  --model models/GLM-TTS-Q8/GLM-TTS_Q8.gguf --backend cuda \
-  --voice-ref reference.wav \
-  --reference-text "The exact words spoken in reference.wav." \
-  --text "Hello from GLM-TTS." \
-  --seed 0 --out glm_tts.wav
-```
+| Field | Value |
+|---|---|
+| Family | `pocket_tts` |
+| Model directory | `models/pocket-tts` |
+| Tasks | `tts`, `clon` |
+| Modes | `offline`, `streaming` |
+| Languages | `english`, `french`, `german`, `italian`, `portuguese`, `spanish` |
+| Voice input | Built-in voice id or reference WAV |
+| Built-in voices | Voice ids depend on the downloaded language package; `alba` is used by the examples |
 
-See the [GLM-TTS community model guide](community_models/glm_tts.md) for
-standalone GGUF packaging, controls, and validation results.
-
-## Inflect v2
-
-Inflect Micro v2 is a compact English offline TTS model with a native GGML
-runtime. The model manager defaults to the standalone GGUF package; the
-original source/conversion path remains documented in the community guide.
-Inflect requires an external eSpeak-ng installation:
+Preset voice:
 
 ```bash
-python3 tools/model_manager_v2.py install inflect_micro_v2_orig --models-root models
-
-audiocpp_cli --task tts --family inflect_v2 \
-  --model models/Inflect-Micro-v2-GGUF/inflect-micro-v2-orig.gguf --backend cuda \
-  --text "Hello from Inflect Micro version two." \
-  --request-option speaking_rate=1.0 \
-  --request-option variation=0.667 \
-  --seed 0 --out inflect.wav
+audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-id alba --out out.wav
 ```
 
-See the [Inflect v2 community model guide](community_models/inflect_v2.md) for
-eSpeak-ng paths, long-form behavior, source/conversion instructions, and
-limitations.
+French preset voice (keep the package's `embeddings` directory alongside the GGUF):
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/french/pocket-tts-french-q8_0.gguf \
+  --backend cuda --text "Bonjour, bienvenue dans notre bibliotheque." \
+  --voice-id cosette --out french.wav
+```
+
+Voice clone:
+
+```bash
+audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-ref assets/resources/b.wav --out out.wav
+```
+
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio or preset behavior.
+
+To reuse a cloned voice across runs, export its prepared state once. This skips reference-audio encoding and voice-state preparation on subsequent runs:
+
+```bash
+audiocpp_cli --task clon --family pocket_tts \
+  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
+  --backend cuda --voice-ref assets/resources/b.wav \
+  --voice-state-out models/PocketTTS-GGUF/english/embeddings/my_voice.safetensors
+```
+
+The export command exits after saving the state; no text or output WAV is needed. Save it in the language package's `embeddings` directory, then use the filename without `.safetensors` as the voice id, just like a built-in voice:
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf \
+  --backend cuda --text "Hello from my saved voice." \
+  --voice-id my_voice --out out.wav
+```
+
+### Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--voice-id` | packaged or exported voice id | not set | Voice-state filename in `embeddings`, without `.safetensors`. |
+| `--voice-ref` | WAV path | not set | Reference speaker audio for cloning. |
+| `--voice-state-out` | `.safetensors` path | not set | Export prepared voice state from `--voice-ref` and exit. |
+| `--text-chunk-size` | integer chars | not set | Optional character chunk size; otherwise use sentence/token budgeting. |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `frames_after_eos` | integer >= -1 | `-1` | Extra frames after EOS; -1 uses the model-derived value. |
+| `max_frames` | integer >= 0 | `0` | Maximum generated audio frames; zero estimates the cap from text length. Captured from the first request during session preparation. Legacy `max_steps` remains accepted. |
+| `text_chunk_tokens` | integer >= 1 | `50` | Tokenizer tokens per text chunk, not generated tokens. Legacy `max_tokens` retains this input-token meaning. |
+| `temperature` | float | model default | Positive flow noise temperature; defaults to the model configuration. Captured from the first request during session preparation. |
+| `seed` | integer >= 0 | random | Noise seed; omitted chooses a random seed. Captured from the first request during session preparation. |
+| `noise_clamp` | float | `-1` | Noise clamp; a negative value disables clamping. Captured from the first request during session preparation. |
+| `eos_threshold` | float | `-4` | EOS detection threshold. Captured from the first request during session preparation. |
+| `noise_file` | path | not set | Precomputed noise schedule file. Captured from the first request during session preparation. |
+| `voice_embedding_file` | path | not set | Precomputed voice-state embedding file. Captured from the first request during session preparation. Legacy `voice_embedding_path` remains accepted. |
+| `truncate_clone_audio` | bool | `false` | Truncate voice clone audio. Captured from the first request during session preparation. |
+| `text_chunk_size` | integer | not set | Optional per-request character chunk size; otherwise use sentence/token budgeting. |
+| `export_voice_state_file` | path | not set | Export the prepared voice state during session preparation. Legacy `export_voice_state_path` remains accepted. |
+
+PocketTTS cloning does not use a reference transcript. Legacy `voice_clone_text`
+remains accepted with clone audio but does not affect voice encoding.
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `pocket_tts.voice_state_cache_slots` | integer >= 0 | `4` | Cached prepared voice states; zero disables reuse. |
+| `pocket_tts.offline_graph_capacity_mode` | `fixed`, `double`, `tiered`, `grow` | not set | Offline graph capacity policy; CPU/Metal default tiered, other backends double. |
+| `pocket_tts.prompt_graph_capacity` | integer >= 1 | not set | Optional reserved prompt capacity. |
+| `pocket_tts.generation_graph_capacity` | integer >= 1 | not set | Optional reserved generation capacity. |
+| `pocket_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Shared matmul weight storage; component matmul settings inherit it. Convolution storage remains independently native unless overridden. |
+| `pocket_tts.matmul_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
+| `pocket_tts.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage. |
+| `pocket_tts.weight_context_mb` | integer >= 1 | `64` | Context or graph arena size in MiB. |
+| `pocket_tts.flow_weight_context_mb` | integer >= 1 | see description | Flow weight context in MiB; inherits pocket_tts.weight_context_mb when omitted. |
+| `pocket_tts.mimi_encoder_weight_context_mb` | integer >= 1 | see description | Mimi encoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted. |
+| `pocket_tts.mimi_decoder_weight_context_mb` | integer >= 1 | see description | Mimi decoder weight context in MiB; inherits pocket_tts.weight_context_mb when omitted. |
+| `pocket_tts.flow_weights_view_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
+| `pocket_tts.flow_step_graph_arena_mb` | integer >= 1 | `256` | Host graph-metadata arena; legacy `flow_step_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_encoder_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena; legacy `mimi_encoder_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_conv_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena; legacy `mimi_conv_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_transformer_graph_arena_mb` | integer >= 1 | `96` | Host graph-metadata arena; legacy `mimi_transformer_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_tail_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena; legacy `mimi_tail_graph_context_mb` accepted with the same family prefix. |
+| `pocket_tts.mimi_full_chunk_frames` | integer >= 1 | `90` | Full-sequence decoder chunk frames. |
+| `pocket_tts.mimi_stage2_chunk_frames` | integer >= 1 | `900` | Second-stage decoder chunk frames. |
+| `pocket_tts.use_full_mimi` | bool | `true` | Use full-sequence Mimi decoding. |
+
+### Load Options (use with `--load-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `pocket_tts.language` | text | `english` | Model language selection. |
+
+The legacy load name `language` and session name `offline_graph_capacity_mode`
+remain accepted. Use only one name for each control. Preparation-only request
+controls are captured when `prepare()` is called. With CLI `--requests`, they
+come from the first request and are retained for later requests in that batch.
+
+## Qwen3 TTS
+
+Qwen3 TTS supports reference voice cloning, voice design, and packaged custom voices. See the [Qwen3 TTS guide](models/qwen3_tts.md) for Base, VoiceDesign, CustomVoice, sampling, and streaming details.
+
+```bash
+audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Base --backend cuda --text "Hello from Qwen3 TTS." --voice-ref assets/resources/b.wav --out out.wav
+```
 
 ## sanoTTS
 
@@ -884,7 +775,7 @@ audiocpp_cli --task tts --family sanotts \
   --out sanotts.wav
 ```
 
-See the [sanoTTS community model guide](community_models/sanotts.md) for
+See the [sanoTTS community model guide](models/sanotts.md) for
 eSpeak-ng paths, seed semantics, parity evidence, and performance numbers.
 
 ## Supertonic
@@ -953,12 +844,18 @@ VibeVoice is a long-form multi-speaker TTS model, available in 1.5B and 7B sizes
 | Family | `vibevoice` |
 | Model directory | `models/VibeVoice-1.5B` (or `models/VibeVoice-7B`) |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Up to four speaker reference WAVs through `voice_samples` |
 | Text format | Lines like `Speaker 1: ... Speaker 2: ...`; ids are normalized internally |
 | Long-form | No text chunking; generation uses the model long-form path |
 | LoRA | Optional PEFT decoder adapter through `--load-option vibevoice.lora` |
+
+Use `--mode streaming` to emit native audio chunks during generation, including
+speaker changes. The completed audio uses the same generation path as offline
+mode. For HTTP, configure `"mode": "streaming"` and request `"stream_format": "sse"`
+on `/v1/audio/speech`; deltas contain only newly generated PCM. The full
+speaker-labeled text is still supplied at the start of the request.
 
 Both sizes share the same CLI surface and the same Qwen2.5 tokenizer; the 7B is simply larger (hidden size 3584 vs 1536) and needs a matching 7B LoRA if one is used.
 
@@ -1018,3 +915,145 @@ audiocpp_cli --task tts --family vibevoice --model models/VibeVoice-1.5B --backe
 The adapter follows the PEFT training layout: `adapter_model.safetensors` + `adapter_config.json` for the language-model LoRA, plus optional `diffusion_head/model.safetensors` (or `diffusion_head_full.bin`), `acoustic_connector/pytorch_model.bin`, and `semantic_connector/pytorch_model.bin` for the fully fine-tuned components. Everything is applied at load time, so it composes with the `vibevoice.*_weight_type` quantization options and adds no per-step cost; the overlay is logged with `--log`. Use a 1.5B adapter with `VibeVoice-1.5B` and a 7B adapter with `VibeVoice-7B`; a size mismatch is rejected with a descriptive error. The same option may instead be passed as `--session-option vibevoice.lora` (but not via both at once).
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family <family>`.
+
+## VoxCPM1
+
+VoxCPM1 supports offline and streaming TTS plus short-reference voice cloning. It reuses the VoxCPM2 runtime tree with a GGUF tensor-adaptation layer that understands the OpenBMB folded AudioVAE weights. The registered package is the 16 kHz 0.5B model; the runtime is size-agnostic, so a different VoxCPM1 GGUF can still be loaded via an explicit `--model <path>`.
+
+| Field | Value |
+|---|---|
+| Family | `voxcpm1` |
+| Model directory | `models/VoxCPM1-GGUF` (0.5B) |
+| Tasks | `tts`, `clon` |
+| Modes | `offline`, `streaming` |
+| Languages | Model auto-handles supported languages |
+| Voice input | Optional reference WAV; optional transcript through `--reference-text` |
+| Built-in voices | Not exposed |
+
+Text to speech:
+
+```bash
+audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --out out.wav
+```
+
+Voice clone:
+
+```bash
+audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --text "Hello from VoxCPM1." --voice-ref assets/resources/b.wav --out out.wav
+```
+
+`clon` is an alias to the same synthesis path. Route selection does not change
+the existing reference-audio or continuation-prompt behavior.
+
+Streaming output:
+
+```bash
+audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf --backend cpu --mode streaming --text "Hello from VoxCPM1." --request-option retry_badcase=false --out out.wav
+```
+
+| Option | Values | Default | Meaning |
+|---|---:|---:|---|
+| `--voice-ref` | WAV path | not set | Reference speaker audio. |
+| `--reference-text` | text | empty string | Transcript for the reference audio (clone prompting). |
+| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode; streaming requires `retry_badcase=false`. |
+| `--session-option voxcpm1.mem_saver=true\|false` | bool | `false` | Use tighter graph workspaces and release MiniCPM/AudioVAE request graphs after completion to reduce resident VRAM. |
+| `--session-option voxcpm1.prompt_cache_slots=<n>` | integer | `1` | Prompt and prompt-audio embedding cache slots. Set to `0` to disable prompt caching. |
+| `--max-tokens` | integer | `4096` | Maximum generated AR tokens. |
+| `--num-inference-steps` | integer | `10` | Flow matching steps. |
+| `--guidance-scale` | float | `2.0` | CFG strength. |
+
+## VoxCPM2
+
+VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
+
+| Field | Value |
+|---|---|
+| Family | `voxcpm2` |
+| Model directory | `models/VoxCPM2` |
+| Tasks | `tts`, `clon`, `vdes` |
+| Modes | `offline`, `streaming` |
+| Languages | Model auto-handles supported languages |
+| Voice input | Optional reference WAV; optional transcript through `--reference-text` |
+| Built-in voices | Not exposed |
+
+Voice design:
+
+```bash
+audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "(A young woman, gentle and clear voice)Hello from VoxCPM2." --out out.wav
+```
+
+Voice clone:
+
+```bash
+audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "Hello from VoxCPM2." --voice-ref assets/resources/b.wav --out out.wav
+```
+
+Ultimate clone:
+
+```bash
+audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --text "Hello from VoxCPM2." --voice-ref assets/resources/b.wav --reference-text "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you." --out out.wav
+```
+
+`clon` and `vdes` are aliases to the same synthesis implementation. Route
+selection does not add or remove reference-audio, prompt, or style inputs.
+
+Streaming output:
+
+```bash
+audiocpp_cli --task tts --family voxcpm2 --model models/VoxCPM2 --backend cuda --mode streaming --request-option retry_badcase=false --text "Hello from VoxCPM2." --out out.wav
+```
+
+### Common Options (use directly)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--text "(style)content"` | text | required | Voice design or style control. |
+| `--voice-ref` | WAV path | not set | Reference speaker audio. |
+| `--reference-text` | text | empty string | Transcript for ultimate-clone style prompting. |
+| `--mode` | `offline`, `streaming` | `offline` | Full-output or streaming run mode. |
+| `--text-chunk-size` | integer chars | `2048` | Framework long-form text chunk size. Offline only. |
+| `--text-chunk-mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. Offline only. |
+| `--max-tokens` | integer | `4096` | Maximum generated audio tokens. Zero resolves to model max_length; requires min_tokens <= resolved max_tokens <= model limit. |
+| `--num-inference-steps` | integer | `10` | Flow sampling steps. Must be positive. |
+| `--guidance-scale` | float | `2.0` | Classifier-free guidance scale. Must be nonnegative. |
+
+### Request Options (use with `--request-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `min_tokens` | integer >= 0 | `2` | Minimum generated audio tokens. |
+| `max_tokens` | integer >= 0 | `4096` | Maximum generated audio tokens. Zero resolves to model max_length; requires min_tokens <= resolved max_tokens <= model limit. |
+| `num_inference_steps` | integer | `10` | Flow sampling steps. Must be positive. |
+| `guidance_scale` | float | `2` | Classifier-free guidance scale. Must be nonnegative. |
+| `retry_badcase` | bool | `true` | Retry detected bad generations. Offline only; streaming requires false. |
+| `retry_badcase_max_times` | integer | `3` | Total attempts including the initial attempt, not extra retries; must be positive. |
+| `retry_badcase_ratio_threshold` | float | `6` | Bad-case audio/text length ratio threshold. Must be positive. |
+| `seed` | integer >= 0 | `1234` | Sampling seed. |
+| `cfm_noise_file` | path | not set | Precomputed flow noise file. |
+| `stream_left_context` | integer >= 0 | `3` | Previous patches decoded as streaming left context. |
+| `stream_chunk_policy` | `grow`, `fixed` | `grow` | Streaming only. Grow emits one patch first, then doubles toward `stream_frames_per_event`; fixed waits for the configured patch count. |
+| `stream_frames_per_event` | integer >= 1 | `4` | Maximum generated latent patches per streaming audio event. Set to `1` for the original one-patch cadence. Ignored offline. |
+| `prompt_text` | text | not set | Transcript for continuation prompt audio, distinct from the base voice reference. |
+| `chunk_strategy` | `continuation`, `stateless` | `continuation` | Long-form continuation or independent generation per chunk. Offline only. |
+| `text_chunk_size` | integer | `2048` | Framework long-form text chunk size. Offline only. |
+| `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `tag_aware` | Framework text chunking mode. Offline only. |
+
+### Session Options (use with `--session-option`)
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `voxcpm2.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Language-model weight storage; does not override AudioVAE storage. |
+| `voxcpm2.audiovae_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | AudioVAE weight storage; defaults independently to native, not the shared weight_type. |
+| `voxcpm2.prompt_cache_slots` | integer >= 0 | `1` | Cached encoded prompt slots; zero disables reuse. |
+| `voxcpm2.mem_saver` | bool | `true` | Release staged runtime graphs. |
+| `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |
+| `voxcpm2.text_embedding_graph_arena_mb` | integer >= 1 | `64` | Host graph-metadata arena size in MiB; legacy `text_embedding_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.lm_step_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `lm_step_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.projection_graph_arena_mb` | integer >= 1 | `256` | Host graph-metadata arena size in MiB; legacy `projection_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.local_encoder_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena size in MiB; legacy `local_encoder_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.dit_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `dit_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.audiovae_weight_context_mb` | integer >= 1 | `768` | Context or graph arena size in MiB. |
+| `voxcpm2.audiovae_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional reserved latent frame capacity; omitted selects automatically. |
+| `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |

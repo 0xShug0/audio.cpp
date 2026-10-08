@@ -2,6 +2,7 @@
 // lifecycle overlaps without GPU timing, sleeps in production, or large models.
 #include "parallel_runtime.h"
 #include "engine/framework/audio/wav_writer.h"
+#include "engine/framework/runtime/errors.h"
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
@@ -73,9 +74,10 @@ struct Gate {
 };
 struct Control {
     Gate load, run, destroy;
-    std::atomic<int> loads{0}, destructions{0}, runs{0};
+    std::atomic<int> loads{0}, destructions{0}, runs{0}, finishes{0};
     std::atomic<int> sessions{0}, clones{0}, final_text{0};
-    std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false};
+    std::atomic<int> last_device{-1};
+    std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false}, reject_run{false};
     std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false}; std::optional<rt::Transcript> live_text;
 };
 class Session final : public rt::IOfflineVoiceTaskSession,
@@ -103,12 +105,13 @@ public:
         control_->run.wait();
         ++control_->runs;
         if (control_->fail_run) { throw std::runtime_error("controlled inference failure"); }
+        if (control_->reject_run) { throw rt::InvalidRequestError("controlled request rejection"); }
         if (task_.task == rt::VoiceTaskKind::Asr && !request.audio_input) {
             throw std::runtime_error("replacement ASR requires audio input");
         }
         rt::TaskResult result;
         if (!control_->no_text) { result.text_output = rt::Transcript{revision_, "en"}; }
-        result.audio_output = rt::AudioBuffer{16000, 1, {0.1f, -0.1f}};
+        result.audio_output = rt::AudioBuffer{16000, 1, {0.1f, -0.1f}}; result.output_artifacts = request.input_artifacts;
         return result;
     }
     std::vector<rt::TaskResult> run_batch(const std::vector<rt::TaskRequest> & requests) override {
@@ -134,7 +137,7 @@ public:
     }
     void reset() override { emitted_ = false; }
     rt::StreamEvent process_audio_chunk(const rt::AudioChunk &) override { return {}; }
-    rt::TaskResult finalize() override { auto r = result_; if (control_->final_text == 1) { r.text_output.reset(); } return r; }
+    rt::TaskResult finalize() override { ++control_->finishes; auto r = result_; if (control_->final_text == 1) { r.text_output.reset(); } return r; }
 private:
     std::shared_ptr<Control> control_;
     rt::TaskSpec task_;
@@ -157,6 +160,7 @@ public:
     const rt::CapabilitySet & capabilities() const noexcept override { return capabilities_; }
     std::unique_ptr<rt::IVoiceTaskSession> create_task_session(const rt::TaskSpec & task, const rt::SessionOptions & options) const override {
         if (control_->null_session) { return nullptr; }
+        control_->last_device = options.backend.device;
         const auto cap = options.options.find("fixture_capacity");
         return std::make_unique<Session>(control_, task, revision_,
             cap == options.options.end() ? 4 : std::stoul(cap->second));
@@ -241,11 +245,11 @@ struct Fixture {
     std::shared_ptr<Loader> loader = std::make_shared<Loader>();
     std::unique_ptr<srv::ParallelServerState> state;
     int count;
-    Fixture(int slots, int limit = 0) : count(slots) {
+    Fixture(int slots, int limit = 0, int device = 0) : count(slots) {
         root = std::filesystem::temp_directory_path() /
             ("audiocpp-lifecycle-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(root);
-        srv::ServerConfig config; config.backend = engine::core::BackendType::Cpu;
+        srv::ServerConfig config; config.backend = engine::core::BackendType::Cpu; config.device = device;
         config.ui_enabled = false; config.max_loaded_models = limit; config.busy_timeout_ms = 0;
         state = std::make_unique<srv::ParallelServerState>(config, root);
         Access::registry(*state, loader);
@@ -278,6 +282,37 @@ struct Fixture {
             quote(task) + ",\"slots\":" + std::to_string(count) + "}");
     }
 };
+
+void per_model_device_selection() {
+    Fixture f(1, 0, 3);
+    auto inherited = f.add("inherited");
+    auto overridden = f.add("overridden");
+    Access::model(*f.state, "overridden").config.device = 7;
+
+    success(run(*f.state, "inherited"));
+    success(run(*f.state, "overridden"));
+    require(inherited->last_device == 3, "model without override did not use the server device");
+    require(overridden->last_device == 7, "model override did not reach SessionOptions");
+
+    srv::HttpRequest list; list.method = "GET"; list.path = "/v1/models";
+    const auto listed = f.state->handle(list);
+    success(listed);
+    const auto data = parse(listed.body).require("data").as_array();
+    require(data.size() == 2 && data[0].require("device").as_number() == 3 &&
+            data[1].require("device").as_number() == 7,
+            "model listing did not expose effective devices: " + listed.body);
+
+    f.asset("replacement");
+    success(f.replace("overridden", "replacement"));
+    require(overridden->last_device == 7,
+            "reloading a configured model without device discarded its assignment");
+
+    const auto invalid = post(*f.state, "/v1/models/load",
+        "{\"id\":\"bad\",\"path\":" + quote((f.root / "replacement").generic_string()) +
+        ",\"family\":\"lifecycle_fixture\",\"device\":-1,\"slots\":1}");
+    require(invalid.status == 400 && invalid.body.find("device for model bad") != std::string::npos,
+            "dynamic load accepted a negative model device: " + invalid.body);
+}
 
 void older_work_before_management(int count, bool reconfigure) {
     Fixture f(count); auto c = f.add("shared"); f.asset("replacement");
@@ -597,6 +632,32 @@ void loading_and_inference_failures_release_ownership(int count) {
     require(result.body.find("replacement") != std::string::npos, "replacement failed to retry consistently");
 }
 
+// A request the session turns away as sent is the caller's to fix: a 400 on
+// the generic routes in either run mode, with the lease released. Any other
+// failure still leaves the handler for the transport's 500.
+void session_request_errors(int count) {
+    Fixture f(count); auto offline = f.add("offline"); auto stream = f.add("stream", "streaming");
+    offline->reject_run = stream->reject_run = true;
+    for (const auto & [path, model] : std::vector<std::pair<std::string, std::string>>{
+             {"/v1/tasks/run", "offline"}, {"/v1/tasks/run", "stream"}, {"/v1/tasks/stream", "stream"}}) {
+        const auto rejected = post(*f.state, path, "{\"model\":" + quote(model) + ",\"text\":\"hi\"}");
+        require(rejected.status == 400 && rejected.body.find("controlled request rejection") != std::string::npos &&
+                rejected.body.find("invalid_request_error") != std::string::npos,
+                path + " on " + model + " answered a rejected request with HTTP " + std::to_string(rejected.status) + ": " + rejected.body);
+        require(Access::slots(*f.state, model).active == 0, path + " on " + model + " kept its lease after a rejected request");
+    }
+    offline->reject_run = false; offline->fail_run = true;
+    bool server_error = false; std::string outcome;
+    try {
+        const auto failed = run(*f.state, "offline");
+        server_error = failed.status == 500; outcome = "HTTP " + std::to_string(failed.status) + ": " + failed.body;
+    } catch (const std::runtime_error & error) {
+        outcome = error.what(); server_error = outcome == "controlled inference failure";
+    }
+    require(server_error, "a failure that is not a rejected request was answered as " + outcome);
+    offline->fail_run = false; success(run(*f.state, "offline"));
+}
+
 void abandoned_deferred_responses_release_ownership(int count) {
     Fixture f(count); f.add("stream", "streaming"); f.add("batch");
     for (const auto & [id, path, body] : std::vector<std::tuple<std::string, std::string, std::string>>{
@@ -726,6 +787,13 @@ void dynamic_capacity_changes_use_parallel_lifecycle() {
         require(rejected, "parallel registration accepted invalid capacity");
         require(Access::resident(*f.state, "shared"), "invalid capacity unloaded an existing model");
     }
+    const auto ordered = post(*f.state, "/v1/models/load",
+        "{\"id\":\"shared\",\"family\":\"lifecycle_fixture\",\"path\":" +
+        quote((f.root / "shared").generic_string()) +
+        ",\"slots\":null,\"load_options\":[]}");
+    require(ordered.status == 400 &&
+            ordered.body.find("model slots must be an integer") != std::string::npos,
+            "parallel registration parsed options before validating capacity");
 }
 
 // An SSE stream's event types in order, its joined text deltas and its final text.
@@ -842,6 +910,230 @@ void live_speech_optional_input(int count) {
     }
 }
 
+// The generic routes read a request `artifacts` array into input_artifacts. The
+// fixture returns its input artifacts as its result's, so a response shows what
+// the session was given, in order, in the JSON shape the request used.
+void generic_request_artifacts(int count) {
+    Fixture f(count); auto offline = f.add("offline"); auto stream = f.add("stream", "streaming");
+    const auto file = f.root / "reply.bin";
+    std::ofstream(file, std::ios::binary) << std::string("\x01\x00\xff", 3);
+    std::vector<std::vector<std::string>> expected{
+        {"turn.question", "custom", "aGVsbG8="}, {"turn.reply", "acoustic_tokens", "AQD/"},
+        {"turn.question", "custom", "d29ybGQ="}};
+    std::string artifacts = "[{\"id\":\"turn.question\",\"kind\":\"custom\",\"payload\":\"aGVsbG8=\","
+        "\"meta\":{\"format\":\"wav\",\"steps\":3}},"
+        "{\"id\":\"turn.reply\",\"kind\":\"acoustic_tokens\",\"path\":" + quote(file.generic_string()) + "},"
+        "{\"id\":\"turn.question\",\"kind\":\"custom\",\"payload\":\"data:audio/wav;base64,d29ybGQ=\"}";
+    // Every kind name a response writes reads back as the same kind.
+    for (const std::string kind : {"speaker_embedding", "style_embedding", "prompt_embedding", "acoustic_tokens",
+                                   "midi", "transcript_alignment", "diarization_state", "vad_state", "custom"}) {
+        artifacts += ",{\"id\":\"kind\",\"kind\":" + quote(kind) + ",\"payload\":\"\"}";
+        expected.push_back({"kind", kind, ""});
+    }
+    artifacts += "]";
+    const auto check = [&](const engine::io::json::Value & result, const std::string & route) {
+        const auto & out = result.require("artifacts").as_array();
+        require(out.size() == expected.size(), route + " returned " + std::to_string(out.size()) + " artifacts");
+        for (size_t i = 0; i < out.size(); ++i) {
+            require(out[i].require("id").as_string() == expected[i][0] &&
+                    out[i].require("kind").as_string() == expected[i][1] &&
+                    out[i].require("payload").as_string() == expected[i][2],
+                    route + " changed artifact " + std::to_string(i));
+        }
+        const auto & meta = out[0].require("meta");
+        require(meta.as_object().size() == 2 && meta.require("format").as_string() == "wav" &&
+                meta.require("steps").as_string() == "3" && out[1].require("meta").as_object().empty(),
+                route + " changed artifact meta");
+    };
+    const auto body = [&](const std::string & model, bool wrapped) {
+        const std::string request = "\"text\":\"hi\",\"artifacts\":" + artifacts;
+        return "{\"model\":" + quote(model) + (wrapped ? ",\"request\":{" + request + "}}" : "," + request + "}");
+    };
+    for (const bool wrapped : {false, true}) {
+        const auto ran = post(*f.state, "/v1/tasks/run", body("offline", wrapped)); success(ran);
+        check(parse(ran.body), "offline /v1/tasks/run");
+        const auto streamed_run = post(*f.state, "/v1/tasks/run", body("stream", wrapped)); success(streamed_run);
+        check(parse(streamed_run.body), "streaming /v1/tasks/run");
+        const auto streamed = post(*f.state, "/v1/tasks/stream", body("stream", wrapped)); success(streamed);
+        check(parse(streamed.body).require("result"), "/v1/tasks/stream");
+    }
+    auto batch = post(*f.state, "/v1/tasks/batch", "{\"model\":\"offline\",\"requests\":[{\"text\":\"hi\",\"artifacts\":" +
+        artifacts + "},{\"text\":\"plain\"}]}");
+    success(batch); Writer writer; batch.stream_body(writer); batch.stream_body = {};
+    int results = 0;
+    for (size_t at = writer.output.find("data: {"); at != std::string::npos; at = writer.output.find("data: {", at + 1)) {
+        const auto event = parse(writer.output.substr(at + 6, writer.output.find("\n\n", at) - at - 6));
+        if (event.require("type").as_string() != "task.batch.result") { continue; }
+        ++results;
+        const auto & result = event.require("result");
+        if (event.require("index").as_i64() == 0) { check(result, "/v1/tasks/batch"); }
+        else { require(result.find("artifacts") == nullptr, "batch request without artifacts got some"); }
+    }
+    require(results == 2, "batch with artifacts returned " + std::to_string(results) + " results");
+    require(run(*f.state, "offline").body.find("\"artifacts\"") == std::string::npos,
+            "request without artifacts returned some");
+    const int offline_runs = offline->runs, stream_runs = stream->runs;
+    for (const auto & [bad, message] : std::vector<std::pair<std::string, std::string>>{
+        {"{\"id\":\"x\"}", "artifacts must be an array of artifact objects"},
+        {"[{\"id\":\"x\",\"kind\":\"tokens\",\"payload\":\"\"}]", "artifacts[0] (x): unknown kind 'tokens'"},
+        {"[{\"id\":\"x\",\"kind\":\"custom\",\"payload\":\"%%\"}]", "artifacts[0] (x): payload is not valid base64"},
+        {"[{\"id\":\"x\",\"kind\":\"custom\",\"path\":" + quote((f.root / "missing.bin").generic_string()) + "}]",
+         "artifacts[0] (x): path is not a regular file"}}) {
+        for (const auto & [path, request] : std::vector<std::pair<std::string, std::string>>{
+            {"/v1/tasks/run", "{\"model\":\"offline\",\"artifacts\":" + bad + "}"},
+            {"/v1/tasks/run", "{\"model\":\"stream\",\"request\":{\"artifacts\":" + bad + "}}"},
+            {"/v1/tasks/stream", "{\"model\":\"stream\",\"request\":{\"artifacts\":" + bad + "}}"},
+            {"/v1/tasks/batch", "{\"model\":\"offline\",\"requests\":[{\"text\":\"hi\"},{\"artifacts\":" + bad + "}]}"}}) {
+            const auto rejected = post(*f.state, path, request);
+            require(rejected.status == 400 && rejected.body.find(message) != std::string::npos &&
+                    rejected.body.find("invalid_request_error") != std::string::npos,
+                    path + " did not reject artifacts " + bad + ": HTTP " + std::to_string(rejected.status) + " " + rejected.body);
+        }
+    }
+    require(offline->runs == offline_runs && stream->runs == stream_runs, "rejected artifacts reached the model");
+    for (const std::string id : {"offline", "stream"}) {
+        require(Access::slots(*f.state, id).active == 0, id + " left its lease held after artifact requests");
+    }
+}
+
+// With a top-level "stream_format":"sse", /v1/tasks/stream writes each event
+// as the model produces it, as the object the JSON response puts in "events",
+// then the JSON response's "result" and [DONE]. Without the field, or with
+// null, the response is the JSON body. The fixture counts finalize calls, so a
+// writer that records the count at each write shows when an event left.
+void generic_task_stream_sse(int count) {
+    Fixture f(count); auto c = f.add("stream", "streaming");
+    const auto active = [&] { return Access::slots(*f.state, "stream").active; };
+    const auto body = [](const std::string & fields, bool wrapped) {
+        const std::string request = "\"text\":\"hi\",\"artifacts\":[{\"id\":\"turn.reply\",\"kind\":\"acoustic_tokens\","
+            "\"payload\":\"AQD/\",\"meta\":{\"steps\":\"3\"}}]";
+        return "{\"model\":\"stream\"" + fields + (wrapped ? ",\"request\":{" + request + "}}" : "," + request + "}");
+    };
+    const std::string sse = ",\"stream_format\":\"sse\"";
+    const auto stream = [&](const std::string & body_text) { return post(*f.state, "/v1/tasks/stream", body_text); };
+    // The JSON body's event and result as text: a parse and stringify round
+    // trip reorders object keys, so comparisons use the bytes as written.
+    const auto json_parts = [](const srv::HttpResponse & response) {
+        const std::string events = "{\"events\":[", result = "],\"result\":";
+        const auto end = response.body.find(result);
+        require(response.status == 200 && response.content_type == "application/json" && !response.stream_body &&
+                response.body.rfind(events, 0) == 0 && end != std::string::npos,
+                "task stream did not answer its JSON body: HTTP " + std::to_string(response.status) + " " + response.body);
+        const auto from = end + result.size();
+        return std::make_pair(response.body.substr(events.size(), end - events.size()),
+                              response.body.substr(from, response.body.size() - from - 1));
+    };
+    const auto without_ttft = [](std::string json) {
+        const std::string key = "\"ttft_ms\":";
+        const auto at = json.find(key);
+        require(at != std::string::npos, "task stream result has no ttft_ms: " + json);
+        json.erase(at + key.size(), json.find_first_of(",}", at + key.size()) - at - key.size());
+        return json;
+    };
+    struct Recorder final : srv::HttpStreamWriter {
+        explicit Recorder(std::shared_ptr<Control> counted) : control(std::move(counted)) {}
+        void write(std::string_view s) override { writes.emplace_back(control->finishes.load(), std::string(s)); }
+        std::shared_ptr<Control> control;
+        std::vector<std::pair<int, std::string>> writes;
+    };
+    for (const bool wrapped : {false, true}) {
+        const auto [event, result] = json_parts(stream(body("", wrapped)));
+        require(json_parts(stream(body(",\"stream_format\":null", wrapped))).first == event,
+                "a null stream_format changed the task stream's JSON events");
+        auto response = stream(body(sse, wrapped)); success(response);
+        const auto buffering = response.headers.find("X-Accel-Buffering");
+        require(response.content_type == "text/event-stream; charset=utf-8" && bool(response.stream_body) &&
+                response.body.empty() && buffering != response.headers.end() && buffering->second == "no",
+                "task stream with sse did not answer an event stream: " + response.content_type);
+        require(active() == 1, "task stream with sse did not hold its slot before the headers");
+        Recorder writer(c); const int before = c->finishes;
+        response.stream_body(writer);
+        require(active() == 1, "task stream callback released the slot its owner holds");
+        response.stream_body = {}; // transport drops the callback at exchange end
+        require(active() == 0, "task stream with sse leaked its slot");
+        require(writer.writes.size() == 3, "task stream with sse wrote " + std::to_string(writer.writes.size()) + " times");
+        require(writer.writes[0].second == "data: {\"type\":\"task.stream.event\",\"event\":" + event + "}\n\n",
+                "task stream event is not the JSON response's: " + writer.writes[0].second);
+        const std::string done_key = "data: {\"type\":\"task.stream.done\",\"result\":", done_end = "}\n\n";
+        const auto & done = writer.writes[1].second;
+        require(done.size() > done_key.size() + done_end.size() && done.rfind(done_key, 0) == 0 &&
+                done.compare(done.size() - done_end.size(), done_end.size(), done_end) == 0,
+                "task stream done line: " + done);
+        const auto streamed = done.substr(done_key.size(), done.size() - done_key.size() - done_end.size());
+        require(without_ttft(streamed) == without_ttft(result), "task stream result is not the JSON response's: " + streamed);
+        const auto parsed = parse(streamed);
+        const auto & artifacts = parsed.require("artifacts").as_array();
+        require(parsed.require("timing").require("ttft_ms").is_number() && artifacts.size() == 1 &&
+                artifacts[0].require("id").as_string() == "turn.reply" && artifacts[0].require("payload").as_string() == "AQD/",
+                "task stream done event lost the result's timing or artifacts: " + streamed);
+        require(writer.writes[2].second == "data: [DONE]\n\n", "task stream did not end with [DONE]");
+        require(writer.writes[0].first == before && writer.writes[1].first == before + 1,
+                "task stream wrote its event after the run was over");
+    }
+    // Only the top-level field of this route opts in: not the Accept header,
+    // not a field inside `request`, not the field on /v1/tasks/run.
+    srv::HttpRequest accept; accept.method = "POST"; accept.path = "/v1/tasks/stream"; accept.body = body("", true);
+    accept.headers["content-type"] = "application/json"; accept.headers["accept"] = "text/event-stream";
+    (void)json_parts(f.state->handle(accept));
+    (void)json_parts(stream("{\"model\":\"stream\",\"request\":{\"text\":\"hi\",\"stream_format\":\"sse\"}}"));
+    const auto ran = post(*f.state, "/v1/tasks/run", body(sse, true)); success(ran);
+    require(ran.content_type == "application/json" && !ran.stream_body && parse(ran.body).find("artifacts") != nullptr,
+            "/v1/tasks/run read stream_format: " + ran.body);
+    // Errors found before the headers keep their status.
+    const int runs = c->runs;
+    for (const std::string value : {"\"audio\"", "\"SSE\"", "\"\"", "1", "true", "{}", "[]"}) {
+        const auto rejected = stream(body(",\"stream_format\":" + value, true));
+        require(rejected.status == 400 && !rejected.stream_body &&
+                rejected.body.find("task stream stream_format must be sse") != std::string::npos &&
+                rejected.body.find("invalid_request_error") != std::string::npos,
+                "task stream took stream_format " + value + ": HTTP " + std::to_string(rejected.status) + " " + rejected.body);
+    }
+    const auto malformed = [&](const std::string & fields) {
+        return stream("{\"model\":\"stream\"" + fields + ",\"request\":{\"artifacts\":{\"id\":\"x\"}}}");
+    };
+    const auto json_rejected = malformed(""), sse_rejected = malformed(sse);
+    require(json_rejected.status == 400 && sse_rejected.status == 400 && !sse_rejected.stream_body &&
+            sse_rejected.body == json_rejected.body,
+            "task stream with sse answered malformed artifacts differently: " + sse_rejected.body);
+    require(c->runs == runs && active() == 0, "a rejected task stream reached the model or kept its slot");
+    // The slot is bound before the headers, so a busy model is still a 503.
+    std::vector<srv::HttpResponse> held;
+    for (int i = 0; i < count; ++i) {
+        held.push_back(stream(body(sse, true)));
+        require(bool(held.back().stream_body), "task stream with sse did not stream");
+    }
+    require(active() == count, "unstarted task streams did not hold every slot");
+    const auto busy = stream(body(sse + ",\"busy_timeout_ms\":50", true));
+    require(busy.status == 503 && !busy.stream_body && busy.body.find("server_busy") != std::string::npos,
+            "task stream with sse on a busy model answered HTTP " + std::to_string(busy.status) + " " + busy.body);
+    held.clear();
+    require(active() == 0, "dropped task streams kept their slots");
+    // After the headers a failure leaves the callback for the transport's
+    // error event, and a write to a closed connection stops the run.
+    std::string error;
+    c->reject_run = true;
+    auto rejected = stream(body(sse, true)); success(rejected);
+    require(bool(rejected.stream_body), "task stream with sse did not stream");
+    Writer silent;
+    try { rejected.stream_body(silent); } catch (const rt::InvalidRequestError & e) { error = e.what(); }
+    rejected.stream_body = {};
+    require(error == "controlled request rejection" && silent.output.empty() && active() == 0,
+            "a task stream the model turned away ended with '" + error + "' after: " + silent.output);
+    c->reject_run = false;
+    auto dropped = stream(body(sse, true)); success(dropped);
+    require(bool(dropped.stream_body), "task stream with sse did not stream");
+    Writer gone; gone.disconnected = true; error.clear();
+    const int before = c->finishes;
+    try { dropped.stream_body(gone); } catch (const std::runtime_error & e) { error = e.what(); }
+    dropped.stream_body = {};
+    require(error == "client disconnected" && c->finishes == before && active() == 0,
+            "a task stream to a closed connection ended with '" + error + "' and kept running or kept its slot");
+    auto abandoned = stream(body(sse, true));
+    require(bool(abandoned.stream_body) && active() == 1, "unstarted task stream did not own its slot");
+    abandoned = {}; // Dropped without invoking the callback.
+    require(active() == 0, "unstarted task stream leaked its slot");
+}
+
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
@@ -858,6 +1150,7 @@ int main(int argc, char ** argv) {
         registration_is_visible_while_loading();
         live_policy_does_not_hold_registry_lock();
         concurrent_json_parsing();
+        per_model_device_selection();
         unsupported_capacity_preserves_registration();
         dynamic_capacity_changes_use_parallel_lifecycle();
         generic_batch_single_slot_and_invalid_input();
@@ -876,15 +1169,19 @@ int main(int argc, char ** argv) {
             if (count > 1) { generic_batches_hold_independent_slots(count); }
             rejected_preparation_releases_lease(count);
             loading_and_inference_failures_release_ownership(count);
+            session_request_errors(count);
             abandoned_deferred_responses_release_ownership(count);
             overlapping_bulk_operations(count);
             bulk_publication_excludes_only_other_bulk_calls(count);
             guarded_loading_does_not_block_warm_model(count);
             live_speech_return_text(count);
             live_speech_optional_input(count);
+            generic_request_artifacts(count);
+            generic_task_stream_sse(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"
-                         " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input\n";
+                         " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input,"
+                         " request artifacts, task stream SSE\n";
         }
     } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
 }

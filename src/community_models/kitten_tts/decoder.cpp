@@ -1018,6 +1018,10 @@ KittenStyleTTS2DecoderRuntime::KittenStyleTTS2DecoderRuntime(std::shared_ptr<con
 
 KittenStyleTTS2DecoderRuntime::~KittenStyleTTS2DecoderRuntime() = default;
 
+void KittenStyleTTS2DecoderRuntime::set_seed(uint64_t seed) {
+    impl_->rng_seed = seed;
+}
+
 void KittenStyleTTS2DecoderRuntime::prepare(KittenStyleTTS2DecoderCapacityContract contract) { impl_->prepare(contract); }
 
 std::vector<float> KittenStyleTTS2DecoderRuntime::decode(const PredictorOutputs &predictor, const std::vector<float> &ref_s) {

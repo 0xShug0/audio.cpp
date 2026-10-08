@@ -5,8 +5,8 @@ OmniVoice supports multilingual TTS, voice cloning, voice design, non-verbal tag
 | Route | Task | Mode | Inputs |
 |---|---|---|---|
 | Auto voice | `tts` | `offline`, `streaming` | `--text` |
-| Voice clone | `tts` | `offline`, `streaming` | `--text`, `--voice-ref`, optional `--reference-text` |
-| Voice design | `tts` | `offline`, `streaming` | `--text`, `--instruct` |
+| Voice clone | `tts`, `clon` | `offline`, `streaming` | `--text`, `--voice-ref`, optional `--reference-text` |
+| Voice design | `tts`, `vdes` | `offline`, `streaming` | `--text`, `--instruct` |
 
 ## Model Layout
 
@@ -37,6 +37,9 @@ Auto voice:
 ```bash
 audiocpp_cli --task tts --family omnivoice --model /path/to/OmniVoice --backend cuda --text "Hello from OmniVoice." --out out.wav
 ```
+
+`clon` and `vdes` are aliases to the same synthesis implementation. Route
+selection does not add or remove input requirements.
 
 ## Streaming CLI
 
@@ -107,7 +110,7 @@ The SSE stream emits `speech.audio.delta` events followed by `speech.audio.done`
 | `--guidance-scale` | float | `2.0` | Decoder CFG strength. |
 | `--seed` | unsigned 32-bit integer | random session RNG | Generation seed; omitted requests continue the session RNG state. |
 
-The corresponding request-option names are `reference_text`, `instruction`,
+The corresponding request-option names are `reference_text`, `instruct`,
 `language`, `text_chunk_size`, `text_chunk_mode`, `num_inference_steps`,
 `guidance_scale`, and `seed`.
 
@@ -137,8 +140,8 @@ Arena and weight-context sizes are in MiB.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `omnivoice.mem_saver` | bool | `false` | Release staged generator and audio-tokenizer runtime graphs after request phases to reduce resident VRAM. Later requests may rebuild released graphs. |
-| `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Opt-in generator attention mode. `off` keeps the exact-safe path; `flash_attention` can improve CUDA throughput with small output drift. |
+| `omnivoice.mem_saver` | bool | `false` | Release staged runtime graphs after request phases; default false. Cannot be combined with perf_mode=flash_attention. |
+| `omnivoice.perf_mode` | `off`, `flash_attention` | `off` | Generator performance mode; default off keeps the exact-safe attention path. flash_attention requires mem_saver=false. |
 | `omnivoice.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Generator weight storage fallback. |
 | `omnivoice.generator_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | inherits `weight_type` | Explicit generator weight storage override. |
 | `omnivoice.audio_tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Runtime storage type for audio tokenizer weights. |

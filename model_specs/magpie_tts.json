@@ -48,7 +48,7 @@
       {
         "name": "voice_id",
         "type": "enum",
-        "description": "Packaged MagpieTTS voice name; default Aria.",
+        "description": "Packaged MagpieTTS voice name; default Aria. Numeric speaker index strings are also accepted within the checkpoint speaker count.",
         "values": [
           "Aria",
           "Jason",

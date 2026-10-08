@@ -48,11 +48,11 @@ audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
-| `intelligibility_guidance_scale` | float | `0.7` | CFG strength for source-content intelligibility. |
-| `similarity_guidance_scale` | float | `0.7` | CFG strength for target-speaker similarity. |
+| `duration_scale` | float > 0 | `1.0` | Currently parsed and validated but does not affect V2 duration. Legacy `length_adjust` remains accepted. |
+| `intelligibility_guidance_scale` | float | `0.7` | V2 classifier-free guidance scale for source-content intelligibility; default 0.7. Any finite value is accepted and used in V2 guidance arithmetic. |
+| `similarity_guidance_scale` | float | `0.7` | V2 classifier-free guidance scale for target-speaker similarity; default 0.7. Any finite value is accepted and used in V2 guidance arithmetic. |
 | `voice_anonymization` | bool | `false` | Use randomized voice conditioning instead of target-speaker conditioning. |
-| `noise_path` | path | empty | Optional deterministic noise input for validation. |
+| `noise_file` | path | empty | Optional deterministic noise input for validation. Legacy `noise_path` remains accepted. |
 
 ## V1 Whisper + BigVGAN Voice Conversion
 
@@ -82,8 +82,8 @@ audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
-| `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
+| `duration_scale` | float > 0 | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
+| `inference_guidance_scale` | float | `0.7` | V1 classifier-free guidance scale; default 0.7. Any finite value is accepted; V1 disables CFG for nonpositive values. |
 
 ## V1 XLSR + HiFT Voice Conversion
 
@@ -113,8 +113,8 @@ audiocpp_cli --task vc --family seed_vc --model models/SeedVC-MLX --backend cuda
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
-| `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
+| `duration_scale` | float > 0 | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
+| `inference_guidance_scale` | float | `0.7` | V1 classifier-free guidance scale; default 0.7. Any finite value is accepted; V1 disables CFG for nonpositive values. |
 
 ## V1 Singing Voice Conversion
 
@@ -144,8 +144,8 @@ audiocpp_cli --task svc --family seed_vc --model models/SeedVC-MLX --backend cud
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `length_adjust` | float | `1.0` | Stretch or compress generated duration. |
-| `inference_guidance_scale` | float | `0.7` | V1 CFM guidance strength. |
+| `duration_scale` | float > 0 | `1.0` | Stretch or compress generated duration. Legacy `length_adjust` remains accepted. |
+| `inference_guidance_scale` | float | `0.7` | V1 classifier-free guidance scale; default 0.7. Any finite value is accepted; V1 disables CFG for nonpositive values. |
 | `f0_condition` | bool | `true` | Enable F0-conditioned conversion. |
 | `auto_f0_adjust` | bool | `false` | Automatically adjust F0 when F0 conditioning is enabled. |
 | `semitone_shift` | integer | `0` | Shift pitch by semitones when F0 conditioning is enabled. |
@@ -174,5 +174,5 @@ The schema-v1 option names are the preferred names. Existing local requests usin
 | `intelligibility_cfg_rate` | `intelligibility_guidance_scale` |
 | `similarity_cfg_rate` | `similarity_guidance_scale` |
 | `anonymization_only` | `voice_anonymization` |
-| `noise_file` | `noise_path` |
+| `noise_path` | `noise_file` |
 | `semi_tone_shift` | `semitone_shift` |

@@ -5,7 +5,22 @@ facade over `engine::runtime` and adds no behaviour of its own: every call maps
 onto `ModelRegistry` → `ILoadedVoiceModel` → `IVoiceTaskSession`, the same
 surfaces `audiocpp_cli` uses.
 
-It is off by default.
+It is off by default in source builds. Releases provide separate
+`audio-<tag>-lib-<platform>-<backend>` archives, alongside the existing binary
+archives. Each library archive contains `include/audiocpp.h`, `libs/`, and the
+license. Windows archives include `audiocpp.lib` for linking. Choose the archive
+for your platform and backend: CPU, CUDA, Vulkan, or Metal. Keep bundled shared
+dependencies beside the library in `libs/`; GPU drivers and the Vulkan loader
+must be installed on the host. The server-only Colab bundle is unchanged.
+Dynamic backend plugins are discovered beside the C API library on Linux,
+macOS, and Windows, independently of the application's working directory.
+
+CUDA libraries for Linux (12.8 and 13.3) and Windows use a separate matching
+`audio-<tag>-cudart-<platform>-cuda<version>` archive. Extract its contents into
+the library package's `libs/` directory, or make that runtime directory available
+to the system loader. The NVIDIA driver is not bundled.
+Windows Vulkan also has a separate baseline `vulkan-portable` package for CPUs
+without AVX/AVX2; the existing Vulkan package is unchanged.
 
 ```bash
 cmake -S . -B build -DAUDIOCPP_BUILD_C_API=ON
@@ -148,7 +163,9 @@ speaker reference (`audiocpp_request_set_voice_id` /
 `..._set_energy_scale`, `..._set_style_tag`), and input artifacts
 (`audiocpp_request_add_artifact`). Results expose the matching outputs,
 including artifacts, so a speaker embedding can be read out of one result and
-fed back into a later request instead of being re-derived.
+fed back into a later request instead of being re-derived. The server's generic
+task routes and the CLI request JSON carry artifacts the same way, as an
+`artifacts` array (see the [server docs](../app/server/README.md#post-v1tasksrun)).
 
 ## Discovering what a model accepts
 
@@ -166,9 +183,12 @@ for (size_t i = 0; i < count; ++i) {
 }
 ```
 
-Bounds come through too, so generated wrappers can validate rather than just
-pass values along — Sortformer's `speaker_threshold` reports `[0, 1]`, Kokoro's
-`text_chunk_size` reports a minimum of 32.
+Bounds are read-only discovery metadata; returning `min_value` and `max_value`
+does not enforce them on requests. They can guide controls and input hints, but
+are not a complete validation contract. Read `description` for excluded
+endpoints and conditional constraints, such as a temperature that must be
+`> 0` only when sampling is enabled. Model parsers and consumers enforce actual
+values. See [option metadata](maintainers/model_specs.md#metadata-vs-runtime-loading).
 
 This is what keeps the ABI independent of the model surface: the option maps are
 `string -> string` in the framework already, so **adding a model family never

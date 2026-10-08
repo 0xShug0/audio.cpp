@@ -12,6 +12,7 @@
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/registry.h"
@@ -53,7 +54,7 @@ void print_task_list_help() {
         << "audiocpp_cli --task <task> --family <family> --model <path> --backend <backend> [options]\n"
         << "  Global:\n"
         << "    --version  Print build version, commit, compiler, platform, and enabled backends\n"
-        << "    --task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc|midi\n"
+        << "    --task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc|midi|wake|cls\n"
         << "    --family <name>\n"
         << "    --model <path>\n"
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
@@ -62,11 +63,13 @@ void print_task_list_help() {
         << "    --list-devices  List available backend devices and exit\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
         << "    --registry-config <path>\n"
-        << "    --model-spec-override <json-or-directory>  Override package-spec resolution\n"
+        << "    --model-spec-override <json-or-directory|embedded>  Select a spec file/directory or the GGUF's embedded spec\n"
         << "    --config <id>\n"
         << "    --weight <id>\n"
         << "    --log  Stream framework progress and timing logs to stdout\n"
         << "    --log-file <path>  Stream framework progress and timing logs to a file\n"
+        << "    --load-progress 0|1  with --log/--log-file, emit model-load progress keys\n"
+        << "                (runtime.load.phase, <store>.weights.upload_progress); default 0\n"
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
@@ -153,7 +156,7 @@ void print_task_list_help() {
         << "    --vad-chunk-padding-seconds <float>  Pad each VAD span before chunking, default 0.25\n"
         << "    --turns-out <json>\n"
         << "    --words-out <json>\n"
-        << "    --voice-state-out <safetensors>  Export PocketTTS voice state from --voice-ref\n"
+        << "    --voice-state-out <safetensors>  Export a prepared voice state when supported by the model\n"
         << "  Streaming:\n"
         << "    --mode streaming uses the selected model's default streaming policy\n"
         << "  Utility:\n"
@@ -174,7 +177,9 @@ void print_task_list_help() {
         << "    vdes   voice design\n"
         << "    spk    speaker embedding/recognition\n"
         << "    svc    singing voice conversion\n"
-        << "    midi   audio-to-symbolic MIDI/event transcription\n";
+        << "    midi   audio-to-symbolic MIDI/event transcription\n"
+        << "    wake   wake-word detection\n"
+        << "    cls    audio classification\n";
 }
 
 void print_option_group(const char * title, const std::vector<engine::runtime::CliOptionInfo> & options) {
@@ -204,7 +209,7 @@ bool model_supports_task(const engine::runtime::ModelInspection & inspection, en
 }
 
 void print_model_common_options(const engine::runtime::ModelInspection & inspection) {
-    std::cout << "  Available input options:\n";
+    std::cout << "  Common input options (not all options apply to every model; see the model-specific documentation):\n";
     if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::AudioGeneration)) {
         std::cout
             << "    --text <text>\n"
@@ -272,6 +277,8 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
     }
     if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::Asr) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::Vad) ||
+        model_supports_task(inspection, engine::runtime::VoiceTaskKind::WakeWord) ||
+        model_supports_task(inspection, engine::runtime::VoiceTaskKind::AudioClassification) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::Diarization) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::SourceSeparation) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::Midi) ||
@@ -543,6 +550,9 @@ void run_streaming(
     minitts::cli::PartialTextRenderer partial_renderer(stdout_is_terminal());
     const minitts::app::StreamEventSink sink =
         [&](const engine::runtime::StreamEvent & event) {
+            if (event.partial_text_snapshot.has_value()) {
+                std::cout << partial_renderer.render_snapshot(event.partial_text_snapshot->text) << std::flush;
+            }
             if (event.partial_text.has_value()) {
                 // Flushed so a live source's partials appear as they are produced rather than
                 // when the stdio buffer happens to fill.
@@ -641,6 +651,15 @@ int audiocpp_cli_main(int argc, char ** argv) {
             has_arg(argc, argv, "--log") || log_file.has_value(),
             log_file,
         });
+        // Opt-in model-load progress reporting (runtime.load.phase,
+        // <store>.weights.upload_progress). Default off so the log for
+        // existing downstream pipelines is unchanged.
+        if (const auto load_progress = find_arg(argc, argv, "--load-progress")) {
+            if (*load_progress != "0" && *load_progress != "1") {
+                throw std::runtime_error("--load-progress expects 0 or 1");
+            }
+            engine::core::set_load_progress_enabled(*load_progress == "1");
+        }
         const bool metrics_requested = has_arg(argc, argv, "--metrics");
         if (has_arg(argc, argv, "--version")) {
             minitts::app::print_build_info(std::cout);
@@ -839,6 +858,9 @@ int audiocpp_cli_main(int argc, char ** argv) {
         const auto wav_options = wav_write_options_from_cli(argc, argv);
         auto model = registry.load(load_request);
         auto session = model->create_task_session(task_spec, session_options);
+        // The weight stores uploaded during session construction: close the
+        // load-progress bracket opened by registry.load (see finish_model_load_trace).
+        engine::runtime::finish_model_load_trace();
         const auto voice_state_out = optional_path_arg(argc, argv, "--voice-state-out");
         const auto text_out = optional_path_arg(argc, argv, "--text-out");
         const auto words_out = optional_path_arg(argc, argv, "--words-out");
@@ -932,18 +954,14 @@ int audiocpp_cli_main(int argc, char ** argv) {
             request.options["return_timestamps"] = "true";
         }
         if (voice_state_out.has_value()) {
-            if (session->family() != "pocket_tts") {
-                throw std::runtime_error("--voice-state-out is only supported by PocketTTS");
-            }
-            if (task_spec.task != engine::runtime::VoiceTaskKind::Tts) {
-                throw std::runtime_error("--voice-state-out requires --task tts");
-            }
-            request.options["pocket_tts.export_voice_state_path"] = voice_state_out->string();
+            request.options["export_voice_state_file"] = voice_state_out->string();
         }
         require_known_args(argc, argv);
         const auto session_start = std::chrono::steady_clock::now();
         session->prepare(engine::runtime::build_preparation_request(request));
         if (voice_state_out.has_value()) {
+            engine::debug::timing_log_scalar(
+                "session.wall_ms", duration_ms(std::chrono::steady_clock::now() - session_start));
             std::cout << "family=" << session->family() << "\n";
             std::cout << "voice_state_out=" << voice_state_out->string() << "\n";
             return 0;

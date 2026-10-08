@@ -203,7 +203,8 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_asr_weights(
     engine::assets::TensorStorageType encoder_storage_type,
     engine::assets::TensorStorageType decoder_storage_type,
     engine::assets::TensorStorageType conv_storage_type,
-    size_t weight_context_bytes) {
+    size_t weight_context_bytes,
+    bool include_decoder) {
     const auto start = Clock::now();
     auto weights = std::make_shared<MoonshineWeights>();
     weights->store = std::make_shared<engine::core::BackendWeightStore>(
@@ -253,8 +254,10 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_asr_weights(
     }
     weights->encoder.final_norm = load_encoder_layer_norm(*weights->store, source, "model.encoder.final_norm", enc.hidden_size);
 
-    weights->decoder.token_embedding =
-        weights->store->load_tensor(source, "model.decoder.embed_tokens.weight", decoder_storage_type, {dec.vocab_size, dec.hidden_size});
+    if (include_decoder) {
+        weights->decoder.token_embedding = weights->store->load_tensor(
+            source, "model.decoder.embed_tokens.weight", decoder_storage_type, {dec.vocab_size, dec.hidden_size});
+    }
     weights->decoder.position_embedding =
         weights->store->load_f32_tensor(source, "model.decoder.pos_emb.weight", {dec.max_position_embeddings, enc.hidden_size});
     if (source.has_tensor("model.decoder.proj.weight")) {
@@ -268,22 +271,24 @@ std::shared_ptr<const MoonshineWeights> load_moonshine_asr_weights(
                 enc.hidden_size,
                 false);
     }
-    weights->decoder.layers.reserve(static_cast<size_t>(dec.layers));
-    for (int64_t i = 0; i < dec.layers; ++i) {
-        weights->decoder.layers.push_back(load_decoder_layer(*weights->store, source, dec, i, decoder_storage_type));
+    if (include_decoder) {
+        weights->decoder.layers.reserve(static_cast<size_t>(dec.layers));
+        for (int64_t i = 0; i < dec.layers; ++i) {
+            weights->decoder.layers.push_back(load_decoder_layer(*weights->store, source, dec, i, decoder_storage_type));
+        }
+        weights->decoder.norm =
+            binding::norm_weight_from_source(*weights->store, source, "model.decoder.norm", dec.hidden_size);
+        const std::string head = source.has_tensor("proj_out.weight") ? "proj_out" : "model.proj_out";
+        weights->decoder.output_projection =
+            binding::linear_from_source(
+                *weights->store,
+                source,
+                head,
+                decoder_storage_type,
+                dec.vocab_size,
+                dec.hidden_size,
+                false);
     }
-    weights->decoder.norm =
-        binding::norm_weight_from_source(*weights->store, source, "model.decoder.norm", dec.hidden_size);
-    const std::string head = source.has_tensor("proj_out.weight") ? "proj_out" : "model.proj_out";
-    weights->decoder.output_projection =
-        binding::linear_from_source(
-            *weights->store,
-            source,
-            head,
-            decoder_storage_type,
-            dec.vocab_size,
-            dec.hidden_size,
-            false);
     weights->store->upload();
     debug::timing_log_scalar("moonshine_asr.weights_load_ms", engine::debug::elapsed_ms(start, Clock::now()));
     return weights;

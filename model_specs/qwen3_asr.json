@@ -69,14 +69,14 @@
       {
         "name": "return_timestamps",
         "type": "bool",
-        "description": "Return word-level timestamps by running Qwen3 ForcedAligner after ASR; default false and requires forced_aligner_path when enabled.",
+        "description": "Return word-level timestamps by running Qwen3 ForcedAligner after ASR; default false and requires forced_aligner_path when enabled. Offline only; streaming rejects true even when an aligner is configured.",
         "required": false,
         "default": false
       },
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Audio chunking mode; default auto uses fixed chunks normally and VAD chunks when timestamps are requested.",
+        "description": "Audio chunking mode; default auto uses fixed chunks normally and VAD chunks when timestamps are requested. Offline only; streaming uses fixed-duration windows regardless of this selection.",
         "values": [
           "auto",
           "fixed",
@@ -89,7 +89,7 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Maximum audio chunk duration in seconds; default 30 for transcription and 15 when timestamps or VAD chunking are used.",
+        "description": "Maximum audio chunk duration in seconds; must be > 0 when chunking or streaming. Ignored with audio_chunk_mode=none offline. Default 30 for streaming and offline transcription, or 15 for offline timestamps/VAD chunking.",
         "required": false,
         "min": 0
       },
@@ -116,7 +116,7 @@
         "required": false
       },
       {
-        "name": "vad_path",
+        "name": "vad_model_path",
         "type": "path",
         "description": "Optional Silero VAD model path for VAD chunking; default assets/framework/models/silero_vad.",
         "required": false,
@@ -194,7 +194,7 @@
       "Stream"
     ],
     "docs": [
-      "docs/models/qwen3.md",
+      "docs/models/qwen3_asr.md",
       "docs/asr.md",
       "docs/gguf.md"
     ]

@@ -32,34 +32,29 @@
       {
         "name": "max_tokens",
         "type": "int",
-        "description": "Maximum generated speech tokens; otherwise the official 2x-to-20x text-token bounds are used.",
+        "description": "Maximum generated speech tokens; otherwise the official 2x-to-20x text-token bounds are used. Nonpositive values select the automatic text-derived budget.",
         "required": false,
-        "min": 0,
         "default": 0
       },
       {
         "name": "temperature",
         "type": "float",
-        "description": "Speech-token temperature; official default 1.0.",
+        "description": "Speech-token temperature; official default 1.0. Nonpositive values select greedy decoding.",
         "required": false,
-        "min": 0.0,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "top_k",
         "type": "int",
-        "description": "Speech-token top-k; official default 25.",
+        "description": "Speech-token top-k; official default 25. Nonpositive values disable top-k filtering.",
         "required": false,
-        "min": 0,
         "default": 25
       },
       {
         "name": "top_p",
         "type": "float",
-        "description": "Speech-token nucleus threshold; official default 0.8.",
+        "description": "Speech-token nucleus threshold; official default 0.8. Out-of-range values are not rejected by the parser.",
         "required": false,
-        "min": 0.0,
-        "max": 1.0,
         "default": 0.8
       },
       {
@@ -80,18 +75,17 @@
       {
         "name": "flow_guidance_scale",
         "type": "float",
-        "description": "Flow classifier-free guidance rate; defaults to model config, usually official default 0.7.",
-        "required": false,
-        "min": 0.0
+        "description": "Flow classifier-free guidance rate; defaults to model config, usually official default 0.7. Negative values are accepted and enter the CFG formula.",
+        "required": false
       },
       {
-        "name": "flow_noise_path",
+        "name": "flow_noise_file",
         "type": "path",
         "description": "Optional raw float32 initial Flow noise for parity tests.",
         "required": false
       },
       {
-        "name": "hift_source_random_path",
+        "name": "hift_source_random_file",
         "type": "path",
         "description": "Optional raw float32 HiFT phase-uniform and Gaussian values for parity tests.",
         "required": false
@@ -252,7 +246,7 @@
       "GGUF"
     ],
     "docs": [
-      "docs/community_models/glm_tts.md",
+      "docs/models/glm_tts.md",
       "docs/reports/glm_tts_validation.md",
       "docs/gguf.md"
     ]

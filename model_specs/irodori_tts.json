@@ -11,7 +11,8 @@
     "design"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "ja"
@@ -27,6 +28,14 @@
   "options": {
     "request": [
       {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Codec latent frames per streaming audio event; default 12 (0.48 seconds at 25 Hz).",
+        "required": false,
+        "min": 1,
+        "default": 12
+      },
+      {
         "name": "language",
         "type": "string",
         "description": "Text language code; Irodori-TTS supports Japanese only.",
@@ -34,9 +43,9 @@
         "default": "ja"
       },
       {
-        "name": "instruction",
+        "name": "instruct",
         "type": "string",
-        "description": "Natural-language voice or style instruction describing target voice identity, style, or emotion; supported only by caption-conditioned checkpoints. Legacy caption is accepted as an alias.",
+        "description": "Natural-language voice or style instruction describing target voice identity, style, or emotion; supported only by caption-conditioned checkpoints. Legacy instruction and caption are accepted as aliases.",
         "required": false
       },
       {
@@ -45,6 +54,33 @@
         "description": "Use no-reference generation; default true unless a speaker reference is provided.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "speaker_embedding_file",
+        "type": "path",
+        "description": "Speaker Inversion embedding (*.speaker.safetensors written by Irodori-TTS training) used as the speaker condition instead of reference audio; use it with the base checkpoint it was trained on. Cannot be combined with reference audio or no_ref=true.",
+        "required": false
+      },
+      {
+        "name": "reference_duration_sec",
+        "type": "float",
+        "description": "Trim reference audio to its first reference_duration_sec seconds before encoding it, as Python Irodori-TTS does; default is the checkpoint's ref_max_seconds (30 when it has none); 0 keeps the whole reference.",
+        "required": false,
+        "min": 0.0
+      },
+      {
+        "name": "t_schedule_mode",
+        "type": "string",
+        "description": "RF Euler timestep schedule: linear or sway; default linear.",
+        "required": false,
+        "default": "linear"
+      },
+      {
+        "name": "sway_coeff",
+        "type": "float",
+        "description": "Sway Sampling coefficient; must be finite and produce strictly decreasing timesteps. Default -1.0.",
+        "required": false,
+        "default": -1.0
       },
       {
         "name": "num_inference_steps",
@@ -57,14 +93,13 @@
       {
         "name": "duration_sec",
         "type": "float",
-        "description": "Explicit output duration in seconds; must be positive when set, otherwise predicted duration is used.",
-        "required": false,
-        "min": 0.0
+        "description": "Target duration in seconds; omitted or nonpositive values select predicted duration.",
+        "required": false
       },
       {
         "name": "duration_scale",
         "type": "float",
-        "description": "Predicted-duration multiplier; must be positive when set; default 1.0.",
+        "description": "Predicted-duration multiplier; must be > 0 when set; default 1.0.",
         "required": false,
         "min": 0.0,
         "default": 1.0
@@ -72,8 +107,10 @@
       {
         "name": "text_chunk_mode",
         "type": "enum",
-        "description": "Text chunking mode; default endline.",
+        "description": "Text chunk policy; word_budget also accepts the legacy spelling default.",
         "values": [
+          "word_budget",
+          "tag_aware",
           "japanese",
           "endline"
         ],
@@ -90,7 +127,7 @@
       {
         "name": "min_duration_sec",
         "type": "float",
-        "description": "Minimum generated duration in seconds; must be positive and no greater than max_duration_sec; default 0.5.",
+        "description": "Minimum generated duration in seconds; must be > 0 and no greater than max_duration_sec; default 0.5.",
         "required": false,
         "min": 0.0,
         "default": 0.5
@@ -98,7 +135,7 @@
       {
         "name": "max_duration_sec",
         "type": "float",
-        "description": "Maximum generated duration in seconds; must be at least min_duration_sec; default 30.",
+        "description": "Maximum generated duration in seconds; must be at least min_duration_sec; default 30. Must be > 0.",
         "required": false,
         "min": 0.0,
         "default": 30.0
@@ -106,33 +143,29 @@
       {
         "name": "text_guidance_scale",
         "type": "float",
-        "description": "Text classifier-free guidance scale; default 3.0.",
+        "description": "Text classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch.",
         "required": false,
-        "min": 0.0,
-        "default": 3.0
+        "default": 3
       },
       {
         "name": "speaker_guidance_scale",
         "type": "float",
-        "description": "Speaker classifier-free guidance scale; default 5.0.",
+        "description": "Speaker classifier-free guidance scale; default 5.0. Nonpositive values disable the corresponding CFG branch.",
         "required": false,
-        "min": 0.0,
-        "default": 5.0
+        "default": 5
       },
       {
         "name": "caption_guidance_scale",
         "type": "float",
-        "description": "Caption classifier-free guidance scale; default 3.0.",
+        "description": "Caption classifier-free guidance scale; default 3.0. Nonpositive values disable the corresponding CFG branch.",
         "required": false,
-        "min": 0.0,
-        "default": 3.0
+        "default": 3
       },
       {
         "name": "guidance_scale",
         "type": "float",
-        "description": "Override all classifier-free guidance scales when set.",
-        "required": false,
-        "min": 0.0
+        "description": "Override all classifier-free guidance scales when set. Nonpositive values disable the corresponding CFG branch.",
+        "required": false
       },
       {
         "name": "guidance_mode",
@@ -149,25 +182,24 @@
       {
         "name": "guidance_min_t",
         "type": "float",
-        "description": "Minimum diffusion timestep value where guidance is active; default 0.5.",
+        "description": "Minimum diffusion timestep value where guidance is active; default 0.5. The parser does not enforce a nonnegative bound.",
         "required": false,
-        "min": 0.0,
         "default": 0.5
       },
       {
         "name": "guidance_max_t",
         "type": "float",
-        "description": "Maximum diffusion timestep value where guidance is active; default 1.0.",
+        "description": "Maximum diffusion timestep value where guidance is active; default 1.0. The parser does not enforce a nonnegative bound.",
         "required": false,
-        "min": 0.0,
-        "default": 1.0
+        "default": 1
       },
       {
         "name": "seed",
         "type": "int",
-        "description": "Generation seed for reproducible output; omitted uses a random seed.",
+        "description": "Unsigned 32-bit generation seed in [0, 4294967295]; omitted uses a random seed.",
         "required": false,
-        "min": 0
+        "min": 0,
+        "max": 4294967295
       },
       {
         "name": "trim_tail",
@@ -210,7 +242,7 @@
         "type": "int",
         "description": "Condition encoder graph arena size in MiB; default 256.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 256
       },
       {
@@ -218,7 +250,7 @@
         "type": "int",
         "description": "RF sampler graph arena size in MiB; default 768.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 768
       },
       {
@@ -226,15 +258,47 @@
         "type": "int",
         "description": "DACVAE codec graph arena size in MiB; default 512.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 512
+      },
+      {
+        "name": "codec_decode_chunk_steps",
+        "type": "int",
+        "description": "Decode the latent in windows of this many frames (25 per second) so the codec's activation memory stops growing with the output length; 0 decodes the whole sequence at once (default).",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "codec_decode_overlap_steps",
+        "type": "int",
+        "description": "Latent frames of context decoded on each side of a window and then discarded; default 16.",
+        "required": false,
+        "min": 0,
+        "default": 16
+      },
+      {
+        "name": "codec_encode_chunk_steps",
+        "type": "int",
+        "description": "Encode reference audio in windows of this many latent frames (25 per second) so the codec's activation memory stops growing with the reference length; 0 encodes the whole reference at once (default).",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "codec_encode_overlap_steps",
+        "type": "int",
+        "description": "Latent frames of reference audio encoded as context on each side of a window and then discarded; default 16.",
+        "required": false,
+        "min": 0,
+        "default": 16
       },
       {
         "name": "condition_weight_context_mb",
         "type": "int",
         "description": "Condition encoder weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       },
       {
@@ -242,7 +306,7 @@
         "type": "int",
         "description": "RF sampler weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       },
       {
@@ -250,7 +314,7 @@
         "type": "int",
         "description": "DACVAE codec weight context size in MiB; default 32.",
         "required": false,
-        "min": 0,
+        "min": 1,
         "default": 32
       },
       {

@@ -28,6 +28,7 @@ enum class HiftVocoderUpsampleMode {
 enum class HiftVocoderSourceMode {
     Standard,
     CausalSineGen2,
+    SineGen2,
 };
 
 struct HiftVocoderConfig {

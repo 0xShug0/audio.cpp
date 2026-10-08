@@ -1,6 +1,8 @@
 #include "engine/community_models/inflect_v2/session.h"
 
+#include "engine/community_models/inflect_v2/rknn_decoder.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/utf8.h"
@@ -8,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -46,10 +49,17 @@ void validate_session_options(
     const runtime::SessionOptions & options,
     const engine::model_spec::ModelContract & contract) {
     const std::string family_prefix = std::string(kFamily) + ".";
+    // A published GGUF package embeds its own model spec, so an option added to
+    // model_specs/inflect_v2.json is invisible to a package built before it. The NPU
+    // decoder option is therefore also accepted by name (piper_tts does the same).
+    static const std::set<std::string> kPackageIndependent = {
+        "inflect_v2.exec_plan",
+    };
     for (const auto & [key, _] : options.options) {
         if (key.rfind(family_prefix, 0) == 0 &&
             contract.session_option_keys.find(key) ==
-                contract.session_option_keys.end()) {
+                contract.session_option_keys.end() &&
+            kPackageIndependent.find(key) == kPackageIndependent.end()) {
             throw std::runtime_error(
                 "unknown Inflect v2 session option: " + key);
         }
@@ -104,9 +114,21 @@ InflectV2Session::InflectV2Session(
     frontend_ = std::make_unique<InflectV2Frontend>(
         session_path(options, "inflect_v2.espeak_library_path"),
         session_path(options, "inflect_v2.espeak_data_path"));
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "inflect_v2.exec_plan",
+        {{"decoder", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}},
+           {"rknn", {}, {"main"}, {}}}}});
+    const auto & decoder_plan = exec_plan.at("decoder");
+    const std::string rknn_decoder_path = decoder_plan.impl == "rknn"
+        ? engine::rknn::resolve_engine_path(
+              decoder_plan.artifacts.at("main"), assets_->resources.model_directory())
+        : std::string{};
     runtime_ = std::make_unique<InflectV2VitsRuntime>(
         assets_,
-        options.backend);
+        options.backend,
+        rknn_decoder_path);
 }
 
 InflectV2Session::~InflectV2Session() = default;
@@ -125,11 +147,11 @@ InflectV2GenerationOptions InflectV2Session::generation_options(
     InflectV2GenerationOptions out;
     if (const auto value = runtime::parse_finite_float_option(
             request.options,
-            {"speaking_rate"})) {
+            {"speed", "speaking_rate"})) {
         out.speaking_rate = *value;
     }
     if (out.speaking_rate < 0.5F || out.speaking_rate > 2.0F) {
-        throw std::runtime_error("Inflect v2 speaking_rate must be between 0.5 and 2.0");
+        throw std::runtime_error("Inflect v2 speed must be between 0.5 and 2.0");
     }
     if (const auto value = runtime::parse_finite_float_option(
             request.options,

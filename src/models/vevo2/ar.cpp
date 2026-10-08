@@ -568,17 +568,26 @@ struct Vevo2Qwen2ARPrefillGraph {
         }
         core::ModuleBuildContext build_ctx{ctx.get(), "vevo2.ar.prefill", backend_type};
         token_ids = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, prompt_steps);
+        ggml_set_input(token_ids);
         auto ids = core::wrap_tensor(token_ids, core::TensorShape::from_dims({prompt_steps}), GGML_TYPE_I32);
         auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                      .build(build_ctx, ids, this->weights->token_embedding);
         x = core::reshape_tensor(build_ctx, x, core::TensorShape::from_dims({1, prompt_steps, config.hidden_size}));
         positions = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, prompt_steps);
+        ggml_set_input(positions);
+        // Initialized once; retain the positions when this graph is replayed.
+        ggml_set_output(positions);
         auto position_values = core::wrap_tensor(positions, core::TensorShape::from_dims({prompt_steps}), GGML_TYPE_I32);
         for (const auto & layer : this->weights->layers) {
             auto out = decoder_layer(build_ctx, x, position_values, layer, config);
             x = out.output;
             keys.push_back(out.key.tensor);
             values.push_back(out.value.tensor);
+            // Prefill exports every layer's KV state after graph execution.
+            ggml_set_output(out.key.tensor);
+            ggml_set_output(out.value.tensor);
+            if (out.key.tensor->view_src != nullptr) ggml_set_output(out.key.tensor->view_src);
+            if (out.value.tensor->view_src != nullptr) ggml_set_output(out.value.tensor->view_src);
         }
         x = modules::SliceModule({1, prompt_steps - 1, 1}).build(build_ctx, x);
         x = modules::RMSNormModule({config.hidden_size, config.rms_norm_eps, true, false})
@@ -589,8 +598,9 @@ struct Vevo2Qwen2ARPrefillGraph {
         ggml_set_output(logits);
         graph = ggml_new_graph_custom(ctx.get(), 65536, false);
         ggml_build_forward_expand(graph, logits);
-        buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), backend);
-        if (buffer == nullptr) {
+        engine::debug::timing_log_context_reservation("vevo2.ar.prefill.graph", ctx.get());
+        gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 AR prefill graph");
         }
         std::vector<int32_t> pos(static_cast<size_t>(prompt_steps), 0);
@@ -602,8 +612,8 @@ struct Vevo2Qwen2ARPrefillGraph {
 
     ~Vevo2Qwen2ARPrefillGraph() {
         engine::core::release_backend_graph_resources(backend, graph);
-        if (buffer != nullptr) {
-            ggml_backend_buffer_free(buffer);
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
         }
     }
 
@@ -651,7 +661,7 @@ struct Vevo2Qwen2ARPrefillGraph {
     std::vector<ggml_tensor *> keys;
     std::vector<ggml_tensor *> values;
     ggml_cgraph * graph = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
 };
 
 struct Vevo2Qwen2ARDecodeGraph {
@@ -680,15 +690,26 @@ struct Vevo2Qwen2ARDecodeGraph {
         if (ctx == nullptr) {
             throw std::runtime_error("failed to initialize Vevo2 AR decode graph context");
         }
+        // Cache tensors and transfer views outlive each graph execution.
+        const size_t cache_tensor_count = this->weights->layers.size() * 2 * (static_cast<size_t>(cache_steps) + 1);
+        ggml_init_params cache_params{cache_tensor_count * ggml_tensor_overhead(), nullptr, true};
+        cache_ctx.reset(ggml_init(cache_params));
+        if (cache_ctx == nullptr) {
+            throw std::runtime_error("failed to initialize Vevo2 AR cache context");
+        }
+        core::ModuleBuildContext cache_build_ctx{cache_ctx.get(), "vevo2.ar.cache", backend_type};
         core::ModuleBuildContext build_ctx{ctx.get(), "vevo2.ar.decode", backend_type};
         token_id = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
+        ggml_set_input(token_id);
         auto token = core::wrap_tensor(token_id, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         auto x = modules::EmbeddingModule({config.vocab_size, config.hidden_size})
                      .build(build_ctx, token, this->weights->token_embedding);
         x = core::reshape_tensor(build_ctx, x, core::TensorShape::from_dims({1, 1, config.hidden_size}));
         positions = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_I32, 1);
+        ggml_set_input(positions);
         auto position_values = core::wrap_tensor(positions, core::TensorShape::from_dims({1}), GGML_TYPE_I32);
         attention_mask = ggml_new_tensor_4d(ctx.get(), GGML_TYPE_F16, cache_steps + 1, 1, 1, 1);
+        ggml_set_input(attention_mask);
         auto mask = core::wrap_tensor(
             attention_mask,
             core::TensorShape::from_dims({1, 1, 1, cache_steps + 1}),
@@ -698,11 +719,11 @@ struct Vevo2Qwen2ARDecodeGraph {
         std::vector<core::TensorValue> cache_values;
         for (const auto & layer : this->weights->layers) {
             cache_keys.push_back(core::make_tensor(
-                build_ctx,
+                cache_build_ctx,
                 GGML_TYPE_F32,
                 core::TensorShape::from_dims({1, cache_steps + 1, config.num_key_value_heads, dim})));
             cache_values.push_back(core::make_tensor(
-                build_ctx,
+                cache_build_ctx,
                 GGML_TYPE_F32,
                 core::TensorShape::from_dims({1, cache_steps + 1, config.num_key_value_heads, dim})));
             auto out = decoder_layer_with_static_cache_tail(
@@ -718,6 +739,10 @@ struct Vevo2Qwen2ARDecodeGraph {
             x = out.output;
             key_sources.push_back(ggml_view_1d(ctx.get(), out.key.tensor, config.num_key_value_heads * dim, 0));
             value_sources.push_back(ggml_view_1d(ctx.get(), out.value.tensor, config.num_key_value_heads * dim, 0));
+            ggml_set_output(out.key.tensor);
+            ggml_set_output(out.value.tensor);
+            if (out.key.tensor->view_src != nullptr) ggml_set_output(out.key.tensor->view_src);
+            if (out.value.tensor->view_src != nullptr) ggml_set_output(out.value.tensor->view_src);
         }
         step_cache = runtime::TransformerKVCache(
             cache_steps + 1,
@@ -732,8 +757,16 @@ struct Vevo2Qwen2ARDecodeGraph {
                      .tensor;
         ggml_set_output(logits);
         ggml_build_forward_expand(graph, logits);
-        buffer = ggml_backend_alloc_ctx_tensors(ctx.get(), backend);
-        if (buffer == nullptr) {
+        for (size_t layer = 0; layer < key_sources.size(); ++layer) {
+            ggml_build_forward_expand(graph, key_sources[layer]);
+            ggml_build_forward_expand(graph, value_sources[layer]);
+        }
+        cache_buffer = ggml_backend_alloc_ctx_tensors(cache_ctx.get(), backend);
+        engine::debug::timing_log_context_reservation("vevo2.ar.decode.graph", ctx.get());
+        engine::debug::timing_log_context_reservation("vevo2.ar.cache", cache_ctx.get());
+        gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (cache_buffer == nullptr || gallocr == nullptr ||
+            !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
             throw std::runtime_error("failed to allocate Vevo2 AR decode graph");
         }
         attention_mask_values.assign(static_cast<size_t>(cache_steps + 1), ggml_fp32_to_fp16(-INFINITY));
@@ -741,8 +774,11 @@ struct Vevo2Qwen2ARDecodeGraph {
 
     ~Vevo2Qwen2ARDecodeGraph() {
         engine::core::release_backend_graph_resources(backend, graph);
-        if (buffer != nullptr) {
-            ggml_backend_buffer_free(buffer);
+        if (gallocr != nullptr) {
+            ggml_gallocr_free(gallocr);
+        }
+        if (cache_buffer != nullptr) {
+            ggml_backend_buffer_free(cache_buffer);
         }
     }
 
@@ -800,8 +836,8 @@ struct Vevo2Qwen2ARDecodeGraph {
             key_slot.reserve(key_sources.size());
             value_slot.reserve(value_sources.size());
             for (size_t layer = 0; layer < key_sources.size(); ++layer) {
-                key_slot.push_back(ggml_view_1d(ctx.get(), step_cache.key_tensor(layer).tensor, step_elems, byte_offset));
-                value_slot.push_back(ggml_view_1d(ctx.get(), step_cache.value_tensor(layer).tensor, step_elems, byte_offset));
+                key_slot.push_back(ggml_view_1d(cache_ctx.get(), step_cache.key_tensor(layer).tensor, step_elems, byte_offset));
+                value_slot.push_back(ggml_view_1d(cache_ctx.get(), step_cache.value_tensor(layer).tensor, step_elems, byte_offset));
             }
         }
     }
@@ -823,7 +859,9 @@ struct Vevo2Qwen2ARDecodeGraph {
     std::vector<ggml_fp16_t> attention_mask_values;
     runtime::TransformerKVCache step_cache;
     ggml_cgraph * graph = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    std::unique_ptr<ggml_context, GgmlContextDeleter> cache_ctx;
+    ggml_backend_buffer_t cache_buffer = nullptr;
+    ggml_gallocr_t gallocr = nullptr;
 };
 
 Vevo2Qwen2ARRuntime::Vevo2Qwen2ARRuntime(

@@ -2,16 +2,22 @@
 
 | Model | Family | Task | Quick Start |
 |---|---|---|---|
-| Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
+| AST AudioSet | `ast_audioset` | `cls` | [Model guide](models/ast_audioset.md) |
+| CED Audio Tagging | `ced` | `cls` | [Model guide](models/ced.md) |
+| FireRed VAD / Stream-VAD | `firered_vad` | `vad` | [Model guide](models/firered_vad.md) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
+| microWakeWord | `micro_wake_word` | `wake` | [Model guide](models/micro_wake_word.md) |
+| MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
+| Nemotron 3 Diarization | `nemotron_3_diar` | `diar` | [Model guide](models/nemotron_3_diar.md) |
+| OpenWakeWord Alexa | `open_wake_word` | `wake` | [Model guide](models/open_wake_word.md) |
 | PulseVAD | `pulsevad` | `vad` | [PulseVAD](models/pulsevad.md) |
+| Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3_forced_aligner.md) |
+| sherpa-onnx Zipformer KWS | `sherpa_kws` | `wake` | [Model guide](models/sherpa_kws.md) |
+| Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
 | Sortformer Diarization | `sortformer_diar` | `diar` | [Sortformer Diarization](#sortformer-diarization) |
 | Sortformer Diarization v2.1 | `sortformer_diar_v2` | `diar` | [Sortformer Diarization v2.1](#sortformer-diarization-v21) |
-| Nemotron 3 Diarization | `nemotron_3_diar` | `diar` | [Model guide](models/nemotron_3_diar.md) |
-| MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
-| Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3.md#qwen3-forced-aligner) |
 
-This page covers VAD, diarization, and forced-aligner models. ASR models are documented in [ASR models](asr.md).
+This page covers audio classification, wake-word detection, VAD, diarization, and forced-aligner models. ASR models are documented in [ASR models](asr.md).
 
 Common CLI shape:
 
@@ -20,6 +26,62 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend cuda 
 ```
 
 When `--mode streaming` is used, the selected model provides its default streaming policy.
+
+## MarbleNet VAD
+
+MarbleNet VAD is an offline speech activity detector.
+
+| Field | Value |
+|---|---|
+| Family | `marblenet_vad` |
+| Model directory | `assets/framework/models/marblenet_vad` |
+| Task | `vad` |
+| Modes | `offline` |
+| Output | Speech segment JSON through `--segments-out` |
+| Streaming | Not exposed |
+
+```bash
+audiocpp_cli --task vad --family marblenet_vad --model assets/framework/models/marblenet_vad --backend cuda --audio speech_16k.wav --segments-out segments.json
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Input audio. |
+| `--segments-out` | JSON path | not set | Write speech segments. |
+| `--request-option threshold=<float>` | float | `0.5` | Speech probability threshold. |
+
+## MMS Forced Aligner
+
+The MMS forced aligner aligns an exact transcript to mono/stereo audio and
+returns per-word start/end timestamps. Native normalization covers Dutch and
+English; a pre-romanized mode accepts ASCII romanization for other languages.
+
+| Field | Value |
+|---|---|
+| Family | `mms_forced_aligner` |
+| Model directory | `models/mms-300m-1130-forced-aligner` (safetensors) or a local GGUF |
+| Task | `align` |
+| Mode | `offline` only |
+| Output | `word_timestamps` |
+
+```bash
+audiocpp_cli --task align --family mms_forced_aligner --model models/mms-300m-1130-forced-aligner \
+  --audio speech.wav --text "The quick brown fox." --language eng --words-out words.json
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Input audio. |
+| `--text` | string | required | Exact transcript to align. |
+| `--language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | required | Transcript language. |
+| `--request-option text_normalization=<mode>` | `latin`, `pre_romanized` | `latin` | Native Latin normalization or caller-supplied romanization. |
+| `--request-option star_frequency=<mode>` | `segment`, `edges` | `segment` | Virtual `<star>` target placement. |
+| `--request-option merge_threshold_sec=<float>` | float >= 0 | `0.0` | Merge words whose gap is at or below this many seconds. |
+| `--words-out` | JSON path | not set | Write per-word timestamps. |
+
+The checkpoint is CC-BY-NC-4.0 and GGUF conversion is local-only. See the
+[full model guide](models/mms_forced_aligner.md) for install,
+conversion, licensing, and boundary-parity evidence.
 
 ## Silero VAD
 
@@ -76,30 +138,7 @@ audiocpp_cli --task vad --family silero_vad --model assets/framework/models/sile
 | `--request-option min_speech_duration_ms=<n>` | integer ms | `250` | Minimum speech duration. |
 | `--request-option min_silence_duration_ms=<n>` | integer ms | `100` | Minimum silence duration. |
 | `--request-option speech_pad_ms=<n>` | integer ms | `30` | Padding around speech segments. |
-| `--request-option max_speech_duration_s=<float>` | seconds | `1000000000` | Maximum speech segment length. |
-
-## MarbleNet VAD
-
-MarbleNet VAD is an offline speech activity detector.
-
-| Field | Value |
-|---|---|
-| Family | `marblenet_vad` |
-| Model directory | `assets/framework/models/marblenet_vad` |
-| Task | `vad` |
-| Modes | `offline` |
-| Output | Speech segment JSON through `--segments-out` |
-| Streaming | Not exposed |
-
-```bash
-audiocpp_cli --task vad --family marblenet_vad --model assets/framework/models/marblenet_vad --backend cuda --audio speech_16k.wav --segments-out segments.json
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | WAV path | required | Input audio. |
-| `--segments-out` | JSON path | not set | Write speech segments. |
-| `--request-option threshold=<float>` | float | `0.5` | Speech probability threshold. |
+| `--request-option max_speech_duration_sec=<float>` | seconds | `1000000000` | Maximum speech segment length. Legacy `max_speech_duration_s` remains accepted. |
 
 ## Sortformer Diarization
 
@@ -128,7 +167,7 @@ audiocpp_cli --task diar --family sortformer_diar --model models/Sortformer-Diar
 | `--session-option sortformer_diar.speaker_threshold=<float>` | float | `0.5` | Default speaker activation threshold. |
 | `--session-option sortformer_diar.speaker_min_frames=<n>` | integer | `0` | Default minimum speaker segment frames. |
 | `--session-option sortformer_diar.speaker_pad_frames=<n>` | integer | `0` | Default padding around speaker turns. |
-| `--session-option sortformer_diar.session_len_sec=<float>` | seconds | `20.0` | Diarization graph window length. |
+| `--session-option sortformer_diar.session_len_sec=<float>` | seconds > 0 | `20.0` | Diarization graph window length. |
 | `--session-option sortformer_diar.graph_capacity_mode=<mode>` | `fixed`, `tiered`, `grow`, `double` | backend default | Offline graph capacity policy. |
 | `--session-option sortformer_diar.graph_arena_mb=<n>` | MB | `512` | Inference graph arena size. |
 | `--session-option sortformer_diar.weight_context_mb=<n>` | MB | `128` | Weight context size. |
@@ -171,7 +210,7 @@ unchanged.
 
 The checkpoint is local-use only pending NVIDIA Open Model License
 redistribution approval. Convert it with
-[`tools/community_models/convert_sortformer_v2_1.py`](community_models/sortformer_diar_v2.md#local-conversion).
+[`tools/community_models/convert_sortformer_v2_1.py`](models/sortformer_diar_v2.md#license-and-local-conversion).
 
 ```bash
 audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \
@@ -181,40 +220,7 @@ audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \
 
 Use request options `speaker_threshold`, `speaker_min_frames`, and
 `speaker_pad_frames` for decoding controls.
-See the [community-model guide](community_models/sortformer_diar_v2.md) for
+See the [community-model guide](models/sortformer_diar_v2.md) for
 conversion commands, weight profiles, streaming geometry, and validation
 limits. CUDA offline F32 execution is memory-heavy; streaming is the supported
 path for long recordings.
-
-## MMS Forced Aligner
-
-The MMS forced aligner aligns an exact transcript to mono/stereo audio and
-returns per-word start/end timestamps. Native normalization covers Dutch and
-English; a pre-romanized mode accepts ASCII romanization for other languages.
-
-| Field | Value |
-|---|---|
-| Family | `mms_forced_aligner` |
-| Model directory | `models/mms-300m-1130-forced-aligner` (safetensors) or a local GGUF |
-| Task | `align` |
-| Mode | `offline` only |
-| Output | `word_timestamps` |
-
-```bash
-audiocpp_cli --task align --family mms_forced_aligner --model models/mms-300m-1130-forced-aligner \
-  --audio speech.wav --text "The quick brown fox." --language eng --words-out words.json
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | WAV path | required | Input audio. |
-| `--text` | string | required | Exact transcript to align. |
-| `--language` | `nl`, `nld`, `en`, `eng` (latin); any code (pre_romanized) | required | Transcript language. |
-| `--request-option text_normalization=<mode>` | `latin`, `pre_romanized` | `latin` | Native Latin normalization or caller-supplied romanization. |
-| `--request-option star_frequency=<mode>` | `segment`, `edges` | `segment` | Virtual `<star>` target placement. |
-| `--request-option merge_threshold_sec=<float>` | float >= 0 | `0.0` | Merge words whose gap is at or below this many seconds. |
-| `--words-out` | JSON path | not set | Write per-word timestamps. |
-
-The checkpoint is CC-BY-NC-4.0 and GGUF conversion is local-only. See the
-[full model guide](community_models/mms_forced_aligner.md) for install,
-conversion, licensing, and boundary-parity evidence.

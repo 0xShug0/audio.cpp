@@ -40,9 +40,9 @@
   "options": {
     "request": [
       {
-        "name": "speaking_rate",
+        "name": "speed",
         "type": "float",
-        "description": "Duration multiplier on the voice's tuned length scale; larger is slower. Applied before the per-token clamp.",
+        "description": "Speech speed multiplier; larger is faster. Its reciprocal scales the voice's tuned length scale before the per-token clamp.",
         "required": false,
         "min": 0.5,
         "max": 2.0,
@@ -87,6 +87,13 @@
         "type": "path",
         "description": "Optional explicit path to the directory containing espeak-ng-data.",
         "required": false
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/neon; no artifacts or params are used. Default retains automatic NEON selection on supported Nano-lineage AArch64 CPU sessions. GGML supports the session backend; explicit NEON requires a Nano-lineage model, AArch64 NEON, and a CPU session.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []
@@ -344,7 +351,7 @@
     ],
     "docs": [
       "docs/tts.md",
-      "docs/community_models/sanotts.md",
+      "docs/models/sanotts.md",
       "docs/gguf.md"
     ]
   },

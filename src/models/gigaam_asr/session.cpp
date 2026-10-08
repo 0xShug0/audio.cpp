@@ -21,12 +21,14 @@ public:
     GigaAMSession(const runtime::TaskSpec & task, const runtime::SessionOptions & options,
                   std::shared_ptr<const GigaAMAssets> assets, std::shared_ptr<const model_spec::ModelContract> contract)
         : RuntimeSessionBase(options), assets_(std::move(assets)), contract_(std::move(contract)) {
-        runtime::validate_spec_backed_session_options(options, *contract_, "gigaam_asr", "GigaAM ASR");
+        auto validation_options = options;
+        validation_options.options.erase("gigaam_asr.vad_model_path");
+        runtime::validate_spec_backed_session_options(validation_options, *contract_, "gigaam_asr", "GigaAM ASR");
         if (task.task != runtime::VoiceTaskKind::Asr || task.mode != runtime::RunMode::Offline) {
             throw std::runtime_error("GigaAM requires an offline ASR session");
         }
         const auto type = assets::parse_tensor_storage_type(
-            runtime::find_option(options.options, {"weight_type"}).value_or("native"));
+            runtime::find_option(options.options, {"gigaam_asr.weight_type", "weight_type"}).value_or("native"));
         weights_ = load_gigaam_weights(*assets_, execution_context(), type);
         runtime_ = std::make_unique<GigaAMRuntime>(*assets_, *weights_, execution_context());
     }
@@ -171,9 +173,9 @@ public:
 private:
     runtime::IOfflineVoiceTaskSession & vad_session() {
         if (!vad_session_) {
-            const auto path = runtime::find_option(options().options, {"vad_model_path"});
+            const auto path = runtime::find_option(options().options, {"gigaam_asr.vad_model_path", "vad_model_path"});
             if (!path || path->empty()) {
-                throw std::runtime_error("GigaAM audio_chunk_mode=vad requires vad_model_path");
+                throw std::runtime_error("GigaAM audio_chunk_mode=vad requires gigaam_asr.vad_model_path");
             }
             auto model = runtime::make_default_registry().load(std::filesystem::path(*path));
             auto session = model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},

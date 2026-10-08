@@ -46,7 +46,7 @@
       {
         "name": "audio_chunk_mode",
         "type": "enum",
-        "description": "Audio chunking mode. auto transcribes input up to audio_chunk_seconds whole and splits longer input at pauses found by the bundled VAD (fixed chunks when the VAD model is absent); vad always splits at pauses and skips silence; fixed cuts every audio_chunk_seconds; none transcribes the whole input at once.",
+        "description": "Audio chunking mode. auto transcribes input up to audio_chunk_duration_sec whole and splits longer input at pauses found by the bundled VAD (fixed chunks when the VAD model is absent); vad always splits at pauses and skips silence; fixed cuts every audio_chunk_duration_sec; none transcribes the whole input at once.",
         "values": [
           "auto",
           "fixed",
@@ -57,7 +57,7 @@
         "default": "auto"
       },
       {
-        "name": "audio_chunk_seconds",
+        "name": "audio_chunk_duration_sec",
         "type": "float",
         "description": "Longest chunk in seconds, at least 1. With fixed chunks, a final piece shorter than 1 second joins the previous chunk.",
         "required": false,
@@ -118,7 +118,7 @@
         "type": "int",
         "description": "TTS: maximum Unicode codepoints per text chunk, each spoken as its own turn.",
         "required": false,
-        "min": 32,
+        "min": 1,
         "default": 200
       },
       {
@@ -128,6 +128,13 @@
         "required": false,
         "min": 1,
         "default": 1
+      },
+      {
+        "name": "return_codes",
+        "type": "bool",
+        "description": "S2S: also return the reply's text tokens and audio codes as an lfm2_audio.reply artifact, to send back as history with the conversation's next turn.",
+        "required": false,
+        "default": false
       }
     ],
     "session": [
@@ -148,14 +155,14 @@
       {
         "name": "vocoder_gguf",
         "type": "string",
-        "description": "TTS: vocoder GGUF (depthformer), relative to the model directory. Defaults to vocoder-<backbone GGUF name>, or else the directory's only vocoder GGUF.",
+        "description": "TTS/S2S vocoder GGUF (depthformer), relative to the model directory. Defaults to vocoder-<backbone GGUF name>, or the directory's only vocoder GGUF.",
         "required": false,
         "default": ""
       },
       {
         "name": "detokenizer_gguf",
         "type": "string",
-        "description": "TTS: audio detokenizer GGUF, relative to the model directory. Defaults to tokenizer-<backbone GGUF name>, or else the directory's only tokenizer GGUF.",
+        "description": "TTS/S2S audio detokenizer GGUF, relative to the model directory. Defaults to tokenizer-<backbone GGUF name>, or the directory's only tokenizer GGUF.",
         "required": false,
         "default": ""
       },
@@ -167,12 +174,27 @@
         "default": "assets/framework/models/silero_vad"
       },
       {
-        "name": "max_pass_seconds",
+        "name": "max_pass_duration_sec",
         "type": "float",
         "description": "Most audio, in seconds, the encoder takes in one pass: an ASR chunk (the whole input with audio_chunk_mode=none) or the S2S question. Longer audio is rejected before it is encoded.",
         "required": false,
         "min": 1,
         "default": 120
+      },
+      {
+        "name": "cpu_repack",
+        "type": "bool",
+        "description": "On the CPU, multiply the matrices with the kernels of ggml's CPU extra buffer types where those take the weight's type and shape: the repacked ones take Q4_0 on x86 with AVX2 and Q4_0, Q8_0 and Q6_K on Arm; where ggml's AMX buffer is built, it comes first and also takes F16, Q8_0 and K-quants. Where the token embedding's type is taken, the text head gets a copy of it. Other backends ignore it.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "conversation_cache_slots",
+        "type": "int",
+        "description": "S2S: how many conversations a session keeps the earlier questions' encoder output and prefill blocks of, for their next turns, the least recently used dropped first; 0 keeps none. Each kept conversation takes up to about 350 MiB of host memory at the conversation limit, and a slot that no conversation has used takes nothing. Output does not depend on it.",
+        "required": false,
+        "min": 0,
+        "default": 4
       }
     ],
     "load": []
@@ -331,7 +353,7 @@
     ],
     "recommended_package": "lfm2_audio_1_5b_q8_0",
     "docs": [
-      "docs/community_models/lfm2_audio.md"
+      "docs/models/lfm2_audio.md"
     ],
     "summary": "LFM2.5-Audio transcription, speech and spoken chat (English and Japanese checkpoints) from Liquid's published GGUFs.",
     "builtin_voices": [

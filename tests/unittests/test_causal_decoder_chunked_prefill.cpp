@@ -147,6 +147,23 @@ int main(int argc, char ** argv) {
         config.evict_cuda_graph_cache_on_release = true;
         engine::modules::CausalDecoderRuntime reference(execution, config, weights);
         engine::modules::CausalDecoderRuntime saver(execution, config, weights);
+        engine::modules::CausalDecoderRuntime direct(execution, config, weights);
+        for (const int steps : {11, 5, 1, 11, 41, 5}) {
+            const auto embeddings = pattern(steps * 64, .3f);
+            const auto expected = reference.prefill_embeddings(embeddings, steps);
+            const auto actual = direct.prefill_embeddings_into_decode_cache(embeddings, steps, 64);
+            close(actual.logits, expected.logits);
+            reference.start_decode_embeddings(expected.state, 64);
+            for (int step = 0; step < 4; ++step) {
+                const auto next = pattern(64, .1f * (step + 1));
+                close(direct.decode_embedding(next).logits, reference.decode_embedding(next).logits);
+            }
+            if (direct.decode_current_end() != steps + 4) {
+                throw std::runtime_error("direct embedding prefill cache position mismatch");
+            }
+            // Switching back must not reuse a graph that writes the decode cache.
+            close(direct.prefill_embeddings(embeddings, steps).logits, expected.logits);
+        }
         for (int steps : {11, 5, 1, 11, 28}) {
             const auto embeddings = pattern(steps * 64, .3f);
             auto expected = reference.prefill_embeddings(embeddings, steps);

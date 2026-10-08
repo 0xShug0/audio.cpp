@@ -226,9 +226,10 @@ EchoTtsSession::EchoTtsSession(
     if (assets_ == nullptr) {
         throw std::runtime_error("Echo-TTS session requires loaded assets");
     }
-    if (task_.task != runtime::VoiceTaskKind::VoiceCloning ||
+    if ((task_.task != runtime::VoiceTaskKind::Tts &&
+         task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
         task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Echo-TTS only supports offline voice cloning");
+        throw std::runtime_error("Echo-TTS supports offline TTS and voice cloning");
     }
 }
 
@@ -251,6 +252,9 @@ EchoSamplerOptions EchoTtsSession::parse_sampler_options(
         sampler.truncation_factor = *truncation;
     }
     if (const auto kv_scale = runtime::parse_float_option(options, {"speaker_kv_scale"})) {
+        if (*kv_scale == 0.0F) {
+            throw std::runtime_error("speaker_kv_scale must be nonzero");
+        }
         // 1.0 is the documented "disabled" value, not a scale to apply.
         if (*kv_scale != 1.0F) {
             sampler.speaker_kv_scale = *kv_scale;
@@ -578,7 +582,12 @@ runtime::AudioBuffer EchoTtsSession::synthesize_chunk(
 
 runtime::TaskResult EchoTtsSession::run(const runtime::TaskRequest & request) {
     require_prepared("Echo-TTS run");
-    runtime::validate_spec_backed_request_options(request.options, *contract_, "Echo-TTS");
+    auto validation_options = request.options;
+    // Older embedded specs omit this control; the chunk parser validates its value.
+    if (contract_->request_option_keys.find("text_chunk_size") == contract_->request_option_keys.end()) {
+        validation_options.erase("text_chunk_size");
+    }
+    runtime::validate_spec_backed_request_options(validation_options, *contract_, "Echo-TTS");
 
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("Echo-TTS requires text input");

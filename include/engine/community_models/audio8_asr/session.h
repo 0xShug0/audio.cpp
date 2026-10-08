@@ -5,7 +5,7 @@
 #include "engine/community_models/audio8_asr/assets.h"
 #include "engine/community_models/audio8_asr/projector.h"
 #include "engine/community_models/audio8_asr/thinker.h"
-#include "engine/models/qwen3_asr/audio_encoder.h"
+#include "engine/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.h"
 #include "engine/models/qwen3_asr/frontend_whisper.h"
 
 #include <memory>
@@ -36,7 +36,7 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const Audio8ASRAssets> assets_;
     qwen3_asr::Qwen3ASRWhisperFrontend frontend_;
-    qwen3_asr::Qwen3ASRAudioEncoderRuntime audio_encoder_;
+    modules::Qwen3AudioEncoderRuntime audio_encoder_;
     Audio8ProjectorRuntime projector_;
     Audio8Qwen2ThinkerRuntime thinker_;
 };

@@ -530,7 +530,8 @@ VibeVoiceResult generate_vibevoice(
     const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head,
     VibeVoiceQwen2CachedState & positive_cache,
-    VibeVoiceQwen2CachedState & negative_cache) {
+    VibeVoiceQwen2CachedState & negative_cache,
+    const std::function<void(const runtime::AudioBuffer &)> & on_audio) {
     const auto & config = decoder.assets().config.decoder;
     const auto prompt_noise_values = load_noise_file(request.generation.prompt_noise_file, "prompt");
     auto prompt = prepare_vibevoice_prompt(
@@ -619,6 +620,7 @@ VibeVoiceResult generate_vibevoice(
                 audio_tokenizer.assets().speech_bias_factor);
             auto chunk = audio_tokenizer.decode_acoustic_streaming(decoder_latents, acoustic_streaming_state);
             append_audio(audio_samples, chunk);
+            if (on_audio) on_audio(chunk);
             auto semantic_features = audio_tokenizer.encode_semantic_streaming(chunk, semantic_streaming_state);
             auto acoustic_embedding = connector.project_acoustic(
                 speech_latents.front().values,

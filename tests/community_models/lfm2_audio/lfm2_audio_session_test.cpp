@@ -207,9 +207,9 @@ void test_request_options(const Package & package) {
         "request option max_tokens=many");
 
     rejects({{"audio_chunk_mode", "sometimes"}}, "audio_chunk_mode");
-    rejects({{"audio_chunk_seconds", "0"}}, "audio_chunk_seconds");
-    rejects({{"audio_chunk_seconds", "-3"}}, "audio_chunk_seconds");
-    rejects({{"audio_chunk_seconds", "0.5"}}, "audio_chunk_seconds");
+    rejects({{"audio_chunk_seconds", "0"}}, "audio_chunk_duration_sec");
+    rejects({{"audio_chunk_seconds", "-3"}}, "audio_chunk_duration_sec");
+    rejects({{"audio_chunk_seconds", "0.5"}}, "audio_chunk_duration_sec");
 
     rejects({{"temperature", "0.7"}}, "temperature");
     // S2S options the spec lists, which ASR turns away.
@@ -378,9 +378,9 @@ void test_one_pass_limit(const Package & package) {
     capacity_error([&] { (void)session->run(request(tone(3.0), {{"audio_chunk_mode", "none"}})); },
         "the input is 3.0 s; use audio_chunk_mode=auto", "none over the limit");
     capacity_error([&] { (void)session->run(request(tone(3.0), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "3"}})); },
-        "lower audio_chunk_seconds", "chunks over the limit");
+        "lower audio_chunk_duration_sec", "chunks over the limit");
     capacity_error([&] { (void)session->run(request(tone(3.0), {{"audio_chunk_mode", "auto"}, {"audio_chunk_seconds", "30"}})); },
-        "audio_chunk_seconds allows chunks of up to 3.0 s", "auto keeping the input whole over the limit");
+        "audio_chunk_duration_sec allows chunks of up to 3.0 s", "auto keeping the input whole over the limit");
     require_eq(transcribe(*session, request(tone(2.0), {{"audio_chunk_mode", "none"}})), std::string("hi"), "none at the limit");
     require_eq(transcribe(*session, request(tone(3.0), {{"audio_chunk_mode", "fixed"}, {"audio_chunk_seconds", "1"}})),
         std::string("hi hi hi"), "chunks under the limit");
@@ -398,15 +398,27 @@ void test_one_pass_limit(const Package & package) {
     auto tenths = open_session(package.root, {{"lfm2_audio.max_pass_seconds", "2.1"}});
     require_eq(transcribe(*tenths, request(tone(2.1), {{"audio_chunk_mode", "none"}})), std::string("hi"), "none at a limit of 2.1 s");
     capacity_error([&] { (void)tenths->run(request(tone(33601.0 / 16000), {{"audio_chunk_mode", "none"}})); },
-        "at most 2.1 s of audio in one pass (lfm2_audio.max_pass_seconds), and the input is 2.2 s", "a sample over a limit of 2.1 s");
+        "at most 2.1 s of audio in one pass (lfm2_audio.max_pass_duration_sec), and the input is 2.2 s", "a sample over a limit of 2.1 s");
 
     // 120 s by default.
     auto defaults = open_session(package.root);
     require_eq(transcribe(*defaults, request(tone(3.0), {{"audio_chunk_mode", "none"}})), std::string("hi"), "the default limit");
     capacity_error([&] { (void)defaults->run(request(tone(120.5), {{"audio_chunk_mode", "none"}})); },
-        "at most 120.0 s of audio in one pass (lfm2_audio.max_pass_seconds), and the input is 120.5 s", "none over the default");
+        "at most 120.0 s of audio in one pass (lfm2_audio.max_pass_duration_sec), and the input is 120.5 s", "none over the default");
     require_throws_with([&] { (void)open_session(package.root, {{"lfm2_audio.max_pass_seconds", "0.5"}}); }, "must be at least 1",
         "a limit under a second");
+}
+
+// lfm2_audio.cpu_repack takes a bool. This package's F32 weights stay in the
+// plain CPU buffer either way.
+void test_cpu_repack_option(const Package & package) {
+    for (const char * value : {"false", "true", "0", "on"}) {
+        require_eq(transcribe(*open_session(package.root, {{"lfm2_audio.cpu_repack", value}}), request(tone(1.0))), std::string("hi"),
+            std::string("lfm2_audio.cpu_repack=") + value);
+    }
+
+    require_throws_with([&] { (void)open_session(package.root, {{"lfm2_audio.cpu_repack", "maybe"}}); }, "lfm2_audio.cpu_repack",
+        "lfm2_audio.cpu_repack=maybe");
 }
 
 // 3.5 s of LibriSpeech speech followed by `silence_seconds` of zeros, and the
@@ -601,6 +613,7 @@ int main() {
         test_ends_inside_a_character();
         test_chunking(package);
         test_one_pass_limit(package);
+        test_cpu_repack_option(package);
         test_vad_chunking(package);
         test_selects_backbone();
         test_japanese_checkpoint();

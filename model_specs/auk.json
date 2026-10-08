@@ -7,6 +7,7 @@
   "status": "experimental",
   "tasks": [
     "tts",
+    "clone",
     "edit"
   ],
   "modes": [
@@ -28,11 +29,14 @@
       "Edit"
     ],
     "docs": [
-      "docs/community_models/auk.md"
+      "docs/models/auk.md"
     ]
   },
   "capabilities": {
     "tts": [
+      "speaker_reference"
+    ],
+    "clone": [
       "speaker_reference"
     ],
     "edit": [
