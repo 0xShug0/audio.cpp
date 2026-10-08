@@ -60,6 +60,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `htdemucs` | [facebookresearch/demucs](https://github.com/facebookresearch/demucs) | MIT | Yes | | 2026-09-21 |
 | `htdemucs_6stems` | [facebookresearch/demucs `5c90dfd2`](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th) | MIT | Yes | | 2026-09-26 |
 | `hviske_asr` | [syvai/hviske-v5.3](https://huggingface.co/syvai/hviske-v5.3) | CC-BY-NC-4.0 | No | | 2026-09-21 |
+| `hviske_asr_v6` | [syvai/hviske-v6](https://huggingface.co/syvai/hviske-v6) | CC-BY-NC-4.0 | No | Retain upstream NOTICE and third-party license notices. | 2026-10-07 |
 | `index_echo` | [IndexTeam/Index-Echo-S2TT-2B](https://huggingface.co/IndexTeam/Index-Echo-S2TT-2B)<br>[IndexTeam/Index-Echo-S2TT-9B](https://huggingface.co/IndexTeam/Index-Echo-S2TT-9B) | Apache-2.0 | Yes | S2TT checkpoints only. | 2026-10-01 |
 | `index_tts2` | [IndexTeam/IndexTTS-2](https://huggingface.co/IndexTeam/IndexTTS-2)<br>[IndexTeam/IndexTTS-2.5](https://huggingface.co/IndexTeam/IndexTTS-2.5) | [bilibili Model Use License](https://huggingface.co/IndexTeam/IndexTTS-2.5/blob/main/LICENSE) | Conditional | A separate license is needed above RMB 1 billion yearly revenue or 100 million monthly users. The model and its outputs may not be used to improve other commercial AI models. | 2026-09-21 |
 | `inflect_v2` | [owensong/Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2)<br>[owensong/Inflect-Nano-v2](https://huggingface.co/owensong/Inflect-Nano-v2) | Apache-2.0 | Yes | | 2026-09-21 |

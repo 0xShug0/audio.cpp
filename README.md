@@ -129,6 +129,7 @@ Model weights keep the license of their original release, which is separate from
 | **fun_asr_nano** | ASR | auto, zh, en, ja | Fun-ASR-Nano-2512 | GGUF 16/Q8 |
 | **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
+| **[hviske_asr_v6](docs/models/hviske_asr_v6.md)** | ASR | da | Hviske v6 | GGUF BF16 / Q8 |
 | **index_echo** | ASR, Translate | zh → en, es, ja | Index-Echo-S2TT 2B<br>Index-Echo-S2TT 9B | GGUF original/Q8_0/Q4_K |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
 | **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
