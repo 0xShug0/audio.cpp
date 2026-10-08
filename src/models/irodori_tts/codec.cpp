@@ -6,6 +6,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -590,8 +591,30 @@ public:
     }
   }
 
+  void set_decode_chunking(int64_t chunk_steps, int64_t overlap_steps) {
+    if (chunk_steps < 0 || overlap_steps < 0) {
+      throw std::runtime_error(
+          "Irodori-TTS codec decode chunking must be non-negative");
+    }
+    decode_chunk_steps_ = chunk_steps;
+    decode_overlap_steps_ = overlap_steps;
+  }
+
+  void set_encode_chunking(int64_t chunk_steps, int64_t overlap_steps) {
+    if (chunk_steps < 0 || overlap_steps < 0) {
+      throw std::runtime_error(
+          "Irodori-TTS codec encode chunking must be non-negative");
+    }
+    encode_chunk_steps_ = chunk_steps;
+    encode_overlap_steps_ = overlap_steps;
+  }
+
   runtime::AudioBuffer decode(const std::vector<float> &latent,
                               int64_t latent_steps, int64_t target_samples) {
+    const int64_t window = decode_chunk_steps_ + 2 * decode_overlap_steps_;
+    if (decode_chunk_steps_ > 0 && latent_steps > window) {
+      return decode_chunked(latent, latent_steps, target_samples, window);
+    }
     const bool graph_rebuild =
         graph_ == nullptr || graph_->latent_steps() != latent_steps;
     if (graph_rebuild) {
@@ -620,6 +643,12 @@ public:
     mono = reflect_pad_right_to_multiple(std::move(mono),
                                          assets_->codec.hop_length);
     const int64_t padded_samples = static_cast<int64_t>(mono.size());
+    const int64_t hop = assets_->codec.hop_length;
+    const int64_t latent_steps = padded_samples / hop;
+    const int64_t window = encode_chunk_steps_ + 2 * encode_overlap_steps_;
+    if (encode_chunk_steps_ > 0 && latent_steps > window) {
+      return encode_chunked(mono, latent_steps, window, latent_steps_out);
+    }
     const bool graph_rebuild =
         encode_graph_ == nullptr ||
         encode_graph_->padded_samples() != padded_samples;
@@ -639,6 +668,113 @@ public:
   }
 
 private:
+  // The encoder and decoder are convolutions, Snake and tanh only, so a latent
+  // frame and the audio around it depend on each other only within a few
+  // frames. A window of `window` frames keeps `overlap` frames of real context
+  // on both sides of the frames it contributes; windows at the ends are
+  // shifted inward so that one graph of a fixed size is reused for every
+  // window, and the true sequence edges keep the same zero padding as a
+  // whole-sequence pass.
+  static int64_t chunk_window_start(int64_t start, int64_t overlap,
+                                    int64_t total, int64_t window) {
+    return std::min(std::max<int64_t>(0, start - overlap), total - window);
+  }
+
+  std::vector<float> encode_chunked(const std::vector<float> &mono,
+                                    int64_t latent_steps, int64_t window,
+                                    int64_t &latent_steps_out) {
+    const int64_t hop = assets_->codec.hop_length;
+    const bool graph_rebuild = encode_graph_ == nullptr ||
+                               encode_graph_->padded_samples() != window * hop;
+    if (graph_rebuild) {
+      encode_graph_.reset();
+      encode_graph_ =
+          std::make_unique<EncodeGraph>(*this, window * hop, graph_arena_bytes_);
+    }
+    debug::trace_log_scalar("irodori_tts.codec_encode.graph_rebuild",
+                             graph_rebuild);
+    std::vector<float> latent;
+    std::vector<float> window_audio(static_cast<size_t>(window * hop));
+    int64_t dim = 0;
+    for (int64_t start = 0; start < latent_steps;
+         start += encode_chunk_steps_) {
+      const int64_t end = std::min(start + encode_chunk_steps_, latent_steps);
+      const int64_t window_start =
+          chunk_window_start(start, encode_overlap_steps_, latent_steps, window);
+      std::copy(mono.begin() + window_start * hop,
+                mono.begin() + (window_start + window) * hop,
+                window_audio.begin());
+      int64_t window_steps = 0;
+      auto encoded = encode_graph_->run(window_audio, window_steps);
+      if (window_steps != window ||
+          encoded.size() % static_cast<size_t>(window) != 0) {
+        throw std::runtime_error(
+            "Irodori-TTS codec chunked encode: unexpected window output size");
+      }
+      if (dim == 0) {
+        dim = static_cast<int64_t>(encoded.size()) / window;
+        latent.reserve(static_cast<size_t>(latent_steps * dim));
+      }
+      latent.insert(latent.end(), encoded.begin() + (start - window_start) * dim,
+                    encoded.begin() + (end - window_start) * dim);
+    }
+    latent_steps_out = latent_steps;
+    return latent;
+  }
+
+  runtime::AudioBuffer decode_chunked(const std::vector<float> &latent,
+                                      int64_t latent_steps,
+                                      int64_t target_samples, int64_t window) {
+    const int64_t latent_dim = assets_->config.latent_dim;
+    if (static_cast<int64_t>(latent.size()) != latent_steps * latent_dim) {
+      throw std::runtime_error("Irodori-TTS codec latent size mismatch");
+    }
+    const bool graph_rebuild =
+        graph_ == nullptr || graph_->latent_steps() != window;
+    if (graph_rebuild) {
+      graph_.reset();
+      graph_ = std::make_unique<Graph>(*this, window, graph_arena_bytes_);
+    }
+    debug::trace_log_scalar("irodori_tts.codec_decode.graph_rebuild",
+                             graph_rebuild);
+    std::vector<float> samples;
+    std::vector<float> window_latent(static_cast<size_t>(window * latent_dim));
+    int64_t hop = 0;
+    for (int64_t start = 0; start < latent_steps;
+         start += decode_chunk_steps_) {
+      const int64_t end = std::min(start + decode_chunk_steps_, latent_steps);
+      const int64_t window_start =
+          chunk_window_start(start, decode_overlap_steps_, latent_steps, window);
+      std::copy(latent.begin() + window_start * latent_dim,
+                latent.begin() + (window_start + window) * latent_dim,
+                window_latent.begin());
+      auto decoded = graph_->run(window_latent, 0);
+      if (hop == 0) {
+        if (decoded.samples.size() % static_cast<size_t>(window) != 0) {
+          throw std::runtime_error(
+              "Irodori-TTS codec chunked decode: output is not a whole "
+              "number of samples per latent frame");
+        }
+        hop = static_cast<int64_t>(decoded.samples.size()) / window;
+        samples.reserve(static_cast<size_t>(latent_steps * hop));
+      }
+      samples.insert(samples.end(),
+                     decoded.samples.begin() + (start - window_start) * hop,
+                     decoded.samples.begin() + (end - window_start) * hop);
+    }
+    if (target_samples > 0 &&
+        static_cast<int64_t>(samples.size()) > target_samples) {
+      samples.resize(static_cast<size_t>(target_samples));
+    }
+    return runtime::AudioBuffer{assets_->codec.sample_rate, 1,
+                                std::move(samples)};
+  }
+
+  int64_t decode_chunk_steps_ = 0;
+  int64_t decode_overlap_steps_ = 16;
+  int64_t encode_chunk_steps_ = 0;
+  int64_t encode_overlap_steps_ = 16;
+
   class EncodeGraph {
   public:
     EncodeGraph(IrodoriCodec::Impl &owner, int64_t padded_samples,
@@ -819,6 +955,16 @@ std::vector<float>
 IrodoriCodec::encode_reference(const runtime::AudioBuffer &audio,
                                int64_t &latent_steps_out) {
   return impl_->encode_reference(audio, latent_steps_out);
+}
+
+void IrodoriCodec::set_decode_chunking(int64_t chunk_steps,
+                                       int64_t overlap_steps) {
+  impl_->set_decode_chunking(chunk_steps, overlap_steps);
+}
+
+void IrodoriCodec::set_encode_chunking(int64_t chunk_steps,
+                                       int64_t overlap_steps) {
+  impl_->set_encode_chunking(chunk_steps, overlap_steps);
 }
 
 void IrodoriCodec::release_graphs() { impl_->release_graphs(); }
