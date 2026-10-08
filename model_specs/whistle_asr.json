@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "family": "whistle_asr",
+  "display_name": "Whistle ASR",
+  "description": "Whistle offline speech recognition with locally converted FP32 GGUF weights on CPU or Metal.",
+  "category": "asr",
+  "status": "experimental",
+  "tasks": ["asr"],
+  "modes": ["offline"],
+  "languages": ["en", "de", "fr", "es", "it", "nl", "pl"],
+  "runtime": {
+    "tags": ["gguf", "cpu", "metal"]
+  },
+  "capabilities": {},
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Force one supported language; omit to detect the language.",
+        "required": false
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "packages": [],
+  "dependencies": [],
+  "ui": {
+    "tags": ["ASR", "GGUF"],
+    "docs": ["docs/community_models/whistle_asr.md"]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_blob": "model:tokenizer.blob",
+        "mel_filterbank": "model:mel_filterbank_80.f32",
+        "hadamard_perm1": "model:hadamard_perm1.f32",
+        "hadamard_perm2": "model:hadamard_perm2.f32"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_blob": "model:tokenizer.blob",
+        "mel_filterbank": "model:mel_filterbank_80.f32",
+        "hadamard_perm1": "model:hadamard_perm1.f32",
+        "hadamard_perm2": "model:hadamard_perm2.f32"
+      },
+      "tensors": {
+        "weights": "model:whistle.safetensors"
+      }
+    }
+  ]
+}

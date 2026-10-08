@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "family": "hviske_asr_v6",
+  "display_name": "Hviske v6",
+  "description": "Danish speech recognition with a rotary Whisper encoder and Qwen3 decoder.",
+  "category": "asr",
+  "status": "supported",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "da"
+  ],
+  "capabilities": {},
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "auto preserves silence splitting above 30 seconds; silence splits above the configured duration at silence boundaries; fixed splits at the configured duration; none disables splitting and accepts at most 30 seconds.",
+        "required": false,
+        "default": "auto",
+        "values": [
+          "auto",
+          "silence",
+          "fixed",
+          "none"
+        ]
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum chunk duration when splitting. In auto mode the 30-second trigger remains unchanged.",
+        "required": false,
+        "default": 28.0,
+        "min": 0.001,
+        "max": 30.0
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens per chunk, also capped to eight tokens per audio second plus twelve.",
+        "required": false,
+        "default": 440,
+        "min": 1
+      },
+      {
+        "name": "num_beams",
+        "type": "int",
+        "description": "Beam-search width. One selects greedy decoding.",
+        "required": false,
+        "default": 2,
+        "min": 1
+      },
+      {
+        "name": "length_penalty",
+        "type": "float",
+        "description": "Exponent used to normalize beam scores by generated length.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "cased",
+        "type": "bool",
+        "description": "Request casing. Both cased and punctuated must be provided to override automatic formatting.",
+        "required": false
+      },
+      {
+        "name": "punctuated",
+        "type": "bool",
+        "description": "Request punctuation. Both cased and punctuated must be provided to override automatic formatting.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Weight storage override; native preserves the supplied checkpoint types.",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "hviske_asr_v6_bf16",
+      "display_name": "Hviske v6 BF16 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "Hviske-v6-GGUF",
+      "files": [
+        "Hviske-v6-GGUF/hviske-v6-bf16.gguf"
+      ],
+      "strip_prefix": "Hviske-v6-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf"
+      }
+    },
+    {
+      "id": "hviske_asr_v6_q8_0",
+      "display_name": "Hviske v6 Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Hviske-v6-GGUF",
+      "files": [
+        "Hviske-v6-GGUF/hviske-v6-q8_0.gguf"
+      ],
+      "strip_prefix": "Hviske-v6-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf"
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "hviske_asr_v6_bf16",
+    "tags": [
+      "ASR",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/hviske_asr_v6.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "model:model.safetensors"
+        }
+      }
+    },
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "tokenizer_json": "model:tokenizer.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}

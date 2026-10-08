@@ -14,6 +14,8 @@ The default downloadable package is the GGUF v4 Small Q8_0 checkpoint. v4 Small 
 
 v4 GGUF packages are published in both `q8_0` and `f16`. v3 GGUF packages are also available in `q8_0` and `f16`.
 
+**Checkpoints without a duration predictor** (`use_duration_predictor` absent or `false` in the model config, such as the original 500M v2 safetensors) also load. With no `duration_sec`, they generate 30 seconds and `trim_tail` cuts the trailing silence, as the Python runtime does; `duration_scale` has no effect. The fallback always samples 30 seconds, so passing `duration_sec` is faster when the length is known.
+
 > **v4 reference-conditioning note:** Fresh v4 voice-clone or reference+instruction generations may occasionally add a short extra phrase near the end of the clip. This behavior is also reproducible in the upstream Python path with the same reference/text/seed, so it is treated as a current v4 model/runtime limitation rather than a GGUF-only issue. No-reference and instruction-only paths are usually cleaner; for reference-conditioned use, try a different seed, instruction, or explicit `duration_sec` if the tail matters.
 
 ## Quick Start
@@ -65,6 +67,26 @@ audiocpp_cli --task clon --family irodori_tts \
   --out out.wav
 ```
 
+v4 with a Speaker Inversion embedding:
+
+```bash
+audiocpp_cli --task tts --family irodori_tts \
+  --model models/Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf \
+  --backend cuda --language ja \
+  --text "こんにちは、これは学習した話者埋め込みを使った推論です。" \
+  --request-option speaker_embedding_path=path/to/name.speaker.safetensors \
+  --out out.wav
+```
+
+## Speaker Inversion Embeddings
+
+[Irodori-TTS](https://github.com/Aratako/Irodori-TTS)'s Speaker Inversion training learns a few speaker tokens for one voice while the base model stays frozen, and saves them as `*.speaker.safetensors`. audio.cpp uses such a file as the speaker condition in place of reference audio, like `--ref-embed` in the Python `infer.py`: the tokens go to the model as they are, without the speaker encoder.
+
+- **By path:** request option `speaker_embedding_path` (CLI `--request-option`, or `"options"` in a server request).
+- **By name:** put the file in an `embeddings` directory next to the model weights as `<name>.safetensors` and pass `<name>` as the voice id (CLI `--voice-id`, server `"voice"`). With the model path set to that directory, the server's `GET /v1/audio/voices` lists the names. A voice id with no such file is ignored, as before.
+
+The file must hold a `speaker_embedding` tensor of shape `[tokens, speaker_dim]` (F32, F16 or BF16). An embedding cannot be combined with reference audio or `no_ref=true`. Use it with the base checkpoint it was trained on: an embedding from another checkpoint with the same `speaker_dim` loads, but the speaker match is not guaranteed.
+
 ## Request Options (use with `--request-option`)
 
 v4 uses the normalized schema-v1 option names directly. New requests should use these names:
@@ -74,6 +96,7 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `language` | `ja` | `ja` | Text language code; Irodori-TTS is Japanese-only. |
 | `instruction` | text | empty | Voice-design instruction; only useful on caption-conditioned checkpoints. Legacy `caption` is accepted as an alias. |
 | `no_ref` | bool | `true` unless a reference is provided | Use no-reference generation. Set `false` with `--voice-ref` for reference conditioning. |
+| `speaker_embedding_path` | path | unset | Speaker Inversion embedding (`*.speaker.safetensors`) used instead of reference audio. See [Speaker Inversion Embeddings](#speaker-inversion-embeddings). |
 | `num_inference_steps` | integer | `40` | RF diffusion steps. |
 | `duration_sec` | seconds | unset | Explicit output duration; omitted uses predicted duration. |
 | `duration_scale` | float | `1.0` | Multiplier for predicted duration. |

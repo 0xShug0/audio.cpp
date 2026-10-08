@@ -129,6 +129,7 @@ Model weights keep the license of their original release, which is separate from
 | **fun_asr_nano** | ASR | auto, zh, en, ja | Fun-ASR-Nano-2512 | GGUF 16/Q8 |
 | **higgs_audio_stt** | ASR | en | Higgs Audio v3 STT | GGUF 16/Q8, Stream |
 | **hviske_asr** | ASR | da | Hviske v5.3 | GGUF Q8 |
+| **[hviske_asr_v6](docs/models/hviske_asr_v6.md)** | ASR | da | Hviske v6 | GGUF BF16 / Q8 |
 | **index_echo** | ASR, Translate | zh → en, es, ja | Index-Echo-S2TT 2B<br>Index-Echo-S2TT 9B | GGUF original/Q8_0/Q4_K |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
 | **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
@@ -162,12 +163,14 @@ Model weights keep the license of their original release, which is separate from
 | **meanvc2** | VC | lang agnostic | MeanVC2 120 ms/40 ms zero-shot voice conversion | GGUF F32/Q4, Stream |
 | **mel_band_roformer** | Sep | lang agnostic | Mel-Band RoFormer MLX vocal separation variants | GGUF 16/Q8 |
 | **miocodec** | Codec, VC | lang agnostic | MioCodec v2, 25 Hz, 44.1 kHz | GGUF 16/Q8 |
+| **mossformer2** | Sep | lang agnostic | MossFormer2 SS 16K two-speaker separation | GGUF F32 |
 | **muscriptor** | MIDI | music | MuScriptor Small audio-to-symbolic transcription | GGUF F32, Stream |
 | **rvc** | VC | lang agnostic | RVC F16 GGUF with packaged v1/v2 voices and optional retrieval blending | GGUF 16 |
 | **sam_audio** | S2S | lang agnostic | SAM Audio Small<br>SAM Audio Base<br>SAM Audio Large | GGUF F32/BF16/Q8 |
 | **seed_vc** | VC | lang agnostic | SeedVC XLS-R + HiFT<br>SeedVC Whisper-small + BigVGAN | GGUF 16/Q8 |
 | **sheetsage2** | MIDI | music | SheetSage2 audio-to-ABC score transcription | GGUF orig |
 | **sidon** | S2S | lang agnostic | Sidon v0.1 single-speaker speech restoration | GGUF F32 |
+| **tf_gridnet** | Sep | lang agnostic | TF-GridNet WSJ0-2mix two-speaker separation | GGUF F32 |
 | **tone_color_vc** | VC | lang agnostic | Tone Color VC | GGUF F32/F16 |
 | **universr** | S2S | lang agnostic | UniverSR Audio and Speech super-resolution | GGUF F32 |
 
@@ -226,6 +229,7 @@ Community model ports live under `community_models` to make the ownership bounda
 | **sortformer_diar_v2** | Diar | multilingual | GGUF F32/mixed F16, Stream | [@LysanderdeJong](https://github.com/LysanderdeJong) | [NVIDIA Sortformer v2.1](docs/community_models/sortformer_diar_v2.md) four-speaker streaming diarization; local conversion only pending redistribution approval |
 | **vieneu_v3_turbo** | TTS, Clone | vi, en | GGUF | Bảo [@pnnbao97](https://github.com/pnnbao97) (model author); first port by Phuoc [@phuocnguyen90](https://github.com/phuocnguyen90) | [VieNeu-TTS v3 Turbo](docs/community_models/vieneu_v3_turbo.md) 48 kHz Vietnamese/English TTS and voice cloning (formerly `vietneu_tts`) |
 | **vibeasr** | ASR | en | GGUF I8_S + I2_S | [@XsquirrelC](https://github.com/XsquirrelC) / VibeASR | [VibeASR](docs/community_models/vibeasr.md) fully quantized port of [VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp): VibeVoice acoustic/semantic tokenizers on INT8 weights and INT8 activations, feeding a ternary BitNet Qwen2 decoder. Offline, CPU only |
+| **whistle_asr** | ASR | en, de, fr, es, it, nl, pl | GGUF F32, Safetensors F32 | [@bumpyclock](https://github.com/bumpyclock) | [Whistle ASR](docs/community_models/whistle_asr.md) experimental offline transcription with a GGML encoder on CPU or Metal; 16 kHz mono, at most 30 seconds; local conversion only |
 | **voxcpm1** | TTS, Clone | zh, en, ja, ko | GGUF Q8, Stream | [@jasonchen31](https://github.com/jasonchen31) | [VoxCPM1](docs/community_models/voxcpm1.md) tokenizer-free 0.5B TTS with 16 kHz output, streaming, and continuation-mode voice cloning |
 
 
