@@ -48,7 +48,9 @@ reference implementation: [liquid-audio](https://github.com/Liquid4All/liquid-au
   until end-of-audio, and ends at `<|im_end|>`. Text is greedy and audio is
   sampled at temperature 1.0 with top-k 4, as in liquid-audio's README and chat
   demo; `text_temperature` and `text_top_k` sample the text as
-  `generate_interleaved`'s arguments of the same names do.
+  `generate_interleaved`'s arguments of the same names do. A later turn of a
+  conversation puts the earlier questions and replies before the new question,
+  as liquid-audio's ChatState does ([Conversations](#conversations)).
 - An LFM2 detokenizer (8 layers, causal sliding-window attention over 30 steps)
   turns the mean of each frame's code embeddings, repeated 6 times, into
   log-magnitude and phase, and an ISTFT (n_fft 1280, hop 320) gives 24 kHz
@@ -124,7 +126,7 @@ Speech is sampled like the README's example (temperature 0.8, top-k 64); pass
 `--seed` for repeatable audio, or `--temperature 0` for greedy decoding.
 
 S2S answers a spoken turn with a spoken reply and its text: the CLI prints the
-text (`text_output=`) and `--text-out` writes it. Each request is a new
+text (`text_output=`) and `--text-out` writes it. Alone, a request is a new
 conversation under liquid-audio's chat system prompt, `Respond with interleaved
 text and audio.`; `--text` replaces that prompt, which the checkpoints were
 trained with, so leave it out unless experimenting. The reply is sampled like
@@ -142,7 +144,8 @@ steps. Text tokens stand for bytes, not characters. Bytes that make no whole
 character, which replies in scripts such as Thai can have, come out as U+FFFD,
 as the Hugging Face tokenizer decodes them, in replies and transcripts alike; a
 character left open at the end of the text is dropped, as in a transcript cut
-at `max_tokens`.
+at `max_tokens`. A request can also carry the turns before it; see
+[Conversations](#conversations).
 
 The question goes through the encoder in one pass, as in liquid-audio, so it
 can be at most `lfm2_audio.max_pass_seconds` long (120 s by default; see
@@ -238,7 +241,8 @@ arithmetic, as for TTS. On CUDA, streamed replies to
 2.2e-2 to 4.5e-2 with Q8_0 and 0.06 to 0.15 with Q4_0 (five replies each). A
 reply cut off at `max_tokens` streams as it does offline, with the same
 warning; a character left open at the cut is dropped in both. A stream
-finished before its reply is over returns the text its events carried.
+finished before its reply is over returns the text its events carried and,
+with `return_codes`, the reply's steps so far.
 A question longer than `lfm2_audio.max_pass_seconds` fails as soon as that
 much of it has come, without waiting for the rest.
 The server's live route, `/v1/audio/speech/live`, takes the question as
@@ -271,6 +275,118 @@ the first frame. With the JP F32 package on CUDA, the first audio came 113 ms
 after a 2.6 s Japanese question. Offline, `/v1/tasks/run` returned a 13.1 s
 English reply in 2.1 s on CUDA (F16).
 
+## Conversations
+
+liquid-audio's chat demo keeps every turn of a conversation and prefills all of
+it again for each reply. audio.cpp does the same, but its S2S session keeps
+nothing between requests: the client keeps the conversation and sends its
+earlier turns with each new question, as the request's input artifacts, in
+conversation order. For each earlier turn, its question and then its reply:
+
+| Artifact id | Kind | Payload |
+|---|---|---|
+| `lfm2_audio.question` | `custom` | The question's audio as a WAV file, with the samples that turn's request had (a float WAV holds any exactly) |
+| `lfm2_audio.reply` | `acoustic_tokens` | The reply artifact that turn's result returned, payload and meta unchanged |
+
+The request's audio is the new question. With `return_codes=true` the result,
+offline or streamed, also returns the reply as an `lfm2_audio.reply` artifact
+for the next turn. The prompt is the one ChatState holds in liquid-audio's
+README multi-turn example: the system prompt once, each earlier question and
+its reply in the chat markup, then the new question. A reply goes back in step
+by step, its text as the token ids it generated and its frames as the sum of
+their code embeddings, as liquid-audio's `_prefill` takes them.
+
+This prompt differs from the chat demo's on purpose. `demo/chat.py`, as
+written, adds the system turn again after the open user turn on every turn,
+since its `len(chat.text) == 1` check always holds; audio.cpp keeps it once.
+In ten-turn English conversations run with liquid-audio, replies under the
+repeated system turn answered 1 of 21 questions about earlier turns, and 7 of
+21 with the system prompt once.
+
+The reply artifact's payload is little-endian int32 values, one step after
+another: a text token is its id, and an audio frame is -1 followed by its
+8 codes. It holds every step of the reply, `<|text_end|>`, the frame that
+ends the audio and frames with end-of-audio in another codebook included, as
+liquid-audio keeps them: about 470 bytes per second of reply audio. Its meta:
+
+| Key | Value |
+|---|---|
+| `format` | `lfm2_audio.reply/1` |
+| `language` | The checkpoint's language, `en` or `ja` |
+| `codebooks`, `audio_vocab_size`, `text_vocab_size` | The checkpoint's codebooks (8), codes per codebook with end-of-audio (2049) and text vocabulary (65536) |
+| `steps` | Text tokens and frames in the payload |
+| `ended` | `true` when the reply ended; `false` when `max_tokens`, or a stream finished early, cut it off |
+
+A reply that was cut off goes back in as it is, as liquid-audio keeps it. The
+artifact holds ids and codes only, so it replays on any quantization of the
+same checkpoint. A reply from the other checkpoint or in another format
+version is rejected, and so are artifacts out of turn, artifacts with other
+ids, meta the format does not have and a question that does not read as WAV.
+These are errors in the request, as are a `return_codes` that is neither true
+nor false and history or `return_codes` sent to ASR or TTS: the server answers
+each with 400 (`invalid_request_error`).
+
+The system prompt, `text_input` or the default, applies to the whole
+conversation, so send the same one every turn. A turn's reply depends only on
+the system prompt, the earlier turns, the new question and the request
+options, seed included: on a backend, the same request gives the same bytes
+whatever ran before it. Each turn prefills the whole conversation again, so
+its prefill takes longer as the conversation grows; a turn with earlier turns
+prefills in blocks of 256 steps, so its attention never holds more than
+256 scores per prompt step and head. Each earlier question is held to
+`lfm2_audio.max_pass_seconds`, as the new one is.
+
+A conversation's prompt and `max_tokens` may take 8192 steps together, where a
+step is 80 ms of a question's audio, a text token or an 80 ms reply frame. Past
+that the turn fails with a CapacityError as soon as the request shows it: when
+the request is read, from the replies and the chat markup, so that a stream
+fails at its start, before its audio, or else as the questions are encoded.
+The client then leaves out the oldest turns; audio.cpp never leaves out any
+itself. A first turn is held only to the context. Conversations were checked up
+to 10 turns, with prompts of up to about 5000 steps at the tenth: replies kept
+their speech and used what earlier turns said, but did not recall what users
+said about themselves, such as their name, and late Japanese replies sometimes
+repeated an earlier one. Past 10 turns, leave out the oldest turns.
+
+Through the C API (`include/audiocpp.h`), the reply artifact is the result's
+first artifact, from `audiocpp_session_run` or `audiocpp_stream_finish`, and
+goes into the next request with its meta:
+
+```c
+/* Turn 1, with return_codes. */
+audiocpp_request_set_audio(request_1, question_1, frames_1, sample_rate, channels);
+audiocpp_request_set_option(request_1, "return_codes", "true");
+audiocpp_session_run(session, request_1, &result_1);
+
+/* Turn 2: the first question's WAV, then the reply artifact and its meta. */
+audiocpp_artifact_kind kind;
+const char * id;
+const void * payload;
+size_t bytes, index;
+audiocpp_result_artifact(result_1, 0, &kind, &id, &payload, &bytes);
+audiocpp_request_add_artifact(request_2, AUDIOCPP_ARTIFACT_CUSTOM, "lfm2_audio.question",
+                              wav_1, wav_1_bytes, NULL);
+audiocpp_request_add_artifact(request_2, kind, id, payload, bytes, &index);
+for (size_t m = 0; m < audiocpp_result_artifact_meta_count(result_1, 0); ++m) {
+    const char * key;
+    const char * value;
+    audiocpp_result_artifact_meta(result_1, 0, m, &key, &value);
+    audiocpp_request_set_artifact_meta(request_2, index, key, value);
+}
+audiocpp_request_set_audio(request_2, question_2, frames_2, sample_rate, channels);
+audiocpp_request_set_option(request_2, "return_codes", "true");
+audiocpp_session_run(session, request_2, &result_2);
+```
+
+A third turn sends both earlier questions and replies, in order, and so on.
+
+The server returns the reply artifact in the `artifacts` array of
+`/v1/tasks/run` and `/v1/tasks/stream` results (base64 `payload`, and `meta`)
+when the request's `options` have `"return_codes": true`. Its request JSON
+does not take artifacts yet, so it cannot be sent the history: through the
+server, and on the live route, `/v1/audio/speech/live`, each request is a
+first turn.
+
 ## Request Options (use with `--request-option`)
 
 | Option | Task | Default | Meaning |
@@ -287,6 +403,7 @@ English reply in 2.1 s on CUDA (F16).
 | `text_chunk_mode` | TTS | `japanese` for JP, else `default` | How long text is split; see [Long text](#long-text). |
 | `text_chunk_size` | TTS | `200` | Unicode codepoints per text chunk. |
 | `stream_frames_per_event` | TTS, S2S streaming | `1` | Audio frames (80 ms) per streaming event. |
+| `return_codes` | S2S | `false` | Also return the reply's text tokens and audio codes as an `lfm2_audio.reply` artifact, to send back as history; see [Conversations](#conversations). |
 
 Each task rejects the options it does not take.
 
@@ -579,9 +696,15 @@ cut off at `max_tokens` counting as a miss), well-formed text, streaming
 against offline, a stream finished early, a reply cut off at `max_tokens`,
 offline and streamed, that the first request, sent again after the others,
 gets the same reply (S2S sizes its decode cache from the request alone, as TTS
-does), and that a reply with `text_temperature` is step for step the
-greedy-text reply of the same seed until a text token differs; it runs when
-`lfm2_audio_1_5b_f16` is installed in `models/`.
+does), that a reply with `text_temperature` is step for step the
+greedy-text reply of the same seed until a text token differs, and a
+conversation: the first reply's artifact holds its text and speech, a second
+turn (`assets/resources/a.wav`) sent with the first gets another reply than
+without it and the same bytes when sent again, and a third turn replays both;
+it runs when `lfm2_audio_1_5b_f16` is installed in `models/`.
+`lfm2_audio_chat_test` runs the S2S session on a synthetic package, offline
+and streamed, over three turns of a conversation, and up to the conversation
+limit.
 
 ### CPU
 
@@ -689,8 +812,8 @@ copy of it in their layout as the text head (see [CPU](#cpu)).
 
 ## Limitations
 
-- S2S answers one turn per request, as a new conversation; liquid-audio's
-  demo also keeps the earlier turns.
+- The server does not take request artifacts yet, so it answers each S2S
+  request as a first turn; conversations run through the C API.
 - ASR is offline only; TTS and S2S also stream.
 - TTS speaks with the built-in voices only; there is no voice cloning.
 - On the CPU, F16 and F32 weights, and Q8_0 on x86, run ggml's generic

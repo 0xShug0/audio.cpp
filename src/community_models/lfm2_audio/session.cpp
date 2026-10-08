@@ -160,7 +160,17 @@ std::shared_ptr<const Lfm2AudioComponents> select_components(
 void reject_options(const runtime::TaskRequest & request, std::initializer_list<const char *> names, const char * task) {
     for (const char * name : names) {
         if (request.options.count(name) != 0) {
-            throw std::runtime_error(std::string("LFM2-Audio ") + task + " does not take request option " + name);
+            throw runtime::InvalidRequestError(std::string("LFM2-Audio ") + task + " does not take request option " + name);
+        }
+    }
+}
+
+// Conversation history is for S2S. Other artifacts stay ignored, as before.
+void reject_history(const runtime::TaskRequest & request, const char * task) {
+    for (const auto & artifact : request.input_artifacts) {
+        if (artifact.id.rfind("lfm2_audio.", 0) == 0) {
+            throw runtime::InvalidRequestError(std::string("LFM2-Audio ") + task + " takes no conversation history, so no " + artifact.id +
+                                               " artifact");
         }
     }
 }
@@ -338,8 +348,10 @@ void Lfm2AudioSession::prepare(const runtime::SessionPreparationRequest & reques
 Lfm2AudioSession::RequestOptions Lfm2AudioSession::parse_request_options(const runtime::TaskRequest & request) const {
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
     reject_options(request,
-        {"temperature", "top_k", "seed", "text_temperature", "text_top_k", "text_chunk_mode", "text_chunk_size", "stream_frames_per_event"},
+        {"temperature", "top_k", "seed", "text_temperature", "text_top_k", "text_chunk_mode", "text_chunk_size", "stream_frames_per_event",
+         "return_codes"},
         "ASR");
+    reject_history(request, "ASR");
 
     RequestOptions out;
     out.max_tokens = runtime::parse_positive_i64_option(request.options, {"max_tokens"}, out.max_tokens);
@@ -545,7 +557,8 @@ Lfm2AudioTtsSession::RequestOptions Lfm2AudioTtsSession::parse_request(const run
     }
 
     runtime::validate_spec_backed_request_options(request.options, require_contract(contract_), kModelName);
-    reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds", "text_temperature", "text_top_k"}, "TTS");
+    reject_options(request, {"audio_chunk_mode", "audio_chunk_seconds", "text_temperature", "text_top_k", "return_codes"}, "TTS");
+    reject_history(request, "TTS");
 
     std::string language = request.text_input->language;
     if (const auto option = runtime::find_option(request.options, {"language"})) {
@@ -864,22 +877,79 @@ Lfm2AudioChatSession::RequestOptions Lfm2AudioChatSession::parse_request(const r
     sampling.seed = runtime::parse_u64_option(request.options, {"seed"}).value_or(runtime::random_u64_seed());
     out.stream_frames_per_event =
         runtime::parse_positive_i64_option(request.options, {"stream_frames_per_event"}, kDefaultStreamFramesPerEvent);
+    if (const auto value = runtime::find_option(request.options, {"return_codes"})) {
+        // The parser's only runtime_error is a value it does not read.
+        try {
+            out.return_codes = runtime::parse_bool_option(*value, "return_codes");
+        } catch (const std::runtime_error & error) {
+            throw runtime::InvalidRequestError(error.what());
+        }
+    }
+
+    // Read here, so that a stream turns away bad history before its audio
+    // comes, and a conversation whose replies and markup alone pass the
+    // limit.
+    out.history = read_lfm2_conversation(request.input_artifacts, reply_checkpoint(), out.reply.max_steps);
+    for (size_t turn = 0; turn < out.history.size(); ++turn) {
+        const auto & question = out.history[turn].question;
+        require_one_pass(frame_count(question), question.sample_rate, max_pass_seconds_,
+                         "the question of earlier turn " + std::to_string(turn + 1) + " is", "leave that turn out, or raise the limit");
+    }
+
+    if (!out.history.empty()) {
+        out.text_steps = lfm2_chat_prompt_text_steps(tokenizer_, out.system_prompt, out.history);
+        require_lfm2_conversation_room(out.text_steps, true, out.reply.max_steps);
+    }
+
     return out;
 }
 
+Lfm2ReplyCheckpoint Lfm2AudioChatSession::reply_checkpoint() const {
+    return {language_, output_->depthformer.codebooks, output_->depthformer.audio_vocab_size, components_->backbone.vocab_size};
+}
+
 // The user's turn goes in the way ASR takes its audio, under the chat system
-// prompt (liquid-audio's demo, ChatState).
+// prompt and after the earlier turns, as liquid-audio's ChatState holds them
+// (chat.h). Each question goes through the encoder on its own: liquid-audio
+// encodes them in one batch, whose padding the encoder masks.
 std::unique_ptr<Lfm2InterleavedGenerator> Lfm2AudioChatSession::start_reply(
     const RequestOptions & options, const runtime::AudioBuffer & audio) {
     require_one_pass(frame_count(audio), audio.sample_rate, max_pass_seconds_, "the question is", "send a shorter one, or raise the limit");
-    const auto features = features_.extract(lfm2_audio_mono_16k(audio));
-    auto embeddings = encoder_.encode(features);
-    auto prompt = make_lfm2_spoken_prompt(tokenizer_, options.system_prompt).with_audio(embeddings.tokens);
+    // The prompt's steps so far: a conversation past the limit encodes no
+    // more questions.
+    int64_t steps = options.text_steps;
+    Lfm2AudioEmbeddings embeddings;
+    const auto encode = [&](const runtime::AudioBuffer & question) {
+        const auto encoded = encoder_.encode(features_.extract(lfm2_audio_mono_16k(question)));
+        embeddings.hidden_size = encoded.hidden_size;
+        embeddings.tokens += encoded.tokens;
+        embeddings.values.insert(embeddings.values.end(), encoded.values.begin(), encoded.values.end());
+        steps += encoded.tokens;
+        return encoded.tokens;
+    };
+
+    std::vector<Lfm2ChatTurn> history;
+    for (const auto & turn : options.history) {
+        history.push_back({encode(turn.question), turn.reply});
+        require_lfm2_conversation_room(steps, true, options.reply.max_steps);
+    }
+
+    const auto question_tokens = encode(audio);
+    auto prompt = make_lfm2_chat_prompt(tokenizer_, options.system_prompt, history, question_tokens);
     debug_dump("prompt_ids.i32", prompt.input_ids.data(), prompt.input_ids.size() * sizeof(int32_t));
     debug::trace_log_scalar("lfm2_audio.session.audio_tokens", embeddings.tokens);
 
+    // A first turn runs as S2S always has. A later one holds the whole
+    // conversation, which the chunked prefill takes without the one-shot
+    // prefill's prompt^2 attention scores.
+    auto reply = options.reply;
+    if (!history.empty()) {
+        require_lfm2_conversation_room(static_cast<int64_t>(prompt.input_ids.size()), false, reply.max_steps);
+        reply.prefill = Lfm2Prefill::Chunked;
+    }
+
     return std::make_unique<Lfm2InterleavedGenerator>(
-        backbone_, depthformer_, tokenizer_, std::move(prompt), std::move(embeddings), output_->depthformer.end_of_audio(), options.reply);
+        backbone_, depthformer_, tokenizer_, std::move(prompt), std::move(embeddings), output_->depthformer.end_of_audio(), reply);
 }
 
 bool Lfm2AudioChatSession::reached_max_tokens() const {
@@ -902,7 +972,12 @@ runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & reque
     const int32_t end_of_audio = output_->depthformer.end_of_audio();
     std::vector<int32_t> tokens;
     std::vector<std::vector<int32_t>> frames;
+    std::vector<Lfm2ReplyStep> steps;  // all of them, for return_codes
     while (auto step = generator->next()) {
+        if (options.return_codes) {
+            steps.push_back(*step);
+        }
+
         if (step->codes.empty()) {
             tokens.push_back(step->token);
         } else if (lfm2_speaks(step->codes, end_of_audio)) {
@@ -920,6 +995,10 @@ runtime::TaskResult Lfm2AudioChatSession::run(const runtime::TaskRequest & reque
     runtime::TaskResult result;
     result.audio_output = runtime::AudioBuffer{output_->detokenizer_config.sample_rate, 1, detokenizer_.decode(frames)};
     result.text_output = runtime::Transcript{lfm2_take_text(bytes), language_};
+    if (options.return_codes) {
+        result.output_artifacts.push_back(make_lfm2_reply_artifact(steps, generator->ended(), reply_checkpoint()));
+    }
+
     debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
@@ -934,8 +1013,9 @@ struct Lfm2AudioChatSession::Stream {
     bool done = false;
     size_t frames = 0;
     std::unique_ptr<Lfm2StreamingIstft> istft;
-    Lfm2StreamedText text;       // the reply's text, and what of it is in events
-    runtime::AudioBuffer audio;  // everything emitted
+    Lfm2StreamedText text;              // the reply's text, and what of it is in events
+    runtime::AudioBuffer audio;         // everything emitted
+    std::vector<Lfm2ReplyStep> steps;  // every step so far, for return_codes
 };
 
 runtime::StreamingPolicy Lfm2AudioChatSession::streaming_policy() const {
@@ -1026,6 +1106,10 @@ std::optional<runtime::StreamEvent> Lfm2AudioChatSession::next_stream_event() {
             break;
         }
 
+        if (st.options.return_codes) {
+            st.steps.push_back(*step);
+        }
+
         if (step->codes.empty()) {
             tokens.push_back(step->token);
         } else if (lfm2_speaks(step->codes, end_of_audio)) {
@@ -1076,10 +1160,17 @@ runtime::TaskResult Lfm2AudioChatSession::finish_stream() {
     }
 
     // The text the events carried: a stream finished before its reply is
-    // over leaves out a character the reply has not finished.
+    // over leaves out a character the reply has not finished, and its reply
+    // artifact holds the steps so far, as not ended.
+    auto & st = *stream_;
     runtime::TaskResult result;
-    result.audio_output = std::move(stream_->audio);
-    result.text_output = runtime::Transcript{stream_->text.text(), language_};
+    result.audio_output = std::move(st.audio);
+    result.text_output = runtime::Transcript{st.text.text(), language_};
+    if (st.options.return_codes) {
+        const bool ended = st.generator != nullptr && st.generator->ended();
+        result.output_artifacts.push_back(make_lfm2_reply_artifact(st.steps, ended, reply_checkpoint()));
+    }
+
     reset();
     return result;
 }

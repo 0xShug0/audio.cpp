@@ -26,6 +26,13 @@ struct Lfm2Prompt {
     // Positions in input_ids taken by audio embeddings, in order. Their ids
     // are placeholders and never looked up.
     std::vector<int32_t> audio_positions;
+    // Positions in input_ids taken by audio frames generated earlier, in
+    // order, and their codes: one per codebook for each frame, frame after
+    // frame. A frame goes in as step_audio feeds it (an earlier reply in a
+    // conversation's history). Their ids are placeholders too, and they need
+    // the backbone loaded with the audio embedding.
+    std::vector<int32_t> frame_positions;
+    std::vector<int32_t> frame_codes;
 };
 
 struct Lfm2GenerationOptions {
@@ -52,6 +59,21 @@ enum class Lfm2DecodeCache {
     // TTS and S2S. The prompt plus the step budget rounded up to 256, whatever
     // ran before, so seeded speech does not depend on earlier requests.
     Speech,
+};
+
+// How start() runs the prompt. The two give the same logits up to float
+// rounding, not bit for bit.
+enum class Lfm2Prefill {
+    // One graph over the whole prompt, whose keys and values then go into
+    // the decode cache: ASR, TTS and the first turn of a conversation. Its
+    // attention holds prompt^2 scores per head.
+    OneShot,
+    // Blocks of 256 positions, at multiples of 256 from the start, written
+    // straight into the decode cache, each attending over the cache up to
+    // its own end only: a conversation's history. What a block computes
+    // depends on the prompt up to its end, never on the cache's length, and
+    // attention holds 256 x prompt scores at most.
+    Chunked,
 };
 
 struct Lfm2GenerationResult {
@@ -92,11 +114,17 @@ public:
     // Prefills the prompt, leaving room for `max_steps` more steps, and
     // returns the text logits after it. `cache` is the task's sizing policy:
     // Transcript for a text decoder that transcribes, Speech for TTS and S2S.
+    // `prefill` is how the prompt runs.
     std::vector<float> start(
-        const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, Lfm2DecodeCache cache);
+        const Lfm2Prompt & prompt,
+        const Lfm2AudioEmbeddings & audio,
+        int64_t max_steps,
+        Lfm2DecodeCache cache,
+        Lfm2Prefill prefill = Lfm2Prefill::OneShot);
 
     // One step after start(): a text token, or the codes of an audio frame
-    // (the sum of their audio embeddings goes in).
+    // (the sum of their audio embeddings goes in, summed as a prompt's frames
+    // are).
     std::vector<float> step_text(int32_t token, Lfm2StepOutput output);
     std::vector<float> step_audio(const std::vector<int32_t> & codes, Lfm2StepOutput output);
 

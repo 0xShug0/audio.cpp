@@ -2379,6 +2379,7 @@ audiocpp_add_model(lfm2_audio
     SOURCES
         src/community_models/lfm2_audio/asr_inputs.cpp
         src/community_models/lfm2_audio/assets.cpp
+        src/community_models/lfm2_audio/chat.cpp
         src/community_models/lfm2_audio/tokenizer.cpp
         src/community_models/lfm2_audio/audio_encoder.cpp
         src/community_models/lfm2_audio/backbone.cpp
@@ -3259,6 +3260,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 lfm2_audio_asr_inputs_test
                 lfm2_audio_assets_test
                 lfm2_audio_backbone_test
+                lfm2_audio_chat_test
                 lfm2_audio_encoder_test
                 lfm2_audio_features_test
                 lfm2_audio_session_test

@@ -5,12 +5,14 @@
 // and decoded greedily like LFM2AudioModel.generate_sequential
 // (model/lfm2_audio.py). TTS: text -> backbone -> depthformer, one audio
 // frame per step, -> detokenizer -> 24 kHz audio. S2S: audio in as for ASR,
-// a reply of text and audio out as for TTS, interleaved.
+// a reply of text and audio out as for TTS, interleaved, after the earlier
+// turns of the conversation that the request carries (chat.h).
 
 #include "engine/community_models/lfm2_audio/asr_inputs.h"
 #include "engine/community_models/lfm2_audio/assets.h"
 #include "engine/community_models/lfm2_audio/audio_encoder.h"
 #include "engine/community_models/lfm2_audio/backbone.h"
+#include "engine/community_models/lfm2_audio/chat.h"
 #include "engine/community_models/lfm2_audio/depthformer.h"
 #include "engine/community_models/lfm2_audio/detokenizer.h"
 #include "engine/community_models/lfm2_audio/interleaved.h"
@@ -145,10 +147,14 @@ private:
 
 // Speech-to-speech (s2s): a spoken user turn in, a reply of interleaved text
 // and audio out (LFM2AudioModel.generate_interleaved) under the system prompt
-// of liquid-audio's chat demo, which text_input replaces when given. Each
-// request is a new conversation. Streaming takes the user's audio in chunks
-// and, once it has all come, pulls the reply as events: the audio of the next
-// stream_frames_per_event frames and the text written since the last event.
+// of liquid-audio's chat demo, which text_input replaces when given. The
+// session keeps nothing between requests: a request's input artifacts carry
+// the conversation's earlier turns, which the prompt replays in full as
+// liquid-audio does, and with return_codes its result carries the reply to
+// send back with the next turn. Streaming takes the user's audio in chunks
+// and, once it has all come, pulls the reply as events: the audio of the
+// next stream_frames_per_event frames and the text written since the last
+// event.
 class Lfm2AudioChatSession final : public runtime::RuntimeSessionBase,
                                    public runtime::IOfflineVoiceTaskSession,
                                    public runtime::IStreamingVoiceTaskSession {
@@ -184,12 +190,16 @@ private:
         std::string system_prompt;
         Lfm2InterleavedOptions reply;
         int64_t stream_frames_per_event = 0;
+        bool return_codes = false;
+        std::vector<Lfm2ConversationTurn> history;
+        int64_t text_steps = 0;  // with history: prompt steps besides the questions' audio
     };
 
     struct Stream;
 
     RequestOptions parse_request(const runtime::TaskRequest & request) const;
     std::unique_ptr<Lfm2InterleavedGenerator> start_reply(const RequestOptions & options, const runtime::AudioBuffer & audio);
+    [[nodiscard]] Lfm2ReplyCheckpoint reply_checkpoint() const;
 
     runtime::TaskSpec task_;
     std::shared_ptr<const Lfm2AudioAssets> assets_;

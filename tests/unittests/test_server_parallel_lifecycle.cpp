@@ -2,6 +2,7 @@
 // lifecycle overlaps without GPU timing, sleeps in production, or large models.
 #include "parallel_runtime.h"
 #include "engine/framework/audio/wav_writer.h"
+#include "engine/framework/runtime/errors.h"
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
@@ -75,7 +76,7 @@ struct Control {
     Gate load, run, destroy;
     std::atomic<int> loads{0}, destructions{0}, runs{0};
     std::atomic<int> sessions{0}, clones{0}, final_text{0};
-    std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false};
+    std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false}, reject_run{false};
     std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false}; std::optional<rt::Transcript> live_text;
 };
 class Session final : public rt::IOfflineVoiceTaskSession,
@@ -103,6 +104,7 @@ public:
         control_->run.wait();
         ++control_->runs;
         if (control_->fail_run) { throw std::runtime_error("controlled inference failure"); }
+        if (control_->reject_run) { throw rt::InvalidRequestError("controlled request rejection"); }
         if (task_.task == rt::VoiceTaskKind::Asr && !request.audio_input) {
             throw std::runtime_error("replacement ASR requires audio input");
         }
@@ -597,6 +599,32 @@ void loading_and_inference_failures_release_ownership(int count) {
     require(result.body.find("replacement") != std::string::npos, "replacement failed to retry consistently");
 }
 
+// A request the session turns away as sent is the caller's to fix: a 400 on
+// the generic routes in either run mode, with the lease released. Any other
+// failure still leaves the handler for the transport's 500.
+void session_request_errors(int count) {
+    Fixture f(count); auto offline = f.add("offline"); auto stream = f.add("stream", "streaming");
+    offline->reject_run = stream->reject_run = true;
+    for (const auto & [path, model] : std::vector<std::pair<std::string, std::string>>{
+             {"/v1/tasks/run", "offline"}, {"/v1/tasks/run", "stream"}, {"/v1/tasks/stream", "stream"}}) {
+        const auto rejected = post(*f.state, path, "{\"model\":" + quote(model) + ",\"text\":\"hi\"}");
+        require(rejected.status == 400 && rejected.body.find("controlled request rejection") != std::string::npos &&
+                rejected.body.find("invalid_request_error") != std::string::npos,
+                path + " on " + model + " answered a rejected request with HTTP " + std::to_string(rejected.status) + ": " + rejected.body);
+        require(Access::slots(*f.state, model).active == 0, path + " on " + model + " kept its lease after a rejected request");
+    }
+    offline->reject_run = false; offline->fail_run = true;
+    bool server_error = false; std::string outcome;
+    try {
+        const auto failed = run(*f.state, "offline");
+        server_error = failed.status == 500; outcome = "HTTP " + std::to_string(failed.status) + ": " + failed.body;
+    } catch (const std::runtime_error & error) {
+        outcome = error.what(); server_error = outcome == "controlled inference failure";
+    }
+    require(server_error, "a failure that is not a rejected request was answered as " + outcome);
+    offline->fail_run = false; success(run(*f.state, "offline"));
+}
+
 void abandoned_deferred_responses_release_ownership(int count) {
     Fixture f(count); f.add("stream", "streaming"); f.add("batch");
     for (const auto & [id, path, body] : std::vector<std::tuple<std::string, std::string, std::string>>{
@@ -876,6 +904,7 @@ int main(int argc, char ** argv) {
             if (count > 1) { generic_batches_hold_independent_slots(count); }
             rejected_preparation_releases_lease(count);
             loading_and_inference_failures_release_ownership(count);
+            session_request_errors(count);
             abandoned_deferred_responses_release_ownership(count);
             overlapping_bulk_operations(count);
             bulk_publication_excludes_only_other_bulk_calls(count);
