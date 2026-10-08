@@ -351,9 +351,11 @@ struct Fixture {
 
     // With the audio embedding, as TTS and S2S load it, so steps and prompts
     // can take audio frames.
-    [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> speech_runtime() {
+    [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> speech_runtime() { return speech_runtime(execution); }
+
+    [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> speech_runtime(engine::core::ExecutionContext & on) {
         return std::make_unique<lfm2::Lfm2BackboneRuntime>(
-            engine::assets::open_tensor_source(path), config, execution, engine::assets::open_tensor_source(audio_embedding_path),
+            engine::assets::open_tensor_source(path), config, on, engine::assets::open_tensor_source(audio_embedding_path),
             kCodebooks, kCodes);
     }
 
@@ -478,6 +480,46 @@ AudioPrompt long_history() {
     return out;
 }
 
+// `text` text tokens, then a question of `audio_tokens` audio rows, at the
+// end of `c`, as the chat markup and the next question follow a reply.
+void append_question(AudioPrompt & c, int64_t text, int64_t audio_tokens, uint64_t seed) {
+    const auto markup = text_prompt(text, seed);
+    c.prompt.input_ids.insert(c.prompt.input_ids.end(), markup.input_ids.begin(), markup.input_ids.end());
+    const auto values = lfm2_audio_test::Random(seed + 1).uniform(static_cast<size_t>(audio_tokens * c.audio.hidden_size), 1.0f);
+    c.audio.values.insert(c.audio.values.end(), values.begin(), values.end());
+    c.audio.tokens += audio_tokens;
+    for (int64_t i = 0; i < audio_tokens; ++i) {
+        c.prompt.audio_positions.push_back(static_cast<int32_t>(c.prompt.input_ids.size()));
+        c.prompt.input_ids.push_back(0);
+    }
+}
+
+// 1124 steps of a conversation's fourth turn: a question at 12-31 and its
+// reply's frames in the first block, a second question across the first
+// block edge, a second reply across the second, then a third question and
+// reply up to the fifth block.
+AudioPrompt conversation() {
+    auto out = audio_prompt(40, 20, 70, 16, 12);
+    append_reply(out.prompt, random_reply(150, 71));
+    append_question(out, 12, 70, 72);
+    append_reply(out.prompt, random_reply(300, 74));
+    append_question(out, 12, 40, 75);
+    append_reply(out.prompt, random_reply(500, 77));
+    return out;
+}
+
+// Steps after a prefill: text tokens and frames.
+const std::vector<ReplyStep> kAfter = {{5, {}}, {0, {1, 3}}, {0, {4, 0}}, {17, {}}, {0, {2, 2}}, {9, {}}};
+
+// A chunked request, its prefill's logits, then each step's after it.
+std::vector<std::vector<float>> chunked_request(
+    lfm2::Lfm2BackboneRuntime & runtime, const AudioPrompt & c, int64_t max_steps, const std::vector<ReplyStep> & after = kAfter) {
+    auto logits = runtime.start(c.prompt, c.audio, max_steps, lfm2::Lfm2DecodeCache::Speech, lfm2::Lfm2Prefill::Chunked);
+    auto steps = feed(runtime, after);
+    steps.insert(steps.begin(), std::move(logits));
+    return steps;
+}
+
 Vector as_vector(const std::vector<float> & values) { return {values.begin(), values.end()}; }
 
 void require_bitwise_equal(const std::vector<float> & actual, const std::vector<float> & expected, const std::string & label) {
@@ -486,6 +528,14 @@ void require_bitwise_equal(const std::vector<float> & actual, const std::vector<
         require(std::memcmp(&actual[i], &expected[i], sizeof(float)) == 0,
             label + " logit " + std::to_string(i) + ": " + std::to_string(actual[i]) + " is not bitwise " +
                 std::to_string(expected[i]));
+    }
+}
+
+void require_bitwise_equal(
+    const std::vector<std::vector<float>> & actual, const std::vector<std::vector<float>> & expected, const std::string & label) {
+    require_eq(actual.size(), expected.size(), label + " steps");
+    for (size_t i = 0; i < actual.size(); ++i) {
+        require_bitwise_equal(actual[i], expected[i], label + ", step " + std::to_string(i));
     }
 }
 
@@ -893,23 +943,8 @@ void test_chunked_requests_are_independent(Fixture & fixture) {
     auto runtime = fixture.speech_runtime();
     const auto c = long_history();
     const auto after = random_reply(6, 65);
-    // The prefill's logits, then each step's.
-    const auto request = [&] {
-        auto logits = runtime->start(c.prompt, c.audio, 6, lfm2::Lfm2DecodeCache::Speech, lfm2::Lfm2Prefill::Chunked);
-        auto steps = feed(*runtime, after);
-        steps.insert(steps.begin(), std::move(logits));
-        return steps;
-    };
-    const auto require_same = [&](const std::vector<std::vector<float>> & actual, const std::vector<std::vector<float>> & expected,
-                                  const std::string & label) {
-        require_eq(actual.size(), expected.size(), label + " steps");
-        for (size_t i = 0; i < actual.size(); ++i) {
-            require_bitwise_equal(actual[i], expected[i], label + ", step " + std::to_string(i));
-        }
-    };
-
-    const auto first = request();
-    require_same(request(), first, "the same request again");
+    const auto first = chunked_request(*runtime, c, 6, after);
+    require_bitwise_equal(chunked_request(*runtime, c, 6, after), first, "the same request again");
 
     // Longer and shorter requests, one-shot and chunked, and a text-only one
     // with a transcript cache.
@@ -920,7 +955,7 @@ void test_chunked_requests_are_independent(Fixture & fixture) {
     (void)runtime->start(shorter.prompt, shorter.audio, 6, lfm2::Lfm2DecodeCache::Speech, lfm2::Lfm2Prefill::OneShot);
     (void)feed(*runtime, after);
     (void)runtime->start(text_prompt(300, 68), {}, 20, lfm2::Lfm2DecodeCache::Transcript, lfm2::Lfm2Prefill::Chunked);
-    require_same(request(), first, "the request after others");
+    require_bitwise_equal(chunked_request(*runtime, c, 6, after), first, "the request after others");
 
     // Another prompt of the same length keeps the decode cache, and leaves
     // its own keys and values in it.
@@ -929,9 +964,93 @@ void test_chunked_requests_are_independent(Fixture & fixture) {
     const auto cache_steps = runtime->decode_cache_steps();
     (void)runtime->start(other.prompt, other.audio, 6, lfm2::Lfm2DecodeCache::Speech, lfm2::Lfm2Prefill::Chunked);
     (void)feed(*runtime, after);
-    const auto again = request();
+    const auto again = chunked_request(*runtime, c, 6, after);
     require_eq(runtime->decode_cache_steps(), cache_steps, "the cache kept from another prompt");
-    require_same(again, first, "the request in a cache another prompt filled");
+    require_bitwise_equal(again, first, "the request in a cache another prompt filled");
+}
+
+// A turn's prompt starts with the turn before's, so a chunked prefill
+// restores the full blocks it starts with from the chunked prefill before
+// rather than running them. Each request must still give what it gives on a
+// fresh runtime, bit for bit, at every thread count, with a cache of another
+// length than the request before, and with its last block run.
+void test_chunked_resumes(Fixture & fixture) {
+    const auto history = conversation();
+    struct Request {
+        int64_t length;
+        int64_t max_steps;
+        int64_t resumed;
+    };
+    // Caches of 512, 1536, 768, 1792, 1024, 1024 and 2048 steps. 768 steps
+    // are three full blocks, but the second request of them still runs its
+    // last.
+    const std::vector<Request> requests = {
+        {300, 10, 0}, {513, 900, 256}, {600, 10, 512}, {768, 900, 512}, {768, 10, 512}, {1000, 10, 768}, {1000, 900, 768}};
+    for (const int threads : {1, 4, 8}) {
+        engine::core::ExecutionContext execution{engine::core::BackendConfig{engine::core::BackendType::Cpu, 0, threads}};
+        auto runtime = fixture.speech_runtime(execution);
+        for (const auto & request : requests) {
+            const auto c = prefix(history, request.length);
+            const std::string label = std::to_string(threads) + " threads, " + std::to_string(request.length) + " steps and " +
+                                      std::to_string(request.max_steps) + " more";
+            auto fresh = fixture.speech_runtime(execution);
+            const auto expected = chunked_request(*fresh, c, request.max_steps);
+            require_eq(fresh->resumed_prefill_steps(), int64_t{0}, label + ": a fresh runtime resumes nothing");
+            const auto actual = chunked_request(*runtime, c, request.max_steps);
+            require_eq(runtime->resumed_prefill_steps(), request.resumed, label + ": steps resumed");
+            require_eq(runtime->decode_cache_steps(), fresh->decode_cache_steps(), label + ": the cache");
+            require_bitwise_equal(actual, expected, label);
+        }
+    }
+}
+
+// Blocks are compared bit for bit, from the start, and only with the last
+// chunked prefill: a one-shot request in between leaves them, and a
+// text-only chunked one replaces them.
+void test_chunked_resume_misses(Fixture & fixture) {
+    const auto base = prefix(conversation(), 600);
+    auto runtime = fixture.speech_runtime();
+    const auto request = [&](const AudioPrompt & c, int64_t resumed, const std::string & label) {
+        const auto expected = chunked_request(*fixture.speech_runtime(), c, 6);
+        const auto actual = chunked_request(*runtime, c, 6);
+        require_eq(runtime->resumed_prefill_steps(), resumed, label + ": steps resumed");
+        require_bitwise_equal(actual, expected, label);
+    };
+
+    request(base, 0, "the first request");
+    request(base, 512, "the same request again");
+
+    // The lowest bit of one value of the audio row at position 260, in block 1.
+    auto flipped = base;
+    const auto audio_row = static_cast<size_t>(std::find(base.prompt.audio_positions.begin(), base.prompt.audio_positions.end(), 260) -
+                                               base.prompt.audio_positions.begin());
+    require(audio_row < base.prompt.audio_positions.size(), "position 260 holds audio");
+    auto & value = flipped.audio.values[audio_row * static_cast<size_t>(flipped.audio.hidden_size) + 3];
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    bits ^= 1u;
+    std::memcpy(&value, &bits, sizeof(bits));
+    request(flipped, 256, "an audio row in block 1 a bit off");
+    request(base, 256, "the first prompt after it");
+
+    // A code of the first frame, in block 0.
+    auto recoded = base;
+    require(recoded.prompt.frame_positions.front() < 256, "the first frame is in block 0");
+    recoded.prompt.frame_codes[1] = (recoded.prompt.frame_codes[1] + 1) % static_cast<int32_t>(kCodes);
+    request(recoded, 0, "a frame code in block 0 changed");
+    request(base, 0, "the first prompt after that");
+    request(base, 512, "the first prompt again");
+
+    // A one-shot request, of a longer prompt that starts the same.
+    const auto longer = prefix(conversation(), 700);
+    (void)runtime->start(longer.prompt, longer.audio, 6, lfm2::Lfm2DecodeCache::Speech, lfm2::Lfm2Prefill::OneShot);
+    (void)feed(*runtime, kAfter);
+    require_eq(runtime->resumed_prefill_steps(), int64_t{0}, "a one-shot request resumes nothing");
+    request(base, 512, "after a one-shot request");
+
+    (void)runtime->start(text_prompt(300, 68), {}, 20, lfm2::Lfm2DecodeCache::Transcript, lfm2::Lfm2Prefill::Chunked);
+    request(base, 0, "after a text-only chunked request");
+    request(base, 512, "after it, again");
 }
 
 // Liquid's quantized packages store the matrices as Q8_0 or Q4_0, and the
@@ -1095,6 +1214,8 @@ int main() {
             test_chunked_frames_match_steps(chunked);
             test_chunked_independent_of_cache(chunked);
             test_chunked_requests_are_independent(chunked);
+            test_chunked_resumes(chunked);
+            test_chunked_resume_misses(chunked);
         }
 
         test_quantized_weights();

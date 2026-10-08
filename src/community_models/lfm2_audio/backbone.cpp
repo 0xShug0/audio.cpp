@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -182,6 +183,15 @@ struct PromptSpan {
     [[nodiscard]] int64_t audio_tokens() const { return static_cast<int64_t>(audio_positions.size()); }
     [[nodiscard]] int64_t frames() const { return static_cast<int64_t>(frame_positions.size()); }
 };
+
+// Whether two spans hold the same inputs, bit for bit. The audio rows are
+// compared as bytes, so 0 and -0 differ.
+bool same_span(const PromptSpan & a, const PromptSpan & b) {
+    return a.input_ids == b.input_ids && a.audio_positions == b.audio_positions && a.frame_positions == b.frame_positions &&
+           a.frame_rows == b.frame_rows && a.audio_values.size() == b.audio_values.size() &&
+           (a.audio_values.empty() ||
+            std::memcmp(a.audio_values.data(), b.audio_values.data(), a.audio_values.size() * sizeof(float)) == 0);
+}
 
 // `rows` are the prompt's frame_rows().
 PromptSpan prompt_span(const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, const std::vector<int32_t> & rows,
@@ -483,7 +493,12 @@ public:
                 "LFM2-Audio decode graph does not fit in device memory at " + std::to_string(cache_steps) + " cache steps");
         }
 
-        cache_ = runtime::TransformerKVCache(cache_steps, step_elems, keys, values);
+        // A chunked prefill writes the cache itself, so only import_state
+        // needs the host scratch the cache stages a whole state in.
+        runtime::TransformerKVCacheOptions cache_options;
+        cache_options.lazy_import_scratch = true;
+        cache_ = runtime::TransformerKVCache(cache_steps, step_elems, keys, values, cache_options);
+        attention_layers_ = keys.size();
         mask_scratch_.assign(static_cast<size_t>(cache_steps), ggml_fp32_to_fp16(-INFINITY));
     }
 
@@ -505,12 +520,28 @@ public:
     void import_state(const PrefillState & state) {
         ggml_backend_buffer_clear(buffer_.get(), 0);
         cache_.import_state(state.kv);
-        if (state.conv_tails.size() != conv_tails_.size()) {
+        set_conv_tails(state.conv_tails);
+    }
+
+    // The conv state, per short-conv layer [hidden][kernel - 1].
+    [[nodiscard]] std::vector<std::vector<float>> conv_tails() const {
+        std::vector<std::vector<float>> out;
+        for (auto * tail : conv_tails_) {
+            std::vector<float> values(static_cast<size_t>(ggml_nelements(tail)));
+            ggml_backend_tensor_get(tail, values.data(), 0, values.size() * sizeof(float));
+            out.push_back(std::move(values));
+        }
+
+        return out;
+    }
+
+    void set_conv_tails(const std::vector<std::vector<float>> & tails) {
+        if (tails.size() != conv_tails_.size()) {
             throw std::runtime_error("LFM2-Audio conv state does not match the decode graph");
         }
 
         for (size_t i = 0; i < conv_tails_.size(); ++i) {
-            ggml_backend_tensor_set(conv_tails_[i], state.conv_tails[i].data(), 0, state.conv_tails[i].size() * sizeof(float));
+            ggml_backend_tensor_set(conv_tails_[i], tails[i].data(), 0, tails[i].size() * sizeof(float));
         }
     }
 
@@ -524,9 +555,11 @@ public:
     // After a block has written `steps` more positions.
     void advance(int64_t steps) { cache_.advance_after_direct_append(steps); }
 
-    // The cache of the i-th attention layer, [1, cache_steps, kv_heads, head_dim].
+    // The cache of the i-th attention layer, [1, cache_steps, kv_heads, head_dim],
+    // which holds position p in row p.
     [[nodiscard]] const TensorValue & cache_key(size_t layer) const { return cache_.key_tensor(layer); }
     [[nodiscard]] const TensorValue & cache_value(size_t layer) const { return cache_.value_tensor(layer); }
+    [[nodiscard]] size_t attention_layers() const noexcept { return attention_layers_; }
 
     // The last kernel - 1 conv inputs of the i-th short-conv layer, [1, hidden, kernel - 1].
     [[nodiscard]] TensorValue conv_tail(size_t layer) const {
@@ -594,6 +627,7 @@ private:
     std::vector<ggml_tensor *> conv_tails_;
     std::vector<ggml_fp16_t> mask_scratch_;
     runtime::TransformerKVCache cache_;
+    size_t attention_layers_ = 0;
     ggml_cgraph * hidden_graph_ = nullptr;
     ggml_cgraph * logits_graph_ = nullptr;
     std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, GgmlBufferDeleter> buffer_;
@@ -828,6 +862,13 @@ struct Lfm2BackboneRuntime::Impl {
 
     // Lfm2Prefill::Chunked: the prompt block by block into `graph`, whose
     // cache is long enough. `rows` are the prompt's frame_rows().
+    //
+    // A block computes the same bits from the same span on the same keys,
+    // values and conv state (see BlockGraph), whatever the cache's length.
+    // So the leading blocks whose spans the last chunked prefill ran too
+    // are restored from what it left rather than run again: a next turn of
+    // a conversation starts with the turn before's prompt. The last block
+    // always runs, as its logits are the prefill's.
     std::vector<float> prefill_blocks(
         DecodeGraph & graph, const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, const std::vector<int32_t> & rows) {
         if (block_allocator == nullptr) {
@@ -838,20 +879,92 @@ struct Lfm2BackboneRuntime::Impl {
         }
 
         const auto steps = static_cast<int64_t>(prompt.input_ids.size());
-        std::vector<float> logits;
+        const auto span_at = [&](int64_t begin) {
+            return prompt_span(prompt, audio, rows, weights, config.hidden_size, begin, std::min(kPrefillBlockSteps, steps - begin));
+        };
+
+        const auto most = std::min(static_cast<size_t>((steps - 1) / kPrefillBlockSteps), kept.size());
+        size_t resumed = 0;
+        while (resumed < most && same_span(kept[resumed].span, span_at(static_cast<int64_t>(resumed) * kPrefillBlockSteps))) {
+            ++resumed;
+        }
+
+        kept.erase(kept.begin() + static_cast<std::ptrdiff_t>(resumed), kept.end());
         graph.clear();
-        for (int64_t begin = 0; begin < steps; begin += kPrefillBlockSteps) {
+        restore(graph);
+        resumed_steps = static_cast<int64_t>(resumed) * kPrefillBlockSteps;
+
+        std::vector<float> logits;
+        for (int64_t begin = resumed_steps; begin < steps; begin += kPrefillBlockSteps) {
             const int64_t length = std::min(kPrefillBlockSteps, steps - begin);
-            const auto span = prompt_span(prompt, audio, rows, weights, config.hidden_size, begin, length);
+            auto span = span_at(begin);
             BlockGraph block(weights, config, execution, graph, length, begin + length, span.audio_tokens(), span.frames());
             block.run(span, block_allocator.get());
             graph.advance(length);
             if (begin + length == steps) {
                 logits = block.logits();
             }
+
+            // A shorter last block is never kept: the next turn's block
+            // there is longer, so it could not match.
+            if (length == kPrefillBlockSteps) {
+                keep(graph, std::move(span), begin);
+            }
         }
 
         return logits;
+    }
+
+    // A full block of the last chunked prefill: its span, the rows it wrote
+    // into each attention layer's keys and values, as the cache holds them,
+    // and the conv state it left.
+    struct KeptBlock {
+        PromptSpan span;
+        std::vector<std::vector<float>> keys;
+        std::vector<std::vector<float>> values;
+        std::vector<std::vector<float>> conv_tails;
+    };
+
+    // After the block at `begin` has run, before anything else writes the
+    // cache or the conv state.
+    void keep(const DecodeGraph & graph, PromptSpan span, int64_t begin) {
+        KeptBlock block;
+        block.span = std::move(span);
+        const auto read_rows = [&](const TensorValue & cache) {
+            const size_t step_bytes = cache.tensor->nb[2];
+            std::vector<float> out(static_cast<size_t>(kPrefillBlockSteps) * step_bytes / sizeof(float));
+            ggml_backend_tensor_get(cache.tensor, out.data(), static_cast<size_t>(begin) * step_bytes, out.size() * sizeof(float));
+            return out;
+        };
+        for (size_t layer = 0; layer < graph.attention_layers(); ++layer) {
+            block.keys.push_back(read_rows(graph.cache_key(layer)));
+            block.values.push_back(read_rows(graph.cache_value(layer)));
+        }
+
+        block.conv_tails = graph.conv_tails();
+        kept.push_back(std::move(block));
+    }
+
+    // The kept blocks into `graph`, just cleared, as running them would
+    // leave it.
+    void restore(DecodeGraph & graph) const {
+        if (kept.empty()) {
+            return;
+        }
+
+        const auto write_rows = [](const TensorValue & cache, const std::vector<float> & rows, size_t block) {
+            const size_t offset = block * static_cast<size_t>(kPrefillBlockSteps) * cache.tensor->nb[2];
+            ggml_backend_tensor_set(cache.tensor, rows.data(), offset, rows.size() * sizeof(float));
+        };
+        for (size_t block = 0; block < kept.size(); ++block) {
+            for (size_t layer = 0; layer < graph.attention_layers(); ++layer) {
+                write_rows(graph.cache_key(layer), kept[block].keys[layer], block);
+                write_rows(graph.cache_value(layer), kept[block].values[layer], block);
+            }
+        }
+
+        graph.set_conv_tails(kept.back().conv_tails);
+        graph.advance(static_cast<int64_t>(kept.size()) * kPrefillBlockSteps);
     }
 
     std::shared_ptr<const assets::TensorSource> source;
@@ -863,6 +976,10 @@ struct Lfm2BackboneRuntime::Impl {
     Lfm2DecodeCache decode_policy = Lfm2DecodeCache::Transcript;  // the policy `decode` was sized by
     // The block graphs' scratch, made on the first chunked prefill.
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> block_allocator;
+    // The full blocks of the last chunked prefill, in order from the start
+    // of its prompt, and how many steps the last prefill restored from them.
+    std::vector<KeptBlock> kept;
+    int64_t resumed_steps = 0;
     bool started = false;
 };
 
@@ -890,6 +1007,7 @@ std::vector<float> Lfm2BackboneRuntime::start(
     const auto steps = static_cast<int64_t>(prompt.input_ids.size());
     const auto audio_tokens = static_cast<int64_t>(prompt.audio_positions.size());
     impl_->started = false;
+    impl_->resumed_steps = 0;
     if (steps == 0 || max_steps < 0) {
         throw std::runtime_error("LFM2-Audio generation needs a prompt and a nonnegative step budget");
     }
@@ -918,6 +1036,7 @@ std::vector<float> Lfm2BackboneRuntime::start(
         const auto prefill_start = std::chrono::steady_clock::now();
         auto logits = impl_->prefill_blocks(graph, prompt, audio, rows);
         debug::timing_log_scalar("lfm2_audio.prefill.ms", engine::debug::elapsed_ms(prefill_start));
+        debug::timing_log_scalar("lfm2_audio.prefill.resumed_steps", impl_->resumed_steps);
         impl_->started = true;
         return logits;
     }
@@ -971,6 +1090,10 @@ int64_t Lfm2BackboneRuntime::decode_cache_steps() const noexcept {
 
 std::vector<std::pair<std::string, size_t>> Lfm2BackboneRuntime::extra_weight_buffers() const {
     return impl_->weights.stores->extra_buffers();
+}
+
+int64_t Lfm2BackboneRuntime::resumed_prefill_steps() const noexcept {
+    return impl_->resumed_steps;
 }
 
 Lfm2GenerationResult Lfm2BackboneRuntime::generate(
