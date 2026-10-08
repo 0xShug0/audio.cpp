@@ -3471,6 +3471,46 @@
       ]
     },
     {
+      "id": "firered_vad_offline",
+      "coverage": "FireRed VAD frontend, offline lookahead, segmentation options and repeated requests",
+      "family": "firered_vad",
+      "model": "models/FireRedVAD-GGUF/firered-vad-f32.gguf",
+      "task": "vad",
+      "mode": "offline",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "short", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"},
+        {"id": "different_audio", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "segment_options", "audio": "assets/resources/sample_16k.wav", "options": {"threshold": 0.6, "merge_silence_duration_ms": 150, "speech_pad_ms": 30}},
+        {"id": "timed_chunks", "audio": "assets/resources/sample_16k.wav", "options": {"smooth_window_ms": 35, "min_speech_duration_ms": 105, "max_speech_duration_sec": 0.405, "min_silence_duration_ms": 95, "audio_chunk_duration_sec": 0.645}},
+        {"id": "repeat_short", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav"}
+      ]
+    },
+    {
+      "id": "firered_stream_vad_streaming",
+      "coverage": "FireRed Stream-VAD causal cache, overlapping feature frames and final segments",
+      "family": "firered_vad",
+      "model": "models/FireRedVAD-GGUF/firered-stream-vad-f32.gguf",
+      "task": "vad",
+      "mode": "streaming",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "first", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
+      "id": "firered_stream_vad_options",
+      "coverage": "FireRed Stream-VAD segmentation options",
+      "family": "firered_vad",
+      "model": "models/FireRedVAD-GGUF/firered-stream-vad-f32.gguf",
+      "task": "vad",
+      "mode": "streaming",
+      "outputs": ["segments"],
+      "requests": [
+        {"id": "segment_options", "audio": "assets/resources/sample_16k.wav", "options": {"smooth_window_ms": 30, "min_speech_duration_ms": 100, "max_speech_duration_sec": 0.4, "min_silence_duration_ms": 100, "speech_start_pad_ms": 30}}
+      ]
+    },
+    {
       "id": "silero_vad_streaming",
       "coverage": "Silero VAD streaming chunk state and final speech segments",
       "family": "silero_vad",

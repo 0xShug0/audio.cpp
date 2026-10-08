@@ -48,6 +48,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `dramabox` | [ResembleAI/Dramabox](https://huggingface.co/ResembleAI/Dramabox) | [LTX-2 Community License](https://huggingface.co/ResembleAI/Dramabox/blob/main/LICENSE) | Conditional | A paid license is needed from USD 10M yearly revenue. Generated content must be disclosed as machine-generated. Not for products that compete with Lightricks'. The Gemma 3 text encoder falls under the Gemma Terms of Use. | 2026-09-21 |
 | `echo_tts` | [jordand/echo-tts-base](https://huggingface.co/jordand/echo-tts-base)<br>[jordand/fish-s1-dac-min](https://huggingface.co/jordand/fish-s1-dac-min) | CC-BY-NC-SA-4.0 | No | | 2026-09-21 |
 | `f5_tts` | [SWivid/F5-TTS](https://huggingface.co/SWivid/F5-TTS)<br>[SWivid/Habibi-TTS](https://huggingface.co/SWivid/Habibi-TTS) | CC-BY-NC-4.0 (F5-TTS); CC-BY-NC-SA-4.0 (Habibi-TTS) | No | | 2026-09-21 |
+| `firered_vad` | [FireRedTeam/FireRedVAD](https://huggingface.co/FireRedTeam/FireRedVAD) | Apache-2.0 | Yes | VAD and Stream-VAD checkpoints. | 2026-10-07 |
 | `firered_audio` | [FireRedTeam/FireRedAudio](https://huggingface.co/FireRedTeam/FireRedAudio) | Apache-2.0 | Yes | | 2026-09-21 |
 | `fireredtts3` | [FireRedTeam/FireRedTTS3](https://huggingface.co/FireRedTeam/FireRedTTS3) | Apache-2.0 | Yes | | 2026-09-21 |
 | `fish_audio` | [fishaudio/s2-pro](https://huggingface.co/fishaudio/s2-pro) | [Fish Audio Research License](https://huggingface.co/fishaudio/s2-pro/blob/main/LICENSE.md) | No | Commercial use needs a separate license from Fish Audio. | 2026-09-21 |
