@@ -439,7 +439,7 @@ seconds. The clips are the same local files as the long-form section of
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Steps | 89 | 172 | 156 | 177 | 162 | 107 | 212 |
 
-The dumps are in `build/whistle/pr-prep/decoder-oracle/<clip>/`. They are local and
+The dumps are in `build/whistle/pr-prep/decoder-reference/<clip>/`. They are local and
 git-ignored. The encoder tensors in them came from the merged encoder on `main`.
 
 Measured on the same machine as the section above: Apple M3 Ultra, macOS, Release,
@@ -448,10 +448,10 @@ repository root:
 
 ```bash
 cmake --build build/whistle --target whistle_assets_test audiocpp_cli -j 8
-build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --backend cpu --threads 1 --dump build/whistle/pr-prep/decoder-oracle/sample
-build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend cpu --threads 1 --reference build/whistle/pr-prep/decoder-oracle/<clip> --tolerance 1e-4
-build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend cpu --threads 4 --reference build/whistle/pr-prep/decoder-oracle/<clip> --tolerance 1e-4
-build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend metal --threads 4 --reference build/whistle/pr-prep/decoder-oracle/<clip> --tolerance 5e-3
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav --backend cpu --threads 1 --dump build/whistle/pr-prep/decoder-reference/sample
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend cpu --threads 1 --reference build/whistle/pr-prep/decoder-reference/<clip> --tolerance 1e-4
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend cpu --threads 4 --reference build/whistle/pr-prep/decoder-reference/<clip> --tolerance 1e-4
+build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf <wav> --backend metal --threads 4 --reference build/whistle/pr-prep/decoder-reference/<clip> --tolerance 5e-3
 ctest --test-dir build/whistle -R whistle_ --output-on-failure
 build/whistle/bin/whistle_assets_test build/whistle/pr-prep/model/whistle-f32.gguf assets/resources/sample_16k.wav "<sample transcript>" --full --backend metal
 build/whistle/bin/audiocpp_cli --task asr --family whistle_asr --backend cpu --threads 1 --model build/whistle/pr-prep/model/whistle-f32.gguf --audio assets/resources/sample_16k.wav --language en --metrics
