@@ -1385,9 +1385,22 @@ void ServerState::load_models() {
             } else {
                 ensure_model_loaded_locked(*loaded);
                 ++eager_loaded;
+                // Models-completed boundary for trace-log consumers driving a
+                // load progress bar: one step per resident model. The final
+                // 1.0 is emitted once below.
+                if (eager_loaded < static_cast<int>(config_.models.size())) {
+                    engine::debug::trace_log_scalar(
+                        "server.load.progress",
+                        static_cast<double>(eager_loaded) / static_cast<double>(config_.models.size()));
+                }
             }
         }
         models_.push_back(std::move(loaded));
+    }
+    if (!config_.models.empty() && eager_loaded == static_cast<int>(config_.models.size())) {
+        // Every configured model is resident and the listening banner follows
+        // immediately: complete the models-completed curve at 1.0.
+        engine::debug::trace_log_scalar("server.load.progress", 1.0);
     }
 }
 
@@ -2046,6 +2059,9 @@ void ServerState::ensure_model_loaded_locked(LoadedModel & model) {
 
     auto loaded_model = registry.load(load_request);
     auto session = loaded_model->create_task_session(model.task, session_options);
+    // The weight stores uploaded during session construction: close the
+    // load-progress bracket opened by registry.load (see finish_model_load_trace).
+    engine::runtime::finish_model_load_trace();
     auto * offline = dynamic_cast<engine::runtime::IOfflineVoiceTaskSession *>(session.get());
     auto * streaming = dynamic_cast<engine::runtime::IStreamingVoiceTaskSession *>(session.get());
     if (model.task.mode == engine::runtime::RunMode::Offline && offline == nullptr) {

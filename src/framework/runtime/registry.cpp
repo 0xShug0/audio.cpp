@@ -1,5 +1,6 @@
 #include "engine/framework/runtime/registry.h"
 
+#include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/audio/utilities/utility_api.h"
 #include "engine/framework/model_spec/package.h"
@@ -12,7 +13,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <stdexcept>
+#include <system_error>
 
 namespace engine::runtime {
 
@@ -54,7 +57,28 @@ void log_model_load_trace(const ModelInspection & inspection, const ILoadedVoice
     engine::debug::trace_log_scalar("runtime.model.supports_timestamps", model.capabilities().supports_timestamps);
 }
 
+uint64_t discovered_weight_bytes(const ModelInspection & inspection) {
+    std::error_code ec;
+    uint64_t bytes = 0;
+    for (const auto & weight : inspection.discovered_weights) {
+        const uintmax_t size = std::filesystem::file_size(weight.path, ec);
+        if (!ec) {
+            bytes += static_cast<uint64_t>(size);
+        }
+        ec.clear();
+    }
+    return bytes;
+}
+
 }  // namespace
+
+void finish_model_load_trace() {
+    if (!engine::debug::trace_log_enabled()) {
+        return;
+    }
+    engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"loaded"});
+    engine::core::end_model_load();
+}
 
 void ModelRegistry::register_loader(std::shared_ptr<IVoiceModelLoader> loader) {
     if (loader == nullptr) {
@@ -133,9 +157,19 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const ModelLoadRequest & 
     if (loader == nullptr) {
         throw std::runtime_error("no registered model loader can load: " + request.model_path.string());
     }
-    const auto inspection = engine::debug::trace_log_enabled()
-        ? std::optional<ModelInspection>(loader->inspect(request))
-        : std::nullopt;
+    // Phase brackets + the uploaded-bytes curve give trace-log consumers a
+    // continuous load progress (llama.cpp-style). The curve STARTS here and is
+    // closed by finish_model_load_trace() once the host has built its task
+    // session: the actual weight stores upload during session construction,
+    // not inside the registry load.
+    const bool traced = engine::debug::trace_log_enabled();
+    std::optional<ModelInspection> inspection;
+    if (traced) {
+        engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"inspect"});
+        inspection = loader->inspect(request);
+        engine::core::begin_model_load(discovered_weight_bytes(*inspection));
+        engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"load"});
+    }
     auto model = loader->load(request);
     if (inspection.has_value()) {
         log_model_load_trace(*inspection, *model);

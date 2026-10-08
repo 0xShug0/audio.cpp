@@ -839,6 +839,9 @@ int audiocpp_cli_main(int argc, char ** argv) {
         const auto wav_options = wav_write_options_from_cli(argc, argv);
         auto model = registry.load(load_request);
         auto session = model->create_task_session(task_spec, session_options);
+        // The weight stores uploaded during session construction: close the
+        // load-progress bracket opened by registry.load (see finish_model_load_trace).
+        engine::runtime::finish_model_load_trace();
         const auto voice_state_out = optional_path_arg(argc, argv, "--voice-state-out");
         const auto text_out = optional_path_arg(argc, argv, "--text-out");
         const auto words_out = optional_path_arg(argc, argv, "--words-out");
