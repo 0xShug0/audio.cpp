@@ -68,7 +68,7 @@ RMS gain normalization is applied locally before it.
 
 The encoder runs as one GGML graph on the selected backend. It is built from the
 framework `Conv2dModule`, `DepthwiseConv2dModule`, `DepthwiseConv1dModule`,
-`LinearModule`, `RMSNormModule`, `RoPEModule`, `SiluModule`, `SigmoidModule`,
+`LinearModule`, `RMSNormModule`, `GemmaRMSNormModule`, `RoPEModule`, `SiluModule`, `SigmoidModule`,
 `SoftmaxModule`, and `GLUModule`. The stem does not use the shared
 `DepthwiseConvSubsamplingModule` because that module hardcodes ReLU and Whistle's
 stem uses SiLU. Whistle-specific math stays model-local in `graph.cpp`, shared by
@@ -76,14 +76,14 @@ the encoder and decoder graphs: the four-lane manifold hyper-connection mixing w
 its Sinkhorn normalization, the conditioned Kronecker-factored Hadamard MLP with its
 two fixed permutations, and the per-head RMS norm and rotary embedding over 48-wide
 heads. Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them
-once into the backend weight store. Norms that multiply by `1 + scale` store
-`1 + scale` at load time.
+once into the backend weight store.
 
 The autoregressive decoder runs as one persistent GGML step graph on a CPU
 backend of its own, with one thread, whatever backend the session uses. A step
-is about 2600 small graph nodes for one token, so its cost is per-node overhead
-rather than arithmetic: on Metal a step took about 6.5 ms against 3.3 ms on one
-CPU thread, and a second CPU thread roughly tripled the step time. Each step
+is 4738 small graph nodes for one token, so its cost is per-node overhead
+rather than arithmetic. With an earlier 2585-node version of the graph, a step took
+about 6.5 ms on Metal against 3.3 ms on one CPU thread, and extra CPU threads made
+whole requests slower because each node synchronizes the threads. Each step
 feeds one token. Self-attention keys and values stay on the
 backend in a `TransformerKVCache` written with `FastKVSetRowsModule`, and a
 per-layer history of raw query/key/value projections feeds the three-tap mixing
@@ -150,8 +150,9 @@ unresolved questions. No weights or extracted assets are included in this port.
   `decoder_tokens.i32` (input tokens, BOS and language token first) and
   `decoder_transcript.txt`. `--reference` compares every logits file with the
   same scaled metric and requires identical tokens and transcript.
-  The dumps used in [the validation report](../../tests/whistle_asr/VALIDATION.md)
-  came from the earlier host-only implementation at commit `6e0a40c4`.
+  In [the validation report](../../tests/whistle_asr/VALIDATION.md), the encoder
+  dumps came from the earlier host-only implementation at commit `6e0a40c4`. The
+  decoder dumps came from the host decoder before the step graph replaced it.
 
 To run the native tests through CTest, configure with
 `-DENGINE_BUILD_TESTS=ON` and
