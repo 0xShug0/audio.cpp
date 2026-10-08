@@ -672,7 +672,7 @@ public:
         logits_ = text_logits(ctx, hidden_of_last_step(ctx, x, weights, config), weights, config).tensor;
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
-        core::validate_backend_graph_supported(execution.backend(), graph_, "LFM2-Audio prefill block graph");
+        core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph_, "LFM2-Audio prefill block graph");
 
         // Each position attends to every cache row up to its own.
         const int64_t begin = kv_steps - steps;
