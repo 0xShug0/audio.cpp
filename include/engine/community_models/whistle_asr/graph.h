@@ -81,8 +81,7 @@ public:
     [[nodiscard]] std::vector<float> values(const std::string & name, std::vector<int64_t> shape, int layer = -1) const;
     [[nodiscard]] float scalar(const std::string & name, int layer = -1) const;
     core::TensorValue vector(const std::string & name, int64_t size, int layer = -1);
-    // Gemma-style RMS norm weights. The checkpoint stores scale and the norm
-    // multiplies by 1 + scale, so the stored weight already holds 1 + scale.
+    // Gemma-style RMS norm scale; GemmaRMSNormModule multiplies by 1 + scale.
     modules::NormWeights norm(const std::string & name, int64_t size, int layer = -1);
     // JAX kernels are [in, out]; LinearModule and ggml_mul_mat take [out, in].
     core::TensorValue transposed(const std::string & name, int64_t in, int64_t out, int layer = -1);
@@ -114,7 +113,7 @@ public:
     ggml_tensor * sigmoid(ggml_tensor * input);
     ggml_tensor * softmax(ggml_tensor * input);
     ggml_tensor * rms_norm(ggml_tensor * input, int64_t size);
-    // RMS norm times 1 + scale; weights come from WhistleWeightLoader::norm.
+    // GemmaRMSNormModule: RMS norm times 1 + scale.
     ggml_tensor * gemma_norm(ggml_tensor * input, const modules::NormWeights & weights, int64_t size);
     // Per-head Gemma RMS norm over [heads * 48, rows], returned flat again.
     ggml_tensor * head_norm(ggml_tensor * input, int64_t heads, const modules::NormWeights & weights);

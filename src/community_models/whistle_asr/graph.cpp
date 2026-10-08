@@ -49,11 +49,7 @@ TensorValue WhistleWeightLoader::vector(const std::string & name, int64_t size, 
 }
 
 modules::NormWeights WhistleWeightLoader::norm(const std::string & name, int64_t size, int layer) {
-    auto weight = values(name + "/scale", {size}, layer);
-    for (float & value : weight) {
-        value = 1.0f + value;
-    }
-    return {store_.make_f32(TensorShape::from_dims({size}), std::move(weight)), std::nullopt};
+    return {vector(name + "/scale", size, layer), std::nullopt};
 }
 
 TensorValue WhistleWeightLoader::transposed(const std::string & name, int64_t in, int64_t out, int layer) {
@@ -182,7 +178,7 @@ ggml_tensor * WhistleGraphOps::rms_norm(ggml_tensor * input, int64_t size) {
 }
 
 ggml_tensor * WhistleGraphOps::gemma_norm(ggml_tensor * input, const modules::NormWeights & weights, int64_t size) {
-    return modules::RMSNormModule({size, kNormEpsilon, true, false}).build(ctx_, rows_2d(input), weights).tensor;
+    return modules::GemmaRMSNormModule({size, kNormEpsilon, true, false}).build(ctx_, rows_2d(input), weights).tensor;
 }
 
 ggml_tensor * WhistleGraphOps::head_norm(ggml_tensor * input, int64_t heads, const modules::NormWeights & weights) {
@@ -190,7 +186,7 @@ ggml_tensor * WhistleGraphOps::head_norm(ggml_tensor * input, int64_t heads, con
     auto split = core::wrap_tensor(
         ggml_reshape_4d(ctx_.ggml, input, kWhistleQkDim, heads, rows, 1),
         TensorShape::from_dims({1, rows, heads, kWhistleQkDim}), GGML_TYPE_F32);
-    auto normalized = modules::RMSNormModule({kWhistleQkDim, kNormEpsilon, true, false}).build(ctx_, split, weights);
+    auto normalized = modules::GemmaRMSNormModule({kWhistleQkDim, kNormEpsilon, true, false}).build(ctx_, split, weights);
     return ggml_reshape_2d(ctx_.ggml, normalized.tensor, heads * kWhistleQkDim, rows);
 }
 
