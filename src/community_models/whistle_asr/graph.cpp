@@ -144,15 +144,14 @@ WhistleGraphConstants WhistleWeightLoader::constants(const WhistleAssets & asset
     constants.lane_mean = store_.make_f32(
         TensorShape::from_dims({1, kWhistleLanes}),
         std::vector<float>(static_cast<size_t>(kWhistleLanes), 1.0f / static_cast<float>(kWhistleLanes)));
-    // Sums each column of a flattened 4x4 matrix: column_sum[j] = sum_i m[i * 4 + j].
+    // Flattened 4x4 transpose as a 16x16 permutation: out[c * 4 + r] = in[r * 4 + c].
     constexpr int64_t n = kWhistleLanes;
-    std::vector<float> column_sum(static_cast<size_t>(n * n * n), 0.0f);
-    for (int64_t column = 0; column < n; ++column) {
-        for (int64_t index = 0; index < n * n; ++index) {
-            column_sum[static_cast<size_t>(column * n * n + index)] = index % n == column ? 1.0f : 0.0f;
-        }
+    std::vector<float> transpose(static_cast<size_t>(n * n * n * n), 0.0f);
+    for (int64_t out = 0; out < n * n; ++out) {
+        const int64_t source = (out % n) * n + out / n;
+        transpose[static_cast<size_t>(out * n * n + source)] = 1.0f;
     }
-    constants.column_sum = store_.make_f32(TensorShape::from_dims({n, n * n}), std::move(column_sum));
+    constants.transpose_4x4 = store_.make_f32(TensorShape::from_dims({n * n, n * n}), std::move(transpose));
     constants.identity_16 = identity(16, rows);
     constants.identity_32 = identity(32, rows);
     return constants;
@@ -204,35 +203,34 @@ TensorValue WhistleGraphOps::rope(ggml_tensor * input, int64_t heads, ggml_tenso
     return modules::RoPEModule({kWhistleQkDim, GGML_ROPE_TYPE_NEOX, kRopeTheta, 1.0f}).build(ctx_, split, position_values);
 }
 
-// Twenty rounds of row then column log-normalization of the 4x4 lane-mixing logits
-// L (rows are output lanes, columns source lanes), followed by exp. After any
-// number of rounds the normalized logits equal L + f_i + g_j for row potentials f
-// and column potentials g, so only g is carried: each row step is a softmax of
-// L + g along the row, which subtracts the row maximum like the host loop, and each
-// column step subtracts the log of the column sums of that softmax from g. exp of
-// the final normalized logits is the last row softmax divided by its column sums.
-// The clamp only applies when a whole column underflows, where log(0) would
-// otherwise turn the next softmax into NaN.
+// Subtracts each row's log-sum-exp. ggml has no max reduction, so the log-sum-exp
+// is recovered from the softmax as sum(p * (x - log p)): every term with a
+// non-underflowed p equals the log-sum-exp, and the clamp keeps underflowed terms
+// at zero instead of 0 * -inf. Entries far below the row maximum keep their exact
+// x - lse value, as in the host implementation.
+ggml_tensor * WhistleGraphOps::log_normalize_rows(ggml_tensor * x) {
+    const auto rows = core::wrap_tensor(x, TensorShape::from_dims({x->ne[2], x->ne[1], x->ne[0]}), GGML_TYPE_F32);
+    ggml_tensor * p = ggml_clamp(ctx_.ggml, modules::SoftmaxModule().build(ctx_, rows).tensor,
+        std::numeric_limits<float>::min(), 1.0f);
+    ggml_tensor * lse = ggml_sum_rows(ctx_.ggml,
+        ggml_mul(ctx_.ggml, p, ggml_sub(ctx_.ggml, x, ggml_log(ctx_.ggml, p))));
+    return ggml_sub(ctx_.ggml, x, lse);
+}
+
+// Twenty rounds of row then column log-normalization of the 4x4 lane-mixing
+// logits, followed by exp. Each pass normalizes the rows and transposes, so the
+// row and column passes use the same code and no pass can underflow as a whole.
 ggml_tensor * WhistleGraphOps::sinkhorn(ggml_tensor * logits) {
     const int64_t rows = logits->ne[1];
-    const int64_t n = kWhistleLanes;
-    ggml_context * g = ctx_.ggml;
-    // [column, 1, row, rows]: one softmax row per matrix row, with the column
-    // potentials broadcast over the matrix rows as the softmax mask.
-    ggml_tensor * grid = ggml_reshape_4d(g, logits, n, 1, n, rows);
-    ggml_tensor * potentials = nullptr;
-    ggml_tensor * normalized = nullptr;
-    ggml_tensor * column_sums = nullptr;
+    const int64_t size = kWhistleLanes * kWhistleLanes;
+    ggml_tensor * x = logits;
     for (int iteration = 0; iteration < kSinkhornIterations; ++iteration) {
-        ggml_tensor * mask = potentials == nullptr ? nullptr : ggml_reshape_4d(g, potentials, n, 1, 1, rows);
-        normalized = ggml_soft_max_ext(g, grid, mask, 1.0f, 0.0f);
-        column_sums = ggml_mul_mat(g, constants_.column_sum.tensor, ggml_reshape_2d(g, normalized, n * n, rows));
-        ggml_tensor * log_sums = ggml_log(g,
-            ggml_clamp(g, column_sums, std::numeric_limits<float>::min(), std::numeric_limits<float>::max()));
-        potentials = potentials == nullptr ? ggml_neg(g, log_sums) : ggml_sub(g, potentials, log_sums);
+        for (int pass = 0; pass < 2; ++pass) {
+            x = log_normalize_rows(ggml_reshape_3d(ctx_.ggml, x, kWhistleLanes, kWhistleLanes, rows));
+            x = ggml_mul_mat(ctx_.ggml, constants_.transpose_4x4.tensor, ggml_reshape_2d(ctx_.ggml, x, size, rows));
+        }
     }
-    return ggml_reshape_2d(g,
-        ggml_div(g, normalized, ggml_reshape_4d(g, column_sums, n, 1, 1, rows)), n * n, rows);
+    return ggml_exp(ctx_.ggml, x);
 }
 
 ggml_tensor * WhistleGraphOps::identity_view(const TensorValue & identity, int64_t rows) {

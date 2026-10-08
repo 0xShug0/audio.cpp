@@ -77,10 +77,7 @@ its Sinkhorn normalization, the conditioned Kronecker-factored Hadamard MLP with
 two fixed permutations, and the per-head RMS norm and rotary embedding over 48-wide
 heads. Checkpoint tensors are JAX `[in, out]` kernels; the loader transposes them
 once into the backend weight store. Norms that multiply by `1 + scale` store
-`1 + scale` at load time. The Sinkhorn normalization carries column potentials:
-each of its 20 rounds is a row softmax of the logits plus the potentials, followed
-by a column log-sum update, which is the same row-then-column log normalization
-with fewer graph nodes.
+`1 + scale` at load time.
 
 The autoregressive decoder runs as one persistent GGML step graph on a CPU
 backend of its own, with one thread, whatever backend the session uses. A step

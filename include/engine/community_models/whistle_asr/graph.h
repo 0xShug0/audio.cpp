@@ -65,10 +65,9 @@ struct WhistleGraphConstants {
     core::TensorValue permutation_1;
     core::TensorValue permutation_2;
     core::TensorValue lane_mean;
-    // Column sums of a flattened 4x4 lane-mixing matrix, [16] -> [4].
-    core::TensorValue column_sum;
     // Structural constants: ggml_mul_mat against these transposes small per-row
     // matrices exactly, which the generic strided copy behind ggml_cont does slowly.
+    core::TensorValue transpose_4x4;
     core::TensorValue identity_16;
     core::TensorValue identity_32;
 };
@@ -132,6 +131,7 @@ public:
     [[nodiscard]] core::ModuleBuildContext & context() const noexcept { return ctx_; }
 
 private:
+    ggml_tensor * log_normalize_rows(ggml_tensor * x);
     ggml_tensor * sinkhorn(ggml_tensor * logits);
     ggml_tensor * identity_view(const core::TensorValue & identity, int64_t rows);
     ggml_tensor * kronecker(ggml_tensor * input, const core::TensorValue & a, const core::TensorValue & b);

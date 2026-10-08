@@ -209,6 +209,10 @@ struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept { ggml_free(ctx); }
 };
 
+struct BackendBufferDeleter {
+    void operator()(ggml_backend_buffer_t buffer) const noexcept { ggml_backend_buffer_free(buffer); }
+};
+
 struct GallocrDeleter {
     void operator()(ggml_gallocr * galloc) const noexcept { ggml_gallocr_free(galloc); }
 };
@@ -250,9 +254,6 @@ public:
         core::release_backend_graph_resources(backend_, graph_);
         plan_.reset();
         galloc_.reset();
-        if (state_buffer_ != nullptr) {
-            ggml_backend_buffer_free(state_buffer_);
-        }
     }
 
     Graph(const Graph &) = delete;
@@ -396,13 +397,13 @@ private:
             cross_values_[static_cast<size_t>(layer)] =
                 ggml_new_tensor_3d(ctx, GGML_TYPE_F32, kWhistleMaximumFrames, kWhistleVDim, kWhistleHeads);
         }
-        state_buffer_ = ggml_backend_alloc_ctx_tensors(ctx, backend_);
+        state_buffer_.reset(ggml_backend_alloc_ctx_tensors(ctx, backend_));
         if (state_buffer_ == nullptr) {
             throw std::runtime_error("Failed to allocate the Whistle decoder state tensors");
         }
         // Masked attention entries get probability zero, which only stays zero when
         // the rows behind them are finite; the two leading history slots must be zero.
-        ggml_backend_buffer_clear(state_buffer_, 0);
+        ggml_backend_buffer_clear(state_buffer_.get(), 0);
         // Key rows are 96 wide and value rows 128 wide, so the cache is only cleared
         // and advanced here; its host import and export paths assume one row width.
         runtime::TransformerKVCacheOptions options;
@@ -571,7 +572,7 @@ private:
     std::array<std::vector<std::byte>, kEngramSites> engram_tables_;
 
     std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
-    ggml_backend_buffer_t state_buffer_ = nullptr;
+    std::unique_ptr<ggml_backend_buffer, BackendBufferDeleter> state_buffer_;
     ggml_tensor * token_ = nullptr;
     ggml_tensor * position_ = nullptr;
     ggml_tensor * history_index_ = nullptr;

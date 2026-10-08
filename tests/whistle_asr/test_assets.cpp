@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -339,10 +340,18 @@ int main(int argc, char ** argv) {
                   << " GGUF tensors and " << assets->tokenizer_pieces.size()
                   << " tokenizer pieces\n";
         if (options.wav.empty()) {
+            if (!options.reference_dir.empty() || !options.dump_dir.empty()) {
+                throw std::invalid_argument("--dump and --reference need a WAV file");
+            }
             return 0;
         }
         engine::core::ExecutionContext execution_context(options.backend);
         if (!options.reference_dir.empty() || !options.dump_dir.empty()) {
+            if (!options.reference_dir.empty() && !options.dump_dir.empty() &&
+                std::filesystem::weakly_canonical(options.reference_dir) ==
+                    std::filesystem::weakly_canonical(options.dump_dir)) {
+                throw std::invalid_argument("--dump would overwrite the --reference directory");
+            }
             check_encoder_tensors(options, assets, execution_context);
             check_decoder(options, assets, execution_context);
             return 0;
