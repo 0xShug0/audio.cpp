@@ -382,10 +382,32 @@ A third turn sends both earlier questions and replies, in order, and so on.
 
 The server returns the reply artifact in the `artifacts` array of
 `/v1/tasks/run` and `/v1/tasks/stream` results (base64 `payload`, and `meta`)
-when the request's `options` have `"return_codes": true`. Its request JSON
-does not take artifacts yet, so it cannot be sent the history: through the
-server, and on the live route, `/v1/audio/speech/live`, each request is a
-first turn.
+when the request's `options` have `"return_codes": true`. A later request sends
+the history back in its own `artifacts` array, in the same shape: per earlier
+turn, in order, an `lfm2_audio.question` of kind `custom` holding the
+question's WAV bytes, then the `lfm2_audio.reply` that turn returned, as it
+came back. Either can give its bytes as a base64 `payload` or a `path` to a
+file. The new question goes in `audio` as usual, and the reply's `meta` goes
+back exactly as the result returned it:
+
+```json
+{"model": "lfm2-audio-s2s", "request": {
+  "audio": "/path/to/turn2.wav",
+  "options": {"return_codes": true},
+  "artifacts": [
+    {"id": "lfm2_audio.question", "kind": "custom", "path": "/path/to/turn1.wav"},
+    {"id": "lfm2_audio.reply", "kind": "acoustic_tokens", "payload": "<turn 1's base64>",
+     "meta": {"format": "lfm2_audio.reply/1", "language": "en", "codebooks": "8",
+              "audio_vocab_size": "2049", "text_vocab_size": "65536",
+              "steps": "<turn 1's steps>", "ended": "<turn 1's ended>"}}
+  ]}}
+```
+
+The CLI's `--request-sequence` JSON takes the same `artifacts` array. The CLI
+writes result artifacts with `payload_hex`, which requests do not take, so
+write the bytes to a file and pass its `path`. The live route,
+`/v1/audio/speech/live`, takes no artifacts: each of its requests is a first
+turn.
 
 ## Request Options (use with `--request-option`)
 
@@ -812,8 +834,9 @@ copy of it in their layout as the text head (see [CPU](#cpu)).
 
 ## Limitations
 
-- The server does not take request artifacts yet, so it answers each S2S
-  request as a first turn; conversations run through the C API.
+- The live route, `/v1/audio/speech/live`, answers each request as a first
+  turn; conversations run through `/v1/tasks/run` and `/v1/tasks/stream`, the
+  CLI's request JSON or the C API.
 - ASR is offline only; TTS and S2S also stream.
 - TTS speaks with the built-in voices only; there is no voice cloning.
 - On the CPU, F16 and F32 weights, and Q8_0 on x86, run ggml's generic

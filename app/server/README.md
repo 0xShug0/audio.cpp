@@ -743,7 +743,7 @@ same shape, so a client can send what one result returned in a later request:
 | `id` | non-empty string; ids may repeat |
 | `kind` | `speaker_embedding`, `style_embedding`, `prompt_embedding`, `acoustic_tokens`, `midi`, `transcript_alignment`, `diarization_state`, `vad_state` or `custom` |
 | `payload` | the bytes as Base64; a `data:...;base64,` URI is also accepted |
-| `path` | instead of `payload`: a server-local file whose bytes are the payload |
+| `path` | instead of `payload`: a server-local file whose bytes are the payload; a relative path resolves against the server's working directory |
 | `meta` | optional object of strings; a number or boolean value becomes text as in `options` (`12`, `true`; `1.0` becomes `1`) |
 
 The model gets the artifacts in array order. Which ids and kinds it reads is up
