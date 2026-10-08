@@ -82,11 +82,17 @@ runtime::SessionOptions require_supported_session_options(
   options = normalize_session_options(std::move(options));
   const auto checked_contract = require_contract(contract);
   auto validation_options = options;
-  // Older standalone GGUF packages embed a v1 contract that predates this
-  // workaround option; keep them usable while still validating the value below.
-  if (checked_contract->session_option_keys.find("irodori_tts.codec_backend") ==
-      checked_contract->session_option_keys.end()) {
-    validation_options.options.erase("irodori_tts.codec_backend");
+  // Older standalone GGUF packages embed a v1 contract that predates these
+  // options; keep them usable while still validating the values below.
+  for (const char *key :
+       {"irodori_tts.codec_backend", "irodori_tts.codec_decode_chunk_steps",
+        "irodori_tts.codec_decode_overlap_steps",
+        "irodori_tts.codec_encode_chunk_steps",
+        "irodori_tts.codec_encode_overlap_steps"}) {
+    if (checked_contract->session_option_keys.find(key) ==
+        checked_contract->session_option_keys.end()) {
+      validation_options.options.erase(key);
+    }
   }
   runtime::validate_spec_backed_session_options(
       validation_options, *checked_contract, kFamily, "Irodori-TTS");
@@ -494,6 +500,20 @@ IrodoriTTSSession::IrodoriTTSSession(
   codec_ = std::make_unique<IrodoriCodec>(
       assets_, *codec_execution, codec_graph_arena_bytes_,
       codec_weight_context_bytes_, codec_weight_storage_type_);
+  codec_->set_decode_chunking(
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_decode_chunk_steps"})
+          .value_or(0),
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_decode_overlap_steps"})
+          .value_or(16));
+  codec_->set_encode_chunking(
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_encode_chunk_steps"})
+          .value_or(0),
+      runtime::parse_i64_option(this->options().options,
+                                {"irodori_tts.codec_encode_overlap_steps"})
+          .value_or(16));
   assets_->model_weights->release_storage();
   assets_->codec_weights->release_storage();
   debug::trace_log_scalar("irodori_tts.model_root",

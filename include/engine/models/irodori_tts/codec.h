@@ -88,6 +88,13 @@ public:
                               int64_t latent_steps, int64_t target_samples);
   std::vector<float> encode_reference(const runtime::AudioBuffer &audio,
                                       int64_t &latent_steps_out);
+  // Decode in fixed-size windows of chunk_steps latent frames plus
+  // overlap_steps of context on each side, so the decode graph (and its
+  // activation buffer) no longer grows with the output length. 0 disables.
+  void set_decode_chunking(int64_t chunk_steps, int64_t overlap_steps);
+  // The same for encoding reference audio: windows of chunk_steps latent
+  // frames (hop_length samples each) plus overlap_steps on each side.
+  void set_encode_chunking(int64_t chunk_steps, int64_t overlap_steps);
   void release_graphs();
 
 private:

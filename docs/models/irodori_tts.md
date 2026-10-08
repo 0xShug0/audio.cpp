@@ -125,9 +125,34 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `irodori_tts.condition_graph_arena_mb` | MiB | `256` | Condition encoder graph arena size. |
 | `irodori_tts.rf_graph_arena_mb` | MiB | `768` | RF sampler graph arena size. |
 | `irodori_tts.codec_graph_arena_mb` | MiB | `512` | DACVAE codec graph arena size. |
+| `irodori_tts.codec_decode_chunk_steps` | integer | `0` | Decode the latent in windows of this many latent frames (25 per second); `0` decodes the whole sequence at once. See [Bounding codec memory](#bounding-codec-memory). |
+| `irodori_tts.codec_decode_overlap_steps` | integer | `16` | Latent frames of context decoded on each side of a decode window and discarded. |
+| `irodori_tts.codec_encode_chunk_steps` | integer | `0` | Encode reference audio in windows of this many latent frames; `0` encodes the whole reference at once. |
+| `irodori_tts.codec_encode_overlap_steps` | integer | `16` | Latent frames of reference audio encoded as context on each side of an encode window and discarded. |
 | `irodori_tts.condition_weight_context_mb` | MiB | `32` | Condition encoder weight metadata context size. |
 | `irodori_tts.rf_weight_context_mb` | MiB | `32` | RF sampler weight metadata context size. |
 | `irodori_tts.codec_weight_context_mb` | MiB | `32` | DACVAE codec weight metadata context size. |
+
+### Bounding codec memory
+
+The DACVAE codec decodes the whole generated latent, and encodes the whole reference clip, as one graph, so its activation memory grows with the audio length: about 176 MiB per second of output and 107 MiB per second of reference audio (v4 Small). For anything longer than a few seconds this sets the peak of the request, well above the resident model.
+
+`codec_decode_chunk_steps` and `codec_encode_chunk_steps` process the codec in fixed-size windows instead. Each window carries `overlap_steps` frames of real context on both sides, which are discarded, and one graph of the window size is reused, so the peak no longer depends on the length. Both are off by default. `100` (4 seconds) with the default overlap of `16` is a good setting; shorter windows save little more and run slower. Audio shorter than one window (`chunk + 2 x overlap` frames) is processed in one piece as before.
+
+```bash
+--session-option irodori_tts.codec_decode_chunk_steps=100 \
+--session-option irodori_tts.codec_encode_chunk_steps=100
+```
+
+Peak GPU memory, v4 Small Q8_0 on CUDA, 48 steps:
+
+| request | default | decode chunks | decode + encode chunks |
+|---|---:|---:|---:|
+| short text (6.6 s output) | 2,645 MiB | 2,404 MiB | 2,405 MiB |
+| long text (25.8 s output) | 6,208 MiB | 2,416 MiB | 2,423 MiB |
+| 34.7 s reference clip, first request (includes the encode) | 5,154 MiB | 5,176 MiB | 2,427 MiB |
+
+Requests take about 5-10% longer. The output is not bit-identical: on CPU the waveform differs by at most one 16-bit step; on CUDA the chunked decode is about 67 dB SNR from the whole-sequence decode, and a chunked reference encode changes the speaker condition about as much as `codec_weight_type=f16` does. Keep the overlap at `16`: with `0` the window edges click.
 
 ## Compatibility
 
