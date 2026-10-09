@@ -53,7 +53,7 @@ void print_task_list_help() {
         << "audiocpp_cli --task <task> --family <family> --model <path> --backend <backend> [options]\n"
         << "  Global:\n"
         << "    --version  Print build version, commit, compiler, platform, and enabled backends\n"
-        << "    --task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc|midi\n"
+        << "    --task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc|midi|wake\n"
         << "    --family <name>\n"
         << "    --model <path>\n"
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
@@ -174,7 +174,8 @@ void print_task_list_help() {
         << "    vdes   voice design\n"
         << "    spk    speaker embedding/recognition\n"
         << "    svc    singing voice conversion\n"
-        << "    midi   audio-to-symbolic MIDI/event transcription\n";
+        << "    midi   audio-to-symbolic MIDI/event transcription\n"
+        << "    wake   wake-word detection\n";
 }
 
 void print_option_group(const char * title, const std::vector<engine::runtime::CliOptionInfo> & options) {
@@ -272,6 +273,7 @@ void print_model_common_options(const engine::runtime::ModelInspection & inspect
     }
     if (model_supports_task(inspection, engine::runtime::VoiceTaskKind::Asr) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::Vad) ||
+        model_supports_task(inspection, engine::runtime::VoiceTaskKind::WakeWord) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::Diarization) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::SourceSeparation) ||
         model_supports_task(inspection, engine::runtime::VoiceTaskKind::Midi) ||

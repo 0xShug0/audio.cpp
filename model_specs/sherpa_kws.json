@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "family": "sherpa_kws",
+  "display_name": "sherpa-onnx Zipformer KWS",
+  "description": "Streaming Zipformer transducer keyword spotting from sherpa-onnx model exports.",
+  "category": "audio_tools",
+  "status": "experimental",
+  "tasks": [
+    "wake_word"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "model_dependent"
+  ],
+  "capabilities": {
+    "wake_word": [
+      "speech_segments",
+      "stream_events"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "keywords",
+        "type": "string",
+        "description": "Newline- or slash-separated tokenized keyword rows; each row may include :score, #threshold, and @label fields.",
+        "required": false
+      },
+      {
+        "name": "max_active_paths",
+        "type": "int",
+        "description": "Maximum keyword decoder hypotheses.",
+        "required": false,
+        "min": 1,
+        "max": 64,
+        "default": 4
+      },
+      {
+        "name": "keywords_score",
+        "type": "float",
+        "description": "Default context score added for each matched keyword token.",
+        "required": false,
+        "default": 1.0
+      },
+      {
+        "name": "keywords_threshold",
+        "type": "float",
+        "description": "Default mean acoustic probability required to trigger a keyword.",
+        "required": false,
+        "min": 0,
+        "max": 1,
+        "default": 0.25
+      },
+      {
+        "name": "num_trailing_blanks",
+        "type": "int",
+        "description": "Number of trailing blank frames required before a keyword triggers.",
+        "required": false,
+        "min": 0,
+        "default": 1
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokens": "model:tokens.txt",
+        "keywords": "model:keywords.txt"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokens": "model:tokens.txt",
+        "keywords": "model:keywords.txt"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "Wake Word",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/sherpa_kws.md"
+    ]
+  }
+}

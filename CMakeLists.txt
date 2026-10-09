@@ -849,6 +849,32 @@ audiocpp_add_model(kroko_asr
         engine::models::kroko_asr::make_kroko_asr_loader
 )
 
+audiocpp_add_model(micro_wake_word
+    SOURCES
+        src/models/micro_wake_word/frontend.cpp
+        src/models/micro_wake_word/runtime.cpp
+        src/models/micro_wake_word/session.cpp
+    INCLUDES
+        engine/models/micro_wake_word/session.h
+    LOADERS
+        engine::models::micro_wake_word::make_micro_wake_word_loader
+)
+
+audiocpp_add_model(sherpa_kws
+    SOURCES
+        src/models/sherpa_kws/assets.cpp
+        src/models/sherpa_kws/encoder.cpp
+        src/models/sherpa_kws/frontend.cpp
+        src/models/sherpa_kws/keyword_decoder.cpp
+        src/models/sherpa_kws/session.cpp
+        src/models/sherpa_kws/transducer.cpp
+        src/models/sherpa_kws/zipformer.cpp
+    INCLUDES
+        engine/models/sherpa_kws/session.h
+    LOADERS
+        engine::models::sherpa_kws::make_sherpa_kws_loader
+)
+
 audiocpp_add_model(outetts
     SOURCES
         src/community_models/outetts/assets.cpp
