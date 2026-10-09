@@ -757,6 +757,83 @@ naming it, for example `artifacts[1] (example.tokens): unknown kind 'tokens'`.
 `/v1/tasks/batch` entry, may total at most 2 GiB. A batch reads all its entries
 before it runs, so with `path` artifacts it can hold up to 2 GiB per entry.
 
+### `POST /v1/tasks/stream`
+
+Runs one generic request through the model's streaming interface and returns
+the events it produced with the result. The body is the one `/v1/tasks/run`
+takes, artifacts included, except that `audio_base64` is not read here: it is
+ignored, not rejected, so audio input goes in `audio` as a server-local path.
+
+By default the response is one JSON body, sent once the run is over:
+
+```text
+{"events":[{"partial_text":{"text":"Sure","language":"en"},"audio":"<Base64 WAV>","is_final":false},
+           {"audio":"<Base64 WAV>","is_final":false},...],
+ "result":{"text":"Sure! ...","language":"en","audio":"<Base64 WAV>","sample_rate":24000,"channels":1,
+           "timing":{"ttft_ms":<ms>}}}
+```
+
+An event has the fields it carries: `partial_text`, `audio` (a WAV of that
+event's samples), `named_audio_outputs`, `word_timestamps` and, for a
+diarization model, `speaker_turns`, and always `is_final`. Events do not carry
+voice activity or artifacts, so an event can be just `{"is_final":false}`.
+`result` has the fields of the `/v1/tasks/run` result, except that its `timing`
+holds only `ttft_ms`: the time from the start of the run, after the model is
+free and loaded, to its first output (`null` for a diarization run that found
+no speaker).
+
+With `"stream_format": "sse"` at the top level of the body, the response is
+server-sent events instead, each written as the model produces it:
+
+```bash
+curl -N http://127.0.0.1:8080/v1/tasks/stream \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "lfm2-audio-s2s-stream",
+    "stream_format": "sse",
+    "request": {"audio": "/path/to/question.wav", "options": {"return_codes": true}}
+  }'
+```
+
+```text
+data: {"type":"task.stream.event","event":{"partial_text":{"text":"Sure","language":"en"},"audio":"<Base64 WAV>","is_final":false}}
+data: {"type":"task.stream.event","event":{"audio":"<Base64 WAV>","is_final":false}}
+...
+data: {"type":"task.stream.done","result":{"text":"Sure! ...","language":"en","audio":"<Base64 WAV>",...,"timing":{"ttft_ms":<ms>}}}
+data: [DONE]
+```
+
+Each `event` is the object the JSON response puts in `events`, in the same
+order, and `result` is the object it puts under `result`, artifacts included.
+`task.stream.done` carries the whole result on one line, so for a spoken reply
+it repeats all of the reply's audio, about 640 KB of Base64 per 10 s of 24 kHz
+audio; a client that reads lines with a fixed size limit has to allow for that.
+A client that closes the stream before `task.stream.done` gets no result.
+
+Only the string `"sse"` streams. Without the field, or with `null`, the
+response is the JSON body, and any other value is answered with HTTP 400. This
+differs from `/v1/audio/speech`, which streams whenever `stream_format` is
+present. The `Accept` header is not consulted.
+
+A request that fails before the stream starts gets the status it gets without
+`stream_format`: an unknown model, a malformed artifact, an unreadable `audio`
+path and, with `--parallel-jobs`, a model that stays busy past the busy timeout
+(503). Once the stream has started, a failure ends it with
+`data: {"type":"error","error":{"message":"..."}}`, without `task.stream.done`
+or `[DONE]`; the event has no error type or status. That covers a model that
+fails to load, a request the model turns away when it runs (HTTP 400 without
+`stream_format`) and, without `--parallel-jobs`, a busy model, as on streamed
+`/v1/audio/speech`. A client knows the run succeeded when it gets
+`task.stream.done`.
+
+An SSE client that disconnects stops the run within the next event or two; a
+JSON client that disconnects leaves its run to finish. An SSE client that stops
+reading keeps the model, or with `--parallel-jobs` its slot, busy until it
+reads or disconnects, as on streamed `/v1/audio/speech` and
+`/v1/audio/transcriptions`; `live_ingest.send_timeout_ms` applies only to the
+live routes. The SSE response carries `X-Accel-Buffering: no`; a proxy in front
+of the server must not buffer it.
+
 ### `POST /v1/tasks/batch`
 
 Runs multiple generic requests through a model's native offline batch path. The

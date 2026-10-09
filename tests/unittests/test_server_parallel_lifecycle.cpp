@@ -74,7 +74,7 @@ struct Gate {
 };
 struct Control {
     Gate load, run, destroy;
-    std::atomic<int> loads{0}, destructions{0}, runs{0};
+    std::atomic<int> loads{0}, destructions{0}, runs{0}, finishes{0};
     std::atomic<int> sessions{0}, clones{0}, final_text{0};
     std::atomic<bool> fail_load{false}, null_session{false}, fail_prepare{false}, fail_run{false}, fail_clone{false}, reject_run{false};
     std::atomic<bool> premature_model_destruction{false}, live_input{false}, no_text{false}; std::optional<rt::Transcript> live_text;
@@ -136,7 +136,7 @@ public:
     }
     void reset() override { emitted_ = false; }
     rt::StreamEvent process_audio_chunk(const rt::AudioChunk &) override { return {}; }
-    rt::TaskResult finalize() override { auto r = result_; if (control_->final_text == 1) { r.text_output.reset(); } return r; }
+    rt::TaskResult finalize() override { ++control_->finishes; auto r = result_; if (control_->final_text == 1) { r.text_output.reset(); } return r; }
 private:
     std::shared_ptr<Control> control_;
     rt::TaskSpec task_;
@@ -956,6 +956,144 @@ void generic_request_artifacts(int count) {
     }
 }
 
+// With a top-level "stream_format":"sse", /v1/tasks/stream writes each event
+// as the model produces it, as the object the JSON response puts in "events",
+// then the JSON response's "result" and [DONE]. Without the field, or with
+// null, the response is the JSON body. The fixture counts finalize calls, so a
+// writer that records the count at each write shows when an event left.
+void generic_task_stream_sse(int count) {
+    Fixture f(count); auto c = f.add("stream", "streaming");
+    const auto active = [&] { return Access::slots(*f.state, "stream").active; };
+    const auto body = [](const std::string & fields, bool wrapped) {
+        const std::string request = "\"text\":\"hi\",\"artifacts\":[{\"id\":\"turn.reply\",\"kind\":\"acoustic_tokens\","
+            "\"payload\":\"AQD/\",\"meta\":{\"steps\":\"3\"}}]";
+        return "{\"model\":\"stream\"" + fields + (wrapped ? ",\"request\":{" + request + "}}" : "," + request + "}");
+    };
+    const std::string sse = ",\"stream_format\":\"sse\"";
+    const auto stream = [&](const std::string & body_text) { return post(*f.state, "/v1/tasks/stream", body_text); };
+    // The JSON body's event and result as text: a parse and stringify round
+    // trip reorders object keys, so comparisons use the bytes as written.
+    const auto json_parts = [](const srv::HttpResponse & response) {
+        const std::string events = "{\"events\":[", result = "],\"result\":";
+        const auto end = response.body.find(result);
+        require(response.status == 200 && response.content_type == "application/json" && !response.stream_body &&
+                response.body.rfind(events, 0) == 0 && end != std::string::npos,
+                "task stream did not answer its JSON body: HTTP " + std::to_string(response.status) + " " + response.body);
+        const auto from = end + result.size();
+        return std::make_pair(response.body.substr(events.size(), end - events.size()),
+                              response.body.substr(from, response.body.size() - from - 1));
+    };
+    const auto without_ttft = [](std::string json) {
+        const std::string key = "\"ttft_ms\":";
+        const auto at = json.find(key);
+        require(at != std::string::npos, "task stream result has no ttft_ms: " + json);
+        json.erase(at + key.size(), json.find_first_of(",}", at + key.size()) - at - key.size());
+        return json;
+    };
+    struct Recorder final : srv::HttpStreamWriter {
+        explicit Recorder(std::shared_ptr<Control> counted) : control(std::move(counted)) {}
+        void write(std::string_view s) override { writes.emplace_back(control->finishes.load(), std::string(s)); }
+        std::shared_ptr<Control> control;
+        std::vector<std::pair<int, std::string>> writes;
+    };
+    for (const bool wrapped : {false, true}) {
+        const auto [event, result] = json_parts(stream(body("", wrapped)));
+        require(json_parts(stream(body(",\"stream_format\":null", wrapped))).first == event,
+                "a null stream_format changed the task stream's JSON events");
+        auto response = stream(body(sse, wrapped)); success(response);
+        const auto buffering = response.headers.find("X-Accel-Buffering");
+        require(response.content_type == "text/event-stream; charset=utf-8" && bool(response.stream_body) &&
+                response.body.empty() && buffering != response.headers.end() && buffering->second == "no",
+                "task stream with sse did not answer an event stream: " + response.content_type);
+        require(active() == 1, "task stream with sse did not hold its slot before the headers");
+        Recorder writer(c); const int before = c->finishes;
+        response.stream_body(writer);
+        require(active() == 1, "task stream callback released the slot its owner holds");
+        response.stream_body = {}; // transport drops the callback at exchange end
+        require(active() == 0, "task stream with sse leaked its slot");
+        require(writer.writes.size() == 3, "task stream with sse wrote " + std::to_string(writer.writes.size()) + " times");
+        require(writer.writes[0].second == "data: {\"type\":\"task.stream.event\",\"event\":" + event + "}\n\n",
+                "task stream event is not the JSON response's: " + writer.writes[0].second);
+        const std::string done_key = "data: {\"type\":\"task.stream.done\",\"result\":", done_end = "}\n\n";
+        const auto & done = writer.writes[1].second;
+        require(done.size() > done_key.size() + done_end.size() && done.rfind(done_key, 0) == 0 &&
+                done.compare(done.size() - done_end.size(), done_end.size(), done_end) == 0,
+                "task stream done line: " + done);
+        const auto streamed = done.substr(done_key.size(), done.size() - done_key.size() - done_end.size());
+        require(without_ttft(streamed) == without_ttft(result), "task stream result is not the JSON response's: " + streamed);
+        const auto parsed = parse(streamed);
+        const auto & artifacts = parsed.require("artifacts").as_array();
+        require(parsed.require("timing").require("ttft_ms").is_number() && artifacts.size() == 1 &&
+                artifacts[0].require("id").as_string() == "turn.reply" && artifacts[0].require("payload").as_string() == "AQD/",
+                "task stream done event lost the result's timing or artifacts: " + streamed);
+        require(writer.writes[2].second == "data: [DONE]\n\n", "task stream did not end with [DONE]");
+        require(writer.writes[0].first == before && writer.writes[1].first == before + 1,
+                "task stream wrote its event after the run was over");
+    }
+    // Only the top-level field of this route opts in: not the Accept header,
+    // not a field inside `request`, not the field on /v1/tasks/run.
+    srv::HttpRequest accept; accept.method = "POST"; accept.path = "/v1/tasks/stream"; accept.body = body("", true);
+    accept.headers["content-type"] = "application/json"; accept.headers["accept"] = "text/event-stream";
+    (void)json_parts(f.state->handle(accept));
+    (void)json_parts(stream("{\"model\":\"stream\",\"request\":{\"text\":\"hi\",\"stream_format\":\"sse\"}}"));
+    const auto ran = post(*f.state, "/v1/tasks/run", body(sse, true)); success(ran);
+    require(ran.content_type == "application/json" && !ran.stream_body && parse(ran.body).find("artifacts") != nullptr,
+            "/v1/tasks/run read stream_format: " + ran.body);
+    // Errors found before the headers keep their status.
+    const int runs = c->runs;
+    for (const std::string value : {"\"audio\"", "\"SSE\"", "\"\"", "1", "true", "{}", "[]"}) {
+        const auto rejected = stream(body(",\"stream_format\":" + value, true));
+        require(rejected.status == 400 && !rejected.stream_body &&
+                rejected.body.find("task stream stream_format must be sse") != std::string::npos &&
+                rejected.body.find("invalid_request_error") != std::string::npos,
+                "task stream took stream_format " + value + ": HTTP " + std::to_string(rejected.status) + " " + rejected.body);
+    }
+    const auto malformed = [&](const std::string & fields) {
+        return stream("{\"model\":\"stream\"" + fields + ",\"request\":{\"artifacts\":{\"id\":\"x\"}}}");
+    };
+    const auto json_rejected = malformed(""), sse_rejected = malformed(sse);
+    require(json_rejected.status == 400 && sse_rejected.status == 400 && !sse_rejected.stream_body &&
+            sse_rejected.body == json_rejected.body,
+            "task stream with sse answered malformed artifacts differently: " + sse_rejected.body);
+    require(c->runs == runs && active() == 0, "a rejected task stream reached the model or kept its slot");
+    // The slot is bound before the headers, so a busy model is still a 503.
+    std::vector<srv::HttpResponse> held;
+    for (int i = 0; i < count; ++i) {
+        held.push_back(stream(body(sse, true)));
+        require(bool(held.back().stream_body), "task stream with sse did not stream");
+    }
+    require(active() == count, "unstarted task streams did not hold every slot");
+    const auto busy = stream(body(sse + ",\"busy_timeout_ms\":50", true));
+    require(busy.status == 503 && !busy.stream_body && busy.body.find("server_busy") != std::string::npos,
+            "task stream with sse on a busy model answered HTTP " + std::to_string(busy.status) + " " + busy.body);
+    held.clear();
+    require(active() == 0, "dropped task streams kept their slots");
+    // After the headers a failure leaves the callback for the transport's
+    // error event, and a write to a closed connection stops the run.
+    std::string error;
+    c->reject_run = true;
+    auto rejected = stream(body(sse, true)); success(rejected);
+    require(bool(rejected.stream_body), "task stream with sse did not stream");
+    Writer silent;
+    try { rejected.stream_body(silent); } catch (const rt::InvalidRequestError & e) { error = e.what(); }
+    rejected.stream_body = {};
+    require(error == "controlled request rejection" && silent.output.empty() && active() == 0,
+            "a task stream the model turned away ended with '" + error + "' after: " + silent.output);
+    c->reject_run = false;
+    auto dropped = stream(body(sse, true)); success(dropped);
+    require(bool(dropped.stream_body), "task stream with sse did not stream");
+    Writer gone; gone.disconnected = true; error.clear();
+    const int before = c->finishes;
+    try { dropped.stream_body(gone); } catch (const std::runtime_error & e) { error = e.what(); }
+    dropped.stream_body = {};
+    require(error == "client disconnected" && c->finishes == before && active() == 0,
+            "a task stream to a closed connection ended with '" + error + "' and kept running or kept its slot");
+    auto abandoned = stream(body(sse, true));
+    require(bool(abandoned.stream_body) && active() == 1, "unstarted task stream did not own its slot");
+    abandoned = {}; // Dropped without invoking the callback.
+    require(active() == 0, "unstarted task stream leaked its slot");
+}
+
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
@@ -998,10 +1136,11 @@ int main(int argc, char ** argv) {
             live_speech_return_text(count);
             live_speech_optional_input(count);
             generic_request_artifacts(count);
+            generic_task_stream_sse(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"
                          " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input,"
-                         " request artifacts\n";
+                         " request artifacts, task stream SSE\n";
         }
     } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
 }

@@ -92,6 +92,8 @@ int main() {
                 {"/v1/tasks/run", "{\"model\":\"task\",\"text\":\"hi\",\"artifacts\":" + artifacts + "}"},
                 {"/v1/tasks/run", "{\"model\":\"task\",\"request\":{\"text\":\"hi\",\"artifacts\":" + artifacts + "}}"},
                 {"/v1/tasks/stream", "{\"model\":\"task\",\"request\":{\"artifacts\":" + artifacts + "}}"},
+                {"/v1/tasks/stream",
+                 "{\"model\":\"task\",\"stream_format\":\"sse\",\"request\":{\"artifacts\":" + artifacts + "}}"},
                 {"/v1/tasks/batch", "{\"model\":\"task\",\"requests\":[{\"text\":\"hi\"},{\"artifacts\":" + artifacts + "}]}"}};
         };
         const auto post = [&](const std::string & path, const std::string & body) {
@@ -118,19 +120,50 @@ int main() {
         const std::string good =
             "[{\"id\":\"x\",\"kind\":\"custom\",\"payload\":\"aGVsbG8=\",\"meta\":{\"n\":1}},"
             "{\"id\":\"y\",\"kind\":\"acoustic_tokens\",\"payload\":\"\"}]";
+        // With stream_format sse the headers go out before the model loads, so
+        // the load failure comes from the stream body, before it writes anything.
+        struct Writer final : minitts::server::HttpStreamWriter {
+            std::string output;
+            void write(std::string_view data) override { output.append(data); }
+        };
+        int streamed = 0;
         for (const auto & [path, body] : routes(good)) {
             std::string outcome;
+            Writer writer;
             try {
                 const auto response = post(path, body);
                 outcome = "HTTP " + std::to_string(response.status) + ": " + response.body;
+                if (response.stream_body) {
+                    ++streamed;
+                    if (response.status != 200 || response.content_type != "text/event-stream; charset=utf-8" ||
+                        !response.body.empty()) {
+                        throw std::runtime_error("unexpected stream response " + outcome);
+                    }
+                    response.stream_body(writer);
+                }
             } catch (const std::exception & error) {
                 outcome = error.what();
             }
-            if (outcome.find("model path does not exist") == std::string::npos) {
-                throw std::runtime_error("legacy " + path + " did not take valid artifacts to the model load: " + outcome);
+            if (outcome.find("model path does not exist") == std::string::npos || !writer.output.empty()) {
+                throw std::runtime_error("legacy " + path + " did not take valid artifacts to the model load: " + outcome +
+                                         writer.output);
             }
         }
+        if (streamed != 1) {
+            throw std::runtime_error("legacy /v1/tasks/stream with stream_format sse did not stream");
+        }
         std::cout << "legacy request artifacts parsing passed\n";
+
+        for (const std::string value : {"\"audio\"", "\"SSE\"", "1", "[]"}) {
+            const auto response = post("/v1/tasks/stream", "{\"model\":\"task\",\"stream_format\":" + value + "}");
+            if (response.status != 400 || response.stream_body ||
+                response.body.find("task stream stream_format must be sse") == std::string::npos ||
+                response.body.find("invalid_request_error") == std::string::npos) {
+                throw std::runtime_error("legacy /v1/tasks/stream took stream_format " + value + ": HTTP " +
+                                         std::to_string(response.status) + ": " + response.body);
+            }
+        }
+        std::cout << "legacy task stream format passed\n";
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

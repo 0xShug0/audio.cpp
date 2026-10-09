@@ -4,6 +4,7 @@
 #include "model_memory.h"
 #include "multipart.h"
 #include "speech_option_exceptions.h"
+#include "task_stream_format.h"
 #include "ui_assets.h"
 
 #include "../cli/request.h"
@@ -3640,14 +3641,44 @@ HttpResponse ServerState::handle_generic_batch(const std::string & body_text) {
 HttpResponse ServerState::handle_generic_stream(const std::string & body_text) {
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
+    const bool sse = task_stream_sse_requested(body);
     const auto * request_json = body.find("request");
     const auto & effective_json = request_json != nullptr ? *request_json : body;
-    const auto request = apply_default_request_options(
+    auto request = apply_default_request_options(
         model,
         drop_unsupported_language_option(
             minitts::cli::build_request_from_json(effective_json, request_base_),
             effective_json,
             model.accepts_language));
+    if (sse) {
+        const auto busy_timeout_ms = parse_busy_timeout_override(body);
+        bool diarization;
+        {
+            std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
+            diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
+        }
+        LoadedModel * model_ptr = &model;
+        // Each event goes out as the model produces it, as the object the JSON
+        // response puts in "events", and the result follows as the object it
+        // puts under "result". The model lock is taken inside the stream, as on
+        // the other streamed routes, so a busy model is an error event here.
+        return sse_response([this, model_ptr, request = std::move(request), busy_timeout_ms, diarization](
+                                HttpStreamWriter & writer) {
+            const auto timed_result = run_streaming_model(
+                *model_ptr,
+                request,
+                [&](const engine::runtime::StreamEvent & event) {
+                    write_sse(writer, task_stream_event_line(stream_event_json(event, diarization)));
+                },
+                busy_timeout_ms);
+            const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
+            write_sse(writer, task_stream_done_line(
+                                  silent_diarization
+                                      ? task_result_json_with_timing(timed_result.result, "{\"ttft_ms\":null}")
+                                      : streaming_task_result_json(timed_result.result, timed_result.ttft_ms)));
+            write_sse_done(writer);
+        });
+    }
     std::vector<engine::runtime::StreamEvent> events;
     const auto timed_result = run_streaming_model(
         model,

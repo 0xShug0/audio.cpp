@@ -150,7 +150,9 @@ void print_help() {
         << "  POST /v1/audio/transcriptions/live?model=<id>\n"
         << "       raw PCM in a chunked body, transcript deltas as SSE on the same connection\n"
         << "  POST /v1/tasks/run\n"
-        << "  POST /v1/tasks/batch\n";
+        << "  POST /v1/tasks/batch\n"
+        << "  POST /v1/tasks/stream\n"
+        << "       events and result in one JSON body, or as SSE with stream_format=sse\n";
 }
 
 }  // namespace

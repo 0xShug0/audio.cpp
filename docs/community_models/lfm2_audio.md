@@ -449,6 +449,21 @@ write the bytes to a file and pass its `path`. The live route,
 `/v1/audio/speech/live`, takes no artifacts: each of its requests is a first
 turn.
 
+`/v1/tasks/stream` with `"stream_format": "sse"` sends each reply while it is
+generated: `task.stream.event` events carry its text and audio as in
+[Streaming S2S](#streaming-s2s), and the closing `task.stream.done` event
+carries the result with the `lfm2_audio.reply` artifact (see the
+[server README](../../app/server/README.md#post-v1tasksstream)). The entry
+needs `"mode": "streaming"`; an offline entry fails on this route. The done
+event repeats the whole reply's audio as one Base64 WAV on a single line. A
+client that closes the stream before `task.stream.done` gets no reply
+artifact, so it has to leave that turn out of its next request's history. The
+route does not read `audio_base64`, so the new question goes in `audio` as a
+path the server can read; the earlier questions can still be Base64 payloads.
+A turn the model turns away, such as one past the step limit, is an `error`
+event before any audio, with the message that the JSON response carries with
+HTTP 400.
+
 ## Request Options (use with `--request-option`)
 
 | Option | Task | Default | Meaning |
@@ -883,8 +898,9 @@ memory, up to about 350 MiB at the conversation limit; see
 ## Limitations
 
 - The live route, `/v1/audio/speech/live`, answers each request as a first
-  turn; conversations run through `/v1/tasks/run` and `/v1/tasks/stream`, the
-  CLI's request JSON or the C API.
+  turn; conversations run through `/v1/tasks/run` and `/v1/tasks/stream`
+  (which streams each reply with `"stream_format": "sse"`), the CLI's request
+  JSON or the C API.
 - ASR is offline only; TTS and S2S also stream.
 - TTS speaks with the built-in voices only; there is no voice cloning.
 - On the CPU, F16 and F32 weights, and Q8_0 on x86, run ggml's generic
