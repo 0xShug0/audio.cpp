@@ -105,20 +105,13 @@ public:
             hidden = modules::AddModule().build(ctx, hidden, frequency_positions);
             hidden = modules::ReshapeModule({core::TensorShape::from_dims({1, c.hidden, frequency * time})}).build(ctx, hidden);
             hidden = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, hidden);
-            modules::AttentionConfig attention;
-            attention.hidden_size = c.hidden;
-            attention.num_heads = c.heads;
-            attention.use_packed_qkv = true;
-            attention.use_flash_attention = flash;
+            modules::TransformerEncoderBlockConfig block_config{c.hidden, c.heads, c.intermediate, 1e-6f};
+            block_config.use_packed_qkv = true;
+            block_config.use_flash_attention = flash;
+            const modules::TransformerEncoderBlockModule block(block_config);
             const modules::LayerNormModule norm({c.hidden, 1e-6f, true, true, false});
             for (const auto & layer : w.layers) {
-                auto normalized = norm.build(ctx, hidden, layer.norm1);
-                auto attended = modules::SelfAttentionModule(attention).build(ctx, normalized, layer.self_attention);
-                hidden = modules::ResidualAddModule().build(ctx, hidden, attended);
-                normalized = norm.build(ctx, hidden, layer.norm2);
-                auto fed = modules::FeedForwardModule({c.hidden, c.intermediate, true, modules::GeluApproximation::ExactErf})
-                    .build(ctx, normalized, layer.feed_forward);
-                hidden = modules::ResidualAddModule().build(ctx, hidden, fed);
+                hidden = block.build(ctx, hidden, layer);
             }
             hidden = norm.build(ctx, hidden, w.norm);
             output = modules::ReduceMeanModule({1}).build(ctx, hidden);

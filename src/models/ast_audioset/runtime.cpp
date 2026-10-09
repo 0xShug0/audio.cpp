@@ -110,33 +110,6 @@ std::shared_ptr<BackendWeights> load_weights(
     return result;
 }
 
-core::TensorValue build_encoder_layer(
-    core::ModuleBuildContext & context,
-    const core::TensorValue & input,
-    const modules::TransformerEncoderBlockWeights & weights,
-    const Config & config,
-    bool use_flash_attention) {
-    const modules::NormConfig norm_config{config.hidden_size, config.layer_norm_eps, true, true, false};
-    auto normalized = modules::LayerNormModule(norm_config).build(context, input, weights.norm1);
-    modules::AttentionConfig attention_config;
-    attention_config.hidden_size = config.hidden_size;
-    attention_config.num_heads = config.heads;
-    attention_config.use_bias = true;
-    attention_config.use_flash_attention = use_flash_attention;
-    auto attention = modules::SelfAttentionModule(attention_config).build(context, normalized, weights.self_attention);
-    auto hidden = modules::ResidualAddModule().build(context, input, attention);
-    normalized = modules::LayerNormModule(norm_config).build(context, hidden, weights.norm2);
-    auto feed_forward = modules::FeedForwardModule({
-        config.hidden_size,
-        config.intermediate_size,
-        true,
-        modules::GeluApproximation::ExactErf,
-        GGML_PREC_DEFAULT,
-        modules::FeedForwardActivation::Gelu,
-    }).build(context, normalized, weights.feed_forward);
-    return modules::ResidualAddModule().build(context, hidden, feed_forward);
-}
-
 }  // namespace
 
 struct Runtime::Impl {
@@ -185,8 +158,12 @@ struct Runtime::Impl {
             auto positions = modules::RepeatModule({core::TensorShape::from_dims({1, token_count, config_.hidden_size})})
                                  .build(build, weights_->position_embeddings);
             hidden = modules::AddModule().build(build, hidden, positions);
+            modules::TransformerEncoderBlockConfig block_config{
+                config_.hidden_size, config_.heads, config_.intermediate_size, config_.layer_norm_eps};
+            block_config.use_flash_attention = use_flash_attention;
+            const modules::TransformerEncoderBlockModule block(block_config);
             for (const auto & layer : weights_->layers) {
-                hidden = build_encoder_layer(build, hidden, layer, config_, use_flash_attention);
+                hidden = block.build(build, hidden, layer);
             }
             hidden = modules::LayerNormModule({config_.hidden_size, config_.layer_norm_eps, true, true, false})
                          .build(build, hidden, weights_->final_norm);
