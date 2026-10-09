@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -58,17 +59,12 @@ public:
             q = core::ensure_backend_addressable_layout(ctx, q);
             k = core::ensure_backend_addressable_layout(ctx, k);
             v = core::ensure_backend_addressable_layout(ctx, v);
-            q = core::reshape_tensor(ctx, q, TensorShape::from_dims({frames, q.shape.dims[2] * bins}));
-            k = core::reshape_tensor(ctx, k, TensorShape::from_dims({frames, k.shape.dims[2] * bins}));
-            v = core::reshape_tensor(ctx, v, TensorShape::from_dims({frames, value_channels * bins}));
-            // Q/K and V widths differ; the shared SDPA module requires equal widths.
-            auto scores = modules::MatMulModule().build(ctx, q,
-                modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx, k));
-            scores = modules::MulModule().build(ctx, scores,
-                modules::RepeatModule({scores.shape}).build(ctx,
-                    core::reshape_tensor(ctx, weights_.at("attention_scale"), TensorShape::from_dims({1, 1}))));
-            auto probabilities = modules::SoftmaxModule().build(ctx, scores);
-            auto context = modules::MatMulModule().build(ctx, probabilities, v);
+            q = core::reshape_tensor(ctx, q, TensorShape::from_dims({1, 1, frames, q.shape.dims[2] * bins}));
+            k = core::reshape_tensor(ctx, k, TensorShape::from_dims({1, 1, frames, k.shape.dims[2] * bins}));
+            v = core::reshape_tensor(ctx, v, TensorShape::from_dims({1, 1, frames, value_channels * bins}));
+            auto context = modules::ScaledDotProductAttentionModule({q.shape.dims[3],
+                modules::ScaledDotProductAttentionLowering::Explicit, GGML_PREC_DEFAULT})
+                .build(ctx, q, k, v, std::nullopt, weights_.at("attention_scale"));
             context = core::reshape_tensor(ctx, context, TensorShape::from_dims({1, frames, value_channels, bins}));
             heads.push_back(modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, context));
         }

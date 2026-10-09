@@ -39,7 +39,10 @@ public:
         const core::TensorValue & q_heads,
         const core::TensorValue & k_heads,
         const core::TensorValue & v_heads,
-        const std::optional<core::TensorValue> & attention_mask = std::nullopt) const;
+        const std::optional<core::TensorValue> & attention_mask = std::nullopt,
+        // Explicit lowering only: multiply scores by this scalar tensor instead
+        // of the default 1/sqrt(head_dim) scale, preserving tensor arithmetic.
+        const std::optional<core::TensorValue> & score_scale = std::nullopt) const;
 
     static const core::ModuleSchema & static_schema() noexcept;
 
