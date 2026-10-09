@@ -146,23 +146,8 @@ struct OWSMV4Runtime::Graphs {
         ctx.module_instance_name = "owsm.encoder";
         ggml_set_input(features.tensor);
         ggml_set_input(encoder_positions.tensor);
-        auto x = core::reshape_tensor(ctx, features,
-            TensorShape::from_dims({1, 1, config.frontend_frames, 128}));
-        x = modules::Conv2dModule({1, config.hidden_size, 3, 3, 2, 2, 0, 0, 1, 1, true})
-            .build(ctx, x, weights.subsampling.conv0);
-        x = modules::ReluModule().build(ctx, x);
-        x = modules::Conv2dModule({config.hidden_size, config.hidden_size, 3, 3, 2, 2, 0, 0, 1, 1, true})
-            .build(ctx, x, weights.subsampling.conv1);
-        x = modules::ReluModule().build(ctx, x);
-        x = modules::Conv2dModule({config.hidden_size, config.hidden_size, 3, 3, 2, 2, 0, 0, 1, 1, true})
-            .build(ctx, x, weights.subsampling.conv2);
-        x = modules::ReluModule().build(ctx, x);
-        x = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
-        x = core::ensure_backend_addressable_layout(ctx, x);
-        x = core::reshape_tensor(ctx, x,
-            TensorShape::from_dims({1, config.encoder_frames, config.hidden_size * 15}));
-        x = modules::LinearModule({config.hidden_size * 15, config.hidden_size, true})
-            .build(ctx, x, weights.subsampling.projection);
+        auto x = modules::EspnetConv2dSubsampling8Module({128, config.hidden_size})
+            .build(ctx, features, weights.subsampling);
         x = modules::LayerScaleModule().build(ctx, x, {weights.embedding_scale});
         x = modules::AddModule().build(ctx, x, encoder_positions);
         for (const auto & layer : weights.encoder) {

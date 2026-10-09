@@ -6,6 +6,7 @@
 #include "engine/framework/modules/structural_modules.h"
 
 #include <stdexcept>
+#include <algorithm>
 
 namespace engine::modules {
 
@@ -176,6 +177,60 @@ ConvSubsamplingOutputs ConvSubsamplingModule::build(
         output,
         current_lengths,
     };
+}
+
+EspnetConv2dSubsampling8Module::EspnetConv2dSubsampling8Module(EspnetConv2dSubsampling8Config config)
+    : config_(config) {
+    if (config_.input_features < 15 || config_.hidden_size <= 0 || config_.time_row_alignment <= 0) {
+        throw std::runtime_error("Invalid ESPnet Conv2D subsampling dimensions or row alignment");
+    }
+}
+
+core::TensorValue EspnetConv2dSubsampling8Module::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const EspnetConv2dSubsampling8Weights & weights) const {
+    core::validate_rank_between(input, 3, 3, "input");
+    core::validate_last_dim(input, config_.input_features, "input");
+    const auto batch = input.shape.dims[0];
+    const auto frames = input.shape.dims[1];
+    if (frames < 15) {
+        throw std::runtime_error("ESPnet Conv2D subsampling requires at least 15 input frames");
+    }
+    const auto d = config_.hidden_size;
+    const auto alignment = config_.time_row_alignment;
+    auto x = core::reshape_tensor(ctx, input,
+        core::TensorShape::from_dims({batch, 1, frames, config_.input_features}));
+    int64_t valid_frames = (frames - 3) / 2 + 1;
+    if (alignment > 1) {
+        // Align the second convolution by padding the small input, not its activation.
+        const auto next_frames = (valid_frames - 3) / 2 + 1;
+        const auto aligned_next_frames = ((next_frames + alignment - 1) / alignment) * alignment;
+        const auto padded_input_frames = 2 * (2 * aligned_next_frames + 1) + 1;
+        x = Pad2dModule({0, 0, 0, std::max<int64_t>(0, padded_input_frames - frames)}).build(ctx, x);
+    }
+    x = Conv2dModule({1, d, 3, 3, 2, 2, 0, 0, 1, 1, true}).build(ctx, x, weights.conv0);
+    x = ReluModule().build(ctx, x);
+    for (const auto * conv : {&weights.conv1, &weights.conv2}) {
+        const auto output_frames = (valid_frames - 3) / 2 + 1;
+        const auto padded_frames = ((output_frames + alignment - 1) / alignment) * alignment;
+        const auto pad_frames = std::max<int64_t>(0, 2 * padded_frames + 1 - x.shape.dims[2]);
+        if (pad_frames > 0) {
+            x = Pad2dModule({0, 0, 0, pad_frames}).build(ctx, x);
+        }
+        x = Conv2dModule({d, d, 3, 3, 2, 2, 0, 0, 1, 1, true}).build(ctx, x, *conv);
+        if (padded_frames != output_frames) {
+            x = SliceModule({2, 0, output_frames}).build(ctx, x);
+        }
+        x = ReluModule().build(ctx, x);
+        valid_frames = output_frames;
+    }
+    const auto flattened_features = d * x.shape.dims[3];
+    x = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
+    x = core::ensure_backend_addressable_layout(ctx, x);
+    x = core::reshape_tensor(ctx, x,
+        core::TensorShape::from_dims({batch, valid_frames, flattened_features}));
+    return LinearModule({flattened_features, d, true}).build(ctx, x, weights.projection);
 }
 
 DepthwiseConvSubsamplingModule::DepthwiseConvSubsamplingModule(DepthwiseConvSubsamplingConfig config)
