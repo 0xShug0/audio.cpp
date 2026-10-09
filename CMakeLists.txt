@@ -553,6 +553,7 @@ add_library(engine_core OBJECT
     src/framework/audio/fft.cpp
     src/framework/audio/kaldi_fbank.cpp
     src/framework/audio/activity.cpp
+    src/framework/audio/probability_segmenter.cpp
     src/framework/audio/activity_graph.cpp
     src/framework/audio/chunking.cpp
     src/framework/audio/conversion.cpp

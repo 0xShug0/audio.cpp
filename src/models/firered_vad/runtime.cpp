@@ -4,6 +4,7 @@
 #include "engine/models/firered_vad/runtime.h"
 
 #include "engine/framework/audio/kaldi_fbank.h"
+#include "engine/framework/audio/probability_segmenter.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -133,13 +134,14 @@ std::vector<runtime::SpeechSegment> segment_probabilities(
         t = end;
     }
     std::vector<runtime::SpeechSegment> result;
-    for (size_t t = 0; t < fixed.size();) {
-        if (!fixed[t]) { ++t; continue; }
-        const size_t start = t;
-        while (t < fixed.size() && fixed[t]) ++t;
-        const int64_t end = t * kHop + (t == fixed.size() ? kWindow : 0);
-        result.push_back(make_segment(start * kHop, end, samples));
+    audio::ProbabilitySegmenter segmenter({0.5f});
+    for (size_t t = 0; t < fixed.size(); ++t) {
+        if (const auto interval = segmenter.push(static_cast<float>(fixed[t]), t, t + 1)) {
+            result.push_back(make_segment(interval->start * kHop, interval->end * kHop, samples));
+        }
     }
+    if (const auto interval = segmenter.finish())
+        result.push_back(make_segment(interval->start * kHop, interval->end * kHop + kWindow, samples));
     return result;
 }
 

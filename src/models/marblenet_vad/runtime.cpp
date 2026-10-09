@@ -1,6 +1,7 @@
 #include "engine/models/marblenet_vad/runtime.h"
 
 #include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/probability_segmenter.h"
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -533,42 +534,20 @@ std::vector<runtime::SpeechSegment> decode_segments(
     int sample_rate,
     float threshold) {
     std::vector<runtime::SpeechSegment> segments;
-    bool active = false;
-    int64_t start_frame = 0;
-    double confidence_sum = 0.0;
-    int64_t confidence_count = 0;
+    audio::ProbabilitySegmenter segmenter({threshold});
+    const auto append = [&](const audio::ProbabilitySegment & interval) {
+        const int64_t frame_to_samples = weights.config.hop_length * weights.config.output_stride;
+        runtime::SpeechSegment segment;
+        segment.span.start_sample = interval.start * frame_to_samples;
+        segment.span.end_sample = interval.end * frame_to_samples;
+        segment.confidence = interval.confidence;
+        segments.push_back(segment);
+    };
     for (int64_t frame = 0; frame < inference.frames; ++frame) {
         const float probability = speech_probability(inference, frame);
-        if (probability >= threshold) {
-            if (!active) {
-                active = true;
-                start_frame = frame;
-                confidence_sum = 0.0;
-                confidence_count = 0;
-            }
-            confidence_sum += probability;
-            ++confidence_count;
-            continue;
-        }
-        if (!active) {
-            continue;
-        }
-        const int64_t frame_to_samples = weights.config.hop_length * weights.config.output_stride;
-        runtime::SpeechSegment segment;
-        segment.span.start_sample = start_frame * frame_to_samples;
-        segment.span.end_sample = frame * frame_to_samples;
-        segment.confidence = static_cast<float>(confidence_sum / static_cast<double>(confidence_count));
-        segments.push_back(segment);
-        active = false;
+        if (const auto interval = segmenter.push(probability, frame, frame + 1)) append(*interval);
     }
-    if (active) {
-        const int64_t frame_to_samples = weights.config.hop_length * weights.config.output_stride;
-        runtime::SpeechSegment segment;
-        segment.span.start_sample = start_frame * frame_to_samples;
-        segment.span.end_sample = inference.frames * frame_to_samples;
-        segment.confidence = static_cast<float>(confidence_sum / static_cast<double>(confidence_count));
-        segments.push_back(segment);
-    }
+    if (const auto interval = segmenter.finish()) append(*interval);
     for (auto & segment : segments) {
         segment.span.start_sample = segment.span.start_sample * sample_rate / weights.config.sample_rate;
         segment.span.end_sample = segment.span.end_sample * sample_rate / weights.config.sample_rate;

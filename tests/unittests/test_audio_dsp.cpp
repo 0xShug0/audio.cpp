@@ -1,4 +1,5 @@
 #include "engine/framework/audio/dsp.h"
+#include "engine/framework/audio/probability_segmenter.h"
 
 #include <algorithm>
 #include <chrono>
@@ -378,10 +379,44 @@ void test_istft_matches_reference_across_configs_and_variants() {
     }
 }
 
+void test_probability_segments() {
+    using engine::audio::ProbabilitySegmenter;
+    ProbabilitySegmenter frames({0.5f});
+    require(!frames.push(0.1f, 0, 1), "leading silence");
+    require(!frames.push(0.5f, 1, 2), "inclusive threshold");
+    require(!frames.push(1.0f, 2, 3), "contiguous speech");
+    const auto first = frames.push(0.0f, 3, 4);
+    require(first && first->start == 1 && first->end == 3 && first->confidence == 0.75f,
+            "frame segment and confidence");
+    require(!frames.finish(), "finished segment must not repeat");
+    require(!frames.push(1.0f, 4, 5), "next segment");
+    const auto last = frames.finish();
+    require(last && last->start == 4 && last->end == 5 && last->confidence == 1.0f,
+            "finish resets confidence and boundaries");
+
+    ProbabilitySegmenter windows({0.5f, 3200, 800});
+    require(!windows.push(1.0f, 0, 3200), "positive window");
+    require(!windows.push(0.0f, 1600, 4800), "overlap is not silence duration");
+    require(!windows.push(0.0f, 3200, 6400), "silence shorter than minimum");
+    const auto window = windows.push(0.0f, 4000, 7200);
+    require(window && window->start == 0 && window->end == 3200,
+            "end is last positive window end");
+
+    ProbabilitySegmenter minimum({0.5f, 2, 0});
+    require(!minimum.push(1.0f, 0, 1), "short segment begins");
+    require(!minimum.push(0.0f, 1, 2), "short segment discarded");
+    require(!minimum.push(0.5f, 2, 3), "reuse after discard");
+    require(!minimum.push(0.5f, 3, 4), "minimum duration reached");
+    const auto kept = minimum.finish();
+    require(kept && kept->start == 2 && kept->end == 4 && kept->confidence == 0.5f,
+            "minimum duration is inclusive");
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_probability_segments();
         test_log_mel_matches_reference_pipeline();
         test_hann_window_modes_and_cache();
         test_stft_istft_round_trip_matches_waveform();
