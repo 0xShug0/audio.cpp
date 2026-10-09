@@ -66,6 +66,9 @@ struct IrodoriModelConfig {
     std::string duration_caption_pooling = "masked_mean";
     int64_t max_text_len = 256;
     int64_t max_caption_len = 256;
+    // Default reference length cap in seconds (the checkpoint's
+    // ref_max_seconds; 30 when it has none, as in Python Irodori-TTS).
+    float ref_max_seconds = 30.0F;
 
     int64_t patched_latent_dim() const noexcept;
     int64_t speaker_patched_latent_dim() const noexcept;

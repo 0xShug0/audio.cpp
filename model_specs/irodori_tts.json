@@ -53,6 +53,13 @@
         "required": false
       },
       {
+        "name": "max_ref_seconds",
+        "type": "float",
+        "description": "Trim reference audio to its first max_ref_seconds before encoding it, as Python Irodori-TTS does; default is the checkpoint's ref_max_seconds (30 when it has none); 0 keeps the whole reference.",
+        "required": false,
+        "min": 0.0
+      },
+      {
         "name": "num_inference_steps",
         "type": "int",
         "description": "RF diffusion steps; default 40.",
