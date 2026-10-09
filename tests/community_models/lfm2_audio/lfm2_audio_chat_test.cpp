@@ -1053,10 +1053,11 @@ const lfm2::Lfm2AudioChatSession & chat(const runtime::IVoiceTaskSession & sessi
 // must leave each turn's bytes those of a fresh session. Questions of 10, 12,
 // 14 and 6 s take the prompts past 256 steps at turn 2 and past 512 at
 // turn 3, so turn 3 resumes from turn 2's first block and turn 4 from turn
-// 3's first two; turn 1 runs one-shot and keeps no blocks.
+// 3's first two; turn 1 runs one-shot and keeps no blocks. The session keeps
+// one conversation, so another one in between replaces what it kept.
 void test_turns_reuse(const Package & package, runtime::RunMode mode) {
     const std::string how = mode == runtime::RunMode::Offline ? "offline" : "streamed";
-    auto session = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode);
+    auto session = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode, {{"lfm2_audio.conversation_cache_slots", "1"}});
     const auto fresh = [&](const runtime::TaskRequest & request) {
         auto other = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode);
         return run_turn(*other, mode, request);
@@ -1143,6 +1144,221 @@ void test_turns_reuse(const Package & package, runtime::RunMode mode) {
     require_eq(chat(*session).reused_questions(), int64_t{3}, how + ": turn 4 after a request without history reuses");
 }
 
+// A conversation's questions, the seed of its first turn (one more each turn
+// after), and its system prompt, the default when empty.
+struct Conversation {
+    std::vector<Question> questions;
+    int seed = 0;
+    std::string system_prompt;
+};
+
+// A turn's reply, and the prefill steps and earlier questions the session
+// took for it from the turns before.
+struct Taken {
+    Reply reply;
+    int64_t resumed = 0;
+    int64_t reused = 0;
+};
+
+// Turn `turn` of `c`, after the replies `before` of its turns before.
+runtime::TaskRequest turn_request(const Conversation & c, size_t turn, const std::vector<Taken> & before) {
+    std::vector<runtime::VoiceArtifact> history;
+    for (size_t k = 0; k < turn; ++k) {
+        history.push_back(c.questions[k].artifact);
+        history.push_back(before[k].reply.artifact());
+    }
+
+    auto request = ask(c.questions[turn], std::to_string(c.seed + static_cast<int>(turn)), std::move(history));
+    if (!c.system_prompt.empty()) {
+        request.text_input = runtime::Transcript{c.system_prompt, "en"};
+    }
+
+    return request;
+}
+
+// The conversations on one session, taking turns: the first turn of each,
+// then the second of each, and so on, each turn after the replies this
+// session gave its own conversation.
+std::vector<std::vector<Taken>> take_turns(
+    runtime::IVoiceTaskSession & session, runtime::RunMode mode, const std::vector<Conversation> & conversations) {
+    std::vector<std::vector<Taken>> out(conversations.size());
+    for (size_t turn = 0;; ++turn) {
+        bool asked = false;
+        for (size_t c = 0; c < conversations.size(); ++c) {
+            if (turn < conversations[c].questions.size()) {
+                const auto request = turn_request(conversations[c], turn, out[c]);
+                auto reply = run_turn(session, mode, request);
+                out[c].push_back({std::move(reply), chat(session).resumed_prefill_steps(), chat(session).reused_questions()});
+                asked = true;
+            }
+        }
+
+        if (!asked) {
+            return out;
+        }
+    }
+}
+
+// lfm2_audio.conversation_cache_slots: an S2S session keeps the questions and
+// prefill blocks of that many conversations, so conversations taking turns on
+// it each take what they would take on a session of their own, and give the
+// same bytes.
+void test_conversations_kept(const Package & package, runtime::RunMode mode) {
+    const std::string how = mode == runtime::RunMode::Offline ? "offline" : "streamed";
+    const auto with_slots = [&](const std::string & slots) {
+        return open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode, {{"lfm2_audio.conversation_cache_slots", slots}});
+    };
+    const auto alone = [&](const Conversation & c) {
+        auto session = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode);
+        return take_turns(*session, mode, {c}).front();
+    };
+    const auto require_replies = [&](const std::vector<Taken> & turns, const std::vector<Taken> & expected, const std::string & label) {
+        require_eq(turns.size(), expected.size(), label + " turns");
+        for (size_t k = 0; k < turns.size(); ++k) {
+            require(same(turns[k].reply, expected[k].reply), label + " turn " + std::to_string(k + 1) + " gives its bytes alone");
+        }
+    };
+    const auto require_taken = [&](const Taken & turn, int64_t resumed, int64_t reused, const std::string & label) {
+        require_eq(turn.resumed, resumed, label + ": prefill steps resumed");
+        require_eq(turn.reused, reused, label + ": earlier questions reused");
+    };
+
+    // A is test_turns_reuse's conversation; B resumes from its turn 3 too.
+    const Conversation a{{question(10.0, 220.0), question(12.0, 330.0, 24000, 2), question(14.0, 495.0), question(6.0, 770.0)}, 20, ""};
+    const Conversation b{{question(11.0, 260.0), question(13.0, 390.0), question(12.0, 560.0), question(5.0, 840.0)}, 60, ""};
+    const auto a_alone = alone(a);
+    const auto b_alone = alone(b);
+    const std::vector<int64_t> a_resumed = {0, 0, 256, 512};
+    for (size_t k = 0; k < a_alone.size(); ++k) {
+        require_taken(a_alone[k], a_resumed[k], static_cast<int64_t>(k), how + ": A alone, turn " + std::to_string(k + 1));
+    }
+
+    require(b_alone[2].resumed > 0 && b_alone[3].resumed > b_alone[2].resumed, how + ": B alone resumes from its turn 3");
+
+    // With two slots, each turn takes what it takes alone. With one, each
+    // conversation's turn drops the other's.
+    auto two = with_slots("2");
+    const auto both = take_turns(*two, mode, {a, b});
+    auto one = with_slots("1");
+    const auto pushed = take_turns(*one, mode, {a, b});
+    for (size_t i = 0; i < 2; ++i) {
+        const auto & expected = i == 0 ? a_alone : b_alone;
+        const std::string name = how + (i == 0 ? ": A" : ": B");
+        require_replies(both[i], expected, name + " with two slots");
+        require_replies(pushed[i], expected, name + " with one slot");
+        for (size_t k = 0; k < expected.size(); ++k) {
+            const std::string turn = ", turn " + std::to_string(k + 1);
+            require_taken(both[i][k], expected[k].resumed, expected[k].reused, name + " with two slots" + turn);
+            require_taken(pushed[i][k], 0, 0, name + " with one slot" + turn);
+        }
+    }
+
+    // A third conversation then drops what was least recently used: its first
+    // turn A's questions (a first turn keeps no blocks), its second B's
+    // blocks.
+    const Conversation c{{question(9.0, 650.0), question(8.0, 930.0)}, 80, ""};
+    const auto c_alone = alone(c);
+    const auto step = [&](runtime::IVoiceTaskSession & session, const runtime::TaskRequest & request, const Reply & expected,
+                          int64_t resumed, int64_t reused, const std::string & label) {
+        const auto reply = run_turn(session, mode, request);
+        require(same(reply, expected), label + " gives its bytes alone");
+        require_taken({reply, chat(session).resumed_prefill_steps(), chat(session).reused_questions()}, resumed, reused, label);
+    };
+    step(*two, turn_request(c, 0, c_alone), c_alone[0].reply, 0, 0, how + ": C's turn 1");
+    step(*two, turn_request(a, 3, a_alone), a_alone[3].reply, 512, 0, how + ": A's turn 4 after C's turn 1");
+    step(*two, turn_request(c, 1, c_alone), c_alone[1].reply, 0, 1, how + ": C's turn 2");
+    step(*two, turn_request(b, 3, b_alone), b_alone[3].reply, 0, 0, how + ": B's turn 4 after C's turn 2");
+
+    // No slots keep nothing.
+    auto none = with_slots("0");
+    const auto kept_nothing = take_turns(*none, mode, {a}).front();
+    require_replies(kept_nothing, a_alone, how + ": A with no slots");
+    for (size_t k = 0; k < kept_nothing.size(); ++k) {
+        require_taken(kept_nothing[k], 0, 0, how + ": A with no slots, turn " + std::to_string(k + 1));
+    }
+
+    // One system prompt of 300 tokens fills the first block of both
+    // conversations. Each still keeps its own blocks after it; B's turn 2
+    // takes that block, which A's turn 2 kept.
+    std::string system_prompt;
+    while (system_prompt.size() < 300) {
+        system_prompt += "zebra lamp ";
+    }
+
+    system_prompt.resize(300);
+    auto long_a = a;
+    auto long_b = b;
+    long_a.system_prompt = system_prompt;
+    long_b.system_prompt = system_prompt;
+    const auto long_a_alone = alone(long_a);
+    const auto long_b_alone = alone(long_b);
+    require(long_a_alone[2].resumed >= 512, how + ": A with a long system prompt resumes more than its first block");
+    require_eq(long_b_alone[1].resumed, int64_t{0}, how + ": B with a long system prompt resumes nothing at turn 2");
+    auto shared = with_slots("2");
+    const auto long_both = take_turns(*shared, mode, {long_a, long_b});
+    for (size_t i = 0; i < 2; ++i) {
+        const auto & expected = i == 0 ? long_a_alone : long_b_alone;
+        const std::string name = how + (i == 0 ? ": A" : ": B") + " with a long system prompt";
+        require_replies(long_both[i], expected, name);
+        for (size_t k = 0; k < expected.size(); ++k) {
+            const auto resumed = i == 1 && k == 1 ? int64_t{256} : expected[k].resumed;
+            require_taken(long_both[i][k], resumed, expected[k].reused, name + ", turn " + std::to_string(k + 1));
+        }
+    }
+
+    // Conversations that ask the same clips, first and at turn 3: each turn
+    // still takes the encoder output of all its earlier questions.
+    const Conversation same_a{{question(9.0, 350.0), question(12.0, 470.0), question(7.0, 610.0), question(6.0, 720.0)}, 90, ""};
+    const Conversation same_b{{question(9.0, 350.0), question(11.0, 530.0), question(7.0, 610.0), question(5.0, 880.0)}, 95, ""};
+    const auto same_a_alone = alone(same_a);
+    const auto same_b_alone = alone(same_b);
+    auto clips = with_slots("2");
+    const auto same_both = take_turns(*clips, mode, {same_a, same_b});
+    for (size_t i = 0; i < 2; ++i) {
+        const auto & expected = i == 0 ? same_a_alone : same_b_alone;
+        const std::string name = how + (i == 0 ? ": A" : ": B") + " with shared clips";
+        require_replies(same_both[i], expected, name);
+        for (size_t k = 0; k < expected.size(); ++k) {
+            const std::string label = name + ", turn " + std::to_string(k + 1);
+            require_eq(same_both[i][k].reused, static_cast<int64_t>(k), label + ": earlier questions reused");
+            require(same_both[i][k].resumed >= expected[k].resumed, label + ": resumes at least what it does alone");
+        }
+    }
+
+    // Without the option a session keeps four conversations: four taking
+    // turns each take what they take alone, and then a fifth one's first turn
+    // drops the questions of the least recently used, A's.
+    auto defaulted = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode);
+    const std::vector<std::vector<Taken>> four_alone = {a_alone, b_alone, same_a_alone, same_b_alone};
+    const auto four = take_turns(*defaulted, mode, {a, b, same_a, same_b});
+    for (size_t i = 0; i < four.size(); ++i) {
+        const std::string name = how + ": conversation " + std::to_string(i + 1) + " of four without the option";
+        require_replies(four[i], four_alone[i], name);
+        for (size_t k = 0; k < four_alone[i].size(); ++k) {
+            const std::string label = name + ", turn " + std::to_string(k + 1);
+            require_eq(four[i][k].reused, four_alone[i][k].reused, label + ": earlier questions reused");
+            require(four[i][k].resumed >= four_alone[i][k].resumed, label + ": resumes at least what it does alone");
+        }
+    }
+
+    step(*defaulted, turn_request(c, 0, c_alone), c_alone[0].reply, 0, 0, how + ": C's turn 1 after four conversations");
+    step(*defaulted, turn_request(a, 3, a_alone), a_alone[3].reply, 512, 0, how + ": A's turn 4 after C's turn 1, without the option");
+}
+
+// The option's values: a count of at least 0, which ASR and TTS take and
+// ignore.
+void test_conversation_cache_slots_option(const Package & package) {
+    const auto open_with = [&](runtime::VoiceTaskKind task, const std::string & slots) {
+        return open(package, task, runtime::RunMode::Offline, {{"lfm2_audio.conversation_cache_slots", slots}});
+    };
+    lfm2_audio_test::require_throws_with([&] { (void)open_with(runtime::VoiceTaskKind::SpeechToSpeech, "-1"); },
+                                         "lfm2_audio.conversation_cache_slots must be non-negative", "a negative slot count");
+    lfm2_audio_test::require_throws_with([&] { (void)open_with(runtime::VoiceTaskKind::SpeechToSpeech, "2x"); },
+                                         "lfm2_audio.conversation_cache_slots must be an integer", "a slot count that is not a number");
+    (void)open_with(runtime::VoiceTaskKind::Asr, "2");
+    (void)open_with(runtime::VoiceTaskKind::Tts, "2");
+}
+
 }  // namespace s2s
 
 }  // namespace
@@ -1160,6 +1376,9 @@ int main() {
         s2s::test_rejects(package, turns);
         s2s::test_turns_reuse(package, runtime::RunMode::Offline);
         s2s::test_turns_reuse(package, runtime::RunMode::Streaming);
+        s2s::test_conversations_kept(package, runtime::RunMode::Offline);
+        s2s::test_conversations_kept(package, runtime::RunMode::Streaming);
+        s2s::test_conversation_cache_slots_option(package);
         std::cout << "lfm2_audio_chat_test: PASS\n";
         return 0;
     } catch (const std::exception & error) {

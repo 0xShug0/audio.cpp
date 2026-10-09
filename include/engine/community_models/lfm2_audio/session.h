@@ -23,6 +23,7 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -151,13 +152,14 @@ private:
 // request's input artifacts carry the conversation's earlier turns, which
 // the prompt replays in full as liquid-audio does, and with return_codes its
 // result carries the reply to send back with the next turn. What a request
-// gives depends on that request alone; to save time on the next turn, the
-// session keeps the questions of its last request with history or
-// return_codes, with their encoder output, and the backbone the full prefill
-// blocks of its last turn with history. Streaming takes the user's audio in
-// chunks and, once it has all come, pulls the reply as events: the audio of
-// the next stream_frames_per_event frames and the text written since the
-// last event.
+// gives depends on that request alone; to save time on the next turn, for
+// each of up to lfm2_audio.conversation_cache_slots conversations (four by
+// default), the session keeps the questions of its last request with history
+// or return_codes, with their encoder output, and the backbone the full
+// prefill blocks of its last turn with history. Streaming takes the user's
+// audio in chunks and, once it has all come, pulls the reply as events: the
+// audio of the next stream_frames_per_event frames and the text written since
+// the last event.
 class Lfm2AudioChatSession final : public runtime::RuntimeSessionBase,
                                    public runtime::IOfflineVoiceTaskSession,
                                    public runtime::IStreamingVoiceTaskSession {
@@ -189,8 +191,8 @@ public:
     [[nodiscard]] bool reached_max_tokens() const;
 
     // Of the last reply's prompt: the steps the backbone restored from the
-    // turn before rather than ran (Lfm2BackboneRuntime::resumed_prefill_steps),
-    // and the earlier questions that took the encoder output kept from it.
+    // turns before rather than ran (Lfm2BackboneRuntime::resumed_prefill_steps),
+    // and the earlier questions that took the encoder output kept from them.
     [[nodiscard]] int64_t resumed_prefill_steps() const;
     [[nodiscard]] int64_t reused_questions() const;
 
@@ -216,12 +218,15 @@ private:
 
     RequestOptions parse_request(const runtime::TaskRequest & request) const;
     std::unique_ptr<Lfm2InterleavedGenerator> start_reply(const RequestOptions & options, const runtime::AudioBuffer & audio);
+    void keep_questions(std::vector<EncodedQuestion> questions);
     [[nodiscard]] Lfm2ReplyCheckpoint reply_checkpoint() const;
 
     runtime::TaskSpec task_;
     std::shared_ptr<const Lfm2AudioAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     bool cpu_repack_;  // lfm2_audio.cpu_repack, for the runtimes below
+    // lfm2_audio.conversation_cache_slots, for the backbone below and questions_
+    size_t conversation_slots_;
     std::shared_ptr<const Lfm2AudioComponents> components_;
     std::shared_ptr<const Lfm2AudioOutputComponents> output_;
     Lfm2TextTokenizer tokenizer_;
@@ -234,8 +239,9 @@ private:
     double max_pass_seconds_;
     std::unique_ptr<Stream> stream_;
     bool reached_max_tokens_ = false;
-    // The questions of the last request with history or return_codes.
-    std::vector<EncodedQuestion> questions_;
+    // The questions of the last request with history or return_codes of each
+    // of up to conversation_slots_ conversations, the most recent first.
+    std::vector<std::vector<EncodedQuestion>> questions_;
     int64_t reused_questions_ = 0;
 };
 
