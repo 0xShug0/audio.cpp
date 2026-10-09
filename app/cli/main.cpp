@@ -14,6 +14,8 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/model_spec/metadata.h"
+#include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
 
@@ -54,6 +56,7 @@ void print_task_list_help() {
         << "  Global:\n"
         << "    --version  Print build version, commit, compiler, platform, and enabled backends\n"
         << "    --task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc|midi\n"
+        << "           Pass the runtime token. Model specs use their own names; --spec --json prints task_tokens.\n"
         << "    --family <name>\n"
         << "    --model <path>\n"
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
@@ -68,9 +71,10 @@ void print_task_list_help() {
         << "    --log  Stream framework progress and timing logs to stdout\n"
         << "    --log-file <path>  Stream framework progress and timing logs to a file\n"
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
-        << "    --load-option key=value\n"
-        << "    --session-option key=value\n"
-        << "    --request-option key=value\n"
+        << "    --load-option <public_key>=<value>\n"
+        << "    --session-option <public_key>=<value>\n"
+        << "    --request-option <public_key>=<value>\n"
+        << "           public_key is printed on each option by --spec --json.\n"
         << "  Batch:\n"
         << "    --request-sequence <json>  Run JSON requests in one offline session\n"
         << "    --batch-text-file <txt>  Run one offline request per non-empty line\n"
@@ -158,6 +162,8 @@ void print_task_list_help() {
         << "    --mode streaming uses the selected model's default streaming policy\n"
         << "  Utility:\n"
         << "    --inspect\n"
+        << "    --family <family> --spec --json  Print the resolved model spec without loading weights.\n"
+        << "           Schema 2 includes startup, package tasks, option public_key, and operation method, path, and response type.\n"
         << "    --list-loaders [--json]\n"
         << "\n"
         << "  Tasks:\n"
@@ -174,7 +180,8 @@ void print_task_list_help() {
         << "    vdes   voice design\n"
         << "    spk    speaker embedding/recognition\n"
         << "    svc    singing voice conversion\n"
-        << "    midi   audio-to-symbolic MIDI/event transcription\n";
+        << "    midi   audio-to-symbolic MIDI/event transcription\n"
+        << "  Spec names such as clone, design, and music map to these tokens. --spec --json prints task_tokens.\n";
 }
 
 void print_option_group(const char * title, const std::vector<engine::runtime::CliOptionInfo> & options) {
@@ -646,6 +653,20 @@ int audiocpp_cli_main(int argc, char ** argv) {
             minitts::app::print_build_info(std::cout);
             return 0;
         }
+        const bool json_output = has_arg(argc, argv, "--json");
+        if (has_arg(argc, argv, "--spec")) {
+            if (!json_output) {
+                throw std::runtime_error("--spec requires --json");
+            }
+            const auto family = find_arg(argc, argv, "--family");
+            if (!family.has_value() || family->empty()) {
+                throw std::runtime_error("--spec requires --family <family>");
+            }
+            const engine::model_spec::ScopedSpecOverride override(
+                optional_path_arg(argc, argv, "--model-spec-override"));
+            std::cout << engine::io::json::stringify(engine::model_spec::resolved_spec(*family)) << "\n";
+            return 0;
+        }
 
         const auto registry_config = find_arg(argc, argv, "--registry-config");
         auto registry = engine::runtime::make_default_registry(
@@ -654,7 +675,6 @@ int audiocpp_cli_main(int argc, char ** argv) {
         const bool help_requested = has_arg(argc, argv, "--help");
         // Read before the command branches below. An option that no lookup ever runs for cannot
         // be told apart from a misspelling, which is what require_known_args rejects.
-        const bool json_output = has_arg(argc, argv, "--json");
         const auto task_name = find_arg(argc, argv, "--task");
         const auto mode_name = find_arg(argc, argv, "--mode").value_or("offline");
         if (has_arg(argc, argv, "--list-pipelines")) {

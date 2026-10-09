@@ -8,6 +8,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace engine::model_spec {
 namespace {
@@ -398,6 +399,371 @@ void validate_options(const json::Value & value, const std::string & family, std
     }
 }
 
+// Closed server routes a schema 2 family may name. A spec selects an id.
+// Method, path, encoding, and response type come from this table. Documented
+// in docs/maintainers/model_specs.md.
+struct OperationTemplate {
+    std::string method;
+    std::string path;
+    std::string encoding;
+    std::string response_content_type;
+    std::vector<std::string> response_formats;
+    std::string response_format_pointer;
+    std::unordered_set<std::string> multipart_fields;
+};
+
+const std::unordered_map<std::string, OperationTemplate> & operation_templates() {
+    static const std::unordered_map<std::string, OperationTemplate> values = {
+        {"tasks.run", {"POST", "/v1/tasks/run", "json", "application/json", {}, "", {}}},
+        {"speech.create",
+         {"POST", "/v1/audio/speech", "json", "audio/wav", {"wav", "json", "b64_json"}, "/response_format", {}}},
+        {"transcriptions.create",
+         {"POST",
+          "/v1/audio/transcriptions",
+          "multipart",
+          "application/json",
+          {},
+          "",
+          {"file", "model", "language", "prompt", "stream"}}},
+        {"alignments.create",
+         {"POST", "/v1/audio/alignments", "multipart", "application/json", {}, "", {"file", "model", "text", "language"}}},
+    };
+    return values;
+}
+
+using TaskOperations = std::unordered_map<std::string, std::unordered_set<std::string>>;
+
+TaskOperations validate_task_operations(
+    const json::Value & value,
+    const std::unordered_set<std::string> & task_ids,
+    const std::unordered_set<std::string> & mode_ids,
+    std::string_view path) {
+    const auto & rows = require_spec_object(value, path);
+    TaskOperations out;
+    for (const auto & [task, row] : rows) {
+        const auto row_path = std::string(path) + "." + task;
+        if (task_ids.find(task) == task_ids.end()) {
+            fail(row_path, "operation key must be one of this model's tasks");
+        }
+        require_spec_object(row, row_path);
+        const auto preferred = require_spec_string(
+            require_spec_field(row, "preferred_operation", row_path), row_path + ".preferred_operation");
+        std::unordered_set<std::string> operations;
+        if (const auto * declared = row.find("operations")) {
+            operations = validate_nonempty_string_set(
+                *declared, nullptr, row_path + ".operations", "operation");
+        }
+        operations.insert(preferred);
+        for (const auto & operation : operations) {
+            if (operation_templates().find(operation) == operation_templates().end()) {
+                fail(row_path + ".operations", "unknown operation '" + operation + "'");
+            }
+        }
+        if (const auto * method = row.find("method")) {
+            const auto & op = operation_templates().at(preferred);
+            if (require_spec_string(*method, row_path + ".method") != op.method) {
+                fail(row_path + ".method", "does not match preferred operation");
+            }
+        }
+        if (const auto * route = row.find("path")) {
+            const auto & op = operation_templates().at(preferred);
+            if (require_spec_string(*route, row_path + ".path") != op.path) {
+                fail(row_path + ".path", "does not match preferred operation");
+            }
+        }
+        if (const auto * encoding = row.find("encoding")) {
+            const auto & op = operation_templates().at(preferred);
+            if (require_spec_string(*encoding, row_path + ".encoding") != op.encoding) {
+                fail(row_path + ".encoding", "does not match preferred operation");
+            }
+        }
+        if (const auto * stream = row.find("stream")) {
+            if (require_spec_bool(*stream, row_path + ".stream") && mode_ids.find("streaming") == mode_ids.end()) {
+                fail(row_path + ".stream", "streaming requires modes to include streaming");
+            }
+        }
+        const auto & op = operation_templates().at(preferred);
+        if (const auto * response_type = row.find("response_content_type")) {
+            if (require_spec_string(*response_type, row_path + ".response_content_type") != op.response_content_type) {
+                fail(row_path + ".response_content_type", "does not match preferred operation");
+            }
+        }
+        if (const auto * formats = row.find("response_formats")) {
+            const auto & listed = require_spec_array(*formats, row_path + ".response_formats");
+            if (listed.size() != op.response_formats.size()) {
+                fail(row_path + ".response_formats", "does not match preferred operation");
+            }
+            for (size_t index = 0; index < listed.size(); ++index) {
+                if (require_spec_string(listed[index], row_path + ".response_formats") != op.response_formats[index]) {
+                    fail(row_path + ".response_formats", "does not match preferred operation");
+                }
+            }
+        }
+        if (const auto * format_pointer = row.find("response_format_pointer")) {
+            if (require_spec_string(*format_pointer, row_path + ".response_format_pointer") !=
+                op.response_format_pointer) {
+                fail(row_path + ".response_format_pointer", "does not match preferred operation");
+            }
+        }
+        out.emplace(task, std::move(operations));
+    }
+    return out;
+}
+
+std::unordered_set<std::string> applicable_tasks(
+    const json::Value & value,
+    const std::unordered_set<std::string> & all_tasks,
+    std::string_view path,
+    bool required) {
+    const auto * task_value = value.find("tasks");
+    if (task_value == nullptr) {
+        if (required) {
+            fail(path, "missing required field 'tasks'");
+        }
+        return all_tasks;
+    }
+    return validate_nonempty_string_set(*task_value, &all_tasks, std::string(path) + ".tasks", "task");
+}
+
+void validate_binding(
+    const json::Value & value,
+    const std::string & operation,
+    std::string_view path,
+    bool output) {
+    require_spec_object(value, path);
+    const auto template_it = operation_templates().find(operation);
+    if (template_it == operation_templates().end()) {
+        fail(path, "unknown operation '" + operation + "'");
+    }
+    const auto * pointer = value.find("json_pointer");
+    const auto * field = value.find("multipart_field");
+    if ((pointer == nullptr) == (field == nullptr)) {
+        fail(path, "expected exactly one of json_pointer or multipart_field");
+    }
+    const auto & operation_template = template_it->second;
+    if (pointer != nullptr) {
+        const auto pointer_value = require_spec_string(*pointer, std::string(path) + ".json_pointer");
+        if (operation_template.encoding != "json") {
+            fail(std::string(path) + ".json_pointer", "JSON pointer requires a JSON operation");
+        }
+        if (pointer_value.front() != '/') {
+            fail(std::string(path) + ".json_pointer", "JSON pointer must start with '/'");
+        }
+        if (!output && operation == "tasks.run" && pointer_value.rfind("/request/", 0) != 0) {
+            fail(std::string(path) + ".json_pointer", "tasks.run request pointers must start with /request/");
+        }
+        // Fields build_speech_request already reads from the speech body.
+        static const std::unordered_set<std::string> speech_fields = {
+            "/input", "/voice", "/voice_ref", "/instructions", "/language", "/speed", "/speaking_rate",
+            "/seed", "/temperature", "/top_k", "/top_p", "/max_tokens", "/max_steps",
+            "/repetition_penalty", "/guidance_scale", "/reference_text", "/num_inference_steps",
+        };
+        if (!output && operation == "speech.create" && speech_fields.find(pointer_value) == speech_fields.end() &&
+            pointer_value.rfind("/options/", 0) != 0) {
+            fail(std::string(path) + ".json_pointer", "unknown speech.create request field");
+        }
+    } else {
+        const auto field_value = require_spec_string(*field, std::string(path) + ".multipart_field");
+        if (operation_template.encoding != "multipart") {
+            fail(std::string(path) + ".multipart_field", "multipart field requires a multipart operation");
+        }
+        if (operation_template.multipart_fields.find(field_value) == operation_template.multipart_fields.end()) {
+            fail(std::string(path) + ".multipart_field", "unknown field for operation '" + operation + "'");
+        }
+    }
+}
+
+void validate_bindings(
+    const json::Value & value,
+    const std::unordered_set<std::string> & row_tasks,
+    const TaskOperations & task_operations,
+    std::string_view path,
+    bool output = false) {
+    const auto & bindings = require_spec_object(value, path);
+    if (bindings.empty()) {
+        fail(path, "bindings must not be empty");
+    }
+    std::unordered_set<std::string> bound_operations;
+    for (const auto & [operation, binding] : bindings) {
+        bool covers_a_task = false;
+        for (const auto & task : row_tasks) {
+            const auto task_it = task_operations.find(task);
+            if (task_it != task_operations.end() && task_it->second.find(operation) != task_it->second.end()) {
+                covers_a_task = true;
+                break;
+            }
+        }
+        if (!covers_a_task) {
+            fail(std::string(path) + "." + operation, "operation is not declared for any task on this row");
+        }
+        validate_binding(binding, operation, std::string(path) + "." + operation, output);
+        bound_operations.insert(operation);
+    }
+    for (const auto & task : row_tasks) {
+        const auto task_it = task_operations.find(task);
+        bool covered = false;
+        if (task_it != task_operations.end()) {
+            for (const auto & operation : task_it->second) {
+                if (bound_operations.find(operation) != bound_operations.end()) {
+                    covered = true;
+                    break;
+                }
+            }
+        }
+        if (!covered) {
+            fail(path, "task '" + task + "' has no binding for a declared operation");
+        }
+    }
+}
+
+void validate_v11_options(
+    const json::Value & options,
+    const std::string & family,
+    const std::unordered_set<std::string> & task_ids,
+    const TaskOperations & task_operations,
+    std::string_view path) {
+    for (const std::string scope : {"request", "session", "load"}) {
+        const auto child_path = std::string(path) + "." + scope;
+        const auto & rows = require_spec_field(options, scope, path).as_array();
+        std::unordered_set<std::string> keys;
+        for (const auto & row : rows) {
+            const auto name = row.require("name").as_string();
+            keys.insert(scope == "request" ? name : family + "." + name);
+        }
+        for (size_t index = 0; index < rows.size(); ++index) {
+            const auto & row = rows[index];
+            const auto row_path = child_path + "[" + std::to_string(index) + "]";
+            const auto row_tasks = applicable_tasks(row, task_ids, row_path, false);
+            if (const auto * bindings = row.find("bindings")) {
+                validate_bindings(*bindings, row_tasks, task_operations, row_path + ".bindings");
+            }
+            if (const auto * aliases = row.find("aliases")) {
+                const auto alias_values =
+                    validate_nonempty_string_set(*aliases, nullptr, row_path + ".aliases", "alias");
+                for (const auto & alias : alias_values) {
+                    if (scope == "request") {
+                        validate_request_option_name(alias, family, row_path + ".aliases");
+                    } else {
+                        validate_local_option_name(alias, family, scope, row_path + ".aliases");
+                    }
+                    const auto public_alias = scope == "request" ? alias : family + "." + alias;
+                    if (!keys.insert(public_alias).second) {
+                        fail(row_path + ".aliases",
+                             "alias collides with another option key '" + public_alias + "'");
+                    }
+                }
+            }
+        }
+    }
+}
+
+std::unordered_set<std::string> validate_inputs(
+    const json::Value & value,
+    const std::unordered_set<std::string> & task_ids,
+    const TaskOperations & task_operations,
+    const DeclaredOptions & declared,
+    std::string_view path) {
+    static const std::unordered_set<std::string> input_types = {"string", "enum", "audio", "artifact"};
+    const auto & rows = require_spec_array(value, path);
+    std::unordered_set<std::string> ids;
+    std::vector<std::pair<std::string, const json::Value *>> alternatives;
+    for (size_t index = 0; index < rows.size(); ++index) {
+        const auto row_path = std::string(path) + "[" + std::to_string(index) + "]";
+        const auto & row = rows[index];
+        require_spec_object(row, row_path);
+        const auto id = require_spec_string(require_spec_field(row, "id", row_path), row_path + ".id");
+        if (!ids.insert(id).second) {
+            fail(row_path + ".id", "duplicate input id '" + id + "'");
+        }
+        const auto row_tasks = applicable_tasks(row, task_ids, row_path, true);
+        const auto & schema = require_spec_field(row, "schema", row_path);
+        require_spec_object(schema, row_path + ".schema");
+        const auto type = require_spec_string(
+            require_spec_field(schema, "type", row_path + ".schema"), row_path + ".schema.type");
+        validate_enum(type, input_types, row_path + ".schema.type", "input type");
+        const auto * values = schema.find("values");
+        const auto * preset = schema.find("preset");
+        if (type == "enum") {
+            if ((values == nullptr) == (preset == nullptr)) {
+                fail(row_path + ".schema", "enum input requires exactly one of values or preset");
+            }
+            if (values != nullptr) {
+                validate_nonempty_string_set(*values, nullptr, row_path + ".schema.values", "enum value");
+            } else {
+                (void) require_option_preset(
+                    require_spec_string(*preset, row_path + ".schema.preset"));
+            }
+        } else if (values != nullptr || preset != nullptr) {
+            fail(row_path + ".schema", "values and preset are allowed only for enum inputs");
+        }
+        if (const auto * required = row.find("required")) {
+            (void) require_spec_bool(*required, row_path + ".required");
+        }
+        const auto scope = require_spec_string(
+            require_spec_field(row, "scope", row_path), row_path + ".scope");
+        if (scope != "request" && scope != "session") {
+            fail(row_path + ".scope", "expected request or session");
+        }
+        validate_bindings(
+            require_spec_field(row, "bindings", row_path), row_tasks, task_operations, row_path + ".bindings");
+        if (const auto * refs = row.find("alternatives")) {
+            validate_nonempty_string_set(*refs, nullptr, row_path + ".alternatives", "alternative");
+            alternatives.emplace_back(row_path, refs);
+        }
+        if (const auto * presentation = row.find("presentation")) {
+            require_spec_object(*presentation, row_path + ".presentation");
+            for (const std::string key : {"label", "group"}) {
+                if (const auto * item = presentation->find(key)) {
+                    (void) require_spec_string(*item, row_path + ".presentation." + key);
+                }
+            }
+            if (const auto * advanced = presentation->find("advanced")) {
+                (void) require_spec_bool(*advanced, row_path + ".presentation.advanced");
+            }
+        }
+    }
+    std::unordered_set<std::string> valid_alternatives = ids;
+    for (const auto & [scope, keys] : declared.public_by_scope) {
+        (void) scope;
+        valid_alternatives.insert(keys.begin(), keys.end());
+    }
+    for (const auto & [row_path, refs] : alternatives) {
+        for (size_t index = 0; index < refs->as_array().size(); ++index) {
+            const auto & ref = refs->as_array()[index].as_string();
+            if (valid_alternatives.find(ref) == valid_alternatives.end()) {
+                fail(row_path + ".alternatives[" + std::to_string(index) + "]",
+                     "unknown input or option '" + ref + "'");
+            }
+        }
+    }
+    return ids;
+}
+
+void validate_outputs(
+    const json::Value & value,
+    const std::unordered_set<std::string> & task_ids,
+    const TaskOperations & task_operations,
+    std::string_view path) {
+    static const std::unordered_set<std::string> output_kinds = {"audio", "text", "json", "artifact"};
+    const auto & rows = require_spec_array(value, path);
+    std::unordered_set<std::string> ids;
+    for (size_t index = 0; index < rows.size(); ++index) {
+        const auto row_path = std::string(path) + "[" + std::to_string(index) + "]";
+        const auto & row = rows[index];
+        require_spec_object(row, row_path);
+        const auto id = require_spec_string(require_spec_field(row, "id", row_path), row_path + ".id");
+        if (!ids.insert(id).second) {
+            fail(row_path + ".id", "duplicate output id '" + id + "'");
+        }
+        const auto row_tasks = applicable_tasks(row, task_ids, row_path, true);
+        const auto kind = require_spec_string(require_spec_field(row, "kind", row_path), row_path + ".kind");
+        validate_enum(kind, output_kinds, row_path + ".kind", "output kind");
+        if (const auto * bindings = row.find("bindings")) {
+            validate_bindings(*bindings, row_tasks, task_operations, row_path + ".bindings", true);
+        }
+    }
+}
+
 void validate_capabilities(const json::Value & value,
                            const std::unordered_set<std::string> & task_ids,
                            std::string_view path) {
@@ -690,7 +1056,78 @@ void validate_legacy_source(const json::Value & value, std::string_view path) {
     validate_layout(value, path);
 }
 
-void validate_v1(const json::Value & spec, std::string_view source_name) {
+void validate_model_startup(
+    const json::Value & spec,
+    const json::Value & packages_field,
+    const std::unordered_set<std::string> & task_ids,
+    const std::unordered_set<std::string> & mode_ids,
+    bool version_2,
+    std::string_view source_name) {
+    std::string family_default_task;
+    if (version_2) {
+        family_default_task = require_spec_string(
+            require_spec_field(spec, "default_task", source_name), std::string(source_name) + ".default_task");
+        if (task_ids.find(family_default_task) == task_ids.end()) {
+            fail(std::string(source_name) + ".default_task", "default_task must be one of tasks");
+        }
+        const auto default_mode = require_spec_string(
+            require_spec_field(spec, "default_mode", source_name), std::string(source_name) + ".default_mode");
+        if (mode_ids.find(default_mode) == mode_ids.end()) {
+            fail(std::string(source_name) + ".default_mode", "default_mode must be one of modes");
+        }
+    } else {
+        for (const std::string key : {"default_task", "default_mode"}) {
+            if (spec.find(key) != nullptr) {
+                fail(std::string(source_name) + "." + key, "field requires schema_version 2");
+            }
+        }
+    }
+    if (!packages_field.is_array()) {
+        return;
+    }
+    const auto & packages = packages_field.as_array();
+    for (size_t index = 0; index < packages.size(); ++index) {
+        const auto package_path = std::string(source_name) + ".packages[" + std::to_string(index) + "]";
+        const auto * tasks = packages[index].find("tasks");
+        const auto * package_default = packages[index].find("default_task");
+        if (!version_2) {
+            if (tasks != nullptr) {
+                fail(package_path + ".tasks", "field requires schema_version 2");
+            }
+            if (package_default != nullptr) {
+                fail(package_path + ".default_task", "field requires schema_version 2");
+            }
+            continue;
+        }
+        if (tasks == nullptr) {
+            fail(package_path + ".tasks", "missing required field 'tasks'");
+        }
+        const auto package_tasks =
+            validate_nonempty_string_set(*tasks, nullptr, package_path + ".tasks", "task");
+        for (const auto & task : package_tasks) {
+            if (task_ids.find(task) == task_ids.end()) {
+                fail(package_path + ".tasks", "unknown task '" + task + "'");
+            }
+        }
+        if (package_default == nullptr) {
+            fail(package_path + ".default_task", "missing required field 'default_task'");
+        }
+        const auto package_default_task =
+            require_spec_string(*package_default, package_path + ".default_task");
+        if (package_tasks.find(package_default_task) == package_tasks.end()) {
+            fail(package_path + ".default_task", "default_task must be one of this package's tasks");
+        }
+        bool is_default = false;
+        if (const auto * flag = packages[index].find("default")) {
+            is_default = require_spec_bool(*flag, package_path + ".default");
+        }
+        if (is_default && package_default_task != family_default_task) {
+            fail(package_path + ".default_task", "the default package must use the family default_task");
+        }
+    }
+}
+
+void validate_v1(const json::Value & spec, std::string_view source_name, bool version_2) {
     const auto family = require_spec_string(require_spec_field(spec, "family", source_name), std::string(source_name) + ".family");
     (void) require_spec_string(require_spec_field(spec, "display_name", source_name), std::string(source_name) + ".display_name");
     validate_enum(require_spec_string(require_spec_field(spec, "category", source_name), std::string(source_name) + ".category"),
@@ -700,7 +1137,7 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
     validate_enum(status, statuses(), std::string(source_name) + ".status", "status");
     const auto task_ids = validate_nonempty_string_set(
         require_spec_field(spec, "tasks", source_name), &tasks(), std::string(source_name) + ".tasks", "task");
-    validate_nonempty_string_set(
+    const auto mode_ids = validate_nonempty_string_set(
         require_spec_field(spec, "modes", source_name), &modes(), std::string(source_name) + ".modes", "mode");
     validate_nonempty_string_set(
         require_spec_field(spec, "languages", source_name), nullptr, std::string(source_name) + ".languages", "language");
@@ -710,6 +1147,41 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
     validate_options(options_field, family, std::string(source_name) + ".options");
     const auto declared_options =
         collect_declared_options(options_field, family, std::string(source_name) + ".options");
+    TaskOperations task_operations;
+    if (version_2) {
+        if (const auto * operations = spec.find("task_operations")) {
+            task_operations = validate_task_operations(
+                *operations, task_ids, mode_ids, std::string(source_name) + ".task_operations");
+        }
+        validate_v11_options(
+            options_field, family, task_ids, task_operations, std::string(source_name) + ".options");
+        if (const auto * inputs = spec.find("inputs")) {
+            (void) validate_inputs(
+                *inputs, task_ids, task_operations, declared_options, std::string(source_name) + ".inputs");
+        }
+        if (const auto * outputs = spec.find("outputs")) {
+            validate_outputs(
+                *outputs, task_ids, task_operations, std::string(source_name) + ".outputs");
+        }
+    } else {
+        for (const std::string key : {"task_operations", "inputs", "outputs"}) {
+            if (spec.find(key) != nullptr) {
+                fail(std::string(source_name) + "." + key, "field requires schema_version 2");
+            }
+        }
+        for (const std::string scope : {"request", "session", "load"}) {
+            const auto & rows = options_field.require(scope).as_array();
+            for (size_t index = 0; index < rows.size(); ++index) {
+                for (const std::string key : {"tasks", "bindings", "aliases"}) {
+                    if (rows[index].find(key) != nullptr) {
+                        fail(std::string(source_name) + ".options." + scope + "[" +
+                                 std::to_string(index) + "]." + key,
+                             "field requires schema_version 2");
+                    }
+                }
+            }
+        }
+    }
 
     const bool has_default_download =
         has_spec_field(spec, "package_defaults") && has_spec_field(*spec.find("package_defaults"), "download");
@@ -721,6 +1193,7 @@ void validate_v1(const json::Value & spec, std::string_view source_name) {
     const auto & packages_field = require_spec_field(spec, "packages", source_name);
     const auto package_ids = validate_packages(
         packages_field, packages_path, has_default_download, status == "experimental");
+    validate_model_startup(spec, packages_field, task_ids, mode_ids, version_2, source_name);
     validate_dependencies(
         require_spec_field(spec, "dependencies", source_name),
         family,
@@ -748,6 +1221,29 @@ void validate_legacy(const json::Value & spec, std::string_view source_name) {
 
 }  // namespace
 
+std::optional<engine::io::json::Value> operation_surface(std::string_view operation) {
+    const auto it = operation_templates().find(std::string(operation));
+    if (it == operation_templates().end()) {
+        return std::nullopt;
+    }
+    const auto & surface = it->second;
+    engine::io::json::Value::Object object;
+    object["method"] = engine::io::json::Value::make_string(surface.method);
+    object["path"] = engine::io::json::Value::make_string(surface.path);
+    object["encoding"] = engine::io::json::Value::make_string(surface.encoding);
+    object["response_content_type"] = engine::io::json::Value::make_string(surface.response_content_type);
+    if (!surface.response_formats.empty()) {
+        engine::io::json::Value::Array formats;
+        formats.reserve(surface.response_formats.size());
+        for (const auto & format : surface.response_formats) {
+            formats.push_back(engine::io::json::Value::make_string(format));
+        }
+        object["response_formats"] = engine::io::json::Value::make_array(std::move(formats));
+        object["response_format_pointer"] = engine::io::json::Value::make_string(surface.response_format_pointer);
+    }
+    return engine::io::json::Value::make_object(std::move(object));
+}
+
 void validate_spec(const json::Value & spec, std::string_view source_name) {
     require_spec_object(spec, source_name);
     const auto * version = spec.find("schema_version");
@@ -755,11 +1251,12 @@ void validate_spec(const json::Value & spec, std::string_view source_name) {
         validate_legacy(spec, source_name);
         return;
     }
-    if (!version->is_number() || version->as_i64() != kModelSpecSchemaVersion) {
-        fail(std::string(source_name) + ".schema_version",
-             "expected " + std::to_string(kModelSpecSchemaVersion));
+    const bool version_1 = version->is_number() && version->as_number() == kModelSpecSchemaVersionV1;
+    const bool version_2 = version->is_number() && version->as_number() == kModelSpecSchemaVersion;
+    if (!version_1 && !version_2) {
+        fail(std::string(source_name) + ".schema_version", "expected numeric 1 or 2");
     }
-    validate_v1(spec, source_name);
+    validate_v1(spec, source_name, version_2);
 }
 
 }  // namespace engine::model_spec

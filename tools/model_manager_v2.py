@@ -636,6 +636,15 @@ def clean_partial_package(package: PackageRecord, args: argparse.Namespace) -> N
 
 
 def command_list(records: list[PackageRecord], args: argparse.Namespace) -> None:
+    def access_status(record: PackageRecord) -> str:
+        # Declared download.gated flag, not a credential or network check.
+        gated = record.download.get("gated")
+        if gated is True:
+            return "gated"
+        if gated is False:
+            return "public"
+        return "unknown"
+
     rows = [
         {
             "family": record.family,
@@ -646,6 +655,10 @@ def command_list(records: list[PackageRecord], args: argparse.Namespace) -> None
             "default": record.default,
             "target_directory": record.target_directory,
             "repo": record.download.get("repo", ""),
+            "files": list(record.files),
+            "strip_prefix": record.strip_prefix,
+            "download": record.download,
+            "access_status": access_status(record),
         }
         for record in records
     ]

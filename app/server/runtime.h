@@ -87,6 +87,10 @@ private:
         // `GET /v1/models?include_params=true`. Resolved at registration for the
         // same cost reason as the flags above; "[]" when the spec declares none.
         std::string request_params_json = "[]";
+        // Validated spec with package defaults and enum presets expanded, emitted
+        // as "spec" by GET /v1/models?include_params=true. "{}" means no contract
+        // was available for this configured model.
+        std::string resolved_spec_json = "{}";
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;

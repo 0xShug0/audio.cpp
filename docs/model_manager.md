@@ -196,7 +196,10 @@ Use `--models-dir PATH` to select the installation root. Use
 ## Python v2 Commands
 
 - `list` shows the available package ids
-- `list --json` prints a machine-readable package catalog
+- `list --json` prints a machine-readable package catalog. Each row includes
+  `files`, `strip_prefix`, the resolved `download` object, and `access_status`
+  (`public`, `gated`, or `unknown` from the declared `download.gated` flag).
+  Human-readable `list` output is unchanged.
 - `info` shows the target layout, required files, and install source for one package
 - `info <package> --json` prints machine-readable package details
 - `install` downloads or converts one package into a models root

@@ -3427,6 +3427,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_include_directories(model_spec_system_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME model_spec_system_test COMMAND model_spec_system_test)
+        if (Python3_Interpreter_FOUND)
+            add_test(
+                NAME model_manager_v2_contract_test
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/model_spec/test_model_manager_v2_contract.py"
+                    --manager "${CMAKE_CURRENT_SOURCE_DIR}/tools/model_manager_v2.py")
+        endif()
     endif()
 
         add_executable(moss_tts_v15_text_normalization_test

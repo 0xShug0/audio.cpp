@@ -5,6 +5,7 @@
 #include "engine/framework/io/json.h"
 #include "test_assert.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -236,6 +237,351 @@ std::string spec_with_download(const std::string & download) {
     engine::test::require(at != std::string::npos, "download fixture anchor exists");
     text.replace(at, anchor.size(), "\"download\": " + download);
     return text;
+}
+
+// Fictional family only. Production specs stay on schema 1 until a later change
+// fills task_operations, inputs, and outputs for a real model.
+json::Value schema_v2_fixture() {
+    auto spec = json::parse(schema_v1_spec_text("[]")).as_object();
+    spec["schema_version"] = json::Value::make_number(engine::model_spec::kModelSpecSchemaVersion);
+    spec["tasks"] = json::parse(R"(["tts","vc","midi","design"])");
+    spec["capabilities"] = json::parse(
+        R"({"tts":["long_form"],"vc":["speaker_reference"],"midi":["midi_artifact"]})");
+    spec["task_operations"] = json::parse(R"({
+      "tts": {
+        "preferred_operation": "speech.create",
+        "operations": ["speech.create"],
+        "method": "POST",
+        "path": "/v1/audio/speech",
+        "encoding": "json"
+      },
+      "vc": {"preferred_operation": "tasks.run"},
+      "midi": {"preferred_operation": "tasks.run"}
+    })");
+    spec["options"] = json::parse(R"({
+      "request": [
+        {
+          "name": "temperature",
+          "type": "float",
+          "required": false,
+          "default": 0,
+          "description": "Sampling temperature.",
+          "tasks": ["tts"],
+          "aliases": ["temp"],
+          "bindings": {"speech.create": {"json_pointer": "/temperature"}}
+        },
+        {
+          "name": "semitone_shift",
+          "type": "int",
+          "required": false,
+          "default": 0,
+          "description": "Voice conversion pitch shift.",
+          "tasks": ["vc"],
+          "bindings": {"tasks.run": {"json_pointer": "/request/options/semitone_shift"}}
+        },
+        {
+          "name": "emit_notes",
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "description": "Emit note events.",
+          "tasks": ["midi"],
+          "bindings": {"tasks.run": {"json_pointer": "/request/options/emit_notes"}}
+        },
+        {
+          "name": "grid_offset",
+          "type": "int",
+          "required": false,
+          "default": 0,
+          "description": "MIDI grid offset.",
+          "tasks": ["midi"],
+          "bindings": {"tasks.run": {"json_pointer": "/request/options/grid_offset"}}
+        },
+        {
+          "name": "text_chunk_mode",
+          "type": "enum",
+          "preset": "text_chunk_mode_full",
+          "required": false,
+          "default": "word_budget",
+          "description": "Chunk mode used by MIDI labels.",
+          "tasks": ["midi"],
+          "bindings": {"tasks.run": {"json_pointer": "/request/options/text_chunk_mode"}}
+        },
+        {
+          "name": "seed",
+          "type": "int",
+          "required": false,
+          "default": 0,
+          "description": "Sampling seed.",
+          "tasks": ["tts", "vc"],
+          "bindings": {
+            "speech.create": {"json_pointer": "/seed"},
+            "tasks.run": {"json_pointer": "/request/seed"}
+          }
+        }
+      ],
+      "session": [
+        {
+          "name": "peer_model_path",
+          "type": "path",
+          "required": false,
+          "description": "Peer model path."
+        }
+      ],
+      "load": []
+    })");
+    spec["inputs"] = json::parse(R"([
+      {
+        "id": "voice",
+        "tasks": ["tts"],
+        "schema": {"type": "string"},
+        "required": true,
+        "scope": "session",
+        "bindings": {"speech.create": {"json_pointer": "/voice"}}
+      },
+      {
+        "id": "instructions",
+        "tasks": ["tts"],
+        "schema": {"type": "enum", "values": ["calm", "energetic"]},
+        "required": false,
+        "scope": "request",
+        "bindings": {"speech.create": {"json_pointer": "/instructions"}}
+      },
+      {
+        "id": "audio",
+        "tasks": ["vc"],
+        "schema": {"type": "audio"},
+        "required": true,
+        "scope": "request",
+        "bindings": {"tasks.run": {"json_pointer": "/request/audio"}},
+        "alternatives": ["reference_audio"]
+      },
+      {
+        "id": "reference_audio",
+        "tasks": ["vc"],
+        "schema": {"type": "audio"},
+        "required": false,
+        "scope": "request",
+        "bindings": {"tasks.run": {"json_pointer": "/request/reference_audio"}}
+      },
+      {
+        "id": "midi_audio",
+        "tasks": ["midi"],
+        "schema": {"type": "audio"},
+        "required": true,
+        "scope": "request",
+        "bindings": {"tasks.run": {"json_pointer": "/request/audio"}}
+      }
+    ])");
+    spec["outputs"] = json::parse(R"([
+      {"id": "speech", "tasks": ["tts"], "kind": "audio"},
+      {"id": "converted_audio", "tasks": ["vc"], "kind": "audio"},
+      {
+        "id": "notes",
+        "tasks": ["midi"],
+        "kind": "artifact",
+        "bindings": {"tasks.run": {"json_pointer": "/artifacts"}}
+      }
+    ])");
+    spec["ui"] = json::parse(R"({
+      "recommended_package": "toy_model_q8",
+      "tags": ["TTS", "GGUF"],
+      "docs": ["docs/tts.md"],
+      "default_voice": "demo",
+      "builtin_voices": ["demo"]
+    })");
+    spec["default_task"] = json::Value::make_string("tts");
+    spec["default_mode"] = json::Value::make_string("offline");
+    {
+        auto packages = spec.at("packages").as_array();
+        auto package = packages[0].as_object();
+        package["tasks"] = json::parse(R"(["tts","vc","midi","design"])");
+        package["default_task"] = json::Value::make_string("tts");
+        packages[0] = json::Value::make_object(std::move(package));
+        spec["packages"] = json::Value::make_array(std::move(packages));
+    }
+    return json::Value::make_object(std::move(spec));
+}
+
+void test_schema_v2_integrator_contract() {
+    const auto fixture = schema_v2_fixture();
+    engine::model_spec::validate_spec(fixture, "schema_v2_fixture");
+
+    auto fractional_version = fixture.as_object();
+    fractional_version["schema_version"] = json::Value::make_number(1.1);
+    expect_rejects(
+        "schema_v2_rejects_fractional_version",
+        json::stringify(json::Value::make_object(std::move(fractional_version))),
+        "expected numeric 1 or 2");
+
+    auto v1 = fixture.as_object();
+    v1["schema_version"] = json::Value::make_number(1);
+    expect_rejects(
+        "schema_v1_with_v2_fields",
+        json::stringify(json::Value::make_object(std::move(v1))),
+        "field requires schema_version 2");
+
+    auto bad_task = fixture.as_object();
+    bad_task["inputs"] = json::parse(R"([
+      {
+        "id": "audio",
+        "tasks": ["sep"],
+        "schema": {"type": "audio"},
+        "required": true,
+        "scope": "request",
+        "bindings": {"tasks.run": {"json_pointer": "/request/audio"}}
+      }
+    ])");
+    expect_rejects(
+        "schema_v2_unknown_input_task",
+        json::stringify(json::Value::make_object(std::move(bad_task))),
+        "unknown task 'sep'");
+
+    auto bad_operation = fixture.as_object();
+    bad_operation["task_operations"] = json::parse(R"({
+      "tts": {"preferred_operation": "family.magic"}
+    })");
+    expect_rejects(
+        "schema_v2_unknown_operation",
+        json::stringify(json::Value::make_object(std::move(bad_operation))),
+        "unknown operation 'family.magic'");
+
+    auto offline_stream = fixture.as_object();
+    auto operations = offline_stream.at("task_operations").as_object();
+    auto tts = operations.at("tts").as_object();
+    tts.emplace("stream", json::Value::make_bool(true));
+    operations["tts"] = json::Value::make_object(std::move(tts));
+    offline_stream["task_operations"] = json::Value::make_object(std::move(operations));
+    expect_rejects(
+        "schema_v2_stream_without_streaming_mode",
+        json::stringify(json::Value::make_object(std::move(offline_stream))),
+        "streaming requires modes to include streaming");
+
+    auto bad_binding = fixture.as_object();
+    bad_binding["inputs"] = json::parse(R"([
+      {
+        "id": "audio",
+        "tasks": ["vc"],
+        "schema": {"type": "audio"},
+        "required": true,
+        "scope": "request",
+        "bindings": {"tasks.run": {"json_pointer": "/audio"}}
+      }
+    ])");
+    expect_rejects(
+        "schema_v2_bad_tasks_run_pointer",
+        json::stringify(json::Value::make_object(std::move(bad_binding))),
+        "must start with /request/");
+
+    auto partial_binding = fixture.as_object();
+    {
+        auto options = partial_binding.at("options").as_object();
+        auto request = options.at("request").as_array();
+        for (auto & row : request) {
+            if (row.require("name").as_string() != "seed") {
+                continue;
+            }
+            auto object = row.as_object();
+            object["bindings"] = json::parse(R"({"speech.create":{"json_pointer":"/seed"}})");
+            row = json::Value::make_object(std::move(object));
+        }
+        options["request"] = json::Value::make_array(std::move(request));
+        partial_binding["options"] = json::Value::make_object(std::move(options));
+    }
+    expect_rejects(
+        "schema_v2_binding_misses_a_task",
+        json::stringify(json::Value::make_object(std::move(partial_binding))),
+        "task 'vc' has no binding for a declared operation");
+
+    auto missing_default = fixture.as_object();
+    missing_default.erase("default_task");
+    expect_rejects(
+        "schema_v2_missing_default_task",
+        json::stringify(json::Value::make_object(std::move(missing_default))),
+        "missing required field 'default_task'");
+
+    auto resolved_fixture = fixture.as_object();
+    resolved_fixture["package_defaults"] = json::parse(R"({
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/toy-model",
+        "revision": "main",
+        "gated": false
+      }
+    })");
+    auto packages = resolved_fixture.at("packages").as_array();
+    auto package = packages[0].as_object();
+    package.erase("download");
+    packages[0] = json::Value::make_object(std::move(package));
+    resolved_fixture["packages"] = json::Value::make_array(std::move(packages));
+
+    const auto root = make_temp_root();
+    write_text(
+        root,
+        "toy_model.json",
+        json::stringify(json::Value::make_object(std::move(resolved_fixture))));
+    {
+        const engine::model_spec::ScopedSpecOverride override(root);
+        const auto resolved = engine::model_spec::resolved_spec("toy_model");
+        const auto & request_options = resolved.require("options").require("request").as_array();
+        const auto preset = std::find_if(
+            request_options.begin(), request_options.end(), [](const json::Value & row) {
+                return row.require("name").as_string() == "text_chunk_mode";
+            });
+        engine::test::require(preset != request_options.end(), "resolved spec should retain preset option");
+        engine::test::require(
+            preset->require("values").as_array().size() == 4,
+            "resolved spec should expand enum preset values");
+        engine::test::require(
+            resolved.require("inputs").as_array().size() == 5,
+            "resolved spec should retain integrator input roles");
+        const auto & download =
+            resolved.require("packages").as_array()[0].require("download");
+        engine::test::require_eq(
+            download.require("repo").as_string(),
+            std::string("audio-cpp/toy-model"),
+            "resolved spec should merge package download defaults");
+        engine::test::require_eq(
+            resolved.require("options").require("session").as_array()[0].require("public_key").as_string(),
+            std::string("toy_model.peer_model_path"),
+            "resolved spec should publish session option keys");
+        engine::test::require_eq(
+            resolved.require("task_tokens").require("design").as_string(),
+            std::string("vdes"),
+            "resolved spec should map spec task names to runtime tokens");
+        engine::test::require_eq(
+            resolved.require("startup").require("default_task_token").as_string(),
+            std::string("tts"),
+            "resolved spec should name the runtime token for the default task");
+        engine::test::require_eq(
+            resolved.require("startup").require("cli").require("task").as_string(),
+            std::string("--task"),
+            "resolved spec should name the CLI task flag");
+        engine::test::require_eq(
+            resolved.require("startup").require("server_config").require("session_options").as_string(),
+            std::string("session_options"),
+            "resolved spec should name the server session option field");
+        engine::test::require_eq(
+            resolved.require("startup").require("server_config").require("id").as_string(),
+            std::string("id"),
+            "resolved spec should name the server model id field");
+        engine::test::require_eq(
+            resolved.require("startup").require("model_path").as_string(),
+            std::string("directory, or a file in that directory when it contains more than one weight"),
+            "resolved spec should say which path starts the model");
+        engine::test::require_eq(
+            resolved.require("task_operations").require("vc").require("path").as_string(),
+            std::string("/v1/tasks/run"),
+            "resolved spec should fill the operation path");
+        engine::test::require_eq(
+            resolved.require("task_operations").require("tts").require("response_content_type").as_string(),
+            std::string("audio/wav"),
+            "resolved spec should fill the operation response type");
+        engine::test::require(
+            resolved.require("packages").as_array()[0].require("tasks").as_array().size() == 4,
+            "resolved spec should keep package tasks");
+    }
+    std::filesystem::remove_all(root);
 }
 
 void test_download_kinds_schema() {
@@ -1109,8 +1455,9 @@ void test_options_schema() {
 
 void test_option_name_mapping_from_production_spec() {
     // Reference option tables do not opt legacy loaders into v1 contracts.
+    // chatterbox and qwen3_tts are schema 2 samples and are not in this list.
     for (const auto * family : {
-             "omnivoice", "qwen3_tts", "qwen3_asr", "chatterbox", "citrinet_asr",
+             "omnivoice", "qwen3_asr", "citrinet_asr",
              "higgs_audio_tts", "index_tts2", "miocodec", "miotts", "moss_tts_local",
              "moss_tts_nano", "pocket_tts", "stable_audio", "supertonic", "vibevoice",
              "vibevoice_asr", "voxcpm2", "voxtral_realtime"}) {
@@ -1467,6 +1814,7 @@ void test_shipped_model_specs_declare_known_tasks() {
 
 int main() {
     try {
+        test_schema_v2_integrator_contract();
         test_legacy_dependencies_schema();
         test_download_kinds_schema();
         test_typed_schema_renamed_dependencies();

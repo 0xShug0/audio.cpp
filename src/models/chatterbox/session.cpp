@@ -368,9 +368,11 @@ ChatterboxSession::ChatterboxSession(
       multilingual_t3_version_(resolve_multilingual_t3_version(this->options())),
       mem_saver_(resolve_mem_saver(this->options())),
       conditionals_cache_(resolve_conditionals_cache_slots(this->options())) {
-    if (task_.task != runtime::VoiceTaskKind::VoiceCloning &&
+    // TTS uses the same reference-audio path as voice cloning. There is no preset voice.
+    if (task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning &&
         task_.task != runtime::VoiceTaskKind::VoiceConversion) {
-        throw std::runtime_error("Chatterbox session supports --task clon or --task vc");
+        throw std::runtime_error("Chatterbox session supports --task tts, --task clon, or --task vc");
     }
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Chatterbox session only supports offline mode");

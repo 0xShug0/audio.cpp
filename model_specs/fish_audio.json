@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "family": "fish_audio",
   "display_name": "Fish Audio S2 Pro",
   "description": "Fish Audio S2 Pro text-to-speech model for expressive speech across 80+ languages, with automatic language handling, inline prosody/emotion controls, and rapid voice cloning from short reference samples.",
@@ -11,6 +12,8 @@
   "modes": [
     "offline"
   ],
+  "default_task": "tts",
+  "default_mode": "offline",
   "languages": [
     "80+ languages"
   ],
@@ -24,19 +27,91 @@
       "gguf"
     ]
   },
+  "task_operations": {
+    "tts": {
+      "preferred_operation": "speech.create"
+    },
+    "clone": {
+      "preferred_operation": "speech.create"
+    }
+  },
+  "inputs": [
+    {
+      "id": "text",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "schema": {
+        "type": "string"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/input"
+        }
+      }
+    },
+    {
+      "id": "voice",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "schema": {
+        "type": "audio"
+      },
+      "required": false,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/voice_ref"
+        }
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "id": "speech",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "kind": "audio"
+    }
+  ],
   "options": {
     "request": [
       {
         "name": "reference_text",
         "type": "string",
         "description": "Reference transcript used with speaker reference audio.",
-        "required": false
+        "required": false,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/reference_text"
+          }
+        }
       },
       {
         "name": "multi_reference_cond",
         "type": "string",
         "description": "Fish Audio ordered JSON array of reference conditioning pairs for one generated speaker: [{\"audio\":\"ref1.wav\",\"text\":\"Transcript one.\"},{\"audio\":\"ref2.wav\",\"text\":\"Transcript two.\"}]. This is not a multi-speaker dialogue routing option.",
-        "required": false
+        "required": false,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/multi_reference_cond"
+          }
+        }
       },
       {
         "name": "max_tokens",
@@ -44,7 +119,16 @@
         "description": "Maximum Fish Audio semantic tokens to generate; default 1024.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 1024,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/max_tokens"
+          }
+        }
       },
       {
         "name": "text_chunk_size",
@@ -52,7 +136,16 @@
         "description": "Maximum characters per generated text chunk; default 200.",
         "required": false,
         "min": 1,
-        "default": 200
+        "default": 200,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/text_chunk_size"
+          }
+        }
       },
       {
         "name": "text_chunk_mode",
@@ -60,7 +153,16 @@
         "description": "Framework text chunking mode; default word_budget.",
         "preset": "text_chunk_mode_full",
         "required": false,
-        "default": "word_budget"
+        "default": "word_budget",
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/text_chunk_mode"
+          }
+        }
       },
       {
         "name": "top_p",
@@ -69,7 +171,16 @@
         "required": false,
         "min": 0.0,
         "max": 1.0,
-        "default": 0.8
+        "default": 0.8,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/top_p"
+          }
+        }
       },
       {
         "name": "top_k",
@@ -77,7 +188,16 @@
         "description": "Top-k sampling value; default 30.",
         "required": false,
         "min": 1,
-        "default": 30
+        "default": 30,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/top_k"
+          }
+        }
       },
       {
         "name": "temperature",
@@ -86,14 +206,32 @@
         "required": false,
         "min": 0.0,
         "max": 2.0,
-        "default": 0.8
+        "default": 0.8,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/temperature"
+          }
+        }
       },
       {
         "name": "seed",
         "type": "int",
         "description": "Sampling seed for reproducible output; omitted uses a random seed.",
         "required": false,
-        "min": 0
+        "min": 0,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/seed"
+          }
+        }
       }
     ],
     "session": [
@@ -183,6 +321,7 @@
       "gated": false
     }
   },
+  "dependencies": [],
   "packages": [
     {
       "id": "fish_audio_s2_pro_q8_0",
@@ -191,6 +330,11 @@
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Fish-Audio-S2-Pro-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf"
       ],
@@ -202,6 +346,11 @@
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Fish-Audio-S2-Pro-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-bf16.gguf"
       ],

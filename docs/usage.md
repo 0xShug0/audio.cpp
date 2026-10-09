@@ -1,6 +1,6 @@
 # AudioCPP Command Usage
 
-Use `audiocpp_cli` for direct model inference.
+Use `audiocpp_cli` for direct model inference. A UI or control plane should follow the [integrator's guide](integrators.md): family contracts come from `audiocpp_cli --family <id> --spec --json`.
 
 ```bash
 audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <backend> [inputs] [outputs]

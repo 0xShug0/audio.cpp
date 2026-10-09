@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "family": "chatterbox",
   "display_name": "Chatterbox",
   "description": "Open-source Chatterbox family for expressive TTS and voice conversion, with emotion exaggeration control, fast generation, zero-shot voice cloning, and an integrated multilingual TTS path.",
@@ -12,6 +13,8 @@
   "modes": [
     "offline"
   ],
+  "default_task": "tts",
+  "default_mode": "offline",
   "languages": [
     "ar",
     "da",
@@ -33,6 +36,108 @@
     "sw",
     "tr"
   ],
+  "task_operations": {
+    "clone": {
+      "preferred_operation": "speech.create"
+    },
+    "vc": {
+      "preferred_operation": "tasks.run"
+    },
+    "tts": {
+      "preferred_operation": "speech.create"
+    }
+  },
+  "inputs": [
+    {
+      "id": "text",
+      "tasks": [
+        "clone",
+        "tts"
+      ],
+      "schema": {
+        "type": "string"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/input"
+        }
+      }
+    },
+    {
+      "id": "voice",
+      "tasks": [
+        "clone",
+        "tts"
+      ],
+      "schema": {
+        "type": "audio"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/voice_ref"
+        }
+      }
+    },
+    {
+      "id": "audio",
+      "tasks": [
+        "vc"
+      ],
+      "schema": {
+        "type": "audio"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "tasks.run": {
+          "json_pointer": "/request/audio"
+        }
+      },
+      "alternatives": [
+        "source_audio"
+      ]
+    },
+    {
+      "id": "target_speaker",
+      "tasks": [
+        "vc"
+      ],
+      "schema": {
+        "type": "audio"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "tasks.run": {
+          "json_pointer": "/request/target_voice"
+        }
+      },
+      "alternatives": [
+        "target_voice"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "speech",
+      "tasks": [
+        "clone",
+        "tts"
+      ],
+      "kind": "audio"
+    },
+    {
+      "id": "converted_audio",
+      "tasks": [
+        "vc"
+      ],
+      "kind": "audio"
+    }
+  ],
   "options": {
     "request": [
       {
@@ -40,49 +145,116 @@
         "type": "float",
         "description": "Emotion exaggeration.",
         "required": false,
-        "default": 0.5
+        "default": 0.5,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/exaggeration"
+          }
+        }
       },
       {
         "name": "guidance_scale",
         "type": "float",
         "description": "T3 classifier-free guidance scale.",
         "required": false,
-        "default": 0.5
+        "default": 0.5,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/guidance_scale"
+          }
+        }
       },
       {
         "name": "temperature",
         "type": "float",
         "description": "T3 sampling temperature.",
         "required": false,
-        "default": 0.8
+        "default": 0.8,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/temperature"
+          }
+        }
       },
       {
         "name": "repetition_penalty",
         "type": "float",
         "description": "T3 repetition penalty.",
         "required": false,
-        "default": 1.2
+        "default": 1.2,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/repetition_penalty"
+          }
+        }
       },
       {
         "name": "min_p",
         "type": "float",
         "description": "Minimum sampling probability.",
         "required": false,
-        "default": 0.05
+        "default": 0.05,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/min_p"
+          }
+        }
       },
       {
         "name": "top_p",
         "type": "float",
         "description": "Nucleus sampling probability.",
         "required": false,
-        "default": 1
+        "default": 1,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/top_p"
+          }
+        }
       },
       {
         "name": "s3gen_cfg_rate",
         "type": "float",
         "description": "S3Gen flow guidance scale.",
         "required": false,
-        "default": 0.7
+        "default": 0.7,
+        "tasks": [
+          "tts",
+          "clone",
+          "vc"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/s3gen_cfg_rate"
+          },
+          "tasks.run": {
+            "json_pointer": "/request/options/s3gen_cfg_rate"
+          }
+        }
       },
       {
         "name": "max_tokens",
@@ -90,28 +262,64 @@
         "description": "Maximum generated speech tokens.",
         "required": false,
         "min": 1,
-        "default": 384
+        "default": 384,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/max_tokens"
+          }
+        }
       },
       {
         "name": "do_sample",
         "type": "bool",
         "description": "Enable sampling.",
         "required": false,
-        "default": true
+        "default": true,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/do_sample"
+          }
+        }
       },
       {
         "name": "greedy",
         "type": "bool",
         "description": "When true, override do_sample and use greedy decoding.",
         "required": false,
-        "default": false
+        "default": false,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/greedy"
+          }
+        }
       },
       {
         "name": "stop_on_eos",
         "type": "bool",
         "description": "Stop token generation on EOS.",
         "required": false,
-        "default": true
+        "default": true,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/stop_on_eos"
+          }
+        }
       },
       {
         "name": "num_inference_steps",
@@ -119,7 +327,15 @@
         "description": "Voice conversion flow steps; max_steps is also accepted.",
         "required": false,
         "min": 1,
-        "default": 10
+        "default": 10,
+        "tasks": [
+          "vc"
+        ],
+        "bindings": {
+          "tasks.run": {
+            "json_pointer": "/request/num_inference_steps"
+          }
+        }
       },
       {
         "name": "seed",
@@ -127,26 +343,64 @@
         "description": "Sampling seed; omitted chooses a random seed.",
         "required": false,
         "min": 0,
-        "max": 4294967295
+        "max": 4294967295,
+        "tasks": [
+          "tts",
+          "clone",
+          "vc"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/seed"
+          },
+          "tasks.run": {
+            "json_pointer": "/request/seed"
+          }
+        }
       },
       {
         "name": "source_audio",
         "type": "audio_path",
         "description": "Voice conversion source WAV path; overrides audio_input.",
-        "required": false
+        "required": false,
+        "tasks": [
+          "vc"
+        ],
+        "bindings": {
+          "tasks.run": {
+            "json_pointer": "/request/source_audio"
+          }
+        }
       },
       {
         "name": "target_voice",
         "type": "audio_path",
         "description": "Voice conversion target WAV path; overrides the speaker reference.",
-        "required": false
+        "required": false,
+        "tasks": [
+          "vc"
+        ],
+        "bindings": {
+          "tasks.run": {
+            "json_pointer": "/request/target_voice"
+          }
+        }
       },
       {
         "name": "text_chunk_size",
         "type": "int",
         "description": "Framework long-form text chunk size.",
         "required": false,
-        "default": 128
+        "default": 128,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/text_chunk_size"
+          }
+        }
       }
     ],
     "session": [
@@ -248,6 +502,7 @@
       "gated": false
     }
   },
+  "dependencies": [],
   "packages": [
     {
       "id": "chatterbox_q8_0",
@@ -256,6 +511,12 @@
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Chatterbox-GGUF",
+      "tasks": [
+        "tts",
+        "clone",
+        "vc"
+      ],
+      "default_task": "tts",
       "files": [
         "Chatterbox-GGUF/chatterbox-q8_0.gguf"
       ],
@@ -267,6 +528,12 @@
       "format": "gguf",
       "precision": "f16",
       "target_directory": "Chatterbox-GGUF",
+      "tasks": [
+        "tts",
+        "clone",
+        "vc"
+      ],
+      "default_task": "tts",
       "files": [
         "Chatterbox-GGUF/chatterbox-f16.gguf"
       ],
@@ -278,6 +545,12 @@
       "format": "safetensors",
       "precision": "native",
       "target_directory": "chatterbox",
+      "tasks": [
+        "tts",
+        "clone",
+        "vc"
+      ],
+      "default_task": "tts",
       "files": [
         "ve.safetensors",
         "t3_cfg.safetensors",

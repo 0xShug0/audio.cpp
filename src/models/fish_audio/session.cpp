@@ -307,8 +307,9 @@ FishAudioSession::FishAudioSession(
       task_(task),
       assets_(require_assets(std::move(assets))),
       reference_cache_(resolve_reference_cache_slots(this->options())) {
-    if (task_.task != runtime::VoiceTaskKind::Tts || task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Fish Audio only supports offline TTS sessions");
+    if ((task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) ||
+        task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("Fish Audio only supports offline TTS and voice-cloning sessions");
     }
     const auto ar_weight_type =
         option_weight_type(options, "fish_audio.weight_type", assets::TensorStorageType::Native);

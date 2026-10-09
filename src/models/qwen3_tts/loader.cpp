@@ -35,6 +35,7 @@ runtime::CapabilitySet capabilities(const Qwen3TTSAssets & assets) {
     if (assets.config.variant == Qwen3TTSVariant::Base) {
         out.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
         };
         out.supports_speaker_reference = true;
     } else if (assets.config.variant == Qwen3TTSVariant::VoiceDesign) {
@@ -72,6 +73,7 @@ public:
         runtime::CapabilitySet out;
         out.supported_tasks = {
             {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
             {runtime::VoiceTaskKind::VoiceDesign, {runtime::RunMode::Offline}},
         };
         out.supports_speaker_reference = true;
@@ -137,8 +139,10 @@ std::unique_ptr<runtime::IVoiceTaskSession> Qwen3TTSLoadedModel::create_task_ses
     if (task.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Qwen3 TTS only supports offline sessions");
     }
-    if (assets_->config.variant == Qwen3TTSVariant::Base && task.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Qwen3 base TTS model only supports the Tts task");
+    if (assets_->config.variant == Qwen3TTSVariant::Base &&
+        task.task != runtime::VoiceTaskKind::Tts &&
+        task.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Qwen3 base TTS model supports the Tts and VoiceCloning tasks");
     }
     if (assets_->config.variant == Qwen3TTSVariant::VoiceDesign && task.task != runtime::VoiceTaskKind::VoiceDesign) {
         throw std::runtime_error("Qwen3 voice design model only supports the VoiceDesign task");

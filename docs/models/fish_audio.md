@@ -49,11 +49,11 @@ audiocpp_cli --task tts --family fish_audio \
 | Field | Value |
 |---|---|
 | Family | `fish_audio` |
-| Task | `tts` |
+| Task | `tts`, `clone` |
 | Modes | `offline` |
 | Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` |
 | Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
-| Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
+| Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known. `--task clon` uses this same speech request. |
 | Built-in voices | Not exposed |
 
 ## Common Options (use directly)

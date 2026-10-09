@@ -628,7 +628,7 @@ See the [server guide](app/server/README.md) for configuration and usage.
 ## Usage
 
 > [!IMPORTANT]
-> Please read your model's documentation: open the [model-docs index](docs/usage.md#model-docs), choose your task category, then find your model. Also read the dedicated [CLI usage guide](docs/usage.md) and [server guide](app/server/README.md). The examples below are quick starts; model requirements, supported options, and setup details vary.
+> Please read your model's documentation: open the [model-docs index](docs/usage.md#model-docs), choose your task category, then find your model. Also read the dedicated [CLI usage guide](docs/usage.md) and [server guide](app/server/README.md). A control plane should follow the [integrator's guide](docs/integrators.md) and the resolved spec from `audiocpp_cli --family <id> --spec --json`. The examples below are quick starts; model requirements, supported options, and setup details vary.
 
 ### CLI
 

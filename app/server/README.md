@@ -108,6 +108,10 @@ JSON
 
 The server resolves model paths from this JSON exactly as written, so use paths that match your machine. Request-time audio paths are also user-provided paths.
 
+The field names below are the same ones `audiocpp_cli --family <id> --spec --json` prints under `startup`. The walkthrough is [docs/integrators.md](../../docs/integrators.md).
+
+`task` and `mode` are runtime tokens. A model spec may spell the same task differently (`clone`, `design`, `music`). `audiocpp_cli --family <id> --spec --json` prints `task_tokens`, which maps each spec name to the token this `task` field and `--task` accept. Schema 2 also prints `default_task`, `default_mode`, `startup`, and each package's `tasks` and `default_task`. `load_options` and `session_options` are objects keyed by the option `public_key` from that document. `id` is chosen by the caller. `path` is a directory, or a file in that directory when the directory contains more than one weight.
+
 Package specs embedded in a GGUF are used automatically. Builds configured with
 `AUDIOCPP_DEPLOYMENT_BUILD=ON` also carry a compiled fallback catalog; normal builds
 discover `model_specs/<family>.json` on disk. `model_spec_override` explicitly replaces
@@ -375,7 +379,17 @@ Two opt-in query flags add to each entry:
   declares under `options.request`, as the spec writes them (`name`, `type`,
   `required`, `description`, and `default`/`min`/`max` where given). An enum row
   that names a `preset` also carries the preset's `values`. A model whose spec
-  declares no request options returns `"params": []`.
+  declares no request options returns `"params": []`. The same flag adds
+  `spec`: the validated spec with `package_defaults.download` merged into each
+  package and enum presets expanded to `values`. The resolved document adds
+  `task_tokens` and `public_key` on every option. Schema 2 specs include
+  `task_operations`, `inputs`, `outputs`, option `tasks`, `bindings`, and
+  `aliases` when the family declared them, plus `startup` and each package's
+  `tasks` and `default_task`. Operation method, path, encoding, and response
+  type are filled from the operation id. Absent sections mean unknown, not
+  unsupported. `"{}"` means no contract was available. The experimental
+  `--parallel-jobs` runtime does not add `spec`. See
+  `docs/maintainers/model_specs.md`.
 
 ```bash
 curl 'http://127.0.0.1:8080/v1/models?include_params=true'

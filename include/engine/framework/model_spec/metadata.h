@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/framework/io/json.h"
 #include "engine/framework/runtime/model.h"
 
 #include <optional>
@@ -53,5 +54,8 @@ struct ModelContract {
 [[nodiscard]] std::optional<runtime::ModelMetadata> model_metadata(std::string_view family);
 [[nodiscard]] std::optional<runtime::ModelCliInterface> cli_interface(std::string_view family);
 [[nodiscard]] std::vector<ModelDependency> dependencies(std::string_view family);
+// Validated spec with package download defaults and enum presets expanded.
+// Uses the same override / embedded / builtin resolution as model_contract().
+[[nodiscard]] engine::io::json::Value resolved_spec(std::string_view family);
 
 }  // namespace engine::model_spec

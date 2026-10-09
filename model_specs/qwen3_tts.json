@@ -1,4 +1,5 @@
 {
+  "schema_version": 2,
   "family": "qwen3_tts",
   "display_name": "Qwen3-TTS",
   "description": "Qwen TTS family for controllable 10-language speech synthesis, including 3-second voice cloning, CustomVoice instruction control over preset timbres, and VoiceDesign from natural-language descriptions.",
@@ -12,6 +13,8 @@
   "modes": [
     "offline"
   ],
+  "default_task": "tts",
+  "default_mode": "offline",
   "languages": [
     "zh",
     "en",
@@ -32,6 +35,104 @@
       "voice_design"
     ]
   },
+  "task_operations": {
+    "tts": {
+      "preferred_operation": "speech.create"
+    },
+    "design": {
+      "preferred_operation": "speech.create"
+    },
+    "clone": {
+      "preferred_operation": "speech.create"
+    }
+  },
+  "inputs": [
+    {
+      "id": "text",
+      "tasks": [
+        "tts",
+        "design",
+        "clone"
+      ],
+      "schema": {
+        "type": "string"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/input"
+        }
+      }
+    },
+    {
+      "id": "voice",
+      "tasks": [
+        "tts"
+      ],
+      "schema": {
+        "type": "string"
+      },
+      "required": false,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/voice"
+        }
+      },
+      "alternatives": [
+        "speaker"
+      ]
+    },
+    {
+      "id": "reference_audio",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "schema": {
+        "type": "audio"
+      },
+      "required": false,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/voice_ref"
+        }
+      }
+    },
+    {
+      "id": "instructions",
+      "tasks": [
+        "tts",
+        "design"
+      ],
+      "schema": {
+        "type": "string"
+      },
+      "required": false,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/instructions"
+        }
+      },
+      "alternatives": [
+        "instruction"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "speech",
+      "tasks": [
+        "tts",
+        "design",
+        "clone"
+      ],
+      "kind": "audio"
+    }
+  ],
   "options": {
     "request": [
       {
@@ -39,21 +140,51 @@
         "type": "string",
         "description": "Target synthesis language code or label; default auto lets the model infer from text and voice settings.",
         "required": false,
-        "default": "auto"
+        "default": "auto",
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/language"
+          }
+        }
       },
       {
         "name": "max_tokens",
         "type": "int",
         "description": "Maximum generated codec frames per text chunk; omitted uses the checkpoint generation_config.json (2048 when absent).",
         "required": false,
-        "min": 1
+        "min": 1,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/max_tokens"
+          }
+        }
       },
       {
         "name": "do_sample",
         "type": "bool",
         "description": "Sample the main codec stream instead of greedy decoding; default true.",
         "required": false,
-        "default": true
+        "default": true,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/do_sample"
+          }
+        }
       },
       {
         "name": "temperature",
@@ -61,7 +192,17 @@
         "description": "Main codec sampling temperature; must be positive when sampling, default 0.9.",
         "required": false,
         "min": 0,
-        "default": 0.9
+        "default": 0.9,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/temperature"
+          }
+        }
       },
       {
         "name": "top_k",
@@ -69,7 +210,17 @@
         "description": "Main codec top-k sampling limit; default 50, 0 disables top-k filtering.",
         "required": false,
         "min": 0,
-        "default": 50
+        "default": 50,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/top_k"
+          }
+        }
       },
       {
         "name": "top_p",
@@ -78,7 +229,17 @@
         "required": false,
         "min": 0,
         "max": 1,
-        "default": 1
+        "default": 1,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/top_p"
+          }
+        }
       },
       {
         "name": "repetition_penalty",
@@ -86,14 +247,34 @@
         "description": "Positive repetition penalty for the main codec stream; default 1.05.",
         "required": false,
         "min": 0,
-        "default": 1.05
+        "default": 1.05,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/repetition_penalty"
+          }
+        }
       },
       {
         "name": "subtalker_do_sample",
         "type": "bool",
         "description": "Enable subtalker sampling for the remaining audio codebooks instead of greedy decoding; default true.",
         "required": false,
-        "default": true
+        "default": true,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/subtalker_do_sample"
+          }
+        }
       },
       {
         "name": "subtalker_temperature",
@@ -101,7 +282,17 @@
         "description": "Subtalker sampling temperature; must be positive when sampling, default 0.9.",
         "required": false,
         "min": 0,
-        "default": 0.9
+        "default": 0.9,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/subtalker_temperature"
+          }
+        }
       },
       {
         "name": "subtalker_top_k",
@@ -109,7 +300,17 @@
         "description": "Subtalker top-k sampling limit; default 50, 0 disables top-k filtering.",
         "required": false,
         "min": 0,
-        "default": 50
+        "default": 50,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/subtalker_top_k"
+          }
+        }
       },
       {
         "name": "subtalker_top_p",
@@ -118,7 +319,17 @@
         "required": false,
         "min": 0,
         "max": 1,
-        "default": 1
+        "default": 1,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/subtalker_top_p"
+          }
+        }
       },
       {
         "name": "seed",
@@ -126,32 +337,80 @@
         "description": "Codec sampling seed; omitted requests choose a random seed.",
         "required": false,
         "min": 0,
-        "max": 4294967295
+        "max": 4294967295,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/seed"
+          }
+        }
       },
       {
         "name": "reference_text",
         "type": "string",
         "description": "Transcript matching the reference audio for Base voice cloning.",
-        "required": false
+        "required": false,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/reference_text"
+          }
+        }
       },
       {
         "name": "x_vector_only_mode",
         "type": "bool",
         "description": "Use only the speaker embedding for Base voice cloning instead of ICL reference codec prompting; default false.",
         "required": false,
-        "default": false
+        "default": false,
+        "tasks": [
+          "tts",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/x_vector_only_mode"
+          }
+        }
       },
       {
         "name": "instruction",
         "type": "string",
         "description": "Natural-language voice or style instruction for VoiceDesign and CustomVoice variants.",
-        "required": false
+        "required": false,
+        "tasks": [
+          "tts",
+          "design"
+        ],
+        "aliases": [
+          "instruct"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/instructions"
+          }
+        }
       },
       {
         "name": "speaker",
         "type": "string",
         "description": "Named preset speaker from the CustomVoice checkpoint, such as Vivian or Ryan.",
-        "required": false
+        "required": false,
+        "tasks": [
+          "tts"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/speaker"
+          }
+        }
       },
       {
         "name": "text_chunk_size",
@@ -159,7 +418,17 @@
         "description": "Maximum UTF-8 codepoints per long-form text chunk; default 8192.",
         "required": false,
         "min": 1,
-        "default": 8192
+        "default": 8192,
+        "tasks": [
+          "tts",
+          "design",
+          "clone"
+        ],
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/text_chunk_size"
+          }
+        }
       }
     ],
     "session": [
@@ -311,6 +580,7 @@
       "gated": false
     }
   },
+  "dependencies": [],
   "packages": [
     {
       "id": "qwen3_tts_1_7b_base_q8_0",
@@ -319,6 +589,11 @@
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf"
       ],
@@ -330,6 +605,11 @@
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-bf16.gguf"
       ],
@@ -341,6 +621,11 @@
       "format": "gguf",
       "precision": "orig",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-Base-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-orig.gguf"
       ],
@@ -352,6 +637,10 @@
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF",
+      "tasks": [
+        "tts"
+      ],
+      "default_task": "tts",
       "files": [
         "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf"
       ],
@@ -363,6 +652,10 @@
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF",
+      "tasks": [
+        "tts"
+      ],
+      "default_task": "tts",
       "files": [
         "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-bf16.gguf"
       ],
@@ -374,6 +667,10 @@
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF",
+      "tasks": [
+        "design"
+      ],
+      "default_task": "design",
       "files": [
         "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf"
       ],
@@ -385,6 +682,10 @@
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF",
+      "tasks": [
+        "design"
+      ],
+      "default_task": "design",
       "files": [
         "Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-bf16.gguf"
       ],
@@ -396,6 +697,11 @@
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "Qwen3-TTS-12Hz-0.6B-Base-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf"
       ],
@@ -407,6 +713,11 @@
       "format": "gguf",
       "precision": "bf16",
       "target_directory": "Qwen3-TTS-12Hz-0.6B-Base-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-bf16.gguf"
       ],
@@ -418,6 +729,11 @@
       "format": "safetensors",
       "precision": "native",
       "target_directory": "Qwen3-TTS-12Hz-1.7B-Base",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "config.json",
         "generation_config.json",

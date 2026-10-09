@@ -15,7 +15,6 @@
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
-#include "engine/framework/model_spec/options.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/registry.h"
@@ -119,13 +118,14 @@ bool model_accepts_request_option(
     return contract->request_option_keys.find(std::string(option)) != contract->request_option_keys.end();
 }
 
-// The `options.request` rows of the model's spec, as a JSON array, for
-// `GET /v1/models?include_params=true`. Rows are passed through as the spec declares
-// them; an enum row that names a known `preset` also gains the preset's `values`, so a
-// client needs no copy of the preset table. A spec need not be on schema_version 1:
-// older-format specs may document their options too. Those skip the typed validator, so
-// a row that is not an object is left out. A spec with no request options gets "[]".
-std::string model_request_params_json(
+struct ResolvedModelSpecJson {
+    std::string params = "[]";
+    std::string spec = "{}";
+};
+
+// Resolve once at registration. GET /v1/models uses this document for the
+// existing params array and, when include_params is set, the spec object.
+ResolvedModelSpecJson resolved_model_spec_json(
     std::string_view family,
     const std::optional<std::filesystem::path> & model_spec_override,
     const std::filesystem::path & model_path) {
@@ -136,45 +136,33 @@ std::string model_request_params_json(
         try {
             const auto spec_path = engine::model_spec::find_contract_spec_path(family);
             if (!spec_path.has_value()) {
-                return "[]";
+                return {};
             }
-            spec = engine::model_spec::load_contract_spec(*spec_path);
+            spec = engine::model_spec::resolved_spec(family);
         } catch (const std::runtime_error & ex) {
             if (!is_missing_model_contract_error(ex.what())) {
                 throw;
             }
-            return "[]";
+            return {};
         }
     }
+    ResolvedModelSpecJson out;
+    out.spec = json::stringify(spec);
     const auto * options = spec.find("options");
     const auto * request = options != nullptr && options->is_object() ? options->find("request") : nullptr;
     if (request == nullptr || !request->is_array()) {
-        return "[]";
+        return out;
     }
     json::Value::Array rows;
     rows.reserve(request->as_array().size());
-    const auto & presets = engine::model_spec::option_presets();
     for (const auto & row : request->as_array()) {
         if (!row.is_object()) {
             continue;
         }
-        const auto * preset = row.find("preset");
-        const auto known = preset != nullptr && preset->is_string()
-            ? presets.find(preset->as_string())
-            : presets.end();
-        if (known == presets.end() || row.find("values") != nullptr) {
-            rows.push_back(row);
-            continue;
-        }
-        json::Value::Array values;
-        for (const auto & value : known->second) {
-            values.push_back(json::Value::make_string(value));
-        }
-        auto expanded = row.as_object();
-        expanded["values"] = json::Value::make_array(std::move(values));
-        rows.push_back(json::Value::make_object(std::move(expanded)));
+        rows.push_back(row);
     }
-    return json::stringify(json::Value::make_array(std::move(rows)));
+    out.params = json::stringify(json::Value::make_array(std::move(rows)));
+    return out;
 }
 
 std::string json_quote(std::string_view value) {
@@ -1436,8 +1424,10 @@ void ServerState::refresh_model_option_flags(LoadedModel & model) {
         model.accepts_speaking_rate = model_accepts_request_option(
             model.config.family, "speaking_rate", effective_override, model.config.path);
     }
-    model.request_params_json = model_request_params_json(
+    const auto resolved = resolved_model_spec_json(
         model.config.family, effective_override, model.config.path);
+    model.request_params_json = resolved.params;
+    model.resolved_spec_json = resolved.spec;
 }
 
 HttpResponse ServerState::handle_model_load(const std::string & body_text) {
@@ -3757,7 +3747,8 @@ std::string ServerState::models_json(bool include_session_options, bool include_
             out << ",\"session_options\":" << options_json(model.config.session_options);
         }
         if (include_params) {
-            out << ",\"params\":" << model.request_params_json;
+            out << ",\"params\":" << model.request_params_json
+                << ",\"spec\":" << model.resolved_spec_json;
         }
         out << "}";
     }

@@ -340,8 +340,10 @@ Qwen3TTSSession::Qwen3TTSSession(
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Qwen3 TTS currently supports offline sessions");
     }
-    if (assets_->config.variant == Qwen3TTSVariant::Base && task_.task != runtime::VoiceTaskKind::Tts) {
-        throw std::runtime_error("Qwen3 base TTS model only supports the Tts task");
+    if (assets_->config.variant == Qwen3TTSVariant::Base &&
+        task_.task != runtime::VoiceTaskKind::Tts &&
+        task_.task != runtime::VoiceTaskKind::VoiceCloning) {
+        throw std::runtime_error("Qwen3 base TTS model supports the Tts and VoiceCloning tasks");
     }
     if (assets_->config.variant == Qwen3TTSVariant::VoiceDesign && task_.task != runtime::VoiceTaskKind::VoiceDesign) {
         throw std::runtime_error("Qwen3 voice design model only supports the VoiceDesign task");

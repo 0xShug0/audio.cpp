@@ -4,12 +4,19 @@ For release model downloads, `model_specs/*.json` is the source of truth and
 both `tools/model_manager_v2.py` and the optional native
 `audiocpp_model_manager` consume that package catalog.
 
-Integrators treat two surfaces as authoritative:
+Integrators treat these surfaces as authoritative:
 
 1. **Runtime loaders** — `audiocpp_cli --list-loaders --json`
 2. **Install packages** — `python3 tools/model_manager_v2.py list --json` and,
    when native model management is enabled,
-   `audiocpp_model_manager list`
+   `audiocpp_model_manager list`. JSON rows include `files`, `strip_prefix`,
+   the resolved `download` object, and `access_status`.
+3. **Family contract** — `audiocpp_cli --family <id> --spec --json`, and
+   `spec` on `GET /v1/models?include_params=true`. The resolved document
+   carries task tokens, option public keys, and, for schema 2, startup
+   defaults and package tasks. Schema 2 fields are documented in
+   [model_specs.md](model_specs.md). The control-plane walkthrough is
+   [../integrators.md](../integrators.md).
 
 Those surfaces must stay in sync. A package that is installable from
 `model_specs/*.json` but whose `family` is missing from `--list-loaders` looks

@@ -294,6 +294,197 @@ ModelContract contract_from_spec(const json::Value & spec) {
     return out;
 }
 
+json::Value expand_preset(const json::Value & row) {
+    if (!row.is_object()) {
+        return row;
+    }
+    auto object = row.as_object();
+    const auto preset_it = object.find("preset");
+    // Unknown or non-string presets stay as written. Typed specs already reject
+    // them in validate_spec; legacy specs must keep the previous pass-through.
+    if (preset_it != object.end() && preset_it->second.is_string() && object.find("values") == object.end()) {
+        const auto known = option_presets().find(preset_it->second.as_string());
+        if (known != option_presets().end()) {
+            json::Value::Array values;
+            for (const auto & value : known->second) {
+                values.push_back(json::Value::make_string(value));
+            }
+            object.emplace("values", json::Value::make_array(std::move(values)));
+        }
+    }
+    return json::Value::make_object(std::move(object));
+}
+
+json::Value::Object startup_surface(const json::Value & default_task, const json::Value & default_mode) {
+    json::Value::Object startup;
+    startup["default_task"] = default_task;
+    const auto token = runtime::task_token_for_spec_name(default_task.as_string());
+    startup["default_task_token"] = json::Value::make_string(std::string(token));
+    startup["default_mode"] = default_mode;
+    // CLI --task and server config "task" take task_tokens[spec task], not the spec name.
+    startup["task_value"] = json::Value::make_string("task_tokens[<spec task>]");
+    startup["option_assignment"] = json::Value::make_string("public_key=value");
+    startup["server_option_key"] = json::Value::make_string("public_key");
+    startup["package_tasks"] = json::Value::make_string("packages[].tasks");
+    startup["package_default_task"] = json::Value::make_string("packages[].default_task");
+    // A directory is the model root. A file path uses that file's parent. A directory
+    // with more than one weight file must be passed as the file, not the directory.
+    startup["model_path"] = json::Value::make_string(
+        "directory, or a file in that directory when it contains more than one weight");
+    startup["server_id"] = json::Value::make_string("caller-chosen");
+    json::Value::Object cli;
+    cli["family"] = json::Value::make_string("--family");
+    cli["model"] = json::Value::make_string("--model");
+    cli["task"] = json::Value::make_string("--task");
+    cli["mode"] = json::Value::make_string("--mode");
+    cli["load_option"] = json::Value::make_string("--load-option");
+    cli["session_option"] = json::Value::make_string("--session-option");
+    cli["request_option"] = json::Value::make_string("--request-option");
+    startup["cli"] = json::Value::make_object(std::move(cli));
+    json::Value::Object server_config;
+    server_config["id"] = json::Value::make_string("id");
+    server_config["family"] = json::Value::make_string("family");
+    server_config["path"] = json::Value::make_string("path");
+    server_config["task"] = json::Value::make_string("task");
+    server_config["mode"] = json::Value::make_string("mode");
+    server_config["load_options"] = json::Value::make_string("load_options");
+    server_config["session_options"] = json::Value::make_string("session_options");
+    startup["server_config"] = json::Value::make_object(std::move(server_config));
+    return startup;
+}
+
+json::Value resolve_spec(json::Value spec) {
+    auto root = spec.as_object();
+    const auto family_it = root.find("family");
+    const std::string family =
+        family_it != root.end() && family_it->second.is_string() ? family_it->second.as_string() : std::string();
+    if (const auto options_it = root.find("options");
+        options_it != root.end() && options_it->second.is_object()) {
+        auto options = options_it->second.as_object();
+        for (const std::string scope : {"request", "session", "load"}) {
+            const auto rows_it = options.find(scope);
+            if (rows_it == options.end() || !rows_it->second.is_array()) {
+                continue;
+            }
+            json::Value::Array rows;
+            rows.reserve(rows_it->second.as_array().size());
+            for (const auto & row : rows_it->second.as_array()) {
+                auto expanded = expand_preset(row);
+                if (expanded.is_object()) {
+                    auto object = expanded.as_object();
+                    if (const auto name_it = object.find("name");
+                        name_it != object.end() && name_it->second.is_string()) {
+                        const auto name = name_it->second.as_string();
+                        object["public_key"] = json::Value::make_string(
+                            scope == "request" || family.empty() ? name : family + "." + name);
+                    }
+                    rows.push_back(json::Value::make_object(std::move(object)));
+                } else {
+                    rows.push_back(std::move(expanded));
+                }
+            }
+            options[scope] = json::Value::make_array(std::move(rows));
+        }
+        root["options"] = json::Value::make_object(std::move(options));
+    }
+    if (const auto inputs_it = root.find("inputs");
+        inputs_it != root.end() && inputs_it->second.is_array()) {
+        json::Value::Array inputs;
+        inputs.reserve(inputs_it->second.as_array().size());
+        for (const auto & input : inputs_it->second.as_array()) {
+            if (!input.is_object()) {
+                inputs.push_back(input);
+                continue;
+            }
+            auto input_object = input.as_object();
+            const auto schema_it = input_object.find("schema");
+            if (schema_it != input_object.end()) {
+                input_object["schema"] = expand_preset(schema_it->second);
+            }
+            inputs.push_back(json::Value::make_object(std::move(input_object)));
+        }
+        root["inputs"] = json::Value::make_array(std::move(inputs));
+    }
+    json::Value::Object default_download;
+    if (const auto defaults_it = root.find("package_defaults");
+        defaults_it != root.end() && defaults_it->second.is_object()) {
+        if (const auto * download = defaults_it->second.find("download");
+            download != nullptr && download->is_object()) {
+            default_download = download->as_object();
+        }
+    }
+    if (const auto packages_it = root.find("packages");
+        packages_it != root.end() && packages_it->second.is_array()) {
+        json::Value::Array packages;
+        packages.reserve(packages_it->second.as_array().size());
+        for (const auto & package : packages_it->second.as_array()) {
+            if (!package.is_object()) {
+                packages.push_back(package);
+                continue;
+            }
+            auto package_object = package.as_object();
+            auto download = default_download;
+            if (const auto package_download_it = package_object.find("download");
+                package_download_it != package_object.end() && package_download_it->second.is_object()) {
+                for (const auto & [key, value] : package_download_it->second.as_object()) {
+                    download[key] = value;
+                }
+            }
+            if (!download.empty()) {
+                package_object["download"] = json::Value::make_object(std::move(download));
+            }
+            packages.push_back(json::Value::make_object(std::move(package_object)));
+        }
+        root["packages"] = json::Value::make_array(std::move(packages));
+    }
+    if (const auto tasks_it = root.find("tasks");
+        tasks_it != root.end() && tasks_it->second.is_array()) {
+        json::Value::Object tokens;
+        for (const auto & task : tasks_it->second.as_array()) {
+            if (!task.is_string()) {
+                continue;
+            }
+            const auto name = task.as_string();
+            const auto token = runtime::task_token_for_spec_name(name);
+            if (!token.empty()) {
+                tokens.emplace(name, json::Value::make_string(std::string(token)));
+            }
+        }
+        root["task_tokens"] = json::Value::make_object(std::move(tokens));
+    }
+    if (const auto operations_it = root.find("task_operations");
+        operations_it != root.end() && operations_it->second.is_object()) {
+        json::Value::Object filled;
+        for (const auto & [task, row] : operations_it->second.as_object()) {
+            if (!row.is_object()) {
+                filled.emplace(task, row);
+                continue;
+            }
+            auto object = row.as_object();
+            const auto preferred_it = object.find("preferred_operation");
+            if (preferred_it != object.end() && preferred_it->second.is_string()) {
+                if (const auto surface = operation_surface(preferred_it->second.as_string())) {
+                    for (const auto & [key, value] : surface->as_object()) {
+                        if (object.find(key) == object.end()) {
+                            object.emplace(key, value);
+                        }
+                    }
+                }
+            }
+            filled.emplace(task, json::Value::make_object(std::move(object)));
+        }
+        root["task_operations"] = json::Value::make_object(std::move(filled));
+    }
+    const auto default_task_it = root.find("default_task");
+    const auto default_mode_it = root.find("default_mode");
+    if (default_task_it != root.end() && default_task_it->second.is_string() &&
+        default_mode_it != root.end() && default_mode_it->second.is_string()) {
+        root["startup"] = json::Value::make_object(
+            startup_surface(default_task_it->second, default_mode_it->second));
+    }
+    return json::Value::make_object(std::move(root));
+}
+
 }  // namespace
 
 std::optional<ModelContract> model_contract(std::string_view family) {
@@ -302,9 +493,12 @@ std::optional<ModelContract> model_contract(std::string_view family) {
     if (version == nullptr) {
         return std::nullopt;
     }
-    if (!version->is_number() || version->as_i64() != kModelSpecSchemaVersion) {
-        throw std::runtime_error(
-            "model spec schema_version: expected " + std::to_string(kModelSpecSchemaVersion));
+    const bool version_1 =
+        version->is_number() && version->as_number() == kModelSpecSchemaVersionV1;
+    const bool version_2 =
+        version->is_number() && version->as_number() == kModelSpecSchemaVersion;
+    if (!version_1 && !version_2) {
+        throw std::runtime_error("model spec schema_version: expected numeric 1 or 2");
     }
     return contract_from_spec(spec);
 }
@@ -363,6 +557,11 @@ std::vector<ModelDependency> dependencies(std::string_view family) {
         out.push_back(std::move(dependency));
     }
     return out;
+}
+
+engine::io::json::Value resolved_spec(std::string_view family) {
+    return resolve_spec(
+        engine::model_spec::load_spec(engine::model_spec::default_contract_spec_path(family)));
 }
 
 }  // namespace engine::model_spec

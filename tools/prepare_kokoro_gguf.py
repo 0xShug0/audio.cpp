@@ -184,8 +184,8 @@ def convert(source, output, precision, overwrite=False, model_spec=None, embed_m
     if model_spec is not None:
         spec_text = model_spec.read_text(encoding='utf-8')
         spec_json = json.loads(spec_text)
-        if spec_json.get('family') != 'kokoro_tts' or spec_json.get('schema_version') != 1:
-            raise RuntimeError(f'not a Kokoro schema-v1 model spec: {model_spec}')
+        if spec_json.get('family') != 'kokoro_tts' or spec_json.get('schema_version') not in {1, 2}:
+            raise RuntimeError(f'not a Kokoro schema 1 or 2 model spec: {model_spec}')
         writer.add_uint32('audiocpp.model_spec.version', 1)
         writer.add_string('audiocpp.model_spec.family', 'kokoro_tts')
         writer.add_string('audiocpp.model_spec.json', json.dumps(spec_json, ensure_ascii=False, separators=(',', ':')))

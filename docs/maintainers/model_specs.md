@@ -10,16 +10,17 @@ work.
 
 ## Migration Trees
 
-`model_specs/*.json` is the authoritative runtime tree. Specs with
-`schema_version: 1` in this directory are active typed specs and participate in
-`model_contract()` validation, embedded GGUF metadata, CLI/server inspection,
-and package discovery.
+`model_specs/*.json` is the authoritative runtime tree. Specs with numeric
+`schema_version: 1` or `schema_version: 2` in this directory are
+active typed specs and participate in `model_contract()` validation, embedded
+GGUF metadata, CLI/server inspection, and package discovery.
 
 `model_specs_v1/*.json` is a migration reference tree only. It records the
 expected typed shape for families that have not moved to the v1 runtime contract
 yet. Do not treat it as an active runtime source, and do not assume changes there
 affect loaders, CLI options, server validation, or package installs until the
-family is migrated into `model_specs/` with `schema_version: 1`.
+family is migrated into `model_specs/` with a typed `schema_version` (`1` or
+`2`).
 
 During migration, keep public option keys aligned with the code path that will
 actually consume them. If a live loader still accepts an older public key, either
@@ -32,7 +33,7 @@ Top-level fields:
 
 | Field | Meaning | Regenerate standalone GGUF if touched? |
 |---|---|---|
-| `schema_version` | Must be `1`. | No |
+| `schema_version` | Numeric `1` for the original typed contract; numeric `2` for the integrator contract. | No |
 | `family` | Runtime model family id. Must match the filename stem. | Yes, if changing an already published family id |
 | `display_name` | User-facing model family name. | No |
 | `category` | Typed category such as `asr`, `tts`, `audio_generation`, `audio_tools`, or `community`. | No |
@@ -48,6 +49,251 @@ Top-level fields:
 | `dependencies` | Runtime peer models or bundled model assets needed for optional features. | No, but loader/session behavior must support the dependency |
 | `ui` | UI/catalog hints. | No |
 | `sources` | Canonical runtime resource/tensor mappings. | Yes |
+
+## Integrator Contract (Schema 2)
+
+Schema 2 is the integrator contract. Existing schema 1 specs remain valid
+without edits. A spec must declare numeric `schema_version: 2` before it uses
+any of the fields in this section. A reader that only accepts schema 1 rejects
+`2` instead of ignoring the new fields.
+
+The contract is task-scoped because model categories are not routing rules.
+Multi-task families can expose speech, conversion, generation, analysis, and
+structured outputs from the same package. Integrators must not infer behavior
+from the family name, category, option names, or capability tags.
+
+### Operations
+
+`task_operations` maps a task declared in `tasks` to one or more existing server
+operations. `preferred_operation` is the normal choice:
+
+| Operation | HTTP surface | Encoding |
+|---|---|---|
+| `tasks.run` | `POST /v1/tasks/run` | JSON |
+| `speech.create` | `POST /v1/audio/speech` | JSON |
+| `transcriptions.create` | `POST /v1/audio/transcriptions` | multipart |
+| `alignments.create` | `POST /v1/audio/alignments` | multipart |
+
+Method, path, encoding, and response type may be included for readability, but
+validation requires them to match the operation. `audiocpp_cli --spec --json`
+fills any of those fields the source spec omitted. `speech.create` responds
+with `audio/wav` unless the body field `response_format` is `json` or
+`b64_json`. `tasks.run`, `transcriptions.create`, and `alignments.create`
+respond with `application/json`. Specs cannot create arbitrary routes.
+
+```json
+{
+  "task_operations": {
+    "tts": {
+      "preferred_operation": "speech.create",
+      "operations": ["speech.create"]
+    },
+    "vc": {
+      "preferred_operation": "tasks.run"
+    }
+  }
+}
+```
+
+A task without an entry has an unknown route. It is not unsupported.
+An operation may set `"stream": true` only when `modes` includes `streaming`.
+
+### Task-scoped options and bindings
+
+Any request, session, or load option may add `tasks`. Omission preserves schema
+1 behavior and means the row applies to every task in the family. An option may
+also declare stable `aliases`.
+
+`bindings` maps an operation id to the actual wire location. JSON operations
+use `json_pointer`; multipart operations use `multipart_field`.
+
+```json
+{
+  "name": "temperature",
+  "type": "float",
+  "required": false,
+  "default": 0.7,
+  "min": 0,
+  "max": 2,
+  "description": "Sampling temperature.",
+  "tasks": ["tts"],
+  "bindings": {
+    "speech.create": {"json_pointer": "/temperature"}
+  }
+}
+```
+
+For `tasks.run`, request JSON pointers must start with `/request/`. Root inputs
+bind under `/request/<field>`. Spec request options bind under
+`/request/options/<public_key>`. A value may bind differently on different
+operations. Literal `false` and `0` defaults are present defaults; an absent
+default remains unknown.
+
+`speech.create` pointers are limited to the body fields that route already
+accepts: `/input`, `/voice`, `/voice_ref`, `/instructions`, `/language`,
+`/speed`, `/speaking_rate`, `/seed`, `/temperature`, `/top_k`, `/top_p`,
+`/max_tokens`, `/max_steps`, `/repetition_penalty`, `/guidance_scale`,
+`/reference_text`, `/num_inference_steps`, and `/options/*`.
+
+Multipart names are limited to the fields already documented for that route.
+`transcriptions.create` accepts `file`, `model`, `language`, `prompt`, and
+`stream`. `alignments.create` accepts `file`, `model`, `text`, and `language`.
+
+Each binding operation must be declared by at least one task on the row, and
+every task on the row must be covered by a binding whose operation that task
+declares. An option used by both `speech.create` and `tasks.run` carries one
+binding for each. Exactly one of `json_pointer` or `multipart_field` is set.
+Aliases must not collide with another option's public key in the same scope.
+On schema 1, `task_operations`, `inputs`, `outputs`, and option `tasks`,
+`bindings`, and `aliases` are errors. Other unknown keys on schema 1 stay
+ignored. Omitted schema 2 sections mean the route or role is unknown, not that the
+family rejects it.
+
+### Inputs
+
+`inputs` describes semantic roles independently of option names:
+
+```json
+{
+  "inputs": [
+    {
+      "id": "instructions",
+      "tasks": ["tts"],
+      "schema": {
+        "type": "enum",
+        "values": ["calm", "energetic"]
+      },
+      "required": false,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {"json_pointer": "/instructions"}
+      }
+    },
+    {
+      "id": "audio",
+      "tasks": ["vc"],
+      "schema": {"type": "audio"},
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "tasks.run": {"json_pointer": "/request/audio"}
+      },
+      "alternatives": ["reference_audio"]
+    }
+  ]
+}
+```
+
+Input schema types are `string`, `enum`, `audio`, and `artifact`. Enum inputs
+use either explicit `values` or an existing option `preset`. `tasks` is always
+required. `required` may be omitted when the requirement is not known.
+`scope` is `request` or `session`.
+
+`instructions` and `voice` are reserved role ids, but they use the same shape as
+family-defined ids such as `lyrics`, `style`, or `abc`. Instructions are
+supported only for the tasks listed on an `instructions` role. A voice is
+required only when a `voice` role says `required: true`. `ui.default_voice`
+and `ui.builtin_voices` remain presentation/catalog metadata and do not create
+a runtime requirement.
+
+`alternatives` names other input ids or declared option keys that can satisfy
+the role. The caller supplies at most one member of an alternatives set.
+Optional `presentation` may contain `label`, `group`, and `advanced`; it is not
+needed to serialize a valid request.
+
+### Outputs
+
+`outputs` prevents clients from assuming every result is one waveform or one
+transcript:
+
+```json
+{
+  "outputs": [
+    {
+      "id": "stems",
+      "tasks": ["sep"],
+      "kind": "artifact"
+    },
+    {
+      "id": "transcript",
+      "tasks": ["asr"],
+      "kind": "text"
+    }
+  ]
+}
+```
+
+Output kinds are `audio`, `text`, `json`, and `artifact`. Family-defined
+artifact ids cover stems, MIDI, embeddings, token streams, and future structured
+payloads without growing a model-family enum in client code.
+
+### Startup
+
+Schema 2 requires `default_task` (one of `tasks`), `default_mode` (one of
+`modes`), and on every package `tasks` plus `default_task`. Package `tasks` is
+a non-empty subset of the family tasks. The package marked `default: true` uses
+the family `default_task`. A checkpoint that cannot run every family task lists
+only the tasks it can run.
+
+The resolved spec adds three objects an integrator would otherwise have to
+guess:
+
+- `task_tokens` maps each spec task name to the runtime token. `clone` is
+  `clon`, `design` is `vdes`, and `music` is `gen`. CLI `--task` and the server
+  config field `task` take that token.
+- `public_key` on every option. Request options use the local name. Session and
+  load options use `<family>.<name>`. CLI flags assign `public_key=value`.
+  Server `load_options` and `session_options` are objects keyed by `public_key`.
+- `startup` names `default_task`, `default_task_token`, `default_mode`, the CLI
+  flags (`--family`, `--model`, `--task`, `--mode`, `--load-option`,
+  `--session-option`, `--request-option`), and the server config fields
+  (`family`, `path`, `task`, `mode`, `load_options`, `session_options`).
+
+`path` / `--model` is a directory, or a file in that directory when the directory
+contains more than one weight. The server config also requires `id`, which the
+caller chooses.
+Schema 1 rejects `default_task`, `default_mode`, and package `tasks`.
+
+### Installed-binary discovery
+
+The control-plane walkthrough is [../integrators.md](../integrators.md).
+
+`audiocpp_cli --family <id> --spec --json` prints the validated effective spec
+on stdout without loading model weights or allocating a backend device.
+`--spec` requires `--json`. Diagnostics go to stderr. The command resolves the
+normal override, embedded-GGUF, workspace, and builtin-spec precedence, expands
+enum presets, and merges `package_defaults.download` into each package
+`download`. Package fields override the shared defaults.
+
+`GET /v1/models?include_params=true` retains the existing `params` array and
+adds the same resolved document as `spec` for each configured model. `"{}"`
+means no contract was available. The experimental `--parallel-jobs` runtime
+does not add `spec`.
+
+`python3 tools/model_manager_v2.py list --json` adds `files`, `strip_prefix`,
+the resolved `download` object, and `access_status` to each package row.
+`access_status` is `public` when `download.gated` is false, `gated` when it is
+true, and `unknown` when the flag is absent. That is the declared flag, not a
+credential check. Human-readable `list` output is unchanged.
+
+These interfaces let an integration configure a model, start it, and build
+requests from a packaged binary without a source checkout or a family-specific
+table. The conformance fixture is fictional and is not shipped as a model.
+
+Five shipped families are filled in as samples: `kokoro_tts`, `chatterbox`,
+`qwen3_tts`, `cosyvoice3`, and `fish_audio`. Every task those specs list has a
+`task_operations` entry, and every package lists the tasks that checkpoint can
+start. A task with no entry would still mean an unknown route.
+Other families stay on numeric schema 1, or unversioned, until the same sections
+are filled.
+
+Some tasks share one route because the session already implemented them that way:
+
+| Family | Tasks | Route | What differs |
+|---|---|---|---|
+| `chatterbox` | `tts`, `clone` | `speech.create` | Both require reference audio. `tts` is not a preset-voice path. `vc` uses `tasks.run`. |
+| `qwen3_tts` | `tts`, `clone` | `speech.create` | `clone` is the base checkpoint with reference audio. Custom-voice `speaker` stays on `tts`. `design` also uses `speech.create`. |
+| `fish_audio` | `tts`, `clone` | `speech.create` | `clone` sends optional reference audio on the same speech request. |
 
 ## Metadata vs Runtime Loading
 

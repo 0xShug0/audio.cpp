@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "family": "cosyvoice3",
   "display_name": "CosyVoice3",
   "description": "Fun-CosyVoice3 native GGUF package for zero-shot, cross-lingual, and instruction-conditioned text-to-speech using CosyVoice3 speech-token AR generation, causal masked flow mel decoding, CAM++ speaker conditioning, and causal HiFT waveform decoding.",
@@ -12,6 +12,8 @@
   "modes": [
     "offline"
   ],
+  "default_task": "tts",
+  "default_mode": "offline",
   "languages": [
     "zh",
     "en",
@@ -39,6 +41,80 @@
       "speaker_reference"
     ]
   },
+  "task_operations": {
+    "tts": {
+      "preferred_operation": "speech.create"
+    },
+    "clone": {
+      "preferred_operation": "speech.create"
+    }
+  },
+  "inputs": [
+    {
+      "id": "text",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "schema": {
+        "type": "string"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/input"
+        }
+      }
+    },
+    {
+      "id": "voice",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "schema": {
+        "type": "audio"
+      },
+      "required": true,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/voice_ref"
+        }
+      }
+    },
+    {
+      "id": "instructions",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "schema": {
+        "type": "string"
+      },
+      "required": false,
+      "scope": "request",
+      "bindings": {
+        "speech.create": {
+          "json_pointer": "/instructions"
+        }
+      },
+      "alternatives": [
+        "instruction"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "id": "speech",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "kind": "audio"
+    }
+  ],
   "options": {
     "request": [
       {
@@ -51,19 +127,34 @@
           "cross_lingual",
           "instruct"
         ],
-        "default": "zero_shot"
+        "default": "zero_shot",
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/template_name"
+          }
+        }
       },
       {
         "name": "reference_text",
         "type": "string",
         "description": "Transcript for the prompt audio.",
-        "required": false
+        "required": false,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/reference_text"
+          }
+        }
       },
       {
         "name": "instruction",
         "type": "string",
         "description": "Instruction text for instruct mode.",
-        "required": false
+        "required": false,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/instructions"
+          }
+        }
       },
       {
         "name": "text_chunk_size",
@@ -71,7 +162,12 @@
         "description": "Maximum Unicode codepoints per long-form text chunk; default 600.",
         "required": false,
         "min": 1,
-        "default": 600
+        "default": 600,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/text_chunk_size"
+          }
+        }
       },
       {
         "name": "text_chunk_mode",
@@ -84,7 +180,12 @@
           "endline"
         ],
         "required": false,
-        "default": "default"
+        "default": "default",
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/text_chunk_mode"
+          }
+        }
       },
       {
         "name": "max_tokens",
@@ -92,7 +193,12 @@
         "description": "Maximum generated CosyVoice3 speech tokens.",
         "required": false,
         "min": 1,
-        "default": 1600
+        "default": 1600,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/max_tokens"
+          }
+        }
       },
       {
         "name": "min_tokens",
@@ -100,7 +206,12 @@
         "description": "Minimum generated CosyVoice3 speech tokens before stop tokens are accepted.",
         "required": false,
         "min": 0,
-        "default": 0
+        "default": 0,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/options/min_tokens"
+          }
+        }
       },
       {
         "name": "top_k",
@@ -108,7 +219,12 @@
         "description": "AR speech-token top-k sampling limit; default 25.",
         "required": false,
         "min": 1,
-        "default": 25
+        "default": 25,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/top_k"
+          }
+        }
       },
       {
         "name": "num_inference_steps",
@@ -116,7 +232,12 @@
         "description": "Flow decoder Euler steps; default 10.",
         "required": false,
         "min": 1,
-        "default": 10
+        "default": 10,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/num_inference_steps"
+          }
+        }
       },
       {
         "name": "seed",
@@ -124,7 +245,12 @@
         "description": "Generation seed.",
         "required": false,
         "min": 0,
-        "default": 1986
+        "default": 1986,
+        "bindings": {
+          "speech.create": {
+            "json_pointer": "/seed"
+          }
+        }
       }
     ],
     "session": [
@@ -186,6 +312,11 @@
       "format": "gguf",
       "precision": "q8_0",
       "target_directory": "CosyVoice3-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "CosyVoice3-GGUF/cosyvoice3-q8_0.gguf"
       ],
@@ -204,6 +335,11 @@
       "format": "gguf",
       "precision": "f32",
       "target_directory": "CosyVoice3-GGUF",
+      "tasks": [
+        "tts",
+        "clone"
+      ],
+      "default_task": "tts",
       "files": [
         "CosyVoice3-GGUF/cosyvoice3-f32.gguf"
       ],
