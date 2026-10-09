@@ -72,7 +72,9 @@
         "tts"
       ],
       "schema": {
-        "type": "audio"
+        "type": "audio",
+        "media_type": "audio/wav",
+        "wire": ["path_string", "voice_ref_object"]
       },
       "required": true,
       "scope": "request",
@@ -88,7 +90,9 @@
         "vc"
       ],
       "schema": {
-        "type": "audio"
+        "type": "audio",
+        "media_type": "audio/wav",
+        "wire": ["path_string"]
       },
       "required": true,
       "scope": "request",
@@ -107,7 +111,9 @@
         "vc"
       ],
       "schema": {
-        "type": "audio"
+        "type": "audio",
+        "media_type": "audio/wav",
+        "wire": ["path_string"]
       },
       "required": true,
       "scope": "request",
@@ -128,14 +134,20 @@
         "clone",
         "tts"
       ],
-      "kind": "audio"
+      "kind": "audio",
+      "bindings": {
+        "speech.create": {"slot": "audio"}
+      }
     },
     {
       "id": "converted_audio",
       "tasks": [
         "vc"
       ],
-      "kind": "audio"
+      "kind": "audio",
+      "bindings": {
+        "tasks.run": {"slot": "audio"}
+      }
     }
   ],
   "options": {
@@ -326,6 +338,7 @@
         "type": "int",
         "description": "Voice conversion flow steps; max_steps is also accepted.",
         "required": false,
+        "aliases": ["max_steps"],
         "min": 1,
         "default": 10,
         "tasks": [

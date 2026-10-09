@@ -74,7 +74,9 @@
         "clone"
       ],
       "schema": {
-        "type": "audio"
+        "type": "audio",
+        "media_type": "audio/wav",
+        "wire": ["path_string", "voice_ref_object"]
       },
       "required": true,
       "scope": "request",
@@ -91,7 +93,15 @@
         "clone"
       ],
       "schema": {
-        "type": "string"
+        "type": "string",
+        "text": {
+          "caller": "plain",
+          "engine_boundary": {
+            "token": "<|endofprompt|>",
+            "prefix": "You are a helpful assistant. ",
+            "suffix": "<|endofprompt|>"
+          }
+        }
       },
       "required": false,
       "scope": "request",
@@ -112,7 +122,10 @@
         "tts",
         "clone"
       ],
-      "kind": "audio"
+      "kind": "audio",
+      "bindings": {
+        "speech.create": {"slot": "audio"}
+      }
     }
   ],
   "options": {

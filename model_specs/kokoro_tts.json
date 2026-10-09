@@ -38,7 +38,7 @@
     }
   ],
   "outputs": [
-    {"id": "speech", "tasks": ["tts"], "kind": "audio"}
+    {"id": "speech", "tasks": ["tts"], "kind": "audio", "bindings": {"speech.create": {"slot": "audio"}}}
   ],
   "options": {
     "request": [
@@ -60,10 +60,11 @@
       {
         "name": "speed",
         "type": "float",
-        "description": "Speech speed multiplier; default 1.0.",
+        "description": "Speech speed multiplier; default 1.0. speaking_rate is the same option.",
         "required": false,
         "min": 0.01,
         "default": 1.0,
+        "aliases": ["speaking_rate"],
         "bindings": {"speech.create": {"json_pointer": "/speed"}}
       },
       {

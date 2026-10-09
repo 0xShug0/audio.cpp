@@ -350,7 +350,7 @@ json::Value schema_v2_fixture() {
       {
         "id": "audio",
         "tasks": ["vc"],
-        "schema": {"type": "audio"},
+        "schema": {"type": "audio", "media_type": "audio/wav", "wire": ["path_string"]},
         "required": true,
         "scope": "request",
         "bindings": {"tasks.run": {"json_pointer": "/request/audio"}},
@@ -359,7 +359,7 @@ json::Value schema_v2_fixture() {
       {
         "id": "reference_audio",
         "tasks": ["vc"],
-        "schema": {"type": "audio"},
+        "schema": {"type": "audio", "media_type": "audio/wav", "wire": ["path_string"]},
         "required": false,
         "scope": "request",
         "bindings": {"tasks.run": {"json_pointer": "/request/reference_audio"}}
@@ -367,20 +367,20 @@ json::Value schema_v2_fixture() {
       {
         "id": "midi_audio",
         "tasks": ["midi"],
-        "schema": {"type": "audio"},
+        "schema": {"type": "audio", "media_type": "audio/wav", "wire": ["path_string"]},
         "required": true,
         "scope": "request",
         "bindings": {"tasks.run": {"json_pointer": "/request/audio"}}
       }
     ])");
     spec["outputs"] = json::parse(R"([
-      {"id": "speech", "tasks": ["tts"], "kind": "audio"},
-      {"id": "converted_audio", "tasks": ["vc"], "kind": "audio"},
+      {"id": "speech", "tasks": ["tts"], "kind": "audio", "bindings": {"speech.create": {"slot": "audio"}}},
+      {"id": "converted_audio", "tasks": ["vc"], "kind": "audio", "bindings": {"tasks.run": {"slot": "audio"}}},
       {
         "id": "notes",
         "tasks": ["midi"],
         "kind": "artifact",
-        "bindings": {"tasks.run": {"json_pointer": "/artifacts"}}
+        "bindings": {"tasks.run": {"slot": "artifact"}}
       }
     ])");
     spec["ui"] = json::parse(R"({
@@ -472,6 +472,38 @@ void test_schema_v2_integrator_contract() {
         "schema_v2_bad_tasks_run_pointer",
         json::stringify(json::Value::make_object(std::move(bad_binding))),
         "must start with /request/");
+
+    auto bare_audio = fixture.as_object();
+    bare_audio["inputs"] = json::parse(R"([
+      {
+        "id": "audio",
+        "tasks": ["vc"],
+        "schema": {"type": "audio"},
+        "required": true,
+        "scope": "request",
+        "bindings": {"tasks.run": {"json_pointer": "/request/audio"}}
+      }
+    ])");
+    expect_rejects(
+        "schema_v2_audio_requires_wire",
+        json::stringify(json::Value::make_object(std::move(bare_audio))),
+        "missing required field 'media_type'");
+
+    auto bare_instruction = fixture.as_object();
+    bare_instruction["inputs"] = json::parse(R"([
+      {
+        "id": "instructions",
+        "tasks": ["tts"],
+        "schema": {"type": "string"},
+        "required": false,
+        "scope": "request",
+        "bindings": {"speech.create": {"json_pointer": "/instructions"}}
+      }
+    ])");
+    expect_rejects(
+        "schema_v2_instruction_requires_text",
+        json::stringify(json::Value::make_object(std::move(bare_instruction))),
+        "missing required field 'text'");
 
     auto partial_binding = fixture.as_object();
     {
@@ -577,6 +609,28 @@ void test_schema_v2_integrator_contract() {
             resolved.require("task_operations").require("tts").require("response_content_type").as_string(),
             std::string("audio/wav"),
             "resolved spec should fill the operation response type");
+        engine::test::require_eq(
+            resolved.require("instruction_fields").as_array()[0].require("caller").as_string(),
+            std::string("enum"),
+            "resolved spec should name how an instruction value is supplied");
+        engine::test::require_eq(
+            resolved.require("task_operations").require("tts").require("response_slots").require("audio")
+                .require("json").require("format_value").as_string(),
+            std::string("wav"),
+            "resolved spec should name the speech JSON audio envelope");
+        engine::test::require_eq(
+            resolved.require("task_operations").require("tts").require("field_aliases").as_array()[0]
+                .require("same_as").as_string(),
+            std::string("/speed"),
+            "resolved spec should alias speaking_rate to speed");
+        engine::test::require_eq(
+            resolved.require("inputs").as_array()[2].require("schema").require("wire_forms")
+                .require("path_string").require("media_type").as_string(),
+            std::string("audio/wav"),
+            "resolved spec should expand audio wire forms");
+        engine::test::require(
+            engine::model_spec::stream_response_surface("speech.create").has_value(),
+            "speech streaming should have a closed event envelope");
         engine::test::require(
             resolved.require("packages").as_array()[0].require("tasks").as_array().size() == 4,
             "resolved spec should keep package tasks");

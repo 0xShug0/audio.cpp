@@ -281,6 +281,8 @@ std::unordered_set<std::string> option_keys(const std::vector<runtime::CliOption
     return keys;
 }
 
+void add_alias_keys(ModelContract & contract, const json::Value & spec);
+
 ModelContract contract_from_spec(const json::Value & spec) {
     ModelContract out;
     out.metadata.family = json::require_string(spec, "family");
@@ -291,7 +293,130 @@ ModelContract contract_from_spec(const json::Value & spec) {
     out.request_option_keys = option_keys(out.cli.request_options);
     out.session_option_keys = option_keys(out.cli.session_options);
     out.load_option_keys = option_keys(out.cli.load_options);
+    add_alias_keys(out, spec);
     return out;
+}
+
+json::Value expand_preset(const json::Value & row);
+
+json::Value wire_form_definition(const std::string & form) {
+    if (form == "path_string") {
+        return json::parse(R"({"kind":"string","meaning":"filesystem path","media_type":"audio/wav"})");
+    }
+    if (form == "voice_ref_object") {
+        return json::parse(R"({
+          "kind": "object",
+          "type_field": "type",
+          "type_values": ["path", "base64"],
+          "path_field": "path",
+          "data_field": "data",
+          "max_decoded_bytes": 5242880,
+          "media_type": "audio/wav"
+        })");
+    }
+    return json::Value::make_null();
+}
+
+json::Value expand_input_schema(json::Value schema) {
+    schema = expand_preset(schema);
+    if (!schema.is_object()) {
+        return schema;
+    }
+    auto object = schema.as_object();
+    const auto wire_it = object.find("wire");
+    if (wire_it == object.end() || !wire_it->second.is_array() || object.find("wire_forms") != object.end()) {
+        return json::Value::make_object(std::move(object));
+    }
+    json::Value::Object forms;
+    for (const auto & form : wire_it->second.as_array()) {
+        if (!form.is_string()) {
+            continue;
+        }
+        const auto name = form.as_string();
+        auto definition = wire_form_definition(name);
+        if (!definition.is_null()) {
+            forms.emplace(name, std::move(definition));
+        }
+    }
+    if (!forms.empty()) {
+        object.emplace("wire_forms", json::Value::make_object(std::move(forms)));
+    }
+    return json::Value::make_object(std::move(object));
+}
+
+json::Value::Array instruction_fields(const json::Value::Array & inputs) {
+    json::Value::Array fields;
+    for (const auto & input : inputs) {
+        if (!input.is_object()) {
+            continue;
+        }
+        const auto id_it = input.as_object().find("id");
+        if (id_it == input.as_object().end() || !id_it->second.is_string() || id_it->second.as_string() != "instructions") {
+            continue;
+        }
+        json::Value::Object field;
+        field["id"] = id_it->second;
+        if (const auto tasks_it = input.as_object().find("tasks");
+            tasks_it != input.as_object().end()) {
+            field["tasks"] = tasks_it->second;
+        }
+        const auto schema_it = input.as_object().find("schema");
+        if (schema_it != input.as_object().end() && schema_it->second.is_object()) {
+            const auto & schema = schema_it->second.as_object();
+            if (const auto text_it = schema.find("text"); text_it != schema.end() && text_it->second.is_object()) {
+                const auto & text = text_it->second.as_object();
+                for (const std::string key : {"caller", "engine_prefix", "engine_suffix", "engine_boundary"}) {
+                    if (const auto item = text.find(key); item != text.end()) {
+                        field.emplace(key, item->second);
+                    }
+                }
+            } else if (const auto type_it = schema.find("type");
+                       type_it != schema.end() && type_it->second.is_string() && type_it->second.as_string() == "enum") {
+                field["caller"] = json::Value::make_string("enum");
+                if (const auto values_it = schema.find("values"); values_it != schema.end()) {
+                    field["values"] = values_it->second;
+                }
+            }
+        }
+        fields.push_back(json::Value::make_object(std::move(field)));
+    }
+    return fields;
+}
+
+void add_alias_keys(ModelContract & contract, const json::Value & spec) {
+    const auto * options = spec.find("options");
+    if (options == nullptr || !options->is_object()) {
+        return;
+    }
+    for (const std::string scope : {"request", "session", "load"}) {
+        const auto * rows = options->find(scope);
+        if (rows == nullptr || !rows->is_array()) {
+            continue;
+        }
+        for (const auto & row : rows->as_array()) {
+            if (!row.is_object()) {
+                continue;
+            }
+            const auto * aliases = row.find("aliases");
+            if (aliases == nullptr || !aliases->is_array()) {
+                continue;
+            }
+            for (const auto & alias : aliases->as_array()) {
+                if (!alias.is_string()) {
+                    continue;
+                }
+                const auto key = scope == "request" ? alias.as_string()
+                                                    : contract.metadata.family + "." + alias.as_string();
+                if (scope == "request") {
+                    contract.request_option_keys.insert(key);
+                } else if (scope == "session") {
+                    contract.session_option_keys.insert(key);
+                } else {
+                    contract.load_option_keys.insert(key);
+                }
+            }
+        }
+    }
 }
 
 json::Value expand_preset(const json::Value & row) {
@@ -399,11 +524,21 @@ json::Value resolve_spec(json::Value spec) {
             auto input_object = input.as_object();
             const auto schema_it = input_object.find("schema");
             if (schema_it != input_object.end()) {
-                input_object["schema"] = expand_preset(schema_it->second);
+                input_object["schema"] = expand_input_schema(schema_it->second);
             }
             inputs.push_back(json::Value::make_object(std::move(input_object)));
         }
         root["inputs"] = json::Value::make_array(std::move(inputs));
+    }
+    const auto version_it = root.find("schema_version");
+    if (version_it != root.end() && version_it->second.is_number() &&
+        version_it->second.as_number() == kModelSpecSchemaVersion) {
+        json::Value::Array inputs;
+        if (const auto inputs_it = root.find("inputs");
+            inputs_it != root.end() && inputs_it->second.is_array()) {
+            inputs = inputs_it->second.as_array();
+        }
+        root["instruction_fields"] = json::Value::make_array(instruction_fields(inputs));
     }
     json::Value::Object default_download;
     if (const auto defaults_it = root.find("package_defaults");
@@ -463,11 +598,18 @@ json::Value resolve_spec(json::Value spec) {
             auto object = row.as_object();
             const auto preferred_it = object.find("preferred_operation");
             if (preferred_it != object.end() && preferred_it->second.is_string()) {
-                if (const auto surface = operation_surface(preferred_it->second.as_string())) {
+                const auto operation = preferred_it->second.as_string();
+                if (const auto surface = operation_surface(operation)) {
                     for (const auto & [key, value] : surface->as_object()) {
                         if (object.find(key) == object.end()) {
                             object.emplace(key, value);
                         }
+                    }
+                }
+                if (const auto stream_it = object.find("stream");
+                    stream_it != object.end() && stream_it->second.is_bool() && stream_it->second.as_bool()) {
+                    if (const auto stream = stream_response_surface(operation)) {
+                        object["stream_response"] = *stream;
                     }
                 }
             }

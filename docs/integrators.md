@@ -70,7 +70,9 @@ integrator contract. A spec with no `schema_version` is an older layout spec.
 | Default task and mode | `default_task`, `default_mode`, and `startup` | Unknown |
 | HTTP route for a task | `task_operations` | Unknown |
 | Request fields | `inputs` and option `bindings` | Unknown |
-| Result kind | `outputs` | Unknown beyond the route's response type, and the route itself is unknown |
+| Result slot | `outputs[].bindings` and `task_operations[].response_slots` | Unknown beyond the route's response type, and the route itself is unknown |
+| Audio wire form | `inputs[].schema.wire` and `wire_forms` | Unknown |
+| Instruction text | `instruction_fields` | Unknown |
 
 An omitted schema 2 section means unknown. It does not mean the family rejects
 that role. Five families ship as schema 2 samples: `kokoro_tts`, `chatterbox`,
@@ -195,6 +197,14 @@ is known. Types are `bool`, `int`, `float`, `string`, `enum`, `path`,
 `false` or `0` default is a real default. A missing `default` means unknown.
 
 Input schema types are `string`, `enum`, `audio`, and `artifact`.
+
+An `audio` input names `media_type` and `wire`. The resolved `wire_forms` object is the shape of each name. `path_string` is a filesystem path to a WAV. `voice_ref_object` is only valid on speech `/voice_ref`: a path string, or an object whose `type` is `path` or `base64`. A `path` object has `path`. A `base64` object has `data`, and the decoded WAV is at most 5 MiB. `tasks.run` audio fields are `path_string` only.
+
+`instruction_fields` lists every input whose id is `instructions`. An empty array means this family has no instruction input. `caller` `plain` means send the string as written to the binding. `engine_prefix` and `engine_suffix` are added by the engine, so the caller does not add them. `engine_boundary` is the same idea when the string does not already contain `token`: the engine adds `prefix` and `suffix`. `caller` `enum` means the value is one of `values`. Option `aliases` are other keys the runtime accepts for that option. Speech also treats `/speaking_rate` as `/speed`; that pair is `field_aliases` on the operation.
+
+`outputs[].bindings[<operation>].slot` selects a row of `response_slots` on that operation. Speech `audio` is WAV bytes when `response_format` is omitted or `wav`. When `response_format` is `json` or `b64_json`, the same WAV is base64 at `/audio`, `/format` is `wav`, and `/timing` is the timing object. `tasks.run` `audio` is JSON: base64 WAV at `/audio`, plus `/sample_rate`, `/channels`, and `/timing`. `text` is `/text` and optional `/language`. `artifact` is the `/artifacts` array. `alignments.create` `alignment` is `/text` and `/words`.
+
+`stream_response` is present only when that task sets `stream` to true. Speech streaming requires `response_format` `pcm`. `stream_format` `sse` sends `speech.audio.delta` events whose `audio` is base64 PCM16, then `speech.audio.done`. `stream_format` `audio` is a raw PCM16 body. `tasks.run` streaming returns one JSON object with `/events` and `/result`.
 
 For a Qwen custom-voice model started with spec task `tts`, `preferred_operation`
 is `speech.create`. The text input binds to `/input`. The optional `voice`

@@ -525,6 +525,87 @@ std::unordered_set<std::string> applicable_tasks(
     return validate_nonempty_string_set(*task_value, &all_tasks, std::string(path) + ".tasks", "task");
 }
 
+const std::unordered_set<std::string> & output_slots_for(const std::string & operation) {
+    static const std::unordered_map<std::string, std::unordered_set<std::string>> slots = {
+        {"speech.create", {"audio"}},
+        {"tasks.run", {"audio", "text", "artifact"}},
+        {"transcriptions.create", {"text"}},
+        {"alignments.create", {"alignment"}},
+    };
+    static const std::unordered_set<std::string> empty;
+    const auto it = slots.find(operation);
+    return it == slots.end() ? empty : it->second;
+}
+
+bool binding_points_at(const json::Value & bindings, std::string_view pointer) {
+    if (!bindings.is_object()) {
+        return false;
+    }
+    for (const auto & [operation, binding] : bindings.as_object()) {
+        (void) operation;
+        if (!binding.is_object()) {
+            continue;
+        }
+        const auto * value = binding.find("json_pointer");
+        if (value != nullptr && value->is_string() && value->as_string() == pointer) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void validate_audio_wire(const json::Value & schema, const json::Value & bindings, std::string_view schema_path) {
+    static const std::unordered_set<std::string> forms = {"path_string", "voice_ref_object"};
+    const auto media = require_spec_string(
+        require_spec_field(schema, "media_type", schema_path), std::string(schema_path) + ".media_type");
+    if (media != "audio/wav") {
+        fail(std::string(schema_path) + ".media_type", "audio inputs are WAV");
+    }
+    const auto declared = validate_nonempty_string_set(
+        require_spec_field(schema, "wire", schema_path), &forms, std::string(schema_path) + ".wire", "audio wire form");
+    const bool voice_ref = binding_points_at(bindings, "/voice_ref");
+    if (voice_ref) {
+        if (declared.size() != 2 || declared.find("path_string") == declared.end() ||
+            declared.find("voice_ref_object") == declared.end()) {
+            fail(std::string(schema_path) + ".wire",
+                 "speech /voice_ref accepts a WAV path string and a voice_ref object");
+        }
+        return;
+    }
+    if (declared.size() != 1 || declared.find("path_string") == declared.end()) {
+        fail(std::string(schema_path) + ".wire", "this audio field accepts a WAV path string");
+    }
+}
+
+void validate_instruction_text(const json::Value & schema, std::string_view schema_path) {
+    const auto text_path = std::string(schema_path) + ".text";
+    const auto & text = require_spec_field(schema, "text", schema_path);
+    (void) require_spec_object(text, text_path);
+    const auto caller = require_spec_string(require_spec_field(text, "caller", text_path), text_path + ".caller");
+    if (caller != "plain") {
+        fail(text_path + ".caller", "instruction strings are sent as plain text");
+    }
+    const bool prefix = text.find("engine_prefix") != nullptr;
+    const bool suffix = text.find("engine_suffix") != nullptr;
+    const auto * boundary = text.find("engine_boundary");
+    if (boundary != nullptr && (prefix || suffix)) {
+        fail(text_path, "engine_boundary and engine_prefix or engine_suffix are alternatives");
+    }
+    if (prefix) {
+        (void) require_spec_string(*text.find("engine_prefix"), text_path + ".engine_prefix");
+    }
+    if (suffix) {
+        (void) require_spec_string(*text.find("engine_suffix"), text_path + ".engine_suffix");
+    }
+    if (boundary != nullptr) {
+        const auto boundary_path = text_path + ".engine_boundary";
+        (void) require_spec_object(*boundary, boundary_path);
+        for (const std::string key : {"token", "prefix", "suffix"}) {
+            (void) require_spec_string(require_spec_field(*boundary, key, boundary_path), boundary_path + "." + key);
+        }
+    }
+}
+
 void validate_binding(
     const json::Value & value,
     const std::string & operation,
@@ -537,8 +618,22 @@ void validate_binding(
     }
     const auto * pointer = value.find("json_pointer");
     const auto * field = value.find("multipart_field");
-    if ((pointer == nullptr) == (field == nullptr)) {
-        fail(path, "expected exactly one of json_pointer or multipart_field");
+    const auto * slot = value.find("slot");
+    if (!output && slot != nullptr) {
+        fail(std::string(path) + ".slot", "slot is valid only on an output binding");
+    }
+    const int kinds = (pointer != nullptr ? 1 : 0) + (field != nullptr ? 1 : 0) + (slot != nullptr ? 1 : 0);
+    if (kinds != 1) {
+        fail(path,
+             output ? "expected exactly one of json_pointer, multipart_field, or slot"
+                    : "expected exactly one of json_pointer or multipart_field");
+    }
+    if (slot != nullptr) {
+        const auto slot_name = require_spec_string(*slot, std::string(path) + ".slot");
+        if (output_slots_for(operation).find(slot_name) == output_slots_for(operation).end()) {
+            fail(std::string(path) + ".slot", "unknown output slot '" + slot_name + "'");
+        }
+        return;
     }
     const auto & operation_template = template_it->second;
     if (pointer != nullptr) {
@@ -704,8 +799,18 @@ std::unordered_set<std::string> validate_inputs(
         if (scope != "request" && scope != "session") {
             fail(row_path + ".scope", "expected request or session");
         }
-        validate_bindings(
-            require_spec_field(row, "bindings", row_path), row_tasks, task_operations, row_path + ".bindings");
+        const auto & bindings = require_spec_field(row, "bindings", row_path);
+        validate_bindings(bindings, row_tasks, task_operations, row_path + ".bindings");
+        if (type == "audio") {
+            validate_audio_wire(schema, bindings, row_path + ".schema");
+        }
+        const bool instruction_string =
+            type == "string" && (id == "instructions" || binding_points_at(bindings, "/instructions"));
+        if (instruction_string) {
+            validate_instruction_text(schema, row_path + ".schema");
+        } else if (schema.find("text") != nullptr) {
+            fail(row_path + ".schema.text", "text describes an instruction string");
+        }
         if (const auto * refs = row.find("alternatives")) {
             validate_nonempty_string_set(*refs, nullptr, row_path + ".alternatives", "alternative");
             alternatives.emplace_back(row_path, refs);
@@ -758,9 +863,12 @@ void validate_outputs(
         const auto row_tasks = applicable_tasks(row, task_ids, row_path, true);
         const auto kind = require_spec_string(require_spec_field(row, "kind", row_path), row_path + ".kind");
         validate_enum(kind, output_kinds, row_path + ".kind", "output kind");
-        if (const auto * bindings = row.find("bindings")) {
-            validate_bindings(*bindings, row_tasks, task_operations, row_path + ".bindings", true);
-        }
+        validate_bindings(
+            require_spec_field(row, "bindings", row_path),
+            row_tasks,
+            task_operations,
+            row_path + ".bindings",
+            true);
     }
 }
 
@@ -1219,6 +1327,74 @@ void validate_legacy(const json::Value & spec, std::string_view source_name) {
     }
 }
 
+std::optional<json::Value> response_slot_surface(const std::string & operation) {
+    if (operation == "speech.create") {
+        return json::parse(R"({
+          "audio": {
+            "default": {"content_type": "audio/wav", "body": "wav"},
+            "json": {
+              "content_type": "application/json",
+              "response_formats": ["json", "b64_json"],
+              "audio_pointer": "/audio",
+              "audio_encoding": "base64",
+              "media_type": "audio/wav",
+              "format_pointer": "/format",
+              "format_value": "wav",
+              "timing_pointer": "/timing"
+            }
+          }
+        })");
+    }
+    if (operation == "tasks.run") {
+        return json::parse(R"({
+          "audio": {
+            "content_type": "application/json",
+            "audio_pointer": "/audio",
+            "audio_encoding": "base64",
+            "media_type": "audio/wav",
+            "sample_rate_pointer": "/sample_rate",
+            "channels_pointer": "/channels",
+            "timing_pointer": "/timing"
+          },
+          "text": {
+            "content_type": "application/json",
+            "text_pointer": "/text",
+            "language_pointer": "/language",
+            "timing_pointer": "/timing"
+          },
+          "artifact": {
+            "content_type": "application/json",
+            "artifacts_pointer": "/artifacts",
+            "payload_encoding": "base64"
+          }
+        })");
+    }
+    if (operation == "transcriptions.create") {
+        return json::parse(R"({
+          "text": {
+            "content_type": "application/json",
+            "text_pointer": "/text",
+            "language_pointer": "/language",
+            "segments_pointer": "/segments",
+            "words_pointer": "/words",
+            "timing_pointer": "/timing"
+          }
+        })");
+    }
+    if (operation == "alignments.create") {
+        return json::parse(R"({
+          "alignment": {
+            "content_type": "application/json",
+            "text_pointer": "/text",
+            "words_pointer": "/words",
+            "word_fields": ["word", "start", "end", "start_sample", "end_sample", "confidence"],
+            "timing_pointer": "/timing"
+          }
+        })");
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 std::optional<engine::io::json::Value> operation_surface(std::string_view operation) {
@@ -1241,7 +1417,43 @@ std::optional<engine::io::json::Value> operation_surface(std::string_view operat
         object["response_formats"] = engine::io::json::Value::make_array(std::move(formats));
         object["response_format_pointer"] = engine::io::json::Value::make_string(surface.response_format_pointer);
     }
+    if (const auto slots = response_slot_surface(std::string(operation))) {
+        object["response_slots"] = *slots;
+    }
+    if (std::string(operation) == "speech.create") {
+        object["field_aliases"] = engine::io::json::parse(
+            R"([{"pointer":"/speaking_rate","same_as":"/speed"}])");
+    }
     return engine::io::json::Value::make_object(std::move(object));
+}
+
+std::optional<engine::io::json::Value> stream_response_surface(std::string_view operation) {
+    if (operation == "speech.create") {
+        return engine::io::json::parse(R"({
+          "response_format": "pcm",
+          "response_format_pointer": "/response_format",
+          "stream_format_pointer": "/stream_format",
+          "stream_formats": ["sse", "audio"],
+          "sse": {
+            "content_type": "text/event-stream",
+            "events": [
+              {"type": "speech.audio.delta", "audio": "base64 pcm16"},
+              {"type": "speech.audio.done", "timing": "object"}
+            ]
+          },
+          "audio": {"content_type": "application/octet-stream", "body": "pcm16"}
+        })");
+    }
+    if (operation == "tasks.run") {
+        return engine::io::json::parse(R"({
+          "content_type": "application/json",
+          "events_pointer": "/events",
+          "event_fields": ["partial_text", "audio", "named_audio_outputs", "word_timestamps", "speaker_turns", "is_final"],
+          "audio_encoding": "base64 wav",
+          "result_pointer": "/result"
+        })");
+    }
+    return std::nullopt;
 }
 
 void validate_spec(const json::Value & spec, std::string_view source_name) {

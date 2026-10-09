@@ -18,4 +18,8 @@ void validate_spec(const engine::io::json::Value & spec, std::string_view source
 // Empty when the id is not one of the operations schema 2 may name.
 [[nodiscard]] std::optional<engine::io::json::Value> operation_surface(std::string_view operation);
 
+// Event envelope for an operation whose task sets stream to true.
+// Empty when that operation has no streaming response.
+[[nodiscard]] std::optional<engine::io::json::Value> stream_response_surface(std::string_view operation);
+
 }  // namespace engine::model_spec

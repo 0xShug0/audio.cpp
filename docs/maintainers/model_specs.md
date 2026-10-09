@@ -172,7 +172,11 @@ family rejects it.
     {
       "id": "audio",
       "tasks": ["vc"],
-      "schema": {"type": "audio"},
+      "schema": {
+        "type": "audio",
+        "media_type": "audio/wav",
+        "wire": ["path_string"]
+      },
       "required": true,
       "scope": "request",
       "bindings": {
@@ -212,20 +216,41 @@ transcript:
     {
       "id": "stems",
       "tasks": ["sep"],
-      "kind": "artifact"
+      "kind": "artifact",
+      "bindings": {"tasks.run": {"slot": "artifact"}}
     },
     {
       "id": "transcript",
       "tasks": ["asr"],
-      "kind": "text"
+      "kind": "text",
+      "bindings": {"transcriptions.create": {"slot": "text"}}
     }
   ]
 }
 ```
 
-Output kinds are `audio`, `text`, `json`, and `artifact`. Family-defined
-artifact ids cover stems, MIDI, embeddings, token streams, and future structured
-payloads without growing a model-family enum in client code.
+Output kinds are `audio`, `text`, `json`, and `artifact`. Every output binding
+names a `slot` instead of a JSON pointer. The slot must be one the operation
+defines: speech `audio`; `tasks.run` `audio`, `text`, or `artifact`;
+transcriptions `text`; alignments `alignment`. The resolved operation's
+`response_slots` entry is the body layout for that slot.
+
+An audio input requires `media_type` `audio/wav` and `wire`. Speech `/voice_ref`
+uses `path_string` and `voice_ref_object`. Every other audio field uses
+`path_string` only. The resolved spec expands those names to `wire_forms`.
+
+A string input with id `instructions`, or one bound to `/instructions`, requires
+`schema.text`. `caller` is `plain`: the caller sends the string unchanged.
+`engine_prefix` and `engine_suffix` are the affix the engine adds. They are an
+alternative to `engine_boundary`, which has `token`, `prefix`, and `suffix` and
+applies only when the string does not already contain `token`. The resolved
+spec copies these rows to `instruction_fields`. An empty array means the family
+declares no instruction input.
+
+`stream_response` is not written in the source spec. The resolved task operation
+gains it when `stream` is true. Speech streaming is PCM, either SSE
+`speech.audio.delta` / `speech.audio.done` or a raw PCM16 body. `tasks.run`
+streaming is one JSON object with `events` and `result`.
 
 ### Startup
 

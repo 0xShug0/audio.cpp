@@ -91,7 +91,9 @@
         "clone"
       ],
       "schema": {
-        "type": "audio"
+        "type": "audio",
+        "media_type": "audio/wav",
+        "wire": ["path_string", "voice_ref_object"]
       },
       "required": false,
       "scope": "request",
@@ -108,7 +110,12 @@
         "design"
       ],
       "schema": {
-        "type": "string"
+        "type": "string",
+        "text": {
+          "caller": "plain",
+          "engine_prefix": "<|im_start|>user\n",
+          "engine_suffix": "<|im_end|>\n"
+        }
       },
       "required": false,
       "scope": "request",
@@ -130,7 +137,10 @@
         "design",
         "clone"
       ],
-      "kind": "audio"
+      "kind": "audio",
+      "bindings": {
+        "speech.create": {"slot": "audio"}
+      }
     }
   ],
   "options": {
