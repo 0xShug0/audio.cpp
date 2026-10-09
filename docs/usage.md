@@ -12,7 +12,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `--task` | `gen`, `tts`, `clon`, `vc`, `svc`, `s2s`, `asr`, `align`, `vad`, `diar`, `sep`, `vdes`, `midi` | required | User task. |
+| `--task` | `gen`, `tts`, `clon`, `vc`, `svc`, `s2s`, `asr`, `align`, `vad`, `diar`, `sep`, `vdes`, `midi`, `wake`, `cls` | required | User task. |
 | `--family` | model family name | required | Selects the model implementation. Must match a registered loader (`audiocpp_cli --list-loaders`). |
 | `--model` | local model directory | required | Path to local model assets. |
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Inference backend. |
@@ -29,7 +29,7 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | Option | Used by | Meaning |
 |---|---|---|
 | `--text` | generation, TTS, ASR context, alignment transcript | Input text. |
-| `--audio` | generation/editing, ASR, VAD, diarization, separation, conversion, alignment | Input WAV, or `-` to stream raw PCM from stdin (requires `--mode streaming`). |
+| `--audio` | generation/editing, ASR, classification, wake word, VAD, diarization, separation, conversion, alignment | Input WAV, or `-` to stream raw PCM from stdin (requires `--mode streaming`). |
 | `--input-format` | streaming ASR with `--audio -` | Raw PCM sample format, `s16le` or `f32le`. Default `s16le`. |
 | `--input-rate` | streaming ASR with `--audio -` | Raw PCM sample rate in Hz. Default `16000`. |
 | `--input-channels` | streaming ASR with `--audio -` | Raw PCM channel count. Default `1`. |
@@ -124,5 +124,5 @@ A request can also pass input artifacts in an `artifacts` array, in the shape th
 | Music and sound generation | [music_generation.md](music_generation.md) |
 | OmniVoice TTS, voice cloning, voice design, and streaming | [models/omnivoice.md](models/omnivoice.md) |
 | ASR models | [asr.md](asr.md) |
-| VAD and diarization | [speech_analysis.md](speech_analysis.md) |
+| Classification, wake word, VAD, and diarization | [speech_analysis.md](speech_analysis.md) |
 | Audio tools, voice conversion, codec, and source separation | [audio_tools.md](audio_tools.md) |

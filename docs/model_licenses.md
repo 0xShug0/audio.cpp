@@ -25,6 +25,8 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 |---|---|---|---|---|---|
 | `ace_step` | [ACE-Step/Ace-Step1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) | MIT | Yes | | 2026-09-21 |
 | `apollo` | [JusperLee/Apollo](https://huggingface.co/JusperLee/Apollo) | CC-BY-SA-4.0 | Yes | | 2026-09-21 |
+| `ast_audioset` | [MIT/ast-finetuned-audioset-10-10-0.4593](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593) | BSD-3-Clause | Yes | | 2026-09-26 |
+| `ced` | [mispeech/ced-tiny](https://huggingface.co/mispeech/ced-tiny), [ced-mini](https://huggingface.co/mispeech/ced-mini), [ced-small](https://huggingface.co/mispeech/ced-small), [ced-base](https://huggingface.co/mispeech/ced-base) | Apache-2.0 | Yes | Checkpoint license; the separate upstream training repository is GPL-3.0. | 2026-10-09 |
 | `audio8_asr` | [Edge0/Audio8-ASR-0.1B](https://huggingface.co/Edge0/Audio8-ASR-0.1B) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `audio8_tts` | [Edge0/Audio8-TTS-Preview-0.6b](https://huggingface.co/Edge0/Audio8-TTS-Preview-0.6b) | Apache-2.0 | Yes | | 2026-09-21 |
 | `audio_flamingo` | [nvidia/audio-flamingo-3-hf](https://huggingface.co/nvidia/audio-flamingo-3-hf), [nvidia/audio-flamingo-next-hf](https://huggingface.co/nvidia/audio-flamingo-next-hf) | NVIDIA OneWay Noncommercial | No | Upstream model-card licenses and terms apply. | 2026-10-02 |
@@ -77,6 +79,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `marblenet_vad` | Not linked | Not stated | Unclear | Bundled in `assets/framework/models`; the checkpoint's source is not documented. | 2026-09-21 |
 | `maya1` | [maya-research/maya1](https://huggingface.co/maya-research/maya1)<br>[hubertsiuzdak/snac_24khz](https://huggingface.co/hubertsiuzdak/snac_24khz) | Apache-2.0 (Maya1); MIT (SNAC) | Yes | The combined GGUF contains weights from both projects. | 2026-09-25 |
 | `meanvc2` | [ASLP-lab/MeanVC2](https://huggingface.co/ASLP-lab/MeanVC2) | Apache-2.0 | Yes | | 2026-09-21 |
+| `micro_wake_word` | User-supplied converted model | Model-dependent | Unclear | Verify the license of the source TFLite model. | 2026-10-09 |
 | `tone_color_vc` | [myshell-ai/OpenVoiceV2](https://huggingface.co/myshell-ai/OpenVoiceV2) | MIT | Yes | Standalone V2 converter. | 2026-09-27 |
 | `mel_band_roformer` | [mlx-community/mel-roformer-mlx](https://huggingface.co/mlx-community/mel-roformer-mlx) | MIT | Yes | | 2026-09-21 |
 | `midashenglm_gen` | [mispeech/midashenglm-gen](https://huggingface.co/mispeech/midashenglm-gen) | Apache-2.0 | Yes | | 2026-09-21 |
@@ -120,6 +123,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `seed_vc` | [Plachta/Seed-VC](https://huggingface.co/Plachta/Seed-VC)<br>[mlx-community/SeedVC-MLX](https://huggingface.co/mlx-community/SeedVC-MLX) | GPL-3.0 | Yes | Copyleft. | 2026-09-21 |
 | `sense_asr` | [FunAudioLLM/SenseVoiceSmall](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) | [FunASR Model Open Source License v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) | Yes | Credit the source and authors, and keep the model names. | 2026-09-21 |
 | `sheetsage2` | [m-a-p/SheetSage2](https://huggingface.co/m-a-p/SheetSage2) | CC-BY-NC-4.0 | No | | 2026-09-21 |
+| `sherpa_kws` | User-supplied sherpa-onnx export | Model-dependent | Unclear | Verify the license of the source export. | 2026-10-09 |
 | `silero_vad` | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) | MIT | Yes | Bundled in `assets/framework/models`. | 2026-09-21 |
 | `smart_turn` | [pipecat-ai/smart-turn](https://github.com/pipecat-ai/smart-turn) | BSD-2-Clause | Yes | Smart Turn v3.2. | 2026-09-30 |
 | `soprano_tts` | [ekwek/Soprano-1.1-80M](https://huggingface.co/ekwek/Soprano-1.1-80M) | Apache-2.0 | Yes | | 2026-09-21 |

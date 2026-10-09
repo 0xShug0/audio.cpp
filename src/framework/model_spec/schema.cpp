@@ -150,7 +150,7 @@ const std::unordered_set<std::string> & runtime_tags() {
 const std::unordered_set<std::string> & ui_tags() {
     static const std::unordered_set<std::string> values = {
         "ASR", "TTS", "Clone", "VC", "Align", "VAD", "Diar", "Codec", "Sep", "Music", "SFX",
-        "Edit", "Design", "MIDI", "GGUF", "Stream",
+        "Edit", "Design", "MIDI", "Wake Word", "Classify", "GGUF", "Stream",
     };
     return values;
 }
@@ -167,6 +167,8 @@ const std::unordered_set<std::string> & capabilities_for_task(const std::string 
         {"svc", {"speaker_reference", "singing"}},
         {"align", {"word_timestamps"}},
         {"vad", {"speech_segments", "chunk_planning"}},
+        {"wake_word", {"speech_segments", "stream_events"}},
+        {"classify", {"scores"}},
         {"turn", {"turn_decision"}},
         {"diar", {"speaker_turns"}},
         {"sep", {"stems"}},

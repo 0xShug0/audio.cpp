@@ -737,6 +737,30 @@ audiocpp_add_model(smart_turn
         engine::models::smart_turn::make_smart_turn_loader
 )
 
+audiocpp_add_model(ced
+    SOURCES
+        src/models/ced/assets.cpp
+        src/models/ced/frontend.cpp
+        src/models/ced/runtime.cpp
+        src/models/ced/session.cpp
+    INCLUDES
+        engine/models/ced/session.h
+    LOADERS
+        engine::models::ced::make_ced_loader
+)
+
+audiocpp_add_model(ast_audioset
+    SOURCES
+        src/models/ast_audioset/assets.cpp
+        src/models/ast_audioset/frontend.cpp
+        src/models/ast_audioset/runtime.cpp
+        src/models/ast_audioset/session.cpp
+    INCLUDES
+        engine/models/ast_audioset/session.h
+    LOADERS
+        engine::models::ast_audioset::make_ast_audioset_loader
+)
+
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp
@@ -847,6 +871,32 @@ audiocpp_add_model(kroko_asr
         engine/community_models/kroko_asr/session.h
     LOADERS
         engine::models::kroko_asr::make_kroko_asr_loader
+)
+
+audiocpp_add_model(micro_wake_word
+    SOURCES
+        src/models/micro_wake_word/frontend.cpp
+        src/models/micro_wake_word/runtime.cpp
+        src/models/micro_wake_word/session.cpp
+    INCLUDES
+        engine/models/micro_wake_word/session.h
+    LOADERS
+        engine::models::micro_wake_word::make_micro_wake_word_loader
+)
+
+audiocpp_add_model(sherpa_kws
+    SOURCES
+        src/models/sherpa_kws/assets.cpp
+        src/models/sherpa_kws/encoder.cpp
+        src/models/sherpa_kws/frontend.cpp
+        src/models/sherpa_kws/keyword_decoder.cpp
+        src/models/sherpa_kws/session.cpp
+        src/models/sherpa_kws/transducer.cpp
+        src/models/sherpa_kws/zipformer.cpp
+    INCLUDES
+        engine/models/sherpa_kws/session.h
+    LOADERS
+        engine::models::sherpa_kws::make_sherpa_kws_loader
 )
 
 audiocpp_add_model(outetts

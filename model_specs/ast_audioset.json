@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "family": "ast_audioset",
+  "display_name": "AST AudioSet",
+  "description": "MIT Audio Spectrogram Transformer for multi-label classification across 527 AudioSet sound classes.",
+  "category": "speech_analysis",
+  "status": "supported",
+  "tasks": [
+    "classify"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "classify": [
+      "scores"
+    ]
+  },
+  "dependencies": [],
+  "options": {
+    "request": [
+      {
+        "name": "top_k",
+        "type": "int",
+        "description": "Number of highest-scoring AudioSet classes to return.",
+        "required": false,
+        "min": 1,
+        "max": 527,
+        "default": 10
+      }
+    ],
+    "session": [
+      {
+        "name": "attention",
+        "type": "enum",
+        "description": "Attention lowering; auto selects a supported fast path.",
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage override; native preserves the packaged tensor types.",
+        "preset": "weight_type_full",
+        "required": false,
+        "default": "native"
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "ui": {
+    "recommended_package": "ast_audioset_f32",
+    "tags": [
+      "Classify",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/ast_audioset.md"
+    ]
+  },
+  "packages": [
+    {
+      "id": "ast_audioset_f32",
+      "display_name": "AST AudioSet F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "default": true,
+      "target_directory": "AST-AudioSet-GGUF",
+      "files": [
+        "AST-AudioSet-GGUF/ast-audioset-f32.gguf"
+      ],
+      "strip_prefix": "AST-AudioSet-GGUF"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "processor": "model:preprocessor_config.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors"
+      }
+    }
+  ]
+}

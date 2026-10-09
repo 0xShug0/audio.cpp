@@ -319,7 +319,7 @@
     { id: 'conversion', label: 'Voice Conversion / S2S', filterLabel: 'Voice Conversion / S2S', tasks: ['vc', 'svc', 's2s'] },
     { id: 'enhancement', label: 'Enhancement / denoising', filterLabel: 'Enhancement / denoising', tasks: ['s2s'] },
     { id: 'separation', label: 'Source separation', filterLabel: 'Separation', tasks: ['sep', 's2s'] },
-    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi', 'asr', 'turn'] },
+    { id: 'analysis', label: 'Audio analysis', filterLabel: 'Analysis', tasks: ['vad', 'diar', 'align', 'spk', 'midi', 'asr', 'turn', 'wake', 'cls'] },
     { id: 'design', label: 'Voice design', filterLabel: 'Voice design', tasks: ['vdes'] }
   ] as const;
 
@@ -498,7 +498,7 @@
     selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' || selected?.family === 'kugelaudio' ||
     (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
-  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi', 'turn'].includes(selected?.task) ||
+  $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi', 'turn', 'wake', 'cls'].includes(selected?.task) ||
     isFireRedAudioEdit || selected?.family === 'liveavatar' ||
     (selected?.family === 'auk' && selected?.task === 'gen');
   $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
@@ -1357,7 +1357,7 @@
     if (!file) return undefined;
     const targetSampleRate = selected.task === 'sep' || selected.family === 'apollo'
       ? 44100
-      : ['asr', 'vad', 'diar', 'align', 'midi'].includes(selected.task) ? 16000 : undefined;
+      : ['asr', 'vad', 'diar', 'align', 'midi', 'wake', 'cls'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
     return uploadWav(wav, aborter?.signal);
   }

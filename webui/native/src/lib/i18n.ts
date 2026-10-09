@@ -118,6 +118,8 @@ const english: Record<string, string> = {
   'task.diar': 'Speaker diarization',
   'task.align': 'Forced alignment',
   'task.vdes': 'Voice design',
+  'task.wake': 'Wake-word detection',
+  'task.cls': 'Audio classification',
   'studio.eyebrow': 'LOCAL AUDIO INTELLIGENCE',
   'studio.title': 'Audio studio',
   'studio.subtitle.tts': 'Generate natural speech from text, with voice presets and cloning when supported.',
