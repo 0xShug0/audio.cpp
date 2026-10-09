@@ -52,8 +52,7 @@ int main(int argc, char ** argv) {
             engine::audio::write_wav(std::filesystem::path(argv[4]) / "speaker_input.wav", 16000, 1, input, options);
         }
         auto source = engine::assets::open_tensor_source(argv[1]);
-        auto encoder = s3::load_s3_flow_encoder_weights(*source, execution, engine::assets::TensorStorageType::F32);
-        auto decoder = s3::load_s3_flow_decoder_weights(*source, execution, engine::assets::TensorStorageType::F32);
+        s3::S3GenRuntime runtime(source, execution, s3::S3GenConfig{engine::assets::TensorStorageType::F32});
         const auto all = json::parse_file(argv[2]);
         const auto & voice = all.require("Bruno");
         s3::EmbedReferenceOutputs ref;
@@ -70,27 +69,22 @@ int main(int argc, char ** argv) {
         for (const auto & x : codes.as_array()) tokens.push_back(x.as_number());
         tokens.insert(tokens.end(), 3, 4299);
         const int64_t frames = 2 * (ref.prompt_token_count + tokens.size());
-        s3::S3GenSessionCache cache(config);
-        std::filesystem::create_directories(argv[4]);
-        // Isolate the encoder from the meanflow solver when diagnosing parity.
+        // Isolate the encoder through the runtime's stage API.
         auto table = source->require_f32("flow.input_embedding.weight", {6561,512});
         auto all_tokens = ref.prompt_tokens;
         all_tokens.insert(all_tokens.end(), tokens.begin(), tokens.end());
         std::vector<float> embedded;
         for (auto token : all_tokens) for (int i = 0; i < 512; ++i)
             embedded.push_back(table[token*512+i]);
-        s3::S3FlowSessionCache flow_cache(config);
-        auto encoded = s3::compute_s3_flow_encoder_forward(flow_cache, *encoder, embedded,
-            all_tokens.size(), all_tokens.size(), 512, config);
+        auto encoded = runtime.encode(embedded, all_tokens.size(), all_tokens.size(), 512);
         std::ofstream hidden(std::filesystem::path(argv[4])/"encoder.f32", std::ios::binary);
         hidden.write(reinterpret_cast<const char *>(encoded.hidden.data()), encoded.hidden.size()*sizeof(float));
-        auto mel = s3::compute_s3_token2mel_inference(cache, *encoder, *decoder, ref, tokens, tokens.size(),
-            2, 0, false, std::vector<float>(80*frames, 0), 0, config);
+        auto mel = runtime.token_to_mel(ref, tokens, tokens.size(),
+            2, 0, false, std::vector<float>(80*frames, 0), 0);
         std::filesystem::create_directories(argv[4]);
         std::ofstream out(std::filesystem::path(argv[4])/"zero_noise_mel.f32", std::ios::binary);
         out.write(reinterpret_cast<const char *>(mel.mel.data()), mel.mel.size()*sizeof(float));
-        auto wrapper = s3::HiFTVocoderComponent::load_from_source(source, execution, engine::assets::TensorStorageType::F32);
-        engine::modules::HiftVocoderComponent vocoder(wrapper.weights()->runtime_weights, config);
+        const auto & vocoder = runtime.vocoder();
         auto f0 = vocoder.predict_f0(mel.mel, mel.frames);
         std::vector<float> random(9 + 9*480*mel.frames, 0);
         auto audio = vocoder.synthesize(mel.mel, mel.frames, 0, 0, &random);

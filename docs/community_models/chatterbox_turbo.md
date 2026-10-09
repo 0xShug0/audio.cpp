@@ -27,7 +27,7 @@ repacks it offline into one self-contained, audio.cpp-native GGUF:
 - T3 and built-in-conditional tensors are moved from the upstream flat `t3.`/`conds.` dot
   namespace into this project's own `/`-delimited packed-GGUF namespace convention.
 - S3Gen tensors are renamed back to the exact names the shared S3Gen flow/HiFT-vocoder
-  loader (`src/framework/codecs/s3gen_flow.cpp`,
+  loader (`src/framework/codecs/s3gen_runtime.cpp`,
   `src/framework/modules/vocoders/hift_vocoder.cpp`) already expects, so that loader runs
   completely unmodified for Turbo — no tensor-name translation code exists in this family at
   runtime.

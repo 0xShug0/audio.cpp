@@ -1,73 +1,73 @@
 #pragma once
 
-#include "engine/framework/codecs/s3gen_hift_runtime.h"
-#include "engine/framework/core/backend.h"
-#include "engine/framework/codecs/s3gen_flow.h"
-#include "engine/framework/codecs/s3gen_types.h"
+#include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/core/execution_context.h"
+#include "engine/framework/modules/vocoders/hift_vocoder.h"
 
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <vector>
 
 namespace engine::codecs::s3gen {
 
-struct S3GenTimingBreakdown;
+struct EmbedReferenceOutputs {
+    std::vector<int32_t> prompt_tokens;
+    int64_t prompt_token_count = 0;
+    std::vector<float> prompt_feat;
+    int64_t prompt_feat_frames = 0;
+    int64_t prompt_feat_dims = 0;
+    std::vector<float> embedding;
+    int64_t embedding_size = 0;
+    double prompt_mel_ms = 0.0;
+    double speaker_ms = 0.0;
+    double tokenizer_ms = 0.0;
+};
 
-class S3GenSessionCache {
-public:
-    explicit S3GenSessionCache(engine::core::BackendConfig backend = {});
-    ~S3GenSessionCache();
-    S3GenSessionCache(S3GenSessionCache &&) noexcept;
-    S3GenSessionCache & operator=(S3GenSessionCache &&) noexcept;
+struct S3Token2MelOutputs {
+    std::vector<float> mel;
+    int64_t channels = 0;
+    int64_t frames = 0;
+};
 
-    S3GenSessionCache(const S3GenSessionCache &) = delete;
-    S3GenSessionCache & operator=(const S3GenSessionCache &) = delete;
+struct S3FlowEncoderOutputs {
+    std::vector<float> hidden;
+    int64_t frames = 0;
+    int64_t storage_frames = 0;
+    int64_t hidden_size = 0;
+};
 
-    void release_runtime_graphs();
+struct S3GenInferenceOutputs {
+    std::vector<float> waveform;
+    int64_t samples = 0;
+    std::vector<float> source;
+    int64_t source_channels = 0;
+    int64_t source_frames = 0;
+    std::vector<float> mel;
+    int64_t mel_channels = 0;
+    int64_t mel_frames = 0;
+};
 
-private:
-    struct State;
-    std::unique_ptr<State> state_;
+struct S3FlowDecoderRunTiming {
+    int64_t calls = 0;
+    double conditioning_write_ms = 0.0;
+    double time_embedding_ms = 0.0;
+    double input_write_ms = 0.0;
+    double time_write_ms = 0.0;
+    double graph_compute_ms = 0.0;
+    double output_read_ms = 0.0;
+};
 
-    friend S3Token2MelOutputs compute_s3_token2mel_inference(
-        S3GenSessionCache & cache,
-        const S3FlowEncoderWeights & encoder_weights,
-        const S3FlowDecoderWeights & decoder_weights,
-        const EmbedReferenceOutputs & ref_dict,
-        const std::vector<int32_t> & speech_tokens,
-        int64_t speech_token_count,
-        int64_t num_steps,
-        float cfg_rate,
-        bool cosine_schedule,
-        const std::vector<float> & full_noise,
-        uint64_t flow_seed,
-        engine::core::BackendConfig backend,
-        S3GenTimingBreakdown * timing);
-    friend S3GenInferenceOutputs compute_s3gen_inference(
-        S3GenSessionCache & cache,
-        const S3FlowEncoderWeights & encoder_weights,
-        const S3FlowDecoderWeights & decoder_weights,
-        const HiFTVocoderComponent & vocoder,
-        const EmbedReferenceOutputs & ref_dict,
-        const std::vector<int32_t> & speech_tokens,
-        int64_t speech_token_count,
-        int64_t num_steps,
-        float cfg_rate,
-        bool cosine_schedule,
-        const std::vector<float> & full_noise,
-        uint64_t flow_seed,
-        uint64_t vocoder_seed,
-        engine::core::BackendConfig backend,
-        S3GenTimingBreakdown * timing);
-    friend S3GenInferenceOutputs compute_s3gen_inference(
-        S3GenSessionCache & cache,
-        const S3FlowEncoderWeights & encoder_weights,
-        const S3FlowDecoderWeights & decoder_weights,
-        const HiFTVocoderComponent & vocoder,
-        const EmbedReferenceOutputs & ref_dict,
-        const std::vector<int32_t> & speech_tokens,
-        int64_t speech_token_count,
-        engine::core::BackendConfig backend,
-        S3GenTimingBreakdown * timing);
+struct S3FlowCFMTimingBreakdown {
+    int64_t steps = 0;
+    int64_t decoder_calls = 0;
+    double initial_state_ms = 0.0;
+    double schedule_ms = 0.0;
+    double zero_conditioning_ms = 0.0;
+    double runner_setup_ms = 0.0;
+    double host_update_ms = 0.0;
+    S3FlowDecoderRunTiming conditioned;
+    S3FlowDecoderRunTiming unconditioned;
 };
 
 struct S3GenTimingBreakdown {
@@ -80,47 +80,50 @@ struct S3GenTimingBreakdown {
     double vocoder_ms = 0.0;
 };
 
-S3Token2MelOutputs compute_s3_token2mel_inference(
-    S3GenSessionCache & cache,
-    const S3FlowEncoderWeights & encoder_weights,
-    const S3FlowDecoderWeights & decoder_weights,
-    const EmbedReferenceOutputs & ref_dict,
-    const std::vector<int32_t> & speech_tokens,
-    int64_t speech_token_count,
-    int64_t num_steps = 10,
-    float cfg_rate = 0.7f,
-    bool cosine_schedule = true,
-    const std::vector<float> & full_noise = {},
-    uint64_t flow_seed = 0,
-    engine::core::BackendConfig backend = {},
-    S3GenTimingBreakdown * timing = nullptr);
+struct S3GenConfig {
+    assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+    std::string vocoder_tensor_prefix = "mel2wav.";
+    modules::HiftVocoderWeightLayout vocoder_weight_layout =
+        modules::HiftVocoderWeightLayout::TorchParametrizedWeightNorm;
+};
 
-S3GenInferenceOutputs compute_s3gen_inference(
-    S3GenSessionCache & cache,
-    const S3FlowEncoderWeights & encoder_weights,
-    const S3FlowDecoderWeights & decoder_weights,
-    const HiFTVocoderComponent & vocoder,
-    const EmbedReferenceOutputs & ref_dict,
-    const std::vector<int32_t> & speech_tokens,
-    int64_t speech_token_count,
-    int64_t num_steps = 10,
-    float cfg_rate = 0.7f,
-    bool cosine_schedule = true,
-    const std::vector<float> & full_noise = {},
-    uint64_t flow_seed = 0,
-    uint64_t vocoder_seed = 0,
-    engine::core::BackendConfig backend = {},
-    S3GenTimingBreakdown * timing = nullptr);
+class S3GenRuntime {
+public:
+    S3GenRuntime(std::shared_ptr<const assets::TensorSource> source,
+                 const core::ExecutionContext & execution, S3GenConfig config = {});
+    ~S3GenRuntime();
+    S3GenRuntime(S3GenRuntime &&) noexcept;
+    S3GenRuntime & operator=(S3GenRuntime &&) noexcept;
+    S3GenRuntime(const S3GenRuntime &) = delete;
+    S3GenRuntime & operator=(const S3GenRuntime &) = delete;
 
-S3GenInferenceOutputs compute_s3gen_inference(
-    S3GenSessionCache & cache,
-    const S3FlowEncoderWeights & encoder_weights,
-    const S3FlowDecoderWeights & decoder_weights,
-    const HiFTVocoderComponent & vocoder,
-    const EmbedReferenceOutputs & ref_dict,
-    const std::vector<int32_t> & speech_tokens,
-    int64_t speech_token_count,
-    engine::core::BackendConfig backend,
-    S3GenTimingBreakdown * timing = nullptr);
+    bool is_meanflow() const;
+    S3FlowEncoderOutputs encode(
+        const std::vector<float> & embeddings, int64_t frames,
+        int64_t capacity_frames, int64_t hidden_size) const;
+    S3Token2MelOutputs token_to_mel(
+        const EmbedReferenceOutputs & reference,
+        const std::vector<int32_t> & speech_tokens, int64_t speech_token_count,
+        int64_t num_steps = 10, float cfg_rate = 0.7f, bool cosine_schedule = true,
+        const std::vector<float> & full_noise = {}, uint64_t flow_seed = 0,
+        S3GenTimingBreakdown * timing = nullptr) const;
+    modules::HiftVocoderOutput decode_waveform(
+        const std::vector<float> & mel, int64_t frames,
+        uint64_t seed = 0, uint64_t prior_noise_values = 0) const;
+    S3GenInferenceOutputs synthesize(
+        const EmbedReferenceOutputs & reference,
+        const std::vector<int32_t> & speech_tokens, int64_t speech_token_count,
+        int64_t num_steps = 10, float cfg_rate = 0.7f, bool cosine_schedule = true,
+        const std::vector<float> & full_noise = {}, uint64_t flow_seed = 0,
+        uint64_t vocoder_seed = 0, S3GenTimingBreakdown * timing = nullptr) const;
+
+    const modules::HiftVocoderComponent & vocoder() const;
+    void release_flow_graphs() const;
+    void release_vocoder_graphs() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace engine::codecs::s3gen

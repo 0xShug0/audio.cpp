@@ -5,7 +5,7 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/chatterbox/components.h"
-#include "engine/framework/codecs/s3gen_flow.h"
+#include "engine/framework/codecs/s3gen_runtime.h"
 
 #include <chrono>
 #include <cmath>
@@ -179,18 +179,10 @@ std::unique_ptr<ChatterboxTTSComponent> make_chatterbox_component_for_language(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
-    auto flow_encoder = engine::codecs::s3gen::load_s3_flow_encoder_weights(
-        *assets.s3gen_weights,
-        execution_context,
-        component_weight_storage_type);
-    auto flow_decoder = engine::codecs::s3gen::load_s3_flow_decoder_weights(
-        *assets.s3gen_weights,
-        execution_context,
-        component_weight_storage_type);
-    auto hift = HiFTVocoderComponent::load_from_source(
-        assets.s3gen_weights,
-        execution_context,
-        component_weight_storage_type);
+    engine::codecs::s3gen::S3GenConfig s3gen_config;
+    s3gen_config.weight_storage_type = component_weight_storage_type;
+    auto s3gen = std::make_unique<engine::codecs::s3gen::S3GenRuntime>(
+        assets.s3gen_weights, execution_context, s3gen_config);
     auto campplus_encoder = CAMPPlusEncoderComponent::load_from_source(
         assets.s3gen_weights,
         execution_context,
@@ -202,9 +194,7 @@ std::unique_ptr<ChatterboxTTSComponent> make_chatterbox_component_for_language(
         std::move(voice_encoder),
         std::move(s3_tokenizer),
         std::move(campplus_encoder),
-        std::move(flow_encoder),
-        std::move(flow_decoder),
-        std::move(hift),
+        std::move(s3gen),
         make_prompt_prep_config(options),
         execution_context,
         mem_saver);
@@ -220,18 +210,10 @@ std::unique_ptr<ChatterboxVCComponent> make_chatterbox_vc_component(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
-    auto flow_encoder = engine::codecs::s3gen::load_s3_flow_encoder_weights(
-        *assets.s3gen_weights,
-        execution_context,
-        component_weight_storage_type);
-    auto flow_decoder = engine::codecs::s3gen::load_s3_flow_decoder_weights(
-        *assets.s3gen_weights,
-        execution_context,
-        component_weight_storage_type);
-    auto hift = HiFTVocoderComponent::load_from_source(
-        assets.s3gen_weights,
-        execution_context,
-        component_weight_storage_type);
+    engine::codecs::s3gen::S3GenConfig s3gen_config;
+    s3gen_config.weight_storage_type = component_weight_storage_type;
+    auto s3gen = std::make_unique<engine::codecs::s3gen::S3GenRuntime>(
+        assets.s3gen_weights, execution_context, s3gen_config);
     auto campplus_encoder = CAMPPlusEncoderComponent::load_from_source(
         assets.s3gen_weights,
         execution_context,
@@ -240,11 +222,8 @@ std::unique_ptr<ChatterboxVCComponent> make_chatterbox_vc_component(
     return std::make_unique<ChatterboxVCComponent>(
         std::move(s3_tokenizer),
         std::move(campplus_encoder),
-        std::move(flow_encoder),
-        std::move(flow_decoder),
-        std::move(hift),
+        std::move(s3gen),
         make_prompt_prep_config(options),
-        execution_context,
         mem_saver);
 }
 

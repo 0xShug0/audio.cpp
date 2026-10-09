@@ -5,7 +5,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/models/chatterbox/assets.h"
-#include "engine/framework/codecs/s3gen_hift_runtime.h"
+#include "engine/framework/codecs/s3gen_runtime.h"
 
 #include <cstdint>
 #include <memory>
@@ -19,9 +19,6 @@ struct HiftVocoderWeights;
 namespace engine::models::chatterbox {
 
 using codecs::s3gen::EmbedReferenceOutputs;
-using codecs::s3gen::HiFTVocoderOutputs;
-using codecs::s3gen::HiFTVocoderComponent;
-using codecs::s3gen::HiFTVocoderComponentWeights;
 
 namespace components {
 struct S3TokenizerV2Weights;

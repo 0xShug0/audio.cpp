@@ -2,8 +2,6 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/modules/vocoders/hift_vocoder.h"
-#include "engine/framework/codecs/s3gen_flow.h"
 #include "engine/framework/codecs/s3gen_runtime.h"
 
 #include <cstdint>
@@ -13,9 +11,7 @@
 namespace engine::community_models::chatterbox_turbo {
 
 // Loads and runs Chatterbox Turbo's S3Gen half (speech tokens -> waveform) by delegating to the
-// shared framework flow encoder/decoder and HiFT vocoder code (architecturally
-// identical apart from the meanflow decoder branch already added to
-// engine::codecs::s3gen::S3FlowDecoderWeights). The native, repacked GGUF (see
+// shared framework S3Gen runtime's meanflow decoder and HiFT vocoder. The native, repacked GGUF (see
 // tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py) stores S3Gen tensors
 // under the same names those loaders already expect, so no name translation is needed here.
 //
@@ -37,11 +33,7 @@ public:
         uint64_t vocoder_seed) const;
 
 private:
-    std::shared_ptr<const engine::codecs::s3gen::S3FlowEncoderWeights> encoder_weights_;
-    std::shared_ptr<const engine::codecs::s3gen::S3FlowDecoderWeights> decoder_weights_;
-    std::shared_ptr<engine::modules::HiftVocoderComponent> vocoder_;
-    mutable engine::codecs::s3gen::S3GenSessionCache cache_;
-    const engine::core::ExecutionContext * execution_context_ = nullptr;
+    std::unique_ptr<engine::codecs::s3gen::S3GenRuntime> runtime_;
 };
 
 }  // namespace engine::community_models::chatterbox_turbo

@@ -63,22 +63,13 @@ engine::core::BackendMemorySnapshot capture_backend_memory_snapshot(const engine
 
 }  // namespace
 
-struct ChatterboxTTSComponent::State {
-    explicit State(engine::core::BackendConfig backend)
-        : s3_cache(backend) {}
-
-    engine::codecs::s3gen::S3GenSessionCache s3_cache;
-};
-
 ChatterboxTTSComponent::ChatterboxTTSComponent(
     std::shared_ptr<const T3InferenceWeights> t3_weights,
     std::shared_ptr<const ChatterboxEnglishTokenizerModel> tokenizer,
     engine::models::chatterbox::VoiceEncoderComponent voice_encoder,
     engine::models::chatterbox::S3TokenizerComponent tokenizer_component,
     engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder,
-    std::shared_ptr<const engine::codecs::s3gen::S3FlowEncoderWeights> flow_encoder_weights,
-    std::shared_ptr<const engine::codecs::s3gen::S3FlowDecoderWeights> flow_decoder_weights,
-    engine::models::chatterbox::HiFTVocoderComponent vocoder,
+    std::unique_ptr<engine::codecs::s3gen::S3GenRuntime> s3gen,
     ChatterboxPromptPrepConfig prompt_prep_config,
     const engine::core::ExecutionContext & execution_context,
     bool mem_saver)
@@ -91,17 +82,11 @@ ChatterboxTTSComponent::ChatterboxTTSComponent(
           std::move(tokenizer_component),
           std::move(speaker_encoder),
           prompt_prep_config),
-      flow_encoder_weights_(std::move(flow_encoder_weights)),
-      flow_decoder_weights_(std::move(flow_decoder_weights)),
-      vocoder_(std::move(vocoder)),
+      s3gen_(std::move(s3gen)),
       execution_context_(&execution_context),
-      mem_saver_(mem_saver),
-      state_(std::make_shared<State>(execution_context.config())) {
+      mem_saver_(mem_saver) {
     if (!tokenizer_) {
         throw std::runtime_error("ChatterboxTtsComponent requires text tokenizer");
-    }
-    if (!flow_encoder_weights_ || !flow_decoder_weights_) {
-        throw std::runtime_error("ChatterboxTtsComponent requires S3 flow weights");
     }
 }
 
@@ -217,10 +202,7 @@ ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone_impl(
     engine::codecs::s3gen::S3GenTimingBreakdown s3gen_timing;
     const auto token2mel_memory_before = capture_backend_memory_snapshot(execution_context_);
     const auto token2mel_started = std::chrono::steady_clock::now();
-    const auto mel = engine::codecs::s3gen::compute_s3_token2mel_inference(
-        state_->s3_cache,
-        *flow_encoder_weights_,
-        *flow_decoder_weights_,
+    const auto mel = s3gen_->token_to_mel(
         conds.gen,
         outputs.cleaned_speech_tokens,
         static_cast<int64_t>(outputs.cleaned_speech_tokens.size()),
@@ -229,29 +211,26 @@ ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone_impl(
         true,
         {},
         config.seed,
-        execution_context_ != nullptr ? execution_context_->config() : engine::core::BackendConfig{},
         &s3gen_timing);
     s3gen_timing.token2mel_ms =
         engine::debug::elapsed_ms(token2mel_started);
     const auto token2mel_memory_after = capture_backend_memory_snapshot(execution_context_);
     if (mem_saver_) {
-        state_->s3_cache.release_runtime_graphs();
+        s3gen_->release_flow_graphs();
     }
     const uint64_t prior_noise_values =
         static_cast<uint64_t>(mel.channels * (conds.gen.prompt_feat_frames + mel.frames));
     const auto vocoder_memory_before = capture_backend_memory_snapshot(execution_context_);
     const auto vocoder_started = std::chrono::steady_clock::now();
-    const auto vocoder_outputs = vocoder_.infer(
+    const auto vocoder_outputs = s3gen_->decode_waveform(
         mel.mel,
-        1,
         mel.frames,
         config.seed,
-        prior_noise_values,
-        {});
+        prior_noise_values);
     s3gen_timing.vocoder_ms =
         engine::debug::elapsed_ms(vocoder_started);
     if (mem_saver_) {
-        vocoder_.release_runtime_cache();
+        s3gen_->release_vocoder_graphs();
     }
     const auto vocoder_memory_after = capture_backend_memory_snapshot(execution_context_);
     outputs.s3gen_ms =
@@ -264,11 +243,6 @@ ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone_impl(
     }
     outputs.waveform = vocoder_outputs.waveform;
     outputs.samples = vocoder_outputs.samples;
-    outputs.source = vocoder_outputs.source;
-    outputs.source_channels = vocoder_outputs.source_channels;
-    outputs.source_frames = vocoder_outputs.source_frames;
-    outputs.post = vocoder_outputs.post;
-    outputs.post_frames = vocoder_outputs.post_frames;
     outputs.mel = mel.mel;
     outputs.mel_channels = mel.channels;
     outputs.mel_frames = mel.frames;
