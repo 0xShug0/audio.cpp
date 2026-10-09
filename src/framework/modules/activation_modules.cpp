@@ -1,4 +1,6 @@
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/structural_modules.h"
 
 #include <stdexcept>
 
@@ -627,6 +629,91 @@ core::TensorValue Snake1dModule::build(
     const auto s2 = core::wrap_tensor(ggml_mul(ctx.ggml, s.tensor, s.tensor), input_f32.shape, GGML_TYPE_F32);
     const auto frac = core::wrap_tensor(ggml_div(ctx.ggml, s2.tensor, alpha_broadcast.tensor), input_f32.shape, GGML_TYPE_F32);
     return core::wrap_tensor(ggml_add(ctx.ggml, input_f32.tensor, frac.tensor), input_f32.shape, GGML_TYPE_F32);
+}
+
+PReluModule::PReluModule(PReluConfig config) : config_(config) {}
+
+const core::ModuleSchema & PReluModule::schema() const noexcept {
+    return static_schema();
+}
+
+const core::ModuleSchema & PReluModule::static_schema() noexcept {
+    static const core::ModulePortSpec inputs[] = {
+        {"input", core::PortKind::Activation, false},
+        {"slope", core::PortKind::Parameter, false},
+        {"negative_one", core::PortKind::Parameter, true},
+    };
+    static const core::ModuleSchema schema = {
+        "PReLU", "nn.activation", inputs, 3, kActivationOutputs, 1,
+        "Applies learned scalar or channel-wise negative slopes.",
+    };
+    return schema;
+}
+
+core::TensorValue PReluModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & slope,
+    const std::optional<core::TensorValue> & negative_one) const {
+    core::validate_rank_between(input, 1, core::kMaxTensorRank, "input");
+    if (config_.channel_axis >= input.shape.rank) {
+        throw std::runtime_error("PReLU channel axis is outside input rank");
+    }
+    if (config_.lowering == PReluLowering::TensorScaleRelu &&
+        (!negative_one || negative_one->shape.num_elements() != 1)) {
+        throw std::runtime_error("PReLU tensor-scale lowering requires a scalar negative-one tensor");
+    }
+    auto alpha = slope;
+    if (config_.lowering == PReluLowering::TensorScaleRelu) {
+        auto negation = *negative_one;
+        if (!same_shape(negation.shape, alpha.shape)) {
+            auto shape = alpha.shape;
+            for (size_t axis = 0; axis < shape.rank; ++axis) shape.dims[axis] = 1;
+            negation = RepeatModule({alpha.shape}).build(ctx, core::reshape_tensor(ctx, negation, shape));
+        }
+        alpha = MulModule().build(ctx, alpha, negation);
+    }
+    if (!same_shape(alpha.shape, input.shape)) {
+        const auto channels = alpha.shape.num_elements();
+        if (channels != 1 && channels != input.shape.dims[config_.channel_axis]) {
+            throw std::runtime_error("PReLU slope must be scalar or match the channel dimension");
+        }
+        auto shape = input.shape;
+        for (size_t axis = 0; axis < shape.rank; ++axis) shape.dims[axis] = 1;
+        shape.dims[config_.channel_axis] = channels;
+        alpha = core::reshape_tensor(ctx, alpha, shape);
+        alpha = RepeatModule({input.shape}).build(ctx, alpha);
+    }
+    const auto x = core::ensure_backend_addressable_layout(ctx, input);
+    const auto positive = ReluModule().build(ctx, x);
+    core::TensorValue negative;
+    switch (config_.lowering) {
+        case PReluLowering::SubtractPositive:
+            negative = core::wrap_tensor(ggml_sub(ctx.ggml, x.tensor, positive.tensor), x.shape);
+            break;
+        case PReluLowering::NegateRelu:
+            negative = ReluModule().build(ctx, core::wrap_tensor(ggml_neg(ctx.ggml, x.tensor), x.shape));
+            break;
+        case PReluLowering::ScaleRelu:
+            negative = ReluModule().build(ctx, core::wrap_tensor(ggml_scale(ctx.ggml, x.tensor, -1), x.shape));
+            break;
+        case PReluLowering::TensorScaleRelu: {
+            auto shape = x.shape;
+            for (size_t axis = 0; axis < shape.rank; ++axis) shape.dims[axis] = 1;
+            auto negation = core::reshape_tensor(ctx, *negative_one, shape);
+            negative = ReluModule().build(ctx, MulModule().build(ctx, x,
+                RepeatModule({x.shape}).build(ctx, negation)));
+            break;
+        }
+    }
+    negative = MulModule().build(ctx, negative, alpha);
+    if (config_.lowering == PReluLowering::NegateRelu) {
+        return core::wrap_tensor(ggml_sub(ctx.ggml, positive.tensor, negative.tensor), x.shape);
+    }
+    if (config_.lowering == PReluLowering::ScaleRelu) {
+        negative = core::wrap_tensor(ggml_scale(ctx.ggml, negative.tensor, -1), x.shape);
+    }
+    return AddModule().build(ctx, positive, negative);
 }
 
 const core::ModuleSchema & Snake1dModule::static_schema() noexcept {

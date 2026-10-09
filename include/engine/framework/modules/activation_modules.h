@@ -27,6 +27,34 @@ struct LeakyReluConfig {
     float negative_slope = 0.01F;
 };
 
+// Preserve the caller's arithmetic sequence when extracting existing graphs.
+enum class PReluLowering {
+    SubtractPositive,
+    NegateRelu,
+    ScaleRelu,
+    TensorScaleRelu,
+};
+
+struct PReluConfig {
+    size_t channel_axis = 1;
+    PReluLowering lowering = PReluLowering::SubtractPositive;
+};
+
+class PReluModule {
+public:
+    explicit PReluModule(PReluConfig config = {});
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const core::TensorValue & slope,
+        const std::optional<core::TensorValue> & negative_one = std::nullopt) const;
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    PReluConfig config_;
+};
+
 class LeakyReluModule {
 public:
     explicit LeakyReluModule(LeakyReluConfig config = {});

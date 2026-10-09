@@ -149,15 +149,8 @@ private:
         const int64_t channels = weight.shape.dims[0];
         x = modules::Conv2dModule({x.shape.dims[1], channels, 1, 1}).build(ctx, x,
             {weight, weights_.at(prefix + ".0.bias")});
-        const auto positive = modules::ReluModule().build(ctx, x);
-        auto negative = modules::MulModule().build(ctx, x,
-            modules::RepeatModule({x.shape}).build(ctx,
-                core::reshape_tensor(ctx, weights_.at("negative_one"), TensorShape::from_dims({1, 1, 1, 1}))));
-        negative = modules::ReluModule().build(ctx, negative);
-        auto slope = modules::MulModule().build(ctx, weights_.at(prefix + ".1.weight"), weights_.at("negative_one"));
-        negative = modules::MulModule().build(ctx, negative, modules::RepeatModule({x.shape}).build(ctx,
-            core::reshape_tensor(ctx, slope, TensorShape::from_dims({1, 1, 1, 1}))));
-        x = modules::AddModule().build(ctx, positive, negative);
+        x = modules::PReluModule({1, modules::PReluLowering::TensorScaleRelu})
+            .build(ctx, x, weights_.at(prefix + ".1.weight"), weights_.at("negative_one"));
         const auto shape = x.shape;
         x = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
         const int64_t features = channels * shape.dims[3];
