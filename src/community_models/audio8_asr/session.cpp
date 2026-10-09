@@ -200,10 +200,12 @@ Audio8ASRSession::Audio8ASRSession(
       assets_(require_assets(std::move(assets))),
       frontend_(assets_->encoder_assets),
       audio_encoder_(
-          assets_->encoder_assets,
+          assets_->encoder_assets->model_weights,
+          assets_->encoder_assets->config.audio_encoder,
           execution_context(),
           encoder_graph_arena_bytes(RuntimeSessionBase::options()),
-          parse_encoder_weight_storage(RuntimeSessionBase::options())),
+          parse_encoder_weight_storage(RuntimeSessionBase::options()),
+          assets_->encoder_assets->config.hf_transformers_layout),
       projector_(
           assets_->resources.open_tensor_source("weights"),
           assets_->config.tower,

@@ -530,6 +530,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/causal_decoder_runtime.cpp
     src/framework/modules/transformers/qwen35_decoder_runtime.cpp
     src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
+    src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/transformers/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
@@ -1792,7 +1793,6 @@ audiocpp_add_model(qwen3_asr
         src/models/qwen3_asr/assets.cpp
         src/models/qwen3_asr/tokenizer_text.cpp
         src/models/qwen3_asr/frontend_whisper.cpp
-        src/models/qwen3_asr/audio_encoder.cpp
         src/models/qwen3_asr/thinker.cpp
         src/models/qwen3_asr/prompt_asr.cpp
         src/models/qwen3_asr/postprocess.cpp
