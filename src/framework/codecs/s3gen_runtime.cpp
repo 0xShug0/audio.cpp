@@ -3,6 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
+#include "engine/framework/runtime/session.h"
 #include "engine/framework/sampling/torch_random.h"
 
 #include "ggml.h"
