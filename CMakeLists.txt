@@ -20,6 +20,30 @@ option(AUDIOCPP_DEPLOYMENT_BUILD
 # Model specs remain editable runtime data in normal builds. The converter always
 # carries the source catalog so the conversion binary is portable. Deployment builds
 # additionally compile the catalog into engine_runtime as a fallback for CLI/server.
+# MSVC error C2026 rejects a string literal longer than 16380 characters.
+# Adjacent literals are concatenated, so each spec is emitted in chunks.
+function(audiocpp_embedded_spec_entry out_var family json)
+    set(chunk_size 16000)
+    string(LENGTH "${json}" total)
+    set(offset 0)
+    set(literals "")
+    if(total EQUAL 0)
+        set(literals "\"\"")
+    endif()
+    while(offset LESS total)
+        math(EXPR remaining "${total} - ${offset}")
+        if(remaining GREATER chunk_size)
+            set(length "${chunk_size}")
+        else()
+            set(length "${remaining}")
+        endif()
+        string(SUBSTRING "${json}" "${offset}" "${length}" piece)
+        string(APPEND literals "R\"AUDIOCPP_SPEC(${piece})AUDIOCPP_SPEC\" ")
+        math(EXPR offset "${offset} + ${length}")
+    endwhile()
+    set("${out_var}" "    {\"${family}\", ${literals}},\n" PARENT_SCOPE)
+endfunction()
+
 file(GLOB AUDIOCPP_MODEL_SPEC_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/model_specs/*.json")
 set(AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES "")
 set(AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES "")
@@ -27,13 +51,11 @@ set(AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES "")
 foreach(AUDIOCPP_MODEL_SPEC_FILE IN LISTS AUDIOCPP_MODEL_SPEC_FILES)
     get_filename_component(AUDIOCPP_MODEL_SPEC_FAMILY "${AUDIOCPP_MODEL_SPEC_FILE}" NAME_WE)
     file(READ "${AUDIOCPP_MODEL_SPEC_FILE}" AUDIOCPP_MODEL_SPEC_JSON)
-    string(APPEND AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES
-        "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
-    string(APPEND AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES
-        "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
+    audiocpp_embedded_spec_entry(AUDIOCPP_MODEL_SPEC_ENTRY "${AUDIOCPP_MODEL_SPEC_FAMILY}" "${AUDIOCPP_MODEL_SPEC_JSON}")
+    string(APPEND AUDIOCPP_CONVERTER_MODEL_SPEC_ENTRIES "${AUDIOCPP_MODEL_SPEC_ENTRY}")
+    string(APPEND AUDIOCPP_NATIVE_PACKAGE_SPEC_ENTRIES "${AUDIOCPP_MODEL_SPEC_ENTRY}")
     if (AUDIOCPP_DEPLOYMENT_BUILD)
-        string(APPEND AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES
-            "    {\"${AUDIOCPP_MODEL_SPEC_FAMILY}\", R\"AUDIOCPP_SPEC(${AUDIOCPP_MODEL_SPEC_JSON})AUDIOCPP_SPEC\"},\n")
+        string(APPEND AUDIOCPP_BUILTIN_MODEL_SPEC_ENTRIES "${AUDIOCPP_MODEL_SPEC_ENTRY}")
     endif()
 endforeach()
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
