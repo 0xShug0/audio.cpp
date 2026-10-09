@@ -132,6 +132,7 @@ Model weights keep the license of their original release, which is separate from
 | **[hviske_asr_v6](docs/models/hviske_asr_v6.md)** | ASR | da | Hviske v6 | GGUF BF16 / Q8 |
 | **index_echo** | ASR, Translate | zh → en, es, ja | Index-Echo-S2TT 2B<br>Index-Echo-S2TT 9B | GGUF original/Q8_0/Q4_K |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
+| **firered_vad** | VAD | lang agnostic | FireRed VAD / Stream-VAD | GGUF F32/F16/Q8, Stream |
 | **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
 | **moonshine_asr** | ASR | en | Moonshine Streaming Tiny/Small/Medium | GGUF Q8, Stream |
 | **moss_transcribe_diarize** | ASR | auto, 50+ languages | MOSS-Transcribe-Diarize with speaker labels and timestamps | GGUF BF16/Q8/Q4_K, Stream |

@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "family": "firered_vad",
+  "display_name": "FireRed VAD",
+  "description": "DFSMN speech activity detection with offline and causal Stream-VAD checkpoints.",
+  "category": "audio_tools",
+  "status": "experimental",
+  "tasks": [
+    "vad"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "vad": [
+      "speech_segments"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "threshold",
+        "type": "float",
+        "description": "Speech probability threshold; defaults to 0.4 for VAD and 0.5 for Stream-VAD.",
+        "required": false,
+        "min": 0,
+        "max": 1
+      },
+      {
+        "name": "smooth_window_ms",
+        "type": "int",
+        "description": "Trailing probability smoothing window in milliseconds, rounded to the nearest 10 ms.",
+        "required": false,
+        "default": 50,
+        "min": 10
+      },
+      {
+        "name": "min_speech_duration_ms",
+        "type": "int",
+        "description": "Speech confirmation duration, rounded to the nearest 10 ms; defaults to 200 ms for VAD and 80 ms for Stream-VAD.",
+        "required": false,
+        "min": 10
+      },
+      {
+        "name": "max_speech_duration_sec",
+        "type": "float",
+        "description": "Maximum speech duration in seconds, rounded to the nearest 10 ms.",
+        "required": false,
+        "default": 20,
+        "min": 0.02
+      },
+      {
+        "name": "min_silence_duration_ms",
+        "type": "int",
+        "description": "Silence confirmation duration in milliseconds, rounded to the nearest 10 ms.",
+        "required": false,
+        "default": 200,
+        "min": 0
+      },
+      {
+        "name": "merge_silence_duration_ms",
+        "type": "int",
+        "description": "Merge shorter internal silence gaps in offline VAD; milliseconds rounded to the nearest 10 ms.",
+        "required": false,
+        "default": 0,
+        "min": 0
+      },
+      {
+        "name": "speech_pad_ms",
+        "type": "int",
+        "description": "Extend offline VAD segments on each side; milliseconds rounded to the nearest 10 ms.",
+        "required": false,
+        "default": 0,
+        "min": 0
+      },
+      {
+        "name": "speech_start_pad_ms",
+        "type": "int",
+        "description": "Stream-VAD start padding in milliseconds, rounded to the nearest 10 ms and at least the smoothing window.",
+        "required": false,
+        "default": 50,
+        "min": 0
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Maximum network duration per offline chunk in seconds, rounded to the nearest 10 ms; each chunk resets network history, matching upstream.",
+        "required": false,
+        "default": 300,
+        "min": 0.01
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "firered_vad_f32",
+      "display_name": "FireRed VAD GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "FireRedVAD-GGUF",
+      "files": [
+        "FireRedVAD-GGUF/firered-vad-f32.gguf"
+      ],
+      "strip_prefix": "FireRedVAD-GGUF"
+    },
+    {
+      "id": "firered_stream_vad_f32",
+      "display_name": "FireRed Stream-VAD GGUF F32",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "FireRedVAD-GGUF",
+      "files": [
+        "FireRedVAD-GGUF/firered-stream-vad-f32.gguf"
+      ],
+      "strip_prefix": "FireRedVAD-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "VAD",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/firered_vad.md"
+    ],
+    "recommended_package": "firered_vad_f32"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    }
+  ]
+}

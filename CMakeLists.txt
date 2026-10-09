@@ -707,6 +707,16 @@ audiocpp_add_model(tone_color_vc
         engine::models::tone_color_vc::make_tone_color_vc_loader
 )
 
+audiocpp_add_model(firered_vad
+    SOURCES
+        src/models/firered_vad/runtime.cpp
+        src/models/firered_vad/session.cpp
+    INCLUDES
+        engine/models/firered_vad/session.h
+    LOADERS
+        engine::models::firered_vad::make_firered_vad_loader
+)
+
 audiocpp_add_model(pulsevad
     SOURCES
         src/models/pulsevad/runtime.cpp
@@ -2903,6 +2913,13 @@ if (ENGINE_ENABLE_OPENMP)
 endif()
 
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
+    if (firered_vad IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(firered_vad_probe tests/firered_vad/probe.cpp)
+        target_link_libraries(firered_vad_probe PRIVATE engine_runtime ggml)
+        add_executable(firered_vad_rules_test tests/firered_vad/test_rules.cpp)
+        target_link_libraries(firered_vad_rules_test PRIVATE engine_runtime ggml)
+        add_test(NAME firered_vad_rules_test COMMAND firered_vad_rules_test)
+    endif()
     if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(audiocpp_kitten_tts2_prepare_voices tools/community_models/prepare_kitten_tts2_voices.cpp)
         audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
@@ -3151,6 +3168,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     # platform-safe: the Metal timing section skips itself when Metal is absent.
     add_engine_unittest(conv1d_pertap_fast_path_test tests/unittests/test_conv1d_pertap_fast_path.cpp)
     add_test(NAME conv1d_pertap_fast_path_test COMMAND conv1d_pertap_fast_path_test)
+    add_engine_unittest(kaldi_fbank_sparse_test tests/unittests/test_kaldi_fbank_sparse.cpp)
+    add_test(NAME kaldi_fbank_sparse_test COMMAND kaldi_fbank_sparse_test)
 
     if(audio8_tts IN_LIST AUDIOCPP_LINKED_MODELS)
         # Regression test for the Falcon-H1 host KV cache append (per-head re-stride).

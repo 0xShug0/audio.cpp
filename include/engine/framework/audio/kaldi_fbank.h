@@ -28,6 +28,7 @@ struct KaldiFbankOptions {
   bool apply_cmvn = false;
   std::vector<float> cmvn_shift;
   std::vector<float> cmvn_scale;
+  bool sparse_filterbank = false;
 };
 
 struct KaldiFbankFeatures {

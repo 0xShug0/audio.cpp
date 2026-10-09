@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // Framing and LFR structure adapted from handy-computer/transcribe.cpp at
@@ -315,6 +316,16 @@ KaldiFbankFeatures extract_kaldi_fbank(const std::vector<float> &audio,
   const auto filters =
       make_mel_filterbank(options.sample_rate, fft_size, options.num_mels,
                           options.low_frequency, options.high_frequency);
+  std::vector<std::vector<std::pair<int, float>>> sparse_filters;
+  if (options.sparse_filterbank) {
+    sparse_filters.resize(static_cast<size_t>(options.num_mels));
+    for (int mel = 0; mel < options.num_mels; ++mel) {
+      for (int bin = 0; bin < spectrum_bins; ++bin) {
+        const float weight = filters[static_cast<size_t>(mel) * spectrum_bins + bin];
+        if (weight != 0.0F) sparse_filters[static_cast<size_t>(mel)].emplace_back(bin, weight);
+      }
+    }
+  }
 
   std::vector<float> framed(checked_product(static_cast<size_t>(mel_frames),
                                             static_cast<size_t>(fft_size),
@@ -381,8 +392,14 @@ KaldiFbankFeatures extract_kaldi_fbank(const std::vector<float> &audio,
       const float *filter =
           filters.data() + static_cast<size_t>(mel_bin) * spectrum_bins;
       float energy = 0.0F;
-      for (int fft_bin = 0; fft_bin < spectrum_bins; ++fft_bin) {
-        energy += filter[fft_bin] * std::norm(frame_spectrum[fft_bin]);
+      if (options.sparse_filterbank) {
+        for (const auto & [bin, weight] : sparse_filters[static_cast<size_t>(mel_bin)]) {
+          energy += weight * std::norm(frame_spectrum[bin]);
+        }
+      } else {
+        for (int fft_bin = 0; fft_bin < spectrum_bins; ++fft_bin) {
+          energy += filter[fft_bin] * std::norm(frame_spectrum[fft_bin]);
+        }
       }
       mel_row[mel_bin] = std::log(std::max(energy, kMelEpsilon));
     }
