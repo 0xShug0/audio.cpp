@@ -74,14 +74,20 @@ enum class Lfm2Prefill {
     // depends on the prompt up to its end, never on the cache's length, and
     // attention holds 256 x prompt scores at most.
     //
-    // The runtime keeps a host copy of what each full block of the last
-    // chunked prefill wrote (its keys and values, 2 x attention layers x
-    // kv_heads x head_dim floats per position, and the conv state after it),
-    // with the block's inputs. The next chunked prefill restores the blocks it
-    // starts with that have the same inputs, bit for bit, instead of running
-    // them: the same bits, as a block depends only on its inputs and the
-    // blocks before it. Its last block always runs. A one-shot prefill
-    // neither reads nor replaces them.
+    // The runtime keeps a host copy of what each full block of a chunked
+    // prefill wrote (its keys and values, 2 x attention layers x kv_heads x
+    // head_dim floats per position, and the conv state after it), with the
+    // block's inputs, for up to `prefill_cache_slots` prompts, the least
+    // recently used dropped first. A chunked prefill compares its full blocks
+    // from the start with each kept prompt's, and restores the blocks it
+    // starts with that have the same inputs, bit for bit, from the one that
+    // starts with the most of them, instead of running them: the same bits,
+    // as a block depends only on its inputs and the blocks before it. Its
+    // last block always runs. Its own full blocks after them go on the end of
+    // that prompt when it ends there (a conversation's next turn), or else
+    // into a new kept prompt that shares the restored ones (another
+    // conversation that starts the same); a kept prompt that holds all of
+    // them stays as it is. A one-shot prefill neither reads nor changes them.
     Chunked,
 };
 
@@ -99,7 +105,8 @@ public:
     // generated audio frames back. With `cpu_repack` (lfm2_audio.cpu_repack),
     // the CPU multiplies the matrices with the kernels of ggml's CPU extra
     // buffer types (repacked, or AMX) where they take the weight's type and
-    // shape.
+    // shape. It keeps the chunked prefills of up to `prefill_cache_slots`
+    // prompts (see Lfm2Prefill::Chunked); 0 keeps none.
     Lfm2BackboneRuntime(
         std::shared_ptr<const assets::TensorSource> source,
         const Lfm2BackboneConfig & config,
@@ -107,7 +114,8 @@ public:
         std::shared_ptr<const assets::TensorSource> audio_embedding = nullptr,
         int64_t codebooks = 0,
         int64_t audio_vocab_size = 0,
-        bool cpu_repack = true);
+        bool cpu_repack = true,
+        size_t prefill_cache_slots = 1);
     ~Lfm2BackboneRuntime();
 
     Lfm2BackboneRuntime(const Lfm2BackboneRuntime &) = delete;
@@ -146,7 +154,7 @@ public:
     // in the order of their first weights, and how many each holds.
     [[nodiscard]] std::vector<std::pair<std::string, size_t>> extra_weight_buffers() const;
 
-    // The prompt steps the last start() restored from the chunked prefill
+    // The prompt steps the last start() restored from the chunked prefills
     // before it (see Lfm2Prefill::Chunked) rather than ran, a multiple of
     // 256; 0 for a one-shot prefill.
     [[nodiscard]] int64_t resumed_prefill_steps() const noexcept;

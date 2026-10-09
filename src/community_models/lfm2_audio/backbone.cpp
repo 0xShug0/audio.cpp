@@ -24,11 +24,13 @@
 #include <cmath>
 #include <cstring>
 #include <iterator>
+#include <list>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -828,11 +830,13 @@ struct Lfm2BackboneRuntime::Impl {
          const Lfm2BackboneConfig & config_in,
          core::ExecutionContext & execution_in,
          const AudioEmbeddingSource & audio,
-         bool cpu_repack)
+         bool cpu_repack,
+         size_t prefill_cache_slots)
         : source(std::move(source_in)),
           config(config_in),
           execution(execution_in),
-          weights(load_weights(*source, config, execution_in, audio, cpu_repack)) {}
+          weights(load_weights(*source, config, execution_in, audio, cpu_repack)),
+          prefill_slots(prefill_cache_slots) {}
 
     DecodeGraph & require_started() {
         if (decode == nullptr || !started) {
@@ -865,10 +869,10 @@ struct Lfm2BackboneRuntime::Impl {
     //
     // A block computes the same bits from the same span on the same keys,
     // values and conv state (see BlockGraph), whatever the cache's length.
-    // So the leading blocks whose spans the last chunked prefill ran too
-    // are restored from what it left rather than run again: a next turn of
-    // a conversation starts with the turn before's prompt. The last block
-    // always runs, as its logits are the prefill's.
+    // So the leading blocks whose spans a kept prompt starts with too are
+    // restored from what its prefills left rather than run again: a next
+    // turn of a conversation starts with the turn before's prompt. The last
+    // block always runs, as its logits are the prefill's.
     std::vector<float> prefill_blocks(
         DecodeGraph & graph, const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, const std::vector<int32_t> & rows) {
         if (block_allocator == nullptr) {
@@ -883,17 +887,60 @@ struct Lfm2BackboneRuntime::Impl {
             return prompt_span(prompt, audio, rows, weights, config.hidden_size, begin, std::min(kPrefillBlockSteps, steps - begin));
         };
 
-        const auto most = std::min(static_cast<size_t>((steps - 1) / kPrefillBlockSteps), kept.size());
-        size_t resumed = 0;
-        while (resumed < most && same_span(kept[resumed].span, span_at(static_cast<int64_t>(resumed) * kPrefillBlockSteps))) {
-            ++resumed;
+        // The kept prompts that start with the most of this prompt's full
+        // blocks, `matched` of them, compared from the start, each block's
+        // span built once for all of them.
+        const auto full = static_cast<size_t>(steps / kPrefillBlockSteps);
+        std::vector<std::list<KeptPrompt>::iterator> longest;
+        for (auto kept_prompt = kept.begin(); kept_prompt != kept.end(); ++kept_prompt) {
+            longest.push_back(kept_prompt);
         }
 
-        kept.erase(kept.begin() + static_cast<std::ptrdiff_t>(resumed), kept.end());
+        size_t matched = 0;
+        while (matched < full && !longest.empty()) {
+            const auto span = span_at(static_cast<int64_t>(matched) * kPrefillBlockSteps);
+            std::vector<std::list<KeptPrompt>::iterator> longer;
+            std::copy_if(longest.begin(), longest.end(), std::back_inserter(longer), [&](const auto & kept_prompt) {
+                return kept_prompt->size() > matched && same_span((*kept_prompt)[matched]->span, span);
+            });
+            if (longer.empty()) {
+                break;
+            }
+
+            longest = std::move(longer);
+            ++matched;
+        }
+
+        // Of them, one that holds all of this prompt's full blocks or ends
+        // where they part (the turn before), else the most recent. This
+        // prompt continues that one, which becomes the most recent; it parts
+        // from any other.
+        auto from = kept.end();
+        bool continues = false;
+        if (matched > 0) {
+            const auto ends = std::find_if(longest.begin(), longest.end(),
+                                           [&](const auto & kept_prompt) { return matched == full || kept_prompt->size() == matched; });
+            continues = ends != longest.end();
+            from = continues ? *ends : longest.front();
+        }
+
+        if (continues) {
+            kept.splice(kept.begin(), kept, from);
+        }
+
         graph.clear();
-        restore(graph);
+        const auto resumed = std::min(matched, static_cast<size_t>((steps - 1) / kPrefillBlockSteps));
+        if (from != kept.end()) {
+            restore(graph, *from, resumed);
+        }
+
         resumed_steps = static_cast<int64_t>(resumed) * kPrefillBlockSteps;
 
+        // Its own full blocks from `matched` on go on the end of the prompt it
+        // continues, or else into a new kept prompt, made at the first of
+        // them, that starts with the matched blocks of the one it parts from;
+        // that one stays as it was.
+        KeptPrompt * into = continues ? &*from : nullptr;
         std::vector<float> logits;
         for (int64_t begin = resumed_steps; begin < steps; begin += kPrefillBlockSteps) {
             const int64_t length = std::min(kPrefillBlockSteps, steps - begin);
@@ -906,28 +953,63 @@ struct Lfm2BackboneRuntime::Impl {
             }
 
             // A shorter last block is never kept: the next turn's block
-            // there is longer, so it could not match.
-            if (length == kPrefillBlockSteps) {
-                keep(graph, std::move(span), begin);
+            // there is longer, so it could not match. Nor is a matched one,
+            // the last of a prompt of whole blocks, which runs again.
+            const bool own = begin >= static_cast<int64_t>(matched) * kPrefillBlockSteps;
+            if (length == kPrefillBlockSteps && own && prefill_slots > 0) {
+                if (into == nullptr) {
+                    // Copied before add_prompt, which may drop `from`.
+                    KeptPrompt shared;
+                    if (from != kept.end()) {
+                        shared.assign(from->begin(), from->begin() + static_cast<std::ptrdiff_t>(matched));
+                    }
+
+                    into = &add_prompt(std::move(shared));
+                }
+
+                // A kept prompt's blocks are in order from its start.
+                if (into->size() != static_cast<size_t>(begin / kPrefillBlockSteps)) {
+                    throw std::logic_error("LFM2-Audio kept prefill block out of place");
+                }
+
+                into->push_back(std::make_shared<const KeptBlock>(keep(graph, std::move(span), begin)));
             }
         }
 
         return logits;
     }
 
-    // A full block of the last chunked prefill: its span, the rows it wrote
-    // into each attention layer's keys and values, as the cache holds them,
-    // and the conv state it left.
+    // A full block of a chunked prefill: its span, the rows it wrote into
+    // each attention layer's keys and values, as the cache holds them, and
+    // the conv state it left.
     struct KeptBlock {
         PromptSpan span;
         std::vector<std::vector<float>> keys;
         std::vector<std::vector<float>> values;
         std::vector<std::vector<float>> conv_tails;
+
+        // The host memory it holds.
+        [[nodiscard]] size_t bytes() const {
+            size_t out = span.input_ids.size() * sizeof(int32_t) + span.audio_positions.size() * sizeof(int64_t) +
+                         span.audio_values.size() * sizeof(float) + span.frame_positions.size() * sizeof(int64_t) +
+                         span.frame_rows.size() * sizeof(int32_t);
+            for (const auto * part : {&keys, &values, &conv_tails}) {
+                for (const auto & rows : *part) {
+                    out += rows.size() * sizeof(float);
+                }
+            }
+
+            return out;
+        }
     };
+
+    // A kept prompt: the full blocks its chunked prefills ran, in order from
+    // its start. Prompts that start the same share those blocks.
+    using KeptPrompt = std::vector<std::shared_ptr<const KeptBlock>>;
 
     // After the block at `begin` has run, before anything else writes the
     // cache or the conv state.
-    void keep(const DecodeGraph & graph, PromptSpan span, int64_t begin) {
+    KeptBlock keep(const DecodeGraph & graph, PromptSpan span, int64_t begin) const {
         KeptBlock block;
         block.span = std::move(span);
         const auto read_rows = [&](const TensorValue & cache) {
@@ -942,13 +1024,13 @@ struct Lfm2BackboneRuntime::Impl {
         }
 
         block.conv_tails = graph.conv_tails();
-        kept.push_back(std::move(block));
+        return block;
     }
 
-    // The kept blocks into `graph`, just cleared, as running them would
-    // leave it.
-    void restore(DecodeGraph & graph) const {
-        if (kept.empty()) {
+    // The first `count` blocks of `blocks` into `graph`, just cleared, as
+    // running them would leave it.
+    void restore(DecodeGraph & graph, const KeptPrompt & blocks, size_t count) const {
+        if (count == 0) {
             return;
         }
 
@@ -956,15 +1038,43 @@ struct Lfm2BackboneRuntime::Impl {
             const size_t offset = block * static_cast<size_t>(kPrefillBlockSteps) * cache.tensor->nb[2];
             ggml_backend_tensor_set(cache.tensor, rows.data(), offset, rows.size() * sizeof(float));
         };
-        for (size_t block = 0; block < kept.size(); ++block) {
+        for (size_t block = 0; block < count; ++block) {
             for (size_t layer = 0; layer < graph.attention_layers(); ++layer) {
-                write_rows(graph.cache_key(layer), kept[block].keys[layer], block);
-                write_rows(graph.cache_value(layer), kept[block].values[layer], block);
+                write_rows(graph.cache_key(layer), blocks[block]->keys[layer], block);
+                write_rows(graph.cache_value(layer), blocks[block]->values[layer], block);
             }
         }
 
-        graph.set_conv_tails(kept.back().conv_tails);
-        graph.advance(static_cast<int64_t>(kept.size()) * kPrefillBlockSteps);
+        graph.set_conv_tails(blocks[count - 1]->conv_tails);
+        graph.advance(static_cast<int64_t>(count) * kPrefillBlockSteps);
+    }
+
+    // A new kept prompt, the most recent, and the least recently used ones
+    // past the slots dropped.
+    KeptPrompt & add_prompt(KeptPrompt blocks) {
+        kept.push_front(std::move(blocks));
+        while (kept.size() > prefill_slots) {
+            kept.pop_back();
+        }
+
+        return kept.front();
+    }
+
+    // How many prompts are kept, and the MiB of host memory their blocks
+    // take, each shared block once.
+    void log_kept() const {
+        std::unordered_set<const KeptBlock *> counted;
+        size_t bytes = 0;
+        for (const auto & kept_prompt : kept) {
+            for (const auto & block : kept_prompt) {
+                if (counted.insert(block.get()).second) {
+                    bytes += block->bytes();
+                }
+            }
+        }
+
+        debug::timing_log_scalar("lfm2_audio.prefill.kept_prompts", static_cast<int64_t>(kept.size()));
+        debug::timing_log_scalar("lfm2_audio.prefill.kept_mib", static_cast<double>(bytes) / (1024.0 * 1024.0));
     }
 
     std::shared_ptr<const assets::TensorSource> source;
@@ -976,9 +1086,10 @@ struct Lfm2BackboneRuntime::Impl {
     Lfm2DecodeCache decode_policy = Lfm2DecodeCache::Transcript;  // the policy `decode` was sized by
     // The block graphs' scratch, made on the first chunked prefill.
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> block_allocator;
-    // The full blocks of the last chunked prefill, in order from the start
-    // of its prompt, and how many steps the last prefill restored from them.
-    std::vector<KeptBlock> kept;
+    // The kept prompts, the most recent first, at most prefill_slots of
+    // them, and how many steps the last prefill restored from them.
+    std::list<KeptPrompt> kept;
+    size_t prefill_slots = 1;
     int64_t resumed_steps = 0;
     bool started = false;
 };
@@ -990,13 +1101,15 @@ Lfm2BackboneRuntime::Lfm2BackboneRuntime(
     std::shared_ptr<const assets::TensorSource> audio_embedding,
     int64_t codebooks,
     int64_t audio_vocab_size,
-    bool cpu_repack) {
+    bool cpu_repack,
+    size_t prefill_cache_slots) {
     if (audio_embedding != nullptr && (codebooks <= 0 || audio_vocab_size <= 0)) {
         throw std::runtime_error("LFM2-Audio audio embedding needs its codebook count and size");
     }
 
-    impl_ = std::make_unique<Impl>(
-        std::move(source), config, execution, AudioEmbeddingSource{std::move(audio_embedding), codebooks, audio_vocab_size}, cpu_repack);
+    impl_ = std::make_unique<Impl>(std::move(source), config, execution,
+                                   AudioEmbeddingSource{std::move(audio_embedding), codebooks, audio_vocab_size}, cpu_repack,
+                                   prefill_cache_slots);
 }
 
 Lfm2BackboneRuntime::~Lfm2BackboneRuntime() = default;
@@ -1037,6 +1150,10 @@ std::vector<float> Lfm2BackboneRuntime::start(
         auto logits = impl_->prefill_blocks(graph, prompt, audio, rows);
         debug::timing_log_scalar("lfm2_audio.prefill.ms", engine::debug::elapsed_ms(prefill_start));
         debug::timing_log_scalar("lfm2_audio.prefill.resumed_steps", impl_->resumed_steps);
+        if (debug::timing_log_enabled()) {
+            impl_->log_kept();
+        }
+
         impl_->started = true;
         return logits;
     }
