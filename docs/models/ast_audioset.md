@@ -2,7 +2,9 @@
 
 AST AudioSet classifies an audio file into the 527 sound classes used by AudioSet. It uses the
 [MIT `ast-finetuned-audioset-10-10-0.4593` checkpoint](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593).
-The GGUF package provides `ast-audioset-f32.gguf` and `ast-audioset-q8_0.gguf`.
+The default self-contained package is
+`AST-AudioSet-GGUF/ast-audioset-f32.gguf` under
+`audio-cpp/audio.cpp-gguf`. Only F32 is packaged.
 
 ```bash
 build/debug/bin/audiocpp_cli \

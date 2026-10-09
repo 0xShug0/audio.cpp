@@ -27,5 +27,3 @@ The default `keywords.txt` uses sherpa-onnx tokenized keyword rows. A request
 can replace it with `keywords=...`; separate rows with newlines or `/`. Each
 row contains token symbols and can include `:score`, `#threshold`, and
 `@label`, matching sherpa-onnx keyword files.
-
-See [CPU/CUDA measurements and parity limits](../reports/wake_word_cpu_cuda.md).

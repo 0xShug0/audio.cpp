@@ -56,12 +56,21 @@
     ],
     "load": []
   },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
   "runtime": {
     "tags": [
       "gguf"
     ]
   },
   "ui": {
+    "recommended_package": "ast_audioset_f32",
     "tags": [
       "Classify",
       "GGUF"
@@ -70,7 +79,20 @@
       "docs/models/ast_audioset.md"
     ]
   },
-  "packages": [],
+  "packages": [
+    {
+      "id": "ast_audioset_f32",
+      "display_name": "AST AudioSet F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "default": true,
+      "target_directory": "AST-AudioSet-GGUF",
+      "files": [
+        "AST-AudioSet-GGUF/ast-audioset-f32.gguf"
+      ],
+      "strip_prefix": "AST-AudioSet-GGUF"
+    }
+  ],
   "sources": [
     {
       "format": "gguf",

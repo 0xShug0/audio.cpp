@@ -737,6 +737,18 @@ audiocpp_add_model(smart_turn
         engine::models::smart_turn::make_smart_turn_loader
 )
 
+audiocpp_add_model(ced
+    SOURCES
+        src/models/ced/assets.cpp
+        src/models/ced/frontend.cpp
+        src/models/ced/runtime.cpp
+        src/models/ced/session.cpp
+    INCLUDES
+        engine/models/ced/session.h
+    LOADERS
+        engine::models::ced::make_ced_loader
+)
+
 audiocpp_add_model(ast_audioset
     SOURCES
         src/models/ast_audioset/assets.cpp

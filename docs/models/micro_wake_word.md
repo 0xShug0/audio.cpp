@@ -24,5 +24,4 @@ build/debug/bin/audiocpp_cli --family micro_wake_word --task wake \
 
 Detections are returned as speech segments. `text` contains the wake phrase, `confidence` contains the smoothed probability, and the sample span identifies the feature block that triggered the detection. Request options `threshold` and `sliding_window_size` override the values copied from the model manifest.
 
-Use `--mode streaming` for incremental audio. CPU is recommended for this
-small model; see the [CPU/CUDA measurements and parity limits](../reports/wake_word_cpu_cuda.md).
+Use `--mode streaming` for incremental audio.

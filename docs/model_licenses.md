@@ -26,6 +26,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `ace_step` | [ACE-Step/Ace-Step1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) | MIT | Yes | | 2026-09-21 |
 | `apollo` | [JusperLee/Apollo](https://huggingface.co/JusperLee/Apollo) | CC-BY-SA-4.0 | Yes | | 2026-09-21 |
 | `ast_audioset` | [MIT/ast-finetuned-audioset-10-10-0.4593](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593) | BSD-3-Clause | Yes | | 2026-09-26 |
+| `ced` | [mispeech/ced-tiny](https://huggingface.co/mispeech/ced-tiny), [ced-mini](https://huggingface.co/mispeech/ced-mini), [ced-small](https://huggingface.co/mispeech/ced-small), [ced-base](https://huggingface.co/mispeech/ced-base) | Apache-2.0 | Yes | Checkpoint license; the separate upstream training repository is GPL-3.0. | 2026-10-09 |
 | `audio8_asr` | [Edge0/Audio8-ASR-0.1B](https://huggingface.co/Edge0/Audio8-ASR-0.1B) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `audio8_tts` | [Edge0/Audio8-TTS-Preview-0.6b](https://huggingface.co/Edge0/Audio8-TTS-Preview-0.6b) | Apache-2.0 | Yes | | 2026-09-21 |
 | `audio_flamingo` | [nvidia/audio-flamingo-3-hf](https://huggingface.co/nvidia/audio-flamingo-3-hf), [nvidia/audio-flamingo-next-hf](https://huggingface.co/nvidia/audio-flamingo-next-hf) | NVIDIA OneWay Noncommercial | No | Upstream model-card licenses and terms apply. | 2026-10-02 |

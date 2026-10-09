@@ -1,6 +1,23 @@
 {
   "cases": [
     {
+      "id": "ced_classification",
+      "coverage": "CED classification, changing graph shapes, long audio pooling, top-k selection and repeat requests",
+      "family": "ced",
+      "model": "models/CED-GGUF/ced-tiny-f32.gguf",
+      "task": "cls",
+      "outputs": [],
+      "requests": [
+        {"id": "snapping", "audio": "resources/ced/finger_snapping.wav", "options": {"top_k": 527}},
+        {"id": "speech", "audio": "resources/wakeword/micro/speech.wav", "options": {"top_k": 527}},
+        {"id": "music", "audio": "resources/wakeword/micro/music.wav", "options": {"top_k": 527}},
+        {"id": "silence", "audio": "resources/wakeword/micro/silence.wav", "options": {"top_k": 527}},
+        {"id": "long", "audio": "resources/vibevoice_asr/four_speaker_short.wav", "options": {"top_k": 527}},
+        {"id": "repeat", "audio": "resources/ced/finger_snapping.wav", "options": {"top_k": 527}},
+        {"id": "top_one", "audio": "resources/ced/finger_snapping.wav", "options": {"top_k": 1}}
+      ]
+    },
+    {
       "id": "micro_wake_word_requests",
       "coverage": "MixedNet recorded wake phrases, speech, music, silence, threshold overrides and repeated-request reset",
       "family": "micro_wake_word",
