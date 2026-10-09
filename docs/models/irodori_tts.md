@@ -89,7 +89,7 @@ The file must hold a `speaker_embedding` tensor of shape `[tokens, speaker_dim]`
 
 ## Reference Length
 
-Like Python Irodori-TTS, reference audio longer than the checkpoint's `ref_max_seconds` is cut to its first `ref_max_seconds` before it is encoded: 120 seconds for v4, and 30 seconds for checkpoints that do not state it (v3). Request option `max_ref_seconds` sets another length in seconds; `0` keeps the whole reference. Speaker embeddings are not affected.
+Like Python Irodori-TTS, reference audio longer than the checkpoint's `ref_max_seconds` is cut to its first `ref_max_seconds` before it is encoded: 120 seconds for v4, and 30 seconds for checkpoints that do not state it (v3). Request option `max_ref_sec` (Python's `max_ref_seconds`) sets another length in seconds; `0` keeps the whole reference. Speaker embeddings are not affected.
 
 ## Request Options (use with `--request-option`)
 
@@ -101,7 +101,7 @@ v4 uses the normalized schema-v1 option names directly. New requests should use 
 | `instruction` | text | empty | Voice-design instruction; only useful on caption-conditioned checkpoints. Legacy `caption` is accepted as an alias. |
 | `no_ref` | bool | `true` unless a reference is provided | Use no-reference generation. Set `false` with `--voice-ref` for reference conditioning. |
 | `speaker_embedding_path` | path | unset | Speaker Inversion embedding (`*.speaker.safetensors`) used instead of reference audio. See [Speaker Inversion Embeddings](#speaker-inversion-embeddings). |
-| `max_ref_seconds` | seconds | checkpoint | Trim reference audio to this length before encoding it; `0` keeps the whole reference. See [Reference Length](#reference-length). |
+| `max_ref_sec` | seconds | checkpoint | Trim reference audio to this length before encoding it; `0` keeps the whole reference. See [Reference Length](#reference-length). |
 | `num_inference_steps` | integer | `40` | RF diffusion steps. |
 | `duration_sec` | seconds | unset | Explicit output duration; omitted uses predicted duration. |
 | `duration_scale` | float | `1.0` | Multiplier for predicted duration. |

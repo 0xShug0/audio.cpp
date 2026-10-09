@@ -42,7 +42,7 @@ struct IrodoriRequest {
   std::optional<std::filesystem::path> speaker_embedding_path;
   // Reference audio length cap in seconds (Python's max_ref_seconds); 0 keeps
   // the whole reference.
-  float max_ref_seconds = 0.0F;
+  float max_ref_sec = 0.0F;
   IrodoriGenerationOptions generation;
 };
 

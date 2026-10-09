@@ -53,9 +53,9 @@
         "required": false
       },
       {
-        "name": "max_ref_seconds",
+        "name": "max_ref_sec",
         "type": "float",
-        "description": "Trim reference audio to its first max_ref_seconds before encoding it, as Python Irodori-TTS does; default is the checkpoint's ref_max_seconds (30 when it has none); 0 keeps the whole reference.",
+        "description": "Trim reference audio to its first max_ref_sec before encoding it, as Python Irodori-TTS does; default is the checkpoint's ref_max_seconds (30 when it has none); 0 keeps the whole reference.",
         "required": false,
         "min": 0.0
       },
