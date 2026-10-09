@@ -2170,8 +2170,6 @@ audiocpp_add_model(chatterbox_turbo
         engine/community_models/chatterbox_turbo/loader.h
     LOADERS
         engine::community_models::chatterbox_turbo::make_chatterbox_turbo_loader
-    DEPENDS
-        chatterbox
 )
 
 audiocpp_add_model(ace_step
