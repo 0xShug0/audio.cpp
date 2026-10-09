@@ -20,6 +20,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -107,6 +108,26 @@ double parse_max_pass_seconds(const runtime::SessionOptions & options) {
 bool parse_cpu_repack(const runtime::SessionOptions & options) {
     const auto value = runtime::find_option(options.options, {"lfm2_audio.cpu_repack"});
     return !value.has_value() || runtime::parse_bool_option(*value, "lfm2_audio.cpu_repack");
+}
+
+// lfm2_audio.conversation_cache_slots: how many conversations an S2S session
+// keeps the questions and prefill blocks of, for their next turns.
+size_t parse_conversation_cache_slots(const runtime::SessionOptions & options) {
+    const int64_t slots = runtime::parse_i64_option(options.options, {"lfm2_audio.conversation_cache_slots"}).value_or(4);
+    if (slots < 0) {
+        throw std::runtime_error("lfm2_audio.conversation_cache_slots must be non-negative");
+    }
+
+    if (static_cast<std::uint64_t>(slots) > static_cast<std::uint64_t>(std::numeric_limits<size_t>::max())) {
+        throw std::runtime_error("lfm2_audio.conversation_cache_slots is too large");
+    }
+
+    return static_cast<size_t>(slots);
+}
+
+// Whether two questions have the same samples, bit for bit.
+bool same_samples(const std::vector<float> & a, const std::vector<float> & b) {
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
 }
 
 // Checked before the audio reaches the encoder, whose graph grows with the
@@ -790,6 +811,7 @@ Lfm2AudioChatSession::Lfm2AudioChatSession(
       assets_(std::move(assets)),
       contract_(std::move(contract)),
       cpu_repack_(parse_cpu_repack(RuntimeSessionBase::options())),
+      conversation_slots_(parse_conversation_cache_slots(RuntimeSessionBase::options())),
       components_(select_components(assets_, RuntimeSessionBase::options())),
       output_(select_output_components(assets_, components_, RuntimeSessionBase::options())),
       tokenizer_(components_->vocabulary),
@@ -802,7 +824,8 @@ Lfm2AudioChatSession::Lfm2AudioChatSession(
           components_->mmproj,
           output_->depthformer.codebooks,
           output_->depthformer.audio_vocab_size,
-          cpu_repack_),
+          cpu_repack_,
+          conversation_slots_),
       depthformer_(output_->vocoder, output_->depthformer, execution_context(), cpu_repack_),
       detokenizer_(
           output_->detokenizer,
@@ -914,31 +937,34 @@ Lfm2ReplyCheckpoint Lfm2AudioChatSession::reply_checkpoint() const {
 // (chat.h). Each question goes through the encoder on its own: liquid-audio
 // encodes them in one batch, whose padding the encoder masks.
 //
-// An earlier question with the very samples of one the session encoded for
-// the conversation request before takes that encoder output: on a session,
-// the encoder gives the same bits for the same samples. The new question is
-// always encoded.
+// An earlier question with the very samples of one the session kept for a
+// conversation takes that encoder output: on a session, the encoder gives the
+// same bits for the same samples. The new question is always encoded.
 std::unique_ptr<Lfm2InterleavedGenerator> Lfm2AudioChatSession::start_reply(
     const RequestOptions & options, const runtime::AudioBuffer & audio) {
     reused_questions_ = 0;
     require_one_pass(frame_count(audio), audio.sample_rate, max_pass_seconds_, "the question is", "send a shorter one, or raise the limit");
-    // A request that may have a next turn keeps its questions for it.
-    const bool conversation = !options.history.empty() || options.return_codes;
+    // A request that may have a next turn keeps its questions for it, if the
+    // session keeps any conversations.
+    const bool conversation = conversation_slots_ > 0 && (!options.history.empty() || options.return_codes);
     std::vector<EncodedQuestion> questions;
     // The prompt's steps so far: a conversation past the limit encodes no
     // more questions.
     int64_t steps = options.text_steps;
     Lfm2AudioEmbeddings embeddings;
-    const auto same_samples = [](const std::vector<float> & a, const std::vector<float> & b) {
-        return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
-    };
     const auto encode = [&](const runtime::AudioBuffer & question, bool earlier) {
         auto samples = lfm2_audio_mono_16k(question);
-        const auto kept = earlier ? std::find_if(questions_.begin(), questions_.end(),
-                                                 [&](const EncodedQuestion & q) { return same_samples(*q.samples, samples); })
-                                  : questions_.end();
+        const EncodedQuestion * kept = nullptr;
+        for (auto list = questions_.begin(); earlier && kept == nullptr && list != questions_.end(); ++list) {
+            const auto found =
+                std::find_if(list->begin(), list->end(), [&](const EncodedQuestion & q) { return same_samples(*q.samples, samples); });
+            if (found != list->end()) {
+                kept = &*found;
+            }
+        }
+
         EncodedQuestion entry;
-        if (kept != questions_.end()) {
+        if (kept != nullptr) {
             entry = *kept;
             ++reused_questions_;
         } else {
@@ -981,11 +1007,47 @@ std::unique_ptr<Lfm2InterleavedGenerator> Lfm2AudioChatSession::start_reply(
     }
 
     if (conversation) {
-        questions_ = std::move(questions);
+        keep_questions(std::move(questions));
     }
 
     return std::make_unique<Lfm2InterleavedGenerator>(
         backbone_, depthformer_, tokenizer_, std::move(prompt), std::move(embeddings), output_->depthformer.end_of_audio(), reply);
+}
+
+// `questions`, the earlier ones then the new one, replace the kept questions
+// of their conversation: of the kept lists whose last question they ask too
+// (the turn before's new question, or this one when the turn runs again), the
+// one that holds the most of the earlier ones, the most recent on a tie.
+// Without one, they are a new conversation's, and the least recent beyond the
+// slots is dropped.
+void Lfm2AudioChatSession::keep_questions(std::vector<EncodedQuestion> questions) {
+    const auto among = [](const EncodedQuestion & kept, auto first, auto last) {
+        return std::any_of(first, last, [&](const EncodedQuestion & q) {
+            return q.samples == kept.samples || same_samples(*q.samples, *kept.samples);
+        });
+    };
+    const auto earlier = std::prev(questions.end());
+    auto continued = questions_.end();
+    std::ptrdiff_t most = -1;
+    for (auto list = questions_.begin(); list != questions_.end(); ++list) {
+        if (among(list->back(), questions.begin(), questions.end())) {
+            const auto held = std::count_if(
+                list->begin(), list->end(), [&](const EncodedQuestion & kept) { return among(kept, questions.begin(), earlier); });
+            if (held > most) {
+                most = held;
+                continued = list;
+            }
+        }
+    }
+
+    if (continued != questions_.end()) {
+        questions_.erase(continued);
+    }
+
+    questions_.insert(questions_.begin(), std::move(questions));
+    if (questions_.size() > conversation_slots_) {
+        questions_.pop_back();
+    }
 }
 
 int64_t Lfm2AudioChatSession::resumed_prefill_steps() const {

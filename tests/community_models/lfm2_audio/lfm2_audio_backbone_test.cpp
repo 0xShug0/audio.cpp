@@ -353,10 +353,11 @@ struct Fixture {
     // can take audio frames.
     [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> speech_runtime() { return speech_runtime(execution); }
 
-    [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> speech_runtime(engine::core::ExecutionContext & on) {
+    // Keeping the chunked prefills of up to `prefill_slots` prompts.
+    [[nodiscard]] std::unique_ptr<lfm2::Lfm2BackboneRuntime> speech_runtime(engine::core::ExecutionContext & on, size_t prefill_slots = 1) {
         return std::make_unique<lfm2::Lfm2BackboneRuntime>(
             engine::assets::open_tensor_source(path), config, on, engine::assets::open_tensor_source(audio_embedding_path),
-            kCodebooks, kCodes);
+            kCodebooks, kCodes, true, prefill_slots);
     }
 
     [[nodiscard]] ReferenceLfm2 reference() const { return ReferenceLfm2(shape, weights, audio_embedding); }
@@ -1053,6 +1054,118 @@ void test_chunked_resume_misses(Fixture & fixture) {
     request(base, 512, "after it, again");
 }
 
+// `c` with what goes in at `position` changed, so that a prompt parts from
+// it there: a text token, a frame's first code, or the lowest bits of an
+// audio row's first value, by `by` (1 or 2).
+AudioPrompt changed_at(AudioPrompt c, int64_t position, int32_t by) {
+    auto & p = c.prompt;
+    const auto audio = std::find(p.audio_positions.begin(), p.audio_positions.end(), position);
+    const auto frame = std::find(p.frame_positions.begin(), p.frame_positions.end(), position);
+    if (audio != p.audio_positions.end()) {
+        auto & value = c.audio.values[static_cast<size_t>(audio - p.audio_positions.begin()) * static_cast<size_t>(c.audio.hidden_size)];
+        uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        bits ^= static_cast<uint32_t>(by);
+        std::memcpy(&value, &bits, sizeof(bits));
+    } else if (frame != p.frame_positions.end()) {
+        auto & code = p.frame_codes[static_cast<size_t>(frame - p.frame_positions.begin()) * static_cast<size_t>(kCodebooks)];
+        code = (code + by) % static_cast<int32_t>(kCodes);
+    } else {
+        auto & id = p.input_ids[static_cast<size_t>(position)];
+        id = (id + by) % static_cast<int32_t>(kVocab);
+    }
+
+    return c;
+}
+
+// With several slots, the runtime keeps the chunked prefills of several
+// prompts, so conversations taking turns each restore their own blocks:
+// those of the kept prompt that starts with the most of the request's full
+// blocks, compared bit for bit from the start. Its own blocks after them go
+// on the end of that prompt when it ends there, or else into a new one, and
+// a kept prompt that holds all of them stays as it is. Each request must
+// still give what it gives on a fresh runtime, bit for bit.
+void test_chunked_resumes_kept_prompts(Fixture & fixture) {
+    const auto x = conversation();
+    // Conversations whose first block differs from x's.
+    const auto y = changed_at(x, 0, 1);
+    const auto z = changed_at(x, 0, 2);
+    // Conversations that start with x's first 300 steps, as with one long
+    // system prompt, and part from it there.
+    const auto s = changed_at(x, 300, 1);
+    const auto t = changed_at(x, 300, 2);
+    // x with an audio row in block 2 a bit off.
+    require(std::find(x.prompt.audio_positions.begin(), x.prompt.audio_positions.end(), 600) != x.prompt.audio_positions.end(),
+            "position 600 holds audio");
+    const auto flipped = changed_at(x, 600, 1);
+    const AudioPrompt short_text{text_prompt(200, 68), {}};
+    const AudioPrompt block_text{text_prompt(300, 68), {}};
+
+    struct Request {
+        const AudioPrompt * c;
+        int64_t length;
+        int64_t resumed;
+        bool one_shot = false;
+    };
+    const auto run = [&](engine::core::ExecutionContext & on, size_t slots, const std::vector<Request> & requests, const std::string & name) {
+        auto runtime = fixture.speech_runtime(on, slots);
+        for (size_t i = 0; i < requests.size(); ++i) {
+            const auto c = prefix(*requests[i].c, requests[i].length);
+            const std::string label = name + ", request " + std::to_string(i + 1);
+            if (requests[i].one_shot) {
+                (void)runtime->start(c.prompt, c.audio, 6, lfm2::Lfm2DecodeCache::Speech, lfm2::Lfm2Prefill::OneShot);
+                (void)feed(*runtime, kAfter);
+            } else {
+                const auto expected = chunked_request(*fixture.speech_runtime(on), c, 6);
+                require_bitwise_equal(chunked_request(*runtime, c, 6), expected, label);
+            }
+
+            require_eq(runtime->resumed_prefill_steps(), requests[i].resumed, label + ": steps resumed");
+        }
+    };
+
+    // Two conversations taking turns: each restores its own blocks with two
+    // slots, and none with one.
+    const std::vector<Request> taking_turns = {{&x, 300, 0}, {&y, 300, 0}, {&x, 600, 256}, {&y, 600, 256}, {&x, 1000, 512}, {&y, 1000, 512}};
+    for (const int threads : {1, 2, 8}) {
+        engine::core::ExecutionContext execution{engine::core::BackendConfig{engine::core::BackendType::Cpu, 0, threads}};
+        run(execution, 2, taking_turns, "two conversations at " + std::to_string(threads) + " threads");
+    }
+
+    auto & on = fixture.execution;
+    run(on, 1, {{&x, 300, 0}, {&y, 300, 0}, {&x, 600, 0}, {&y, 600, 0}, {&x, 1000, 0}, {&y, 1000, 0}}, "two conversations, one slot");
+    run(on, 0, {{&x, 600, 0}, {&x, 600, 0}}, "no slots");
+
+    // The least recently used prompt goes first.
+    run(on, 2, {{&x, 600, 0}, {&y, 600, 0}, {&z, 600, 0}, {&x, 600, 0}, {&z, 600, 512}, {&y, 600, 0}}, "a third conversation");
+    run(on, 2, {{&x, 600, 0}, {&y, 600, 0}, {&x, 600, 512}, {&z, 600, 0}, {&x, 600, 512}, {&y, 600, 0}}, "the prompt used last");
+
+    // A prompt that parts inside a kept one is kept as a new one, and the
+    // one it parts from stays.
+    run(on, 2, {{&x, 1000, 0}, {&flipped, 1000, 512}, {&x, 1000, 768}, {&y, 1000, 0}, {&x, 1000, 768}}, "a prompt that parts in block 2");
+
+    // A prompt of whole blocks that a kept one holds runs its last block
+    // again, and keeps nothing.
+    run(on, 2, {{&x, 768, 0}, {&y, 768, 0}, {&x, 768, 512}, {&x, 1000, 768}, {&y, 1000, 768}}, "prompts of whole blocks");
+
+    // A chunked prompt with no full block keeps nothing and leaves the kept
+    // one; one with a full block replaces it. A shorter prompt that a kept
+    // one starts with leaves its later blocks.
+    run(on, 1, {{&x, 600, 0}, {&short_text, 200, 0}, {&x, 600, 512}}, "a chunked prompt under a block");
+    run(on, 1, {{&x, 600, 0}, {&block_text, 300, 0}, {&x, 600, 0}}, "a chunked prompt of a block");
+    run(on, 1, {{&x, 1000, 0}, {&x, 600, 512}, {&x, 1000, 768}}, "a shorter prompt");
+
+    // A one-shot request neither reads nor changes them.
+    run(on, 2, {{&x, 600, 0}, {&y, 600, 0}, {&x, 700, 0, true}, {&x, 600, 512}, {&y, 600, 512}}, "a one-shot request");
+
+    // Conversations that start the same share those blocks and each keeps
+    // its own after them; a third one's turn that only holds the shared ones
+    // changes nothing. With one slot, each pushes the other's out.
+    run(on, 2, {{&x, 600, 0}, {&s, 600, 256}, {&x, 900, 512}, {&s, 900, 512}, {&t, 400, 256}, {&x, 900, 768}, {&s, 900, 768}},
+        "conversations that start the same");
+    run(on, 1, {{&x, 600, 0}, {&s, 600, 256}, {&x, 900, 256}, {&s, 900, 256}}, "conversations that start the same, one slot");
+}
+
 // Liquid's quantized packages store the matrices as Q8_0 or Q4_0, and the
 // Q4_0 ones keep the token embedding, which is also the output head, as Q6_K.
 BackboneShape quantized_shape() {
@@ -1216,6 +1329,7 @@ int main() {
             test_chunked_requests_are_independent(chunked);
             test_chunked_resumes(chunked);
             test_chunked_resume_misses(chunked);
+            test_chunked_resumes_kept_prompts(chunked);
         }
 
         test_quantized_weights();

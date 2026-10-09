@@ -336,45 +336,73 @@ and head. Each earlier question is held to `lfm2_audio.max_pass_seconds`, as
 the new one is.
 
 So that a turn does not run the whole conversation again, an S2S session keeps
-what its last turn ran, for one conversation at a time:
+what the last turn of a conversation ran, for up to
+`lfm2_audio.conversation_cache_slots` conversations at a time (4 by default):
 
-- The questions of its last request with history or `return_codes`, as mono
-  16 kHz samples, and their encoder output: about 160 KiB per second of
-  question. An earlier question with exactly those samples takes the kept
-  output instead of going through the encoder. The new question always goes
-  through it.
-- The full 256-step blocks of the prefill of its last turn with history: the
-  keys and values each block wrote, 24 KiB per step over the backbone's six
-  attention layers, the conv state after it, 160 KiB per block, and its input,
-  which holds 8 KiB per step of question audio. That is 6 to 8 MiB per block,
-  the most for a block of question audio, and about 70 MiB at the tenth turn
-  of a conversation of 2900 steps. A turn's prompt starts with the turn
-  before's, so its prefill restores the blocks it starts with that have the
+- The questions of a conversation's last request with history or
+  `return_codes`, as mono 16 kHz samples, and their encoder output: about
+  160 KiB per second of question. An earlier question with exactly the samples
+  of a kept one takes the kept output instead of going through the encoder.
+  The new question always goes through it.
+- The full 256-step blocks of the prefill of a conversation's last turn with
+  history: the keys and values each block wrote, 24 KiB per step over the
+  backbone's six attention layers, the conv state after it, 160 KiB per block,
+  and its input, which holds 8 KiB per step of question audio. That is 6 to 8
+  MiB per block, the most for a block of question audio, and about 70 MiB at the
+  tenth turn of a conversation of 2900 steps. A turn's prompt starts with the
+  turn before's, so its prefill restores the blocks it starts with that have the
   same input, bit for bit, and runs the rest: the end of the turn before's last
   block, its reply and the new question. The last block always runs.
 
-At the 8192-step limit, the session of a conversation that is nearly all
-question audio keeps about 350 MiB of host memory: about 190 MiB of keys,
+At the 8192-step limit, a conversation that is nearly all question audio
+takes about 350 MiB of the session's host memory: about 190 MiB of keys,
 values and conv state, about 60 MiB of block inputs and about 100 MiB of
-questions. A request whose questions are not the kept ones holds both until it
-has encoded them all, up to about 100 MiB more for that time.
+questions. The session keeps up to that for each slot, the blocks that
+conversations share counted once, and a slot that no conversation has used
+takes nothing. A request whose questions are not the kept ones holds both until
+it has encoded them all, up to about 100 MiB more for that time. After each
+turn with history, the timing log (`--log` or `--log-file`) reports how many
+prompts' blocks are kept, one per conversation or two for one that changed or
+left out turns until the older is dropped, and the MiB they take
+(`lfm2_audio.prefill.kept_prompts` and `lfm2_audio.prefill.kept_mib`).
 
 A turn gives the same bytes with or without them; they only save time. They stay
 until a request replaces them or the session closes; resetting a stream does
-not free them. Which ones a request replaces depends on its kind. A turn with
-history replaces both, so if one from another conversation comes in between,
-the next turn of this one encodes its earlier questions again and runs its whole
-prefill. Another conversation's first turn with `return_codes` replaces only the
-questions: the next turn of this one encodes them again but still restores its
-prefill blocks. A request without history or `return_codes` keeps nothing and
+not free them. A request finds what was kept for its conversation by content:
+
+- A turn with history restores the blocks its prompt starts with from the kept
+  conversation whose blocks start with the most of them. When it is that
+  conversation's next turn, or the same turn again, its own blocks after them
+  go on the end of that conversation's; otherwise they are kept as a new
+  conversation's. So conversations that start the same, such as with one long
+  system prompt or the same first turns, share those blocks, and each keeps its
+  own from where they part. A turn that changes an earlier turn keeps its
+  blocks as a new conversation's, and the one it came from is dropped when it
+  is the least recently used. Until then it takes a slot, so another
+  conversation's blocks can be dropped first; when clients leave out or change
+  earlier turns, set one slot more than the conversations. A turn whose prompt
+  is under 256 steps keeps no blocks.
+- A request with history or `return_codes` keeps its questions in place of
+  those of its conversation: the kept questions whose last one it also asks,
+  the ones that hold the most of its earlier questions if several do.
+  Otherwise they are kept as a new conversation's.
+
+A new conversation drops the least recently used conversation's blocks or
+questions past the slots, each on its own: a first turn with `return_codes`
+keeps questions but no blocks. With 0 slots, nothing is kept. With more
+conversations taking turns than slots, they push each other out: with one slot,
+a turn of another conversation in between makes the next turn of this one
+encode its earlier questions again and run its prefill again from where the two
+differ. A request without history or `return_codes` keeps nothing and
 leaves what the session kept. A turn that leaves out the oldest turns moves
-every position after them, so its prefill runs in full, though its questions
-still take the kept encoder output; leave out several turns at once rather than
-one per turn, so that fewer turns run in full. A first turn runs as before and
-keeps no blocks, so the third turn of a conversation is the first to resume a
-prefill. Send each question as the samples its turn had, which a float WAV
-holds exactly: one that differs goes through the encoder again, and the prefill
-runs again from the block it starts in.
+every position after them, so its prefill runs in full and its blocks are kept
+as a new conversation's, as above, though its questions still take the kept
+encoder output; leave out several turns at once rather than one per turn, so
+that fewer turns run in full. A first turn runs as before and keeps no blocks,
+so the third turn of a conversation is the first to resume a prefill. Send each
+question as the samples its turn had, which a float WAV holds exactly: one that
+differs goes through the encoder again, and the prefill runs again from the
+block it starts in.
 
 A conversation's prompt and `max_tokens` may take 8192 steps together, where a
 step is 80 ms of a question's audio, a text token or an 80 ms reply frame. Past
@@ -464,6 +492,25 @@ A turn the model turns away, such as one past the step limit, is an `error`
 event before any audio, with the message that the JSON response carries with
 HTTP 400.
 
+Every request to a server entry runs on that entry's one session, whatever its
+route, also with `--parallel-jobs`, which runs `lfm2_audio` requests one at a
+time. So clients that take turns on one S2S entry share its
+`lfm2_audio.conversation_cache_slots`: the default of 4 keeps four
+conversations. For more that go on at the same time, set it to at least their
+number:
+
+```json
+{"id": "lfm2-audio-s2s", "family": "lfm2_audio", "path": "/path/to/LFM2.5-Audio-1.5B-GGUF",
+ "task": "s2s", "mode": "streaming",
+ "session_options": {"lfm2_audio.model_gguf": "LFM2.5-Audio-1.5B-Q4_0.gguf",
+                     "lfm2_audio.conversation_cache_slots": "8"}}
+```
+
+Each kept conversation adds the host memory above while the server runs: about
+75 MiB at the tenth turn of a conversation of 2900 steps, and up to about
+350 MiB at the step limit. The server's `min_free_memory_mb` guard estimates a
+model from its files when it loads, so it does not count that memory.
+
 ## Request Options (use with `--request-option`)
 
 | Option | Task | Default | Meaning |
@@ -494,6 +541,7 @@ Each task rejects the options it does not take.
 | `lfm2_audio.detokenizer_gguf` | `tokenizer-<backbone file>`, else the only tokenizer | TTS audio detokenizer GGUF, relative to the model directory. |
 | `lfm2_audio.vad_model_path` | `assets/framework/models/silero_vad` | Silero VAD model used to split long audio. |
 | `lfm2_audio.max_pass_seconds` | `120` | Most audio, in seconds, the encoder takes in one pass: an ASR chunk (the whole input with `audio_chunk_mode=none`) or the S2S question; at least 1. Longer audio is rejected before it is encoded; see [Long audio](#long-audio). |
+| `lfm2_audio.conversation_cache_slots` | `4` | S2S: how many conversations a session keeps the earlier questions' encoder output and prefill blocks of, for their next turns; the least recently used is dropped first, and `0` keeps none. Output never depends on it; see [Conversations](#conversations). |
 | `lfm2_audio.cpu_repack` | `true` | On the CPU, multiply the matrices with the kernels of ggml's CPU extra buffer types where those take the weight's type and shape: the repacked ones take Q4_0 on x86 with AVX2 and Q4_0, Q8_0 and Q6_K on Arm; where ggml's AMX buffer is built, it comes first and also takes F16, Q8_0 and K-quants. Where the token embedding's type is taken, the text head gets a copy of it. `false` keeps every weight in the plain CPU buffer. Other backends ignore it; see [CPU](#cpu). |
 
 ## Long Audio
@@ -784,9 +832,18 @@ and streamed, over three turns of a conversation, and up to the conversation
 limit. In one session, the four turns of a longer conversation, another
 conversation in between and a turn over the limit give the replies and errors
 of a fresh session, byte for byte, with the earlier questions and prefill
-blocks taken from the turn before. `lfm2_audio_backbone_test` checks that a
-chunked prefill restored from the one before gives a fresh runtime's bits, at
-1, 4 and 8 threads and with caches of other lengths.
+blocks taken from the turn before. With two slots, two conversations taking
+turns, also two with one long system prompt and two that ask the same clips,
+give the bytes of sessions of their own and take at least what those take, and
+a third one drops what was used least recently; with one slot and with none,
+they give the same bytes. Without the option, four conversations taking turns
+each take what they take alone, and a fifth drops the questions of the least
+recently used. `lfm2_audio_backbone_test` checks that a chunked prefill
+restored from the ones before gives a fresh runtime's bits, at 1, 4 and 8
+threads and with caches of other lengths, and with several kept prompts:
+prompts taking turns, the least recently used dropped, prompts that start the
+same, one that parts inside a kept one, prompts of whole blocks, a shorter one
+and one under a block.
 
 ### CPU
 
@@ -891,8 +948,9 @@ gather rows from, so on CUDA the backbone also keeps a 256 MiB F16 copy of it.
 On the CPU, where ggml's extra buffers take the token embedding's type (Q6_K
 and Q8_0 on Arm; with ggml's AMX buffer also F16), the backbone also keeps a
 copy of it in their layout as the text head (see [CPU](#cpu)).
-An S2S session also keeps its last turn's questions and prefill blocks in host
-memory, up to about 350 MiB at the conversation limit; see
+An S2S session also keeps the questions and prefill blocks of up to
+`lfm2_audio.conversation_cache_slots` conversations (four by default) in host
+memory, up to about 350 MiB each at the conversation limit; see
 [Conversations](#conversations).
 
 ## Limitations

@@ -187,6 +187,14 @@
         "description": "On the CPU, multiply the matrices with the kernels of ggml's CPU extra buffer types where those take the weight's type and shape: the repacked ones take Q4_0 on x86 with AVX2 and Q4_0, Q8_0 and Q6_K on Arm; where ggml's AMX buffer is built, it comes first and also takes F16, Q8_0 and K-quants. Where the token embedding's type is taken, the text head gets a copy of it. Other backends ignore it.",
         "required": false,
         "default": true
+      },
+      {
+        "name": "conversation_cache_slots",
+        "type": "int",
+        "description": "S2S: how many conversations a session keeps the earlier questions' encoder output and prefill blocks of, for their next turns, the least recently used dropped first; 0 keeps none. Each kept conversation takes up to about 350 MiB of host memory at the conversation limit, and a slot that no conversation has used takes nothing. Output does not depend on it.",
+        "required": false,
+        "min": 0,
+        "default": 4
       }
     ],
     "load": []
