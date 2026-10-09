@@ -1,4 +1,4 @@
-#include "engine/models/chatterbox/s3gen_inference.h"
+#include "engine/framework/codecs/s3gen_runtime.h"
 #include "engine/community_models/kitten_tts2/speaker.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"
@@ -13,7 +13,7 @@
 int main(int argc, char ** argv) {
     try {
         if (argc < 5 || argc > 7) throw std::runtime_error("usage: kitten_tts2_components_probe S3GEN VOICES_JSON CODES_JSON OUTPUT_DIR [cpu|cuda [REFERENCE_MODEL_DIR]]");
-        namespace s3 = engine::models::chatterbox;
+        namespace s3 = engine::codecs::s3gen;
         namespace json = engine::io::json;
         engine::core::BackendConfig config;
         config.type = engine::core::BackendType::Cpu;

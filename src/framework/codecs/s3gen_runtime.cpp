@@ -1,6 +1,5 @@
-#include "engine/models/chatterbox/s3gen_inference.h"
-#include "components/component_weights.h"
-#include "components/s3gen_weights.h"
+#include "engine/framework/codecs/s3gen_runtime.h"
+#include "s3gen_weights.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
@@ -10,11 +9,21 @@
 #include "ggml-alloc.h"
 
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <memory>
+#include <algorithm>
+#include <stdexcept>
+#include <random>
 
-namespace engine::models::chatterbox {
+namespace engine::codecs::s3gen {
 namespace {
+
+uint64_t choose_seed(uint64_t seed) {
+    if (seed != 0) return seed;
+    std::random_device rd;
+    return (static_cast<uint64_t>(rd()) << 32U) ^ static_cast<uint64_t>(rd());
+}
 
 int64_t token_capacity_quantum(const engine::core::BackendConfig & backend) {
     (void) backend;
@@ -330,7 +339,7 @@ private:
 std::vector<float> make_gaussian_full_noise(int64_t channels, int64_t frames, uint64_t seed) {
     return engine::sampling::generate_torch_cuda_randn(
         static_cast<size_t>(channels * frames),
-        components::choose_seed(seed),
+        choose_seed(seed),
         engine::sampling::TorchRandnPrecision::Float32);
 }
 
@@ -599,7 +608,7 @@ S3GenInferenceOutputs compute_s3gen_inference(
     S3GenSessionCache & cache,
     const S3FlowEncoderWeights & encoder_weights,
     const S3FlowDecoderWeights & decoder_weights,
-    const engine::models::chatterbox::HiFTVocoderComponent & vocoder,
+    const HiFTVocoderComponent & vocoder,
     const EmbedReferenceOutputs & ref_dict,
     const std::vector<int32_t> & speech_tokens,
     int64_t speech_token_count,
@@ -662,7 +671,7 @@ S3GenInferenceOutputs compute_s3gen_inference(
     S3GenSessionCache & cache,
     const S3FlowEncoderWeights & encoder_weights,
     const S3FlowDecoderWeights & decoder_weights,
-    const engine::models::chatterbox::HiFTVocoderComponent & vocoder,
+    const HiFTVocoderComponent & vocoder,
     const EmbedReferenceOutputs & ref_dict,
     const std::vector<int32_t> & speech_tokens,
     int64_t speech_token_count,
@@ -686,4 +695,4 @@ S3GenInferenceOutputs compute_s3gen_inference(
         timing);
 }
 
-}  // namespace engine::models::chatterbox
+}  // namespace engine::codecs::s3gen

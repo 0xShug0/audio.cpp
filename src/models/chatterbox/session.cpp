@@ -5,7 +5,7 @@
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/text/chunking.h"
 #include "engine/models/chatterbox/components.h"
-#include "engine/models/chatterbox/s3gen_flow.h"
+#include "engine/framework/codecs/s3gen_flow.h"
 
 #include <chrono>
 #include <cmath>
@@ -179,11 +179,11 @@ std::unique_ptr<ChatterboxTTSComponent> make_chatterbox_component_for_language(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
-    auto flow_encoder = load_s3_flow_encoder_weights(
+    auto flow_encoder = engine::codecs::s3gen::load_s3_flow_encoder_weights(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
-    auto flow_decoder = load_s3_flow_decoder_weights(
+    auto flow_decoder = engine::codecs::s3gen::load_s3_flow_decoder_weights(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
@@ -220,11 +220,11 @@ std::unique_ptr<ChatterboxVCComponent> make_chatterbox_vc_component(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
-    auto flow_encoder = load_s3_flow_encoder_weights(
+    auto flow_encoder = engine::codecs::s3gen::load_s3_flow_encoder_weights(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);
-    auto flow_decoder = load_s3_flow_decoder_weights(
+    auto flow_decoder = engine::codecs::s3gen::load_s3_flow_decoder_weights(
         *assets.s3gen_weights,
         execution_context,
         component_weight_storage_type);

@@ -1,11 +1,11 @@
 #include "engine/community_models/kitten_tts2/decoder.h"
-#include "engine/models/chatterbox/s3gen_inference.h"
+#include "engine/framework/codecs/s3gen_runtime.h"
 
 #include <cmath>
 #include <stdexcept>
 
 namespace engine::community_models::kitten_tts2 {
-namespace s3 = engine::models::chatterbox;
+namespace s3 = engine::codecs::s3gen;
 struct WaveformDecoder::Impl {
     const core::ExecutionContext & execution;
     std::shared_ptr<const s3::S3FlowEncoderWeights> encoder;

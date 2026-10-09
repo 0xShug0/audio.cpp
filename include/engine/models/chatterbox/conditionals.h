@@ -2,7 +2,7 @@
 
 #include "engine/models/chatterbox/components.h"
 #include "engine/framework/runtime/session.h"
-#include "engine/models/chatterbox/s3gen_types.h"
+#include "engine/framework/codecs/s3gen_types.h"
 
 #include <cstdint>
 #include <vector>

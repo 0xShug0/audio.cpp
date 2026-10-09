@@ -4,7 +4,7 @@
 #include "engine/framework/runtime/session.h"
 #include "engine/models/chatterbox/components.h"
 #include "engine/models/chatterbox/conditionals.h"
-#include "engine/models/chatterbox/s3gen_inference.h"
+#include "engine/framework/codecs/s3gen_runtime.h"
 
 #include <cstdint>
 #include <memory>
@@ -29,7 +29,7 @@ struct ChatterboxVoiceConversionOutputs {
     double s3gen_ms = 0.0;
     double s3gen_token2mel_ms = 0.0;
     double s3gen_vocoder_ms = 0.0;
-    S3GenTimingBreakdown s3gen_timing;
+    engine::codecs::s3gen::S3GenTimingBreakdown s3gen_timing;
 };
 
 class ChatterboxVCComponent {
@@ -37,8 +37,8 @@ public:
     ChatterboxVCComponent(
         engine::models::chatterbox::S3TokenizerComponent tokenizer_component,
         engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder,
-        std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights,
-        std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights,
+        std::shared_ptr<const engine::codecs::s3gen::S3FlowEncoderWeights> flow_encoder_weights,
+        std::shared_ptr<const engine::codecs::s3gen::S3FlowDecoderWeights> flow_decoder_weights,
         engine::models::chatterbox::HiFTVocoderComponent vocoder,
         ChatterboxPromptPrepConfig prompt_prep_config,
         const engine::core::ExecutionContext & execution_context,
@@ -54,8 +54,8 @@ private:
 
     engine::models::chatterbox::S3TokenizerComponent tokenizer_;
     engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder_;
-    std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights_;
-    std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights_;
+    std::shared_ptr<const engine::codecs::s3gen::S3FlowEncoderWeights> flow_encoder_weights_;
+    std::shared_ptr<const engine::codecs::s3gen::S3FlowDecoderWeights> flow_decoder_weights_;
     engine::models::chatterbox::HiFTVocoderComponent vocoder_;
     ChatterboxPromptPrepConfig prompt_prep_config_;
     const engine::core::ExecutionContext * execution_context_ = nullptr;

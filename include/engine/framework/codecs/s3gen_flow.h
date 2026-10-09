@@ -3,12 +3,12 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/assets/tensor_source.h"
-#include "engine/models/chatterbox/s3gen_types.h"
+#include "engine/framework/codecs/s3gen_types.h"
 
 #include <filesystem>
 #include <memory>
 
-namespace engine::models::chatterbox {
+namespace engine::codecs::s3gen {
 
 struct S3FlowDecoderRunTiming;
 struct S3FlowCFMTimingBreakdown;
@@ -121,7 +121,7 @@ std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
     const engine::assets::TensorSource & source,
     const engine::core::ExecutionContext & execution_context,
     engine::assets::TensorStorageType weight_storage_type = engine::assets::TensorStorageType::Native);
-// S3FlowDecoderWeights is intentionally opaque outside this family; this accessor lets callers
+// S3FlowDecoderWeights is intentionally opaque outside this runtime; this accessor lets callers
 // (e.g. chatterbox_turbo) detect whether a loaded decoder is meanflow-distilled without needing
 // the struct's internal layout.
 bool s3_flow_decoder_is_meanflow(const S3FlowDecoderWeights & weights);
@@ -174,4 +174,4 @@ S3FlowCFMOutputs compute_s3_flow_cfm_meanflow(
     int64_t num_steps = 2,
     engine::core::BackendConfig backend = {});
 
-}  // namespace engine::models::chatterbox
+}  // namespace engine::codecs::s3gen

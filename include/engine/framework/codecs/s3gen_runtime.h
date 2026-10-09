@@ -1,14 +1,14 @@
 #pragma once
 
-#include "engine/models/chatterbox/components.h"
+#include "engine/framework/codecs/s3gen_hift_runtime.h"
 #include "engine/framework/core/backend.h"
-#include "engine/models/chatterbox/s3gen_flow.h"
-#include "engine/models/chatterbox/s3gen_types.h"
+#include "engine/framework/codecs/s3gen_flow.h"
+#include "engine/framework/codecs/s3gen_types.h"
 
 #include <cstdint>
 #include <vector>
 
-namespace engine::models::chatterbox {
+namespace engine::codecs::s3gen {
 
 struct S3GenTimingBreakdown;
 
@@ -46,7 +46,7 @@ private:
         S3GenSessionCache & cache,
         const S3FlowEncoderWeights & encoder_weights,
         const S3FlowDecoderWeights & decoder_weights,
-        const engine::models::chatterbox::HiFTVocoderComponent & vocoder,
+        const HiFTVocoderComponent & vocoder,
         const EmbedReferenceOutputs & ref_dict,
         const std::vector<int32_t> & speech_tokens,
         int64_t speech_token_count,
@@ -62,7 +62,7 @@ private:
         S3GenSessionCache & cache,
         const S3FlowEncoderWeights & encoder_weights,
         const S3FlowDecoderWeights & decoder_weights,
-        const engine::models::chatterbox::HiFTVocoderComponent & vocoder,
+        const HiFTVocoderComponent & vocoder,
         const EmbedReferenceOutputs & ref_dict,
         const std::vector<int32_t> & speech_tokens,
         int64_t speech_token_count,
@@ -99,7 +99,7 @@ S3GenInferenceOutputs compute_s3gen_inference(
     S3GenSessionCache & cache,
     const S3FlowEncoderWeights & encoder_weights,
     const S3FlowDecoderWeights & decoder_weights,
-    const engine::models::chatterbox::HiFTVocoderComponent & vocoder,
+    const HiFTVocoderComponent & vocoder,
     const EmbedReferenceOutputs & ref_dict,
     const std::vector<int32_t> & speech_tokens,
     int64_t speech_token_count,
@@ -116,11 +116,11 @@ S3GenInferenceOutputs compute_s3gen_inference(
     S3GenSessionCache & cache,
     const S3FlowEncoderWeights & encoder_weights,
     const S3FlowDecoderWeights & decoder_weights,
-    const engine::models::chatterbox::HiFTVocoderComponent & vocoder,
+    const HiFTVocoderComponent & vocoder,
     const EmbedReferenceOutputs & ref_dict,
     const std::vector<int32_t> & speech_tokens,
     int64_t speech_token_count,
     engine::core::BackendConfig backend,
     S3GenTimingBreakdown * timing = nullptr);
 
-}  // namespace engine::models::chatterbox
+}  // namespace engine::codecs::s3gen

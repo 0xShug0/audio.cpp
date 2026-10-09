@@ -1,5 +1,5 @@
-#include "engine/models/chatterbox/s3gen_flow.h"
-#include "components/s3gen_weights.h"
+#include "engine/framework/codecs/s3gen_flow.h"
+#include "s3gen_weights.h"
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/profiler.h"
@@ -21,7 +21,7 @@
 #include <limits>
 #include <memory>
 
-namespace engine::models::chatterbox {
+namespace engine::codecs::s3gen {
 namespace {
 
 S3FlowEncoderWeights::LayerNormWeights load_flow_layer_norm(
@@ -2092,4 +2092,4 @@ S3FlowCFMOutputs compute_s3_flow_cfm_meanflow(
     return outputs;
 }
 
-}  // namespace engine::models::chatterbox
+}  // namespace engine::codecs::s3gen

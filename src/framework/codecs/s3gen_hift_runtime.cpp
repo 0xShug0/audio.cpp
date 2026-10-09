@@ -1,4 +1,4 @@
-#include "components/component_weights.h"
+#include "engine/framework/codecs/s3gen_hift_runtime.h"
 
 #include "engine/framework/modules/vocoders/hift_vocoder.h"
 
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace engine::models::chatterbox {
+namespace engine::codecs::s3gen {
 namespace {
 
 engine::modules::HiftVocoderConfig make_chatterbox_hift_config(
@@ -101,4 +101,4 @@ void HiFTVocoderComponent::release_runtime_cache() const {
     state_->component.release_runtime_cache();
 }
 
-}  // namespace engine::models::chatterbox
+}  // namespace engine::codecs::s3gen

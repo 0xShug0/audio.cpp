@@ -44,7 +44,7 @@ runtime::AudioBuffer trim_mono_audio(
 
 struct ChatterboxVCComponent::State {
     explicit State(engine::core::BackendConfig backend) : s3_cache(backend) {}
-    S3GenSessionCache s3_cache;
+    engine::codecs::s3gen::S3GenSessionCache s3_cache;
 };
 
 runtime::AudioBuffer load_chatterbox_vc_audio_mono(
@@ -75,8 +75,8 @@ runtime::AudioBuffer normalize_chatterbox_vc_audio_mono(
 ChatterboxVCComponent::ChatterboxVCComponent(
     engine::models::chatterbox::S3TokenizerComponent tokenizer_component,
     engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder,
-    std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights,
-    std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights,
+    std::shared_ptr<const engine::codecs::s3gen::S3FlowEncoderWeights> flow_encoder_weights,
+    std::shared_ptr<const engine::codecs::s3gen::S3FlowDecoderWeights> flow_decoder_weights,
     engine::models::chatterbox::HiFTVocoderComponent vocoder,
     ChatterboxPromptPrepConfig prompt_prep_config,
     const engine::core::ExecutionContext & execution_context,
@@ -129,8 +129,8 @@ ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
     outputs.source_speech_tokens = source_tokens.tokens;
 
     const auto s3gen_start = std::chrono::steady_clock::now();
-    S3GenTimingBreakdown timing;
-    const auto generated = compute_s3gen_inference(
+    engine::codecs::s3gen::S3GenTimingBreakdown timing;
+    const auto generated = engine::codecs::s3gen::compute_s3gen_inference(
         state_->s3_cache,
         *flow_encoder_weights_,
         *flow_decoder_weights_,

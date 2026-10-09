@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace engine::models::chatterbox {
+namespace engine::codecs::s3gen {
 
 struct S3FlowEncoderOutputs {
     std::vector<float> hidden;
@@ -43,10 +43,7 @@ struct S3GenInferenceOutputs {
     int64_t mel_frames = 0;
 };
 
-struct S3SpeakerEncoderWeights;
-struct S3TokenizerV2Weights;
 struct S3FlowEncoderWeights;
 struct S3FlowDecoderWeights;
-struct S3HiFTVocoderWeights;
 
-}  // namespace engine::models::chatterbox
+}  // namespace engine::codecs::s3gen

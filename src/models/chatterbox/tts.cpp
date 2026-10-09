@@ -67,7 +67,7 @@ struct ChatterboxTTSComponent::State {
     explicit State(engine::core::BackendConfig backend)
         : s3_cache(backend) {}
 
-    S3GenSessionCache s3_cache;
+    engine::codecs::s3gen::S3GenSessionCache s3_cache;
 };
 
 ChatterboxTTSComponent::ChatterboxTTSComponent(
@@ -76,8 +76,8 @@ ChatterboxTTSComponent::ChatterboxTTSComponent(
     engine::models::chatterbox::VoiceEncoderComponent voice_encoder,
     engine::models::chatterbox::S3TokenizerComponent tokenizer_component,
     engine::models::chatterbox::CAMPPlusEncoderComponent speaker_encoder,
-    std::shared_ptr<const S3FlowEncoderWeights> flow_encoder_weights,
-    std::shared_ptr<const S3FlowDecoderWeights> flow_decoder_weights,
+    std::shared_ptr<const engine::codecs::s3gen::S3FlowEncoderWeights> flow_encoder_weights,
+    std::shared_ptr<const engine::codecs::s3gen::S3FlowDecoderWeights> flow_decoder_weights,
     engine::models::chatterbox::HiFTVocoderComponent vocoder,
     ChatterboxPromptPrepConfig prompt_prep_config,
     const engine::core::ExecutionContext & execution_context,
@@ -214,10 +214,10 @@ ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone_impl(
 
     const auto s3gen_memory_before = capture_backend_memory_snapshot(execution_context_);
     const auto s3gen_started = std::chrono::steady_clock::now();
-    S3GenTimingBreakdown s3gen_timing;
+    engine::codecs::s3gen::S3GenTimingBreakdown s3gen_timing;
     const auto token2mel_memory_before = capture_backend_memory_snapshot(execution_context_);
     const auto token2mel_started = std::chrono::steady_clock::now();
-    const auto mel = compute_s3_token2mel_inference(
+    const auto mel = engine::codecs::s3gen::compute_s3_token2mel_inference(
         state_->s3_cache,
         *flow_encoder_weights_,
         *flow_decoder_weights_,

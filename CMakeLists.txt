@@ -585,6 +585,9 @@ add_library(engine_core OBJECT
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/codecs/snac_decoder_runtime.cpp
+    src/framework/codecs/s3gen_flow.cpp
+    src/framework/codecs/s3gen_runtime.cpp
+    src/framework/codecs/s3gen_hift_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
@@ -2139,11 +2142,8 @@ audiocpp_add_model(chatterbox
         src/models/chatterbox/audio_processing.cpp
         src/models/chatterbox/component_weights.cpp
         src/models/chatterbox/conditionals.cpp
-        src/models/chatterbox/hift_vocoder_impl.cpp
         src/models/chatterbox/loader.cpp
         src/models/chatterbox/s3_tokenizer_impl.cpp
-        src/models/chatterbox/s3gen_flow.cpp
-        src/models/chatterbox/s3gen_inference.cpp
         src/models/chatterbox/session.cpp
         src/models/chatterbox/t3_component.cpp
         src/models/chatterbox/t3_weights.cpp

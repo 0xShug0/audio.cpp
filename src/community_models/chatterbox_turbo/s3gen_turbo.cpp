@@ -8,7 +8,7 @@ namespace {
 
 engine::modules::HiftVocoderConfig make_turbo_hift_config(engine::assets::TensorStorageType weight_storage_type) {
     // Matches the S3Gen GGUF's `chatterbox.s3gen.*` metadata and base Chatterbox's own HiFT
-    // config (src/models/chatterbox/hift_vocoder_impl.cpp) -- the vocoder architecture is
+    // config (src/framework/codecs/s3gen_hift_runtime.cpp) -- the vocoder architecture is
     // unchanged by the meanflow distillation, only the tensor names differ. The repacked native
     // GGUF folds torch weight-norm parametrization into a plain "weight" tensor at conversion
     // time (no "parametrizations.weight.original0/1" keys), so this uses the Canonical (plain)
@@ -53,10 +53,10 @@ std::shared_ptr<ChatterboxTurboS3Gen> ChatterboxTurboS3Gen::load(
     auto out = std::make_shared<ChatterboxTurboS3Gen>();
     out->execution_context_ = &execution_context;
     out->encoder_weights_ =
-        engine::models::chatterbox::load_s3_flow_encoder_weights(*s3gen_source, execution_context, weight_storage_type);
+        engine::codecs::s3gen::load_s3_flow_encoder_weights(*s3gen_source, execution_context, weight_storage_type);
     out->decoder_weights_ =
-        engine::models::chatterbox::load_s3_flow_decoder_weights(*s3gen_source, execution_context, weight_storage_type);
-    if (!engine::models::chatterbox::s3_flow_decoder_is_meanflow(*out->decoder_weights_)) {
+        engine::codecs::s3gen::load_s3_flow_decoder_weights(*s3gen_source, execution_context, weight_storage_type);
+    if (!engine::codecs::s3gen::s3_flow_decoder_is_meanflow(*out->decoder_weights_)) {
         throw std::runtime_error(
             "Chatterbox Turbo S3Gen weights are missing the meanflow time_embed_mixer tensor (flow.decoder.estimator.time_embed_mixer)");
     }
@@ -66,15 +66,15 @@ std::shared_ptr<ChatterboxTurboS3Gen> ChatterboxTurboS3Gen::load(
     return out;
 }
 
-engine::models::chatterbox::S3GenInferenceOutputs ChatterboxTurboS3Gen::synthesize(
-    const engine::models::chatterbox::EmbedReferenceOutputs & ref_dict,
+engine::codecs::s3gen::S3GenInferenceOutputs ChatterboxTurboS3Gen::synthesize(
+    const engine::codecs::s3gen::EmbedReferenceOutputs & ref_dict,
     const std::vector<int32_t> & speech_tokens,
     uint64_t flow_seed,
     uint64_t vocoder_seed) const {
     // n_cfm_timesteps=2 matches tts_turbo.py's ChatterboxTurboTTS.generate default; cfg_rate and
     // cosine_schedule are unused on the meanflow path (see s3gen_inference.cpp's
     // decoder_weights.meanflow branch).
-    const auto mel = engine::models::chatterbox::compute_s3_token2mel_inference(
+    const auto mel = engine::codecs::s3gen::compute_s3_token2mel_inference(
         cache_,
         *encoder_weights_,
         *decoder_weights_,
@@ -91,7 +91,7 @@ engine::models::chatterbox::S3GenInferenceOutputs ChatterboxTurboS3Gen::synthesi
 
     const auto voc = vocoder_->synthesize(mel.mel, mel.frames, vocoder_seed);
 
-    engine::models::chatterbox::S3GenInferenceOutputs outputs;
+    engine::codecs::s3gen::S3GenInferenceOutputs outputs;
     outputs.waveform = voc.waveform;
     outputs.samples = voc.samples;
     outputs.mel = mel.mel;
