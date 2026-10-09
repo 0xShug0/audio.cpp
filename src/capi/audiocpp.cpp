@@ -638,9 +638,10 @@ audiocpp_status audiocpp_request_set_text(audiocpp_request * request, const char
         if (language != nullptr) transcript.language = language;
         request->request.text_input = std::move(transcript);
         /* audiocpp_cli's --language sets BOTH the transcript language and
-         * options["language"] (app/cli/request.cpp:336), and some families read
-         * only the latter. Mirroring that is what keeps this API's answers
-         * identical to the CLI's. A later audiocpp_request_set_option wins. */
+         * options["language"] (build_request_from_cli in app/cli/request.cpp),
+         * and some families read only the latter. Mirroring that is what keeps
+         * this API's answers identical to the CLI's. A later
+         * audiocpp_request_set_option wins. */
         if (language != nullptr && *language != '\0') {
             request->request.options["language"] = language;
         }

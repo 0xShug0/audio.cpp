@@ -2613,6 +2613,7 @@ function(audiocpp_use_utf8_codepage target)
 endfunction()
 
 add_executable(audiocpp_cli
+    app/common/base64.cpp
     app/common/build_info.cpp
     app/cli/main.cpp
     app/cli/args.cpp
@@ -2834,9 +2835,9 @@ configure_file(
 )
 
 add_executable(audiocpp_server
+    app/common/base64.cpp
     app/common/build_info.cpp
     app/server/main.cpp
-    app/server/base64.cpp
     app/server/config.cpp
     app/server/frontend.cpp
     app/server/http.cpp
@@ -2892,6 +2893,7 @@ add_executable(model_perf
     tests/perf/model_perf.cpp
     app/cli/args.cpp
     app/cli/request.cpp
+    app/common/base64.cpp
 )
 target_link_libraries(model_perf PRIVATE engine_runtime ggml)
 audiocpp_use_utf8_codepage(model_perf)
@@ -3137,6 +3139,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     if(nemotron_3_diar IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(nemotron_3_diar_streaming_test tests/nemotron_3_diar/streaming_schedule_test.cpp)
         add_test(NAME nemotron_3_diar_streaming_test COMMAND nemotron_3_diar_streaming_test)
+    endif()
+
+    if(yue2 IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(yue2_request_test tests/yue2/request_test.cpp)
+        add_test(NAME yue2_request_test COMMAND yue2_request_test)
     endif()
 
     # Registered here rather than in the extended block below so it runs in the
@@ -3530,6 +3537,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             tests/unittests/test_cli_request_options.cpp
             app/cli/args.cpp
             app/cli/request.cpp
+            app/common/base64.cpp
         )
         target_link_libraries(cli_request_options_test PRIVATE engine_runtime ggml)
         if (ENGINE_ENABLE_OPENMP)
@@ -3548,12 +3556,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(server_multipart_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         add_test(NAME server_multipart_test COMMAND server_multipart_test)
 
-        add_executable(server_base64_test
-            tests/unittests/test_server_base64.cpp
-            app/server/base64.cpp
+        add_executable(base64_test
+            tests/unittests/test_base64.cpp
+            app/common/base64.cpp
         )
-        target_include_directories(server_base64_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
-        add_test(NAME server_base64_test COMMAND server_base64_test)
+        add_test(NAME base64_test COMMAND base64_test)
 
         add_executable(server_busy_guard_test
             tests/unittests/test_server_busy_guard.cpp
@@ -3571,6 +3578,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             app/server/model_memory.cpp
             app/cli/args.cpp
             app/cli/request.cpp
+            app/common/base64.cpp
         )
         target_include_directories(server_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/app/server)
         target_link_libraries(server_config_test PRIVATE engine_runtime ggml)

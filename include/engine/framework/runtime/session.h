@@ -137,6 +137,8 @@ enum class ArtifactKind {
     TranscriptAlignment,
     DiarizationState,
     VadState,
+    // Keep last: the request reader in app/cli/request.cpp checks at build
+    // time that it names every kind up to this one.
     Custom,
 };
 

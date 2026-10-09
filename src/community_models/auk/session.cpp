@@ -1,5 +1,6 @@
 #include "engine/community_models/auk/session.h"
 
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/core/attention_fallback.h"
@@ -180,7 +181,7 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
         throw std::runtime_error("AuK audio editing requires source audio");
     }
     if (!request.input_artifacts.empty()) {
-        throw std::runtime_error("AuK cached artifacts are not supported");
+        throw runtime::InvalidRequestError("AuK cached artifacts are not supported");
     }
     const runtime::AudioBuffer * reference_input = request.audio_input ? &*request.audio_input : nullptr;
     if (request.voice) {

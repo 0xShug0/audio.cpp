@@ -114,6 +114,8 @@ The JSON may be either an array or an object with a `requests` array. Each item 
 
 For each request id, `--metrics` prints `metrics[<id>].wall_ms`, `audio_duration_ms`, `rtf`, `x_realtime`, `sample_rate`, and `channels`.
 
+A request can also pass input artifacts in an `artifacts` array, in the shape the server's [`/v1/tasks/run`](../app/server/README.md#post-v1tasksrun) takes: `id`, `kind`, `payload` (Base64) or `path` (a file holding the bytes, relative to the JSON file), and optional `meta`. Workflow requests take the same field, with paths relative to the workflow file.
+
 ## Model Docs
 
 | Need | Doc |

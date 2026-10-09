@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace minitts::server {
+namespace minitts::app {
 
 std::string base64_encode(const uint8_t * data, size_t size);
 std::string base64_encode(const std::vector<uint8_t> & bytes);
@@ -15,5 +15,7 @@ std::string base64_encode(const std::vector<std::byte> & bytes);
 // Decodes a base64 payload. Accepts an optional "data:<mime>;base64," prefix so
 // clients can send data URIs verbatim. Throws std::runtime_error on malformed input.
 std::vector<uint8_t> base64_decode(std::string_view input);
+// The same, as std::byte, for payloads that are kept as such.
+std::vector<std::byte> base64_decode_bytes(std::string_view input);
 
-}  // namespace minitts::server
+}  // namespace minitts::app

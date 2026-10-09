@@ -1,6 +1,5 @@
 #include "runtime.h"
 
-#include "base64.h"
 #include "live_speech_input.h"
 #include "model_memory.h"
 #include "multipart.h"
@@ -8,6 +7,7 @@
 #include "ui_assets.h"
 
 #include "../cli/request.h"
+#include "../common/base64.h"
 #include "../streaming/pcm_source.h"
 #include "../streaming/streaming.h"
 
@@ -44,6 +44,8 @@ namespace minitts::server {
 namespace {
 
 using engine::io::json::Value;
+using minitts::app::base64_decode;
+using minitts::app::base64_encode;
 
 using Clock = std::chrono::steady_clock;
 

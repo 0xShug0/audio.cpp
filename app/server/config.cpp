@@ -12,6 +12,12 @@
 #include <utility>
 
 namespace minitts::server {
+
+// The request reader caps the artifact payloads of one request at the default
+// body limit, so the two have to move together.
+static_assert(minitts::cli::kMaxRequestArtifactBytes == kDefaultMaxRequestBodyBytes,
+              "request artifact payload limit differs from the default request body limit");
+
 namespace {
 
 std::filesystem::path resolve_path(const std::filesystem::path & base, const std::filesystem::path & path) {

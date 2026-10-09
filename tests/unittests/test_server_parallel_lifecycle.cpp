@@ -110,7 +110,7 @@ public:
         }
         rt::TaskResult result;
         if (!control_->no_text) { result.text_output = rt::Transcript{revision_, "en"}; }
-        result.audio_output = rt::AudioBuffer{16000, 1, {0.1f, -0.1f}};
+        result.audio_output = rt::AudioBuffer{16000, 1, {0.1f, -0.1f}}; result.output_artifacts = request.input_artifacts;
         return result;
     }
     std::vector<rt::TaskResult> run_batch(const std::vector<rt::TaskRequest> & requests) override {
@@ -870,6 +870,92 @@ void live_speech_optional_input(int count) {
     }
 }
 
+// The generic routes read a request `artifacts` array into input_artifacts. The
+// fixture returns its input artifacts as its result's, so a response shows what
+// the session was given, in order, in the JSON shape the request used.
+void generic_request_artifacts(int count) {
+    Fixture f(count); auto offline = f.add("offline"); auto stream = f.add("stream", "streaming");
+    const auto file = f.root / "reply.bin";
+    std::ofstream(file, std::ios::binary) << std::string("\x01\x00\xff", 3);
+    std::vector<std::vector<std::string>> expected{
+        {"turn.question", "custom", "aGVsbG8="}, {"turn.reply", "acoustic_tokens", "AQD/"},
+        {"turn.question", "custom", "d29ybGQ="}};
+    std::string artifacts = "[{\"id\":\"turn.question\",\"kind\":\"custom\",\"payload\":\"aGVsbG8=\","
+        "\"meta\":{\"format\":\"wav\",\"steps\":3}},"
+        "{\"id\":\"turn.reply\",\"kind\":\"acoustic_tokens\",\"path\":" + quote(file.generic_string()) + "},"
+        "{\"id\":\"turn.question\",\"kind\":\"custom\",\"payload\":\"data:audio/wav;base64,d29ybGQ=\"}";
+    // Every kind name a response writes reads back as the same kind.
+    for (const std::string kind : {"speaker_embedding", "style_embedding", "prompt_embedding", "acoustic_tokens",
+                                   "midi", "transcript_alignment", "diarization_state", "vad_state", "custom"}) {
+        artifacts += ",{\"id\":\"kind\",\"kind\":" + quote(kind) + ",\"payload\":\"\"}";
+        expected.push_back({"kind", kind, ""});
+    }
+    artifacts += "]";
+    const auto check = [&](const engine::io::json::Value & result, const std::string & route) {
+        const auto & out = result.require("artifacts").as_array();
+        require(out.size() == expected.size(), route + " returned " + std::to_string(out.size()) + " artifacts");
+        for (size_t i = 0; i < out.size(); ++i) {
+            require(out[i].require("id").as_string() == expected[i][0] &&
+                    out[i].require("kind").as_string() == expected[i][1] &&
+                    out[i].require("payload").as_string() == expected[i][2],
+                    route + " changed artifact " + std::to_string(i));
+        }
+        const auto & meta = out[0].require("meta");
+        require(meta.as_object().size() == 2 && meta.require("format").as_string() == "wav" &&
+                meta.require("steps").as_string() == "3" && out[1].require("meta").as_object().empty(),
+                route + " changed artifact meta");
+    };
+    const auto body = [&](const std::string & model, bool wrapped) {
+        const std::string request = "\"text\":\"hi\",\"artifacts\":" + artifacts;
+        return "{\"model\":" + quote(model) + (wrapped ? ",\"request\":{" + request + "}}" : "," + request + "}");
+    };
+    for (const bool wrapped : {false, true}) {
+        const auto ran = post(*f.state, "/v1/tasks/run", body("offline", wrapped)); success(ran);
+        check(parse(ran.body), "offline /v1/tasks/run");
+        const auto streamed_run = post(*f.state, "/v1/tasks/run", body("stream", wrapped)); success(streamed_run);
+        check(parse(streamed_run.body), "streaming /v1/tasks/run");
+        const auto streamed = post(*f.state, "/v1/tasks/stream", body("stream", wrapped)); success(streamed);
+        check(parse(streamed.body).require("result"), "/v1/tasks/stream");
+    }
+    auto batch = post(*f.state, "/v1/tasks/batch", "{\"model\":\"offline\",\"requests\":[{\"text\":\"hi\",\"artifacts\":" +
+        artifacts + "},{\"text\":\"plain\"}]}");
+    success(batch); Writer writer; batch.stream_body(writer); batch.stream_body = {};
+    int results = 0;
+    for (size_t at = writer.output.find("data: {"); at != std::string::npos; at = writer.output.find("data: {", at + 1)) {
+        const auto event = parse(writer.output.substr(at + 6, writer.output.find("\n\n", at) - at - 6));
+        if (event.require("type").as_string() != "task.batch.result") { continue; }
+        ++results;
+        const auto & result = event.require("result");
+        if (event.require("index").as_i64() == 0) { check(result, "/v1/tasks/batch"); }
+        else { require(result.find("artifacts") == nullptr, "batch request without artifacts got some"); }
+    }
+    require(results == 2, "batch with artifacts returned " + std::to_string(results) + " results");
+    require(run(*f.state, "offline").body.find("\"artifacts\"") == std::string::npos,
+            "request without artifacts returned some");
+    const int offline_runs = offline->runs, stream_runs = stream->runs;
+    for (const auto & [bad, message] : std::vector<std::pair<std::string, std::string>>{
+        {"{\"id\":\"x\"}", "artifacts must be an array of artifact objects"},
+        {"[{\"id\":\"x\",\"kind\":\"tokens\",\"payload\":\"\"}]", "artifacts[0] (x): unknown kind 'tokens'"},
+        {"[{\"id\":\"x\",\"kind\":\"custom\",\"payload\":\"%%\"}]", "artifacts[0] (x): payload is not valid base64"},
+        {"[{\"id\":\"x\",\"kind\":\"custom\",\"path\":" + quote((f.root / "missing.bin").generic_string()) + "}]",
+         "artifacts[0] (x): path is not a regular file"}}) {
+        for (const auto & [path, request] : std::vector<std::pair<std::string, std::string>>{
+            {"/v1/tasks/run", "{\"model\":\"offline\",\"artifacts\":" + bad + "}"},
+            {"/v1/tasks/run", "{\"model\":\"stream\",\"request\":{\"artifacts\":" + bad + "}}"},
+            {"/v1/tasks/stream", "{\"model\":\"stream\",\"request\":{\"artifacts\":" + bad + "}}"},
+            {"/v1/tasks/batch", "{\"model\":\"offline\",\"requests\":[{\"text\":\"hi\"},{\"artifacts\":" + bad + "}]}"}}) {
+            const auto rejected = post(*f.state, path, request);
+            require(rejected.status == 400 && rejected.body.find(message) != std::string::npos &&
+                    rejected.body.find("invalid_request_error") != std::string::npos,
+                    path + " did not reject artifacts " + bad + ": HTTP " + std::to_string(rejected.status) + " " + rejected.body);
+        }
+    }
+    require(offline->runs == offline_runs && stream->runs == stream_runs, "rejected artifacts reached the model");
+    for (const std::string id : {"offline", "stream"}) {
+        require(Access::slots(*f.state, id).active == 0, id + " left its lease held after artifact requests");
+    }
+}
+
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
@@ -911,9 +997,11 @@ int main(int argc, char ** argv) {
             guarded_loading_does_not_block_warm_model(count);
             live_speech_return_text(count);
             live_speech_optional_input(count);
+            generic_request_artifacts(count);
             std::cout << "PASS real handlers: slots=" << count
                       << " queued unload/reconfiguration, manager order, bulk release, global lock,"
-                         " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input\n";
+                         " resident limits 1/2, deferred stream/disconnect, live speech return_text and optional input,"
+                         " request artifacts\n";
         }
     } catch (const std::exception & e) { std::cerr << e.what() << '\n'; return 1; }
 }

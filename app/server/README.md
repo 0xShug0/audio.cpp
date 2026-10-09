@@ -721,6 +721,42 @@ curl http://127.0.0.1:8080/v1/tasks/run \
   }'
 ```
 
+A result's artifacts (opaque payloads such as speaker embeddings or acoustic
+tokens) come back in an `artifacts` array. A request takes artifacts in the
+same shape, so a client can send what one result returned in a later request:
+
+```json
+{
+  "model": "my-model",
+  "request": {
+    "audio": "/path/to/input.wav",
+    "artifacts": [
+      {"id": "example.state", "kind": "custom", "payload": "<Base64 bytes>", "meta": {"format": "example/1"}},
+      {"id": "example.tokens", "kind": "acoustic_tokens", "path": "/path/to/tokens.bin"}
+    ]
+  }
+}
+```
+
+| field | meaning |
+| --- | --- |
+| `id` | non-empty string; ids may repeat |
+| `kind` | `speaker_embedding`, `style_embedding`, `prompt_embedding`, `acoustic_tokens`, `midi`, `transcript_alignment`, `diarization_state`, `vad_state` or `custom` |
+| `payload` | the bytes as Base64; a `data:...;base64,` URI is also accepted |
+| `path` | instead of `payload`: a server-local file whose bytes are the payload; a relative path resolves against the server's working directory |
+| `meta` | optional object of strings; a number or boolean value becomes text as in `options` (`12`, `true`; `1.0` becomes `1`) |
+
+The model gets the artifacts in array order. Which ids and kinds it reads is up
+to its family; see the model's docs. Most families that read none ignore them,
+while AuK, HeartMuLa, VibeVoice, VoxCPM1, VoxCPM2 and YuE2 turn away a request
+that carries any with HTTP 400. The same field works in `/v1/tasks/stream`
+requests and in each `/v1/tasks/batch` entry. A malformed entry returns HTTP 400
+naming it, for example `artifacts[1] (example.tokens): unknown kind 'tokens'`.
+`max_request_body_bytes` bounds inline payloads, as it does `audio_base64`; a
+`path` must name a regular file, and the payloads of one request, or of one
+`/v1/tasks/batch` entry, may total at most 2 GiB. A batch reads all its entries
+before it runs, so with `path` artifacts it can hold up to 2 GiB per entry.
+
 ### `POST /v1/tasks/batch`
 
 Runs multiple generic requests through a model's native offline batch path. The

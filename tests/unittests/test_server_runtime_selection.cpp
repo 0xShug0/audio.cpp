@@ -72,6 +72,65 @@ int main() {
             }
         }
         std::cout << "legacy live speech input requirement passed\n";
+
+        // The generic routes read a request `artifacts` array before the model
+        // loads. A malformed one is a 400 naming the entry; a valid one gets as
+        // far as loading the model, whose path does not exist.
+        minitts::server::ServerConfig task_config;
+        task_config.backend = engine::core::BackendType::Cpu;
+        task_config.ui_enabled = false;
+        minitts::server::ServerModelConfig task_model;
+        task_model.id = "task";
+        task_model.path = std::filesystem::temp_directory_path() / "audiocpp-legacy-task";
+        task_model.family = "loader_free_fixture";
+        task_model.task = "tts";
+        task_model.lazy = true;
+        task_config.models.push_back(task_model);
+        minitts::server::ServerState tasks(task_config, std::filesystem::current_path());
+        const auto routes = [](const std::string & artifacts) {
+            return std::vector<std::pair<std::string, std::string>>{
+                {"/v1/tasks/run", "{\"model\":\"task\",\"text\":\"hi\",\"artifacts\":" + artifacts + "}"},
+                {"/v1/tasks/run", "{\"model\":\"task\",\"request\":{\"text\":\"hi\",\"artifacts\":" + artifacts + "}}"},
+                {"/v1/tasks/stream", "{\"model\":\"task\",\"request\":{\"artifacts\":" + artifacts + "}}"},
+                {"/v1/tasks/batch", "{\"model\":\"task\",\"requests\":[{\"text\":\"hi\"},{\"artifacts\":" + artifacts + "}]}"}};
+        };
+        const auto post = [&](const std::string & path, const std::string & body) {
+            minitts::server::HttpRequest request;
+            request.method = "POST";
+            request.path = path;
+            request.body = body;
+            request.headers["content-type"] = "application/json";
+            return tasks.handle(request);
+        };
+        for (const auto & [bad, message] : std::vector<std::pair<std::string, std::string>>{
+                 {"{}", "artifacts must be an array of artifact objects"},
+                 {"[{\"id\":\"x\",\"kind\":\"tokens\",\"payload\":\"\"}]", "artifacts[0] (x): unknown kind 'tokens'"},
+                 {"[{\"id\":\"x\",\"kind\":\"custom\"}]", "artifacts[0] (x): give exactly one of payload"}}) {
+            for (const auto & [path, body] : routes(bad)) {
+                const auto response = post(path, body);
+                if (response.status != 400 || response.body.find(message) == std::string::npos ||
+                    response.body.find("invalid_request_error") == std::string::npos) {
+                    throw std::runtime_error("legacy " + path + " did not reject artifacts " + bad + ": HTTP " +
+                                             std::to_string(response.status) + ": " + response.body);
+                }
+            }
+        }
+        const std::string good =
+            "[{\"id\":\"x\",\"kind\":\"custom\",\"payload\":\"aGVsbG8=\",\"meta\":{\"n\":1}},"
+            "{\"id\":\"y\",\"kind\":\"acoustic_tokens\",\"payload\":\"\"}]";
+        for (const auto & [path, body] : routes(good)) {
+            std::string outcome;
+            try {
+                const auto response = post(path, body);
+                outcome = "HTTP " + std::to_string(response.status) + ": " + response.body;
+            } catch (const std::exception & error) {
+                outcome = error.what();
+            }
+            if (outcome.find("model path does not exist") == std::string::npos) {
+                throw std::runtime_error("legacy " + path + " did not take valid artifacts to the model load: " + outcome);
+            }
+        }
+        std::cout << "legacy request artifacts parsing passed\n";
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

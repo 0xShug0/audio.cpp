@@ -148,7 +148,9 @@ speaker reference (`audiocpp_request_set_voice_id` /
 `..._set_energy_scale`, `..._set_style_tag`), and input artifacts
 (`audiocpp_request_add_artifact`). Results expose the matching outputs,
 including artifacts, so a speaker embedding can be read out of one result and
-fed back into a later request instead of being re-derived.
+fed back into a later request instead of being re-derived. The server's generic
+task routes and the CLI request JSON carry artifacts the same way, as an
+`artifacts` array (see the [server docs](../app/server/README.md#post-v1tasksrun)).
 
 ## Discovering what a model accepts
 
