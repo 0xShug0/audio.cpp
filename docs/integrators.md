@@ -25,7 +25,7 @@ Use these, in this order. Each one is available from a packaged build.
 advertises runtime task tokens and modes. Its `api_endpoints` and
 `instructions_policy` fields are capability-derived advertisements. A schema 2
 spec replaces them. Take the route from `task_operations`, and take instruction
-support from an `inputs` entry whose id is `instructions`.
+support from `instruction_fields`. An empty array means the family has none.
 
 ## Read the resolved spec
 
@@ -53,9 +53,13 @@ Every resolved spec adds:
 - `public_key` on every option. Request options use the local name. Session
   and load options use `<family>.<name>`.
 
-A schema 2 spec also adds `startup`, fills each `task_operations` entry with
-method, path, encoding, and response type, and lists `tasks` and
-`default_task` on every package.
+A schema 2 spec also adds `startup`, lists `tasks` and `default_task` on every
+package, and fills each `task_operations` entry from the operation id. That
+fill adds method, path, encoding, response type, `response_slots`, and
+`field_aliases` when the route has them. Audio inputs gain `wire_forms`.
+`instruction_fields` lists every instructions input, and is an empty array
+when the family has none. `stream_response` is added only when that task sets
+`stream` to true.
 
 ## Schema 2 and schema 1
 
@@ -198,13 +202,29 @@ is known. Types are `bool`, `int`, `float`, `string`, `enum`, `path`,
 
 Input schema types are `string`, `enum`, `audio`, and `artifact`.
 
-An `audio` input names `media_type` and `wire`. The resolved `wire_forms` object is the shape of each name. `path_string` is a filesystem path to a WAV. `voice_ref_object` is only valid on speech `/voice_ref`: a path string, or an object whose `type` is `path` or `base64`. A `path` object has `path`. A `base64` object has `data`, and the decoded WAV is at most 5 MiB. `tasks.run` audio fields are `path_string` only.
+An `audio` input names `media_type` and `wire`. The resolved `wire_forms`
+object is the shape of each name.
 
-`instruction_fields` lists every input whose id is `instructions`. An empty array means this family has no instruction input. `caller` `plain` means send the string as written to the binding. `engine_prefix` and `engine_suffix` are added by the engine, so the caller does not add them. `engine_boundary` is the same idea when the string does not already contain `token`: the engine adds `prefix` and `suffix`. `caller` `enum` means the value is one of `values`. Option `aliases` are other keys the runtime accepts for that option. Speech also treats `/speaking_rate` as `/speed`; that pair is `field_aliases` on the operation.
+- `path_string` is a filesystem path to a WAV. `tasks.run` audio fields use
+  only this form.
+- `voice_ref_object` is valid on speech `/voice_ref`, together with
+  `path_string`. The value may be a path string, or an object whose `type` is
+  `path` or `base64`. A `path` object has `path`. A `base64` object has
+  `data`. The decoded WAV is at most 5 MiB.
 
-`outputs[].bindings[<operation>].slot` selects a row of `response_slots` on that operation. Speech `audio` is WAV bytes when `response_format` is omitted or `wav`. When `response_format` is `json` or `b64_json`, the same WAV is base64 at `/audio`, `/format` is `wav`, and `/timing` is the timing object. `tasks.run` `audio` is JSON: base64 WAV at `/audio`, plus `/sample_rate`, `/channels`, and `/timing`. `text` is `/text` and optional `/language`. `artifact` is the `/artifacts` array. `alignments.create` `alignment` is `/text` and `/words`.
+`instruction_fields` lists every input whose id is `instructions`. An empty
+array means this family has no instruction input. Send a value only for a task
+listed there.
 
-`stream_response` is present only when that task sets `stream` to true. Speech streaming requires `response_format` `pcm`. `stream_format` `sse` sends `speech.audio.delta` events whose `audio` is base64 PCM16, then `speech.audio.done`. `stream_format` `audio` is a raw PCM16 body. `tasks.run` streaming returns one JSON object with `/events` and `/result`.
+- `caller` `plain` means send the string as written to the binding. Do not add
+  `engine_prefix` or `engine_suffix`; the engine adds them. `engine_boundary`
+  is the same rule when the string does not already contain `token`: the engine
+  adds `prefix` and `suffix`.
+- `caller` `enum` means the value is one of `values`.
+
+Option `aliases` are other keys the runtime accepts for that option. Speech
+also treats `/speaking_rate` as `/speed`. That pair is `field_aliases` on the
+operation.
 
 For a Qwen custom-voice model started with spec task `tts`, `preferred_operation`
 is `speech.create`. The text input binds to `/input`. The optional `voice`
@@ -236,10 +256,19 @@ is a TTS model.
 
 Chatterbox `tts` and `clone` also share `speech.create`. Both require
 reference audio: the `voice` input lists those tasks, `required: true`, and
-binds to `/voice_ref`. `tts` is not a preset-voice path. `vc` uses
-`tasks.run`, and its inputs bind under `/request/`. `seed` carries both
-bindings, `/seed` and `/request/seed`, because that option lists all three
-tasks.
+binds to `/voice_ref`. Its `wire` is `path_string` and `voice_ref_object`.
+`tts` is not a preset-voice path. `vc` uses `tasks.run`, and its audio inputs
+are `path_string` under `/request/`. `seed` carries both bindings, `/seed` and
+`/request/seed`, because that option lists all three tasks.
+
+Qwen and CosyVoice instruction inputs use `caller` `plain`. Qwen's engine adds
+the user-turn affix in `engine_prefix` and `engine_suffix`. CosyVoice adds the
+`engine_boundary` prefix and suffix when the string does not already contain
+`<|endofprompt|>`. Kokoro, Chatterbox, and Fish Audio have an empty
+`instruction_fields` array, so they do not take an instructions value. Kokoro's
+`speed` option aliases `speaking_rate`. Fish Audio's `max_tokens` option
+aliases `max_new_tokens`. Chatterbox's `num_inference_steps` option aliases
+`max_steps`.
 
 CLI text and audio flags (`--text`, `--audio`, `--voice-ref`, `--out`) are
 documented by `audiocpp_cli --help` and [docs/usage.md](usage.md). Per-family
@@ -247,14 +276,24 @@ knobs on the CLI go through `--request-option <public_key>=<value>`.
 
 ## Read the result
 
-Use `response_content_type` for the HTTP body. When `outputs` is present, each
-row has `kind` (`audio`, `text`, `json`, or `artifact`) and the spec tasks it
-belongs to. An output binding, when declared, locates that artifact in the
-JSON body. A missing `outputs` array means the result roles are unknown; the
-operation's response type is still known.
+Each output names a `slot` in `bindings[<operation>]`. That slot selects a row
+of `response_slots` on the resolved operation. A missing `outputs` array means
+the result roles are unknown. The operation's response type is still known.
 
-`stream: true` on an operation is legal only when `modes` includes
-`streaming`. The spec does not describe streaming event payloads.
+Speech `audio` is WAV bytes when `response_format` is omitted or `wav`. When
+`response_format` is `json` or `b64_json`, the same WAV is base64 at `/audio`,
+`/format` is `wav`, and `/timing` is the timing object. `tasks.run` `audio` is
+JSON: base64 WAV at `/audio`, plus `/sample_rate`, `/channels`, and `/timing`.
+`text` is `/text` and an optional `/language`. `artifact` is the `/artifacts`
+array. `alignments.create` `alignment` is `/text` and `/words`.
+
+`stream: true` is legal only when `modes` includes `streaming`. The resolved
+operation then includes `stream_response`. Speech streaming requires
+`response_format` `pcm`. `stream_format` `sse` sends `speech.audio.delta`
+events whose `audio` is base64 PCM16, then `speech.audio.done`. `stream_format`
+`audio` is a raw PCM16 body. `tasks.run` streaming returns one JSON object
+with `/events` and `/result`. The five schema 2 samples leave `stream` unset,
+so they do not advertise a streaming response.
 
 ## Packages and downloads
 
@@ -287,6 +326,7 @@ declares none.
 4. The package's `tasks` includes the spec task you will run.
 5. Startup uses `task_tokens`, `public_key`, and the flag names in `startup`.
 6. The HTTP call uses `preferred_operation`'s method, path, and encoding, the
-   server `id` in `model`, and the bindings for that operation.
-7. The response is read as `response_content_type`, with `outputs` when the
-   spec declares them.
+   server `id` in `model`, and the bindings for that operation. Audio values
+   use `wire_forms`. Instruction text follows `instruction_fields`.
+7. The response is the output `slot` inside `response_slots`. When `stream` is
+   true, events follow `stream_response`.

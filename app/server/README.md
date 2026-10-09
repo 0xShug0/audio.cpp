@@ -385,11 +385,14 @@ Two opt-in query flags add to each entry:
   `task_tokens` and `public_key` on every option. Schema 2 specs include
   `task_operations`, `inputs`, `outputs`, option `tasks`, `bindings`, and
   `aliases` when the family declared them, plus `startup` and each package's
-  `tasks` and `default_task`. Operation method, path, encoding, and response
-  type are filled from the operation id. Absent sections mean unknown, not
+  `tasks` and `default_task`. Operation method, path, encoding, response type,
+  `response_slots`, and speech `field_aliases` are filled from the operation
+  id. Audio inputs gain `wire_forms`. `instruction_fields` lists instruction
+  inputs and is empty when the family has none. `stream_response` is present
+  only when that task sets `stream` to true. Absent sections mean unknown, not
   unsupported. `"{}"` means no contract was available. The experimental
   `--parallel-jobs` runtime does not add `spec`. See
-  `docs/maintainers/model_specs.md`.
+  [docs/integrators.md](../../docs/integrators.md).
 
 ```bash
 curl 'http://127.0.0.1:8080/v1/models?include_params=true'

@@ -14,7 +14,8 @@ Integrators treat these surfaces as authoritative:
 3. **Family contract** — `audiocpp_cli --family <id> --spec --json`, and
    `spec` on `GET /v1/models?include_params=true`. The resolved document
    carries task tokens, option public keys, and, for schema 2, startup
-   defaults and package tasks. Schema 2 fields are documented in
+   defaults, package tasks, audio `wire_forms`, `instruction_fields`, and
+   `response_slots`. Schema 2 fields are documented in
    [model_specs.md](model_specs.md). The control-plane walkthrough is
    [../integrators.md](../integrators.md).
 

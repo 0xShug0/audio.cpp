@@ -59,7 +59,7 @@ New standalone model ports should normally start under `community_models/`. This
 
 Please read [Welcoming Community Models & Using Model Spec v1 for New Models](https://github.com/0xShug0/audio.cpp/issues/54) before starting a new model PR.
 
-New models should use model spec v1, follow existing model/package naming conventions, and reuse framework modules, runtimes, helpers, and ownership patterns when they fit. Schema `2` is optional: keep numeric `1` until the spec declares task operations, inputs, outputs, option `tasks`, `bindings`, and `aliases`, or startup fields (`default_task`, `default_mode`, package `tasks`). See [docs/maintainers/model_specs.md](docs/maintainers/model_specs.md). 
+New models should use model spec v1, follow existing model/package naming conventions, and reuse framework modules, runtimes, helpers, and ownership patterns when they fit. Schema `2` is optional: keep numeric `1` until the spec declares task operations, inputs, outputs, option `tasks`, `bindings`, and `aliases`, or startup fields (`default_task`, `default_mode`, package `tasks`). A schema 2 audio input must name `media_type` and `wire`. A schema 2 instruction string must name `schema.text`. A schema 2 output must bind a `slot`. See [docs/maintainers/model_specs.md](docs/maintainers/model_specs.md). 
 
 Even for community models, PRs should include enough evidence for maintainers and users to understand exactly what was tested. Follow the validation style shown in [PR #19](https://github.com/0xShug0/audio.cpp/pull/19) and [PR #63](https://github.com/0xShug0/audio.cpp/pull/63).
 

@@ -142,7 +142,8 @@ Multipart names are limited to the fields already documented for that route.
 Each binding operation must be declared by at least one task on the row, and
 every task on the row must be covered by a binding whose operation that task
 declares. An option used by both `speech.create` and `tasks.run` carries one
-binding for each. Exactly one of `json_pointer` or `multipart_field` is set.
+binding for each. A request binding sets exactly one of `json_pointer` or
+`multipart_field`. An output binding sets `slot` instead.
 Aliases must not collide with another option's public key in the same scope.
 On schema 1, `task_operations`, `inputs`, `outputs`, and option `tasks`,
 `bindings`, and `aliases` are errors. Other unknown keys on schema 1 stay
@@ -205,6 +206,22 @@ the role. The caller supplies at most one member of an alternatives set.
 Optional `presentation` may contain `label`, `group`, and `advanced`; it is not
 needed to serialize a valid request.
 
+An audio input requires `media_type` `audio/wav` and `wire`. Speech `/voice_ref`
+uses both `path_string` and `voice_ref_object`. Every other audio field uses
+`path_string` only. The resolved spec expands those names to `wire_forms`.
+`path_string` is a filesystem path to a WAV. `voice_ref_object` is a path
+string or an object with `type` `path` or `base64`; decoded base64 WAV is at
+most 5 MiB.
+
+A string input with id `instructions`, or one bound to `/instructions`, requires
+`schema.text`. `caller` is `plain`: the caller sends the string unchanged.
+`engine_prefix` and `engine_suffix` are the affix the engine adds. They are an
+alternative to `engine_boundary`, which has `token`, `prefix`, and `suffix` and
+applies only when the string does not already contain `token`. The resolved
+spec copies instruction inputs to `instruction_fields`. An empty array means
+the family declares no instruction input. An enum `instructions` input is
+reported with `caller` `enum` and its `values`.
+
 ### Outputs
 
 `outputs` prevents clients from assuming every result is one waveform or one
@@ -233,19 +250,10 @@ Output kinds are `audio`, `text`, `json`, and `artifact`. Every output binding
 names a `slot` instead of a JSON pointer. The slot must be one the operation
 defines: speech `audio`; `tasks.run` `audio`, `text`, or `artifact`;
 transcriptions `text`; alignments `alignment`. The resolved operation's
-`response_slots` entry is the body layout for that slot.
-
-An audio input requires `media_type` `audio/wav` and `wire`. Speech `/voice_ref`
-uses `path_string` and `voice_ref_object`. Every other audio field uses
-`path_string` only. The resolved spec expands those names to `wire_forms`.
-
-A string input with id `instructions`, or one bound to `/instructions`, requires
-`schema.text`. `caller` is `plain`: the caller sends the string unchanged.
-`engine_prefix` and `engine_suffix` are the affix the engine adds. They are an
-alternative to `engine_boundary`, which has `token`, `prefix`, and `suffix` and
-applies only when the string does not already contain `token`. The resolved
-spec copies these rows to `instruction_fields`. An empty array means the family
-declares no instruction input.
+`response_slots` entry is the body layout for that slot. Speech `audio` is raw
+WAV, or base64 WAV at `/audio` with `/format` `wav` when `response_format` is
+`json` or `b64_json`. `tasks.run` `audio` is base64 WAV at `/audio` with
+`/sample_rate` and `/channels`.
 
 `stream_response` is not written in the source spec. The resolved task operation
 gains it when `stream` is true. Speech streaming is PCM, either SSE
@@ -260,8 +268,7 @@ a non-empty subset of the family tasks. The package marked `default: true` uses
 the family `default_task`. A checkpoint that cannot run every family task lists
 only the tasks it can run.
 
-The resolved spec adds three objects an integrator would otherwise have to
-guess:
+The resolved spec adds the objects an integrator would otherwise have to guess:
 
 - `task_tokens` maps each spec task name to the runtime token. `clone` is
   `clon`, `design` is `vdes`, and `music` is `gen`. CLI `--task` and the server
@@ -273,6 +280,9 @@ guess:
   flags (`--family`, `--model`, `--task`, `--mode`, `--load-option`,
   `--session-option`, `--request-option`), and the server config fields
   (`family`, `path`, `task`, `mode`, `load_options`, `session_options`).
+- `wire_forms` on each audio input, `instruction_fields`, `response_slots`,
+  and `field_aliases` on speech. `stream_response` appears only when the task
+  sets `stream` to true.
 
 `path` / `--model` is a directory, or a file in that directory when the directory
 contains more than one weight. The server config also requires `id`, which the
@@ -316,9 +326,11 @@ Some tasks share one route because the session already implemented them that way
 
 | Family | Tasks | Route | What differs |
 |---|---|---|---|
-| `chatterbox` | `tts`, `clone` | `speech.create` | Both require reference audio. `tts` is not a preset-voice path. `vc` uses `tasks.run`. |
-| `qwen3_tts` | `tts`, `clone` | `speech.create` | `clone` is the base checkpoint with reference audio. Custom-voice `speaker` stays on `tts`. `design` also uses `speech.create`. |
-| `fish_audio` | `tts`, `clone` | `speech.create` | `clone` sends optional reference audio on the same speech request. |
+| `kokoro_tts` | `tts` | `speech.create` | Preset `voice` string. No instruction input. `speed` aliases `speaking_rate`. |
+| `chatterbox` | `tts`, `clone` | `speech.create` | Both require `/voice_ref` as a WAV path or a `voice_ref` object. `vc` uses `tasks.run` with WAV paths. `num_inference_steps` aliases `max_steps`. |
+| `qwen3_tts` | `tts`, `clone` | `speech.create` | `clone` is the base checkpoint with reference audio. Custom-voice `speaker` stays on `tts`. `design` also uses `speech.create`. Instructions are plain text; the engine wraps them as a user turn. |
+| `cosyvoice3` | `tts`, `clone` | `speech.create` | Reference audio is required. Instructions are plain text; the engine adds `<|endofprompt|>` when the string does not already contain it. |
+| `fish_audio` | `tts`, `clone` | `speech.create` | `clone` sends optional reference audio on the same speech request. `max_tokens` aliases `max_new_tokens`. |
 
 ## Metadata vs Runtime Loading
 
