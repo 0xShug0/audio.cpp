@@ -108,6 +108,9 @@ Qwen3ASRConfig parse_config(const assets::ResourceBundle & resources) {
 
     Qwen3ASRConfig config;
     config.hf_transformers_layout = hf_layout;
+    config.audio_encoder_binding = hf_layout
+        ? modules::Qwen3AudioEncoderWeightBinding{"model.audio_tower", "model.multi_modal_projector", "linear_1", "linear_2"}
+        : modules::Qwen3AudioEncoderWeightBinding{"thinker.audio_tower", "thinker.audio_tower"};
     config.model_type = json::require_string(root, "model_type");
     config.thinker_model_type = json::optional_string(thinker_config, "model_type", config.model_type);
     config.model_size = json::optional_string(root, "model_size", hf_layout ? "Qwen3-ASR-1.7B-hf" : config.model_type);

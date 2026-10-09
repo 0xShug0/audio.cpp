@@ -109,8 +109,8 @@ Qwen3ForcedAlignerSession::Qwen3ForcedAlignerSession(
       tokenizer_(assets_),
       frontend_(assets_),
       audio_encoder_(assets_->model_weights, assets_->config.audio_encoder,
-          execution_context(), audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_,
-          assets_->config.hf_transformers_layout),
+          execution_context(), {audio_encoder_graph_arena_bytes_, audio_encoder_weight_storage_type_, "qwen3_forced_aligner.audio_encoder"},
+          assets_->config.audio_encoder_binding),
       thinker_(
           assets_,
           execution_context(),

@@ -737,7 +737,7 @@ private:
             1,
             true,
         }).build(ctx, x, {weights_.head1_weight, weights_.head1_bias});
-        x = modules::PReluModule().build(ctx, x, broadcast_to(ctx, weights_.head_prelu_slope, x.shape));
+        x = modules::PReluModule().build(ctx, x, weights_.head_prelu_slope);
         x = modules::Conv1dModule({
             x.shape.dims[1],
             weights_.head2_weight.shape.dims[0],
@@ -821,7 +821,7 @@ public:
             joined,
             {weight("duration_predictor.tts.dp.predictor.layers.0.weight"), weight("duration_predictor.tts.dp.predictor.layers.0.bias")});
         h = modules::PReluModule().build(ctx_, h,
-            broadcast_to(ctx_, weight("duration_predictor.tts.dp.predictor.activation.weight"), h.shape));
+            weight("duration_predictor.tts.dp.predictor.activation.weight"));
         auto duration = modules::LinearModule({
             h.shape.last_dim(),
             weight("duration_predictor.tts.dp.predictor.layers.1.weight").shape.dims[0],

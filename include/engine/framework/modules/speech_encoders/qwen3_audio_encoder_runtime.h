@@ -45,15 +45,27 @@ int64_t qwen3_audio_encoder_token_count(int64_t input_frames);
 class Qwen3AudioEncoderGraph;
 struct Qwen3AudioEncoderWeights;
 
+struct Qwen3AudioEncoderWeightBinding {
+    std::string tower_prefix;
+    std::string projector_prefix;
+    std::string projection1 = "proj1";
+    std::string projection2 = "proj2";
+};
+
+struct Qwen3AudioEncoderRuntimeOptions {
+    size_t graph_arena_bytes = 0;
+    assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
+    std::string trace_name = "qwen3_audio_encoder";
+};
+
 class Qwen3AudioEncoderRuntime {
 public:
     Qwen3AudioEncoderRuntime(
         std::shared_ptr<const assets::TensorSource> source,
         Qwen3AudioEncoderConfig config,
         core::ExecutionContext & execution,
-        size_t graph_arena_bytes,
-        assets::TensorStorageType weight_storage_type,
-        bool hf_transformers_layout = false);
+        Qwen3AudioEncoderRuntimeOptions options,
+        Qwen3AudioEncoderWeightBinding binding);
     ~Qwen3AudioEncoderRuntime();
 
     Qwen3AudioEmbeddings encode(const Qwen3AudioFeatures & features);
@@ -62,7 +74,7 @@ private:
     Qwen3AudioEncoderConfig config_;
     std::shared_ptr<const Qwen3AudioEncoderWeights> weights_;
     core::ExecutionContext * execution_ = nullptr;
-    size_t graph_arena_bytes_ = 0;
+    Qwen3AudioEncoderRuntimeOptions options_;
     std::unique_ptr<Qwen3AudioEncoderGraph> graph_;
 };
 

@@ -18,7 +18,13 @@ struct HiftVocoderWeights;
 
 namespace engine::models::chatterbox {
 
-using codecs::s3gen::EmbedReferenceOutputs;
+struct EmbedReferenceOutputs : codecs::s3gen::S3GenConditioning {
+    double prompt_mel_ms = 0.0;
+    double speaker_ms = 0.0;
+    double tokenizer_ms = 0.0;
+};
+
+void apply_s3_trim_fade(std::vector<float> & waveform, int sample_rate);
 
 namespace components {
 struct S3TokenizerV2Weights;

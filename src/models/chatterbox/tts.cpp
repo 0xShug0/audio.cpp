@@ -36,7 +36,9 @@ std::vector<int32_t> clean_generated_speech_tokens_like_python(const std::vector
     return cleaned;
 }
 
-void apply_s3_trim_fade_like_inference(std::vector<float> & waveform, int sample_rate) {
+}  // namespace
+
+void apply_s3_trim_fade(std::vector<float> & waveform, int sample_rate) {
     const int64_t n_trim = sample_rate / 50;
     const int64_t fade_size = 2 * n_trim;
     if (waveform.empty() || n_trim <= 0) {
@@ -53,6 +55,8 @@ void apply_s3_trim_fade_like_inference(std::vector<float> & waveform, int sample
         waveform[static_cast<size_t>(i)] *= fade;
     }
 }
+
+namespace {
 
 engine::core::BackendMemorySnapshot capture_backend_memory_snapshot(const engine::core::ExecutionContext * execution_context) {
     if (!engine::debug::trace_log_enabled() && !engine::debug::timing_log_enabled()) {
@@ -246,7 +250,7 @@ ChatterboxVoiceCloneOutputs ChatterboxTTSComponent::synthesize_voice_clone_impl(
     outputs.mel = mel.mel;
     outputs.mel_channels = mel.channels;
     outputs.mel_frames = mel.frames;
-    apply_s3_trim_fade_like_inference(outputs.waveform, 24000);
+    apply_s3_trim_fade(outputs.waveform, 24000);
     if (chatterbox_language_uses_multilingual_t3(language)) {
         const int64_t speech_token_audio_samples = 24000 / 25;
         const int64_t effective_speech_tokens =

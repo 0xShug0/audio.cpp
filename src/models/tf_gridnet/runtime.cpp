@@ -149,8 +149,7 @@ private:
         const int64_t channels = weight.shape.dims[0];
         x = modules::Conv2dModule({x.shape.dims[1], channels, 1, 1}).build(ctx, x,
             {weight, weights_.at(prefix + ".0.bias")});
-        x = modules::PReluModule({1, modules::PReluLowering::TensorScaleRelu})
-            .build(ctx, x, weights_.at(prefix + ".1.weight"), weights_.at("negative_one"));
+        x = modules::PReluModule({1}).build(ctx, x, weights_.at(prefix + ".1.weight"));
         const auto shape = x.shape;
         x = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
         const int64_t features = channels * shape.dims[3];
@@ -240,7 +239,6 @@ public:
         }
         weights_.emplace("output_conv.weight", store_.make_f32(TensorShape::from_dims({2 * c.speakers, c.embedding_dim, 3, 3}), reversed));
         weights_.emplace("zero", store_.make_f32(TensorShape::from_dims({1}), {0}));
-        weights_.emplace("negative_one", store_.make_f32(TensorShape::from_dims({1}), {-1}));
         const int bins = c.n_fft / 2 + 1;
         const int qk = (c.attention_qk_dim + bins - 1) / bins * bins;
         weights_.emplace("attention_scale", store_.make_f32(TensorShape::from_dims({1}), {1.0f / std::sqrt(float(qk))}));

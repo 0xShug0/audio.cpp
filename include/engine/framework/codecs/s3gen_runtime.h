@@ -11,7 +11,7 @@
 
 namespace engine::codecs::s3gen {
 
-struct EmbedReferenceOutputs {
+struct S3GenConditioning {
     std::vector<int32_t> prompt_tokens;
     int64_t prompt_token_count = 0;
     std::vector<float> prompt_feat;
@@ -19,9 +19,6 @@ struct EmbedReferenceOutputs {
     int64_t prompt_feat_dims = 0;
     std::vector<float> embedding;
     int64_t embedding_size = 0;
-    double prompt_mel_ms = 0.0;
-    double speaker_ms = 0.0;
-    double tokenizer_ms = 0.0;
 };
 
 struct S3Token2MelOutputs {
@@ -40,9 +37,6 @@ struct S3FlowEncoderOutputs {
 struct S3GenInferenceOutputs {
     std::vector<float> waveform;
     int64_t samples = 0;
-    std::vector<float> source;
-    int64_t source_channels = 0;
-    int64_t source_frames = 0;
     std::vector<float> mel;
     int64_t mel_channels = 0;
     int64_t mel_frames = 0;
@@ -80,17 +74,59 @@ struct S3GenTimingBreakdown {
     double vocoder_ms = 0.0;
 };
 
+enum class S3FlowVariant { Conditional, MeanFlow };
+
+struct S3FlowEncoderConfig {
+    int64_t vocabulary_size = 6561;
+    int64_t hidden_size = 512;
+    int64_t heads = 8;
+    int64_t feed_forward_size = 2048;
+    int64_t layers = 6;
+    int64_t upsample_layers = 4;
+    int upsample_factor = 2;
+    int64_t prelook_kernel_size = 4;
+    int64_t prelook_output_kernel_size = 3;
+    int64_t upsample_kernel_size = 5;
+    int64_t speaker_embedding_size = 192;
+};
+
+struct S3FlowDecoderConfig {
+    // Single-scale estimator: one entry block, repeated middle blocks, one exit block.
+    S3FlowVariant variant = S3FlowVariant::Conditional;
+    int64_t hidden_size = 256;
+    int64_t heads = 8;
+    int64_t head_dim = 64;
+    int64_t feed_forward_size = 1024;
+    int64_t time_embedding_size = 320;
+    int64_t time_hidden_size = 1024;
+    int64_t middle_blocks = 12;
+    int64_t attention_layers = 4;
+};
+
 struct S3GenConfig {
-    assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
-    std::string vocoder_tensor_prefix = "mel2wav.";
-    modules::HiftVocoderWeightLayout vocoder_weight_layout =
+    S3GenConfig();
+    int64_t mel_channels = 80;
+    S3FlowEncoderConfig encoder;
+    S3FlowDecoderConfig decoder;
+    modules::HiftVocoderConfig vocoder;
+};
+
+struct S3GenWeightBinding {
+    std::string flow_prefix = "flow.";
+    std::string vocoder_prefix = "mel2wav.";
+    modules::HiftVocoderWeightLayout vocoder_layout =
         modules::HiftVocoderWeightLayout::TorchParametrizedWeightNorm;
+};
+
+struct S3GenRuntimeOptions {
+    assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
 };
 
 class S3GenRuntime {
 public:
     S3GenRuntime(std::shared_ptr<const assets::TensorSource> source,
-                 const core::ExecutionContext & execution, S3GenConfig config = {});
+                 const core::ExecutionContext & execution, S3GenConfig config,
+                 S3GenRuntimeOptions options = {}, S3GenWeightBinding binding = {});
     ~S3GenRuntime();
     S3GenRuntime(S3GenRuntime &&) noexcept;
     S3GenRuntime & operator=(S3GenRuntime &&) noexcept;
@@ -102,7 +138,7 @@ public:
         const std::vector<float> & embeddings, int64_t frames,
         int64_t capacity_frames, int64_t hidden_size) const;
     S3Token2MelOutputs token_to_mel(
-        const EmbedReferenceOutputs & reference,
+        const S3GenConditioning & reference,
         const std::vector<int32_t> & speech_tokens, int64_t speech_token_count,
         int64_t num_steps = 10, float cfg_rate = 0.7f, bool cosine_schedule = true,
         const std::vector<float> & full_noise = {}, uint64_t flow_seed = 0,
@@ -111,7 +147,7 @@ public:
         const std::vector<float> & mel, int64_t frames,
         uint64_t seed = 0, uint64_t prior_noise_values = 0) const;
     S3GenInferenceOutputs synthesize(
-        const EmbedReferenceOutputs & reference,
+        const S3GenConditioning & reference,
         const std::vector<int32_t> & speech_tokens, int64_t speech_token_count,
         int64_t num_steps = 10, float cfg_rate = 0.7f, bool cosine_schedule = true,
         const std::vector<float> & full_noise = {}, uint64_t flow_seed = 0,

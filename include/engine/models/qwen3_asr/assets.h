@@ -58,6 +58,7 @@ struct Qwen3ASRConfig {
     bool tie_word_embeddings = false;
     Qwen3ASRFrontendConfig frontend;
     Qwen3ASRAudioEncoderConfig audio_encoder;
+    modules::Qwen3AudioEncoderWeightBinding audio_encoder_binding;
     Qwen3ASRTextDecoderConfig text_decoder;
     std::vector<std::string> supported_languages;
 };

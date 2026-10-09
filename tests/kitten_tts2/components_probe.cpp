@@ -52,10 +52,12 @@ int main(int argc, char ** argv) {
             engine::audio::write_wav(std::filesystem::path(argv[4]) / "speaker_input.wav", 16000, 1, input, options);
         }
         auto source = engine::assets::open_tensor_source(argv[1]);
-        s3::S3GenRuntime runtime(source, execution, s3::S3GenConfig{engine::assets::TensorStorageType::F32});
+        s3::S3GenConfig s3gen_config;
+        s3gen_config.decoder.variant = s3::S3FlowVariant::MeanFlow;
+        s3::S3GenRuntime runtime(source, execution, s3gen_config, {engine::assets::TensorStorageType::F32});
         const auto all = json::parse_file(argv[2]);
         const auto & voice = all.require("Bruno");
-        s3::EmbedReferenceOutputs ref;
+        s3::S3GenConditioning ref;
         for (const auto & x : voice.require("prompt_token").as_array()[0].as_array()) ref.prompt_tokens.push_back(x.as_number());
         for (const auto & row : voice.require("prompt_feat").as_array()[0].as_array())
             for (const auto & x : row.as_array()) ref.prompt_feat.push_back(x.as_number());

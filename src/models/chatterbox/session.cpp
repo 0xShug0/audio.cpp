@@ -180,9 +180,9 @@ std::unique_ptr<ChatterboxTTSComponent> make_chatterbox_component_for_language(
         execution_context,
         component_weight_storage_type);
     engine::codecs::s3gen::S3GenConfig s3gen_config;
-    s3gen_config.weight_storage_type = component_weight_storage_type;
     auto s3gen = std::make_unique<engine::codecs::s3gen::S3GenRuntime>(
-        assets.s3gen_weights, execution_context, s3gen_config);
+        assets.s3gen_weights, execution_context, s3gen_config,
+        engine::codecs::s3gen::S3GenRuntimeOptions{component_weight_storage_type});
     auto campplus_encoder = CAMPPlusEncoderComponent::load_from_source(
         assets.s3gen_weights,
         execution_context,
@@ -211,9 +211,9 @@ std::unique_ptr<ChatterboxVCComponent> make_chatterbox_vc_component(
         execution_context,
         component_weight_storage_type);
     engine::codecs::s3gen::S3GenConfig s3gen_config;
-    s3gen_config.weight_storage_type = component_weight_storage_type;
     auto s3gen = std::make_unique<engine::codecs::s3gen::S3GenRuntime>(
-        assets.s3gen_weights, execution_context, s3gen_config);
+        assets.s3gen_weights, execution_context, s3gen_config,
+        engine::codecs::s3gen::S3GenRuntimeOptions{component_weight_storage_type});
     auto campplus_encoder = CAMPPlusEncoderComponent::load_from_source(
         assets.s3gen_weights,
         execution_context,

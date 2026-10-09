@@ -80,7 +80,7 @@ public:
         x = core::reshape_tensor(ctx_, x, TensorShape::from_dims({c.hidden, frames_}));
         x = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, x);
         x = modules::AddModule().build(ctx_, x, residual);
-        x = modules::PReluModule({1, modules::PReluLowering::ScaleRelu})
+        x = modules::PReluModule({1})
             .build(ctx_, x, weights_.at("mask_net.prelu.weight"));
         x = linear(x, "mask_net.conv1d_out");
         for (int speaker = 0; speaker < c.speakers; ++speaker) {
@@ -265,7 +265,7 @@ private:
     }
 
     TensorValue fsmn(TensorValue input, const std::string & name) {
-        auto x = modules::PReluModule({1, modules::PReluLowering::ScaleRelu})
+        auto x = modules::PReluModule({1})
             .build(ctx_, linear(input, name + ".conv1.0"), weights_.at(name + ".conv1.1.weight"));
         const auto channels = x.shape.last_dim();
         x = modules::LayerNormModule({channels, 1e-5f}).build(ctx_, x,
@@ -307,7 +307,7 @@ private:
             dense = modules::GroupNormModule({channels, channels, 1e-5f}).build(ctx_, dense,
                 {weights_.at(base + "norm" + std::to_string(depth + 1) + ".weight"),
                  weights_.at(base + "norm" + std::to_string(depth + 1) + ".bias")});
-            dense = modules::PReluModule({1, modules::PReluLowering::ScaleRelu})
+            dense = modules::PReluModule({1})
                 .build(ctx_, dense, weights_.at(base + "prelu" + std::to_string(depth + 1) + ".weight"));
             if (depth == 0) skip = modules::ConcatModule({1}).build(ctx_, dense, skip);
         }

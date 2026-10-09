@@ -105,8 +105,8 @@ public:
           frontend_({16000, 400, 160, 128, audio::STFTFamily::Default}),
           audio_encoder_(assets_->qwen3_omni_audio->model_weights,
               assets_->qwen3_omni_audio->config.audio_encoder,
-              execution, 128ull * 1024ull * 1024ull, storage_type,
-              assets_->qwen3_omni_audio->config.hf_transformers_layout),
+              execution, {128ull * 1024ull * 1024ull, storage_type, "index_echo.audio_encoder"},
+              assets_->qwen3_omni_audio->config.audio_encoder_binding),
           connector_(assets_, execution, storage_type),
           decoder_config_([&] {
               auto config = assets_->qwen35_config;

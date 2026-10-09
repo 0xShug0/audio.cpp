@@ -27,7 +27,7 @@ public:
 
     // speech_tokens: T3 output (S3 codebook ids, < 6561; caller strips control tokens).
     engine::codecs::s3gen::S3GenInferenceOutputs synthesize(
-        const engine::codecs::s3gen::EmbedReferenceOutputs & ref_dict,
+        const engine::codecs::s3gen::S3GenConditioning & ref_dict,
         const std::vector<int32_t> & speech_tokens,
         uint64_t flow_seed,
         uint64_t vocoder_seed) const;

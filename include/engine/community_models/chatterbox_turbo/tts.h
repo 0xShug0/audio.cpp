@@ -45,7 +45,7 @@ private:
     std::shared_ptr<ChatterboxTurboS3Gen> s3gen_;
     std::vector<float> builtin_speaker_embedding_;
     std::vector<int32_t> builtin_cond_prompt_speech_tokens_;
-    engine::codecs::s3gen::EmbedReferenceOutputs builtin_ref_dict_;
+    engine::codecs::s3gen::S3GenConditioning builtin_ref_dict_;
 };
 
 }  // namespace engine::community_models::chatterbox_turbo

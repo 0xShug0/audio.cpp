@@ -240,7 +240,7 @@ private:
             input, TensorShape::from_dims({input->ne[3], 64, input->ne[1], input->ne[0]}));
         const auto x = modules::GroupNormModule({64, 64, 1e-5f, true, true}).build(ctx, value,
             {weights_.at(prefix + ".1.weight"), weights_.at(prefix + ".1.bias")});
-        return modules::PReluModule({1, modules::PReluLowering::NegateRelu})
+        return modules::PReluModule({1})
             .build(ctx, x, weights_.at(prefix + ".2.weight")).tensor;
     }
 

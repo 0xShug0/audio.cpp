@@ -32,7 +32,7 @@ constexpr size_t kDefaultAudioWeightContextBytes = 32ull * 1024ull * 1024ull;
 
 int64_t qwen3_audio_encoder_token_count(int64_t input_frames) {
     if (input_frames <= 0) {
-        throw std::runtime_error("Qwen3 ASR requires positive feature frame count");
+        throw std::runtime_error("Qwen3 requires positive feature frame count");
     }
     const auto floor_div = [](int64_t numerator, int64_t denominator) {
         int64_t quotient = numerator / denominator;
@@ -58,7 +58,7 @@ struct GgmlContextDeleter {
 
 std::vector<int64_t> audio_chunk_lengths(int64_t input_frames, int64_t chunk_frames) {
     if (input_frames <= 0 || chunk_frames <= 0) {
-        throw std::runtime_error("Qwen3 ASR audio chunk lengths require positive sizes");
+        throw std::runtime_error("Qwen3 audio chunk lengths require positive sizes");
     }
     std::vector<int64_t> chunks;
     for (int64_t offset = 0; offset < input_frames; offset += chunk_frames) {
@@ -69,7 +69,7 @@ std::vector<int64_t> audio_chunk_lengths(int64_t input_frames, int64_t chunk_fra
 
 int64_t max_value(const std::vector<int64_t> & values) {
     if (values.empty()) {
-        throw std::runtime_error("Qwen3 ASR expected a non-empty length list");
+        throw std::runtime_error("Qwen3 expected a non-empty length list");
     }
     return *std::max_element(values.begin(), values.end());
 }
@@ -84,7 +84,7 @@ int64_t sum_values(const std::vector<int64_t> & values) {
 
 std::vector<int64_t> audio_attention_window_lengths(int64_t tokens, int64_t window_tokens) {
     if (tokens <= 0 || window_tokens <= 0) {
-        throw std::runtime_error("Qwen3 ASR audio attention window lengths require positive sizes");
+        throw std::runtime_error("Qwen3 audio attention window lengths require positive sizes");
     }
     std::vector<int64_t> lengths;
     for (int64_t offset = 0; offset < tokens; offset += window_tokens) {
@@ -105,14 +105,14 @@ std::vector<float> audio_attention_mask(int64_t tokens, const std::vector<int64_
         offset += length;
     }
     if (offset != tokens) {
-        throw std::runtime_error("Qwen3 ASR audio attention windows do not cover all tokens");
+        throw std::runtime_error("Qwen3 audio attention windows do not cover all tokens");
     }
     return values;
 }
 
 std::vector<float> sinusoidal_positions(int64_t length, int64_t channels) {
     if (channels % 2 != 0) {
-        throw std::runtime_error("Qwen3 ASR audio positional embedding requires even channel count");
+        throw std::runtime_error("Qwen3 audio positional embedding requires even channel count");
     }
     std::vector<float> table(static_cast<size_t>(length * channels), 0.0F);
     const double increment = std::log(10000.0) / static_cast<double>(channels / 2 - 1);
@@ -254,21 +254,18 @@ Conv2dWeightsData load_conv2d(
 std::shared_ptr<const Qwen3AudioEncoderWeights> load_weights(
     const assets::TensorSource & source,
     const Qwen3AudioEncoderConfig & config,
-    bool hf_transformers_layout,
+    const Qwen3AudioEncoderWeightBinding & binding,
     ggml_backend_t backend,
     core::BackendType backend_type,
-    assets::TensorStorageType storage_type) {
-    const std::string audio_prefix = hf_transformers_layout
-        ? "model.audio_tower"
-        : "thinker.audio_tower";
-    const std::string projector_prefix = hf_transformers_layout
-        ? "model.multi_modal_projector"
-        : audio_prefix;
+    assets::TensorStorageType storage_type,
+    const std::string & trace_name) {
+    const auto & audio_prefix = binding.tower_prefix;
+    const auto & projector_prefix = binding.projector_prefix;
     auto weights = std::make_shared<Qwen3AudioEncoderWeights>();
     auto store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
-        "qwen3_asr.audio_encoder.weights",
+        trace_name + ".weights",
         kDefaultAudioWeightContextBytes);
     weights->store = store;
     weights->conv1 = load_conv2d(
@@ -322,8 +319,8 @@ std::shared_ptr<const Qwen3AudioEncoderWeights> load_weights(
     }
     weights->ln_post_weight = store->load_f32_tensor(source, audio_prefix + ".ln_post.weight", {config.d_model});
     weights->ln_post_bias = store->load_f32_tensor(source, audio_prefix + ".ln_post.bias", {config.d_model});
-    const std::string proj1 = hf_transformers_layout ? ".linear_1" : ".proj1";
-    const std::string proj2 = hf_transformers_layout ? ".linear_2" : ".proj2";
+    const std::string proj1 = "." + binding.projection1;
+    const std::string proj2 = "." + binding.projection2;
     weights->proj1 = {
         store->load_tensor(source, projector_prefix + proj1 + ".weight", storage_type, {config.d_model, config.d_model}),
         store->load_f32_tensor(source, projector_prefix + proj1 + ".bias", {config.d_model}),
@@ -379,21 +376,23 @@ public:
         std::shared_ptr<const Qwen3AudioEncoderWeights> weights,
         core::ExecutionContext & execution,
         size_t graph_arena_bytes,
-        int64_t frames)
+        int64_t frames,
+        std::string trace_name)
         : config_(std::move(encoder_config)),
           weights_(std::move(weights)),
           backend_(execution.backend()),
           backend_type_(execution.backend_type()),
           compute_threads_(std::max(1, execution.config().threads)),
-          frames_(frames) {
+          frames_(frames),
+          trace_name_(std::move(trace_name)) {
         if (weights_ == nullptr) {
-            throw std::runtime_error("Qwen3 ASR audio encoder graph requires weights");
+            throw std::runtime_error("Qwen3 audio encoder graph requires weights");
         }
         if (backend_ == nullptr) {
-            throw std::runtime_error("Qwen3 ASR audio encoder backend is not initialized");
+            throw std::runtime_error("Qwen3 audio encoder backend is not initialized");
         }
         if (frames_ <= 0) {
-            throw std::runtime_error("Qwen3 ASR audio encoder graph requires positive frame count");
+            throw std::runtime_error("Qwen3 audio encoder graph requires positive frame count");
         }
         const auto build_start = Clock::now();
         const auto & config = config_;
@@ -409,16 +408,16 @@ public:
         const int64_t max_chunk_tokens = max_value(chunk_token_lengths_);
         attention_window_tokens_ = max_chunk_tokens * (config.n_window_infer / chunk_frame_limit_);
         if (output_tokens_ > config.max_source_positions) {
-            throw std::runtime_error("Qwen3 ASR audio encoder token count exceeds max_source_positions");
+            throw std::runtime_error("Qwen3 audio encoder token count exceeds max_source_positions");
         }
         attention_window_lengths_ = audio_attention_window_lengths(output_tokens_, attention_window_tokens_);
         ggml_init_params params{graph_arena_bytes, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
-            throw std::runtime_error("failed to initialize Qwen3 ASR audio encoder graph context");
+            throw std::runtime_error("failed to initialize Qwen3 audio encoder graph context");
         }
 
-        core::ModuleBuildContext ctx{ctx_.get(), "qwen3_asr.audio_encoder", backend_type_};
+        core::ModuleBuildContext ctx{ctx_.get(), trace_name_.c_str(), backend_type_};
         auto input = core::make_tensor(
             ctx,
             GGML_TYPE_F32,
@@ -516,11 +515,11 @@ public:
         };
         if (!try_alloc() &&
             (engine::core::trim_backend_pools(backend_), !try_alloc())) {
-            throw std::runtime_error("failed to allocate Qwen3 ASR audio encoder graph");
+            throw std::runtime_error("failed to allocate Qwen3 audio encoder graph");
         }
         ggml_backend_tensor_set(attention_mask_, attention_mask_values_.data(), 0, attention_mask_values_.size() * sizeof(float));
-        debug::timing_log_scalar("qwen3_asr.audio_encoder.graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
-        debug::trace_log_scalar("qwen3_asr.audio_encoder.frames", frames_);
+        debug::timing_log_scalar(trace_name_ + ".graph.build_ms", engine::debug::elapsed_ms(build_start, Clock::now()));
+        debug::trace_log_scalar(trace_name_ + ".frames", frames_);
     }
 
     ~Qwen3AudioEncoderGraph() {
@@ -534,10 +533,10 @@ public:
     Qwen3AudioEmbeddings run(const Qwen3AudioFeatures & features) {
         const auto & config = config_;
         if (features.mel_bins != config.num_mel_bins || features.frames != frames_) {
-            throw std::runtime_error("Qwen3 ASR audio encoder feature shape mismatch");
+            throw std::runtime_error("Qwen3 audio encoder feature shape mismatch");
         }
         if (static_cast<int64_t>(features.values.size()) != config.num_mel_bins * frames_) {
-            throw std::runtime_error("Qwen3 ASR audio encoder feature value count mismatch");
+            throw std::runtime_error("Qwen3 audio encoder feature value count mismatch");
         }
         std::vector<float> padded_features(static_cast<size_t>(chunk_count_ * config.num_mel_bins * chunk_frames_), 0.0F);
         int64_t source_frame = 0;
@@ -556,14 +555,14 @@ public:
         auto timing_start = Clock::now();
         ggml_backend_tensor_set(input_, padded_features.data(), 0, padded_features.size() * sizeof(float));
         ggml_backend_tensor_set(attention_mask_, attention_mask_values_.data(), 0, attention_mask_values_.size() * sizeof(float));
-        debug::timing_log_scalar("qwen3_asr.audio_encoder.input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar(trace_name_ + ".input_upload_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         core::set_backend_threads(backend_, compute_threads_);
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_);
         ggml_backend_synchronize(backend_);
-        debug::timing_log_scalar("qwen3_asr.audio_encoder.graph.compute_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar(trace_name_ + ".graph.compute_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Qwen3 ASR audio encoder graph compute failed");
+            throw std::runtime_error("Qwen3 audio encoder graph compute failed");
         }
         Qwen3AudioEmbeddings out;
         out.tokens = output_tokens_;
@@ -571,7 +570,7 @@ public:
         out.values.resize(static_cast<size_t>(out.tokens * out.hidden_size));
         timing_start = Clock::now();
         ggml_backend_tensor_get(output_, out.values.data(), 0, out.values.size() * sizeof(float));
-        debug::timing_log_scalar("qwen3_asr.audio_encoder.output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
+        debug::timing_log_scalar(trace_name_ + ".output_read_ms", engine::debug::elapsed_ms(timing_start, Clock::now()));
         return out;
     }
 
@@ -582,6 +581,7 @@ private:
     core::BackendType backend_type_ = core::BackendType::Cpu;
     int compute_threads_ = 1;
     int64_t frames_ = 0;
+    std::string trace_name_;
     int64_t chunk_frame_limit_ = 0;
     int64_t chunk_frames_ = 0;
     int64_t chunk_count_ = 0;
@@ -604,30 +604,32 @@ Qwen3AudioEncoderRuntime::Qwen3AudioEncoderRuntime(
     std::shared_ptr<const assets::TensorSource> source,
     Qwen3AudioEncoderConfig config,
     core::ExecutionContext & execution,
-    size_t graph_arena_bytes,
-    assets::TensorStorageType weight_storage_type,
-    bool hf_transformers_layout)
+    Qwen3AudioEncoderRuntimeOptions options,
+    Qwen3AudioEncoderWeightBinding binding)
     : config_(std::move(config)),
       execution_(&execution),
-      graph_arena_bytes_(graph_arena_bytes) {
+      options_(std::move(options)) {
     if (source == nullptr) {
-        throw std::runtime_error("Qwen3 ASR audio encoder requires a tensor source");
+        throw std::runtime_error("Qwen3 audio encoder requires a tensor source");
     }
-    if (graph_arena_bytes_ == 0) {
-        throw std::runtime_error("Qwen3 ASR audio encoder graph arena must be non-zero");
+    if (options_.graph_arena_bytes == 0) {
+        throw std::runtime_error("Qwen3 audio encoder graph arena must be non-zero");
     }
-    weights_ = load_weights(*source, config_, hf_transformers_layout,
-        execution.backend(), execution.backend_type(), weight_storage_type);
+    if (config_.activation_function != "gelu") {
+        throw std::runtime_error("Qwen3 audio encoder requires GELU activation");
+    }
+    weights_ = load_weights(*source, config_, binding,
+        execution.backend(), execution.backend_type(), options_.weight_storage_type, options_.trace_name);
 }
 
 Qwen3AudioEncoderRuntime::~Qwen3AudioEncoderRuntime() = default;
 
 Qwen3AudioEmbeddings Qwen3AudioEncoderRuntime::encode(const Qwen3AudioFeatures & features) {
     if (execution_ == nullptr) {
-        throw std::runtime_error("Qwen3 ASR audio encoder execution context is null");
+        throw std::runtime_error("Qwen3 audio encoder execution context is null");
     }
     if (features.encoder_tokens != qwen3_audio_encoder_token_count(features.frames)) {
-        throw std::runtime_error("Qwen3 ASR audio encoder token count mismatch");
+        throw std::runtime_error("Qwen3 audio encoder token count mismatch");
     }
     const int threads = std::max(1, execution_->config().threads);
     if (graph_ == nullptr || !graph_->matches(*weights_, features.frames, execution_->backend(), threads)) {
@@ -636,15 +638,15 @@ Qwen3AudioEmbeddings Qwen3AudioEncoderRuntime::encode(const Qwen3AudioFeatures &
             config_,
             weights_,
             *execution_,
-            graph_arena_bytes_,
-            features.frames);
+            options_.graph_arena_bytes,
+            features.frames, options_.trace_name);
     } else {
-        debug::timing_log_scalar("qwen3_asr.audio_encoder.graph.build_ms", 0.0);
-        debug::trace_log_scalar("qwen3_asr.audio_encoder.frames", features.frames);
+        debug::timing_log_scalar(options_.trace_name + ".graph.build_ms", 0.0);
+        debug::trace_log_scalar(options_.trace_name + ".frames", features.frames);
     }
     auto out = graph_->run(features);
     if (out.tokens != features.encoder_tokens) {
-        throw std::runtime_error("Qwen3 ASR audio encoder output token count mismatch");
+        throw std::runtime_error("Qwen3 audio encoder output token count mismatch");
     }
     return out;
 }

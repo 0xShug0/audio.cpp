@@ -131,6 +131,7 @@ ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
     outputs.s3gen_token2mel_ms = timing.token2mel_ms;
     outputs.s3gen_vocoder_ms = timing.vocoder_ms;
     outputs.waveform = generated.waveform;
+    apply_s3_trim_fade(outputs.waveform, 24000);
     outputs.samples = generated.samples;
 
     if (mem_saver_) {
