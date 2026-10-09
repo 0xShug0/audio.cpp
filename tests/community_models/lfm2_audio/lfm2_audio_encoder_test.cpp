@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -37,6 +38,11 @@ lfm2::Lfm2FastConformerEncoderConfig config_for(const lfm2_audio_test::EncoderSh
 
 lfm2::Lfm2AudioFeatures random_features(int64_t n_mels, int64_t frames, uint64_t seed) {
     return {n_mels, frames, lfm2_audio_test::Random(seed).uniform(static_cast<size_t>(n_mels * frames), 2.0f)};
+}
+
+// The same floats, bit for bit.
+bool bitwise_equal(const std::vector<float> & a, const std::vector<float> & b) {
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0);
 }
 
 class Encoder {
@@ -68,19 +74,22 @@ void test_reuse_matches_fresh_runs(const std::filesystem::path & mmproj, const l
         const auto label = "chunk " + std::to_string(i) + " (" + std::to_string(lengths[i]) + " frames)";
         require_eq(actual.tokens, (lengths[i] + 7) / 8, label + " tokens");
         require_eq(actual.hidden_size, config.output_size, label + " hidden size");
-        require(actual.values == expected.values, label + " differs from a fresh runtime");
+        require(bitwise_equal(actual.values, expected.values), label + " differs from a fresh runtime");
     }
 }
 
 // The same features twice through one graph, with other input in between.
+// The S2S session gives an earlier question the encoder output it kept from
+// the request before, so the same input must give the same bits after other
+// input.
 void test_same_input_same_output(const std::filesystem::path & mmproj, const lfm2::Lfm2FastConformerEncoderConfig & config) {
     Encoder encoder(mmproj, config);
     const auto features = random_features(config.n_mels, 1000, 7);
     const auto first = encoder.encode(features);
     (void)encoder.encode(random_features(config.n_mels, 1000, 8));
-    require(encoder.encode(features).values == first.values, "the same features after another chunk of their length");
+    require(bitwise_equal(encoder.encode(features).values, first.values), "the same features after another chunk of their length");
     (void)encoder.encode(random_features(config.n_mels, 31, 9));
-    require(encoder.encode(features).values == first.values, "the same features after a chunk of another length");
+    require(bitwise_equal(encoder.encode(features).values, first.values), "the same features after a chunk of another length");
 }
 
 // With Q8_0 or Q4_0 linears, lfm2_audio.cpu_repack multiplies them with

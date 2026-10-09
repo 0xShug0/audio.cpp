@@ -33,18 +33,24 @@ namespace runtime = engine::runtime;
 using engine::test::require;
 using engine::test::require_eq;
 
-// `fn` throws CapacityError, with `needle` in its message.
+// The message of the CapacityError `fn` throws.
 template <typename Fn>
-void require_capacity_error(Fn && fn, const std::string & needle, const std::string & label) {
+std::string capacity_message(Fn && fn, const std::string & label) {
     try {
         fn();
     } catch (const runtime::CapacityError & error) {
-        const std::string message = error.what();
-        require(message.find(needle) != std::string::npos, label + " threw \"" + message + "\", expected \"" + needle + "\"");
-        return;
+        return error.what();
     }
 
     require(false, label + " must throw CapacityError");
+    return {};
+}
+
+// `fn` throws CapacityError, with `needle` in its message.
+template <typename Fn>
+void require_capacity_error(Fn && fn, const std::string & needle, const std::string & label) {
+    const auto message = capacity_message(fn, label);
+    require(message.find(needle) != std::string::npos, label + " threw \"" + message + "\", expected \"" + needle + "\"");
 }
 
 // `fn` throws InvalidRequestError, which a server answers with 400, with
@@ -617,6 +623,22 @@ runtime::IStreamingVoiceTaskSession & streaming(runtime::IVoiceTaskSession & ses
     return dynamic_cast<runtime::IStreamingVoiceTaskSession &>(session);
 }
 
+// Starts a stream for `request` and sends its audio in chunks of 1600
+// frames.
+void send_question(runtime::IStreamingVoiceTaskSession & s2s, const runtime::TaskRequest & request) {
+    s2s.start_stream(request);
+    const auto & input = *request.audio_input;
+    const auto chunk_samples = static_cast<size_t>(1600 * input.channels);
+    for (size_t start = 0; start < input.samples.size(); start += chunk_samples) {
+        runtime::AudioChunk chunk;
+        chunk.sample_rate = input.sample_rate;
+        chunk.channels = input.channels;
+        chunk.samples.assign(input.samples.begin() + static_cast<std::ptrdiff_t>(start),
+            input.samples.begin() + static_cast<std::ptrdiff_t>(std::min(input.samples.size(), start + chunk_samples)));
+        (void)s2s.process_audio_chunk(chunk);
+    }
+}
+
 // A question, and the same samples as an lfm2_audio.question artifact: 16-bit
 // samples, so that the WAV holds exactly the audio the turn was asked with.
 struct Question {
@@ -836,18 +858,7 @@ void test_streamed_turns(const Package & package, const Turns & turns) {
     auto session = open(package, runtime::VoiceTaskKind::SpeechToSpeech, runtime::RunMode::Streaming);
     auto & s2s = streaming(*session);
     const auto stream = [&](const runtime::TaskRequest & request, size_t max_events = std::numeric_limits<size_t>::max()) {
-        s2s.start_stream(request);
-        const auto & input = *request.audio_input;
-        const auto chunk_samples = static_cast<size_t>(1600 * input.channels);
-        for (size_t start = 0; start < input.samples.size(); start += chunk_samples) {
-            runtime::AudioChunk chunk;
-            chunk.sample_rate = input.sample_rate;
-            chunk.channels = input.channels;
-            chunk.samples.assign(input.samples.begin() + static_cast<std::ptrdiff_t>(start),
-                input.samples.begin() + static_cast<std::ptrdiff_t>(std::min(input.samples.size(), start + chunk_samples)));
-            (void)s2s.process_audio_chunk(chunk);
-        }
-
+        send_question(s2s, request);
         Reply events;
         for (size_t i = 0; i < max_events; ++i) {
             auto event = s2s.next_stream_event();
@@ -1018,6 +1029,120 @@ void test_rejects(const Package & package, const Turns & turns) {
         "TTS with history");
 }
 
+// A turn run to the end, offline or streamed in chunks of 1600 frames.
+Reply run_turn(runtime::IVoiceTaskSession & session, runtime::RunMode mode, const runtime::TaskRequest & request) {
+    if (mode == runtime::RunMode::Offline) {
+        return reply_of(offline(session).run(request));
+    }
+
+    auto & s2s = streaming(session);
+    send_question(s2s, request);
+    while (s2s.next_stream_event().has_value()) {
+    }
+
+    return reply_of(s2s.finish_stream());
+}
+
+const lfm2::Lfm2AudioChatSession & chat(const runtime::IVoiceTaskSession & session) {
+    return dynamic_cast<const lfm2::Lfm2AudioChatSession &>(session);
+}
+
+// A later turn's prompt starts with the turn before's. The session gives
+// the earlier questions the encoder output it kept from the request before,
+// and the backbone restores the prefill blocks the turn before ran, which
+// must leave each turn's bytes those of a fresh session. Questions of 10, 12,
+// 14 and 6 s take the prompts past 256 steps at turn 2 and past 512 at
+// turn 3, so turn 3 resumes from turn 2's first block and turn 4 from turn
+// 3's first two; turn 1 runs one-shot and keeps no blocks.
+void test_turns_reuse(const Package & package, runtime::RunMode mode) {
+    const std::string how = mode == runtime::RunMode::Offline ? "offline" : "streamed";
+    auto session = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode);
+    const auto fresh = [&](const runtime::TaskRequest & request) {
+        auto other = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode);
+        return run_turn(*other, mode, request);
+    };
+    const std::vector<Question> questions = {question(10.0, 220.0), question(12.0, 330.0, 24000, 2), question(14.0, 495.0), question(6.0, 770.0)};
+    const std::vector<int64_t> resumed = {0, 0, 256, 512};
+    std::vector<runtime::VoiceArtifact> history;
+    std::vector<Reply> replies;
+    runtime::TaskRequest last;
+    for (size_t turn = 0; turn < questions.size(); ++turn) {
+        const auto request = ask(questions[turn], std::to_string(20 + turn), history);
+        const std::string label = how + " turn " + std::to_string(turn + 1);
+        auto reply = run_turn(*session, mode, request);
+        require_eq(chat(*session).resumed_prefill_steps(), resumed[turn], label + ": prefill steps resumed");
+        require_eq(chat(*session).reused_questions(), static_cast<int64_t>(turn), label + ": earlier questions reused");
+        require_whole_reply(reply, label);
+        require(same(reply, fresh(request)), label + " gives a fresh session's bytes");
+        history.push_back(questions[turn].artifact);
+        history.push_back(reply.artifact());
+        replies.push_back(std::move(reply));
+        last = request;
+    }
+
+    // Another conversation in between replaces what the session kept, and
+    // the first one's next turn, run cold, gives the same bytes.
+    const auto other_first = question(9.0, 610.0);
+    const auto other = run_turn(*session, mode, ask(other_first, "40"));
+    const auto other_second = ask(question(8.0, 905.0), "41", {other_first.artifact, other.artifact()});
+    require(same(run_turn(*session, mode, other_second), fresh(other_second)), how + ": another conversation's turn 2");
+    require_eq(chat(*session).reused_questions(), int64_t{1}, how + ": the other conversation's question reused");
+    require(same(run_turn(*session, mode, last), replies.back()), how + ": turn 4 after another conversation");
+    require_eq(chat(*session).resumed_prefill_steps(), int64_t{0}, how + ": turn 4 after another conversation resumes nothing");
+    require_eq(chat(*session).reused_questions(), int64_t{0}, how + ": turn 4 after another conversation reuses nothing");
+    require(same(run_turn(*session, mode, last), replies.back()), how + ": turn 4 again");
+    require_eq(chat(*session).resumed_prefill_steps(), int64_t{512}, how + ": turn 4 again resumes");
+    require_eq(chat(*session).reused_questions(), int64_t{3}, how + ": turn 4 again reuses");
+
+    // Another conversation's first turn alone runs one-shot: it replaces the
+    // kept questions but leaves the kept blocks, so the first conversation's
+    // next turn encodes its questions again and still resumes.
+    require(same(run_turn(*session, mode, ask(other_first, "40")), other), how + ": another conversation's turn 1 again");
+    require(same(run_turn(*session, mode, last), replies.back()), how + ": turn 4 after another conversation's first turn");
+    require_eq(chat(*session).resumed_prefill_steps(), int64_t{512}, how + ": turn 4 after another conversation's first turn resumes");
+    require_eq(chat(*session).reused_questions(), int64_t{0}, how + ": turn 4 after another conversation's first turn reuses nothing");
+
+    // Turn 4 over the limit fails as on a fresh session, with the same
+    // message, after each earlier question and on the whole prompt, and
+    // leaves what the session kept.
+    const auto vocab = text_vocabulary();
+    const lfm2::Lfm2TextTokenizer tokenizer(vocab);
+    std::vector<lfm2::Lfm2ConversationTurn> asked(3);
+    for (size_t turn = 0; turn < asked.size(); ++turn) {
+        asked[turn].reply = steps_of(replies[turn]);
+    }
+
+    auto cold = open(package, runtime::VoiceTaskKind::SpeechToSpeech, mode);
+    auto max_tokens = 8192 - lfm2::lfm2_chat_prompt_text_steps(tokenizer, lfm2::kLfm2ChatSystemPrompt, asked);
+    for (int check = 1;; ++check) {
+        require(check <= 4, how + ": four checks past the text");
+        auto over = last;
+        over.options["max_tokens"] = std::to_string(max_tokens);
+        const std::string label = how + ": turn 4 with max_tokens=" + std::to_string(max_tokens);
+        const auto message = capacity_message([&] { (void)run_turn(*session, mode, over); }, label);
+        require_eq(message, capacity_message([&] { (void)run_turn(*cold, mode, over); }, label + " on a fresh session"), label);
+        const std::string at_least = "LFM2-Audio conversation needs at least ";
+        if (message.rfind(at_least, 0) != 0) {
+            require_eq(check, 4, how + ": the whole prompt is the fourth check");
+            break;
+        }
+
+        max_tokens = 8192 - static_cast<int64_t>(std::stoll(message.substr(at_least.size())));
+    }
+
+    require(same(run_turn(*session, mode, last), replies.back()), how + ": turn 4 after it went over the limit");
+    require_eq(chat(*session).resumed_prefill_steps(), int64_t{512}, how + ": turn 4 after it went over the limit resumes");
+    require_eq(chat(*session).reused_questions(), int64_t{3}, how + ": turn 4 after it went over the limit reuses");
+
+    // A request without history or return_codes keeps nothing, and leaves
+    // what the session kept.
+    const auto plain = ask(question(5.0, 440.0), "50", {}, false);
+    require(same(run_turn(*session, mode, plain), fresh(plain)), how + ": a request without history or return_codes");
+    require(same(run_turn(*session, mode, last), replies.back()), how + ": turn 4 after a request without history");
+    require_eq(chat(*session).resumed_prefill_steps(), int64_t{512}, how + ": turn 4 after a request without history resumes");
+    require_eq(chat(*session).reused_questions(), int64_t{3}, how + ": turn 4 after a request without history reuses");
+}
+
 }  // namespace s2s
 
 }  // namespace
@@ -1033,6 +1158,8 @@ int main() {
         const auto turns = s2s::test_offline_turns(package);
         s2s::test_streamed_turns(package, turns);
         s2s::test_rejects(package, turns);
+        s2s::test_turns_reuse(package, runtime::RunMode::Offline);
+        s2s::test_turns_reuse(package, runtime::RunMode::Streaming);
         std::cout << "lfm2_audio_chat_test: PASS\n";
         return 0;
     } catch (const std::exception & error) {

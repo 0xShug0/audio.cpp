@@ -147,14 +147,17 @@ private:
 
 // Speech-to-speech (s2s): a spoken user turn in, a reply of interleaved text
 // and audio out (LFM2AudioModel.generate_interleaved) under the system prompt
-// of liquid-audio's chat demo, which text_input replaces when given. The
-// session keeps nothing between requests: a request's input artifacts carry
-// the conversation's earlier turns, which the prompt replays in full as
-// liquid-audio does, and with return_codes its result carries the reply to
-// send back with the next turn. Streaming takes the user's audio in chunks
-// and, once it has all come, pulls the reply as events: the audio of the
-// next stream_frames_per_event frames and the text written since the last
-// event.
+// of liquid-audio's chat demo, which text_input replaces when given. A
+// request's input artifacts carry the conversation's earlier turns, which
+// the prompt replays in full as liquid-audio does, and with return_codes its
+// result carries the reply to send back with the next turn. What a request
+// gives depends on that request alone; to save time on the next turn, the
+// session keeps the questions of its last request with history or
+// return_codes, with their encoder output, and the backbone the full prefill
+// blocks of its last turn with history. Streaming takes the user's audio in
+// chunks and, once it has all come, pulls the reply as events: the audio of
+// the next stream_frames_per_event frames and the text written since the
+// last event.
 class Lfm2AudioChatSession final : public runtime::RuntimeSessionBase,
                                    public runtime::IOfflineVoiceTaskSession,
                                    public runtime::IStreamingVoiceTaskSession {
@@ -185,6 +188,12 @@ public:
     // stream since start_stream().
     [[nodiscard]] bool reached_max_tokens() const;
 
+    // Of the last reply's prompt: the steps the backbone restored from the
+    // turn before rather than ran (Lfm2BackboneRuntime::resumed_prefill_steps),
+    // and the earlier questions that took the encoder output kept from it.
+    [[nodiscard]] int64_t resumed_prefill_steps() const;
+    [[nodiscard]] int64_t reused_questions() const;
+
 private:
     struct RequestOptions {
         std::string system_prompt;
@@ -193,6 +202,14 @@ private:
         bool return_codes = false;
         std::vector<Lfm2ConversationTurn> history;
         int64_t text_steps = 0;  // with history: prompt steps besides the questions' audio
+    };
+
+    // A question as the encoder took it, mono 16 kHz, and what it gave. Neither
+    // changes once encoded, so a request that takes a kept question shares
+    // both with the table before rather than copying them.
+    struct EncodedQuestion {
+        std::shared_ptr<const std::vector<float>> samples;
+        std::shared_ptr<const Lfm2AudioEmbeddings> encoded;
     };
 
     struct Stream;
@@ -217,6 +234,9 @@ private:
     double max_pass_seconds_;
     std::unique_ptr<Stream> stream_;
     bool reached_max_tokens_ = false;
+    // The questions of the last request with history or return_codes.
+    std::vector<EncodedQuestion> questions_;
+    int64_t reused_questions_ = 0;
 };
 
 }  // namespace engine::community_models::lfm2_audio

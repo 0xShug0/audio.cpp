@@ -73,6 +73,15 @@ enum class Lfm2Prefill {
     // its own end only: a conversation's history. What a block computes
     // depends on the prompt up to its end, never on the cache's length, and
     // attention holds 256 x prompt scores at most.
+    //
+    // The runtime keeps a host copy of what each full block of the last
+    // chunked prefill wrote (its keys and values, 2 x attention layers x
+    // kv_heads x head_dim floats per position, and the conv state after it),
+    // with the block's inputs. The next chunked prefill restores the blocks it
+    // starts with that have the same inputs, bit for bit, instead of running
+    // them: the same bits, as a block depends only on its inputs and the
+    // blocks before it. Its last block always runs. A one-shot prefill
+    // neither reads nor replaces them.
     Chunked,
 };
 
@@ -136,6 +145,11 @@ public:
     // The CPU extra buffer types its weights went into ("CPU_REPACK", ...),
     // in the order of their first weights, and how many each holds.
     [[nodiscard]] std::vector<std::pair<std::string, size_t>> extra_weight_buffers() const;
+
+    // The prompt steps the last start() restored from the chunked prefill
+    // before it (see Lfm2Prefill::Chunked) rather than ran, a multiple of
+    // 256; 0 for a one-shot prefill.
+    [[nodiscard]] int64_t resumed_prefill_steps() const noexcept;
 
 private:
     struct Impl;
