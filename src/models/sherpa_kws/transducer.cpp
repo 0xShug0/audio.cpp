@@ -82,13 +82,12 @@ std::vector<float> TransducerScorer::predictor(
 
 std::vector<float> TransducerScorer::score(
     const float * encoder_frame,
-    const std::array<int32_t, 2> & context) const {
+    const std::vector<float> & decoder) const {
     if (!encoder_frame) {
         throw std::runtime_error("sherpa KWS transducer scorer requires an encoder frame");
     }
     const int64_t hidden = assets_->config.decoder_dim;
     const int64_t vocabulary = assets_->config.vocab_size;
-    const auto decoder = predictor(context);
     for (int64_t index = 0; index < hidden; ++index) {
         activated_[static_cast<size_t>(index)] =
             std::tanh(encoder_frame[index] + decoder[static_cast<size_t>(index)]);

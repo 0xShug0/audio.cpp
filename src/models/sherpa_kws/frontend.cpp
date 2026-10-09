@@ -31,8 +31,8 @@ int64_t reflect_index(int64_t index, int64_t size) {
     return index;
 }
 
-const std::vector<float> & filterbank() {
-    static const std::vector<float> value = [] {
+const engine::audio::SparseMelFilterbank & filterbank() {
+    static const auto value = [] {
         auto mel = [](float hz) {
             return 1127.0F * std::log(1.0F + hz / 700.0F);
         };
@@ -56,7 +56,10 @@ const std::vector<float> & filterbank() {
                 }
             }
         }
-        return result;
+        engine::audio::AudioTensor dense;
+        dense.shape = {kMels, kBins};
+        dense.values = std::move(result);
+        return engine::audio::MelFilterbank{}.prepare_sparse(dense);
     }();
     return value;
 }
@@ -137,11 +140,12 @@ SherpaFbankFeatures compute_sherpa_fbank(
     for (int64_t frame = 0; frame < frames; ++frame) {
         for (int64_t band = 0; band < kMels; ++band) {
             float energy = 0.0F;
-            for (int64_t bin = 0; bin < kBins; ++bin) {
+            for (int64_t bin = banks.starts[static_cast<size_t>(band)];
+                 bin < banks.ends[static_cast<size_t>(band)]; ++bin) {
                 const float value = magnitude.values[
                     static_cast<size_t>(frame * (kNfft / 2 + 1) + bin)];
                 energy += value * value *
-                    banks[static_cast<size_t>(band * kBins + bin)];
+                    banks.dense.values[static_cast<size_t>(band * kBins + bin)];
             }
             result.values[static_cast<size_t>(frame * kMels + band)] =
                 std::log(std::max(

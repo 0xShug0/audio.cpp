@@ -414,5 +414,7 @@ export const taskLabels: Record<string, string> = {
   align: 'Forced alignment',
   vdes: 'Voice design',
   spk: 'Speaker analysis',
-  turn: 'Turn detection'
+  turn: 'Turn detection',
+  wake: 'Wake-word detection',
+  cls: 'Audio classification'
 };

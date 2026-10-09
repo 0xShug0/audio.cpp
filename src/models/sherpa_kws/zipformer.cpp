@@ -56,7 +56,6 @@ struct StateTensor {
     ggml_tensor * input = nullptr;
     ggml_tensor * output = nullptr;
     core::TensorValue value;
-    std::vector<float> host;
 };
 
 struct LayerState {
@@ -271,7 +270,7 @@ StateTensor state_tensor(
         context, GGML_TYPE_F32, shape);
     result.input = result.value.tensor;
     ggml_set_input(result.input);
-    result.host.assign(element_count(shape), 0.0F);
+    ggml_set_output(result.input);
     return result;
 }
 
@@ -811,6 +810,13 @@ public:
             ggml_build_forward_expand(graph_, state.conv1.output);
             ggml_build_forward_expand(graph_, state.conv2.output);
         }
+        // All old-state consumers precede updates, including state-only branches.
+        for (const auto & state : layer_states_) {
+            for (const auto * value : {&state.key, &state.nonlin, &state.val1,
+                                      &state.val2, &state.conv1, &state.conv2}) {
+                ggml_build_forward_expand(graph_, ggml_cpy(context_.get(), value->output, value->input));
+            }
+        }
         allocator_ = ggml_gallocr_new(
             ggml_backend_get_default_buffer_type(backend_));
         if (allocator_ == nullptr ||
@@ -828,6 +834,7 @@ public:
         }
         plan_ =
             core::create_backend_graph_plan_if_host(backend_, graph_);
+        reset();
     }
 
     ~ZipformerGraph() {
@@ -853,22 +860,6 @@ public:
             input.data(),
             0,
             input.size() * sizeof(float));
-        const auto set_state = [&](StateTensor & state) {
-            ggml_backend_tensor_set_async(
-                backend_,
-                state.input,
-                state.host.data(),
-                0,
-                state.host.size() * sizeof(float));
-        };
-        for (auto & state : layer_states_) {
-            set_state(state.key);
-            set_state(state.nonlin);
-            set_state(state.val1);
-            set_state(state.val2);
-            set_state(state.conv1);
-            set_state(state.conv2);
-        }
         for (auto & mask : stack_masks_) {
             const int64_t valid_left = std::min(
                 mask.left_context,
@@ -924,22 +915,6 @@ public:
             result.values.data(),
             0,
             result.values.size() * sizeof(float));
-        const auto get_state = [&](StateTensor & state) {
-            ggml_backend_tensor_get_async(
-                backend_,
-                state.output,
-                state.host.data(),
-                0,
-                state.host.size() * sizeof(float));
-        };
-        for (auto & state : layer_states_) {
-            get_state(state.key);
-            get_state(state.nonlin);
-            get_state(state.val1);
-            get_state(state.val2);
-            get_state(state.conv1);
-            get_state(state.conv2);
-        }
         ggml_backend_synchronize(backend_);
         processed_frames_ += input_frames_;
         return result;
@@ -948,10 +923,7 @@ public:
     void reset() {
         processed_frames_ = 0;
         const auto clear = [](StateTensor & value) {
-            std::fill(
-                value.host.begin(),
-                value.host.end(),
-                0.0F);
+            ggml_backend_tensor_memset(value.input, 0, 0, ggml_nbytes(value.input));
         };
         for (auto & state : layer_states_) {
             clear(state.key);

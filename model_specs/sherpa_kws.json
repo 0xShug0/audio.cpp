@@ -40,9 +40,9 @@
         "type": "int",
         "description": "Maximum keyword decoder hypotheses.",
         "required": false,
+        "default": 4,
         "min": 1,
-        "max": 64,
-        "default": 4
+        "max": 64
       },
       {
         "name": "keywords_score",
@@ -56,21 +56,55 @@
         "type": "float",
         "description": "Default mean acoustic probability required to trigger a keyword.",
         "required": false,
+        "default": 0.25,
         "min": 0,
-        "max": 1,
-        "default": 0.25
+        "max": 1
       },
       {
         "name": "num_trailing_blanks",
         "type": "int",
         "description": "Number of trailing blank frames required before a keyword triggers.",
         "required": false,
-        "min": 0,
-        "default": 1
+        "default": 1,
+        "min": 0
       }
     ],
     "session": [],
     "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "sherpa_kws_zipformer_zh_en_3m_f32",
+      "display_name": "Sherpa KWS Zipformer Chinese-English 3M GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "Sherpa-KWS-GGUF",
+      "files": [
+        "Sherpa-KWS-GGUF/sherpa-kws-zipformer-zh-en-3m-f32.gguf"
+      ],
+      "strip_prefix": "Sherpa-KWS-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "Wake Word",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/sherpa_kws.md"
+    ],
+    "recommended_package": "sherpa_kws_zipformer_zh_en_3m_f32"
   },
   "sources": [
     {
@@ -105,25 +139,5 @@
         "weights": "model:model.safetensors"
       }
     }
-  ],
-  "package_defaults": {
-    "download": {
-      "kind": "huggingface_snapshot",
-      "repo": "audio-cpp/audio.cpp-gguf",
-      "revision": "main",
-      "gated": false
-    }
-  },
-  "packages": [],
-  "dependencies": [],
-  "ui": {
-    "tags": [
-      "Wake Word",
-      "GGUF",
-      "Stream"
-    ],
-    "docs": [
-      "docs/models/sherpa_kws.md"
-    ]
-  }
+  ]
 }

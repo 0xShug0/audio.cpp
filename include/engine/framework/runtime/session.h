@@ -37,6 +37,7 @@ enum class VoiceTaskKind {
     Midi,
     TurnDetection,
     WakeWord,
+    AudioClassification,
 };
 
 enum class RunMode {

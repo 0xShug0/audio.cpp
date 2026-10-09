@@ -188,7 +188,9 @@ private:
     void process(bool final) {
         if (audio_.samples.empty()) return;
         const auto input = final ? with_tail_padding(audio_) : audio_;
+        const auto frontend_started = std::chrono::steady_clock::now();
         const auto features = compute_sherpa_fbank(input);
+        debug::timing_log_scalar("sherpa_kws.frontend_ms", debug::elapsed_ms(frontend_started));
         const int64_t chunk_size = assets_->config.chunk_size;
         const int64_t shift = assets_->config.chunk_shift;
         const int64_t dim = assets_->config.feature_dim;
@@ -201,7 +203,10 @@ private:
             const auto encoded = zipformer_.encode_chunk(embedded.values);
             const int64_t consumed = std::min(shift, features.frames - processed_features_);
             const int64_t valid = std::min<int64_t>(encoded.frames, (consumed + 3) / 4);
-            for (const auto & detection : decoder_.append(encoded.values, valid, encoded.channels)) {
+            const auto decoder_started = std::chrono::steady_clock::now();
+            const auto detections = decoder_.append(encoded.values, valid, encoded.channels);
+            debug::timing_log_scalar("sherpa_kws.decoder_ms", debug::elapsed_ms(decoder_started));
+            for (const auto & detection : detections) {
                 runtime::SpeechSegment segment;
                 segment.text = detection.phrase;
                 segment.confidence = detection.confidence;

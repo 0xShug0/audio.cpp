@@ -737,6 +737,18 @@ audiocpp_add_model(smart_turn
         engine::models::smart_turn::make_smart_turn_loader
 )
 
+audiocpp_add_model(ast_audioset
+    SOURCES
+        src/models/ast_audioset/assets.cpp
+        src/models/ast_audioset/frontend.cpp
+        src/models/ast_audioset/runtime.cpp
+        src/models/ast_audioset/session.cpp
+    INCLUDES
+        engine/models/ast_audioset/session.h
+    LOADERS
+        engine::models::ast_audioset::make_ast_audioset_loader
+)
+
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp

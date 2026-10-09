@@ -276,6 +276,7 @@ public:
                  kEmbedFrequency}));
         cache_ = cache.tensor;
         ggml_set_input(cache_);
+        ggml_set_output(cache_);
         auto new_cache =
             core::ensure_backend_addressable_layout(
                 build,
@@ -295,24 +296,20 @@ public:
                          conv_weights(
                              params,
                              "encoder.encoder_embed.convnext.depthwise_conv"));
-        output = modules::Conv2dModule(
-            {128, 384, 1, 1, 1, 1, 0, 0, 1, 1, true})
-                     .build(
-                         build,
-                         output,
-                         conv_weights(
-                             params,
-                             "encoder.encoder_embed.convnext.pointwise_conv1"));
+        // Pointwise convolutions are channel projections; retain channel-last
+        // layout across both projections instead of materializing im2col twice.
+        output = modules::TransposeModule({{0, 2, 3, 1}, 4}).build(build, output);
+        const auto pointwise1 = conv_weights(params, "encoder.encoder_embed.convnext.pointwise_conv1");
+        output = modules::LinearModule({128, 384, true}).build(build, output, {
+            core::reshape_tensor(build, pointwise1.weight, core::TensorShape::from_dims({384, 128})),
+            pointwise1.bias});
         output = swoosh(
             build, output, 4.0F, -0.035F);
-        output = modules::Conv2dModule(
-            {384, 128, 1, 1, 1, 1, 0, 0, 1, 1, true})
-                     .build(
-                         build,
-                         output,
-                         conv_weights(
-                             params,
-                             "encoder.encoder_embed.convnext.pointwise_conv2"));
+        const auto pointwise2 = conv_weights(params, "encoder.encoder_embed.convnext.pointwise_conv2");
+        output = modules::LinearModule({384, 128, true}).build(build, output, {
+            core::reshape_tensor(build, pointwise2.weight, core::TensorShape::from_dims({128, 384})),
+            pointwise2.bias});
+        output = modules::TransposeModule({{0, 3, 1, 2}, 4}).build(build, output);
         output = add(build, bypass, output);
 
         output = transpose(build, output, {0, 2, 1, 3});
@@ -346,6 +343,7 @@ public:
             context_.get(), kGraphNodes, false);
         ggml_build_forward_expand(graph_, output_);
         ggml_build_forward_expand(graph_, new_cache_);
+        ggml_build_forward_expand(graph_, ggml_cpy(build.ggml, new_cache_, cache_));
         allocator_ = ggml_gallocr_new(
             ggml_backend_get_default_buffer_type(backend_));
         if (allocator_ == nullptr ||
@@ -356,6 +354,7 @@ public:
         }
         plan_ =
             core::create_backend_graph_plan_if_host(backend_, graph_);
+        reset();
     }
 
     ~SubsamplingGraph() {
@@ -381,12 +380,6 @@ public:
             features.data(),
             0,
             features.size() * sizeof(float));
-        ggml_backend_tensor_set_async(
-            backend_,
-            cache_,
-            cache_values_.data(),
-            0,
-            cache_values_.size() * sizeof(float));
         ggml_backend_synchronize(backend_);
         const auto status = core::compute_backend_graph(
             backend_,
@@ -410,19 +403,12 @@ public:
             result.values.data(),
             0,
             result.values.size() * sizeof(float));
-        ggml_backend_tensor_get_async(
-            backend_,
-            new_cache_,
-            cache_values_.data(),
-            0,
-            cache_values_.size() * sizeof(float));
         ggml_backend_synchronize(backend_);
         return result;
     }
 
     void reset() {
-        std::fill(
-            cache_values_.begin(), cache_values_.end(), 0.0F);
+        ggml_backend_tensor_memset(cache_, 0, 0, ggml_nbytes(cache_));
     }
 
 private:
@@ -432,10 +418,6 @@ private:
     ggml_tensor * cache_ = nullptr;
     ggml_tensor * new_cache_ = nullptr;
     ggml_tensor * output_ = nullptr;
-    mutable std::vector<float> cache_values_ = std::vector<float>(
-        static_cast<size_t>(
-            kEmbedChannels * kEmbedCacheFrames * kEmbedFrequency),
-        0.0F);
     ggml_cgraph * graph_ = nullptr;
     ggml_gallocr_t allocator_ = nullptr;
     ggml_backend_graph_plan_t plan_ = nullptr;

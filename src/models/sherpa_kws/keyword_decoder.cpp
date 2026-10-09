@@ -124,6 +124,7 @@ struct Hypothesis {
     std::vector<int64_t> timestamps;
     std::vector<float> probabilities;
     std::array<int32_t, 2> context{-1, 0};
+    std::vector<float> decoder;
     double log_prob = 0.0;
     int trailing_blanks = 0;
     ContextState * state = nullptr;
@@ -198,8 +199,12 @@ std::vector<KeywordDetection> KeywordDecoder::append(
         std::vector<Candidate> candidates;
         candidates.reserve(impl_->hypotheses.size() * static_cast<size_t>(vocab));
         for (size_t h = 0; h < impl_->hypotheses.size(); ++h) {
+            auto & hypothesis = impl_->hypotheses[h];
+            if (hypothesis.decoder.empty()) {
+                hypothesis.decoder = impl_->scorer.predictor(hypothesis.context);
+            }
             auto logits = impl_->scorer.score(encoder_output.data() + frame * channels,
-                                               impl_->hypotheses[h].context);
+                                               hypothesis.decoder);
             const float maximum = *std::max_element(logits.begin(), logits.end());
             double sum = 0.0;
             for (float value : logits) sum += std::exp(static_cast<double>(value - maximum));
@@ -218,6 +223,7 @@ std::vector<KeywordDetection> KeywordDecoder::append(
             const auto & candidate = candidates[i];
             Hypothesis hypothesis = impl_->hypotheses[candidate.hypothesis];
             if (candidate.token != blank && candidate.token != unknown) {
+                hypothesis.decoder.clear();
                 hypothesis.tokens.push_back(candidate.token);
                 hypothesis.timestamps.push_back(impl_->frame_offset + frame);
                 hypothesis.probabilities.push_back(candidate.probability);

@@ -104,6 +104,20 @@ std::vector<float> make_povey_window(int64_t window_size) {
   return window;
 }
 
+std::vector<float> make_hanning_window(int64_t window_size) {
+  std::vector<float> window(static_cast<size_t>(window_size), 0.0F);
+  if (window_size <= 1) {
+    return window;
+  }
+  constexpr double kPi = 3.14159265358979323846;
+  for (int64_t index = 0; index < window_size; ++index) {
+    window[static_cast<size_t>(index)] = static_cast<float>(
+        0.5 - 0.5 * std::cos(2.0 * kPi * static_cast<double>(index) /
+                             static_cast<double>(window_size - 1)));
+  }
+  return window;
+}
+
 std::vector<float> make_mel_filterbank(int sample_rate, int fft_size,
                                        int num_mels, float low_frequency,
                                        float high_frequency) {
@@ -312,6 +326,8 @@ KaldiFbankFeatures extract_kaldi_fbank(const std::vector<float> &audio,
   const float sample_scale = options.upscale_samples ? 32768.0F : 1.0F;
   const auto window = options.window_type == KaldiFbankWindowType::Povey
                           ? cached_kaldi_povey_window(window_size)
+                      : options.window_type == KaldiFbankWindowType::Hanning
+                          ? make_hanning_window(window_size)
                           : make_hamming_window(window_size);
   const auto filters =
       make_mel_filterbank(options.sample_rate, fft_size, options.num_mels,

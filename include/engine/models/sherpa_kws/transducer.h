@@ -15,11 +15,11 @@ public:
 
     std::vector<float> score(
         const float * encoder_frame,
-        const std::array<int32_t, 2> & context) const;
+        const std::vector<float> & decoder) const;
 
-private:
     std::vector<float> predictor(const std::array<int32_t, 2> & context) const;
 
+private:
     std::shared_ptr<const SherpaKwsAssets> assets_;
     std::vector<float> embedding_;
     std::vector<float> convolution_;

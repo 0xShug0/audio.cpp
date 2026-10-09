@@ -78,7 +78,7 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 
 ## Supported Models
 
-Task tags: `TTS` text to speech, `Clone` voice cloning, `VC` voice conversion, `S2S` speech-to-speech, `ASR` speech recognition, `Align` forced alignment, `VAD` voice activity detection, `Diar` speaker diarization, `Codec` audio codec, `Sep` source separation, `MIDI` audio-to-symbolic MIDI/events, `Music` music/song generation, `SFX` sound effects, `Video` video generation, `Edit` audio/music editing, `Design` voice design, `Dialogue` multi-speaker dialogue TTS, `Ctrl` TTS/clone voice control such as emotion, style, instruction, caption, or non-verbal tag control.
+Task tags: `TTS` text to speech, `Clone` voice cloning, `VC` voice conversion, `S2S` speech-to-speech, `ASR` speech recognition, `Classify` audio classification, `Wake` wake-word detection, `Align` forced alignment, `VAD` voice activity detection, `Diar` speaker diarization, `Codec` audio codec, `Sep` source separation, `MIDI` audio-to-symbolic MIDI/events, `Music` music/song generation, `SFX` sound effects, `Video` video generation, `Edit` audio/music editing, `Design` voice design, `Dialogue` multi-speaker dialogue TTS, `Ctrl` TTS/clone voice control such as emotion, style, instruction, caption, or non-verbal tag control.
 
 Runtime tags summarize the supported loading paths. GGUF package precision varies by model and release; check the [audio.cpp GGUF repo](https://huggingface.co/audio-cpp/audio.cpp-gguf) or [docs/gguf.md](docs/gguf.md) for the exact package list. `Bundled` means the tiny runtime asset ships under `assets/framework/models` and needs no separate model download. `Stream` means the family exposes a streaming server/session path.
 
@@ -120,6 +120,7 @@ Model weights keep the license of their original release, which is separate from
 
 | Family | Task | Lang | Variants | Runtime |
 |---|---|---|---|---|
+| **ast_audioset** | Classify | language agnostic | MIT AST AudioSet, 527 classes | GGUF F32/Q8 |
 | **audio_flamingo** | ASR, Audio understanding | en | Audio Flamingo 3<br>Audio Flamingo Next | GGUF BF16 |
 | **canary_asr** | ASR, Translate | en, de, es, fr | Canary 180M Flash | GGUF F32/Q8 |
 | **citrinet_asr** | ASR | en | Citrinet-256 | GGUF Q8 |
@@ -132,6 +133,7 @@ Model weights keep the license of their original release, which is separate from
 | **[hviske_asr_v6](docs/models/hviske_asr_v6.md)** | ASR | da | Hviske v6 | GGUF BF16 / Q8 |
 | **index_echo** | ASR, Translate | zh → en, es, ja | Index-Echo-S2TT 2B<br>Index-Echo-S2TT 9B | GGUF original/Q8_0/Q4_K |
 | **marblenet_vad** | VAD | lang agnostic | MarbleNet VAD | Bundled |
+| **micro_wake_word** | Wake | model dependent | microWakeWord MixedNet TFLite models converted to GGUF | GGUF F32, Stream |
 | **firered_vad** | VAD | lang agnostic | FireRed VAD / Stream-VAD | GGUF F32/F16/Q8, Stream |
 | **pulsevad** | VAD | lang agnostic | PulseVAD 2.1K Student / 81K Teacher | GGUF F32 |
 | **moonshine_asr** | ASR | en | Moonshine Streaming Tiny/Small/Medium | GGUF Q8, Stream |
@@ -145,6 +147,7 @@ Model weights keep the license of their original release, which is separate from
 | **qwen3_forced_aligner** | Align | zh, yue, en, de, es, fr, it, pt, ru, ko, ja | Qwen3-ForcedAligner-0.6B | GGUF 16/Q8 |
 | **samsone** | Audio understanding | en | SAMSONE 99M<br>SAMSONE 134M<br>SAMSONE 356M | GGUF BF16/Q8 |
 | **silero_vad** | VAD | lang agnostic | Silero VAD | Bundled, Stream |
+| **sherpa_kws** | Wake | model dependent | sherpa-onnx streaming Zipformer keyword spotting | GGUF F32, Stream |
 | **smart_turn** | Turn detection | auto | Smart Turn v3.2 | GGUF F32 |
 | **sortformer_diar** | Diar | en | Sortformer-4spk-v1 | - |
 | **vibevoice_asr** | ASR | auto | VibeVoice ASR | GGUF 16/Q8 |
@@ -648,7 +651,7 @@ audiocpp_cli --task <task> --model <path> --family <family> [--backend <backend>
 
 Core selectors:
 
-- `--task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc`
+- `--task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc|midi|wake|cls`
 - `--model <path>`
 - `--family <name>` explicitly selects the model family
 - `--backend cpu|cuda|vulkan|metal|best`

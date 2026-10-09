@@ -48,6 +48,40 @@
     "session": [],
     "load": []
   },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "micro_wake_word_okay_nabu_f32",
+      "display_name": "microWakeWord Okay Nabu GGUF F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MicroWakeWord-GGUF",
+      "files": [
+        "MicroWakeWord-GGUF/micro-wake-word-okay-nabu-f32.gguf"
+      ],
+      "strip_prefix": "MicroWakeWord-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "Wake Word",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/micro_wake_word.md"
+    ],
+    "recommended_package": "micro_wake_word_okay_nabu_f32"
+  },
   "sources": [
     {
       "format": "gguf",
@@ -77,25 +111,5 @@
         "weights": "model:model.safetensors"
       }
     }
-  ],
-  "package_defaults": {
-    "download": {
-      "kind": "huggingface_snapshot",
-      "repo": "audio-cpp/audio.cpp-gguf",
-      "revision": "main",
-      "gated": false
-    }
-  },
-  "packages": [],
-  "dependencies": [],
-  "ui": {
-    "tags": [
-      "Wake Word",
-      "GGUF",
-      "Stream"
-    ],
-    "docs": [
-      "docs/models/micro_wake_word.md"
-    ]
-  }
+  ]
 }

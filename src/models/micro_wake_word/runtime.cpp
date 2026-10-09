@@ -122,7 +122,6 @@ struct Runtime::Impl {
     core::TensorValue output;
     std::vector<core::TensorValue> state_inputs;
     std::vector<core::TensorValue> state_outputs;
-    std::vector<std::vector<float>> state_values;
     float input_scale = 0.0F;
     int64_t input_zero_point = 0;
     ggml_cgraph * graph = nullptr;
@@ -195,8 +194,8 @@ struct Runtime::Impl {
             }
             auto state_input = core::make_tensor(ctx, GGML_TYPE_F32, native_shape(infos[state.read].tflite_shape));
             ggml_set_input(state_input.tensor);
+            ggml_set_output(state_input.tensor);
             state_inputs.push_back(state_input);
-            state_values.emplace_back(static_cast<size_t>(state_input.shape.num_elements()), 0.0F);
             values.emplace(state.read, state_input);
             states.push_back(std::move(state));
         }
@@ -348,12 +347,17 @@ struct Runtime::Impl {
         graph = ggml_new_graph_custom(context.get(), 2048, false);
         ggml_build_forward_expand(graph, output.tensor);
         for (const auto & value : state_outputs) ggml_build_forward_expand(graph, value.tensor);
+        // Update recurrent state only after every consumer of the old state.
+        for (size_t i = 0; i < state_inputs.size(); ++i) {
+            ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, state_outputs[i].tensor, state_inputs[i].tensor));
+        }
         core::validate_backend_graph_supported(execution.backend(), graph, "micro_wake_word");
         allocator.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
         if (!allocator || !ggml_gallocr_alloc_graph(allocator.get(), graph)) {
             throw std::runtime_error("microWakeWord graph allocation failed");
         }
         core::prepare_host_graph_plan(execution, graph, plan);
+        clear();
     }
 
     ~Impl() { core::release_backend_graph_resources(execution.backend(), graph, true); }
@@ -374,15 +378,11 @@ struct Runtime::Impl {
             }
         }
         core::write_tensor_f32(input, channel_major);
-        for (size_t i = 0; i < state_inputs.size(); ++i) core::write_tensor_f32(state_inputs[i], state_values[i]);
         const auto started = std::chrono::steady_clock::now();
         if (core::compute_graph(execution, graph, plan, "micro_wake_word") != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("microWakeWord graph compute failed");
         }
         debug::timing_log_scalar("micro_wake_word.network_ms", debug::elapsed_ms(started));
-        for (size_t i = 0; i < state_outputs.size(); ++i) {
-            core::read_tensor_f32_into(state_outputs[i].tensor, state_values[i]);
-        }
         const auto result = core::read_tensor_f32(output.tensor);
         if (result.size() != 1 || !std::isfinite(result[0])) {
             throw std::runtime_error("microWakeWord produced an invalid probability");
@@ -392,7 +392,9 @@ struct Runtime::Impl {
     }
 
     void clear() {
-        for (auto & state : state_values) std::fill(state.begin(), state.end(), 0.0F);
+        for (const auto & state : state_inputs) {
+            ggml_backend_tensor_memset(state.tensor, 0, 0, ggml_nbytes(state.tensor));
+        }
     }
 };
 

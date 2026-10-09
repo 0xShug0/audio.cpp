@@ -2,6 +2,10 @@
 
 This runtime executes trained microWakeWord MixedNet TFLite models after conversion to GGUF. It uses the same fixed-point TensorFlow Lite Micro speech frontend as the training project: 16 kHz mono PCM, a 30 ms window, a 10 ms step, and 40 PCAN-normalized filterbank channels.
 
+The default package is `MicroWakeWord-GGUF/micro-wake-word-okay-nabu-f32.gguf`
+under `audio-cpp/audio.cpp-gguf`. It is self-contained, including the model
+configuration and spec. Only F32 is packaged.
+
 Convert a model with its published manifest:
 
 ```bash
@@ -19,3 +23,6 @@ build/debug/bin/audiocpp_cli --family micro_wake_word --task wake \
 ```
 
 Detections are returned as speech segments. `text` contains the wake phrase, `confidence` contains the smoothed probability, and the sample span identifies the feature block that triggered the detection. Request options `threshold` and `sliding_window_size` override the values copied from the model manifest.
+
+Use `--mode streaming` for incremental audio. CPU is recommended for this
+small model; see the [CPU/CUDA measurements and parity limits](../reports/wake_word_cpu_cuda.md).

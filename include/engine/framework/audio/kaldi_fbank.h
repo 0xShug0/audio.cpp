@@ -10,6 +10,7 @@ namespace engine::audio {
 enum class KaldiFbankWindowType {
   Hamming,
   Povey,
+  Hanning,
 };
 
 struct KaldiFbankOptions {
