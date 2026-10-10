@@ -35,6 +35,12 @@ int32_t argmax_dur(const std::vector<float>& v, int64_t vocab_sz, int64_t n_dur)
 }  // namespace
 
 struct ParakeetTDTDecoderRuntime::StepGraph {
+    // The Vulkan decoder path keeps predictor state on the device.
+    // These tensors have independent storage: the graph allocator must never
+    // recycle them as temporary activations between decoder steps.
+    std::unique_ptr<ggml_context, GgmlDeleter> state_ggml;
+    ggml_backend_buffer_t state_buffer = nullptr;
+    engine::core::TensorValue resident_pred_cache;
     std::unique_ptr<ggml_context, GgmlDeleter> ggml;
     ggml_cgraph* graph = nullptr;
     ggml_gallocr_t alloc = nullptr;
@@ -42,7 +48,10 @@ struct ParakeetTDTDecoderRuntime::StepGraph {
     engine::core::TensorValue token_id, enc_frame;
     std::vector<engine::core::TensorValue> h_in, c_in, h_out, c_out;
     engine::core::TensorValue pred_cache, logits;
-    ~StepGraph() { if (alloc) ggml_gallocr_free(alloc); }
+    ~StepGraph() {
+        if (alloc) ggml_gallocr_free(alloc);
+        if (state_buffer) ggml_backend_buffer_free(state_buffer);
+    }
 };
 
 struct ParakeetTDTDecoderRuntime::JointGraph {
@@ -72,11 +81,27 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder", execution_context_->backend_type()};
 
+    const bool resident_state = execution_context_->backend_type() == engine::core::BackendType::Vulkan;
+    if (resident_state) {
+        g->state_ggml.reset(ggml_init({65536, nullptr, true}));
+        if (!g->state_ggml) throw std::runtime_error("decoder state context allocation failed");
+    }
+    engine::core::ModuleBuildContext state_ctx{
+        resident_state ? g->state_ggml.get() : g->ggml.get(),
+        "parakeet.decoder.state", execution_context_->backend_type()};
+
     g->token_id = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1}));
     g->enc_frame = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.encoder.hidden_size}));
     for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
-        g->h_in.push_back(engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
-        g->c_in.push_back(engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
+        g->h_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
+        g->c_in.push_back(engine::core::make_tensor(state_ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size})));
+    }
+    if (resident_state) {
+        g->resident_pred_cache = engine::core::make_tensor(state_ctx, GGML_TYPE_F32,
+            engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size}));
+        g->state_buffer = ggml_backend_alloc_ctx_tensors(g->state_ggml.get(), execution_context_->backend());
+        if (!g->state_buffer) throw std::runtime_error("decoder state buffer allocation failed");
+        ggml_backend_buffer_clear(g->state_buffer, 0);
     }
     ggml_set_input(g->token_id.tensor); ggml_set_input(g->enc_frame.tensor);
     for (int64_t l = 0; l < cfg.decoder_layers; ++l) { ggml_set_input(g->h_in[static_cast<size_t>(l)].tensor); ggml_set_input(g->c_in[static_cast<size_t>(l)].tensor); }
@@ -101,6 +126,17 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     g->graph = ggml_new_graph(g->ggml.get());
     ggml_build_forward_expand(g->graph, g->logits.tensor); ggml_build_forward_expand(g->graph, g->pred_cache.tensor);
     for (size_t l = 0; l < g->h_out.size(); ++l) { ggml_build_forward_expand(g->graph, g->h_out[l].tensor); ggml_build_forward_expand(g->graph, g->c_out[l].tensor); }
+    if (resident_state) {
+        // Append updates after the complete logits/predictor computation. All
+        // consumers of the old recurrent state therefore run before overwriting
+        // it, including consumers in the next LSTM layer.
+        for (size_t l = 0; l < g->h_out.size(); ++l) {
+            ggml_build_forward_expand(g->graph, ggml_cpy(ctx.ggml, g->h_out[l].tensor, g->h_in[l].tensor));
+            ggml_build_forward_expand(g->graph, ggml_cpy(ctx.ggml, g->c_out[l].tensor, g->c_in[l].tensor));
+        }
+        ggml_build_forward_expand(g->graph,
+            ggml_cpy(ctx.ggml, g->pred_cache.tensor, g->resident_pred_cache.tensor));
+    }
 
     g->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_->backend()));
     if (!g->alloc || !ggml_gallocr_alloc_graph(g->alloc, g->graph)) throw std::runtime_error("step graph alloc failed");
@@ -126,7 +162,9 @@ void ParakeetTDTDecoderRuntime::ensure_joint_graph() {
     g->ggml.reset(ggml_init(p));
     engine::core::ModuleBuildContext ctx{g->ggml.get(), "parakeet.decoder_joint", execution_context_->backend_type()};
     g->enc_frame = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.encoder.hidden_size}));
-    g->pred_cache = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size}));
+    g->pred_cache = step_graph_ && step_graph_->state_buffer
+        ? step_graph_->resident_pred_cache
+        : engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, cfg.decoder_hidden_size}));
     ggml_set_input(g->enc_frame.tensor); ggml_set_input(g->pred_cache.tensor);
     auto proj_enc = engine::modules::LinearModule({cfg.encoder.hidden_size, cfg.decoder_hidden_size, true}).build(ctx, g->enc_frame, weights_->decoder.joint_enc);
     auto joint = engine::modules::AddModule().build(ctx, proj_enc, g->pred_cache);
@@ -146,7 +184,7 @@ int32_t ParakeetTDTDecoderRuntime::run_joint_step(const float* enc, int32_t* out
     auto& g = *joint_graph_;
     const auto& cfg = assets_->config;
     engine::core::write_tensor_f32(g.enc_frame, enc, static_cast<size_t>(cfg.encoder.hidden_size));
-    engine::core::write_tensor_f32(g.pred_cache, decoder_cache_scratch_);
+    if (!step_graph_->state_buffer) engine::core::write_tensor_f32(g.pred_cache, decoder_cache_scratch_);
     if (engine::core::compute_graph(*execution_context_, g.graph, g.plan, "Parakeet joint") != GGML_STATUS_SUCCESS)
         throw std::runtime_error("joint compute failed");
     engine::core::read_tensor_f32_into(g.logits.tensor, logits_scratch_);
@@ -161,7 +199,7 @@ int32_t ParakeetTDTDecoderRuntime::run_step(int32_t tok, const float* enc, bool 
     if (!pred_valid || tok != blank) {
         engine::core::write_tensor_i32(g.token_id, &tok, 1);
         engine::core::write_tensor_f32(g.enc_frame, enc, static_cast<size_t>(cfg.encoder.hidden_size));
-        for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
+        for (int64_t l = 0; !g.state_buffer && l < cfg.decoder_layers; ++l) {
             size_t off = static_cast<size_t>(l * cfg.decoder_hidden_size);
             engine::core::write_tensor_f32(g.h_in[static_cast<size_t>(l)], hidden_scratch_.data() + off, static_cast<size_t>(cfg.decoder_hidden_size));
             engine::core::write_tensor_f32(g.c_in[static_cast<size_t>(l)], cell_scratch_.data() + off, static_cast<size_t>(cfg.decoder_hidden_size));
@@ -169,8 +207,8 @@ int32_t ParakeetTDTDecoderRuntime::run_step(int32_t tok, const float* enc, bool 
         if (engine::core::compute_graph(*execution_context_, g.graph, g.plan, "Parakeet step") != GGML_STATUS_SUCCESS)
             throw std::runtime_error("step compute failed");
         engine::core::read_tensor_f32_into(g.logits.tensor, logits_scratch_);
-        engine::core::read_tensor_f32_into(g.pred_cache.tensor, decoder_cache_scratch_);
-        for (int64_t l = 0; l < cfg.decoder_layers; ++l) {
+        if (!g.state_buffer) engine::core::read_tensor_f32_into(g.pred_cache.tensor, decoder_cache_scratch_);
+        for (int64_t l = 0; !g.state_buffer && l < cfg.decoder_layers; ++l) {
             size_t off = static_cast<size_t>(l * cfg.decoder_hidden_size);
             engine::core::read_tensor_f32_into(g.h_out[static_cast<size_t>(l)].tensor, hidden_read_scratch_);
             std::copy(hidden_read_scratch_.begin(), hidden_read_scratch_.end(), hidden_scratch_.begin() + static_cast<std::ptrdiff_t>(off));
@@ -268,6 +306,9 @@ void ParakeetTDTDecoderRuntime::reset_state() {
     hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     decoder_cache_scratch_.assign(static_cast<size_t>(cfg.decoder_hidden_size), 0.f);
+    if (step_graph_ && step_graph_->state_buffer) {
+        ggml_backend_buffer_clear(step_graph_->state_buffer, 0);
+    }
     pending_input_token_ = static_cast<int32_t>(cfg.blank_token_id);
     predictor_cache_valid_ = false;
     state_initialized_ = true;
