@@ -15,10 +15,12 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -266,6 +268,46 @@ std::size_t resolve_reference_cache_slots(const runtime::SessionOptions &options
     throw std::runtime_error("irodori_tts.reference_cache_slots is too large");
   }
   return static_cast<std::size_t>(slots);
+}
+
+// Python Irodori-TTS cuts a single reference WAV to its first
+// int(max_ref_sec * sample_rate) frames before encoding it, then the
+// latent to ceil(max_ref_sec * codec_sample_rate / hop_length) steps.
+std::optional<runtime::AudioBuffer>
+trim_reference_audio(const runtime::AudioBuffer &audio,
+                     float max_ref_sec) {
+  if (max_ref_sec <= 0.0F || audio.channels <= 0 ||
+      audio.sample_rate <= 0) {
+    return std::nullopt;
+  }
+  const auto channels = static_cast<std::size_t>(audio.channels);
+  const std::size_t max_frames = std::max<std::size_t>(
+      1, static_cast<std::size_t>(static_cast<double>(max_ref_sec) *
+                                  static_cast<double>(audio.sample_rate)));
+  if (audio.samples.size() / channels <= max_frames) {
+    return std::nullopt;
+  }
+  runtime::AudioBuffer trimmed;
+  trimmed.sample_rate = audio.sample_rate;
+  trimmed.channels = audio.channels;
+  trimmed.samples.assign(
+      audio.samples.begin(),
+      audio.samples.begin() +
+          static_cast<std::ptrdiff_t>(max_frames * channels));
+  return trimmed;
+}
+
+// Returns 0 when the reference is not capped.
+int64_t max_reference_latent_steps(float max_ref_sec,
+                                   const IrodoriCodecConfig &codec) {
+  if (max_ref_sec <= 0.0F) {
+    return 0;
+  }
+  return std::max<int64_t>(
+      1, static_cast<int64_t>(std::ceil(
+             static_cast<double>(max_ref_sec) *
+             static_cast<double>(codec.sample_rate) /
+             static_cast<double>(codec.hop_length))));
 }
 
 IrodoriSpeakerCondition
@@ -538,7 +580,9 @@ bool IrodoriTTSSession::ReferenceAudioCacheKeyEqual::operator()(
     const ReferenceAudioCacheKey &lhs,
     const ReferenceAudioCacheKey &rhs) const {
   return lhs.hash == rhs.hash && lhs.sample_rate == rhs.sample_rate &&
-         lhs.channels == rhs.channels && lhs.sample_count == rhs.sample_count;
+         lhs.channels == rhs.channels &&
+         lhs.sample_count == rhs.sample_count &&
+         lhs.max_latent_steps == rhs.max_latent_steps;
 }
 
 std::string IrodoriTTSSession::family() const { return kFamily; }
@@ -575,6 +619,10 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       contract_->request_option_keys.end()) {
     validation_options.erase("speaker_embedding_path");
   }
+  if (contract_->request_option_keys.find("max_ref_sec") ==
+      contract_->request_option_keys.end()) {
+    validation_options.erase("max_ref_sec");
+  }
   runtime::validate_spec_backed_request_options(
       validation_options, *contract_, "Irodori-TTS");
   const auto wall_start = Clock::now();
@@ -604,11 +652,26 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
       throw std::runtime_error(
           "Irodori-TTS reference mode requires reference audio");
     }
+    const auto trimmed_reference = trim_reference_audio(
+        first_request.reference_audio, first_request.max_ref_sec);
+    const runtime::AudioBuffer &reference_audio =
+        trimmed_reference ? *trimmed_reference : first_request.reference_audio;
+    if (trimmed_reference) {
+      debug::trace_log_scalar(
+          "irodori_tts.reference.trimmed_from_seconds",
+          static_cast<double>(first_request.reference_audio.samples.size() /
+                              static_cast<std::size_t>(
+                                  first_request.reference_audio.channels)) /
+              first_request.reference_audio.sample_rate);
+    }
+    const int64_t max_latent_steps = max_reference_latent_steps(
+        first_request.max_ref_sec, assets_->codec);
     const ReferenceAudioCacheKey reference_key{
-        reference_audio_cache_key(first_request.reference_audio),
-        first_request.reference_audio.sample_rate,
-        first_request.reference_audio.channels,
-        first_request.reference_audio.samples.size(),
+        reference_audio_cache_key(reference_audio),
+        reference_audio.sample_rate,
+        reference_audio.channels,
+        reference_audio.samples.size(),
+        max_latent_steps,
     };
     if (const auto *cached = reference_speaker_cache_.find(reference_key)) {
       reference_cache_hit = true;
@@ -629,8 +692,14 @@ IrodoriTTSSession::run(const runtime::TaskRequest &request) {
                               reference_speaker_cache_.size() >=
                                   reference_speaker_cache_.capacity();
       int64_t ref_latent_steps = 0;
-      auto ref_latent = codec_->encode_reference(first_request.reference_audio,
-                                                 ref_latent_steps);
+      auto ref_latent =
+          codec_->encode_reference(reference_audio, ref_latent_steps);
+      if (max_latent_steps > 0 && ref_latent_steps > max_latent_steps) {
+        const auto dim =
+            ref_latent.size() / static_cast<std::size_t>(ref_latent_steps);
+        ref_latent.resize(static_cast<std::size_t>(max_latent_steps) * dim);
+        ref_latent_steps = max_latent_steps;
+      }
       speaker = condition_encoder_->encode_speaker_reference(ref_latent,
                                                              ref_latent_steps);
       ReferenceSpeakerCacheEntry entry;
@@ -815,6 +884,15 @@ IrodoriTTSSession::make_request(const runtime::TaskRequest &request) const {
     }
     out.speaker_embedding_path = std::move(embedding);
     out.no_ref = false;
+  }
+  out.max_ref_sec = assets_->config.ref_max_seconds;
+  if (const auto value = runtime::parse_finite_float_option(
+          request.options, {"max_ref_sec"})) {
+    if (*value < 0.0F) {
+      throw std::runtime_error(
+          "Irodori-TTS max_ref_sec must be non-negative");
+    }
+    out.max_ref_sec = *value;
   }
   out.generation = generation_options_from_request(request);
   if (out.generation.duration_scale <= 0.0F) {

@@ -69,6 +69,11 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
         json::optional_nullable_string(root, "duration_caption_pooling", config.duration_caption_pooling);
     config.max_text_len = json::optional_i64(root, "max_text_len", config.max_text_len);
     config.max_caption_len = json::optional_i64(root, "max_caption_len", config.max_text_len);
+    // Python keeps its 30 s legacy default unless ref_max_seconds is positive.
+    const float ref_max_seconds = json::optional_f32(root, "ref_max_seconds", 0.0F);
+    if (std::isfinite(ref_max_seconds) && ref_max_seconds > 0.0F) {
+        config.ref_max_seconds = ref_max_seconds;
+    }
     if (config.use_pretrained_text_encoder()) {
         if (!resources.has_file("pretrained_text_config")) {
             throw std::runtime_error("Irodori-TTS pretrained text encoder requires pretrained_text_config");

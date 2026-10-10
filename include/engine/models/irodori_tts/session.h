@@ -44,6 +44,7 @@ private:
     int sample_rate = 0;
     int channels = 0;
     size_t sample_count = 0;
+    int64_t max_latent_steps = 0;
   };
 
   struct ReferenceAudioCacheKeyEqual {
