@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/session.h"
+#include "engine/community_models/parakeet_tdt/phonon_streaming.h"
 
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
@@ -86,6 +87,9 @@ std::unordered_map<std::string, std::string> normalize_request_options(
     if (contract.request_option_keys.find("audio_chunk_duration_sec") ==
         contract.request_option_keys.end()) {
         validation_options.erase("audio_chunk_duration_sec");
+    }
+    for (const auto * key : {"hotwords", "hotword_lambda"}) {
+        if (!contract.request_option_keys.count(key)) validation_options.erase(key);
     }
     runtime::validate_spec_backed_request_options(
         validation_options,
@@ -284,6 +288,29 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     }
     if (const auto value = runtime::find_option(request.options, {"keep_language_tags"})) {
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
+    }
+    const bool phonon = assets_->config.force_f32_matmul && assets_->config.token_duration_word_timestamps;
+    auto hotwords = runtime::find_option(request.options, {"hotwords"});
+    const auto array = request.option_arrays.find("hotwords");
+    if (!hotwords && array == request.option_arrays.end() && phonon && request.text_input)
+        hotwords = request.text_input->text;
+    const auto strength = runtime::parse_float_option(request.options, {"hotword_lambda"}).value_or(2.f);
+    if (!std::isfinite(strength) || strength < 0 || strength > 100)
+        throw std::runtime_error("Phonon hotword_lambda must be between 0 and 100");
+    if (hotwords || array != request.option_arrays.end()) {
+        if (!phonon) throw std::runtime_error("hotwords currently require a Phonon-2 package");
+        std::vector<PhononHotword> terms;
+        if (hotwords) terms = parse_phonon_hotwords(*hotwords);
+        else {
+            engine::io::json::Value::Array entries;
+            for (const auto & word : array->second) entries.push_back(engine::io::json::Value::make_string(word));
+            terms = parse_phonon_hotwords(engine::io::json::stringify(engine::io::json::Value::make_array(std::move(entries))));
+        }
+        if (!terms.empty() && strength > 0) {
+            auto policy = std::make_shared<PhononHotwordAutomaton>(terms, assets_->tokenizer->id_to_token(),
+                static_cast<int32_t>(assets_->config.blank_token_id), strength);
+            if (!policy->empty()) opts.hotwords = std::move(policy);
+        }
     }
     return opts;
 }
@@ -1001,6 +1028,10 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
                                 std::shared_ptr<const ParakeetTDTAssets> assets,
                                 std::shared_ptr<const engine::model_spec::ModelContract> contract) {
         if (task.mode == runtime::RunMode::Streaming) {
+            if (assets->config.force_f32_matmul && assets->config.token_duration_word_timestamps) {
+                return std::unique_ptr<runtime::IVoiceTaskSession>(std::make_unique<PhononStreamingSession>(
+                    task, options, std::move(assets), std::move(contract)));
+            }
             return std::unique_ptr<runtime::IVoiceTaskSession>(
                 std::make_unique<ParakeetTDTStreamingSession>(
                     task,

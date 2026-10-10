@@ -951,6 +951,8 @@ audiocpp_add_model(parakeet_tdt
         src/community_models/parakeet_tdt/session.cpp
         src/community_models/parakeet_tdt/encoder.cpp
         src/community_models/parakeet_tdt/decoder.cpp
+        src/community_models/parakeet_tdt/hotwords.cpp
+        src/community_models/parakeet_tdt/phonon_streaming.cpp
         src/community_models/parakeet_tdt/frontend.cpp
         src/community_models/parakeet_tdt/weights.cpp
     INCLUDES
@@ -3258,6 +3260,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (parakeet_tdt IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(phonon_hotwords_test tests/parakeet_tdt/test_hotwords.cpp)
+        add_test(NAME phonon_hotwords_test COMMAND phonon_hotwords_test)
+        add_engine_unittest(phonon_features_probe tests/parakeet_tdt/phonon_features_probe.cpp)
         add_engine_unittest(parakeet_variant_config_test tests/parakeet_tdt/test_variant_config.cpp)
         target_include_directories(parakeet_variant_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         target_compile_definitions(parakeet_variant_config_test PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")

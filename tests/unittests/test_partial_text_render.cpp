@@ -45,6 +45,9 @@ void test_finish_closes_only_an_open_line() {
 
 int main() {
     try {
+        PartialTextRenderer snapshot(true);
+        require_eq(snapshot.render_snapshot("Quilon"), std::string("partial_text_snapshot=Quilon\n"), "provisional snapshot");
+        require_eq(snapshot.render_snapshot("Quillon"), std::string("partial_text_snapshot=Quillon\n"), "snapshot revision is not appended");
         test_terminal_appends_partials_verbatim();
         test_redirected_output_keeps_labelled_lines();
         test_finish_closes_only_an_open_line();

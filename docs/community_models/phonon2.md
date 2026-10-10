@@ -117,8 +117,68 @@ The standard serial server accepts the GGUF through `/v1/tasks/run` or
 `family: "parakeet_tdt"`, `path` pointing to the GGUF, `task: "asr"`, and
 `mode: "offline"`; then use `model: "phonon2"` in requests. See
 [the server API](../../app/server/README.md) for request formats.
-No parallel-runtime option is needed. Official Phonon hotword biasing and
-native streaming behavior are not ported by this weight-package integration.
+No parallel-runtime option is needed.
+
+## Hotwords
+
+The optional policy follows `fermion-research` 0.2.11's Phonon-2 hotword
+automaton (Apache-2.0). It boosts matching word pieces, never blank or duration
+scores. Settings belong to one request. Omitted/empty hotwords or strength zero
+retain ordinary decoding.
+
+```bash
+audiocpp_cli --task asr --family parakeet_tdt --model phonon-2-q8_0.gguf \
+  --backend cuda --audio recording.wav \
+  --request-option 'hotwords=Ada Lovelace, Quillon' \
+  --request-option hotword_lambda=2
+```
+
+`hotwords` accepts comma/newline/semicolon-separated terms, or a JSON array of
+strings or `{"word":"Quillon","spoken":["kwil on"]}` objects. With no
+separators, whitespace separates terms. Up to 25 distinct terms are used;
+strength defaults to 2 and must be finite in [0,100]. Strong bias can introduce
+incorrect terms. Inputs are bounded: 16 KiB total, 256 UTF-8 bytes per term,
+8 spoken alternatives per term, and 8192 automaton states.
+
+On `/v1/audio/transcriptions`, send `hotwords` and `hotword_lambda` as JSON or
+multipart fields. OpenAI `prompt` is a vocabulary-list fallback for Phonon only;
+explicit `hotwords`, including an empty list, wins. `/v1/tasks/run` uses the
+same names under `request.options`.
+
+## Live transcription
+
+Use CLI `--mode streaming` or server model `mode: "streaming"`. Phonon uses the
+original rolling policy: 50 ms internal blocks, first provisional decode after
+350 ms, then every 500 ms of additional audio; finalize after 700 ms of quiet,
+at the 30 s phrase cap, or at input end. Idle input remains bounded. Each
+decode re-encodes the phrase; this is not an encoder cache or a file-processing
+speed optimization. These intervals describe audio received; initialization
+and decoding add wall-clock latency.
+
+New conversions advertise streaming. Older GGUFs embed the previous offline
+contract: re-convert, or pass an updated Phonon package spec with
+`--model-spec-override models/Phonon-2-F32/model_spec.json` (server model field:
+`model_spec_override`). The weights do not need to change.
+
+```bash
+audiocpp_cli --task asr --family parakeet_tdt --model phonon-2-q8_0.gguf \
+  --backend cuda --mode streaming --audio recording.wav
+```
+
+The server uses existing `/v1/audio/transcriptions` with `stream=true`, or
+`POST /v1/audio/transcriptions/live` for raw mono 16 kHz PCM. It does not add
+Phonon's separate WebSocket protocol. Live requests accept `prompt`, `hotwords`,
+and `hotword_lambda` as query parameters.
+
+Provisional text can change. CLI labels it `partial_text_snapshot=`. ASR SSE
+sends `{"type":"transcript.text.partial","text":"..."}` with the whole current
+transcript: replace the provisional display. Existing `transcript.text.delta`
+events contain only finalized text; their concatenation equals
+`transcript.text.done.text`. Generic task streams use `partial_text_snapshot`.
+Final word timestamps use absolute recording offsets. Short provisional
+hypotheses and some timings can differ from the original dense Python decoder;
+see [feature validation](../reports/phonon2_features.md). Stock Parakeet retains
+its existing buffered-window streaming implementation.
 
 ## Validation
 

@@ -194,7 +194,7 @@ int32_t ParakeetTDTDecoderRuntime::run_joint_step(const float* enc, int32_t* out
         throw std::runtime_error("joint compute failed");
     engine::core::read_tensor_f32_into(g.logits.tensor, logits_scratch_);
     if (out_dur_id) *out_dur_id = argmax_dur(logits_scratch_, assets_->config.vocab_size, static_cast<int64_t>(assets_->config.durations.size()));
-    return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
+    return select_token();
 }
 
 int32_t ParakeetTDTDecoderRuntime::run_step(int32_t tok, const float* enc, bool pred_valid, int32_t* out_dur_id) {
@@ -224,7 +224,14 @@ int32_t ParakeetTDTDecoderRuntime::run_step(int32_t tok, const float* enc, bool 
         return run_joint_step(enc, out_dur_id);
     }
     if (out_dur_id) *out_dur_id = argmax_dur(logits_scratch_, assets_->config.vocab_size, static_cast<int64_t>(assets_->config.durations.size()));
-    return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
+    return select_token();
+}
+
+int32_t ParakeetTDTDecoderRuntime::select_token() {
+    if (!hotwords_) return argmax_vocab(logits_scratch_, assets_->config.vocab_size);
+    const auto token = hotwords_->select(logits_scratch_, hotword_state_);
+    hotword_state_ = hotwords_->step(hotword_state_, token);
+    return token;
 }
 
 std::string ParakeetTDTDecoderRuntime::decode_text(const std::vector<int32_t>& ids, bool keep_tags) const {
@@ -332,6 +339,8 @@ std::vector<runtime::WordTimestamp> ParakeetTDTDecoderRuntime::build_word_timest
 }
 
 void ParakeetTDTDecoderRuntime::reset_state() {
+    hotword_state_ = 0;
+    hotwords_.reset();
     const auto& cfg = assets_->config;
     hidden_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
     cell_scratch_.assign(static_cast<size_t>(cfg.decoder_layers * cfg.decoder_hidden_size), 0.f);
@@ -357,6 +366,7 @@ ParakeetDecodedText ParakeetTDTDecoderRuntime::decode_incremental(
         throw std::runtime_error("incremental decoder frame offset must be non-negative");
     }
     const auto t0 = Clock::now(); ensure_step_graph();
+    hotwords_ = opts.hotwords;
     engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
     const auto& cfg = assets_->config;
     const int64_t max_tok = opts.max_tokens > 0

@@ -89,6 +89,21 @@
         "required": false,
         "min": 0.001,
         "default": 2.0
+      },
+      {
+        "name": "hotwords",
+        "type": "string",
+        "description": "Phonon-2 only: optional vocabulary list, comma-separated or a JSON array of strings / word-spoken objects. Up to 25 terms; an explicit empty list disables prompt biasing.",
+        "required": false
+      },
+      {
+        "name": "hotword_lambda",
+        "type": "float",
+        "description": "Phonon-2 matching-piece logit bonus; duration scores and blank are not biased.",
+        "required": false,
+        "min": 0,
+        "max": 100,
+        "default": 2.0
       }
     ],
     "session": [

@@ -254,14 +254,14 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
         spec_path = Path(__file__).resolve().parents[2] / "model_specs" / "parakeet_tdt.json"
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
         spec.update(display_name="Phonon-2 (dense F32)", status="experimental", languages=["en"],
-                    modes=["offline"], packages=[],
+                    modes=["offline", "streaming"], packages=[],
                     description="Fermion Research Phonon-2 English ASR. Exact F32 weight reconstruction; "
                                 "uses the native Parakeet TDT runtime, without packed five-value kernels.")
         spec.pop("package_defaults", None)
         spec["ui"].pop("recommended_package", None)
         spec["ui"]["docs"] = ["docs/community_models/phonon2.md"]
-        spec["runtime"]["tags"] = ["gguf"]
-        spec["capabilities"]["asr"] = ["word_timestamps"]
+        spec["runtime"]["tags"] = ["gguf", "stream"]
+        spec["capabilities"]["asr"] = ["word_timestamps", "partial_results"]
         (staged / "model_spec.json").write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
         provenance = {"source_repo": SOURCE_REPO, "source_revision": SOURCE_REVISION,
                       "archive_sha256": ARCHIVE_SHA256, "container_sha256": CONTAINER_SHA256,
