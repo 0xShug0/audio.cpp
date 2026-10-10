@@ -73,7 +73,9 @@ uint64_t discovered_weight_bytes(const ModelInspection & inspection) {
 }  // namespace
 
 void finish_model_load_trace() {
-    if (!engine::debug::trace_log_enabled()) {
+    // Opt-in additions only (--load-progress 1): without the flag this is a
+    // no-op and the log matches the pre-load-progress behavior exactly.
+    if (!engine::core::load_progress_enabled() || !engine::debug::trace_log_enabled()) {
         return;
     }
     engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"loaded"});
@@ -158,17 +160,25 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const ModelLoadRequest & 
         throw std::runtime_error("no registered model loader can load: " + request.model_path.string());
     }
     // Phase brackets + the uploaded-bytes curve give trace-log consumers a
-    // continuous load progress (llama.cpp-style). The curve STARTS here and is
-    // closed by finish_model_load_trace() once the host has built its task
-    // session: the actual weight stores upload during session construction,
-    // not inside the registry load.
-    const bool traced = engine::debug::trace_log_enabled();
+    // continuous load progress (llama.cpp-style). Opt-in via --load-progress
+    // 1 so the log for existing downstream pipelines stays byte-identical:
+    // the runtime.model.* inspection trace below predates it and keeps its
+    // original trace-log gating. The curve STARTS here and is closed by
+    // finish_model_load_trace() once the host has built its task session:
+    // the actual weight stores upload during session construction, not
+    // inside the registry load.
+    const bool log_traced = engine::debug::trace_log_enabled();
+    const bool progress = engine::core::load_progress_enabled();
     std::optional<ModelInspection> inspection;
-    if (traced) {
-        engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"inspect"});
+    if (log_traced) {
+        if (progress) {
+            engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"inspect"});
+        }
         inspection = loader->inspect(request);
-        engine::core::begin_model_load(discovered_weight_bytes(*inspection));
-        engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"load"});
+        if (progress) {
+            engine::core::begin_model_load(discovered_weight_bytes(*inspection));
+            engine::debug::trace_log_scalar("runtime.load.phase", std::string_view{"load"});
+        }
     }
     auto model = loader->load(request);
     if (inspection.has_value()) {

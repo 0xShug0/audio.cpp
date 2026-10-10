@@ -12,6 +12,7 @@
 #include "../streaming/streaming.h"
 
 #include "engine/framework/core/host_memory.h"
+#include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
@@ -1387,8 +1388,9 @@ void ServerState::load_models() {
                 ++eager_loaded;
                 // Models-completed boundary for trace-log consumers driving a
                 // load progress bar: one step per resident model. The final
-                // 1.0 is emitted once below.
-                if (eager_loaded < static_cast<int>(config_.models.size())) {
+                // 1.0 is emitted once below. Opt-in (--load-progress 1).
+                if (engine::core::load_progress_enabled() &&
+                    eager_loaded < static_cast<int>(config_.models.size())) {
                     engine::debug::trace_log_scalar(
                         "server.load.progress",
                         static_cast<double>(eager_loaded) / static_cast<double>(config_.models.size()));
@@ -1397,7 +1399,8 @@ void ServerState::load_models() {
         }
         models_.push_back(std::move(loaded));
     }
-    if (!config_.models.empty() && eager_loaded == static_cast<int>(config_.models.size())) {
+    if (engine::core::load_progress_enabled() &&
+        !config_.models.empty() && eager_loaded == static_cast<int>(config_.models.size())) {
         // Every configured model is resident and the listening banner follows
         // immediately: complete the models-completed curve at 1.0.
         engine::debug::trace_log_scalar("server.load.progress", 1.0);

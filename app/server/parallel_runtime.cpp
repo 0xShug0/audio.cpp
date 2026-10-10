@@ -13,6 +13,7 @@
 #include "../streaming/streaming.h"
 
 #include "engine/framework/core/host_memory.h"
+#include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/metadata.h"
@@ -1394,6 +1395,14 @@ void ParallelServerState::load_models() {
             } else {
                 ensure_model_loaded_locked(*loaded);
                 ++eager_loaded;
+                // Models-completed boundary for trace-log consumers driving a
+                // load progress bar: one step per resident model, 1.0 once
+                // every eager model is resident. Opt-in (--load-progress 1).
+                if (engine::core::load_progress_enabled()) {
+                    engine::debug::trace_log_scalar(
+                        "server.load.progress",
+                        static_cast<double>(eager_loaded) / static_cast<double>(config_.models.size()));
+                }
             }
         }
         models_.push_back(std::move(loaded));
@@ -2151,6 +2160,11 @@ void ParallelServerState::ensure_model_loaded_locked(LoadedModel & model) {
     if (!session) {
         throw std::runtime_error("model returned a null task session: " + model.registered_id);
     }
+    // The weight stores uploaded during session construction: close the
+    // load-progress bracket opened by registry.load (see finish_model_load_trace).
+    // Placed before the slot pool builds any extra sessions so the curve ends
+    // at the first fully resident session.
+    engine::runtime::finish_model_load_trace();
     engine::runtime::VoiceTaskSessionPool::SessionFactory slot_factory;
     const size_t audited_capacity = audited_slot_capacity(
         session->family(), session->task_kind(), config_.backend, session->run_mode());

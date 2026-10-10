@@ -3,6 +3,7 @@
 #include "engine/framework/debug/trace.h"
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 
 namespace engine::core {
@@ -27,14 +28,38 @@ std::mutex & load_progress_mutex() {
     return mutex;
 }
 
+std::atomic_bool & progress_enabled_flag() {
+    static std::atomic_bool enabled{false};
+    return enabled;
+}
+
 // ~500 lines per load keeps the trace log tight while still reading as a
 // continuous curve to anything tailing it.
 constexpr double kEmitStep = 0.002;
 
+// The per-tensor loop never reports 1.0: the final curve point belongs to
+// end_model_load, after the LAST store uploaded. A component whose bytes
+// were undercounted (weights the inspection could not see) would otherwise
+// push the curve to 1.0 before the backbone store even registers, and no
+// later correction could take it back.
+constexpr double kUnfinishedCap = 0.99;
+
+bool reporting_active() {
+    return load_progress_enabled() && engine::debug::trace_log_enabled();
+}
+
 }  // namespace
 
+void set_load_progress_enabled(bool enabled) {
+    progress_enabled_flag().store(enabled, std::memory_order_release);
+}
+
+bool load_progress_enabled() {
+    return progress_enabled_flag().load(std::memory_order_acquire);
+}
+
 void begin_model_load(uint64_t total_bytes) {
-    if (!engine::debug::trace_log_enabled()) {
+    if (!reporting_active()) {
         return;
     }
     std::lock_guard<std::mutex> lock(load_progress_mutex());
@@ -47,9 +72,10 @@ void begin_model_load(uint64_t total_bytes) {
 }
 
 void register_weight_bytes(uint64_t bytes) {
-    // Trace-gated before the lock: with logging off the tracker is inert and
-    // store uploads (thousands of tensors per model) must not pay for a mutex.
-    if (!engine::debug::trace_log_enabled()) {
+    // Flag-gated before the lock: with reporting off the tracker is inert
+    // and store uploads (thousands of tensors per model) must not pay for
+    // a mutex.
+    if (!reporting_active()) {
         return;
     }
     std::lock_guard<std::mutex> lock(load_progress_mutex());
@@ -64,7 +90,7 @@ void register_weight_bytes(uint64_t bytes) {
 }
 
 void add_uploaded_weight_bytes(uint64_t bytes) {
-    if (!engine::debug::trace_log_enabled()) {
+    if (!reporting_active()) {
         return;
     }
     std::lock_guard<std::mutex> lock(load_progress_mutex());
@@ -76,7 +102,7 @@ void add_uploaded_weight_bytes(uint64_t bytes) {
 }
 
 void emit_weight_upload_progress(const std::string & store_name) {
-    if (!engine::debug::trace_log_enabled()) {
+    if (!reporting_active()) {
         return;
     }
     std::lock_guard<std::mutex> lock(load_progress_mutex());
@@ -84,12 +110,18 @@ void emit_weight_upload_progress(const std::string & store_name) {
     if (!state.active || state.total_bytes == 0) {
         return;
     }
-    const double fraction = std::max(
-        std::min(
-            static_cast<double>(state.done_bytes) / static_cast<double>(state.total_bytes),
-            1.0),
-        state.last_emitted);
-    if (state.last_emitted >= 0.0 && fraction - state.last_emitted < kEmitStep && fraction < 1.0) {
+    double fraction = static_cast<double>(state.done_bytes) /
+                      static_cast<double>(state.total_bytes);
+    if (fraction > kUnfinishedCap) {
+        fraction = kUnfinishedCap;
+    }
+    // done/total over all work known so far. When a later store raises the
+    // total, the fraction honestly decreases: emit the correction at once
+    // (no step gate, no high-water clamp) so hosts keep seeing the real
+    // remaining work. Within a fixed denominator, done only grows, so the
+    // step gate is all the smoothing the upward direction needs.
+    const bool decreased = state.last_emitted >= 0.0 && fraction < state.last_emitted;
+    if (!decreased && state.last_emitted >= 0.0 && fraction - state.last_emitted < kEmitStep) {
         return;
     }
     state.last_emitted = fraction;
@@ -104,7 +136,7 @@ void end_model_load() {
         return;
     }
     state.active = false;
-    if (engine::debug::trace_log_enabled() && !state.last_store.empty() && state.last_emitted < 1.0) {
+    if (reporting_active() && !state.last_store.empty() && state.last_emitted < 1.0) {
         state.last_emitted = 1.0;
         engine::debug::trace_log_scalar(state.last_store + ".weights.upload_progress", 1.0);
     }

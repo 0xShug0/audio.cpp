@@ -7,6 +7,7 @@
 #include "../common/build_info.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/load_progress.h"
 #include "engine/framework/debug/trace.h"
 
 #include <csignal>
@@ -90,7 +91,7 @@ void print_help() {
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory>] [--voice-dir <directory>]\n"
         << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
-        << "                [--log] [--log-file <path>]\n"
+        << "                [--log] [--log-file <path>] [--load-progress 0|1]\n"
         << "                [--cors-origins <origins>]\n"
         << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
         << "  --parallel-jobs                  opt into the experimental parallel runtime; per-model slots default to 1\n"
@@ -118,6 +119,9 @@ void print_help() {
         << "  --frontend-option key=value      listener-specific option; may be repeated\n"
         << "  --cors-origins \"*\"              experimental; disabled by default. Allows browser\n"
         << "                                   requests from any origin for trusted local demos only\n"
+        << "  --load-progress 0|1              with --log/--log-file, emit model-load progress keys\n"
+        << "                                   (runtime.load.phase, <store>.weights.upload_progress,\n"
+        << "                                   server.load.progress); default 0 (no new log lines)\n"
         << "\n"
         << "Endpoints:\n"
         << "  GET  /                           embedded WebUI (enabled by default with a config)\n"
@@ -181,6 +185,15 @@ int main(int argc, char ** argv) {
             has_arg(argc, argv, "--log") || log_file.has_value(),
             log_file,
         });
+        // Opt-in model-load progress reporting (runtime.load.phase,
+        // <store>.weights.upload_progress, server.load.progress). Default
+        // off so the log for existing downstream pipelines is unchanged.
+        if (const auto load_progress = arg_value(argc, argv, "--load-progress")) {
+            if (*load_progress != "0" && *load_progress != "1") {
+                throw std::runtime_error("--load-progress expects 0 or 1");
+            }
+            engine::core::set_load_progress_enabled(*load_progress == "1");
+        }
         std::signal(SIGINT, request_shutdown);
         std::signal(SIGTERM, request_shutdown);
 #ifdef SIGPIPE
