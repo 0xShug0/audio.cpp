@@ -131,7 +131,7 @@
       {
         "name": "stream_frames_per_event",
         "type": "int",
-        "description": "Generated codec frames per streaming audio event.",
+        "description": "Maximum generated codec frames per streaming audio event; fixed size with stream_chunk_policy=fixed.",
         "required": false,
         "min": 1,
         "default": 16
@@ -139,10 +139,18 @@
       {
         "name": "stream_lookahead_margin",
         "type": "int",
-        "description": "Trailing codec frames held before emission to reduce streaming boundary artifacts.",
+        "description": "Additional trailing codec frames buffered before streaming emission. The decoder is causal; zero minimizes latency.",
         "required": false,
         "min": 0,
-        "default": 12
+        "default": 0
+      },
+      {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming chunk schedule: grow emits 1, 2, 4, ... frames up to stream_frames_per_event; fixed uses that size from the first event.",
+        "values": ["grow", "fixed"],
+        "required": false,
+        "default": "grow"
       }
     ],
     "session": [

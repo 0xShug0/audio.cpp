@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/streaming_audio.h"
 #include "engine/models/breeze_tts/assets.h"
 #include "engine/models/breeze_tts/speech_decoder.h"
 #include "engine/models/breeze_tts/text_encoder.h"
@@ -29,11 +30,6 @@ struct BreezeGenerationRequest {
     uint64_t seed = 0;
 };
 
-struct BreezeStreamEvent {
-    engine::runtime::AudioBuffer audio;
-    bool done = false;
-};
-
 // BreezeTTS 2's reference inference rounds activations to bf16 (and keeps a bf16
 // KV cache). That is what the model was trained with, but on backends without a
 // cheap fused cast it costs a visible share of the AR loop, so the choice is
@@ -59,8 +55,10 @@ public:
 
     engine::runtime::AudioBuffer generate(const BreezeGenerationRequest & request);
     BreezeSpeechCodes encode_reference(const engine::runtime::AudioBuffer & audio) const;
-    void begin_stream(const BreezeGenerationRequest & request);
-    BreezeStreamEvent next_stream_audio(size_t max_new_frames, int64_t lookahead_margin);
+    engine::runtime::AudioBuffer generate_stream(
+        const BreezeGenerationRequest & request,
+        engine::runtime::StreamingAudioConfig config,
+        engine::runtime::StreamEventCallback sink);
     void end_stream();
 
 private:

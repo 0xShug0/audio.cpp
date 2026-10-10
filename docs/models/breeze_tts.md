@@ -88,8 +88,9 @@ audiocpp_cli \
 | `top_k` | integer >= 0 | `50` | Top-k sampling limit; `0` disables top-k filtering. |
 | `top_p` | `0..1` | `1.0` | Top-p sampling limit. |
 | `seed` | integer >= 0 | `0` | Generation seed. |
-| `stream_frames_per_event` | integer > 0 | `16` | Streaming codec frames per emitted audio event. Smaller values can reduce TTFT but increase event/decoder overhead. |
-| `stream_lookahead_margin` | integer >= 0 | `12` | Trailing codec frames held before emission to reduce streaming boundary artifacts. |
+| `stream_frames_per_event` | integer > 0 | `16` | Maximum codec frames per audio event, or fixed event size with `stream_chunk_policy=fixed`. |
+| `stream_chunk_policy` | `grow`, `fixed` | `grow` | Emit 1, 2, 4, ... frames up to the configured maximum, or use the fixed size from the first event. |
+| `stream_lookahead_margin` | integer >= 0 | `0` | Additional trailing frames buffered before emission. The decoder is causal; zero minimizes latency. |
 
 ## Session Options (use with `--session-option`)
 
@@ -115,7 +116,8 @@ OpenAI-compatible speech endpoint, pass streaming options inside the request
   "options": {
     "instruction": "A confident product demo narrator with steady pacing.",
     "stream_frames_per_event": "16",
-    "stream_lookahead_margin": "12"
+    "stream_chunk_policy": "grow",
+    "stream_lookahead_margin": "0"
   }
 }
 ```
