@@ -1,7 +1,7 @@
 {
   "family": "pocket_tts",
   "display_name": "PocketTTS",
-  "description": "Kyutai 100M-parameter CPU-friendly TTS package set for real-time local synthesis and small-footprint voice cloning in English, German, Italian, Portuguese, and Spanish.",
+  "description": "Kyutai 100M-parameter CPU-friendly TTS package set for real-time local synthesis and small-footprint voice cloning in English, French, German, Italian, Portuguese, and Spanish.",
   "category": "tts",
   "status": "supported",
   "tasks": [
@@ -14,6 +14,7 @@
   ],
   "languages": [
     "en",
+    "fr",
     "de",
     "it",
     "pt",
@@ -341,6 +342,30 @@
         "PocketTTS-GGUF/english/embeddings/alba.safetensors"
       ],
       "strip_prefix": "PocketTTS-GGUF/english"
+    },
+    {
+      "id": "pocket_tts_french_q8_0",
+      "display_name": "PocketTTS French Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "PocketTTS-GGUF/french",
+      "files": [
+        "PocketTTS-GGUF/french/pocket-tts-french-q8_0.gguf",
+        "PocketTTS-GGUF/french/embeddings/cosette.safetensors"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/french"
+    },
+    {
+      "id": "pocket_tts_french_bf16",
+      "display_name": "PocketTTS French BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "PocketTTS-GGUF/french",
+      "files": [
+        "PocketTTS-GGUF/french/pocket-tts-french-bf16.gguf",
+        "PocketTTS-GGUF/french/embeddings/cosette.safetensors"
+      ],
+      "strip_prefix": "PocketTTS-GGUF/french"
     },
     {
       "id": "pocket_tts_german_q8_0",

@@ -453,7 +453,7 @@ OmniVoice streaming is pseudo streaming: audio.cpp emits audio chunk events from
 
 PocketTTS supports built-in voices, voice cloning from reference WAVs, and exported voice states for fast reuse.
 
-PocketTTS language selection is a model-load option. When the model path points at the PocketTTS root, the loader uses `english` unless you pass `--load-option language=<name>`. Kyutai's normal non-English PocketTTS releases are smaller distilled language models intended for the fast PocketTTS path. The `_24l` variants are larger 24-layer, undistilled preview models that can sound better but are slower. Kyutai currently publishes French only as `french_24l`, not as a normal distilled `french` language directory, so French is not listed as a normal PocketTTS language here.
+Use the GGUF package for the desired language. French is available as a distilled six-layer model in BF16 and Q8_0, with packaged voice states such as `cosette`. The `_24l` variants are larger 24-layer, undistilled preview models; French no longer requires the `french_24l` variant.
 
 | Field | Value |
 |---|---|
@@ -461,7 +461,7 @@ PocketTTS language selection is a model-load option. When the model path points 
 | Model directory | `models/pocket-tts` |
 | Task | `tts` |
 | Modes | `offline` |
-| Languages | `english`, `german`, `italian`, `portuguese`, `spanish`|
+| Languages | `english`, `french`, `german`, `italian`, `portuguese`, `spanish` |
 | Voice input | Built-in voice id or reference WAV |
 | Built-in voices | Voice ids depend on the downloaded language package; `alba` is used by the examples |
 
@@ -469,6 +469,15 @@ Preset voice:
 
 ```bash
 audiocpp_cli --task tts --family pocket_tts --model models/pocket-tts --backend cuda --text "Hello from PocketTTS." --voice-id alba --out out.wav
+```
+
+French preset voice (keep the package's `embeddings` directory alongside the GGUF):
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/french/pocket-tts-french-q8_0.gguf \
+  --backend cuda --text "Bonjour, bienvenue dans notre bibliotheque." \
+  --voice-id cosette --out french.wav
 ```
 
 Voice clone:
