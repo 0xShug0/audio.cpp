@@ -101,6 +101,24 @@ Build CLI/server, `phonon_features_probe`, `phonon_hotwords_test`,
 `parakeet_variant_config_test`, `partial_text_render_test`, the common CTest
 targets, and the combined-build `tdt_decoder_duration_loop_test`/`parakeet_parity_dump`.
 
+In an MSVC 14.43 developer environment with CUDA/Vulkan SDKs on PATH,
+the combined runtime build used:
+
+```bash
+cmake -S . -B ../build-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  '-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8' \
+  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=parakeet_tdt \
+  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON \
+  -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_BUILD_SERVER_FRONTENDS=OFF \
+  -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DGGML_CCACHE=OFF \
+  -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON -DCMAKE_CUDA_ARCHITECTURES=86
+cmake --build ../build-gpu -j 6 --target audiocpp_cli audiocpp_server audiocpp_gguf \
+  phonon_features_probe phonon_hotwords_test parakeet_variant_config_test \
+  partial_text_render_test tdt_decoder_duration_loop_test parakeet_parity_dump
+ctest --test-dir ../build-gpu --output-on-failure \
+  -R 'phonon_hotwords_test|parakeet_variant_config_test|tdt_decoder_duration_loop_test|partial_text_render_test'
+```
+
 ```bash
 ctest --test-dir build-cpu --output-on-failure
 python tests/parakeet_tdt/test_phonon2_conversion.py
