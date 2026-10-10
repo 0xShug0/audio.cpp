@@ -1565,6 +1565,25 @@
       ]
     },
     {
+      "id": "fish_audio_s2_pro_streaming",
+      "coverage": "Fish Audio incremental AR code emission and stateful causal codec decoding",
+      "family": "fish_audio",
+      "model": "models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "reference_voice",
+        "text": "The studio engineer checked the short voice prompt, confirmed the take was clear, and started the final render.",
+        "voice_ref": "resources/sample.wav",
+        "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
+        "seed": 1234,
+        "temperature": 0.8,
+        "top_p": 0.8,
+        "repetition_penalty": 1.1
+      }]
+    },
+    {
       "id": "fish_audio_s2_pro_paths",
       "coverage": "Fish Audio S2-Pro path coverage for default voice, reference voice clone, inline control tag, AR generation, and codec decode in one offline session",
       "family": "fish_audio",
@@ -2868,6 +2887,22 @@
       ]
     },
     {
+      "id": "moss_tts_nano_streaming",
+      "coverage": "MOSS-TTS-Nano incremental code frames and cached causal codec decoding",
+      "family": "moss_tts_nano",
+      "model": "models/MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf",
+      "task": "clon",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "reference_voice",
+        "text": "The studio lights clicked on before the first phrase began, and the cloned voice should stay steady through this medium length request.",
+        "voice_ref": "resources/a.wav",
+        "seed": 1234,
+        "max_tokens": 180
+      }]
+    },
+    {
       "id": "moss_tts_nano_voice_clone_long",
       "coverage": "MOSS-TTS-Nano voice clone, text/audio token generation, MOSS-Audio-Tokenizer-Nano decode",
       "family": "moss_tts_nano",
@@ -3058,6 +3093,23 @@
           "seed": 1234
         }
       ]
+    },
+    {
+      "id": "vibevoice_two_speaker_streaming",
+      "coverage": "VibeVoice native audio deltas across speaker turns",
+      "family": "vibevoice",
+      "model": "models/VibeVoice-1.5B-GGUF/vibevoice-1.5b-q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": ["audio"],
+      "requests": [{
+        "id": "two_speaker_dialogue",
+        "text": "Speaker 1: The field recorder captured a clean reference take.\nSpeaker 2: The operator confirmed that every timestamp matched the written production notes.",
+        "seed": 1234,
+        "num_inference_steps": 8,
+        "guidance_scale": 1.3,
+        "options": {"voice_samples": "reference/VibeVoiceCommunity/demo/voices/en-Alice_woman.wav,reference/VibeVoiceCommunity/demo/voices/en-Frank_man.wav"}
+      }]
     },
     {
       "id": "vibevoice_two_speaker_long",

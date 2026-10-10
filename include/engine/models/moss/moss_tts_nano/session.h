@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 #include "engine/models/moss/moss_tts_nano/assets.h"
 #include "engine/models/moss/moss_tts_nano/generator.h"
@@ -18,7 +19,8 @@ namespace engine::models::moss_tts_nano {
 
 class MossTTSNanoSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     MossTTSNanoSession(
         runtime::TaskSpec task,
@@ -32,8 +34,12 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
     MossTTSNanoAudioCodes encode_reference_audio(const runtime::AudioBuffer & audio, int64_t active_codebooks);
-    runtime::AudioBuffer decode_generated_audio(const MossTTSNanoAudioCodes & codes, int64_t active_codebooks);
+    runtime::AudioBuffer decode_generated_audio(
+        const MossTTSNanoAudioCodes & codes, int64_t active_codebooks, bool streaming = false);
     MossTTSNanoRequest make_request(const runtime::TaskRequest & request) const;
     const MossTTSNanoAudioCodes & reference_codes_for_request(const MossTTSNanoRequest & request);
 

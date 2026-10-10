@@ -14,7 +14,8 @@ MossTTSNanoGenerator::MossTTSNanoGenerator(
 
 MossTTSNanoAudioCodes MossTTSNanoGenerator::generate(
     const MossTTSNanoPrompt & prompt,
-    const MossTTSNanoGenerationOptions & options) {
+    const MossTTSNanoGenerationOptions & options,
+    const std::function<void(const std::vector<int32_t> &)> & on_frame) {
     if (prompt.rows <= 0 || prompt.row_width <= 1) {
         throw std::runtime_error("MOSS-TTS-Nano generator requires a non-empty prompt");
     }
@@ -51,6 +52,7 @@ MossTTSNanoAudioCodes MossTTSNanoGenerator::generate(
         generated.insert(generated.end(), frame.begin(), frame.end());
         rows.push_back(local_frame_decoder_.assistant_slot_token_id());
         rows.insert(rows.end(), frame.begin(), frame.end());
+        if (on_frame) on_frame(frame);
     }
     if (generated.empty()) {
         throw std::runtime_error("MOSS-TTS-Nano generation produced no audio frames");

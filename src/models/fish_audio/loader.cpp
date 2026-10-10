@@ -22,7 +22,7 @@ runtime::ModelMetadata metadata(const FishAudioAssets &) {
 runtime::CapabilitySet capabilities(const FishAudioAssets &) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.languages = {"en", "zh", "auto"};
     out.supports_speaker_reference = true;
@@ -61,7 +61,7 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         out.supports_style_condition = true;
@@ -126,8 +126,9 @@ const runtime::CapabilitySet & FishAudioLoadedModel::capabilities() const noexce
 std::unique_ptr<runtime::IVoiceTaskSession> FishAudioLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.task != runtime::VoiceTaskKind::Tts || task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Fish Audio S2-Pro supports offline TTS sessions");
+    if (task.task != runtime::VoiceTaskKind::Tts ||
+        (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming)) {
+        throw std::runtime_error("Fish Audio S2-Pro supports offline and streaming TTS sessions");
     }
     return std::make_unique<FishAudioSession>(task, options, assets_);
 }

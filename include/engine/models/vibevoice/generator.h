@@ -8,6 +8,7 @@
 #include "engine/models/vibevoice/types.h"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace engine::models::vibevoice {
@@ -46,7 +47,8 @@ VibeVoiceResult generate_vibevoice(
     const VibeVoiceQwen2WeightsRuntime & decoder,
     const VibeVoiceDiffusionHeadWeightsRuntime & diffusion_head,
     VibeVoiceQwen2CachedState & positive_cache,
-    VibeVoiceQwen2CachedState & negative_cache);
+    VibeVoiceQwen2CachedState & negative_cache,
+    const std::function<void(const runtime::AudioBuffer &)> & on_audio = {});
 
 std::vector<VibeVoiceResult> generate_vibevoice_batch(
     const std::vector<VibeVoiceRequest> & requests,

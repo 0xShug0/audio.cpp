@@ -6,6 +6,7 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/streaming_frame_attention_cache.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
@@ -256,7 +257,8 @@ inline core::TensorValue transformer_layer(
     const core::TensorValue & mask,
     const std::vector<AttentionWindow> * windows,
     int64_t steps,
-    bool widen_to_f32) {
+    bool widen_to_f32,
+    modules::StreamingFrameAttentionCache * stream_cache = nullptr) {
     const int64_t dim = spec.d_model / spec.num_heads;
     const modules::LayerNormModule norm({spec.d_model, kLayerNormEps, true, true});
 
@@ -286,6 +288,21 @@ inline core::TensorValue transformer_layer(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
+    if (stream_cache != nullptr) {
+        const auto shape = core::TensorShape::from_dims({1, spec.num_heads, spec.context - 1, dim});
+        auto key_cache = core::make_tensor(ctx, GGML_TYPE_F32, shape);
+        auto value_cache = core::make_tensor(ctx, GGML_TYPE_F32, shape);
+        ggml_set_input(key_cache.tensor);
+        ggml_set_input(value_cache.tensor);
+        ggml_set_output(key_cache.tensor);
+        ggml_set_output(value_cache.tensor);
+        const auto cached = modules::StreamingFrameAttentionCacheModule({spec.context - 1})
+            .build(ctx, key_cache, value_cache, k_heads, v_heads);
+        stream_cache->add_layer(key_cache.tensor, value_cache.tensor,
+                               cached.next_key_cache.tensor, cached.next_value_cache.tensor);
+        k_heads = cached.key_context;
+        v_heads = cached.value_context;
+    }
     auto context = windows == nullptr ? attention(ctx, q_heads, k_heads, v_heads, dim, mask)
                                       : windowed_attention(ctx, q_heads, k_heads, v_heads, dim, *windows);
     context = modules::TransposeModule({{0, 2, 1, 3}, context.shape.rank}).build(ctx, context);
@@ -325,14 +342,15 @@ inline core::TensorValue run_transformer(
     const core::TensorValue & positions,
     const core::TensorValue & mask,
     int64_t steps,
-    const std::vector<AttentionWindow> * windows = nullptr) {
+    const std::vector<AttentionWindow> * windows = nullptr,
+    modules::StreamingFrameAttentionCache * stream_cache = nullptr) {
     const auto & spec = weights.spec;
     auto x = weights.input_proj.valid()
                  ? modules::LinearModule(binding::linear_config(spec.input_dim, spec.d_model, false))
                        .build(ctx, input, binding::linear_data(ctx, projection_weight(ctx, weights.input_proj, weights.widen_to_f32)))
                  : input;
     for (const auto & layer : weights.layers) {
-        x = transformer_layer(ctx, x, layer, spec, positions, mask, windows, steps, weights.widen_to_f32);
+        x = transformer_layer(ctx, x, layer, spec, positions, mask, windows, steps, weights.widen_to_f32, stream_cache);
     }
     if (!weights.output_proj.valid()) {
         return x;
@@ -547,6 +565,8 @@ public:
     // Decodes [num_quantizers][steps] codes into a stereo waveform returned as
     // {left, right}, each with steps * 3840 samples at 48 kHz.
     MossAudioTokenizerAudio decode(const MossAudioTokenizerCodes & codes);
+    MossAudioTokenizerAudio decode_stream(const MossAudioTokenizerCodes & codes);
+    void reset_decode_stream();
     void release_runtime_graphs();
 
 private:
@@ -1141,6 +1161,14 @@ struct MossAudioTokenizerDecoder::Impl {
         ggml_tensor * output = nullptr;
         std::vector<StageInput> stage_inputs;
         std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, cd::GgmlGallocrDeleter> gallocr;
+        modules::StreamingFrameAttentionCache attention_cache;
+        ggml_backend_t stream_backend = nullptr;
+
+        ~GraphCache() {
+            if (stream_backend != nullptr && graph != nullptr) {
+                core::release_backend_graph_resources(stream_backend, graph);
+            }
+        }
     };
 
     ggml_backend_t backend = nullptr;
@@ -1153,6 +1181,56 @@ struct MossAudioTokenizerDecoder::Impl {
     std::unique_ptr<core::BackendWeightStore> store;
     std::vector<cd::TransformerWeights> transformers;
     std::unique_ptr<GraphCache> graph_cache;
+    std::unique_ptr<GraphCache> stream_graph_cache;
+    int64_t stream_frames = 0;
+
+    GraphCache & prepare_stream_graph() {
+        if (stream_graph_cache != nullptr) return *stream_graph_cache;
+        auto cache = std::make_unique<GraphCache>();
+        cache->stream_backend = backend;
+        cache->frames = 1;
+        cache->graph_ctx.reset(ggml_init({graph_arena_bytes, nullptr, true}));
+        core::ModuleBuildContext ctx{cache->graph_ctx.get(), "moss.audio_tokenizer.decode_stream", backend_type};
+        auto hidden = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, 1, cd::kCodeDim}));
+        cache->input = hidden.tensor;
+        ggml_set_input(cache->input);
+        int64_t steps = 1;
+        if (config.decoder_initial_patch > 1) {
+            hidden = patch_upsample(ctx, hidden, config.decoder_initial_patch);
+            steps *= config.decoder_initial_patch;
+        }
+        for (const auto & transformer : transformers) {
+            auto positions = core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({steps}));
+            auto mask = core::make_tensor(ctx, GGML_TYPE_F32,
+                core::TensorShape::from_dims({1, 1, steps, transformer.spec.context - 1 + steps}));
+            ggml_set_input(positions.tensor);
+            ggml_set_input(mask.tensor);
+            StageInput stage;
+            stage.positions = positions.tensor;
+            stage.position_host.resize(static_cast<size_t>(steps));
+            stage.masks.push_back({mask.tensor, {}});
+            cache->stage_inputs.push_back(std::move(stage));
+            hidden = cd::run_transformer(ctx, hidden, transformer, positions, mask, steps,
+                                         nullptr, &cache->attention_cache);
+            hidden = patch_upsample(ctx, hidden, transformer.spec.patch);
+            steps *= transformer.spec.patch;
+        }
+        hidden = core::ensure_backend_addressable_layout(ctx, hidden);
+        cache->output = hidden.tensor;
+        cache->interleaved = steps;
+        ggml_set_output(cache->output);
+        cache->attention_cache.set_outputs();
+        cache->graph = ggml_new_graph_custom(cache->graph_ctx.get(), 131072, false);
+        ggml_build_forward_expand(cache->graph, cache->output);
+        cache->attention_cache.build_forward_expand(cache->graph);
+        cache->gallocr.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)));
+        if (!cache->gallocr || !ggml_gallocr_reserve(cache->gallocr.get(), cache->graph) ||
+            !ggml_gallocr_alloc_graph(cache->gallocr.get(), cache->graph)) {
+            throw std::runtime_error("failed to allocate MOSS codec streaming decoder graph");
+        }
+        stream_graph_cache = std::move(cache);
+        return *stream_graph_cache;
+    }
 
     GraphCache & prepare_graph(int64_t frames) {
         if (graph_cache != nullptr && graph_cache->frames == frames) {
@@ -1261,6 +1339,8 @@ struct MossAudioTokenizerDecoder::Impl {
 
     void release_runtime_graphs() {
         graph_cache.reset();
+        stream_graph_cache.reset();
+        stream_frames = 0;
     }
 };
 
@@ -1309,6 +1389,60 @@ MossAudioTokenizerDecoder::~MossAudioTokenizerDecoder() = default;
 
 int64_t MossAudioTokenizerDecoder::sampling_rate() const noexcept {
     return impl_->sampling_rate;
+}
+
+void MossAudioTokenizerDecoder::reset_decode_stream() {
+    impl_->stream_frames = 0;
+}
+
+MossAudioTokenizerAudio MossAudioTokenizerDecoder::decode_stream(const MossAudioTokenizerCodes & codes) {
+    if (codes.frames != 1 || codes.codebooks.empty()) {
+        throw std::runtime_error("MOSS codec streaming decode requires one codec frame");
+    }
+    for (const auto & codebook : codes.codebooks) {
+        if (codebook.size() != 1) throw std::runtime_error("MOSS codec streaming codebook length mismatch");
+    }
+    auto & graph = impl_->prepare_stream_graph();
+    if (impl_->stream_frames == 0) graph.attention_cache.zero_inputs(impl_->backend);
+    const auto latent = impl_->dequantizer->decode(codes.codebooks);
+    ggml_backend_tensor_set(graph.input, latent.data(), 0, latent.size() * sizeof(float));
+    for (size_t index = 0; index < graph.stage_inputs.size(); ++index) {
+        auto & stage = graph.stage_inputs[index];
+        const int64_t steps = static_cast<int64_t>(stage.position_host.size());
+        const int64_t first = impl_->stream_frames * steps;
+        const int64_t context = impl_->transformers[index].spec.context;
+        for (int64_t i = 0; i < steps; ++i) stage.position_host[static_cast<size_t>(i)] = static_cast<int32_t>(first + i);
+        auto & mask = stage.masks.front();
+        const int64_t keys = context - 1 + steps;
+        mask.host.assign(static_cast<size_t>(steps * keys), cd::kMaskedAttentionBias);
+        for (int64_t q = 0; q < steps; ++q) {
+            const int64_t begin = std::max<int64_t>(q, context - 1 - first);
+            for (int64_t k = begin; k <= context - 1 + q; ++k) {
+                mask.host[static_cast<size_t>(q * keys + k)] = 0.0F;
+            }
+        }
+        ggml_backend_tensor_set(stage.positions, stage.position_host.data(), 0, stage.position_host.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(mask.tensor, mask.host.data(), 0, mask.host.size() * sizeof(float));
+    }
+    core::set_backend_threads(impl_->backend, impl_->threads);
+    if (ggml_backend_graph_compute(impl_->backend, graph.graph) != GGML_STATUS_SUCCESS) {
+        throw std::runtime_error("MOSS codec streaming decoder graph compute failed");
+    }
+    graph.attention_cache.commit_outputs(impl_->backend);
+    ggml_backend_synchronize(impl_->backend);
+    const auto flat = core::read_tensor_f32(graph.output);
+    MossAudioTokenizerAudio audio;
+    audio.sampling_rate = impl_->sampling_rate;
+    audio.channels.resize(static_cast<size_t>(impl_->config.channels),
+                          std::vector<float>(static_cast<size_t>(impl_->config.samples_per_frame)));
+    for (int64_t sample = 0; sample < impl_->config.samples_per_frame; ++sample) {
+        for (int64_t channel = 0; channel < impl_->config.channels; ++channel) {
+            audio.channels[static_cast<size_t>(channel)][static_cast<size_t>(sample)] =
+                flat[static_cast<size_t>(sample * impl_->config.channels + channel)];
+        }
+    }
+    ++impl_->stream_frames;
+    return audio;
 }
 
 MossAudioTokenizerAudio MossAudioTokenizerDecoder::decode(const MossAudioTokenizerCodes & codes) {
@@ -1675,6 +1809,14 @@ MossAudioTokenizerCodes MossAudioTokenizerCodecRuntime::encode(const MossAudioTo
 
 MossAudioTokenizerAudio MossAudioTokenizerCodecRuntime::decode(const MossAudioTokenizerCodes & codes) {
     return impl_->require_decoder().decode(codes);
+}
+
+MossAudioTokenizerAudio MossAudioTokenizerCodecRuntime::decode_stream(const MossAudioTokenizerCodes & codes) {
+    return impl_->require_decoder().decode_stream(codes);
+}
+
+void MossAudioTokenizerCodecRuntime::reset_decode_stream() {
+    if (impl_->decoder != nullptr) impl_->decoder->reset_decode_stream();
 }
 
 void MossAudioTokenizerCodecRuntime::release_runtime_graphs() {

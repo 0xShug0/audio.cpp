@@ -6,6 +6,7 @@
 #include "engine/models/fish_audio/types.h"
 
 #include <memory>
+#include <functional>
 
 namespace engine::models::fish_audio {
 
@@ -20,7 +21,10 @@ public:
         assets::TensorStorageType weight_storage_type);
     ~FishAudioDualARRuntime();
 
-    engine::codecs::FishDacCodes generate(const FishAudioPrompt & prompt, const FishAudioGenerationOptions & options);
+    engine::codecs::FishDacCodes generate(
+        const FishAudioPrompt & prompt,
+        const FishAudioGenerationOptions & options,
+        const std::function<void(const std::vector<int32_t> &)> & on_frame = {});
     void release_runtime_graphs();
 
 private:

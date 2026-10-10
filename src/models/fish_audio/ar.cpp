@@ -886,7 +886,10 @@ public:
         runtime_.reset();
     }
 
-    engine::codecs::FishDacCodes generate(const FishAudioPrompt & prompt, const FishAudioGenerationOptions & options) {
+    engine::codecs::FishDacCodes generate(
+        const FishAudioPrompt & prompt,
+        const FishAudioGenerationOptions & options,
+        const std::function<void(const std::vector<int32_t> &)> & on_frame) {
         FishARProfile profile;
         const auto & assets = runtime_->assets();
         const auto & weights = runtime_->weights();
@@ -927,6 +930,9 @@ public:
             const auto input = build_slow_embedding_for_frame(assets.config, weights, frame);
             profile.slow_embedding_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
             auto step_out = step_graph_->run(input, profile);
+            // The last frame is discarded on a length-limited generation.
+            // Only publish it once a subsequent decoding step has started.
+            if (on_frame) on_frame(std::vector<int32_t>(frame.begin() + 1, frame.end()));
             frame = sample_frame(step_out.logits, step_out.hidden, options, sample, true, profile);
             if (frame.front() == im_end_id()) {
                 ended_by_im_end = true;
@@ -1750,8 +1756,9 @@ FishAudioDualARRuntime::~FishAudioDualARRuntime() = default;
 
 engine::codecs::FishDacCodes FishAudioDualARRuntime::generate(
     const FishAudioPrompt & prompt,
-    const FishAudioGenerationOptions & options) {
-    return impl_->generate(prompt, options);
+    const FishAudioGenerationOptions & options,
+    const std::function<void(const std::vector<int32_t> &)> & on_frame) {
+    return impl_->generate(prompt, options, on_frame);
 }
 
 void FishAudioDualARRuntime::release_runtime_graphs() {
