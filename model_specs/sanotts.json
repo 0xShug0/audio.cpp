@@ -87,6 +87,18 @@
         "type": "path",
         "description": "Optional explicit path to the directory containing espeak-ng-data.",
         "required": false
+      },
+      {
+        "name": "cpu_decoder",
+        "type": "enum",
+        "description": "Nano-lineage frame-stage and decoder implementation. auto selects NEON on AArch64 CPU sessions when available, otherwise GGML. ggml explicitly uses the existing graph; neon requires an AArch64 NEON build and the CPU backend. Piperlite voices ignore the selection.",
+        "values": [
+          "auto",
+          "ggml",
+          "neon"
+        ],
+        "required": false,
+        "default": "auto"
       }
     ],
     "load": []

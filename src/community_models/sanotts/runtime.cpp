@@ -1,6 +1,7 @@
 #include "engine/community_models/sanotts/runtime.h"
 
 #include "graph_common.h"
+#include "neon_decoder.h"
 
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/modules/linear_module.h"
@@ -468,12 +469,97 @@ struct SanoTtsNativeRuntime::State : BackendState {
     runtime::CacheSlots<int64_t, std::unique_ptr<FrontGraph>> duration_graphs{4};
     runtime::CacheSlots<int64_t, std::unique_ptr<FrontGraph>> token_graphs{4};
     runtime::CacheSlots<int64_t, std::unique_ptr<DecoderGraph>> decoder_graphs{2};
+    std::unique_ptr<SanoTtsNeonDecoder> neon_decoder;
 };
 
 SanoTtsNativeRuntime::SanoTtsNativeRuntime(
     std::shared_ptr<const SanoTtsAssets> assets,
-    core::BackendConfig backend_config)
-    : state_(std::make_unique<State>(std::move(assets), backend_config)) {}
+    core::BackendConfig backend_config,
+    SanoTtsCpuDecoder cpu_decoder)
+    : state_(std::make_unique<State>(std::move(assets), backend_config)) {
+    const bool auto_selected = cpu_decoder == SanoTtsCpuDecoder::Auto;
+    if (auto_selected) {
+        cpu_decoder = state_->backend_type == core::BackendType::Cpu &&
+                SanoTtsNeonDecoder::available()
+            ? SanoTtsCpuDecoder::Neon
+            : SanoTtsCpuDecoder::Ggml;
+    }
+    if (cpu_decoder == SanoTtsCpuDecoder::Neon) {
+        if (state_->backend_type != core::BackendType::Cpu) {
+            throw std::runtime_error("sanoTTS cpu_decoder=neon needs the CPU backend");
+        }
+        if (!SanoTtsNeonDecoder::available()) {
+            throw std::runtime_error(
+                "sanoTTS cpu_decoder=neon needs an AArch64 build with NEON; use cpu_decoder=ggml");
+        }
+        // The weights already live in host memory on the CPU backend; copy them out once.
+        const auto setup_start = std::chrono::steady_clock::now();
+        const auto & weights = *state_->weights;
+        state_->neon_decoder = std::make_unique<SanoTtsNeonDecoder>(
+            state_->assets->config,
+            [&weights](const std::string & name) {
+                ggml_tensor * tensor = weight(weights, name).tensor;
+                std::vector<float> values(static_cast<size_t>(ggml_nelements(tensor)));
+                ggml_backend_tensor_get(tensor, values.data(), 0, ggml_nbytes(tensor));
+                return values;
+            },
+            state_->threads);
+        engine::debug::timing_log_scalar(
+            "sanotts.neon_decoder_setup_ms",
+            engine::debug::elapsed_ms(setup_start));
+
+        // Self-check. The NEON decoder re-implements build_decoder_graph() by hand (and folds
+        // acoustic.output into decoder.embed, which is only valid while nothing sits between
+        // them). Run both on a short fixed input; if a later change to either side makes them
+        // disagree, fall back to GGML (auto) or fail with a clear message (explicit neon) instead of
+        // producing wrong audio.
+        const auto check_start = std::chrono::steady_clock::now();
+        const auto & config = state_->assets->config;
+        constexpr int64_t kCheckFrames = 24;
+        std::vector<float> context(static_cast<size_t>(config.acoustic_hidden * kCheckFrames));
+        std::vector<float> feats(static_cast<size_t>(3 * kCheckFrames));
+        for (size_t i = 0; i < context.size(); ++i) {
+            context[i] = static_cast<float>(std::sin(0.37 * static_cast<double>(i)));
+        }
+        for (size_t i = 0; i < feats.size(); ++i) {
+            feats[i] = static_cast<float>(std::cos(0.53 * static_cast<double>(i)));
+        }
+        const auto noise = seeded_noise(12345, config.noise_channels, kCheckFrames);
+        const auto neon = state_->neon_decoder->decode(context, feats, noise, kCheckFrames, state_->threads);
+        auto graph = build_decoder_graph(
+            *state_->weights, config, state_->backend.value, state_->backend_type, kCheckFrames);
+        write_f32_input(
+            graph->context, core::TensorShape::from_dims({1, config.acoustic_hidden, kCheckFrames}), context);
+        write_f32_input(graph->feats, core::TensorShape::from_dims({1, 3, kCheckFrames}), feats);
+        write_f32_input(
+            graph->noise, core::TensorShape::from_dims({1, config.noise_channels, kCheckFrames}), noise);
+        compute_graph(*graph, "sanoTTS decoder self-check");
+        const auto reference = core::read_tensor_f32(graph->spectrum);
+        // A size mismatch counts as a failed check (infinite difference).
+        float max_diff = reference.size() == neon.size() ? 0.0F : std::numeric_limits<float>::infinity();
+        float max_ref = 0.0F;
+        for (size_t i = 0; i < reference.size() && i < neon.size(); ++i) {
+            max_diff = std::max(max_diff, std::abs(neon[i] - reference[i]));
+            max_ref = std::max(max_ref, std::abs(reference[i]));
+        }
+        engine::debug::timing_log_scalar("sanotts.neon_self_check_max_diff", max_diff);
+        engine::debug::timing_log_scalar(
+            "sanotts.neon_self_check_ms", engine::debug::elapsed_ms(check_start));
+        // heart / heart-nano measure ~1e-5 here (float summation order, the folded projection
+        // and the GELU approximation); a real mismatch is orders of magnitude larger.
+        if (!(max_diff <= 1.0e-3F * std::max(1.0F, max_ref))) {
+            if (auto_selected) {
+                // cpu_decoder=auto: keep working, on the GGML graph.
+                state_->neon_decoder.reset();
+                engine::debug::timing_log_scalar("sanotts.neon_self_check_fallback", 1);
+                return;
+            }
+            throw std::runtime_error(
+                "sanoTTS NEON decoder self-check failed (max difference " + std::to_string(max_diff) +
+                " from the GGML decoder graph); use --session-option sanotts.cpu_decoder=ggml");
+        }
+    }
+}
 
 SanoTtsNativeRuntime::~SanoTtsNativeRuntime() = default;
 
@@ -571,33 +657,43 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- frame stage + decoder ---------------------------------------------
     const auto decoder_start = std::chrono::steady_clock::now();
-    auto & decoder = cached_graph(
-        state_->decoder_graphs,
-        frames,
-        "sanotts.decoder_graph.cache_hit",
-        [&] {
-            return build_decoder_graph(
-                *state_->weights,
-                config,
-                state_->backend.value,
-                state_->backend_type,
-                frames);
-        });
-    write_f32_input(
-        decoder.context,
-        core::TensorShape::from_dims({1, config.acoustic_hidden, frames}),
-        expand_context(token_context, durations, config.acoustic_hidden, token_count, frames));
-    write_f32_input(
-        decoder.feats,
-        core::TensorShape::from_dims({1, 3, frames}),
-        frame_features(token_count, durations, frames));
-    write_f32_input(
-        decoder.noise,
-        core::TensorShape::from_dims({1, config.noise_channels, frames}),
-        noise);
-    compute_graph(decoder, "sanoTTS decoder");
-    auto spectrum = core::read_tensor_f32(decoder.spectrum);
     const int64_t out_dim = config.n_fft + 2;
+    std::vector<float> spectrum;
+    if (state_->neon_decoder != nullptr) {
+        spectrum = state_->neon_decoder->decode(
+            expand_context(token_context, durations, config.acoustic_hidden, token_count, frames),
+            frame_features(token_count, durations, frames),
+            noise,
+            frames,
+            state_->threads);
+    } else {
+        auto & decoder = cached_graph(
+            state_->decoder_graphs,
+            frames,
+            "sanotts.decoder_graph.cache_hit",
+            [&] {
+                return build_decoder_graph(
+                    *state_->weights,
+                    config,
+                    state_->backend.value,
+                    state_->backend_type,
+                    frames);
+            });
+        write_f32_input(
+            decoder.context,
+            core::TensorShape::from_dims({1, config.acoustic_hidden, frames}),
+            expand_context(token_context, durations, config.acoustic_hidden, token_count, frames));
+        write_f32_input(
+            decoder.feats,
+            core::TensorShape::from_dims({1, 3, frames}),
+            frame_features(token_count, durations, frames));
+        write_f32_input(
+            decoder.noise,
+            core::TensorShape::from_dims({1, config.noise_channels, frames}),
+            noise);
+        compute_graph(decoder, "sanoTTS decoder");
+        spectrum = core::read_tensor_f32(decoder.spectrum);
+    }
     if (static_cast<int64_t>(spectrum.size()) != frames * out_dim) {
         throw std::runtime_error("sanoTTS decoder graph returned invalid output");
     }

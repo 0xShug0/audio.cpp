@@ -43,11 +43,31 @@ std::filesystem::path session_path(
         : std::filesystem::path(found->second);
 }
 
+SanoTtsCpuDecoder cpu_decoder_option(const runtime::SessionOptions & options) {
+    const auto found = options.options.find("sanotts.cpu_decoder");
+    if (found == options.options.end() || found->second == "auto") {
+        return SanoTtsCpuDecoder::Auto;
+    }
+    if (found->second == "ggml") {
+        return SanoTtsCpuDecoder::Ggml;
+    }
+    if (found->second == "neon") {
+        return SanoTtsCpuDecoder::Neon;
+    }
+    throw std::runtime_error("sanoTTS cpu_decoder must be auto, ggml or neon");
+}
+
 void validate_session_options(
     const runtime::SessionOptions & options,
     const engine::model_spec::ModelContract & contract) {
+    auto validation_options = options;
+    // Published GGUFs may predate this option; its value is validated locally.
+    if (contract.session_option_keys.find("sanotts.cpu_decoder") ==
+        contract.session_option_keys.end()) {
+        validation_options.options.erase("sanotts.cpu_decoder");
+    }
     const std::string family_prefix = std::string(kFamily) + ".";
-    for (const auto & [key, _] : options.options) {
+    for (const auto & [key, _] : validation_options.options) {
         if (key.rfind(family_prefix, 0) == 0 &&
             contract.session_option_keys.find(key) ==
                 contract.session_option_keys.end()) {
@@ -128,12 +148,14 @@ SanoTtsSession::SanoTtsSession(
         throw std::runtime_error("sanoTTS only supports offline TTS");
     }
     validate_session_options(options, *contract_);
+    const auto cpu_decoder = cpu_decoder_option(options);
     if (assets_->graph == SanoTtsGraph::Nano) {
         frontend_ = std::make_unique<SanoTtsFrontend>(
             session_path(options, "sanotts.espeak_library_path"),
             session_path(options, "sanotts.espeak_data_path"),
             assets_->config.duration_max_tokens);
-        runtime_ = std::make_unique<SanoTtsNativeRuntime>(assets_, options.backend);
+        runtime_ = std::make_unique<SanoTtsNativeRuntime>(
+            assets_, options.backend, cpu_decoder);
     } else {
         piper_frontend_ = std::make_unique<SanoTtsPiperFrontend>(
             session_path(options, "sanotts.espeak_library_path"),

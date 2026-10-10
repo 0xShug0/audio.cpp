@@ -113,6 +113,24 @@ audiocpp_cli --task tts --family sanotts \
 - `text_chunk_size` (request, default 280) — maximum codepoints per long-form
   chunk; chunks split on sentence punctuation first, and a chunk that
   phonemizes past the voice's token limit is bisected at whitespace.
+- `sanotts.cpu_decoder` (session, `auto`, `ggml` or `neon`, default `auto`) —
+  for nano voices, `auto` selects NEON when the resolved backend is CPU and
+  the build supports AArch64 NEON; otherwise it uses GGML. Set `ggml` to
+  explicitly retain the original graph. `neon` runs the frame stage and decoder
+  with hand-written AArch64 NEON kernels instead of the GGML graph (see
+  Performance). Durations, the token stage, the iSTFT and the DC block are
+  unchanged. Explicit `neon` requires CPU and an AArch64 NEON build; failures
+  are not retried with GGML. Piperlite voices ignore the selection.
+  Existing GGUFs accept this option without conversion or a spec override.
+  Model-specific `--family sanotts --model <path> --help` lists session options
+  from the loaded spec; older embedded specs may omit this entry even though
+  the runtime accepts it.
+  When a NEON decoder starts it decodes 24 fixed frames through both the
+  NEON code and the GGML graph (logged as `sanotts.neon_self_check_max_diff`,
+  ~1e-5 for heart and heart-nano; ~20 ms once per session). If they disagree,
+  `auto` falls back to GGML and explicit `neon` fails.
+  `sanotts_neon_decoder_test` compares the NEON decoder with a
+  double-precision reference on random weights.
 
 ## Determinism and parity
 
@@ -200,6 +218,33 @@ long-form text:
 
 A 806-character German paragraph through `sanotts_de_orig` on the same host:
 37.7 s of audio in 2.7 s wall, ~14× real time.
+
+### ARM: `sanotts.cpu_decoder=neon`
+
+Raspberry Pi 400 (Cortex-A72, 4 GB), CPU backend, `--threads 3` pinned to
+three cores, whole `audiocpp_cli` process, best of 3. Same build for both
+columns; only the session option differs.
+
+| Voice | Text (audio) | `ggml` | `neon` | Speed-up |
+|---|---|---:|---:|---:|
+| heart-nano | greeting (2.8 s) | 77 ms | 61 ms | 1.26× |
+| heart-nano | email, 6 sentences (13.8 s) | 250 ms | 162 ms | 1.54× |
+| heart-nano | 80-word paragraph (28.5 s) | 476 ms | 298 ms | 1.60× |
+| heart-nano | 4.9 kB long-form (337 s) | 4944 ms | 2673 ms | 1.85× |
+| heart | greeting (2.8 s) | 177 ms | 147 ms | 1.20× |
+| heart | email, 6 sentences (14.3 s) | 714 ms | 450 ms | 1.59× |
+| heart | 80-word paragraph (28.8 s) | 1440 ms | 887 ms | 1.62× |
+| heart | 4.9 kB long-form (342 s) | 15888 ms | 9053 ms | 1.75× |
+
+Output against `ggml`: same sample count, 99.6–99.8% of 16-bit samples
+identical, the rest 1 step apart. One-time setup (weight copy, repacking,
+folding `acoustic.output` into `decoder.embed`) is logged as
+`sanotts.neon_decoder_setup_ms`: ~3 ms for heart-nano, ~27 ms for heart.
+Pixel 9 (Cortex-X4/A720/A520) inside the Android Linux VM, `--threads 2`,
+decoder step only (`sanotts.decoder_ms` summed per request, heart, median of
+8): `ggml` 288 ms -> `neon` 116 ms with 1 thread, 275 -> 170 ms with 2.
+Whole-process times in that VM are too noisy to compare, and the NEON path
+does not gain from a second thread there.
 
 The nano decoder runs at frame rate with a host iSTFT; the piperlite decoder
 runs convolutions at audio rate, which is why it is heavier. Graphs are
