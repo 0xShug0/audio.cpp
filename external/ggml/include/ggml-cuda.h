@@ -23,6 +23,11 @@ extern "C" {
 GGML_BACKEND_API ggml_backend_t ggml_backend_cuda_init(int device);
 
 GGML_BACKEND_API bool ggml_backend_is_cuda(ggml_backend_t backend);
+// Opts this instance into full-F32 matmul inputs: disables TF32 and
+// activation rounding/quantization. Defaults remain unchanged on other instances.
+// Call before graph preparation/capture; returns false on a policy change
+// after capture or for non-NVIDIA backends. Kernel implementations are unchanged.
+GGML_BACKEND_API bool ggml_backend_cuda_set_f32_matmul(ggml_backend_t backend, bool enabled);
 GGML_BACKEND_API void ggml_backend_cuda_trim_pools(ggml_backend_t backend);
 // Sets the CUDA scheduling priority used for this backend instance's lazily
 // created streams (lower = higher priority, 0 = default). Scoped to the

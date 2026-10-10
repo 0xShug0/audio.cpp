@@ -3203,6 +3203,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_engine_unittest(auk_vae_test tests/auk/vae_test.cpp)
     add_engine_unittest(auk_flow_test tests/auk/flow_test.cpp)
 
+    if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
+        add_engine_unittest(cuda_matmul_precision_test tests/unittests/test_cuda_matmul_precision.cpp)
+        target_include_directories(cuda_matmul_precision_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME cuda_matmul_precision_test COMMAND cuda_matmul_precision_test)
+        set_tests_properties(cuda_matmul_precision_test PROPERTIES SKIP_RETURN_CODE 125 TIMEOUT 60)
+    endif()
+
     if (ENGINE_ENABLE_CUDA)
         add_engine_unittest(cuda_bias_fusion_test tests/unittests/test_cuda_bias_fusion.cpp)
         add_test(NAME cuda_bias_fusion_test COMMAND cuda_bias_fusion_test)

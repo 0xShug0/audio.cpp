@@ -1749,13 +1749,14 @@ static void ggml_cuda_op_mul_mat_cublas(
         (GGML_CUDA_CC_IS_MTHREADS(cc) && cc >= GGML_CUDA_CC_QY2);
 
     const bool use_fp16 =
+        !ctx.force_f32_matmul &&
         src0->type != GGML_TYPE_NVFP4 &&
         (src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) &&
         ggml_is_contiguous(src0) &&
         row_diff == src0->ne[1] &&
         dst->op_params[0] == GGML_PREC_DEFAULT;
 
-    if (supports_bf16 && src0->type == GGML_TYPE_BF16 && ggml_is_contiguous(src0) && row_diff == src0->ne[1]) {
+    if (!ctx.force_f32_matmul && supports_bf16 && src0->type == GGML_TYPE_BF16 && ggml_is_contiguous(src0) && row_diff == src0->ne[1]) {
         ggml_cuda_pool_alloc<nv_bfloat16> src1_as_bf16(ctx.pool(id));
         if (src1->type != GGML_TYPE_BF16) {
             const to_bf16_cuda_t to_bf16_cuda = ggml_get_to_bf16_cuda(src1->type);
@@ -2749,18 +2750,22 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     const bool bad_padding_clear = ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_COMPUTE
         && ggml_nbytes(src0) != ggml_backend_buffer_get_alloc_size(src0->buffer, src0) && src0->view_src;
 
-    bool use_mul_mat_vec_f = (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16)
+    bool use_mul_mat_vec_f = (!ctx.force_f32_matmul || src0->type == GGML_TYPE_F32)
+        && (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
+    // Precision-sensitive instances avoid TF32/half/quantized activations
+    // through existing F32 kernels/cuBLAS. Default dispatch is unchanged.
     bool use_mul_mat_f     = !ggml_is_quantized(src0->type)
+        && !ctx.force_f32_matmul
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
     const int device_cc = ggml_cuda_info().devices[ctx.device].cc;
     const bool use_nvfp4_f16_mmq = !split && src0->type == GGML_TYPE_NVFP4 && src1->type == GGML_TYPE_F16 &&
         dst->type == GGML_TYPE_F32 && blackwell_mma_available(device_cc) &&
         ggml_get_op_params_i32(dst, 1) == GGML_MUL_MAT_LOWERING_CUDA_NVFP4_F16_ACTIVATION;
-    bool use_mul_mat_vec_q = ggml_is_quantized(src0->type) && !bad_padding_clear
+    bool use_mul_mat_vec_q = !ctx.force_f32_matmul && ggml_is_quantized(src0->type) && !bad_padding_clear
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
         && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
-    bool use_mul_mat_q     = ggml_is_quantized(src0->type) && !bad_padding_clear
+    bool use_mul_mat_q     = !ctx.force_f32_matmul && ggml_is_quantized(src0->type) && !bad_padding_clear
         && (src1->type == GGML_TYPE_F32 || use_nvfp4_f16_mmq) && dst->type == GGML_TYPE_F32;
 
     bool any_gpus_with_slow_fp16 = false;
@@ -2800,8 +2805,8 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
 
     //TODO update for generic tensor parallelism
     const int cc                 = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
-    bool use_batched_cublas_f16  = src0->type == GGML_TYPE_F16 && (src1->type == GGML_TYPE_F16 || !any_gpus_with_slow_fp16);
-    bool use_batched_cublas_bf16 = src0->type == GGML_TYPE_BF16 && bf16_mma_hardware_available(cc);
+    bool use_batched_cublas_f16  = !ctx.force_f32_matmul && src0->type == GGML_TYPE_F16 && (src1->type == GGML_TYPE_F16 || !any_gpus_with_slow_fp16);
+    bool use_batched_cublas_bf16 = !ctx.force_f32_matmul && src0->type == GGML_TYPE_BF16 && bf16_mma_hardware_available(cc);
     bool use_batched_cublas_f32  = src0->type == GGML_TYPE_F32;
 
     if (!split && use_mul_mat_vec_f) {
@@ -4488,7 +4493,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
             const ggml_tensor * src1 = up_n->src[1];
             const ggml_tensor * ids  = up_n->src[2];
 
-            if (ggml_cuda_should_fuse_mul_mat_vec_f(up_n)) {
+            if ((!cuda_ctx->force_f32_matmul || up_n->src[0]->type == GGML_TYPE_F32) && ggml_cuda_should_fuse_mul_mat_vec_f(up_n)) {
                 ggml_cuda_mm_fusion_args_host fusion_data{};
                 fusion_data.gate      = gate_n->src[0];
                 fusion_data.x_bias    = up_bias_tensor;
@@ -4501,7 +4506,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
                 break;
             }
 
-            if (ggml_cuda_should_fuse_mul_mat_vec_q(up_n)) {
+            if (!cuda_ctx->force_f32_matmul && ggml_cuda_should_fuse_mul_mat_vec_q(up_n)) {
                 ggml_cuda_mm_fusion_args_host fusion_data{};
                 fusion_data.gate      = gate_n->src[0];
                 fusion_data.x_bias    = up_bias_tensor;
@@ -4529,7 +4534,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
             const ggml_tensor * src1 = up->src[1];
             const ggml_tensor * ids  = up->src[2];
 
-            if (ggml_cuda_should_fuse_mul_mat_vec_f(up)) {
+            if ((!cuda_ctx->force_f32_matmul || up->src[0]->type == GGML_TYPE_F32) && ggml_cuda_should_fuse_mul_mat_vec_f(up)) {
                 ggml_cuda_mm_fusion_args_host fusion_data{};
                 fusion_data.gate   = gate->src[0];
                 fusion_data.glu_op = ggml_get_glu_op(glu);
@@ -4540,7 +4545,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
                 break;
             }
 
-            if (ggml_cuda_should_fuse_mul_mat_vec_q(up)) {
+            if (!cuda_ctx->force_f32_matmul && ggml_cuda_should_fuse_mul_mat_vec_q(up)) {
                 ggml_cuda_mm_fusion_args_host fusion_data{};
                 fusion_data.gate   = gate->src[0];
                 fusion_data.glu_op = ggml_get_glu_op(glu);
@@ -4610,14 +4615,14 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
         fusion_data.x_bias        = bias_tensor;
         fusion_data.residual_only = reshape_bridge;
 
-        if (ggml_cuda_should_fuse_mul_mat_vec_f(mm_node)) {
+        if ((!cuda_ctx->force_f32_matmul || mm_node->src[0]->type == GGML_TYPE_F32) && ggml_cuda_should_fuse_mul_mat_vec_f(mm_node)) {
             ggml_cuda_mul_mat_vec_f(*cuda_ctx, src0, src1, ids, bias_node, &fusion_data);
             fused_mul_mat_vec = true;
             fused_node_count  = reshape_bridge ? 3 : 2;
             break;
         }
 
-        if (ggml_cuda_should_fuse_mul_mat_vec_q(mm_node)) {
+        if (!cuda_ctx->force_f32_matmul && ggml_cuda_should_fuse_mul_mat_vec_q(mm_node)) {
             ggml_cuda_mul_mat_vec_q(*cuda_ctx, src0, src1, ids, bias_node, &fusion_data);
             fused_mul_mat_vec = true;
             fused_node_count  = reshape_bridge ? 3 : 2;
@@ -5286,6 +5291,33 @@ void * ggml_backend_cuda_get_stream(ggml_backend_t backend) {
 
 bool ggml_backend_is_cuda(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_cuda_guid());
+}
+
+bool ggml_backend_cuda_set_f32_matmul(ggml_backend_t backend, bool enabled) {
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if (!ggml_backend_is_cuda(backend)) return false;
+    auto * ctx = (ggml_backend_cuda_context *) backend->context;
+    if (ctx->force_f32_matmul == enabled) return true;
+#ifdef USE_CUDA_GRAPH
+    if (!ctx->cuda_graphs.empty()) return false;
+#endif
+    ctx->force_f32_matmul = enabled;
+    // Handles belong to this context, not the device/process. The context
+    // also applies this policy when creating handles lazily on any device.
+    for (int device = 0; device < GGML_CUDA_MAX_DEVICES; ++device) {
+        if (ctx->cublas_handles[device] != nullptr) {
+            ggml_cuda_set_device(device);
+            CUBLAS_CHECK(cublasSetMathMode(ctx->cublas_handles[device],
+                                         enabled ? CUBLAS_DEFAULT_MATH : CUBLAS_TF32_TENSOR_OP_MATH));
+        }
+    }
+    ggml_cuda_set_device(ctx->device);
+    return true;
+#else
+    GGML_UNUSED(backend);
+    GGML_UNUSED(enabled);
+    return false;
+#endif
 }
 
 void ggml_backend_cuda_trim_pools(ggml_backend_t backend) {
@@ -6164,6 +6196,9 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     }
     if (strcmp(name, "ggml_backend_cuda_get_stream") == 0) {
         return (void *)ggml_backend_cuda_get_stream;
+    }
+    if (strcmp(name, "ggml_backend_cuda_set_f32_matmul") == 0) {
+        return (void *)ggml_backend_cuda_set_f32_matmul;
     }
     return nullptr;
 }

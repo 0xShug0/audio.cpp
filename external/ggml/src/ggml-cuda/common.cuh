@@ -1385,6 +1385,8 @@ struct ggml_backend_cuda_context {
 
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };
     cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
+    // Instance policy; ordinary models keep historical matmul defaults.
+    bool force_f32_matmul = false;
 
     int curr_stream_no = 0;
 
@@ -1476,7 +1478,12 @@ struct ggml_backend_cuda_context {
         if (cublas_handles[device] == nullptr) {
             ggml_cuda_set_device(device);
             CUBLAS_CHECK(cublasCreate(&cublas_handles[device]));
+#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
             CUBLAS_CHECK(cublasSetMathMode(cublas_handles[device], CUBLAS_TF32_TENSOR_OP_MATH));
+#else
+            CUBLAS_CHECK(cublasSetMathMode(cublas_handles[device],
+                                         force_f32_matmul ? CUBLAS_DEFAULT_MATH : CUBLAS_TF32_TENSOR_OP_MATH));
+#endif
         }
         return cublas_handles[device];
     }
