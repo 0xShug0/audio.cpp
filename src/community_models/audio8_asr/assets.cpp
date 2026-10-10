@@ -5,107 +5,12 @@
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/tokenizers/qwen_bpe_bundle.h"
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
 namespace engine::community_models::audio8_asr {
 namespace json = engine::io::json;
 namespace {
-
-// The Qwen3-ASR encoder/frontend implementations reused by this family address
-// tensors with the official Qwen3-ASR prefixes (`model.audio_tower.*`,
-// `model.multi_modal_projector.*`). Audio8 checkpoints keep the same encoder
-// under `audio_encoder.*`; this source rewrites names in both directions so
-// the shared implementations load Audio8 weights unchanged.
-class RenamingTensorSource final : public assets::TensorSource {
-public:
-    RenamingTensorSource(
-        std::shared_ptr<const assets::TensorSource> inner,
-        std::vector<std::pair<std::string, std::string>> mappings)
-        : inner_(std::move(inner)),
-          mappings_(std::move(mappings)) {
-        // Longest `to` prefix first so the exact-inverse projection entries
-        // win over the catch-all tower mapping during reverse lookups.
-        reverse_ordered_ = mappings_;
-        std::stable_sort(
-            reverse_ordered_.begin(),
-            reverse_ordered_.end(),
-            [](const auto & left, const auto & right) {
-                return left.second.size() > right.second.size();
-            });
-    }
-
-    const std::filesystem::path & source_path() const noexcept override {
-        return inner_->source_path();
-    }
-
-    bool has_tensor(std::string_view name) const noexcept override {
-        return inner_->has_tensor(rewrite(name));
-    }
-
-    assets::TensorMetadata require_metadata(std::string_view name) const override {
-        return inner_->require_metadata(rewrite(name));
-    }
-
-    std::vector<assets::TensorMetadata> tensors() const override {
-        auto tensors = inner_->tensors();
-        for (auto & tensor : tensors) {
-            tensor.name = rewrite_back(tensor.name);
-        }
-        return tensors;
-    }
-
-    void release_storage() const override {
-        inner_->release_storage();
-    }
-
-    assets::RawTensorData require_tensor_data(std::string_view name) const override {
-        return inner_->require_tensor_data(rewrite(name));
-    }
-
-    std::vector<float> require_f32(
-        std::string_view name,
-        const std::optional<std::vector<int64_t>> & expected_shape) const override {
-        return inner_->require_f32(rewrite(name), expected_shape);
-    }
-
-    std::optional<std::vector<float>> optional_f32(
-        std::string_view name,
-        const std::optional<std::vector<int64_t>> & expected_shape) const override {
-        return inner_->optional_f32(rewrite(name), expected_shape);
-    }
-
-    int64_t require_i64_scalar(std::string_view name) const override {
-        return inner_->require_i64_scalar(rewrite(name));
-    }
-
-private:
-    std::string rewrite(std::string_view name) const {
-        for (const auto & [from, to] : mappings_) {
-            if (name.rfind(from, 0) == 0) {
-                return to + std::string(name.substr(from.size()));
-            }
-        }
-        return std::string(name);
-    }
-
-    std::string rewrite_back(const std::string & name) const {
-        // Reverse mapping is only used for diagnostics listings. Check the
-        // longest `to` prefixes first so proj1/proj2 map back to the
-        // multi-modal projector names instead of the tower prefix.
-        for (const auto & [from, to] : reverse_ordered_) {
-            if (name.rfind(to, 0) == 0) {
-                return from + name.substr(to.size());
-            }
-        }
-        return name;
-    }
-
-    std::shared_ptr<const assets::TensorSource> inner_;
-    std::vector<std::pair<std::string, std::string>> mappings_;
-    std::vector<std::pair<std::string, std::string>> reverse_ordered_;
-};
 
 qwen3_asr::Qwen3ASRAudioEncoderConfig parse_audio_encoder_config(const json::Value & value) {
     qwen3_asr::Qwen3ASRAudioEncoderConfig config;
@@ -232,27 +137,14 @@ std::shared_ptr<const Audio8ASRAssets> load_audio8_asr_assets(const std::filesys
     validate_config(assets->config);
 
     const auto weights = assets->resources.open_tensor_source("weights");
-    // Encoder view for the shared Qwen3-ASR implementations: expose the
-    // Audio8 `audio_encoder.*` namespace under the official Qwen3-ASR
-    // prefixes. The Audio8 encoder carries its input/output projections
-    // (proj1/proj2) inside its own namespace; the shared code addresses them
-    // via the multi-modal projector prefix with linear_1/linear_2 names.
-    auto encoder_source = std::make_shared<RenamingTensorSource>(
-        weights,
-        std::vector<std::pair<std::string, std::string>>{
-            {"model.audio_tower.", "audio_encoder."},
-            {"model.multi_modal_projector.linear_1.", "audio_encoder.proj1."},
-            {"model.multi_modal_projector.linear_2.", "audio_encoder.proj2."},
-            {"model.multi_modal_projector.", "audio_encoder."}});
-
     auto encoder_assets = std::make_shared<qwen3_asr::Qwen3ASRAssets>();
-    encoder_assets->config.hf_transformers_layout = true;
+    encoder_assets->config.audio_encoder_binding = {"audio_encoder", "audio_encoder"};
     encoder_assets->config.frontend.sample_rate = assets->config.frontend.sample_rate;
     encoder_assets->config.frontend.feature_size = assets->config.frontend.feature_size;
     encoder_assets->config.frontend.hop_length = assets->config.frontend.hop_length;
     encoder_assets->config.frontend.n_fft = assets->config.frontend.n_fft;
     encoder_assets->config.audio_encoder = assets->config.audio_encoder;
-    encoder_assets->model_weights = std::move(encoder_source);
+    encoder_assets->model_weights = weights;
     assets->encoder_assets = std::move(encoder_assets);
 
     assets->tokenizer = engine::tokenizers::load_qwen_bpe_tokenizer(assets->resources);

@@ -84,7 +84,7 @@ Qwen3ASRAudioFeatures Qwen3ASRWhisperFrontend::extract(const runtime::AudioBuffe
     out.attention_mask.assign(static_cast<size_t>(features.frames), 1);
     out.mel_bins = features.mel_bins;
     out.frames = features.frames;
-    out.encoder_tokens = qwen3_asr_audio_encoder_token_count(out.frames);
+    out.encoder_tokens = modules::qwen3_audio_encoder_token_count(out.frames);
     debug::timing_log_scalar("qwen3_asr.frontend.normalize_ms", engine::debug::elapsed_ms(normalize_start, normalize_end));
     debug::timing_log_scalar("qwen3_asr.frontend.log_mel_ms", engine::debug::elapsed_ms(feature_start, feature_end));
     return out;

@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -58,17 +59,12 @@ public:
             q = core::ensure_backend_addressable_layout(ctx, q);
             k = core::ensure_backend_addressable_layout(ctx, k);
             v = core::ensure_backend_addressable_layout(ctx, v);
-            q = core::reshape_tensor(ctx, q, TensorShape::from_dims({frames, q.shape.dims[2] * bins}));
-            k = core::reshape_tensor(ctx, k, TensorShape::from_dims({frames, k.shape.dims[2] * bins}));
-            v = core::reshape_tensor(ctx, v, TensorShape::from_dims({frames, value_channels * bins}));
-            // Q/K and V widths differ; the shared SDPA module requires equal widths.
-            auto scores = modules::MatMulModule().build(ctx, q,
-                modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx, k));
-            scores = modules::MulModule().build(ctx, scores,
-                modules::RepeatModule({scores.shape}).build(ctx,
-                    core::reshape_tensor(ctx, weights_.at("attention_scale"), TensorShape::from_dims({1, 1}))));
-            auto probabilities = modules::SoftmaxModule().build(ctx, scores);
-            auto context = modules::MatMulModule().build(ctx, probabilities, v);
+            q = core::reshape_tensor(ctx, q, TensorShape::from_dims({1, 1, frames, q.shape.dims[2] * bins}));
+            k = core::reshape_tensor(ctx, k, TensorShape::from_dims({1, 1, frames, k.shape.dims[2] * bins}));
+            v = core::reshape_tensor(ctx, v, TensorShape::from_dims({1, 1, frames, value_channels * bins}));
+            auto context = modules::ScaledDotProductAttentionModule({q.shape.dims[3],
+                modules::ScaledDotProductAttentionLowering::Explicit, GGML_PREC_DEFAULT})
+                .build(ctx, q, k, v, std::nullopt, weights_.at("attention_scale"));
             context = core::reshape_tensor(ctx, context, TensorShape::from_dims({1, frames, value_channels, bins}));
             heads.push_back(modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, context));
         }
@@ -153,15 +149,7 @@ private:
         const int64_t channels = weight.shape.dims[0];
         x = modules::Conv2dModule({x.shape.dims[1], channels, 1, 1}).build(ctx, x,
             {weight, weights_.at(prefix + ".0.bias")});
-        const auto positive = modules::ReluModule().build(ctx, x);
-        auto negative = modules::MulModule().build(ctx, x,
-            modules::RepeatModule({x.shape}).build(ctx,
-                core::reshape_tensor(ctx, weights_.at("negative_one"), TensorShape::from_dims({1, 1, 1, 1}))));
-        negative = modules::ReluModule().build(ctx, negative);
-        auto slope = modules::MulModule().build(ctx, weights_.at(prefix + ".1.weight"), weights_.at("negative_one"));
-        negative = modules::MulModule().build(ctx, negative, modules::RepeatModule({x.shape}).build(ctx,
-            core::reshape_tensor(ctx, slope, TensorShape::from_dims({1, 1, 1, 1}))));
-        x = modules::AddModule().build(ctx, positive, negative);
+        x = modules::PReluModule({1}).build(ctx, x, weights_.at(prefix + ".1.weight"));
         const auto shape = x.shape;
         x = modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
         const int64_t features = channels * shape.dims[3];
@@ -251,7 +239,6 @@ public:
         }
         weights_.emplace("output_conv.weight", store_.make_f32(TensorShape::from_dims({2 * c.speakers, c.embedding_dim, 3, 3}), reversed));
         weights_.emplace("zero", store_.make_f32(TensorShape::from_dims({1}), {0}));
-        weights_.emplace("negative_one", store_.make_f32(TensorShape::from_dims({1}), {-1}));
         const int bins = c.n_fft / 2 + 1;
         const int qk = (c.attention_qk_dim + bins - 1) / bins * bins;
         weights_.emplace("attention_scale", store_.make_f32(TensorShape::from_dims({1}), {1.0f / std::sqrt(float(qk))}));

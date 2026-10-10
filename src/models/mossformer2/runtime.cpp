@@ -80,7 +80,8 @@ public:
         x = core::reshape_tensor(ctx_, x, TensorShape::from_dims({c.hidden, frames_}));
         x = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(ctx_, x);
         x = modules::AddModule().build(ctx_, x, residual);
-        x = prelu(x, "mask_net.prelu.weight");
+        x = modules::PReluModule({1})
+            .build(ctx_, x, weights_.at("mask_net.prelu.weight"));
         x = linear(x, "mask_net.conv1d_out");
         for (int speaker = 0; speaker < c.speakers; ++speaker) {
             auto mask = modules::SliceModule({1, speaker * c.hidden, c.hidden}).build(ctx_, x);
@@ -157,22 +158,6 @@ private:
         auto bias = weights_.find(name + ".bias");
         return modules::LinearModule({weight.shape.dims[1], weight.shape.dims[0], bias != weights_.end()})
             .build(ctx_, x, {weight, bias == weights_.end() ? std::nullopt : std::optional<TensorValue>(bias->second)});
-    }
-
-    TensorValue prelu(TensorValue x, const std::string & name) {
-        x = core::ensure_backend_addressable_layout(ctx_, x);
-        auto positive = modules::ReluModule().build(ctx_, x);
-        auto negative = core::wrap_tensor(ggml_scale(ctx_.ggml, x.tensor, -1), x.shape);
-        negative = modules::ReluModule().build(ctx_, negative);
-        auto slope_shape = x.shape;
-        for (size_t axis = 0; axis < slope_shape.rank; ++axis) {
-            slope_shape.dims[axis] = axis == 1 ? weights_.at(name).shape.num_elements() : 1;
-        }
-        auto slope = core::reshape_tensor(ctx_, weights_.at(name), slope_shape);
-        slope = modules::RepeatModule({x.shape}).build(ctx_, slope);
-        negative = modules::MulModule().build(ctx_, negative, slope);
-        negative = core::wrap_tensor(ggml_scale(ctx_.ggml, negative.tensor, -1), x.shape);
-        return modules::AddModule().build(ctx_, positive, negative);
     }
 
     TensorValue feed_forward(TensorValue x, const std::string & name, bool scale_norm) {
@@ -280,7 +265,8 @@ private:
     }
 
     TensorValue fsmn(TensorValue input, const std::string & name) {
-        auto x = prelu(linear(input, name + ".conv1.0"), name + ".conv1.1.weight");
+        auto x = modules::PReluModule({1})
+            .build(ctx_, linear(input, name + ".conv1.0"), weights_.at(name + ".conv1.1.weight"));
         const auto channels = x.shape.last_dim();
         x = modules::LayerNormModule({channels, 1e-5f}).build(ctx_, x,
             {weights_.at(name + ".norm1.weight"), weights_.at(name + ".norm1.bias")});
@@ -321,7 +307,8 @@ private:
             dense = modules::GroupNormModule({channels, channels, 1e-5f}).build(ctx_, dense,
                 {weights_.at(base + "norm" + std::to_string(depth + 1) + ".weight"),
                  weights_.at(base + "norm" + std::to_string(depth + 1) + ".bias")});
-            dense = prelu(dense, base + "prelu" + std::to_string(depth + 1) + ".weight");
+            dense = modules::PReluModule({1})
+                .build(ctx_, dense, weights_.at(base + "prelu" + std::to_string(depth + 1) + ".weight"));
             if (depth == 0) skip = modules::ConcatModule({1}).build(ctx_, dense, skip);
         }
         dense = core::reshape_tensor(ctx_, dense, TensorShape::from_dims({channels, frames_}));

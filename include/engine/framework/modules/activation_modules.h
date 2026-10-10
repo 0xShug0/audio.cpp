@@ -27,6 +27,24 @@ struct LeakyReluConfig {
     float negative_slope = 0.01F;
 };
 
+struct PReluConfig {
+    size_t channel_axis = 1;
+};
+
+class PReluModule {
+public:
+    explicit PReluModule(PReluConfig config = {});
+    const core::ModuleSchema & schema() const noexcept;
+    core::TensorValue build(
+        core::ModuleBuildContext & ctx,
+        const core::TensorValue & input,
+        const core::TensorValue & slope) const;
+    static const core::ModuleSchema & static_schema() noexcept;
+
+private:
+    PReluConfig config_;
+};
+
 class LeakyReluModule {
 public:
     explicit LeakyReluModule(LeakyReluConfig config = {});

@@ -530,6 +530,7 @@ add_library(engine_core OBJECT
     src/framework/modules/transformers/causal_decoder_runtime.cpp
     src/framework/modules/transformers/qwen35_decoder_runtime.cpp
     src/framework/modules/text_encoders/qwen3_vl_encoder_runtime.cpp
+    src/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.cpp
     src/framework/modules/attention/cross_attention.cpp
     src/framework/modules/transformers/transformer_blocks.cpp
     src/framework/modules/conditioning_modules.cpp
@@ -552,6 +553,7 @@ add_library(engine_core OBJECT
     src/framework/audio/fft.cpp
     src/framework/audio/kaldi_fbank.cpp
     src/framework/audio/activity.cpp
+    src/framework/audio/probability_segmenter.cpp
     src/framework/audio/activity_graph.cpp
     src/framework/audio/chunking.cpp
     src/framework/audio/conversion.cpp
@@ -584,6 +586,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
     src/framework/codecs/redae_codec_runtime.cpp
     src/framework/codecs/snac_decoder_runtime.cpp
+    src/framework/codecs/s3gen_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
     src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
@@ -1792,7 +1795,6 @@ audiocpp_add_model(qwen3_asr
         src/models/qwen3_asr/assets.cpp
         src/models/qwen3_asr/tokenizer_text.cpp
         src/models/qwen3_asr/frontend_whisper.cpp
-        src/models/qwen3_asr/audio_encoder.cpp
         src/models/qwen3_asr/thinker.cpp
         src/models/qwen3_asr/prompt_asr.cpp
         src/models/qwen3_asr/postprocess.cpp
@@ -2139,11 +2141,8 @@ audiocpp_add_model(chatterbox
         src/models/chatterbox/audio_processing.cpp
         src/models/chatterbox/component_weights.cpp
         src/models/chatterbox/conditionals.cpp
-        src/models/chatterbox/hift_vocoder_impl.cpp
         src/models/chatterbox/loader.cpp
         src/models/chatterbox/s3_tokenizer_impl.cpp
-        src/models/chatterbox/s3gen_flow.cpp
-        src/models/chatterbox/s3gen_inference.cpp
         src/models/chatterbox/session.cpp
         src/models/chatterbox/t3_component.cpp
         src/models/chatterbox/t3_weights.cpp
@@ -2171,8 +2170,6 @@ audiocpp_add_model(chatterbox_turbo
         engine/community_models/chatterbox_turbo/loader.h
     LOADERS
         engine::community_models::chatterbox_turbo::make_chatterbox_turbo_loader
-    DEPENDS
-        chatterbox
 )
 
 audiocpp_add_model(ace_step

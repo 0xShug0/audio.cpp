@@ -1,6 +1,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/attention_modules.h"
+#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conformer_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/weight_binding.h"
@@ -1086,10 +1087,38 @@ void test_cached_cross_flash_masks() {
     require_allclose(runner.run_f32(per_head), runner.run_f32(expected), 1e-5f, "per-head cached flash mask");
 }
 
+void test_prelu_broadcasting() {
+    using namespace engine;
+    for (size_t axis = 0; axis < 3; ++axis) {
+        for (bool scalar : {false, true}) {
+            CpuModuleRunner runner;
+            const auto shape = core::TensorShape::from_dims({2, 3, 4});
+            const auto input = runner.make_f32(shape);
+            const auto count = scalar ? 1 : shape.dims[axis];
+            const auto slope = runner.make_f32(core::TensorShape::from_dims({count}));
+            const auto output = modules::PReluModule({axis}).build(runner.ctx, input, slope);
+            runner.allocate_tensors();
+            std::vector<float> values(24), slopes(count), expected(24);
+            for (int64_t c = 0; c < count; ++c) slopes[c] = (c - 1) * 0.25f;
+            int64_t stride = 1;
+            for (size_t dim = axis + 1; dim < 3; ++dim) stride *= shape.dims[dim];
+            for (size_t i = 0; i < values.size(); ++i) {
+                values[i] = static_cast<float>(i % 9) - 4.0f;
+                const auto channel = scalar ? 0 : (i / stride) % count;
+                expected[i] = values[i] < 0 ? values[i] * slopes[channel] : values[i];
+            }
+            core::write_tensor_f32(input, values);
+            core::write_tensor_f32(slope, slopes);
+            require_allclose(runner.run_f32(output), expected, 0.0f, "PReLU scalar/channel broadcasting");
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_prelu_broadcasting();
         test_glu_contiguous_gate_opt_in();
         test_depthwise_subsampling_stage_masks();
         test_batch_norm_eval_binding();

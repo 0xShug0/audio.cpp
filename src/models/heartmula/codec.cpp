@@ -526,17 +526,6 @@ core::TensorValue causal_conv_transpose1d(
     return modules::SliceModule({2, 0, output.shape.dims[2] - stride}).build(ctx, output);
 }
 
-core::TensorValue prelu(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const HeartCodecPreluWeights & weights) {
-    auto positive = core::wrap_tensor(ggml_relu(ctx.ggml, core::ensure_backend_addressable_layout(ctx, input).tensor), input.shape, GGML_TYPE_F32);
-    auto negative = core::wrap_tensor(ggml_sub(ctx.ggml, input.tensor, positive.tensor), input.shape, GGML_TYPE_F32);
-    auto alpha = core::reshape_tensor(ctx, weights.weight, core::TensorShape::from_dims({1, 1, 1}));
-    auto alpha_rep = core::wrap_tensor(ggml_repeat(ctx.ggml, alpha.tensor, input.tensor), input.shape, GGML_TYPE_F32);
-    return modules::AddModule{}.build(ctx, positive, modules::MulModule{}.build(ctx, negative, alpha_rep));
-}
-
 core::TensorValue adjacent_repeat_frames_bct(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -605,9 +594,9 @@ core::TensorValue scalar_residual_unit(
     int64_t kernel_size,
     int64_t dilation) {
     auto x = causal_conv1d(ctx, input, weights.conv1, channels, channels, kernel_size, dilation);
-    x = prelu(ctx, x, weights.activation1);
+    x = modules::PReluModule().build(ctx, x, weights.activation1.weight);
     x = causal_conv1d(ctx, x, weights.conv2, channels, channels, 1);
-    x = prelu(ctx, x, weights.activation2);
+    x = modules::PReluModule().build(ctx, x, weights.activation2.weight);
     return modules::AddModule{}.build(ctx, input, x);
 }
 
@@ -659,7 +648,7 @@ core::TensorValue scalar_decoder(
             config.init_channel,
             config.init_channel,
             config.default_kernel_size);
-        x = prelu(ctx, x, weights.post_processor.activation);
+        x = modules::PReluModule().build(ctx, x, weights.post_processor.activation.weight);
     }
     return causal_conv1d(
         ctx,

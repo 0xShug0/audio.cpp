@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/resource_bundle.h"
+#include "engine/framework/modules/speech_encoders/qwen3_audio_encoder_runtime.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -15,20 +16,7 @@ class TensorSource;
 
 namespace engine::models::qwen3_asr {
 
-struct Qwen3ASRAudioEncoderConfig {
-    int64_t num_mel_bins = 128;
-    int64_t encoder_layers = 0;
-    int64_t encoder_attention_heads = 0;
-    int64_t encoder_ffn_dim = 0;
-    int64_t d_model = 0;
-    int64_t max_source_positions = 0;
-    int64_t n_window = 100;
-    int64_t n_window_infer = 400;
-    int64_t conv_chunksize = 500;
-    int64_t downsample_hidden_size = 0;
-    int64_t output_dim = 0;
-    std::string activation_function = "gelu";
-};
+using Qwen3ASRAudioEncoderConfig = modules::Qwen3AudioEncoderConfig;
 
 struct Qwen3ASRTextDecoderConfig {
     int64_t vocab_size = 0;
@@ -70,6 +58,7 @@ struct Qwen3ASRConfig {
     bool tie_word_embeddings = false;
     Qwen3ASRFrontendConfig frontend;
     Qwen3ASRAudioEncoderConfig audio_encoder;
+    modules::Qwen3AudioEncoderWeightBinding audio_encoder_binding;
     Qwen3ASRTextDecoderConfig text_decoder;
     std::vector<std::string> supported_languages;
 };
