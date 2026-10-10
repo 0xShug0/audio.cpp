@@ -113,6 +113,10 @@ public:
     void prepare_decoder();
     MossAudioTokenizerCodes encode(const MossAudioTokenizerAudio & audio);
     MossAudioTokenizerAudio decode(const MossAudioTokenizerCodes & codes);
+    // Stateful causal decoding of one codec frame. Reset between utterances;
+    // the decoder graph and weights remain resident for subsequent requests.
+    MossAudioTokenizerAudio decode_stream(const MossAudioTokenizerCodes & codes);
+    void reset_decode_stream();
     void release_runtime_graphs();
 
 private:

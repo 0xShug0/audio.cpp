@@ -357,7 +357,7 @@ MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation g
 | Model directory | `models/MOSS-TTS-Nano-100M` |
 | Required codec layout | `audio_tokenizer/` directory inside the model root |
 | Task | `tts`, `clon` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV through `--voice-ref` |
 | Built-in voices | Not exposed |
@@ -713,7 +713,7 @@ speaker-tagged turns, and the full option list.
 | Family | `fish_audio` |
 | Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` when installed through the model manager |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
 | Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
 | Built-in voices | Not exposed |
@@ -955,12 +955,18 @@ VibeVoice is a long-form multi-speaker TTS model, available in 1.5B and 7B sizes
 | Family | `vibevoice` |
 | Model directory | `models/VibeVoice-1.5B` (or `models/VibeVoice-7B`) |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Up to four speaker reference WAVs through `voice_samples` |
 | Text format | Lines like `Speaker 1: ... Speaker 2: ...`; ids are normalized internally |
 | Long-form | No text chunking; generation uses the model long-form path |
 | LoRA | Optional PEFT decoder adapter through `--load-option vibevoice.lora` |
+
+Use `--mode streaming` to emit native audio chunks during generation, including
+speaker changes. The completed audio uses the same generation path as offline
+mode. For HTTP, configure `"mode": "streaming"` and request `"stream_format": "sse"`
+on `/v1/audio/speech`; deltas contain only newly generated PCM. The full
+speaker-labeled text is still supplied at the start of the request.
 
 Both sizes share the same CLI surface and the same Qwen2.5 tokenizer; the 7B is simply larger (hidden size 3584 vs 1536) and needs a matching 7B LoRA if one is used.
 

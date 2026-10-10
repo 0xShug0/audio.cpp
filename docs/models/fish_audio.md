@@ -1,6 +1,6 @@
 # Fish Audio S2 Pro
 
-Fish Audio S2 Pro is wired as `--family fish_audio` for offline text to speech
+Fish Audio S2 Pro is wired as `--family fish_audio` for offline and streaming text to speech
 and reference voice cloning. The integration supports standalone GGUF packages,
 session-level reference caching, framework text chunking for long-form text, and
 Fish-style multi-reference conditioning.
@@ -44,13 +44,26 @@ audiocpp_cli --task tts --family fish_audio \
   --out out_ref.wav
 ```
 
+## Streaming
+
+Add `--mode streaming` to either CLI example to emit audio while the AR model
+generates codes. The codec retains its causal attention and convolution state
+within each text chunk and resets that state at chunk and request boundaries.
+The streaming graph is reused between requests; offline decoding is unchanged.
+
+For HTTP streaming, configure the model with `"mode": "streaming"` and send
+`"stream_format": "sse"` to `/v1/audio/speech`. Each `speech.audio.delta` contains
+only new PCM audio, not a growing prefix. See the [server API](../../app/server/README.md)
+for the streaming response format. The complete text is supplied up front;
+this is output streaming, not incremental text input.
+
 ## Model
 
 | Field | Value |
 |---|---|
 | Family | `fish_audio` |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Model path | `models/Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf` |
 | Languages | Model auto-handles language; tested paths cover English and Chinese-style prompts |
 | Voice input | Optional reference WAV through `--voice-ref`; transcript through `--reference-text` when known |

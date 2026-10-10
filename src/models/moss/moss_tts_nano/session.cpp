@@ -219,8 +219,8 @@ MossTTSNanoSession::MossTTSNanoSession(
     if (task_.task != runtime::VoiceTaskKind::Tts && task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("MOSS-TTS-Nano only supports the Tts and VoiceCloning tasks");
     }
-    if (task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("MOSS-TTS-Nano currently supports offline sessions");
+    if (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("MOSS-TTS-Nano supports offline and streaming sessions");
     }
     codec_.prepare_decoder();
     for (const auto & [key, value] : options.options) {
@@ -306,7 +306,8 @@ MossTTSNanoAudioCodes MossTTSNanoSession::encode_reference_audio(
 
 runtime::AudioBuffer MossTTSNanoSession::decode_generated_audio(
     const MossTTSNanoAudioCodes & codes,
-    int64_t active_codebooks) {
+    int64_t active_codebooks,
+    bool streaming) {
     if (codes.frames <= 0 || active_codebooks <= 0 || active_codebooks > codes.codebooks) {
         throw std::runtime_error("MOSS-TTS-Nano decode requires non-empty generated codes");
     }
@@ -322,10 +323,11 @@ runtime::AudioBuffer MossTTSNanoSession::decode_generated_audio(
                 codes.token_ids[static_cast<size_t>(frame * codes.codebooks + codebook)];
         }
     }
-    const auto decoded = codec_.decode(engine::codecs::MossAudioTokenizerCodes{
+    const engine::codecs::MossAudioTokenizerCodes tokenizer_input{
         codes.frames,
         std::move(tokenizer_codes),
-    });
+    };
+    const auto decoded = streaming ? codec_.decode_stream(tokenizer_input) : codec_.decode(tokenizer_input);
     const auto & channels = decoded.channels;
     const int channel_count = static_cast<int>(channels.size());
     const size_t samples_per_channel = channels.empty() ? 0 : channels.front().size();
@@ -350,6 +352,18 @@ runtime::AudioBuffer MossTTSNanoSession::decode_generated_audio(
 }
 
 runtime::TaskResult MossTTSNanoSession::run(const runtime::TaskRequest & request) {
+    return synthesize(request, false);
+}
+
+runtime::TaskResult MossTTSNanoSession::generate_stream(const runtime::TaskRequest & request) {
+    return synthesize(request, true);
+}
+
+void MossTTSNanoSession::reset_stream_state() {
+    codec_.reset_decode_stream();
+}
+
+runtime::TaskResult MossTTSNanoSession::synthesize(const runtime::TaskRequest & request, bool streaming) {
     require_prepared("MOSS-TTS-Nano run()");
     const auto wall_start = Clock::now();
     const int64_t text_chunk_size =
@@ -379,11 +393,32 @@ runtime::TaskResult MossTTSNanoSession::run(const runtime::TaskRequest & request
         const auto prompt_start = Clock::now();
         const auto prompt = prompt_builder_.build(tts_request, reference_codes);
         prompt_ms += engine::debug::elapsed_ms(prompt_start, Clock::now());
+        double stream_callback_ms = 0.0;
+        std::function<void(const std::vector<int32_t> &)> on_frame;
+        if (streaming) {
+            codec_.reset_decode_stream();
+            on_frame = [&](const std::vector<int32_t> & frame) {
+                const auto start = Clock::now();
+                MossTTSNanoAudioCodes codes;
+                codes.frames = 1;
+                codes.codebooks = static_cast<int64_t>(frame.size());
+                codes.token_ids = frame;
+                auto audio = decode_generated_audio(codes, tts_request.generation.active_codebooks, true);
+                audio_tokenizer_decode_ms += engine::debug::elapsed_ms(start, Clock::now());
+                runtime::append_audio_buffer(merged_audio, audio);
+                if (stream_event_sink()) {
+                    runtime::StreamEvent event;
+                    event.audio_output = std::move(audio);
+                    stream_event_sink()(event);
+                }
+                stream_callback_ms += engine::debug::elapsed_ms(start, Clock::now());
+            };
+        }
         const auto generate_start = Clock::now();
         const int64_t global_graph_builds_before = global_transformer_.graph_builds();
-        const auto generated_codes = generator_.generate(prompt, tts_request.generation);
+        const auto generated_codes = generator_.generate(prompt, tts_request.generation, on_frame);
         const int64_t global_graph_builds_after = global_transformer_.graph_builds();
-        generate_ms += engine::debug::elapsed_ms(generate_start, Clock::now());
+        generate_ms += engine::debug::elapsed_ms(generate_start, Clock::now()) - stream_callback_ms;
         global_graph_rebuilds += global_graph_builds_after - global_graph_builds_before;
         if (generated_codes.hit_max_new_frames) {
             ++max_new_frames_hit_count;
@@ -398,13 +433,13 @@ runtime::TaskResult MossTTSNanoSession::run(const runtime::TaskRequest & request
         debug::trace_log_scalar(
             "moss_tts_nano.chunk.stop_reason",
             std::string_view(generated_codes.hit_max_new_frames ? "max_new_frames" : "eoc"));
-        const auto audio_tokenizer_decode_start = Clock::now();
-        runtime::append_audio_buffer(
-            merged_audio,
-            decode_generated_audio(
-                generated_codes,
-                tts_request.generation.active_codebooks));
-        audio_tokenizer_decode_ms += engine::debug::elapsed_ms(audio_tokenizer_decode_start, Clock::now());
+        if (!streaming) {
+            const auto audio_tokenizer_decode_start = Clock::now();
+            runtime::append_audio_buffer(
+                merged_audio,
+                decode_generated_audio(generated_codes, tts_request.generation.active_codebooks));
+            audio_tokenizer_decode_ms += engine::debug::elapsed_ms(audio_tokenizer_decode_start, Clock::now());
+        }
         ++chunk_index;
     }
 

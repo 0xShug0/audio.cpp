@@ -20,8 +20,8 @@ runtime::ModelMetadata metadata(const MossTTSNanoAssets & assets) {
 runtime::CapabilitySet capabilities(const MossTTSNanoAssets &) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.supports_speaker_reference = true;
     out.languages = {"Auto"};
@@ -67,8 +67,8 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         return out;
@@ -133,8 +133,8 @@ std::unique_ptr<runtime::IVoiceTaskSession> MossTTSNanoLoadedModel::create_task_
     if (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("MOSS-TTS-Nano only supports the Tts and VoiceCloning tasks");
     }
-    if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("MOSS-TTS-Nano only supports offline sessions");
+    if (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("MOSS-TTS-Nano only supports offline and streaming sessions");
     }
     return std::make_unique<MossTTSNanoSession>(task, options, assets_);
 }

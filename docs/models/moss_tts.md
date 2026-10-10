@@ -79,10 +79,17 @@ MOSS-TTS-Nano is the smaller MOSS TTS path. It supports text-only continuation g
 | Model directory | `models/MOSS-TTS-Nano-100M` |
 | Required codec layout | `audio_tokenizer/` directory inside the model root |
 | Task | `tts`, `clon` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Optional reference WAV through `--voice-ref` |
 | Built-in voices | Not exposed |
+
+Nano supports `--mode streaming` for both `tts` and `clon`. It decodes each
+generated codec frame using cached causal attention state and publishes only
+new audio. State resets for each text chunk and request, while the graph is
+retained for reuse. Offline decoding remains unchanged. In the server, use
+`"mode": "streaming"` and `"stream_format": "sse"` on `/v1/audio/speech`.
+This streams output audio from a complete text request, not live text input.
 
 Text-only continuation:
 

@@ -13,7 +13,7 @@ namespace {
 runtime::CapabilitySet capabilities(const VibeVoiceAssets &) {
     runtime::CapabilitySet capabilities;
     capabilities.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     capabilities.languages = {"Auto"};
     capabilities.supports_speaker_reference = true;
@@ -61,7 +61,7 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         return out;
@@ -125,8 +125,8 @@ const runtime::CapabilitySet & VibeVoiceLoadedModel::capabilities() const noexce
 std::unique_ptr<runtime::IVoiceTaskSession> VibeVoiceLoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("VibeVoice only supports offline sessions");
+    if (task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming) {
+        throw std::runtime_error("VibeVoice only supports offline and streaming sessions");
     }
     if (task.task != runtime::VoiceTaskKind::Tts) {
         throw std::runtime_error("VibeVoice only supports the Tts task");

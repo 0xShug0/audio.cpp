@@ -7,6 +7,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
+#include "engine/framework/modules/attention/streaming_frame_attention_cache.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -65,6 +66,58 @@ struct GgmlGallocrDeleter {
         if (alloc != nullptr) {
             ggml_gallocr_free(alloc);
         }
+    }
+};
+
+struct CodecStreamingState {
+    modules::StreamingFrameAttentionCache attention;
+    std::vector<std::pair<ggml_tensor *, ggml_tensor *>> histories;
+    ggml_tensor * positions = nullptr;
+    ggml_tensor * mask = nullptr;
+    int64_t frames = 0;
+
+    core::TensorValue with_history(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t count) {
+        if (count == 0) return input;
+        auto history = core::make_tensor(ctx, GGML_TYPE_F32,
+            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], count}));
+        ggml_set_input(history.tensor);
+        ggml_set_output(history.tensor);
+        auto full = modules::ConcatModule({2}).build(ctx, history, input);
+        auto next = modules::SliceModule({2, full.shape.dims[2] - count, count}).build(ctx, full);
+        next = core::ensure_backend_addressable_layout(ctx, next);
+        ggml_set_output(next.tensor);
+        histories.emplace_back(history.tensor, next.tensor);
+        return full;
+    }
+
+    void prepare(ggml_backend_t backend) {
+        if (frames == 0) {
+            attention.zero_inputs(backend);
+            for (const auto & history : histories) {
+                std::vector<float> zeros(static_cast<size_t>(ggml_nelements(history.first)), 0.0F);
+                ggml_backend_tensor_set(history.first, zeros.data(), 0, zeros.size() * sizeof(float));
+            }
+        }
+        const int32_t position = static_cast<int32_t>(frames);
+        ggml_backend_tensor_set(positions, &position, 0, sizeof(position));
+        std::vector<ggml_fp16_t> values(128, ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
+        std::fill(values.begin() + std::max<int64_t>(0, 127 - frames), values.end(), ggml_fp32_to_fp16(0.0F));
+        ggml_backend_tensor_set(mask, values.data(), 0, values.size() * sizeof(ggml_fp16_t));
+    }
+
+    void expand(ggml_cgraph * graph) {
+        attention.set_outputs();
+        attention.build_forward_expand(graph);
+        for (const auto & history : histories) ggml_build_forward_expand(graph, history.second);
+    }
+
+    void commit(ggml_backend_t backend) {
+        attention.commit_outputs(backend);
+        for (const auto & history : histories) {
+            ggml_backend_tensor_copy_async(backend, backend, history.second, history.first);
+        }
+        ggml_backend_synchronize(backend);
+        ++frames;
     }
 };
 
@@ -260,11 +313,13 @@ core::TensorValue causal_conv1d(
     int64_t kernel,
     int stride,
     int dilation,
-    bool use_bias) {
+    bool use_bias,
+    CodecStreamingState * stream = nullptr) {
     const int64_t effective_kernel = (kernel - 1) * dilation + 1;
     const int64_t left_pad = effective_kernel - stride;
     const int64_t right_pad = extra_padding_for_conv1d(input.shape.dims[2], effective_kernel, stride, left_pad);
-    auto padded = causal_pad(ctx, input, left_pad, right_pad);
+    auto padded = stream == nullptr ? causal_pad(ctx, input, left_pad, right_pad)
+                                    : stream->with_history(ctx, input, left_pad);
     return modules::Conv1dModule({
         in_channels,
         out_channels,
@@ -284,11 +339,13 @@ core::TensorValue causal_depthwise_conv1d(
     int64_t kernel,
     int stride,
     int dilation,
-    bool use_bias) {
+    bool use_bias,
+    CodecStreamingState * stream = nullptr) {
     const int64_t effective_kernel = (kernel - 1) * dilation + 1;
     const int64_t left_pad = effective_kernel - stride;
     const int64_t right_pad = extra_padding_for_conv1d(input.shape.dims[2], effective_kernel, stride, left_pad);
-    auto padded = causal_pad(ctx, input, left_pad, right_pad);
+    auto padded = stream == nullptr ? causal_pad(ctx, input, left_pad, right_pad)
+                                    : stream->with_history(ctx, input, left_pad);
     return modules::DepthwiseConv1dModule({
         channels,
         kernel,
@@ -307,7 +364,10 @@ core::TensorValue causal_conv_transpose1d(
     int64_t out_channels,
     int64_t kernel,
     int stride,
-    bool use_bias) {
+    bool use_bias,
+    CodecStreamingState * stream = nullptr) {
+    const int64_t history = stream == nullptr ? 0 : (kernel - 1) / stride;
+    auto full_input = stream == nullptr ? input : stream->with_history(ctx, input, history);
     auto out = modules::ConvTranspose1dModule({
         in_channels,
         out_channels,
@@ -316,11 +376,12 @@ core::TensorValue causal_conv_transpose1d(
         0,
         1,
         use_bias,
-    }).build(ctx, input, weights);
+    }).build(ctx, full_input, weights);
     const int64_t pad = kernel - stride;
     const int64_t padding_right = static_cast<int64_t>(std::ceil(static_cast<double>(pad)));
     const int64_t padding_left = pad - padding_right;
-    return slice_frames(ctx, out, padding_left, out.shape.dims[2] - padding_left - padding_right);
+    const int64_t start = padding_left + history * stride;
+    return slice_frames(ctx, out, start, out.shape.dims[2] - start - padding_right);
 }
 
 core::TensorValue l2_normalize_last(core::ModuleBuildContext & ctx, const core::TensorValue & input) {
@@ -363,13 +424,28 @@ core::TensorValue attention_from_heads(
     const core::TensorValue & q_heads,
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
-    const core::TensorValue & attention_mask) {
+    const core::TensorValue & attention_mask,
+    CodecStreamingState * stream = nullptr) {
     auto q = modules::TransposeModule({{0, 2, 1, 3}, q_heads.shape.rank}).build(ctx, q_heads);
     auto k = modules::TransposeModule({{0, 2, 1, 3}, k_heads.shape.rank}).build(ctx, k_heads);
     auto v = modules::TransposeModule({{0, 2, 1, 3}, v_heads.shape.rank}).build(ctx, v_heads);
     q = core::wrap_tensor(ggml_cont(ctx.ggml, q.tensor), q.shape, q.type);
     k = core::wrap_tensor(ggml_cont(ctx.ggml, k.tensor), k.shape, k.type);
     v = core::wrap_tensor(ggml_cont(ctx.ggml, v.tensor), v.shape, v.type);
+    if (stream != nullptr) {
+        const auto shape = core::TensorShape::from_dims({1, kCodecTransformerHeads, 127, kCodecHeadDim});
+        auto key = core::make_tensor(ctx, GGML_TYPE_F32, shape);
+        auto value = core::make_tensor(ctx, GGML_TYPE_F32, shape);
+        ggml_set_input(key.tensor);
+        ggml_set_input(value.tensor);
+        // Cache destinations must not alias graph temporaries during copy-back.
+        ggml_set_output(key.tensor);
+        ggml_set_output(value.tensor);
+        const auto cached = modules::StreamingFrameAttentionCacheModule({127}).build(ctx, key, value, k, v);
+        stream->attention.add_layer(key.tensor, value.tensor, cached.next_key_cache.tensor, cached.next_value_cache.tensor);
+        k = cached.key_context;
+        v = cached.value_context;
+    }
     auto * flash = ggml_flash_attn_ext(
         ctx.ggml,
         q.tensor,
@@ -391,7 +467,8 @@ core::TensorValue build_transformer_layer(
     const core::TensorValue & input,
     const core::TensorValue & positions,
     const core::TensorValue & attention_mask,
-    const CodecTransformerLayerWeights & weights) {
+    const CodecTransformerLayerWeights & weights,
+    CodecStreamingState * stream = nullptr) {
     auto normed = modules::RMSNormModule({kCodecDim, kCodecNormEps, true, false}).build(ctx, input, weights.attention_norm);
     auto q = modules::LinearModule({kCodecDim, kCodecDim, false, GGML_PREC_F32})
                  .build(ctx, normed, {weights.attention.q_weight, std::nullopt});
@@ -402,7 +479,7 @@ core::TensorValue build_transformer_layer(
     q = modules::RoPEModule({kCodecHeadDim, GGML_ROPE_TYPE_NORMAL, kCodecRopeTheta}).build(ctx, reshape_heads(ctx, q), positions);
     k = modules::RoPEModule({kCodecHeadDim, GGML_ROPE_TYPE_NORMAL, kCodecRopeTheta}).build(ctx, reshape_heads(ctx, k), positions);
     v = reshape_heads(ctx, v);
-    auto context = attention_from_heads(ctx, q, k, v, attention_mask);
+    auto context = attention_from_heads(ctx, q, k, v, attention_mask, stream);
     context = core::ensure_backend_addressable_layout(ctx, context);
     context = core::reshape_tensor(
         ctx,
@@ -449,12 +526,21 @@ core::TensorValue build_window_transformer(
     core::ConstantTensorCache & constants,
     const core::TensorValue & input_bct,
     const CodecTransformerWeights & weights,
-    int64_t window_size) {
+    int64_t window_size,
+    CodecStreamingState * stream = nullptr) {
     auto x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, input_bct);
-    auto positions = make_positions(ctx, constants, x.shape.dims[1]);
-    auto mask = make_causal_mask(ctx, constants, x.shape.dims[1], window_size);
+    auto positions = stream == nullptr ? make_positions(ctx, constants, x.shape.dims[1])
+        : core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({1}));
+    auto mask = stream == nullptr ? make_causal_mask(ctx, constants, x.shape.dims[1], window_size)
+        : core::make_tensor(ctx, GGML_TYPE_F16, core::TensorShape::from_dims({1, window_size}));
+    if (stream != nullptr) {
+        stream->positions = positions.tensor;
+        stream->mask = mask.tensor;
+        ggml_set_input(positions.tensor);
+        ggml_set_input(mask.tensor);
+    }
     for (const auto & layer : weights.layers) {
-        x = build_transformer_layer(ctx, x, positions, mask, layer);
+        x = build_transformer_layer(ctx, x, positions, mask, layer, stream);
     }
     x = modules::RMSNormModule({kCodecDim, kCodecNormEps, true, false}).build(ctx, x, weights.norm);
     return modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
@@ -465,9 +551,10 @@ core::TensorValue build_residual_unit(
     const core::TensorValue & input,
     const ResidualUnitWeights & weights,
     int64_t channels,
-    int dilation) {
+    int dilation,
+    CodecStreamingState * stream = nullptr) {
     auto y = modules::Snake1dModule({channels}).build(ctx, input, weights.snake1);
-    y = causal_conv1d(ctx, y, weights.conv1, channels, channels, 7, 1, dilation, true);
+    y = causal_conv1d(ctx, y, weights.conv1, channels, channels, 7, 1, dilation, true, stream);
     y = modules::Snake1dModule({channels}).build(ctx, y, weights.snake2);
     y = causal_conv1d(ctx, y, weights.conv2, channels, channels, 1, 1, 1, true);
     core::TensorValue x = input;
@@ -481,8 +568,9 @@ core::TensorValue build_convnext(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
     const ConvNeXtBlockWeights & weights,
-    int64_t channels) {
-    auto y = causal_depthwise_conv1d(ctx, input, weights.dwconv, channels, 7, 1, 1, true);
+    int64_t channels,
+    CodecStreamingState * stream = nullptr) {
+    auto y = causal_depthwise_conv1d(ctx, input, weights.dwconv, channels, 7, 1, 1, true, stream);
     y = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, y);
     y = modules::LayerNormModule({channels, kConvNextNormEps, true, true}).build(ctx, y, weights.norm);
     y = modules::LinearModule({channels, channels * 4, true, GGML_PREC_F32}).build(ctx, y, weights.pwconv1);
@@ -524,21 +612,22 @@ core::TensorValue build_encoder(
 core::TensorValue build_decoder(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
-    const FishCodecWeights & weights) {
-    auto x = causal_conv1d(ctx, input, weights.decoder_first, kCodecDim, 1536, 7, 1, 1, true);
+    const FishCodecWeights & weights,
+    CodecStreamingState * stream = nullptr) {
+    auto x = causal_conv1d(ctx, input, weights.decoder_first, kCodecDim, 1536, 7, 1, 1, true, stream);
     int64_t channels = 1536;
     const int strides[] = {8, 8, 4, 2};
     for (size_t index = 0; index < weights.decoder_blocks.size(); ++index) {
         const auto & block = weights.decoder_blocks[index];
         x = modules::Snake1dModule({channels}).build(ctx, x, block.snake);
-        x = causal_conv_transpose1d(ctx, x, block.conv, channels, channels / 2, 2 * strides[index], strides[index], true);
+        x = causal_conv_transpose1d(ctx, x, block.conv, channels, channels / 2, 2 * strides[index], strides[index], true, stream);
         channels /= 2;
-        x = build_residual_unit(ctx, x, block.residual1, channels, 1);
-        x = build_residual_unit(ctx, x, block.residual3, channels, 3);
-        x = build_residual_unit(ctx, x, block.residual9, channels, 9);
+        x = build_residual_unit(ctx, x, block.residual1, channels, 1, stream);
+        x = build_residual_unit(ctx, x, block.residual3, channels, 3, stream);
+        x = build_residual_unit(ctx, x, block.residual9, channels, 9, stream);
     }
     x = modules::Snake1dModule({channels}).build(ctx, x, weights.decoder_final_snake);
-    x = causal_conv1d(ctx, x, weights.decoder_final, channels, 1, 7, 1, 1, true);
+    x = causal_conv1d(ctx, x, weights.decoder_final, channels, 1, 7, 1, 1, true, stream);
     return modules::TanhModule{}.build(ctx, x);
 }
 
@@ -546,9 +635,14 @@ core::TensorValue build_quantizer_out(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & ids_bt,
     const QuantizerUnitWeights & weights,
-    int64_t codebook_size) {
+    int64_t codebook_size,
+    bool streaming = false) {
     auto emb_btd = modules::CodebookLookupModule({codebook_size, 8}).build(ctx, ids_bt, weights.codebook);
     auto emb_bdt = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, emb_btd);
+    if (streaming) {
+        // Singleton time axes can be contiguous while retaining a non-unit stride.
+        emb_bdt = core::wrap_tensor(ggml_cont(ctx.ggml, emb_bdt.tensor), emb_bdt.shape, emb_bdt.type);
+    }
     return modules::Conv1dModule({8, kCodecDim, 1, 1, 0, 1, true}).build(ctx, emb_bdt, weights.out_proj);
 }
 
@@ -556,10 +650,11 @@ core::TensorValue build_zq_from_codes(
     core::ModuleBuildContext & ctx,
     const std::vector<core::TensorValue> & code_inputs,
     const FishDacCodecConfig & config,
-    const FishCodecWeights & weights) {
-    auto latent = build_quantizer_out(ctx, code_inputs[0], weights.semantic_quantizer, config.semantic_codebook_size);
+    const FishCodecWeights & weights,
+    bool streaming = false) {
+    auto latent = build_quantizer_out(ctx, code_inputs[0], weights.semantic_quantizer, config.semantic_codebook_size, streaming);
     for (size_t index = 0; index < weights.residual_quantizers.size(); ++index) {
-        auto residual = build_quantizer_out(ctx, code_inputs[index + 1], weights.residual_quantizers[index], config.residual_codebook_size);
+        auto residual = build_quantizer_out(ctx, code_inputs[index + 1], weights.residual_quantizers[index], config.residual_codebook_size, streaming);
         latent = modules::AddModule{}.build(ctx, latent, residual);
     }
     if (static_cast<int64_t>(code_inputs.size()) != config.total_codebooks) {
@@ -572,11 +667,12 @@ core::TensorValue build_decode_from_zq(
     core::ModuleBuildContext & ctx,
     core::ConstantTensorCache & constants,
     const core::TensorValue & z_q,
-    const FishCodecWeights & weights) {
-    auto latent = build_window_transformer(ctx, constants, z_q, weights.post_module, 128);
+    const FishCodecWeights & weights,
+    CodecStreamingState * stream = nullptr) {
+    auto latent = build_window_transformer(ctx, constants, z_q, weights.post_module, 128, stream);
     for (const auto & stage : weights.upsample) {
-        latent = causal_conv_transpose1d(ctx, latent, stage.first, kCodecDim, kCodecDim, 2, 2, true);
-        latent = build_convnext(ctx, latent, stage.second, kCodecDim);
+        latent = causal_conv_transpose1d(ctx, latent, stage.first, kCodecDim, kCodecDim, 2, 2, true, stream);
+        latent = build_convnext(ctx, latent, stage.second, kCodecDim, stream);
     }
     return latent;
 }
@@ -586,12 +682,13 @@ core::TensorValue build_decode_quantizer(
     core::ConstantTensorCache & constants,
     const std::vector<core::TensorValue> & code_inputs,
     const FishDacCodecConfig & config,
-    const FishCodecWeights & weights) {
+    const FishCodecWeights & weights,
+    CodecStreamingState * stream = nullptr) {
     return build_decode_from_zq(
         ctx,
         constants,
-        build_zq_from_codes(ctx, code_inputs, config, weights),
-        weights);
+        build_zq_from_codes(ctx, code_inputs, config, weights, stream != nullptr),
+        weights, stream);
 }
 
 core::TensorValue build_encode_quantizer(
@@ -880,7 +977,8 @@ struct DecodeGraph {
         std::shared_ptr<const FishCodecWeights> weights,
         core::ExecutionContext & execution_context,
         size_t graph_arena_bytes,
-        int64_t frames)
+        int64_t frames,
+        bool streaming = false)
         : config_(std::move(config)),
           weights_(std::move(weights)),
           backend_(execution_context.backend()),
@@ -888,6 +986,7 @@ struct DecodeGraph {
           threads_(std::max(1, execution_context.config().threads)),
           frame_capacity_(frames),
           constants_(backend_, threads_, "Fish DAC codec decode constants") {
+        if (streaming) stream_ = std::make_unique<CodecStreamingState>();
         ggml_init_params params{graph_arena_bytes, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
@@ -900,12 +999,13 @@ struct DecodeGraph {
             ggml_set_input(ids.tensor);
             code_inputs_.push_back(ids);
         }
-        auto latent = build_decode_quantizer(ctx, constants_, code_inputs_, config_, *weights_);
-        auto waveform = build_decoder(ctx, latent, *weights_);
+        auto latent = build_decode_quantizer(ctx, constants_, code_inputs_, config_, *weights_, stream_.get());
+        auto waveform = build_decoder(ctx, latent, *weights_, stream_.get());
         output_ = waveform.tensor;
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
         ggml_build_forward_expand(graph_, output_);
+        if (stream_) stream_->expand(graph_);
         constants_.finish_graph();
         constants_.ensure_uploaded();
         gallocr_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_)));
@@ -920,6 +1020,17 @@ struct DecodeGraph {
 
     bool matches(int64_t frames, ggml_backend_t backend, int threads) const {
         return frame_capacity_ >= frames && backend_ == backend && threads_ == std::max(1, threads);
+    }
+
+    runtime::AudioBuffer run_stream(const FishDacCodes & codes) {
+        stream_->prepare(backend_);
+        auto audio = run(codes);
+        stream_->commit(backend_);
+        return audio;
+    }
+
+    void reset_stream() {
+        stream_->frames = 0;
     }
 
     runtime::AudioBuffer run(const FishDacCodes & codes) {
@@ -977,6 +1088,7 @@ private:
     ggml_cgraph * graph_ = nullptr;
     std::unique_ptr<std::remove_pointer_t<ggml_gallocr_t>, GgmlGallocrDeleter> gallocr_;
     core::ConstantTensorCache constants_;
+    std::unique_ptr<CodecStreamingState> stream_;
 };
 
 struct LatentDecodeGraph {
@@ -1284,6 +1396,22 @@ public:
         return decode_graph_->run(codes);
     }
 
+    runtime::AudioBuffer decode_stream(const FishDacCodes & codes) {
+        if (codes.frames != 1) {
+            throw std::runtime_error("Fish DAC streaming decode requires one codec frame");
+        }
+        if (!stream_decode_graph_) {
+            stream_decode_graph_ = std::make_unique<DecodeGraph>(
+                component_->impl_->config, component_->impl_->weights,
+                execution_, graph_arena_bytes_, 1, true);
+        }
+        return stream_decode_graph_->run_stream(codes);
+    }
+
+    void reset_decode_stream() {
+        if (stream_decode_graph_) stream_decode_graph_->reset_stream();
+    }
+
     runtime::AudioBuffer decode_latents(const FishDacLatents & latents) {
         if (latent_decode_graph_ == nullptr || !latent_decode_graph_->matches(latents.frames, execution_.backend(), threads_)) {
             latent_decode_graph_.reset();
@@ -1308,6 +1436,7 @@ public:
     void release_decode_graphs() {
         decode_graph_.reset();
         latent_decode_graph_.reset();
+        stream_decode_graph_.reset();
     }
 
     void release_encode_graph() {
@@ -1318,6 +1447,7 @@ public:
         encode_graph_.reset();
         decode_graph_.reset();
         latent_decode_graph_.reset();
+        stream_decode_graph_.reset();
     }
 
 private:
@@ -1327,6 +1457,7 @@ private:
     size_t graph_arena_bytes_ = 0;
     std::unique_ptr<EncodeGraph> encode_graph_;
     std::unique_ptr<DecodeGraph> decode_graph_;
+    std::unique_ptr<DecodeGraph> stream_decode_graph_;
     std::unique_ptr<LatentDecodeGraph> latent_decode_graph_;
 };
 
@@ -1387,6 +1518,14 @@ FishDacLatents FishDacCodecRuntime::encode_latents(const runtime::AudioBuffer & 
 
 runtime::AudioBuffer FishDacCodecRuntime::decode_codes(const FishDacCodes & codes) {
     return impl_->decode_codes(codes);
+}
+
+runtime::AudioBuffer FishDacCodecRuntime::decode_stream(const FishDacCodes & codes) {
+    return impl_->decode_stream(codes);
+}
+
+void FishDacCodecRuntime::reset_decode_stream() {
+    impl_->reset_decode_stream();
 }
 
 runtime::AudioBuffer FishDacCodecRuntime::decode_latents(const FishDacLatents & latents) {

@@ -94,7 +94,7 @@ Model weights keep the license of their original release, which is separate from
 | **cosyvoice3** | TTS, Clone | zh, en, ja, ko, de, es, fr, it, ru, yue | Fun-CosyVoice3 zero-shot, cross-lingual, and instruction-conditioned TTS | GGUF F32/Q8 |
 | **dots_tts** | TTS, Clone, Edit, Ctrl | multilingual | DotTTS SOAR<br>DotTTS MeanFlow<br>DotTTS Edit | GGUF 16/Q8, Stream |
 | **dramabox** | TTS, Clone | en | DramaBox expressive TTS and voice cloning | GGUF Q8 |
-| **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8 |
+| **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | Fish Audio S2 Pro | GGUF 16/Q8, Stream |
 | **firered_audio** | ASR, TTS, Clone, Design, Ctrl | zh, en | FireRedAudio multimodal speech/audio model with ASR, understanding, cloning, design, and edit paths | GGUF original/Q8 |
 | **fireredtts3** | TTS, Clone, Design, Ctrl | 24 langs + 21 zh dialects | FireRedTTS3 Base<br>FireRedTTS3 Instruct/Voicedesign | GGUF original/Q8 |
 | **higgs_audio_tts** | TTS, Clone, Ctrl | auto | Higgs Audio v3 TTS 4B | GGUF 16/Q8, Stream |
@@ -106,14 +106,14 @@ Model weights keep the license of their original release, which is separate from
 | **maya1** | TTS, Design, Ctrl | en | Maya1 expressive TTS with natural-language voice design, inline emotion tags, and SNAC decoding | GGUF original/Q8 |
 | **miotts** | TTS, Clone | en, ja | MioTTS-1.7B | GGUF 16/Q8 |
 | **moss_tts_local** | TTS, Clone, Ctrl | auto, optional language hint | MOSS-TTS-Local-Transformer-v1.5 | GGUF 16/Q8 |
-| **moss_tts_nano** | TTS, Clone | auto | MOSS-TTS-Nano-100M | GGUF 16/Q8 |
+| **moss_tts_nano** | TTS, Clone | auto | MOSS-TTS-Nano-100M | GGUF 16/Q8, Stream |
 | **neutts** | TTS, Ctrl | en | NeuTTS 2E with built-in speaker prompts and emotion control | GGUF original precision, Stream |
 | **omnivoice** | TTS, Clone, Design, Ctrl | 646+ langs | OmniVoice, Qwen3-0.6B based<br>VoiceTut-TTS (Egyptian Arabic fine-tune) | GGUF 16/Q8, Stream |
 | **personaplex** | Dialogue, S2S | en | PersonaPlex 7B v1 speech-to-speech conversational model with packaged voice/persona prompts | GGUF Q4/Q8, Stream |
 | **pocket_tts** | TTS, Clone | en, de, it, pt, es | PocketTTS-100M English/German/Italian/Portuguese/Spanish | GGUF 16/Q8, Stream |
 | **qwen3_tts** | TTS, Clone, Design, Ctrl | zh, en, fr, de, it, ja, ko, pt, ru, es | Qwen3-TTS-12Hz-0.6B-Base<br>Qwen3-TTS-12Hz-1.7B-Base<br>Qwen3-TTS-12Hz-1.7B-CustomVoice<br>Qwen3-TTS-12Hz-1.7B-VoiceDesign | GGUF 16/Q8, Stream |
 | **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | Supertonic 3 | GGUF F32, Stream |
-| **vibevoice** | TTS, Dialogue | en, zh | VibeVoice-1.5B<br>VibeVoice-7B | GGUF 16/Q8 |
+| **vibevoice** | TTS, Dialogue | en, zh | VibeVoice-1.5B<br>VibeVoice-7B | GGUF 16/Q8, Stream |
 | **voxcpm2** | TTS, Clone, Design, Ctrl | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | VoxCPM2-2B, 48 kHz | GGUF 16/Q8, Stream |
 
 ### Speech Recognition And Analysis

@@ -86,6 +86,9 @@ public:
     FishDacCodes encode_codes(const runtime::AudioBuffer & audio);
     FishDacLatents encode_latents(const runtime::AudioBuffer & audio);
     runtime::AudioBuffer decode_codes(const FishDacCodes & codes);
+    // Decode one frame with persistent causal attention/convolution state.
+    runtime::AudioBuffer decode_stream(const FishDacCodes & codes);
+    void reset_decode_stream();
     runtime::AudioBuffer decode_latents(const FishDacLatents & latents);
     runtime::AudioBuffer decode_latents(const std::vector<float> & values, int64_t frames);
     void release_decode_graphs();

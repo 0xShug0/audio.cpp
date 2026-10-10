@@ -307,8 +307,9 @@ FishAudioSession::FishAudioSession(
       task_(task),
       assets_(require_assets(std::move(assets))),
       reference_cache_(resolve_reference_cache_slots(this->options())) {
-    if (task_.task != runtime::VoiceTaskKind::Tts || task_.mode != runtime::RunMode::Offline) {
-        throw std::runtime_error("Fish Audio only supports offline TTS sessions");
+    if (task_.task != runtime::VoiceTaskKind::Tts ||
+        (task_.mode != runtime::RunMode::Offline && task_.mode != runtime::RunMode::Streaming)) {
+        throw std::runtime_error("Fish Audio supports offline and streaming TTS sessions");
     }
     const auto ar_weight_type =
         option_weight_type(options, "fish_audio.weight_type", assets::TensorStorageType::Native);
@@ -477,6 +478,14 @@ const engine::codecs::FishDacCodes & FishAudioSession::resolve_reference_codes(c
 }
 
 runtime::TaskResult FishAudioSession::run(const runtime::TaskRequest & request) {
+    return synthesize(request, false);
+}
+
+runtime::TaskResult FishAudioSession::generate_stream(const runtime::TaskRequest & request) {
+    return synthesize(request, true);
+}
+
+runtime::TaskResult FishAudioSession::synthesize(const runtime::TaskRequest & request, bool streaming) {
     require_prepared("Fish Audio run()");
     const auto wall_start = Clock::now();
     const bool mem_saver = mem_saver_from_options(options());
@@ -500,11 +509,28 @@ runtime::TaskResult FishAudioSession::run(const runtime::TaskRequest & request) 
                 reference_codes.push_back(resolve_reference_codes(reference));
             }
         }
-        auto generated = generator_->generate(fish_request, reference_codes, previous_turn, mem_saver);
+        std::function<void(const runtime::AudioBuffer &)> on_audio;
+        if (streaming && stream_event_sink()) {
+            on_audio = [&](const runtime::AudioBuffer & audio) {
+                runtime::StreamEvent event;
+                event.audio_output = audio;
+                stream_event_sink()(event);
+            };
+        }
+        auto generated = generator_->generate(fish_request, reference_codes, previous_turn, mem_saver, streaming, on_audio);
+        if (streaming && generated.audio.samples.empty()) {
+            continue;
+        }
         runtime::append_audio_buffer(merged_audio, generated.audio);
         if (chunk_requests.size() > 1) {
             previous_turn = FishAudioConversationTurn{fish_request.text, std::move(generated.codes)};
         }
+    }
+    if (streaming && merged_audio.samples.empty()) {
+        throw std::runtime_error(
+            "Fish Audio streaming produced no audio across all text chunks. "
+            "Check max_tokens / max_new_tokens: a value of 1 leaves no confirmed audio frames. "
+            "Try increasing the token limit; generation may also have ended immediately.");
     }
     runtime::TaskResult result;
     result.audio_output = std::move(merged_audio);
