@@ -25,7 +25,7 @@ audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-T
 | Family | `higgs_audio_tts` |
 | Model path | `models/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf` when installed through the model manager |
 | Task | `tts` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` |
 | Languages | Model auto-handles supported languages |
 | Voice input | Reference WAV through `--voice-ref`; transcript through `--reference-text` when known |
 | Built-in voices | Not exposed |
@@ -56,6 +56,26 @@ audiocpp_cli --task tts --family higgs_audio_tts --model models/Higgs-Audio-v3-T
 | `reference_text` | text | empty string | Transcript accompanying reference audio. |
 | `text_chunk_size` | integer | `1024` | Framework long-form text chunk size. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework text chunking mode. |
+| `stream_frames_per_event` | integer >= 1 | `32` | Streaming audio frame cap; each codec frame contains 40 ms of audio. |
+| `stream_chunk_policy` | `grow`, `fixed` | `grow` | Start with one frame and grow to the cap, or emit fixed-size chunks. Streaming only. |
+
+## Streaming
+
+Set the session mode to `streaming`. Audio is decoded and emitted during AR
+generation, once all eight delayed codebooks for each frame are available.
+The default chunk schedule is 1, 2, 4, 8, 16, then 32 frames per event;
+the final event may be shorter. The non-causal codec needs ten frames of
+future context, so a one-frame first event still waits for that context.
+This is not a one-AR-step latency guarantee.
+
+Streaming keeps bounded codec windows and reuses their graphs within the
+session. Text chunking and reference conditioning remain the same as offline.
+The final WAV contains exactly the concatenated audio deltas. Floating-point
+differences from offline decoding are possible because codec graph shapes differ.
+
+For the server, configure `"mode": "streaming"` on the model entry and request
+`"stream_format": "sse"` from `/v1/audio/speech`. Streaming controls belong in
+the request's `options` object. They are not applied to offline generation.
 
 ## Session Options (use with `--session-option`)
 

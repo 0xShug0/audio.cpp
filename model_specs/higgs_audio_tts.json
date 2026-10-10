@@ -9,13 +9,33 @@
     "clone"
   ],
   "modes": [
-    "offline"
+    "offline",
+    "streaming"
   ],
   "languages": [
     "100+ languages"
   ],
   "options": {
     "request": [
+      {
+        "name": "stream_frames_per_event",
+        "type": "int",
+        "description": "Streaming codec frames per event; grow starts at one and increases to this cap. Each frame is 40 ms of audio.",
+        "required": false,
+        "min": 1,
+        "default": 32
+      },
+      {
+        "name": "stream_chunk_policy",
+        "type": "enum",
+        "description": "Streaming chunk schedule. The non-causal codec always retains ten frames of left and right context.",
+        "required": false,
+        "values": [
+          "grow",
+          "fixed"
+        ],
+        "default": "grow"
+      },
       {
         "name": "max_tokens",
         "type": "int",

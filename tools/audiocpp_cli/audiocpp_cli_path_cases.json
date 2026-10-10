@@ -1458,6 +1458,50 @@
       ]
     },
     {
+      "id": "higgs_audio_tts_voice_clone_streaming",
+      "coverage": "Higgs incremental delayed-codebook audio with growing chunks",
+      "family": "higgs_audio_tts",
+      "model": "models/higgs-audio-v3-tts-4b",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "grow",
+          "text": "A short warmup checks the cloned voice before the run.",
+          "voice_ref": "resources/sample.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "seed": 1234
+        }
+      ]
+    },
+    {
+      "id": "higgs_audio_tts_voice_clone_streaming_fixed",
+      "coverage": "Higgs incremental delayed-codebook audio with small fixed chunks",
+      "family": "higgs_audio_tts",
+      "model": "models/higgs-audio-v3-tts-4b",
+      "task": "tts",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "fixed",
+          "text": "The next sentence uses fixed audio chunks without changing the reference speaker.",
+          "voice_ref": "resources/sample.wav",
+          "reference_text": "This little work was finished in the year eighteen o three, and intended for immediate publication.",
+          "seed": 4321,
+          "options": {
+            "stream_chunk_policy": "fixed",
+            "stream_frames_per_event": "8"
+          }
+        }
+      ]
+    },
+    {
       "id": "higgs_audio_tts_voice_clone_cache_pollution",
       "coverage": "Higgs Audio v3 long-lived session cache pollution check with short, long, medium, and long requests",
       "family": "higgs_audio_tts",

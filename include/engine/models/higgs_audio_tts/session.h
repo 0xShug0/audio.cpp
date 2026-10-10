@@ -2,6 +2,8 @@
 
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/streaming_audio.h"
+#include "engine/framework/runtime/streaming_tts_session.h"
 #include "engine/models/higgs_audio_tts/assets.h"
 #include "engine/models/higgs_audio_tts/ar.h"
 #include "engine/models/higgs_audio_tts/codec.h"
@@ -17,7 +19,8 @@ namespace engine::models::higgs_audio_tts {
 
 class HiggsTTSSession final
     : public runtime::RuntimeSessionBase
-    , public runtime::IOfflineVoiceTaskSession {
+    , public runtime::IOfflineVoiceTaskSession
+    , public runtime::StreamingTtsSessionBase {
 public:
     HiggsTTSSession(
         runtime::TaskSpec task,
@@ -31,6 +34,10 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);
+    runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
+    void reset_stream_state() override;
+
     struct ReferenceCacheEntry {
         HiggsCodecEncodeOutput codes;
     };
@@ -78,6 +85,7 @@ private:
     std::unique_ptr<HiggsGenerator> generator_;
     runtime::CacheSlots<ReferenceCacheKey, ReferenceCacheEntry, ReferenceCacheKeyEqual> reference_cache_;
     std::optional<ReferenceCacheEntry> uncached_reference_;
+    runtime::StreamingAudioController<int32_t> stream_audio_;
 };
 
 }  // namespace engine::models::higgs_audio_tts

@@ -170,6 +170,7 @@ HiggsGenerator::HiggsGenerator(std::shared_ptr<const HiggsAssets> assets,
 }
 
 void HiggsGenerator::replace_kv_cache(int64_t steps, bool preserve_state) {
+    prefill_graph_.reset();
     if (ar_->backend_type() != core::BackendType::Cuda) {
         const auto state = preserve_state ? ar_kv_cache_->export_state() : runtime::TransformerKVState{};
         decode_graph_.reset();
@@ -271,7 +272,9 @@ void HiggsGenerator::prepare(const HiggsGenerationRequest & request) {
     }
 }
 
-HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & request) {
+HiggsGenerationResult HiggsGenerator::generate(
+    const HiggsGenerationRequest & request,
+    runtime::StreamingAudioController<int32_t> * stream) {
     const auto & config = assets_->config;
     const bool has_reference = request.reference_frames > 0 || !request.reference_codes.empty();
     if (has_reference) {
@@ -417,7 +420,9 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
             ar_, prompt_steps, prefill_start_step, ar_kv_cache_.get(), ar_decode_graph_arena_bytes_);
     }
     auto prefill_output = prefill_graph_->run(prepared.ar_input, prefill_start_step);
-    prefill_graph_.reset();
+    if (stream == nullptr) {
+        prefill_graph_.reset();
+    }
     reference_kv_ready_ = reference_cache_hit;
 
     if (decode_graph_ == nullptr || !decode_graph_->can_run(*ar_, ar_kv_cache_->cache_steps())) {
@@ -485,6 +490,10 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     decoded.codebook_logits.reserve(
         static_cast<size_t>(config.audio.num_codebooks * config.audio.vocab_size));
     bool logged_decode_step_timing = false;
+    std::vector<int32_t> stream_frame;
+    if (stream != nullptr) {
+        stream_frame.resize(static_cast<size_t>(config.audio.num_codebooks));
+    }
     double sampler_total_ms = 0.0;
     HiggsARDecodeTiming decode_timing_total;
     decode_graph_->begin_decode_run();
@@ -528,6 +537,16 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
         if (!sampled.empty() && sampled.front() != kHiggsStopCode) {
             result.delayed_codes.insert(result.delayed_codes.end(), sampled.begin(), sampled.end());
             result.delayed_frames += 1;
+            if (stream != nullptr && result.delayed_frames >= config.audio.num_codebooks) {
+                const int64_t frame = result.delayed_frames - config.audio.num_codebooks;
+                for (int64_t book = 0; book < config.audio.num_codebooks; ++book) {
+                    const int32_t code = result.delayed_codes[flat_index(
+                        frame + book, book, config.audio.num_codebooks)];
+                    stream_frame[static_cast<size_t>(book)] =
+                        code >= config.audio.vocab_size - 2 ? 0 : code;
+                }
+                stream->push(stream_frame);
+            }
         }
     }
     decode_timing_total.add(decode_graph_->timing());
@@ -574,15 +593,17 @@ HiggsGenerationResult HiggsGenerator::generate(const HiggsGenerationRequest & re
     engine::debug::trace_log_i32("higgs_audio_tts.generator.raw_codes_for_codec",
                                  {result.raw_frames, config.audio.num_codebooks},
                                  result.raw_codes);
-    const auto codec_start = Clock::now();
-    result.audio =
-        codec_->decode_codes(result.raw_codes, result.raw_frames, config.audio.num_codebooks);
-    engine::debug::trace_log_f32("higgs_audio_tts.codec.decode.output_audio",
-                                 {result.audio.samples},
-                                 result.audio.values);
-    engine::debug::timing_log_scalar("higgs_audio_tts.generator.codec_decode_ms",
-                                     engine::debug::elapsed_ms(codec_start, Clock::now()));
-    codec_->release_runtime_graphs();
+    if (stream == nullptr) {
+        const auto codec_start = Clock::now();
+        result.audio =
+            codec_->decode_codes(result.raw_codes, result.raw_frames, config.audio.num_codebooks);
+        engine::debug::trace_log_f32("higgs_audio_tts.codec.decode.output_audio",
+                                     {result.audio.samples},
+                                     result.audio.values);
+        engine::debug::timing_log_scalar("higgs_audio_tts.generator.codec_decode_ms",
+                                         engine::debug::elapsed_ms(codec_start, Clock::now()));
+        codec_->release_runtime_graphs();
+    }
     return result;
 }
 
