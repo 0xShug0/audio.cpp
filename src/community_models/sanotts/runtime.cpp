@@ -477,7 +477,8 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
     core::BackendConfig backend_config,
     SanoTtsCpuDecoder cpu_decoder)
     : state_(std::make_unique<State>(std::move(assets), backend_config)) {
-    if (cpu_decoder == SanoTtsCpuDecoder::Auto) {
+    const bool auto_selected = cpu_decoder == SanoTtsCpuDecoder::Auto;
+    if (auto_selected) {
         cpu_decoder = state_->backend_type == core::BackendType::Cpu &&
                 SanoTtsNeonDecoder::available()
             ? SanoTtsCpuDecoder::Neon
@@ -506,6 +507,57 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
         engine::debug::timing_log_scalar(
             "sanotts.neon_decoder_setup_ms",
             engine::debug::elapsed_ms(setup_start));
+
+        // Self-check. The NEON decoder re-implements build_decoder_graph() by hand (and folds
+        // acoustic.output into decoder.embed, which is only valid while nothing sits between
+        // them). Run both on a short fixed input; if a later change to either side makes them
+        // disagree, fall back to GGML (auto) or fail with a clear message (explicit neon) instead of
+        // producing wrong audio.
+        const auto check_start = std::chrono::steady_clock::now();
+        const auto & config = state_->assets->config;
+        constexpr int64_t kCheckFrames = 24;
+        std::vector<float> context(static_cast<size_t>(config.acoustic_hidden * kCheckFrames));
+        std::vector<float> feats(static_cast<size_t>(3 * kCheckFrames));
+        for (size_t i = 0; i < context.size(); ++i) {
+            context[i] = static_cast<float>(std::sin(0.37 * static_cast<double>(i)));
+        }
+        for (size_t i = 0; i < feats.size(); ++i) {
+            feats[i] = static_cast<float>(std::cos(0.53 * static_cast<double>(i)));
+        }
+        const auto noise = seeded_noise(12345, config.noise_channels, kCheckFrames);
+        const auto neon = state_->neon_decoder->decode(context, feats, noise, kCheckFrames, state_->threads);
+        auto graph = build_decoder_graph(
+            *state_->weights, config, state_->backend.value, state_->backend_type, kCheckFrames);
+        write_f32_input(
+            graph->context, core::TensorShape::from_dims({1, config.acoustic_hidden, kCheckFrames}), context);
+        write_f32_input(graph->feats, core::TensorShape::from_dims({1, 3, kCheckFrames}), feats);
+        write_f32_input(
+            graph->noise, core::TensorShape::from_dims({1, config.noise_channels, kCheckFrames}), noise);
+        compute_graph(*graph, "sanoTTS decoder self-check");
+        const auto reference = core::read_tensor_f32(graph->spectrum);
+        // A size mismatch counts as a failed check (infinite difference).
+        float max_diff = reference.size() == neon.size() ? 0.0F : std::numeric_limits<float>::infinity();
+        float max_ref = 0.0F;
+        for (size_t i = 0; i < reference.size() && i < neon.size(); ++i) {
+            max_diff = std::max(max_diff, std::abs(neon[i] - reference[i]));
+            max_ref = std::max(max_ref, std::abs(reference[i]));
+        }
+        engine::debug::timing_log_scalar("sanotts.neon_self_check_max_diff", max_diff);
+        engine::debug::timing_log_scalar(
+            "sanotts.neon_self_check_ms", engine::debug::elapsed_ms(check_start));
+        // heart / heart-nano measure ~1e-5 here (float summation order, the folded projection
+        // and the GELU approximation); a real mismatch is orders of magnitude larger.
+        if (!(max_diff <= 1.0e-3F * std::max(1.0F, max_ref))) {
+            if (auto_selected) {
+                // cpu_decoder=auto: keep working, on the GGML graph.
+                state_->neon_decoder.reset();
+                engine::debug::timing_log_scalar("sanotts.neon_self_check_fallback", 1);
+                return;
+            }
+            throw std::runtime_error(
+                "sanoTTS NEON decoder self-check failed (max difference " + std::to_string(max_diff) +
+                " from the GGML decoder graph); use --session-option sanotts.cpu_decoder=ggml");
+        }
     }
 }
 

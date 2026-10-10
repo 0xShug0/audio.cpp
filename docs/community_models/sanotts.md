@@ -125,6 +125,12 @@ audiocpp_cli --task tts --family sanotts \
   Model-specific `--family sanotts --model <path> --help` lists session options
   from the loaded spec; older embedded specs may omit this entry even though
   the runtime accepts it.
+  When a NEON decoder starts it decodes 24 fixed frames through both the
+  NEON code and the GGML graph (logged as `sanotts.neon_self_check_max_diff`,
+  ~1e-5 for heart and heart-nano; ~20 ms once per session). If they disagree,
+  `auto` falls back to GGML and explicit `neon` fails.
+  `sanotts_neon_decoder_test` compares the NEON decoder with a
+  double-precision reference on random weights.
 
 ## Determinism and parity
 

@@ -4076,6 +4076,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             COMMAND sanotts_frontend_test
         )
 
+        # cpu_decoder=neon against a double-precision reference on random weights (no model files)
+        add_engine_unittest(sanotts_neon_decoder_test tests/unittests/test_sanotts_neon_decoder.cpp)
+        target_include_directories(sanotts_neon_decoder_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/community_models/sanotts)
+        add_test(
+            NAME sanotts_neon_decoder_test
+            COMMAND sanotts_neon_decoder_test
+        )
+
         add_engine_unittest(inflect_v2_frontend_test tests/unittests/test_inflect_v2_frontend.cpp)
         target_include_directories(inflect_v2_frontend_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(
