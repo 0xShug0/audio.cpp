@@ -1950,20 +1950,26 @@
     };
   }
 
-  // ensureLoadedMode for a panel's request. As ensureLoaded does, it first
-  // reloads an entry that is resident with another package, or with
-  // imported settings that differ.
-  async function ensurePanelLoadedMode(mode: string) {
-    if (server?.ui_management && (!isLoaded || settingsReloadRequired)) {
+  // ensureLoaded for a panel's request, in the mode given. After each wait
+  // it stops once the request's entry is no longer selected, so that it
+  // does not load the entry the user selected meanwhile.
+  async function ensurePanelLoaded(modelId: string, mode: string) {
+    if (!server?.ui_management) return ensureLoaded();
+    const stillSelected = () => {
+      if (selectedId !== modelId) throw new Error('The model changed while it loaded; press Run again.');
+    };
+    if (!isLoaded || settingsReloadRequired) {
       if (settingsReloadRequired && loadedModels.some((model) => model.id === selectedId && model.loaded)) {
         await unloadModel(selectedId);
         await refresh();
+        stillSelected();
       }
       await doLoad(mode);
       await refresh();
+      stillSelected();
       settingsReloadRequired = false;
     }
-    await ensureLoadedMode(mode);
+    await ensureLoadedMode(mode).finally(stillSelected);
   }
 
   // A panel with requestMode 'panel' runs the request itself. It is called
@@ -1976,19 +1982,16 @@
       if (tab !== 'studio') throw new StatusWarning('Open the Studio tab to run this entry.');
       throw new Error(`${selected.display_name} is not ready.`);
     }
-    if (recordingTarget === 'source') throw new StatusWarning('Stop the recording first.');
-    const question = sourceFile;
-    if (!question) throw new StatusWarning('Record or choose source audio first.');
     const outcome = await runner({
       modelId,
-      question,
       seed: resolvedSeed,
       maxTokens: supportsMaxTokens(selected) ? maxTokens : undefined,
       language: language.trim(),
       options: requestOptions(),
       signal,
       setStatus: (text) => { status = text; },
-      ensureLoadedMode: ensurePanelLoadedMode
+      warning: (text) => new StatusWarning(text),
+      ensureLoaded: (mode) => ensurePanelLoaded(modelId, mode)
     });
     clearOutput();
     if (outcome.audio) outputAudio = [{ id: 'reply', url: URL.createObjectURL(outcome.audio) }];

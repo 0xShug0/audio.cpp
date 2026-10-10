@@ -14,6 +14,7 @@
   export let catalogEntries: CatalogEntry[] = [];
   export let paramSpecs: ParamSpec[] = [];
   export let sourceFile: File | null = null;
+  export let sourceRecording = false;
   export let clearSource: () => void = () => {};
   export let log: (message: string) => void = () => {};
   export let setPanelRunner: RegisterPanelRunner = () => () => {};
@@ -109,6 +110,9 @@
   }
 
   async function runTurn(context: PanelRunContext): Promise<PanelRunOutcome> {
+    if (sourceRecording) throw context.warning('Stop the recording first.');
+    const question = sourceFile;
+    if (!question) throw context.warning('Record or choose source audio first.');
     // Before anything is awaited, so that it is still inside the Run click
     // or key press: a browser starts audio only then.
     player.beginTurn(liveAudio);
@@ -144,21 +148,17 @@
     const signal = controller.signal;
     let stage: 'load' | 'read' | 'upload' | 'run' = 'load';
     try {
-      if (server?.ui_management) {
-        await context.ensureLoadedMode('streaming');
-        checkAborted(signal);
-        if (modelId !== context.modelId) throw new Error('The model changed while it loaded; press Run again.');
-      } else {
-        const registered = loadedModels.find((model) => model.id === context.modelId);
-        if (!registered) throw new Error(`This server does not list ${context.modelId}.`);
-        turn.live = registered.mode === 'streaming';
-      }
+      await context.ensureLoaded('streaming');
+      checkAborted(signal);
+      // A server with a config file keeps the entry in its configured mode.
+      turn.live = server?.ui_management === true ||
+        loadedModels.some((model) => model.id === context.modelId && model.mode === 'streaming');
 
       stage = 'read';
       turn.state = 'uploading';
       context.setStatus('Uploading the question…');
       refresh();
-      const wav = await browserDecodeToWav(context.question);
+      const wav = await browserDecodeToWav(question);
       checkAborted(signal);
       stage = 'upload';
       const path = await uploadWav(wav, signal);
@@ -207,7 +207,7 @@
       const audio = finishTurn(turn, result);
       turn.state = 'done';
       // A question recorded while the reply played stays for the next turn.
-      if (sourceFile === context.question) clearSource();
+      if (sourceFile === question) clearSource();
       return { audio, text: turn.replyText, json: resultJson(result) };
     } catch (error) {
       player.stop();
