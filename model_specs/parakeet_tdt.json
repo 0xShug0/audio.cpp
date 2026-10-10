@@ -97,7 +97,7 @@
         "required": false
       },
       {
-        "name": "hotword_lambda",
+        "name": "hotwords_score",
         "type": "float",
         "description": "Phonon-2 matching-piece logit bonus; duration scores and blank are not biased.",
         "required": false,

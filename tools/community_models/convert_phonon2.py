@@ -188,8 +188,9 @@ def validate_sidecars(reference: Path, source_config: dict) -> None:
             raise ValueError(f"missing reference sidecar: {name}")
 
 
-def configure_timestamps(config: dict, tokenizer_path: Path) -> None:
+def configure_variant(config: dict, tokenizer_path: Path) -> None:
     vocabulary = json.loads(tokenizer_path.read_text(encoding="utf-8"))["model"]["vocab"]
+    config["variant"] = "phonon2"
     config["word_timestamp_mode"] = "token_duration"
     # Match Phonon's Unicode-aware rule: punctuation has no letter/digit.
     config["audiocpp_punctuation_token_ids"] = sorted(
@@ -269,7 +270,7 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
         # Preserve the normal loader's arithmetic and backend precision. The
         # projection compensation above replaces the old runtime scale override.
         runtime_config = json.loads((staged / "config.json").read_text(encoding="utf-8"))
-        configure_timestamps(runtime_config, staged / "tokenizer.json")
+        configure_variant(runtime_config, staged / "tokenizer.json")
         (staged / "config.json").write_text(json.dumps(runtime_config, indent=2) + "\n", encoding="utf-8")
         for name in LICENSES:
             shutil.copyfile(source / name, staged / name)
@@ -290,7 +291,7 @@ def convert(source: Path, reference: Path, output: Path) -> Path:
                       "base_repo": BASE_REPO, "base_revision": BASE_REVISION,
                       "weights_license": "CC-BY-4.0", "family": "parakeet_tdt", "language": "en",
                       "storage": "F32", "records": len(records), "tensors": len(tensors),
-                      "runtime_config_overrides": {"word_timestamp_mode": "token_duration"},
+                      "runtime_config_overrides": {"variant": "phonon2", "word_timestamp_mode": "token_duration"},
                       "conversion_projection_scale": 1 / 32,
                       "conversion_batch_norm": "gamma compensated for the normal loader's 1e-5 variance floor",
                       "dropped_training_counters": counters,
@@ -357,7 +358,7 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
         for name in SIDECARS + LICENSES + ("model_spec.json", "provenance.json"):
             shutil.copyfile(staged / name, metadata / name)
         config = json.loads((metadata / "config.json").read_text(encoding="utf-8"))
-        configure_timestamps(config, metadata / "tokenizer.json")
+        configure_variant(config, metadata / "tokenizer.json")
         (metadata / "config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
         preserved, mixed_manifest = lossless_f16_tensors(staged) if storage == "mixed-f16" else ([], [])
         half = []
@@ -400,6 +401,7 @@ def write_gguf(staged: Path, converter: Path, output: Path, storage: str) -> Non
             (metadata / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
         provenance = json.loads((metadata / "provenance.json").read_text(encoding="utf-8"))
         provenance["runtime_config_overrides"]["word_timestamp_mode"] = "token_duration"
+        provenance["runtime_config_overrides"]["variant"] = "phonon2"
         if storage == "q8_0":
             provenance["preserved_f32_tensors"] = ["joint.head.weight", "joint.head.bias"]
             provenance["conversion"] += "; --keep-type joint.head.*=orig (duration-sensitive output head)"

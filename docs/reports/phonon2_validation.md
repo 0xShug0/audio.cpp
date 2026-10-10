@@ -52,17 +52,29 @@ All nine combinations complete and pass their upload endpoint text check.
   Original offline timings match in 27/36 cases and provisional sequences in
   5/18.
   These diagnostic differences are included rather than hidden by forcing GPU precision.
-- CPU/CUDA/Vulkan actual CLI and legacy server: JSON/multipart hotwords, uploaded
-  streaming, unaligned live PCM, per-request isolation and repeated requests pass.
+- CPU/CUDA/Vulkan actual CLI and legacy server: uploaded streaming, unaligned
+  live PCM, per-request isolation and repeated requests pass.
 - CPU/CUDA/Vulkan lifecycle: 13/2049/whole-input chunking, invalid order/retry,
   repeat finalize/post-final rejection, nonfinite input and callback failure
   recovery, idle/reuse and multiple phrases pass. Six named-term F32 cases match
   original final text. Committed deltas equal final text; timestamps stay in range.
 - Stock Parakeet Q8 offline/buffered streaming: six before/after text/timing checks
-  pass. Repeated multipart fields, bad strength/JSON recovery and biased silence pass.
+  pass. Bad strength/JSON recovery and biased silence pass.
 - CPU CTest: 54/54; combined-build targeted CTest: 4/4; converter/timestamp Python:
   14/14. Windows source encoding and embedded catalog are enabled; no assertions
   or unrelated framework tests were weakened.
+
+Dedicated HTTP hotword fields were removed after those measurements. Hotwords
+use generic `options` on JSON and batch multipart requests; single-file uploads
+and live PCM use the existing `prompt` interface. A subsequent CUDA check covered
+18 requests across standard and parallel servers, including upload, upload
+streaming and live PCM: prompt bias took effect, removing it restored the
+baseline, and committed deltas concatenated to the final text.
+After separating variant selection from timestamp formatting, eight further
+CUDA live requests using a newly packaged F32 GGUF matched the previous final
+text and unprompted snapshot sequences exactly. Both server modes preserved
+prompt bias and repeated-request isolation, with `session.wall_ms` emitted for
+each request. These checks do not establish new performance results.
 
 ## Functional timing and memory
 

@@ -58,6 +58,9 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
 
     ParakeetConfig config;
     config.model_type = json::require_string(config_root, "model_type");
+    if (config_root.find("variant")) {
+        config.variant = json::require_string(config_root, "variant");
+    }
     config.vocab_size = json::require_i64(config_root, "vocab_size");
     config.blank_token_id = json::require_i64(config_root, "blank_token_id");
     config.pad_token_id = json::require_i64(config_root, "pad_token_id");

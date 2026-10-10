@@ -91,7 +91,7 @@ PhononHotwordAutomaton::PhononHotwordAutomaton(
     const std::vector<PhononHotword> & words, const std::vector<std::string> & vocabulary,
     int32_t blank, float strength) : blank_(blank), strength_(strength) {
     if (!std::isfinite(strength) || strength < 0 || strength > 100)
-        throw std::runtime_error("Phonon hotword_lambda must be finite and between 0 and 100");
+        throw std::runtime_error("Phonon hotwords_score must be finite and between 0 and 100");
     if (strength == 0 || words.empty()) return;
     std::unordered_map<std::string, int32_t> pieces;
     std::unordered_map<uint32_t, uint32_t> upper;

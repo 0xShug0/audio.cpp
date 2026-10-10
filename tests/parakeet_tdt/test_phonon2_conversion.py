@@ -68,7 +68,8 @@ class PhononConversionTests(unittest.TestCase):
                 "\u2581": 0, "\u2581Hello": 1, "\u2581!": 2, "\u2581\u00e9": 3,
                 "\u2581\u4e2d": 4, "\u2014": 5, "123": 6, "\u2581\u0661": 7}}}), encoding="utf-8")
             config = {}
-            converter.configure_timestamps(config, path)
+            converter.configure_variant(config, path)
+            self.assertEqual(config["variant"], "phonon2")
             self.assertEqual(config["word_timestamp_mode"], "token_duration")
             self.assertEqual(config["audiocpp_punctuation_token_ids"], [0, 2, 5])
 

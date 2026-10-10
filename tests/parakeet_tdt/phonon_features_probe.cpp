@@ -53,7 +53,7 @@ int main(int argc, char ** argv) {
         const auto wav = engine::audio::read_wav_f32(std::filesystem::path(input.require("audio").as_string()));
         TaskRequest request; request.audio_input = AudioBuffer{wav.sample_rate, wav.channels, wav.samples};
         if (const auto * terms = input.find("hotwords")) request.options["hotwords"] = j::stringify(*terms);
-        if (const auto * strength = input.find("strength")) request.options["hotword_lambda"] = j::stringify(*strength);
+        if (const auto * strength = input.find("strength")) request.options["hotwords_score"] = j::stringify(*strength);
         if (const auto * cap = input.find("max_tokens")) request.options["max_tokens"] = j::stringify(*cap);
         session->prepare(build_preparation_request(request));
         auto start = std::chrono::steady_clock::now();

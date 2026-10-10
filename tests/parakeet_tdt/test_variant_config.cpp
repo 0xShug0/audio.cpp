@@ -39,11 +39,17 @@ void test_config(const std::filesystem::path & root) {
         std::filesystem::path(ENGINE_REPO_ROOT) / "model_specs/parakeet_tdt.json", root);
     write(root / "config.json", config());
     auto base = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
+    engine::test::require(base->config.variant.empty(), "stock variant unchanged");
     engine::test::require_eq(base->config.word_timestamp_mode, std::string("default"), "stock timestamp policy unchanged");
     write(root / "config.json", config("", ",\"word_timestamp_mode\":\"token_duration\",\"audiocpp_punctuation_token_ids\":[1,0]"));
     auto timed = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
+    engine::test::require(timed->config.variant.empty(), "timestamp policy does not select Phonon");
     engine::test::require_eq(timed->config.word_timestamp_mode, std::string("token_duration"), "Phonon timestamp policy");
     engine::test::require_eq(timed->config.punctuation_token_ids.front(), int32_t(0), "punctuation ids sorted");
+    write(root / "config.json", config("", ",\"variant\":\"phonon2\""));
+    auto phonon = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
+    engine::test::require_eq(phonon->config.variant, std::string("phonon2"), "explicit Phonon variant");
+    engine::test::require_eq(phonon->config.word_timestamp_mode, std::string("default"), "variant does not override timestamp policy");
     for (const auto & bad : {config("", ",\"word_timestamp_mode\":\"token_duration\""),
                             config("", ",\"word_timestamp_mode\":\"rounded\""),
                             config("", ",\"audiocpp_punctuation_token_ids\":[3]"),

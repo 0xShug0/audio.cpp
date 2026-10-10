@@ -1051,11 +1051,6 @@ engine::runtime::TaskRequest build_openai_transcription_request(
         request.audio_input = minitts::cli::read_audio_buffer(std::string_view(*uploaded_audio_bytes));
     }
     request.options = options_from_object(body.find("options"));
-    for (const auto * key : {"hotwords", "hotword_lambda"}) {
-        if (const auto * value = body.find(key)) {
-            request.options[key] = value->is_string() ? value->as_string() : engine::io::json::stringify(*value);
-        }
-    }
     std::string language;
     if (const auto * value = body.find("language")) {
         language = value->as_string();
@@ -1070,8 +1065,6 @@ engine::runtime::TaskRequest build_openai_transcription_request(
     }
     std::string context;
     if (const auto * value = body.find("text")) {
-        context = value->as_string();
-    } else if (const auto * value = body.find("prompt")) {
         context = value->as_string();
     }
     if (!language.empty() || !context.empty()) {
@@ -2843,8 +2836,6 @@ HttpResponse ServerState::handle_transcription_multipart(
     std::string model_id;
     std::string language;
     std::string prompt;
-    engine::io::json::Value::Object hotword_fields;
-    engine::io::json::Value::Array hotword_parts;
     std::optional<int> busy_timeout_ms;
     bool stream = false;
     for (const auto & part : parts) {
@@ -2859,10 +2850,6 @@ HttpResponse ServerState::handle_transcription_multipart(
             // transcription field name; "text" matches the JSON request
             // builder, which already forwards it to request.text_input.
             prompt = part.data;
-        } else if (part.name == "hotwords[]") {
-            hotword_parts.push_back(engine::io::json::Value::make_string(part.data));
-        } else if (part.name == "hotwords" || part.name == "hotword_lambda") {
-            hotword_fields[part.name] = engine::io::json::Value::make_string(part.data);
         } else if (part.name == "busy_timeout_ms") {
             try {
                 busy_timeout_ms = std::stoi(part.data);
@@ -2911,9 +2898,6 @@ HttpResponse ServerState::handle_transcription_multipart(
     if (!prompt.empty()) {
         fields.emplace("text", engine::io::json::Value::make_string(prompt));
     }
-    for (const auto & [key, value] : hotword_fields) fields[key] = value;
-    if (!hotword_parts.empty() && !hotword_fields.count("hotwords"))
-        fields["hotwords"] = engine::io::json::Value::make_array(hotword_parts);
     const auto body = engine::io::json::Value::make_object(std::move(fields));
 
     auto & model = require_model(body);
@@ -2955,8 +2939,6 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
     std::string model_id;
     std::string language;
     std::string prompt;
-    engine::io::json::Value::Object hotword_fields;
-    engine::io::json::Value::Array hotword_parts;
     std::unordered_map<std::string, std::string> options;
     std::optional<int> busy_timeout_ms;
     for (const auto & part : parts) {
@@ -2971,10 +2953,6 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
         } else if (part.name == "options") {
             const auto option_fields = engine::io::json::parse(part.data);
             options = options_from_object(&option_fields);
-        } else if (part.name == "hotwords[]") {
-            hotword_parts.push_back(engine::io::json::Value::make_string(part.data));
-        } else if (part.name == "hotwords" || part.name == "hotword_lambda") {
-            hotword_fields[part.name] = engine::io::json::Value::make_string(part.data);
         } else if (part.name == "busy_timeout_ms") {
             try {
                 busy_timeout_ms = std::stoi(part.data);
@@ -3033,9 +3011,6 @@ HttpResponse ServerState::handle_batch_transcriptions_multipart(
         if (!option_fields.empty()) {
             fields.emplace("options", engine::io::json::Value::make_object(std::move(option_fields)));
         }
-        for (const auto & [key, value] : hotword_fields) fields[key] = value;
-        if (!hotword_parts.empty() && !hotword_fields.count("hotwords"))
-            fields["hotwords"] = engine::io::json::Value::make_array(hotword_parts);
         const auto body = engine::io::json::Value::make_object(std::move(fields));
         requests.push_back(apply_default_request_options(
             model,
@@ -3464,10 +3439,6 @@ HttpResponse ServerState::handle_transcription_live(const HttpRequest & request)
         }
         if (!language.empty() || !prompt.empty()) {
             task_request.text_input = engine::runtime::Transcript{prompt, language};
-        }
-        for (const auto * key : {"hotwords", "hotword_lambda"}) {
-            const auto value = decoded_query_param(request.query, key);
-            if (!value.empty()) task_request.options[key] = value;
         }
         task_request = apply_default_request_options(model, std::move(task_request));
     } catch (const std::runtime_error & ex) {

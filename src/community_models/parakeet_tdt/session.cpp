@@ -88,9 +88,6 @@ std::unordered_map<std::string, std::string> normalize_request_options(
         contract.request_option_keys.end()) {
         validation_options.erase("audio_chunk_duration_sec");
     }
-    for (const auto * key : {"hotwords", "hotword_lambda"}) {
-        if (!contract.request_option_keys.count(key)) validation_options.erase(key);
-    }
     runtime::validate_spec_backed_request_options(
         validation_options,
         contract,
@@ -289,14 +286,16 @@ ParakeetDecodeOptions ParakeetTDTSessionBase::decode_options_for_request(const r
     if (const auto value = runtime::find_option(request.options, {"keep_language_tags"})) {
         opts.keep_language_tags = runtime::parse_bool_option(*value, "keep_language_tags");
     }
-    const bool phonon = assets_->config.word_timestamp_mode == "token_duration";
-    auto hotwords = runtime::find_option(request.options, {"hotwords"});
+    const bool phonon = assets_->config.variant == "phonon2";
+    std::optional<std::string> hotwords;
+    if (const auto it = request.options.find("hotwords"); it != request.options.end())
+        hotwords = it->second;
     const auto array = request.option_arrays.find("hotwords");
     if (!hotwords && array == request.option_arrays.end() && phonon && request.text_input)
         hotwords = request.text_input->text;
-    const auto strength = runtime::parse_float_option(request.options, {"hotword_lambda"}).value_or(2.f);
+    const auto strength = runtime::parse_float_option(request.options, {"hotwords_score"}).value_or(2.f);
     if (!std::isfinite(strength) || strength < 0 || strength > 100)
-        throw std::runtime_error("Phonon hotword_lambda must be between 0 and 100");
+        throw std::runtime_error("Phonon hotwords_score must be between 0 and 100");
     if (hotwords || array != request.option_arrays.end()) {
         if (!phonon) throw std::runtime_error("hotwords currently require a Phonon-2 package");
         std::vector<PhononHotword> terms;
@@ -1028,7 +1027,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader() {
                                 std::shared_ptr<const ParakeetTDTAssets> assets,
                                 std::shared_ptr<const engine::model_spec::ModelContract> contract) {
         if (task.mode == runtime::RunMode::Streaming) {
-            if (assets->config.word_timestamp_mode == "token_duration") {
+            if (assets->config.variant == "phonon2") {
                 return std::unique_ptr<runtime::IVoiceTaskSession>(std::make_unique<PhononStreamingSession>(
                     task, options, std::move(assets), std::move(contract)));
             }

@@ -1,6 +1,8 @@
 #pragma once
 #include "engine/community_models/parakeet_tdt/session.h"
 
+#include <chrono>
+
 namespace engine::community_models::parakeet_tdt {
 
 // Original Phonon live policy: re-decode the current phrase, publish revisable
@@ -36,6 +38,7 @@ private:
     int64_t committed_tokens_ = 0;
     float peak_rms_ = 0;
     bool voiced_ = false, active_ = false;
+    std::chrono::steady_clock::time_point wall_start_;
     std::string text_;
     std::vector<runtime::WordTimestamp> words_;
 };

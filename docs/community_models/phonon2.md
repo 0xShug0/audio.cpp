@@ -42,6 +42,11 @@ scale compensation; Q8 also keeps the duration-sensitive joint head in F32.
 The dense packages are approximately 2.51/1.26/0.94 GB, not the original 164 MB
 packed package. No public download/package-manager URL is advertised here.
 
+The converter sets `variant=phonon2` in the runtime configuration to select its
+hotword and rolling-streaming behavior. `word_timestamp_mode` controls timestamp
+formatting only. Regenerate unpublished development packages with this converter;
+there is no compatibility fallback for earlier Phonon metadata or option names.
+
 `--gguf-type mixed-f16` offers lossless storage of the staged values: tensors
 use F16 only when conversion back to F32 is exact. Other tensors, normalization
 and compensated projections stay F32. The package is about 1.30 GB. It does
@@ -79,7 +84,7 @@ audiocpp_cli --task asr --family parakeet_tdt \
   --model models/Phonon-2-Parakeet-GGUF/phonon-2-mixed-f16.gguf \
   --backend cuda --device 0 --threads 8 --audio recording.wav \
   --request-option 'hotwords=["Ada Lovelace","CUDA"]' \
-  --request-option hotword_lambda=2
+  --request-option hotwords_score=2
 ```
 
 Use `cpu`, or `vulkan --device 1` on the tested RTX 3090 setup. The device index
@@ -87,8 +92,8 @@ depends on the machine. For Windows executable paths add `.exe`.
 
 Hotwords can be a JSON string array, `{ "word": "...", "spoken": ["..."] }`
 entries, or comma/newline/semicolon-separated terms. Without separators, whitespace
-separates terms. The original `prompt` vocabulary fallback is accepted by the
-transcription API; explicit hotwords, including an empty list, take precedence.
+separates terms. The model uses recognition-context text as a vocabulary fallback;
+explicit hotwords, including an empty list, take precedence.
 The policy accepts at most 25 distinct terms, strength 0–100 (default 2), 16 KiB
 input, 256-byte terms and at most eight spoken alternatives. It does not bias
 blank/duration logits or guarantee correction of every named entity. Request
@@ -100,8 +105,11 @@ Use the same CLI command with `--mode streaming`, or configure a legacy server
 model with `family: "parakeet_tdt"`, the new GGUF path, `task: "asr"` and
 `mode: "streaming"`. Transcription uploads with `stream=true` and
 `POST /v1/audio/transcriptions/live` (mono 16 kHz PCM) use existing transports.
-JSON/multipart uploads accept `hotwords`, `hotword_lambda` and repeated
-`hotwords[]`; the live route accepts query options.
+JSON requests and batch multipart uploads can pass `hotwords` and
+`hotwords_score` through the existing generic `options` object. Single-file
+multipart uploads and live requests use the existing `prompt` field or query
+parameter for vocabulary hints. JSON requests use `text` for recognition context.
+There are no dedicated top-level hotword fields or live hotword query parameters.
 
 The Phonon policy processes 50 ms energy blocks, allows a first provisional
 decode after 350 ms of a voiced phrase, then every 500 ms of new audio, and

@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/phonon_streaming.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
@@ -47,6 +48,7 @@ void PhononStreamingSession::reset() {
     text_.clear(); words_.clear(); options_ = {};
     decoder_->reset_state();
     active_ = true;
+    wall_start_ = std::chrono::steady_clock::now();
 }
 
 void PhononStreamingSession::abort() {
@@ -176,6 +178,8 @@ runtime::TaskResult PhononStreamingSession::finalize() {
         active_ = false;
         options_ = {}; // Release request-local hotwords without dropping cached graphs.
         decoder_->reset_state();
+        debug::timing_log_scalar("session.wall_ms",
+            debug::elapsed_ms(wall_start_, std::chrono::steady_clock::now()));
         return result;
     } catch (...) { abort(); throw; }
 }
