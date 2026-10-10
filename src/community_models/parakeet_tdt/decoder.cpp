@@ -1,4 +1,6 @@
 #include "engine/community_models/parakeet_tdt/decoder.h"
+#include "engine/community_models/parakeet_tdt/graph_precision.h"
+#include "engine/community_models/parakeet_tdt/word_timestamps.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -101,6 +103,7 @@ void ParakeetTDTDecoderRuntime::ensure_step_graph() {
     g->graph = ggml_new_graph(g->ggml.get());
     ggml_build_forward_expand(g->graph, g->logits.tensor); ggml_build_forward_expand(g->graph, g->pred_cache.tensor);
     for (size_t l = 0; l < g->h_out.size(); ++l) { ggml_build_forward_expand(g->graph, g->h_out[l].tensor); ggml_build_forward_expand(g->graph, g->c_out[l].tensor); }
+    configure_matmul_precision(g->graph, cfg.force_f32_matmul);
 
     g->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_->backend()));
     if (!g->alloc || !ggml_gallocr_alloc_graph(g->alloc, g->graph)) throw std::runtime_error("step graph alloc failed");
@@ -134,6 +137,7 @@ void ParakeetTDTDecoderRuntime::ensure_joint_graph() {
     g->logits = engine::modules::LinearModule({cfg.decoder_hidden_size, static_cast<int64_t>(cfg.vocab_size + cfg.durations.size()), true}).build(ctx, joint, weights_->decoder.joint_head);
     ggml_set_output(g->logits.tensor);
     g->graph = ggml_new_graph(g->ggml.get()); ggml_build_forward_expand(g->graph, g->logits.tensor);
+    configure_matmul_precision(g->graph, cfg.force_f32_matmul);
     g->alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_context_->backend()));
     if (!g->alloc || !ggml_gallocr_alloc_graph(g->alloc, g->graph)) throw std::runtime_error("joint graph alloc failed");
     engine::core::validate_backend_graph_supported(execution_context_->backend(), g->graph, "Parakeet decoder joint");
@@ -198,11 +202,36 @@ std::vector<runtime::WordTimestamp> ParakeetTDTDecoderRuntime::build_word_timest
     const std::vector<int32_t>& ids,
     const std::vector<int32_t>& frame_indices,
     const std::vector<int32_t>& durs,
-    int64_t audio_end_frame) const {
+    int64_t audio_end_frame,
+    int64_t audio_end_sample) const {
     std::vector<runtime::WordTimestamp> out;
     const int64_t spf = assets_->config.frontend.hop_length * assets_->config.encoder.subsampling_factor;
     const size_t count = std::min({ids.size(), frame_indices.size(), durs.size()});
     constexpr const char* kSentencePieceSpace = "\xE2\x96\x81";
+
+    if (assets_->config.token_duration_word_timestamps) {
+        std::vector<TimestampPiece> pieces;
+        pieces.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            const auto tid = ids[i];
+            if (tid < 0 || tid >= static_cast<int32_t>(assets_->tokenizer->id_to_token().size()) ||
+                tid == assets_->config.blank_token_id || tid == assets_->config.pad_token_id ||
+                (tid < static_cast<int32_t>(assets_->special_token_ids.size()) &&
+                 assets_->special_token_ids[static_cast<size_t>(tid)])) continue;
+            auto text = assets_->tokenizer->id_to_token()[static_cast<size_t>(tid)];
+            size_t pos = 0;
+            while ((pos = text.find(kSentencePieceSpace, pos)) != std::string::npos) {
+                text.replace(pos, 3, " ");
+                ++pos;
+            }
+            const auto & punctuation = assets_->config.punctuation_token_ids;
+            pieces.push_back({std::move(text), frame_indices[i] * spf,
+                              std::max<int32_t>(durs[i], 0) * spf,
+                              std::binary_search(punctuation.begin(), punctuation.end(), tid)});
+        }
+        return token_duration_word_timestamps(
+            pieces, audio_end_sample >= 0 ? audio_end_sample : audio_end_frame * spf);
+    }
 
     std::string current_word;
     int64_t current_start_frame = 0;
@@ -362,7 +391,8 @@ ParakeetDecodedText ParakeetTDTDecoderRuntime::format_tokens(
         out.token_ids,
         out.token_frame_indices,
         out.durations,
-        audio_end_frame);
+        audio_end_frame,
+        opts.audio_end_sample);
     return out;
 }
 

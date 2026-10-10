@@ -17,6 +17,7 @@ namespace engine::community_models::parakeet_tdt {
 struct ParakeetDecodeOptions {
     int64_t max_tokens = 0;
     bool keep_language_tags = false;
+    int64_t audio_end_sample = -1;
 };
 
 struct ParakeetDecodedText {
@@ -84,7 +85,8 @@ private:
         const std::vector<int32_t> & token_ids,
         const std::vector<int32_t> & token_frame_indices,
         const std::vector<int32_t> & durations,
-        int64_t audio_end_frame) const;
+        int64_t audio_end_frame,
+        int64_t audio_end_sample) const;
 };
 
 }  // namespace engine::community_models::parakeet_tdt

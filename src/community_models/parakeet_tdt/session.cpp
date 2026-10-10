@@ -445,7 +445,7 @@ runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & 
         throw std::runtime_error("Parakeet TDT run() received an invalid audio layout");
     }
     const auto wall_start = Clock::now();
-    const auto decode_options = decode_options_for_request(normalized_request);
+    auto decode_options = decode_options_for_request(normalized_request);
     const int64_t source_frames =
         static_cast<int64_t>(normalized_request.audio_input->samples.size()) /
         std::max(normalized_request.audio_input->channels, 1);
@@ -453,6 +453,7 @@ runtime::TaskResult ParakeetTDTOfflineSession::run(const runtime::TaskRequest & 
         static_cast<double>(source_frames) *
         static_cast<double>(assets_->config.frontend.sample_rate) /
         static_cast<double>(normalized_request.audio_input->sample_rate)));
+    decode_options.audio_end_sample = target_samples;
     const auto chunk_mode = engine::audio::parse_audio_chunk_mode(normalized_request.options);
     if (chunk_mode == engine::audio::AudioChunkMode::QuietEnergy) {
         throw std::runtime_error("Parakeet TDT supports audio_chunk_mode=auto, fixed, vad, or none");
@@ -636,6 +637,9 @@ runtime::TaskResult ParakeetTDTOfflineSession::run_vad_chunks(
             continue;
         }
         auto item_decode_options = decode_options;
+        item_decode_options.audio_end_sample = static_cast<int64_t>(std::ceil(
+            static_cast<double>(window.samples.size() / std::max(window.channels, 1)) *
+            assets_->config.frontend.sample_rate / window.sample_rate));
         if (item_decode_options.max_tokens > 0) {
             item_decode_options.max_tokens = std::max<int64_t>(
                 0,

@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/encoder.h"
+#include "engine/community_models/parakeet_tdt/graph_precision.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -538,6 +539,8 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     const auto opt_backend = graph_optimizer_backend_for(execution_context_->backend_type());
     const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_backend);
     const auto opt_report = engine::runtime::optimize_graph(*graph->graph, opt_backend);
+    configure_matmul_precision(graph->pos_graph, assets_->config.force_f32_matmul);
+    configure_matmul_precision(graph->graph, assets_->config.force_f32_matmul);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_before", opt_report.nodes_before);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_after", opt_report.nodes_after);
     (void)pos_opt_report;

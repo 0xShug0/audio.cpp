@@ -3257,6 +3257,14 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME audio8_tts_falcon_kv_cache_test COMMAND audio8_tts_falcon_kv_cache_test)
     endif()
 
+    if (parakeet_tdt IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(parakeet_variant_config_test tests/parakeet_tdt/test_variant_config.cpp)
+        target_include_directories(parakeet_variant_config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        target_compile_definitions(parakeet_variant_config_test PRIVATE ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+        add_test(NAME parakeet_variant_config_test COMMAND parakeet_variant_config_test)
+
+    endif()
+
     if (ENGINE_BUILD_TESTS)
         add_executable(server_speech_option_exceptions_test
             tests/unittests/test_server_speech_option_exceptions.cpp)
