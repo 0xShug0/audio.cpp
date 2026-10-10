@@ -13,6 +13,7 @@ namespace {
 struct LoadProgressState {
     bool active = false;
     uint64_t total_bytes = 0;
+    uint64_t registered_bytes = 0;
     uint64_t done_bytes = 0;
     double last_emitted = -1.0;
     std::string last_store;
@@ -66,6 +67,7 @@ void begin_model_load(uint64_t total_bytes) {
     auto & state = load_progress_state();
     state.active = true;
     state.total_bytes = total_bytes;
+    state.registered_bytes = 0;
     state.done_bytes = 0;
     state.last_emitted = -1.0;
     state.last_store.clear();
@@ -83,10 +85,14 @@ void register_weight_bytes(uint64_t bytes) {
     if (!state.active) {
         return;
     }
-    // Stores register their upload budget one at a time, as each upload()
-    // starts. Raise the denominator rather than letting the fraction run
-    // past the seed when backend tensors expand past the on-disk bytes.
-    state.total_bytes = std::max(state.total_bytes, state.done_bytes + bytes);
+    // Each store declares its upload budget exactly once (its pending tensor
+    // bytes), so the budgets accumulate: with every store prepared up front
+    // the denominator covers the whole model before the first byte copies,
+    // and with sequential stores it grows as each budget lands. The stored
+    // seed from the inspected weight files stays as a floor for whichever
+    // case undercounts.
+    state.registered_bytes += bytes;
+    state.total_bytes = std::max(state.total_bytes, state.registered_bytes);
 }
 
 void add_uploaded_weight_bytes(uint64_t bytes) {

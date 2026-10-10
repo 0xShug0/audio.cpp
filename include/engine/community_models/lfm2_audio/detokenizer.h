@@ -36,6 +36,12 @@ public:
     Lfm2DetokenizerRuntime(const Lfm2DetokenizerRuntime &) = delete;
     Lfm2DetokenizerRuntime & operator=(const Lfm2DetokenizerRuntime &) = delete;
 
+    // Load-progress support, same contract as the encoder runtime: the
+    // constructor queues weights, prepare_weights() reports the full upload
+    // budget, upload_weights() copies the data, inference uploads lazily.
+    void prepare_weights();
+    void upload_weights();
+
     // The head output for frames[first_frame:], row-major
     // [frames * upsample][output_size]: the log-magnitudes of the n_fft / 2 + 1
     // bins, then their phases. `frames` holds one code per codebook for each

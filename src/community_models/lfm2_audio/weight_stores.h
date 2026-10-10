@@ -44,6 +44,12 @@ public:
     // into, or nullptr for the plain store.
     [[nodiscard]] ggml_backend_buffer_type_t matmul_buffer_type(ggml_type type, int64_t rows, int64_t cols) const;
 
+    // Allocate every buffer and register every upload budget with the
+    // load-progress tracker, without copying tensor data. A host that builds
+    // several components calls prepare() on all of them before uploading any;
+    // upload() prepares automatically when this was not called.
+    void prepare();
+
     void upload();
 
     // The extra buffer types in use ("CPU_REPACK", ...), in the order of

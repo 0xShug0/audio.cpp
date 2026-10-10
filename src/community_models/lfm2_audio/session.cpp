@@ -344,6 +344,14 @@ Lfm2AudioSession::Lfm2AudioSession(
       vad_model_path_(runtime::find_option(RuntimeSessionBase::options().options, {"lfm2_audio.vad_model_path"})
                           .value_or(default_vad_model_path().string())),
       max_pass_seconds_(parse_max_pass_seconds(RuntimeSessionBase::options())) {
+    // Prepare every weight store before uploading any: the load-progress
+    // denominator then covers the whole model from the first copied byte
+    // (BackendWeightStore::prepare), so the curve never has to correct for a
+    // budget that registers late. The sources die right after.
+    encoder_.prepare_weights();
+    backbone_.prepare_weights();
+    encoder_.upload_weights();
+    backbone_.upload_weights();
     components_->model->release_storage();
     components_->mmproj->release_storage();
 }
@@ -548,6 +556,13 @@ Lfm2AudioTtsSession::Lfm2AudioTtsSession(
           Lfm2DetokenizerRuntime::kDefaultChunkFrames,
           cpu_repack_),
       language_(model_language(*components_)) {
+    // Prepare every weight store before uploading any (see Lfm2AudioSession).
+    backbone_.prepare_weights();
+    depthformer_.prepare_weights();
+    detokenizer_.prepare_weights();
+    backbone_.upload_weights();
+    depthformer_.upload_weights();
+    detokenizer_.upload_weights();
     components_->model->release_storage();
     components_->mmproj->release_storage();
     output_->vocoder->release_storage();
@@ -836,6 +851,15 @@ Lfm2AudioChatSession::Lfm2AudioChatSession(
           cpu_repack_),
       language_(model_language(*components_)),
       max_pass_seconds_(parse_max_pass_seconds(RuntimeSessionBase::options())) {
+    // Prepare every weight store before uploading any (see Lfm2AudioSession).
+    encoder_.prepare_weights();
+    backbone_.prepare_weights();
+    depthformer_.prepare_weights();
+    detokenizer_.prepare_weights();
+    encoder_.upload_weights();
+    backbone_.upload_weights();
+    depthformer_.upload_weights();
+    detokenizer_.upload_weights();
     components_->model->release_storage();
     components_->mmproj->release_storage();
     output_->vocoder->release_storage();

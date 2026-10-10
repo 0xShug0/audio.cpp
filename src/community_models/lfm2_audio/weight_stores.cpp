@@ -70,6 +70,16 @@ ggml_backend_buffer_type_t WeightStores::matmul_buffer_type(ggml_type type, int6
     return nullptr;
 }
 
+void WeightStores::prepare() {
+    // Allocate every buffer and register every budget before any tensor data
+    // moves, so the load-progress denominator covers the whole component from
+    // the first copied byte (see BackendWeightStore::prepare).
+    plain_.prepare();
+    for (auto & extra : extra_) {
+        extra.store->prepare();
+    }
+}
+
 void WeightStores::upload() {
     plain_.upload();
     // An extra buffer's set_tensor converts the layout, and takes each weight

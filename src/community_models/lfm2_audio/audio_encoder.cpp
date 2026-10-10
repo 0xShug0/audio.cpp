@@ -252,7 +252,8 @@ EncoderWeights load_encoder_weights(
     out.adapter_fc1 = linear("mm.a.mlp.1");
     out.adapter_fc2 = linear("mm.a.mlp.3");
 
-    out.stores->upload();
+    // No upload here: the session prepares every weight store up front
+    // (exact load-progress denominator) and commits them in build order.
     return out;
 }
 
@@ -425,6 +426,17 @@ struct Lfm2FastConformerEncoderRuntime::Impl {
           weights(load_encoder_weights(*source, config_in, execution_in, cpu_repack)),
           positions(config_in.hidden_size) {}
 
+    // The constructor only queues weights; upload() happens in
+    // upload_weights() (sessions) or lazily before the first encode().
+    void ensure_uploaded() {
+        if (!weights_uploaded) {
+            weights.stores->upload();
+            weights_uploaded = true;
+        }
+    }
+
+    bool weights_uploaded = false;
+
     // Chunks of the same length reuse the graph. A new length builds a new
     // graph in the same compute buffer, which grows to the longest chunk kept.
     Lfm2AudioEmbeddings encode(const Lfm2AudioFeatures & features) {
@@ -509,7 +521,16 @@ Lfm2FastConformerEncoderRuntime::Lfm2FastConformerEncoderRuntime(
 
 Lfm2FastConformerEncoderRuntime::~Lfm2FastConformerEncoderRuntime() = default;
 
+void Lfm2FastConformerEncoderRuntime::prepare_weights() {
+    impl_->weights.stores->prepare();
+}
+
+void Lfm2FastConformerEncoderRuntime::upload_weights() {
+    impl_->ensure_uploaded();
+}
+
 Lfm2AudioEmbeddings Lfm2FastConformerEncoderRuntime::encode(const Lfm2AudioFeatures & features) {
+    impl_->ensure_uploaded();
     if (features.n_mels != impl_->config.n_mels || features.frames <= 0 ||
         static_cast<int64_t>(features.values.size()) != features.n_mels * features.frames) {
         throw std::runtime_error("LFM2-Audio encoder features have an unexpected shape");

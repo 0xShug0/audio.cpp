@@ -33,6 +33,12 @@ public:
     Lfm2DepthformerRuntime(const Lfm2DepthformerRuntime &) = delete;
     Lfm2DepthformerRuntime & operator=(const Lfm2DepthformerRuntime &) = delete;
 
+    // Load-progress support, same contract as the encoder runtime: the
+    // constructor queues weights, prepare_weights() reports the full upload
+    // budget, upload_weights() copies the data, inference uploads lazily.
+    void prepare_weights();
+    void upload_weights();
+
     // `hidden` is the backbone's final-norm output for the step.
     std::vector<int32_t> frame(const std::vector<float> & hidden, const PickCode & pick);
 

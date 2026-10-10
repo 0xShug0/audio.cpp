@@ -58,6 +58,15 @@ public:
     Lfm2FastConformerEncoderRuntime(const Lfm2FastConformerEncoderRuntime &) = delete;
     Lfm2FastConformerEncoderRuntime & operator=(const Lfm2FastConformerEncoderRuntime &) = delete;
 
+    // Load-progress support: the constructor queues weights without
+    // uploading. prepare_weights() allocates the buffer and reports the full
+    // upload budget; upload_weights() copies the tensor data. A host with
+    // several weight stores prepares all of them before uploading any, so the
+    // load-progress denominator covers the whole model from the first copied
+    // byte. Inference uploads lazily when these were not called.
+    void prepare_weights();
+    void upload_weights();
+
     // One embedding per 8 feature frames, rounded up. The graph and its
     // compute buffer stay for the next call, which reuses the graph when the
     // frame count is the same. A chunk longer than 30 s frees its buffer

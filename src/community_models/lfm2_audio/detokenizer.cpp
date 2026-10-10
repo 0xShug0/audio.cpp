@@ -82,7 +82,8 @@ DetokenizerWeights load_weights(
     out.head_weight = out.stores->load_matmul(detokenizer, "dense_2.weight", {config.output_size, d});
     out.head_bias = store.load_f32_tensor(detokenizer, "dense_2.bias", {config.output_size});
     out.window = vocoder.require_f32_tensor("istft.window", {config.n_fft}).values;
-    out.stores->upload();
+    // No upload here: the session prepares every weight store up front
+    // (exact load-progress denominator) and commits them in build order.
     return out;
 }
 
@@ -395,6 +396,17 @@ struct Lfm2DetokenizerRuntime::Impl {
         }
     }
 
+    // The constructor only queues weights; upload() happens in
+    // upload_weights() (sessions) or lazily before the first use.
+    void ensure_uploaded() {
+        if (!weights_uploaded) {
+            weights.stores->upload();
+            weights_uploaded = true;
+        }
+    }
+
+    bool weights_uploaded = false;
+
     // Utterances of different lengths use graphs of different sizes; the
     // most recently used few are kept.
     ChunkGraph & graph(int64_t frames) {
@@ -441,7 +453,16 @@ Lfm2DetokenizerRuntime::Lfm2DetokenizerRuntime(
 
 Lfm2DetokenizerRuntime::~Lfm2DetokenizerRuntime() = default;
 
+void Lfm2DetokenizerRuntime::prepare_weights() {
+    impl_->weights.stores->prepare();
+}
+
+void Lfm2DetokenizerRuntime::upload_weights() {
+    impl_->ensure_uploaded();
+}
+
 std::vector<float> Lfm2DetokenizerRuntime::spectrum(const std::vector<std::vector<int32_t>> & frames, int64_t first_frame) {
+    impl_->ensure_uploaded();
     const auto & config = impl_->config;
     const auto total = static_cast<int64_t>(frames.size());
     if (first_frame < 0 || first_frame >= total) {
@@ -482,6 +503,7 @@ std::vector<float> Lfm2DetokenizerRuntime::spectrum(const std::vector<std::vecto
 }
 
 std::vector<float> Lfm2DetokenizerRuntime::decode(const std::vector<std::vector<int32_t>> & frames) {
+    impl_->ensure_uploaded();
     const auto & config = impl_->config;
     const auto values = spectrum(frames);
     return lfm2_audio_istft(values, static_cast<int64_t>(frames.size()) * config.upsample, impl_->weights.window, config.hop_length);
@@ -496,6 +518,7 @@ void Lfm2DetokenizerRuntime::start_stream() {
 }
 
 std::vector<float> Lfm2DetokenizerRuntime::stream(const std::vector<std::vector<int32_t>> & frames) {
+    impl_->ensure_uploaded();
     if (impl_->stream == nullptr) {
         throw std::runtime_error("LFM2-Audio detokenizer stream has not been started");
     }

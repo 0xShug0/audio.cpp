@@ -42,7 +42,9 @@ bool load_progress_enabled();
 /// trace log is on.
 void begin_model_load(uint64_t total_bytes);
 
-/// A weight store is about to upload `bytes` (BackendWeightStore::upload).
+/// A weight store declares its full upload budget `bytes` (the sum of its
+/// pending tensors' bytes) - from BackendWeightStore::prepare, before any
+/// tensor data moves. Budgets accumulate across stores.
 void register_weight_bytes(uint64_t bytes);
 
 /// One tensor finished uploading.

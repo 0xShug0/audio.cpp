@@ -94,7 +94,8 @@ DepthformerWeights load_weights(
         out.codebooks.push_back(std::move(w));
     }
 
-    out.stores->upload();
+    // No upload here: the session prepares every weight store up front
+    // (exact load-progress denominator) and commits them in build order.
     return out;
 }
 
@@ -292,6 +293,17 @@ struct Lfm2DepthformerRuntime::Impl {
           weights(load_weights(*source, config, execution, cpu_repack)),
           graphs(weights, config, execution) {}
 
+    // The constructor only queues weights; upload() happens in
+    // upload_weights() (sessions) or lazily before the first frame().
+    void ensure_uploaded() {
+        if (!weights_uploaded) {
+            weights.stores->upload();
+            weights_uploaded = true;
+        }
+    }
+
+    bool weights_uploaded = false;
+
     std::shared_ptr<const assets::TensorSource> source;
     Lfm2DepthformerConfig config;
     DepthformerWeights weights;
@@ -307,7 +319,16 @@ Lfm2DepthformerRuntime::Lfm2DepthformerRuntime(
 
 Lfm2DepthformerRuntime::~Lfm2DepthformerRuntime() = default;
 
+void Lfm2DepthformerRuntime::prepare_weights() {
+    impl_->weights.stores->prepare();
+}
+
+void Lfm2DepthformerRuntime::upload_weights() {
+    impl_->ensure_uploaded();
+}
+
 std::vector<int32_t> Lfm2DepthformerRuntime::frame(const std::vector<float> & hidden, const PickCode & pick) {
+    impl_->ensure_uploaded();
     return impl_->graphs.run(hidden, pick);
 }
 

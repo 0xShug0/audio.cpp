@@ -156,9 +156,16 @@ public:
         return value;
     }
 
-    void upload() {
+    // Allocate the weight buffer and report this store's full upload budget
+    // to the load-progress tracker, without copying any tensor data. A host
+    // that builds several stores before uploading any calls prepare() on all
+    // of them first: the progress denominator then covers the whole model
+    // from the first copied byte, and the reported curve never has to correct
+    // for a budget that registers late. Idempotent; upload() prepares
+    // automatically when this was not called.
+    void prepare() {
         if (buffer_ != nullptr) {
-            throw std::runtime_error(name_ + " weights were already uploaded");
+            return;
         }
         buffer_ = buffer_type_ != nullptr
             ? ggml_backend_alloc_ctx_tensors_from_buft(ctx_.get(), buffer_type_)
@@ -180,6 +187,16 @@ public:
         }
         engine::core::register_weight_bytes(pending_bytes);
         engine::core::emit_weight_upload_progress(name_);
+    }
+
+    void upload() {
+        // A prepared-but-not-committed store already has its buffer (from
+        // prepare()) with pending tensors still queued; a fully uploaded one
+        // has neither. Only the latter is a genuine double upload.
+        if (buffer_ != nullptr && pending_.empty()) {
+            throw std::runtime_error(name_ + " weights were already uploaded");
+        }
+        prepare();
         for (auto & upload : pending_) {
             if (upload.kind == PendingUploadKind::Tensor) {
                 upload.source->set_backend_tensor(

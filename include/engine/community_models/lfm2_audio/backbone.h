@@ -121,6 +121,12 @@ public:
     Lfm2BackboneRuntime(const Lfm2BackboneRuntime &) = delete;
     Lfm2BackboneRuntime & operator=(const Lfm2BackboneRuntime &) = delete;
 
+    // Load-progress support, same contract as the encoder runtime: the
+    // constructor queues weights, prepare_weights() reports the full upload
+    // budget, upload_weights() copies the data, inference uploads lazily.
+    void prepare_weights();
+    void upload_weights();
+
     // Greedy text generation until a stop token or max_new_tokens: the ASR
     // decoder, so its cache is always sized as Lfm2DecodeCache::Transcript.
     Lfm2GenerationResult generate(
