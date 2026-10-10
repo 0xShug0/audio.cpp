@@ -2390,7 +2390,7 @@ SupertonicChunkOutput synthesize_supertonic_chunk(
             const size_t position = window.first_frame * chunk_size;
             const size_t remaining = position < static_cast<size_t>(wav_length)
                 ? static_cast<size_t>(wav_length) - position : 0;
-            const size_t count = std::min(window.new_frames * chunk_size, remaining);
+            const size_t count = std::min<size_t>(window.new_frames * chunk_size, remaining);
             return runtime::AudioBuffer{config.sample_rate, 1,
                 std::vector<float>(decoded.values.begin() + begin, decoded.values.begin() + begin + count)};
         }, std::move(sink));
